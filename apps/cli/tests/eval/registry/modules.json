@@ -1138,7 +1138,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Code: the new run pinned to standalone; continued runs reach their unrolled terminal state; restarted runs start from the reconciled state; the cross-backend resume refused with a typed reason; the rehearsal record retained."
+        "detail": "Code: the new run pinned to standalone; continued runs reach their unrolled terminal state; restarted runs start from the reconciled state; the cross-backend resume refused with a typed reason; the rehearsal record retained. On the Engine backend, backend-selection.l2 is backend-rollback.test.ts — the configured-runner switch, the typed cross-runner refusal with its unchanged text, and the terminate-and-restart procedure's order, reconciliation and kept rehearsal record — and backend-selection.l3 is dev-review-backend-selection.test.ts, which drives six in-flight Engine runs (the three pause kinds, mid-Developer turn, mid-review, an uncertain publication) with the Claude and the Codex stub through continue and through terminate-and-restart on the forge-fake ledger. backend-selection.l6, the live rehearsal, is owed: its live-gated case in dev-review-backend-selection.test.ts reads the rehearsal record of a live `task run --rollback` when VINAYA_ROLLBACK_REHEARSAL names the task, and is recorded as evidence once that output is pasted in a pull request."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "Deterministic 100%; one live rehearsal at L6 before cutover, its record retained.",

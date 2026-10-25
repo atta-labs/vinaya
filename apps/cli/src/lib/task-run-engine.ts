@@ -43,15 +43,36 @@ export function recordTaskRunner(
   renameSync(temporary, path)
 }
 
+/** Why a runner refuses to continue a run: the run is recorded on another runner, named with the one requested. */
+export type CrossRunnerRefusalReason = {
+  code: 'recorded_on_another_runner'
+  task: number
+  recorded: TaskRunner
+  requested: TaskRunner
+}
+
 /**
- * The refusal a runner gives a held pause another runner recorded, naming the recorded one; null when the pause is
- * this runner's own. A run with no recorded runner is a standalone run.
+ * The typed refusal a runner gives a held pause another runner recorded; null when the pause is this runner's own.
+ * A run with no recorded runner is a standalone run.
  */
-export function crossRunnerRefusal(task: number, runner: TaskRunner, root: string = runtimeDirForThisRepo()) {
+export function crossRunnerRefusalReason(
+  task: number,
+  runner: TaskRunner,
+  root: string = runtimeDirForThisRepo()
+): CrossRunnerRefusalReason | null {
   const recorded = readTaskRunner(task, root)
-  return recorded === runner
-    ? null
-    : `task ${task}'s paused run was recorded on the ${recorded} runner, and the ${runner} runner never continues another runner's run — resume it on ${recorded}.`
+  return recorded === runner ? null : { code: 'recorded_on_another_runner', task, recorded, requested: runner }
+}
+
+/** The refusal's text, as both runners print it. */
+export function crossRunnerRefusalText(reason: CrossRunnerRefusalReason): string {
+  return `task ${reason.task}'s paused run was recorded on the ${reason.recorded} runner, and the ${reason.requested} runner never continues another runner's run — resume it on ${reason.recorded}.`
+}
+
+/** The refusal a runner gives a held pause another runner recorded, as text; null when the pause is this runner's own. */
+export function crossRunnerRefusal(task: number, runner: TaskRunner, root: string = runtimeDirForThisRepo()) {
+  const reason = crossRunnerRefusalReason(task, runner, root)
+  return reason === null ? null : crossRunnerRefusalText(reason)
 }
 
 /** One task's Engine run directory: `<runtimeDir>/engine-runs/<task>`, where the Engine keeps its checkpoints. */

@@ -18,7 +18,23 @@ import {
   assembleAndRenderBriefForIssue as realAssembleAndRenderBriefForIssue
 } from './brief-assembly.js'
 import { type loadConfig, loadTaskRunner, resolveTaskRunner, type TaskRunner } from './config.js'
-import { crossRunnerRefusal, recordTaskRunner, runTaskEngine, type EngineRunnerDeps } from './task-run-engine.js'
+import {
+  type BackendRollbackDeps,
+  endEngineRunThrough,
+  reconcileEffectOnForge,
+  ROLLBACK_REHEARSALS_FILE,
+  type RollbackRehearsalRecord,
+  terminateAndRestart
+} from './backend-rollback.js'
+import {
+  type CrossRunnerRefusalReason,
+  crossRunnerRefusalReason,
+  crossRunnerRefusalText,
+  readTaskRunner,
+  recordTaskRunner,
+  runTaskEngine,
+  type EngineRunnerDeps
+} from './task-run-engine.js'
 import type { AgentVendor } from './dispatch.js'
 import {
   developerBranchFor as realDeveloperBranchFor,
@@ -65,6 +81,13 @@ type OpenPrRef = NonNullable<ReturnType<typeof realFindOpenPrForBranch>>
  * command lets it propagate to `index.ts`'s own top-level catch. */
 export class RunTaskError extends Error {}
 
+/** A run refused because another runner recorded the task's held pause: the typed reason, with the text runners print. */
+export class CrossRunnerRefusedError extends RunTaskError {
+  constructor(readonly reason: CrossRunnerRefusalReason) {
+    super(`runTask: ${crossRunnerRefusalText(reason)}`)
+  }
+}
+
 /**
  * `prepareTask`'s own fixed wording for its "already dispatched" refusal
  * (`dispatch-task.ts`'s `findExistingV1Comment` guard) — the only one of its
@@ -102,6 +125,12 @@ export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) 
    * then start the run (`widenSurfaceBeforeRun`).
    */
   widenSurface?: WidenSurfaceRequest
+  /**
+   * `--rollback`: end the task's in-flight Engine run and restart it on the
+   * standalone runner (`terminateAndRestart`, `backend-rollback.ts`), refused
+   * when the task's recorded runner is not `atta-engine`.
+   */
+  rollback?: boolean
 }
 
 /** The globs a widen-surface continuation adds to `## Surface` `in:`, and the reason its superseding brief records. */
@@ -212,7 +241,12 @@ export type RunTaskDeps = {
   /** Records the runner a run actually used, once it is known; absent, nothing is recorded. */
   recordRunner?: (issue: number, runner: TaskRunner) => void
   /** Why `runner` may not continue the task's held pause — another runner recorded it — or null when it may. */
-  crossRunnerRefusal?: (issue: number, runner: TaskRunner) => string | null
+  crossRunnerRefusalReason?: (issue: number, runner: TaskRunner) => CrossRunnerRefusalReason | null
+  /** The terminate-and-restart procedure a `rollback` run takes, around the standalone start this run supplies. */
+  backendRollback?: (
+    issue: number,
+    wiring: Pick<BackendRollbackDeps, 'startStandalone' | 'recordRunner'>
+  ) => Promise<RollbackRehearsalRecord>
   /** The widen-surface continuation's own seams, read only when `RunTaskInput.widenSurface` is given; absent, the real ones. */
   widen?: WidenSurfaceDeps
 }
@@ -309,8 +343,33 @@ export const defaultRunTaskDeps: RunTaskDeps = {
   resolveRepo: () => realResolveRepo(),
   assignIssue: (issue) => realAssignIssueAtRunStart(issue),
   recordRunner: recordTaskRunner,
-  crossRunnerRefusal: (issue, runner) => crossRunnerRefusal(issue, runner),
+  crossRunnerRefusalReason: (issue, runner) => crossRunnerRefusalReason(issue, runner),
+  backendRollback: liveBackendRollback,
   widen: defaultWidenSurfaceDeps
+}
+
+/** The procedure over this repository's runtime directory, its forge and the shared cancel the Operator uses. */
+async function liveBackendRollback(
+  issue: number,
+  wiring: Pick<BackendRollbackDeps, 'startStandalone' | 'recordRunner'>
+): Promise<RollbackRehearsalRecord> {
+  const root = runtimeDir()
+  const controlStore = defaultControlStoreDeps(() => tasksExecutionRoot(root))
+  // Loaded here: the Operator's tool handlers import this module.
+  const { defaultTaskCancelHandler } = await import('./task-tools/cancel.js')
+  return terminateAndRestart(issue, {
+    runtimeDir: root,
+    controlStore,
+    readRunner: (task) => readTaskRunner(task, root),
+    endEngineRun: endEngineRunThrough(defaultTaskCancelHandler, root, controlStore),
+    reconcile: reconcileEffectOnForge,
+    ...wiring
+  })
+}
+
+/** A finished standalone run's terminal state, as a rehearsal record names it. */
+export function terminalStateOf(decision: DriverResult['finalDecision']): string {
+  return decision.type === 'pause' || decision.type === 'ended' ? `${decision.type}:${decision.reason}` : decision.type
 }
 
 /** `null` on any resolution failure — a display-only nicety never worth failing `runTask` over. */
@@ -421,6 +480,29 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // ahead of any line `devReviewLoop` writes of its own.
   const resolvedModel = deps.resolveModelForDispatch(agent, issue, explicitModel)
   console.error(`vinaya task run: ${taskLabel} — ${describeModelResolution(explicitModel, resolvedModel)}`)
+  const branch = deps.developerBranchFor(issue)
+
+  // The procedure ends the Engine run itself before it starts the standalone one, so no live-driver check precedes it.
+  if (input.rollback) {
+    const rollback = deps.backendRollback ?? liveBackendRollback
+    const restarted: { result?: DriverResult } = {}
+    const rehearsal = await rollback(issue, {
+      recordRunner: (task, recorded) => deps.recordRunner?.(task, recorded),
+      startStandalone: async (task) => {
+        deps.assignIssue(task)
+        // A fresh run from the frozen brief on the Issue: the cancelled pause is never resumed.
+        const result = await deps.devReviewLoop({ task, agent, ...(resolvedModel ? { model: resolvedModel } : {}) })
+        restarted.result = result
+        return { terminalState: terminalStateOf(result.finalDecision) }
+      }
+    })
+    if (restarted.result === undefined) throw new RunTaskError(`runTask: ${taskLabel}'s rollback started no run`)
+    console.error(
+      `vinaya task run: ${taskLabel} — the Engine run was ${rehearsal.action} and restarted on the standalone runner; its rehearsal record is kept in the task's runtime directory, ${ROLLBACK_REHEARSALS_FILE}`
+    )
+    const loopResult = restarted.result
+    return { ...loopResult, prUrl: await resolvePrUrl(deps.resolveRepo, loopResult.prNumber), branch }
+  }
 
   // Round 2 security review, LOW: this check-then-act read has a real, accepted
   // race window — two concurrent `runTask` calls for the same task can both
@@ -432,7 +514,6 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // round-1 entry re-reads this same fact immediately before it would ever
   // dispatch fresh, narrowing the real double-dispatch window to the few
   // milliseconds between this read and that one, on both sides of the race.
-  const branch = deps.developerBranchFor(issue)
   const existingPr = deps.findOpenPrForBranch(branch)
   // An open PR alone is no longer grounds to refuse — a
   // driver that crashed or was killed leaves its PR (and, sometimes, a held
@@ -460,11 +541,11 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   const shouldResumeFromPause = existingPr !== null && deps.hasPauseState(issue)
   // A held pause belongs to the runner that recorded it: neither runner continues the other's.
   const heldByAnother = (selected: TaskRunner) => {
-    const refusal = deps.crossRunnerRefusal?.(issue, selected) ?? null
+    const refusal = deps.crossRunnerRefusalReason?.(issue, selected) ?? null
     return refusal !== null && deps.hasPauseState(issue) ? refusal : null
   }
   const refusedBy = heldByAnother(runner)
-  if (refusedBy !== null) throw new RunTaskError(`runTask: ${refusedBy}`)
+  if (refusedBy !== null) throw new CrossRunnerRefusedError(refusedBy)
   // Every start path reaches this one call: the foreground command, the
   // detached child a `--background` start launches, and the Operator's
   // `task_start` tool all run `runTask` itself.
@@ -479,7 +560,7 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
     if (exitCode !== null) return { exitCode, task: issue, branch, prUrl: null, prNumber: null, finalDecision: null }
     // The Engine is unavailable: the standalone loop continues only a pause the standalone runner holds.
     const refusedFallback = heldByAnother('standalone')
-    if (refusedFallback !== null) throw new RunTaskError(`runTask: ${refusedFallback}`)
+    if (refusedFallback !== null) throw new CrossRunnerRefusedError(refusedFallback)
   }
   deps.recordRunner?.(issue, 'standalone')
   const loopResult = await deps.devReviewLoop(

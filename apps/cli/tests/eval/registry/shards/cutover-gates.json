@@ -766,7 +766,8 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "test": "apps/cli/tests/conformance/dev-review-backend-selection.test.ts",
+          "liveGated": { "variable": "VINAYA_ROLLBACK_REHEARSAL" }
         }
       },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
