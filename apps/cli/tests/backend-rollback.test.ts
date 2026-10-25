@@ -1,5 +1,9 @@
+// Backend selection and rollback (evaluation program §6.20), the L2 evidence
+// of cutover-gate:gate-13: the configured-runner switch, the typed
+// cross-runner refusal and the terminate-and-restart procedure's order,
+// reconciliation, refusals and kept rehearsal record.
 import { afterEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -27,7 +31,10 @@ import { writeDriverLock, writePauseState } from '../src/lib/dev-review-loop/pau
 import type { EffectIdentity } from '../src/lib/effects.js'
 import { CrossRunnerRefusedError, runTask, type RunTaskDeps } from '../src/lib/task-run.js'
 import {
+  crossRunnerInFlightText,
   crossRunnerRefusal,
+  engineRunDirectory,
+  engineRunInFlight,
   crossRunnerRefusalReason,
   crossRunnerRefusalText,
   readTaskRunner,
@@ -77,6 +84,13 @@ const identity = (round: number): EffectIdentity => ({
   inputVersion: round,
   payloadDigest: `digest-${round}`
 })
+
+/** The trace the Engine runner writes when a leg ends, naming how it ended. */
+function writeTrace(runtimeDir: string, outcome: string) {
+  const dir = engineRunDirectory(TASK, runtimeDir)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'trace.json'), JSON.stringify({ outcome }))
+}
 
 /** Records an effect at `status`, as an interrupted or fenced write leaves it. */
 function recordEffect(store: ControlStoreDeps, key: string, round: number, status: 'started' | 'uncertain') {
@@ -214,6 +228,64 @@ describe('the typed cross-runner refusal', () => {
   })
 })
 
+describe('an in-flight Engine run with no pause held', () => {
+  it('is read as in flight until its last leg completes or is cancelled', () => {
+    const runtimeDir = root()
+    expect(engineRunInFlight(TASK, runtimeDir)).toBe(false)
+    // A checkpoint and no trace: the run stopped before any leg ended.
+    mkdirSync(engineRunDirectory(TASK, runtimeDir), { recursive: true })
+    writeFileSync(join(engineRunDirectory(TASK, runtimeDir), 'checkpoints.sqlite'), '')
+    expect(engineRunInFlight(TASK, runtimeDir)).toBe(true)
+    for (const [outcome, inFlight] of [
+      ['paused', true],
+      ['failed', true],
+      ['exhausted', true],
+      ['completed', false],
+      ['cancelled', false]
+    ] as const) {
+      writeTrace(runtimeDir, outcome)
+      expect(engineRunInFlight(TASK, runtimeDir)).toBe(inFlight)
+    }
+    // A live driver is in flight whatever its last trace says.
+    writeDriverLock(runtimeDir, TASK, { pid: process.pid, startedAt: new Date().toISOString() })
+    expect(engineRunInFlight(TASK, runtimeDir)).toBe(true)
+  })
+
+  it('is never taken over by a plain start on standalone, and a run that ended is', async () => {
+    const runtimeDir = root()
+    recordTaskRunner(TASK, 'atta-engine', runtimeDir)
+    writeTrace(runtimeDir, 'paused')
+    let starts = 0
+    const start = () =>
+      runTask(
+        { issue: TASK, agent: 'claude', runner: 'standalone' },
+        fixtureDeps({
+          recordRunner: (issue, runner) => recordTaskRunner(issue, runner, runtimeDir),
+          crossRunnerRefusalReason: (issue, runner) => crossRunnerRefusalReason(issue, runner, runtimeDir),
+          engineRunInFlight: (issue) => engineRunInFlight(issue, runtimeDir),
+          devReviewLoop: async () => {
+            starts += 1
+            return { task: TASK, prNumber: 7, finalDecision: { type: 'publish' } }
+          }
+        })
+      )
+    const refusal = await start().catch((error: unknown) => error)
+    expect(refusal).toBeInstanceOf(CrossRunnerRefusedError)
+    const reason = {
+      code: 'recorded_on_another_runner',
+      task: TASK,
+      recorded: 'atta-engine',
+      requested: 'standalone'
+    } as const
+    expect((refusal as CrossRunnerRefusedError).reason).toEqual(reason)
+    expect((refusal as Error).message).toBe(`runTask: ${crossRunnerInFlightText(reason)}`)
+    expect([starts, readTaskRunner(TASK, runtimeDir)]).toEqual([0, 'atta-engine'])
+    writeTrace(runtimeDir, 'completed')
+    await start()
+    expect([starts, readTaskRunner(TASK, runtimeDir)]).toEqual([1, 'standalone'])
+  })
+})
+
 describe('the terminate-and-restart procedure', () => {
   it('refuses a task whose recorded runner is not atta-engine, before anything runs or is recorded', async () => {
     const { runtimeDir, steps, deps } = rollbackWorld()
@@ -287,8 +359,8 @@ describe('the terminate-and-restart procedure', () => {
     ])
   })
 
-  it('never starts the standalone run while the Engine driver is still live', async () => {
-    const { runtimeDir, steps, deps } = rollbackWorld()
+  it('never starts the standalone run while the Engine driver is still live, once its bounded wait runs out', async () => {
+    const { runtimeDir, steps, deps } = rollbackWorld({ engineStopTimeoutMs: 50 })
     writeDriverLock(runtimeDir, TASK, { pid: process.pid, startedAt: new Date().toISOString() })
     const refusal = await terminateAndRestart(TASK, deps).catch((error: unknown) => error)
     expect((refusal as BackendRollbackRefusedError).reason).toEqual({
@@ -297,6 +369,47 @@ describe('the terminate-and-restart procedure', () => {
       pid: process.pid
     })
     expect(steps).toEqual(['end'])
+  })
+
+  it('waits for a cancelled run’s driver to release its lock, then restarts', async () => {
+    const { runtimeDir, steps, deps } = rollbackWorld({
+      sleep: async () => {
+        // The Engine run's ruling watch reads the cancel and ends, releasing its lock.
+        writeDriverLock(runtimeDir, TASK, { pid: EXITED_PID, startedAt: new Date().toISOString() })
+      }
+    })
+    writeDriverLock(runtimeDir, TASK, { pid: process.pid, startedAt: new Date().toISOString() })
+    const record = await terminateAndRestart(TASK, deps)
+    expect(steps).toEqual(['end', 'record:standalone', 'start'])
+    expect(record.refusal).toBeNull()
+  })
+
+  it('keeps a rehearsal record when the restarted run or the reconciliation fails', async () => {
+    const restart = rollbackWorld({
+      startStandalone: async () => {
+        throw new Error('the standalone loop crashed')
+      }
+    })
+    await expect(terminateAndRestart(TASK, restart.deps)).rejects.toThrow('the standalone loop crashed')
+    expect(readRollbackRehearsals(TASK, restart.runtimeDir)).toEqual([
+      expect.objectContaining({
+        restarted: null,
+        refusal: { code: 'step_failed', task: TASK, step: 'restart', detail: 'the standalone loop crashed' }
+      })
+    ])
+    const reconcile = rollbackWorld({
+      reconcile: () => {
+        throw new Error('the forge read threw')
+      }
+    })
+    recordEffect(reconcile.controlStore, 'open', 1, 'uncertain')
+    await expect(terminateAndRestart(TASK, reconcile.deps)).rejects.toThrow('the forge read threw')
+    expect(reconcile.steps).toEqual(['end'])
+    expect(readRollbackRehearsals(TASK, reconcile.runtimeDir)).toEqual([
+      expect.objectContaining({
+        refusal: { code: 'step_failed', task: TASK, step: 'reconcile', detail: 'the forge read threw' }
+      })
+    ])
   })
 
   it('reports a refused cancel as the refusal, and starts nothing', async () => {
@@ -343,6 +456,11 @@ describe('ending the Engine run through public run control', () => {
     // Halted with no pause held and no live driver: its started effects are fenced as a cancel fences them.
     recordEffect(controlStore, 'in-flight', 1, 'started')
     writeDriverLock(runtimeDir, TASK, { pid: EXITED_PID, startedAt: new Date().toISOString() })
+    // A run whose last leg completed is not in flight: nothing to roll back, and nothing fenced.
+    writeTrace(runtimeDir, 'completed')
+    await expect(end(TASK)).rejects.toThrow(`task ${TASK}'s Engine run has already ended`)
+    expect(readEffect(controlStore, TASK, 'in-flight').status === 'ok').toBe(true)
+    writeTrace(runtimeDir, 'paused')
     expect(await end(TASK)).toEqual({ action: 'halted', fencedEffectKeys: ['in-flight'] })
     expect(cancels).toEqual([])
     // A live driver holding no pause is refused, never signalled.

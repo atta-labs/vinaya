@@ -28,8 +28,10 @@ import {
 } from './backend-rollback.js'
 import {
   type CrossRunnerRefusalReason,
+  crossRunnerInFlightText,
   crossRunnerRefusalReason,
   crossRunnerRefusalText,
+  engineRunInFlight,
   readTaskRunner,
   recordTaskRunner,
   runTaskEngine,
@@ -83,8 +85,11 @@ export class RunTaskError extends Error {}
 
 /** A run refused because another runner recorded the task's held pause: the typed reason, with the text runners print. */
 export class CrossRunnerRefusedError extends RunTaskError {
-  constructor(readonly reason: CrossRunnerRefusalReason) {
-    super(`runTask: ${crossRunnerRefusalText(reason)}`)
+  constructor(
+    readonly reason: CrossRunnerRefusalReason,
+    text: string = crossRunnerRefusalText(reason)
+  ) {
+    super(`runTask: ${text}`)
   }
 }
 
@@ -242,6 +247,8 @@ export type RunTaskDeps = {
   recordRunner?: (issue: number, runner: TaskRunner) => void
   /** Why `runner` may not continue the task's held pause — another runner recorded it — or null when it may. */
   crossRunnerRefusalReason?: (issue: number, runner: TaskRunner) => CrossRunnerRefusalReason | null
+  /** Whether the task's Engine run has not ended, pause held or not; absent, no run is treated as in flight. */
+  engineRunInFlight?: (issue: number) => boolean
   /** The terminate-and-restart procedure a `rollback` run takes, around the standalone start this run supplies. */
   backendRollback?: (
     issue: number,
@@ -344,6 +351,7 @@ export const defaultRunTaskDeps: RunTaskDeps = {
   assignIssue: (issue) => realAssignIssueAtRunStart(issue),
   recordRunner: recordTaskRunner,
   crossRunnerRefusalReason: (issue, runner) => crossRunnerRefusalReason(issue, runner),
+  engineRunInFlight: (issue) => engineRunInFlight(issue),
   backendRollback: liveBackendRollback,
   widen: defaultWidenSurfaceDeps
 }
@@ -542,10 +550,15 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // A held pause belongs to the runner that recorded it: neither runner continues the other's.
   const heldByAnother = (selected: TaskRunner) => {
     const refusal = deps.crossRunnerRefusalReason?.(issue, selected) ?? null
-    return refusal !== null && deps.hasPauseState(issue) ? refusal : null
+    if (refusal === null) return null
+    if (deps.hasPauseState(issue)) return new CrossRunnerRefusedError(refusal)
+    // An Engine run halted or stopped with no pause held is still the Engine's: never taken over by a plain start.
+    return refusal.recorded === 'atta-engine' && deps.engineRunInFlight?.(issue)
+      ? new CrossRunnerRefusedError(refusal, crossRunnerInFlightText(refusal))
+      : null
   }
   const refusedBy = heldByAnother(runner)
-  if (refusedBy !== null) throw new CrossRunnerRefusedError(refusedBy)
+  if (refusedBy !== null) throw refusedBy
   // Every start path reaches this one call: the foreground command, the
   // detached child a `--background` start launches, and the Operator's
   // `task_start` tool all run `runTask` itself.
@@ -560,7 +573,7 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
     if (exitCode !== null) return { exitCode, task: issue, branch, prUrl: null, prNumber: null, finalDecision: null }
     // The Engine is unavailable: the standalone loop continues only a pause the standalone runner holds.
     const refusedFallback = heldByAnother('standalone')
-    if (refusedFallback !== null) throw new CrossRunnerRefusedError(refusedFallback)
+    if (refusedFallback !== null) throw refusedFallback
   }
   deps.recordRunner?.(issue, 'standalone')
   const loopResult = await deps.devReviewLoop(

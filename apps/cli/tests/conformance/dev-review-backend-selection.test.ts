@@ -23,7 +23,9 @@ import { isDriverPidAlive, readDriverLock, readPauseState } from '../../src/lib/
 import { runtimeDir as runtimeDirForThisRepo } from '../../src/lib/dev-review-loop.js'
 import { CrossRunnerRefusedError, runTask, type RunTaskDeps } from '../../src/lib/task-run.js'
 import {
+  crossRunnerInFlightText,
   crossRunnerRefusalReason,
+  engineRunInFlight,
   engineRunnerScriptPath,
   readTaskRunner,
   recordTaskRunner
@@ -145,7 +147,10 @@ async function switchRunner(run: InFlightEngineRun): Promise<void> {
   expect(continuation.argv[0]).toBe(engineRunnerScriptPath())
 }
 
-/** A start on the standalone runner over the Engine's held pause: refused, typed, with today's text. */
+/**
+ * A start on the standalone runner over the in-flight Engine run: refused, typed. Over a held pause it carries
+ * today's text; over a run halted with no pause held, the in-flight text naming the rollback.
+ */
 async function refusedOnStandalone(run: InFlightEngineRun): Promise<void> {
   let starts = 0
   const refusal = await runTask(
@@ -153,6 +158,7 @@ async function refusedOnStandalone(run: InFlightEngineRun): Promise<void> {
     fixtureDeps(run.task, {
       hasPauseState: (issue) => readPauseState(run.runtimeDir, issue) !== null,
       crossRunnerRefusalReason: (issue, runner) => crossRunnerRefusalReason(issue, runner, run.runtimeDir),
+      engineRunInFlight: (issue) => engineRunInFlight(issue, run.runtimeDir),
       devReviewLoop: async () => {
         starts += 1
         return { task: run.task, prNumber: run.pr, finalDecision: { type: 'publish' } }
@@ -168,9 +174,12 @@ async function refusedOnStandalone(run: InFlightEngineRun): Promise<void> {
     requested: 'standalone'
   })
   expect(typed.message).toBe(
-    `runTask: task ${run.task}'s paused run was recorded on the atta-engine runner, and the standalone runner never continues another runner's run — resume it on atta-engine.`
+    PAUSED.includes(run.kind)
+      ? `runTask: task ${run.task}'s paused run was recorded on the atta-engine runner, and the standalone runner never continues another runner's run — resume it on atta-engine.`
+      : `runTask: ${crossRunnerInFlightText(typed.reason)}`
   )
   expect(starts).toBe(0)
+  expect(readTaskRunner(run.task, run.runtimeDir)).toBe('atta-engine')
 }
 
 describe('cutover-gate:gate-13 — backend selection and rollback on the Engine backend', () => {
@@ -181,7 +190,7 @@ describe('cutover-gate:gate-13 — backend selection and rollback on the Engine 
         expect(expected.decision).toBe('publish')
         const continued = await runInFlightEngineRun(kind, agent, async (run) => {
           await switchRunner(run)
-          if (PAUSED.includes(kind)) await refusedOnStandalone(run)
+          await refusedOnStandalone(run)
           await run.continueOnEngine()
         })
         expect(terminal(continued)).toEqual(terminal(expected))

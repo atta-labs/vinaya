@@ -758,7 +758,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Code: the new run pinned to standalone; continued runs reach their unrolled terminal state; restarted runs start from the reconciled state; the cross-backend resume refused with a typed reason; the rehearsal record retained."
+        "detail": "Code: the new run pinned to standalone; continued runs reach their unrolled terminal state; restarted runs start from the reconciled state; the cross-backend resume refused with a typed reason; the rehearsal record retained. On the Engine backend the L2 suite is apps/cli/tests/backend-rollback.test.ts and the L3 suite is apps/cli/tests/conformance/dev-review-backend-selection.test.ts, both naming this row's id; the L3 file is the Engine evidence entry, whose live-gated case is the owed L6 rehearsal."
       },
       "backends": ["standalone", "engine"],
       "backendEvidence": {

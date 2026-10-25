@@ -13,10 +13,10 @@
  *    live Engine run's own ruling watch end it; a run already halted at a
  *    node boundary, with no pause held and no live driver, has its started
  *    effects fenced the same way. A run still live with no pause held is
- *    refused, never signalled.
- * 3. Refuse while the Engine driver is still live: a second live driver for
- *    one task is refused by the driver lock, so the restart never starts
- *    beside it.
+ *    refused, never signalled, and so is a run that already ended.
+ * 3. Wait, bounded, for a cancelled run's driver to release its lock, and
+ *    refuse while it is still live: a second live driver for one task is
+ *    refused by the driver lock, so the restart never starts beside it.
  * 4. Reconcile every started and uncertain effect by its identity against the
  *    forge: one the forge carries is recorded verified, so it is never
  *    repeated; one the forge does not carry is recorded started again, so the
@@ -27,7 +27,8 @@
  *    same prepared inputs: the frozen brief on the task Issue.
  *
  * Every rehearsal that reaches step 2 appends one rehearsal record to the
- * task's runtime directory, refused or completed, and nothing removes it.
+ * task's runtime directory — completed, refused, or failed at a later step —
+ * and nothing removes it.
  */
 
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -50,6 +51,7 @@ import {
 import type { EffectIdentity, EffectReconciler, EffectReconcileResult } from './effects.js'
 import { reconcileGhComment } from './forge-write.js'
 import { ensureRunDir, runPath } from './run-paths.js'
+import { engineRunInFlight } from './task-run-engine.js'
 import type { TaskToolCallResult } from './task-tools/handlers.js'
 import type { CallerContext } from './task-tools/server.js'
 
@@ -59,9 +61,15 @@ export type BackendRollbackRefusalReason =
   | { code: 'engine_running'; task: number; pid: number }
   | { code: 'cancel_refused'; task: number; detail: string }
   | { code: 'effect_ambiguous'; task: number; keys: string[]; detail: string }
+  | { code: 'engine_run_ended'; task: number }
+  | { code: 'step_failed'; task: number; step: 'reconcile' | 'restart'; detail: string }
 
 export function backendRollbackRefusalText(reason: BackendRollbackRefusalReason): string {
   switch (reason.code) {
+    case 'engine_run_ended':
+      return `task ${reason.task}'s Engine run has already ended, completed or cancelled, and holds no pause — there is no in-flight run to roll back; start a new run with \`task run\`.`
+    case 'step_failed':
+      return `task ${reason.task}'s ${reason.step === 'reconcile' ? 'effect reconciliation' : 'restarted standalone run'} failed: ${reason.detail}`
     case 'not_engine_run':
       return `task ${reason.task}'s run is recorded on the ${reason.recorded} runner, not atta-engine — the terminate-and-restart procedure ends only an Engine run.`
     case 'engine_running':
@@ -117,6 +125,29 @@ export type BackendRollbackDeps = {
   /** Starts the fresh standalone run and resolves with its terminal state once it ends. */
   startStandalone: (task: number) => Promise<{ terminalState: string }>
   now?: () => Date
+  /** How long a cancelled run's driver gets to release its lock before the restart is refused. */
+  engineStopTimeoutMs?: number
+  sleep?: (ms: number) => Promise<void>
+}
+
+/** The bound for a cancelled Engine run's driver to see the cancel and release its lock: one ruling-watch poll and grace. */
+export const ROLLBACK_ENGINE_STOP_TIMEOUT_MS = 45_000
+const ROLLBACK_ENGINE_STOP_POLL_MS = 100
+
+/** True once no live driver holds the task's lock, waiting up to `timeoutMs` for it to be released. */
+async function driverReleased(
+  runtimeDir: string,
+  task: number,
+  timeoutMs: number,
+  sleep: (ms: number) => Promise<void>
+): Promise<{ released: true } | { released: false; pid: number }> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const lock = readDriverLock(runtimeDir, task)
+    if (lock === null || !isDriverPidAlive(lock.pid)) return { released: true }
+    if (Date.now() >= deadline) return { released: false, pid: lock.pid }
+    await sleep(ROLLBACK_ENGINE_STOP_POLL_MS)
+  }
 }
 
 /** The file in the task's runtime directory that keeps every rehearsal record, one line each. */
@@ -237,10 +268,31 @@ export async function terminateAndRestart(task: number, deps: BackendRollbackDep
     if (error instanceof BackendRollbackRefusedError) throw refuse(null, error.reason)
     throw refuse(null, { code: 'cancel_refused', task, detail: error instanceof Error ? error.message : String(error) })
   }
-  const lock = readDriverLock(deps.runtimeDir, task)
-  if (lock !== null && isDriverPidAlive(lock.pid)) throw refuse(ending, { code: 'engine_running', task, pid: lock.pid })
+  // A cancelled run's own ruling watch ends it; a halted one has no driver left to wait for.
+  const driver = await driverReleased(
+    deps.runtimeDir,
+    task,
+    ending.action === 'cancelled' ? (deps.engineStopTimeoutMs ?? ROLLBACK_ENGINE_STOP_TIMEOUT_MS) : 0,
+    deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+  )
+  if (!driver.released) throw refuse(ending, { code: 'engine_running', task, pid: driver.pid })
 
-  const { reconciled, ambiguous } = reconcileOpenEffects(deps, task, now)
+  /** A later step's failure is still a rehearsal: its record is kept before the error is rethrown. */
+  const failed = (step: 'reconcile' | 'restart', error: unknown, reconciledEffects: ReconciledEffect[]) => {
+    keep(ending, {
+      reconciledEffects,
+      restarted: null,
+      refusal: { code: 'step_failed', task, step, detail: error instanceof Error ? error.message : String(error) }
+    })
+    return error
+  }
+  let settled: ReturnType<typeof reconcileOpenEffects>
+  try {
+    settled = reconcileOpenEffects(deps, task, now)
+  } catch (error) {
+    throw failed('reconcile', error, [])
+  }
+  const { reconciled, ambiguous } = settled
   if (ambiguous.length > 0) {
     const reason: BackendRollbackRefusalReason = {
       code: 'effect_ambiguous',
@@ -252,8 +304,13 @@ export async function terminateAndRestart(task: number, deps: BackendRollbackDep
     throw new BackendRollbackRefusedError(reason)
   }
 
-  deps.recordRunner(task, 'standalone')
-  const restarted = await deps.startStandalone(task)
+  let restarted: { terminalState: string }
+  try {
+    deps.recordRunner(task, 'standalone')
+    restarted = await deps.startStandalone(task)
+  } catch (error) {
+    throw failed('restart', error, reconciled)
+  }
   return keep(ending, {
     reconciledEffects: reconciled,
     restarted: { runner: 'standalone', terminalState: restarted.terminalState },
@@ -270,12 +327,14 @@ export const BACKEND_ROLLBACK_CALLER = { id: 'backend-rollback' }
 
 /**
  * Ends a task's Engine run through public run control: a held pause through the shared cancel, a halted run by
- * fencing its started effects. A live driver holding no pause is refused, never signalled.
+ * fencing its started effects. A live driver holding no pause is refused, never signalled, and so is an Engine run
+ * that already ended: with no pause held there is nothing in flight to roll back.
  */
 export function endEngineRunThrough(
   cancel: CancelHandler,
   runtimeDir: string,
-  controlStore: ControlStoreDeps
+  controlStore: ControlStoreDeps,
+  inFlight: (task: number) => boolean = (task) => engineRunInFlight(task, runtimeDir)
 ): (task: number) => Promise<EngineRunEnding> {
   return async (task) => {
     if (readPauseState(runtimeDir, task) === null) {
@@ -283,6 +342,7 @@ export function endEngineRunThrough(
       if (lock !== null && isDriverPidAlive(lock.pid)) {
         throw new BackendRollbackRefusedError({ code: 'engine_running', task, pid: lock.pid })
       }
+      if (!inFlight(task)) throw new BackendRollbackRefusedError({ code: 'engine_run_ended', task })
       const owned = acquireOwnership(controlStore, task, `backend-rollback:${task}:fence`)
       if (!owned.acquired) throw new Error(`could not acquire task ${task}'s control-store epoch to fence its effects`)
       return { action: 'halted', fencedEffectKeys: fenceStartedEffectsAsUncertain(task, owned.epoch, controlStore) }
