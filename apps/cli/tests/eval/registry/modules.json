@@ -996,7 +996,7 @@
         "detail": "Code, plus an import check that the Engine path references only public packed exports and never drives the graph outside public run control."
       },
       "backends": ["engine"],
-      "decisionRule": "Deterministic 100%. Expected to fail until Atta Engine delivers gate 16; the gap is an external cutover dependency recorded in the capability matrix, never in the standalone defect register.",
+      "decisionRule": "Deterministic 100%. Atta Engine has delivered gate 16: packed-runtime-public-run-control.test.ts is its evidence, recorded in the capability matrix. A failure there is an external cutover dependency owned by Atta Engine, never an entry in the standalone defect register.",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: both backends execute its suites (engine-boundary.l3@1); on its deterministic suites the Engine backend passes every mandatory case and every standalone failure is named by a registered expected defect, comparison evidence only; its suites run in the regression floor or the live schedule on both backends until cutover and on the Engine backend afterwards; each of its §13 rows satisfies its declared cutover outcome. Recommended order: step 1, the Engine run-control boundary."
     },
