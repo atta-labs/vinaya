@@ -22,10 +22,13 @@
  * Preparation never throws for a source: each failure is that source's typed
  * outcome, and the caller pauses the run when any required source is
  * unavailable (`REQUIRED_SOURCE_POLICY`), so a turn never starts on model
- * memory in a missing source's place.
+ * memory in a missing source's place. A repository that cannot be read at
+ * all — a worktree that does not exist, a git that fails — is no source's
+ * outcome: the reader throws `SourceReaderUnavailable`, an infrastructure stop.
  */
 
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import {
   classifyDocumentationSource,
   parseIssueDocumentation,
@@ -62,29 +65,63 @@ export const REQUIRED_SOURCE_POLICY = {
 export type RepositoryObject = { type: 'blob' | 'tree'; id: string; content: Uint8Array }
 
 export type SourceProviderDeps = {
-  /** The object `path` names at `revision`, or `null` when the revision holds no such path. Never touches the network. */
+  /**
+   * The object `path` names at `revision`, or `null` when the revision holds no such path; throws
+   * `SourceReaderUnavailable` when the repository cannot be read at all. Never touches the network.
+   */
   readObject: (revision: string, path: string) => RepositoryObject | null
   fetch: FetchDocumentationDeps
   now: () => Date
 }
 
+/**
+ * Thrown when the repository sources are read from cannot be read at all: the worktree is missing, or git itself
+ * failed. An infrastructure stop, never a source the brief named wrongly.
+ */
+export class SourceReaderUnavailable extends Error {
+  constructor(
+    readonly cwd: string,
+    why: string
+  ) {
+    super(`the repository sources are read from cannot be read (${cwd}): ${why}`)
+    this.name = 'SourceReaderUnavailable'
+  }
+}
+
+/** `git rev-parse --verify --quiet`'s own answer for a revision that holds no such path. */
+const NOT_FOUND_EXIT = 1
+
 /** The real object reader: `git rev-parse`/`cat-file` against the repository `cwd` belongs to. */
 export function gitObjectReader(cwd: string): SourceProviderDeps['readObject'] {
-  const git = (args: string[]): Buffer => execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] })
+  const git = (args: string[]): Buffer => execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
   return (revision, path) => {
+    if (!existsSync(cwd)) throw new SourceReaderUnavailable(cwd, 'the worktree does not exist')
     const spec = `${revision}:${path.replace(/\/+$/, '')}`
     let id: string
     let type: string
     try {
       id = git(['rev-parse', '--verify', '--quiet', spec]).toString('utf8').trim()
+    } catch (error) {
+      // Only the quiet verify's own exit means the path is absent; any other failure is git's, not the source's.
+      if ((error as { status?: unknown }).status === NOT_FOUND_EXIT) return null
+      throw new SourceReaderUnavailable(cwd, gitFailure(error))
+    }
+    try {
       type = git(['cat-file', '-t', id]).toString('utf8').trim()
-    } catch {
-      return null
+    } catch (error) {
+      throw new SourceReaderUnavailable(cwd, gitFailure(error))
     }
     if (type === 'blob') return { type: 'blob', id, content: new Uint8Array(git(['cat-file', 'blob', id])) }
     if (type === 'tree') return { type: 'tree', id, content: new Uint8Array(git(['ls-tree', id])) }
     return null
   }
+}
+
+/** A failed git call's first line of stderr, else its message. */
+function gitFailure(error: unknown): string {
+  const stderr = (error as { stderr?: unknown }).stderr
+  const text = stderr instanceof Uint8Array ? Buffer.from(stderr).toString('utf8').trim() : ''
+  return text.split('\n')[0] || (error instanceof Error ? error.message : String(error))
 }
 
 export type PrepareSourcesInput = {
