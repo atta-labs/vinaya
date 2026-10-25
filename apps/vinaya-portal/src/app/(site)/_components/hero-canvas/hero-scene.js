@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { clamp01, easeInOutCubic, easeOutCubic, lerp, smoothstep } from '@/ui/lib/math'
+import { clamp01, easeInOutCubic, lerp, smoothstep } from '@/ui/lib/math'
 import { buildFloaters } from '../canvas/floaters'
 import { buildField } from './field-3d'
 import { buildHarness, heroColor, heroFabricAlpha, readToken } from './harness-model'
@@ -12,10 +12,11 @@ import { buildBeam } from './underworld-beam'
  * `three` stays out of the SSR module graph (the `/life-cycle` precedent,
  * `.claude/skills/vinaya-architecture/SKILL.md`).
  *
- * DO NOT retune the timeline below: its relative rhythm is the design. Main's arrival opens
- * it — an `open` ramp at the head, every later beat 0.75 s behind it. With the outer ring
- * switched off (RING) its two beats are skipped and everything after them moves up, so the
- * columns close 0.75 s after the bolts rise, the same step as every other beat.
+ * DO NOT retune the timeline below: its relative rhythm is the design. The scene opens on
+ * main and the bolts already in place, framed extremely close on main; one fast zoom out
+ * (ZOOM_HOLD, ZOOM_DUR) lands on the resting frame, and the columns close OPEN_GAP after it.
+ * With the outer ring switched off (RING) its two beats are skipped and everything after
+ * them moves up.
  * Every `document`/`window`/`getComputedStyle` read lives inside `mountHeroScene`.
  */
 
@@ -28,9 +29,17 @@ const RING = false
 const RING_BEATS = ['deploy', 'spark']
 const RING_SPAN = 3.85 - 2.05 // from the ring's first beat to `clamp`, the beat after its last
 const afterRing = (s) => (RING || s < 2.05 ? s : s - RING_SPAN)
+/* the cold open: held extremely close on main for ZOOM_HOLD, then one fast zoom out over ZOOM_DUR to the
+   resting distance. The start is as close as the frame allows while main stays whole and clear: its drawn
+   circle keeps ZOOM_CLEAR px from the lockup, the top bar and the viewport's edges. */
+const ZOOM_HOLD = 0.45
+const ZOOM_DUR = 0.6
+const ZOOM_CLEAR = 24
+const OPEN_GAP = 0.25 // from the end of the zoom to the columns starting to close
+/* the beats below are written against the old entrance (main opening, then the bolts rising), with the first
+   beat after it at 2.05 s; OPEN_SHIFT moves them all up so that beat starts OPEN_GAP after the zoom lands */
+const OPEN_SHIFT = 2.05 - (ZOOM_HOLD + ZOOM_DUR + OPEN_GAP)
 const BUILD = [
-  ['open', 0.25, 0.9], // main's aperture — the sheet is empty until it opens
-  ['screw', 1.3, 0.5],
   ['deploy', 2.05, 0.7],
   ['spark', 3.05, 0.45],
   ['clamp', 3.85, 0.8],
@@ -38,11 +47,10 @@ const BUILD = [
   ['merge', 4.73, 0.55]
 ]
   .filter(([key]) => RING || !RING_BEATS.includes(key))
-  .map(([key, start, dur]) => [key, afterRing(start), dur])
-const WAVE_T = afterRing(4.73) // fires with `merge`
+  .map(([key, start, dur]) => [key, afterRing(start) - OPEN_SHIFT, dur])
+const WAVE_T = afterRing(4.73) - OPEN_SHIFT // fires with `merge`
 const FLOW_T = WAVE_T + 0.35 // the infinity leaves main just behind the shock wave's front
-const ARRIVAL_T = 0.2 // the small ripple that precedes main's opening
-const FLASH_T = afterRing(5.35) // the build flash trails the latch
+const FLASH_T = afterRing(5.35) - OPEN_SHIFT // the build flash trails the latch
 /* the scene clock (and the field's step) runs INTRO_SPEED times the rate the beats above are written at
    until INTRO_END, the end of the build flash, then at real time, with no jump. Without the ring the
    intro plays at the speed it is written at; with it, 1.5 times faster, as it always has */
@@ -214,7 +222,10 @@ function heroFloaterPlace(rnd) {
   return [spread(distance * 0.55), -0.3 + rnd() * 5, z]
 }
 
-function startHeroScene({ canvas, root, labelClass, frameShiftRem = 0, onReady = () => {} }, palette) {
+function startHeroScene(
+  { canvas, root, labelClass, frameShiftRem = 0, onReady = () => {}, onFirstFrame = () => {} },
+  palette
+) {
   const scope = root ?? document
   const track = scope.querySelector('[data-hero-track]')
   const hero = scope.querySelector('[data-hero-viewport]')
@@ -459,7 +470,6 @@ function startHeroScene({ canvas, root, labelClass, frameShiftRem = 0, onReady =
       const t0 = performance.now()
       let last = t0
       let firedWave = false
-      let firedArrival = false
       /* progress() reads the track's live rect: `travel = trackHeight - hero.clientHeight`,
          both of which move with the viewport's height (the track is `320vh`, the hero
          `h-dvh`). Resizing the window changes `travel` on every layout pass while the
@@ -474,11 +484,99 @@ function startHeroScene({ canvas, root, labelClass, frameShiftRem = 0, onReady =
          (snapped straight to the target) during the scroll-locked build and under
          reduced-motion, where the value must already be exact. */
       let pSmooth = 0
-      /* main's arrival: the sphere and its contour open from nothing; the label (and with it
-         the wire net and travellers, which ride the spinner) only once the surface is whole */
-      const mainSphere = harness.group.getObjectByName('main-sphere')
-      const mainContour = harness.group.getObjectByName('main-contour')
-      const mainSpinner = harness.group.getObjectByName('main-spinner')
+      /* the cold open's starting distance: the closest camera at which main's circle and the four
+         bolts' circles all keep ZOOM_CLEAR px from the lockup and the top bar, with main whole inside
+         the viewport. The zoom out only shrinks everything toward main, so a start that clears
+         stays clear all the way down. Found by bisection on the real projection; re-read every
+         frame of the zoom, since the lockup's box is wherever lockup-flip.js has put it. */
+      const restDist = 13.5
+      const lockupEl = document.querySelector('[data-hero-lockup]')
+      const barEl = document.querySelector('[data-bare]')
+      const mainR = harness.dims.coreRadius * 1.02
+      const boltR = harness.dims.k * 22
+      const mainObj = harness.group.getObjectByName('main-sphere')
+      const bolts = []
+      harness.group.traverse((o) => {
+        if (/^screw--?[\d.]+$/.test(o.name)) bolts.push(o)
+      })
+      const wp = new THREE.Vector3()
+      const sp = new THREE.Vector3()
+      const circleOf = (obj, radius, w, h, focal) => {
+        obj.getWorldPosition(wp)
+        const d = wp.distanceTo(camera.position)
+        sp.copy(wp).project(camera)
+        return {
+          x: ((sp.x + 1) / 2) * w,
+          y: ((1 - sp.y) / 2) * h,
+          r: (focal * radius) / Math.sqrt(Math.max(1e-6, d * d - radius * radius))
+        }
+      }
+      /* how big the bolts are drawn at a point of the zoom: they are not in the first frame and
+         grow on screen from nothing to their resting size as the camera pulls back; the pivot's
+         scale cancels the zoom's magnification (~ the distance ratio) */
+      const boltShown = (zoom, startDist) => Math.min(1, zoom * (startDist / restDist) ** (1 - zoom))
+      const zoomedDist = (zoom, startDist) => restDist * (startDist / restDist) ** (1 - zoom)
+      const touches = (c, rects) =>
+        rects.some((b) => {
+          const dx = Math.max(b.left - c.x, 0, c.x - b.right)
+          const dy = Math.max(b.top - c.y, 0, c.y - b.bottom)
+          return Math.hypot(dx, dy) < c.r + ZOOM_CLEAR
+        })
+      /* does a zoom starting at startDist keep main (biggest in the first frame) and the bolts (at
+         their drawn size, sampled along the whole pull back) clear of the lockup and the top bar? */
+      const clearFrom = (startDist, rects, w, h) => {
+        const focal = h / 2 / Math.tan(((camera.fov / 2) * Math.PI) / 180)
+        place(88, startDist, seatY, 0)
+        camera.updateMatrixWorld()
+        const main = circleOf(mainObj, mainR, w, h, focal)
+        if (main.x - main.r < ZOOM_CLEAR || main.x + main.r > w - ZOOM_CLEAR || main.y + main.r > h - ZOOM_CLEAR)
+          return false
+        if (touches(main, rects)) return false
+        for (let i = 1; i <= 20; i++) {
+          const zoom = i / 20
+          place(88, zoomedDist(zoom, startDist), seatY, 0)
+          camera.updateMatrixWorld()
+          const r = boltR * boltShown(zoom, startDist)
+          for (const b of bolts) if (touches(circleOf(b, r, w, h, focal), rects)) return false
+        }
+        return true
+      }
+      /* the lockup's own box is narrower than its letters (its bare spans are zero width and
+         overflow), so the box that matters is the one around everything it draws */
+      const range = document.createRange()
+      const boxOf = (el) => {
+        range.selectNodeContents(el)
+        return range.getBoundingClientRect()
+      }
+      /* worked out once per viewport size: the lockup holds still at the top of the scroll */
+      let startKey = ''
+      let startDist = restDist
+      const clearDist = () => {
+        const w = hero.clientWidth
+        const h = hero.clientHeight
+        if (w <= 0 || h <= 0) return restDist
+        const box = hero.getBoundingClientRect()
+        const rects = []
+        /* the bar holds the lockup, so its own element box is the bar; the lockup is measured by what it draws */
+        for (const b of [lockupEl && boxOf(lockupEl), barEl?.getBoundingClientRect()]) {
+          if (b && b.width > 0)
+            rects.push({
+              left: b.left - box.left,
+              right: b.right - box.left,
+              top: b.top - box.top,
+              bottom: b.bottom - box.top
+            })
+        }
+        let lo = harness.dims.coreLift + mainR * 1.5
+        let hi = restDist
+        if (!clearFrom(hi, rects, w, h)) return restDist
+        for (let i = 0; i < 18; i++) {
+          const mid = (lo + hi) / 2
+          if (clearFrom(mid, rects, w, h)) hi = mid
+          else lo = mid
+        }
+        return hi
+      }
 
       const frame = (now) => {
         raf = requestAnimationFrame(frame)
@@ -530,27 +628,30 @@ function startHeroScene({ canvas, root, labelClass, frameShiftRem = 0, onReady =
         state.waveAxis = tip
         state.tip = tip
         state.buildFlash = reduced ? 0 : clamp01(1 - (t - FLASH_T) / 2.2)
-        if (!firedArrival && t >= ARRIVAL_T) {
-          firedArrival = true
-          field.pulse({ amp: 0.2, decay: 1.1 }) // small, local; the latch keeps full strength
-        }
         if (!firedWave && (t >= WAVE_T || reduced)) {
           firedWave = true
           field.pulse()
         }
 
+        /* the zoom out is eased on a log scale, so the pull back reads as one even rush rather than
+           crawling at the far end; it is done before the scroll lock lifts, so tip is still 0 */
+        const zoom = reduced ? 1 : easeInOutCubic(clamp01((t - ZOOM_HOLD) / ZOOM_DUR))
+        if (zoom < 1 && startKey !== `${hero.clientWidth}x${hero.clientHeight}`) {
+          startKey = `${hero.clientWidth}x${hero.clientHeight}`
+          startDist = clearDist()
+        }
+        const zoomDist = zoom < 1 ? startDist : restDist
         harness.update(state)
-        /* after harness.update(), which rewrites main's transform every frame. Sphere and
-           contour only — the group carries the label spinner and the clamp's squeeze. */
-        const open = easeOutCubic(state.open ?? 1)
-        const openScale = Math.max(0.0001, open) // never exactly 0: a zero matrix is non-invertible
-        mainSphere.scale.setScalar(openScale)
-        mainContour.scale.setScalar(openScale)
-        mainSphere.visible = open > 0.02
-        mainContour.visible = open > 0.02
-        mainSpinner.visible = open > 0.99
+        /* the bolts come in with the zoom (boltShown); after harness.update, which sets them to 1 */
+        if (zoom < 1) {
+          const shown = boltShown(zoom, zoomDist)
+          for (const b of bolts) {
+            b.visible = shown > 0.001
+            b.scale.setScalar(Math.max(0.001, shown))
+          }
+        }
         field.update(dt, {
-          mass: open, // the well deepens as main opens
+          mass: 1, // main is there from the first frame, its well already deep
           time: t,
           lift: 1 - tip, // ridge height fades as the camera tips (see field-3d.js)
           // the sheet never rises above the ring's underside inside the harness footprint
@@ -567,7 +668,7 @@ function startHeroScene({ canvas, root, labelClass, frameShiftRem = 0, onReady =
 
         px += (mx - px) * 0.05
         py += (my - py) * 0.05
-        const dist = lerp(13.5, 10.4, tip)
+        const dist = lerp(restDist, 10.4, tip) * (zoomedDist(zoom, zoomDist) / restDist)
         place(lerp(88, 17, tip) + py * 2.5 * tip, dist, lerp(seatY, seatY + 1, tip), px * 3.5 * tip)
         /* the end pose rises over the last stretch: the frame shift (down) eased back and past into a lift (up) */
         {
@@ -580,7 +681,12 @@ function startHeroScene({ canvas, root, labelClass, frameShiftRem = 0, onReady =
         }
         field.setFade(dist * 0.8, dist * 2.7)
         renderer.render(scene, camera)
+        if (!firstShown) {
+          firstShown = true
+          onFirstFrame() // main and the fabric are on screen: the lockup may show now, in the same frame
+        }
       }
+      let firstShown = false
       raf = requestAnimationFrame(frame)
 
       cleanupBuild = () => {

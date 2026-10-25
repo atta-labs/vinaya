@@ -18,12 +18,25 @@ const LETTER_CLASS = { word: 'inline-block whitespace-nowrap', letter: 'inline-b
    edge to edge — including the strip under the transparent top bar. */
 const FRAME_SHIFT_REM = 3
 
+/* The scene's chunk (and `three` with it) starts downloading as soon as this module runs on the
+   client, not after hydration's effects, so main and the fabric are ready as early as they can be.
+   Still a dynamic import, so `three` stays out of the SSR module graph. */
+const heroScene = typeof window === 'undefined' ? null : import('./hero-scene')
+
+/* The lockup waits for the scene's first painted frame, so main, the fabric and the wordmark all
+   appear in the same frame. If the scene never paints (no WebGL, an unreadable theme), the lockup
+   shows anyway after this long. */
+const LOCKUP_FALLBACK_MS = 2500
+
 function EmblemInner({ landingActions }: { landingActions?: ReactNode }) {
   const isLanding = landingActions !== undefined
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const heroViewportRef = useRef<HTMLDivElement>(null)
   const getLockupNodes = useHeroLockupNodes()
+  /* set by the lockup's layout effect, called by the scene's first frame (whichever comes second runs it) */
+  const revealLockup = useRef<(() => void) | null>(null)
+  const sceneShown = useRef(false)
 
   // Mounts the hero scene from a dynamic import so `three` stays out of
   // the SSR module graph (the `/life-cycle` precedent). `cancelled` guards the async
@@ -32,17 +45,24 @@ function EmblemInner({ landingActions }: { landingActions?: ReactNode }) {
   useEffect(() => {
     let cancelled = false
     let scene: { dispose: () => void } | undefined
-    import('./hero-scene').then(({ mountHeroScene }) => {
+    const shown = () => {
+      sceneShown.current = true
+      revealLockup.current?.()
+    }
+    const fallback = window.setTimeout(shown, LOCKUP_FALLBACK_MS)
+    heroScene?.then(({ mountHeroScene }) => {
       if (cancelled || !canvasRef.current) return
       scene = mountHeroScene({
         canvas: canvasRef.current,
         root: rootRef.current,
         labelClass: LETTER_CLASS,
-        frameShiftRem: FRAME_SHIFT_REM
+        frameShiftRem: FRAME_SHIFT_REM,
+        onFirstFrame: shown
       })
     })
     return () => {
       cancelled = true
+      window.clearTimeout(fallback)
       scene?.dispose()
     }
   }, [])
@@ -65,12 +85,13 @@ function EmblemInner({ landingActions }: { landingActions?: ReactNode }) {
   // where nothing else hides it) the lockup got one painted frame at its small, natural
   // topbar position before this effect moved it — the load flash. `useLayoutEffect` runs
   // after commit but BEFORE paint, and `attachLockupFlip` writes its first frame
-  // synchronously before returning (see its header comment), so by the time this effect
-  // flips `opacity` on, the hero-scale transform is already on the node: the reveal is in
-  // the same pre-paint task as the transform, with no rAF hop between them. On a hard
+  // synchronously before returning (see its header comment), so by the time `opacity` is
+  // flipped on, the hero-scale transform is already on the node. That reveal waits for the
+  // scene's first painted frame (`revealLockup`), so the wordmark never shows over an empty
+  // canvas: main, the fabric and the lockup arrive in the same frame. On a hard
   // reload the SSR'd HTML is painted before any JS runs at all; that window is covered by
   // `HeroLockup.tsx`'s `[[data-bare=true]_&]:opacity-0` (the SSR'd `data-bare` is `'true'`
-  // on landing), which this effect lifts only once the transform exists.
+  // on landing), which is lifted only once the transform exists.
   //
   // The per-letter cascade (`HeroLockup.tsx`'s `Letters`) is revealed in the SAME
   // pass: each letter already carries its own CSS `transitionDelay`, so flipping them
@@ -92,24 +113,32 @@ function EmblemInner({ landingActions }: { landingActions?: ReactNode }) {
     const hero = heroViewportRef.current
     if (!hero || !lockup || !word) return
 
-    const revealLetters = () => {
+    const reveal = () => {
+      revealLockup.current = null
+      lockup.style.opacity = '1'
       for (const el of lockup.querySelectorAll<HTMLElement>('[data-letter]')) {
         el.style.opacity = '1'
         el.style.transform = 'translateY(0)'
       }
     }
+    const revealWithScene = () => {
+      if (sceneShown.current) reveal()
+      else revealLockup.current = reveal
+    }
 
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (reduced) {
       dockImmediately({ lockup, desc, mark, bar })
-      lockup.style.opacity = '1'
-      revealLetters()
-      return () => resetLockup({ lockup, word, desc, mark, bar })
+      revealWithScene()
+      return () => {
+        revealLockup.current = null
+        resetLockup({ lockup, word, desc, mark, bar })
+      }
     }
     const stop = attachLockupFlip({ hero, lockup, word, desc, mark, bar })
-    lockup.style.opacity = '1'
-    revealLetters()
+    revealWithScene()
     return () => {
+      revealLockup.current = null
       stop()
       resetLockup({ lockup, word, desc, mark, bar })
     }
