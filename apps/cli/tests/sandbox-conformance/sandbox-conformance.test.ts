@@ -30,22 +30,40 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { sourceManifestPath, sourceReceiptsPath } from '../../src/lib/source-manifest.js'
 import { devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
 import { expectGradingSandboxDenies, proveGradingSandbox } from '../eval/grading-sandbox-proof.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../lib/dispatch/driver-socket-reach.js'
+import { spawnSyncBudgeted } from '../lib/process-fixture.js'
+import { ROLE_NAMES } from '../../../../harness/adapters/agents/manifest.js'
+import { createRoleLaunchers, sandboxProbePlanFor } from '../../../../processes/vinaya/executing/actions.js'
 import { commandsTheTextsName, DOCTRINE_SOURCES, isSuiteInput, REPO_ROOT } from './command-sources.js'
 import {
   AGENTS,
+  buildCanaryHome,
   type Agent,
   COMMAND_BUDGET_MS,
   conformanceSkipReason,
+  openEngineSandboxSession,
   openSandboxSession,
   type SandboxSession,
   sourceBranch
 } from './sandbox-launch.js'
+import {
+  codexExcludedVariables,
+  CREDENTIAL_PROBES,
+  deniesCredentialRoute,
+  GATE_14_PROBES,
+  generatedRoleFiles,
+  OWED_REASONS,
+  PROBE_CANARY,
+  probeAsserts,
+  probeLeaked,
+  roleHasShell
+} from './engine-attack-probes.js'
 
 type CommandEntry = {
   id: string
@@ -210,6 +228,177 @@ describe('sandbox conformance — the known-failures list', () => {
     expect(bad).toEqual([])
     const keys = KNOWN_FAILURES.map((f) => `${f.id}/${f.agent}/${f.platform}`)
     expect(new Set(keys).size).toBe(keys.length)
+  })
+})
+
+describe('Engine credential-confinement probes — the command and deny-rule checks', () => {
+  const generated = generatedRoleFiles()
+
+  it('every credential-confinement row has a probe with a non-empty, single-line command', () => {
+    const bad = CREDENTIAL_PROBES.filter((p) => p.command.trim() === '' || /[\r\n]/.test(p.command)).map((p) => p.row)
+    expect(bad).toEqual([])
+    // The probes plant only the generated canary, never a real secret.
+    expect(PROBE_CANARY).toContain('not-a-real-secret')
+  })
+
+  it('names exactly the ten credential-confinement rows of the matrix', () => {
+    expect(CREDENTIAL_PROBES.map((p) => p.row).sort()).toEqual(
+      [
+        '21-access-to-named-denied-credential-paths',
+        '22-secret-present-in-generally-readable-material',
+        '23-worktree-code-reaching-forge-credentials-gate-14',
+        '33-forge-credential-reached-through-the-system-credential-store',
+        '34-git-credential-helper-execution-yielding-forge-authority',
+        '35-ssh-agent-access-yielding-forge-authority',
+        '40-ambient-credential-inherited-by-a-role-environment',
+        '53-unrelated-system-credential-store-items-readable',
+        '56-secret-exfiltration-through-an-allowed-host',
+        '58-copied-vendor-login-readable-by-the-agent'
+      ].sort()
+    )
+  })
+
+  it('carries, for every gate-14 row, a deny rule in every role under both adapters — or records the route owed', () => {
+    const missing: string[] = []
+    for (const probe of GATE_14_PROBES) {
+      for (const agent of AGENTS) {
+        const denial = probe.byAdapter[agent]
+        for (const role of Object.keys(generated[agent])) {
+          if (!deniesCredentialRoute(generated[agent][role] as Record<string, string>, denial)) {
+            missing.push(`${probe.row}/${agent}/${role}`)
+          }
+        }
+        // A route the current launch shape cannot deny is owed with a recorded reason, never silently dropped.
+        if (denial.kind === 'owed') {
+          expect([...OWED_REASONS]).toContain(denial.reason)
+        }
+      }
+    }
+    expect(missing).toEqual([])
+  })
+
+  it('names, for each Codex gate-14 route, the env filters the legacy settings can carry — and fails when one is dropped', () => {
+    // The parts of the gate-14 routes Codex's legacy settings can deny: the forge tokens, the git and SSH
+    // askpass prompts, the SSH agent's pointer and the keyring's session bus.
+    const carried = GATE_14_PROBES.flatMap((probe) => {
+      const denial = probe.byAdapter.codex
+      return denial.kind === 'owed' ? [...(denial.envExcludes ?? [])] : []
+    })
+    expect(carried).toEqual(expect.arrayContaining(['SSH_AUTH_SOCK', 'DBUS_SESSION_BUS_ADDRESS', 'GH_TOKEN']))
+    for (const role of Object.keys(generated.codex)) {
+      const files = generated.codex[role] as Record<string, string>
+      for (const probe of GATE_14_PROBES) {
+        const denial = probe.byAdapter.codex
+        if (denial.kind !== 'owed' || denial.envExcludes === undefined) continue
+        for (const name of denial.envExcludes) {
+          // Dropping this one filter from this role's config must fail the deny check.
+          const toml = files['config.toml'] ?? ''
+          const line = `${JSON.stringify(name)} = "exclude"\n`
+          expect(toml, `${role} excludes ${name}`).toContain(line)
+          const dropped = { ...files, 'config.toml': toml.replace(line, '') }
+          expect(codexExcludedVariables(dropped['config.toml'])).not.toContain(name)
+          expect(deniesCredentialRoute(dropped, denial), `${probe.row}/${role} without ${name}`).toBe(false)
+        }
+      }
+    }
+  })
+
+  it('catches the credential-helper leak once the deny rule is gone: run unsandboxed, the row-34 probe surfaces the canary', () => {
+    const probe = CREDENTIAL_PROBES.find((p) => p.row.startsWith('34-'))
+    if (probe === undefined) throw new Error('no row-34 probe')
+    const root = mkdtempSync(join(tmpdir(), 'engine-probe-helper-'))
+    try {
+      const home = buildCanaryHome(root)
+      // No sandbox and no deny rule: the canary home's credential store is open to the helper, as it would be to a
+      // role whose generated settings lost the `.git-credentials` denial.
+      const run = (): string => {
+        const result = spawnSyncBudgeted(
+          'bash',
+          ['-c', probe.command],
+          {
+            cwd: root,
+            env: {
+              PATH: process.env.PATH ?? '/usr/bin:/bin',
+              HOME: home,
+              GIT_CONFIG_NOSYSTEM: '1',
+              GIT_TERMINAL_PROMPT: '0'
+            },
+            encoding: 'utf8'
+          },
+          30_000,
+          'row-34 probe'
+        )
+        return `${result.stdout}${result.stderr}`
+      }
+      expect(probeLeaked(run())).toBe(true)
+      // With the store files gone the same probe surfaces nothing, so the leak it reports comes from the denied route.
+      rmSync(join(home, '.git-credentials'))
+      rmSync(join(home, '.config', 'git', 'credentials'))
+      expect(probeLeaked(run())).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('carries a deny rule in every role for every settings-expressible credential route, both adapters', () => {
+    const missing: string[] = []
+    for (const probe of CREDENTIAL_PROBES) {
+      for (const agent of AGENTS) {
+        for (const role of Object.keys(generated[agent])) {
+          if (!deniesCredentialRoute(generated[agent][role] as Record<string, string>, probe.byAdapter[agent])) {
+            missing.push(`${probe.row}/${agent}/${role}`)
+          }
+        }
+      }
+    }
+    expect(missing).toEqual([])
+  })
+
+  it('runs its probes with no API-key variable in any role environment, even when the host carries one', () => {
+    const apiKey = /API_KEY$|_TOKEN$|_SECRET$/i
+    // Non-secret canary values — never a real key shape — so a role that still sees one is a leak.
+    const poisoned = {
+      PATH: '/usr/bin',
+      HOME: '/home/dev',
+      ANTHROPIC_API_KEY: PROBE_CANARY,
+      OPENAI_API_KEY: PROBE_CANARY,
+      GH_TOKEN: PROBE_CANARY
+    }
+    const root = mkdtempSync(join(tmpdir(), 'engine-probe-env-'))
+    try {
+      for (const [agent, vendor] of [
+        ['claude', 'claude-code'],
+        ['codex', 'codex']
+      ] as const) {
+        const generatedRoot = join(root, agent)
+        const launchers = createRoleLaunchers({ vendor, generatedRoot })
+        for (const role of ROLE_NAMES) {
+          // The probe's environment is the Engine's allowlisted launch env, so no API-key variable flows into it.
+          const plan = sandboxProbePlanFor(
+            vendor,
+            launchers[role] as { command: string; env: Record<string, string> },
+            join(generatedRoot, role),
+            root,
+            poisoned
+          )
+          expect(
+            Object.keys(plan.env).filter((name) => apiKey.test(name)),
+            `${agent}/${role}`
+          ).toEqual([])
+          // The allowlist also strips an ambient forge token: a role never inherits GH_TOKEN.
+          expect(plan.env.GH_TOKEN, `${agent}/${role}`).toBeUndefined()
+        }
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+    // Codex additionally keeps every credential-carrying variable out of the role's commands.
+    for (const role of Object.keys(generated.codex)) {
+      const toml = generated.codex[role]?.['config.toml'] ?? ''
+      const excluded = codexExcludedVariables(toml)
+      expect(excluded).toContain('*_API_KEY')
+      expect(excluded).toContain('*_TOKEN')
+    }
   })
 })
 
@@ -491,4 +680,71 @@ for (const agent of AGENTS) {
       )
     }
   })
+}
+
+// --- The credential-confinement probes, run inside the Engine launch shape ---
+//
+// Live only: this suite runs the real sandbox on Linux, outside any agent's
+// sandbox, against a throwaway canary home. Each probe runs in the launch
+// shape the Engine generates for a role — through the SAME `sandboxProbePlanFor`
+// env the Engine's own pre-spawn probe uses. A role granted no shell can run no
+// probe at all, which each such role asserts; a role with a shell runs every
+// probe. Where the adapter denies the route (Claude's deny rules, the launch-env
+// allowlist) the probe asserts nothing of the credential surfaced; where the
+// route is owed (Codex's legacy sandbox denies no file read, egress containment)
+// the run is observed, never asserted. No assertion echoes raw output — a leak
+// is a boolean — so a failed run can never print a credential.
+//
+// The only row proved denied on both adapters, live-gated until its output is
+// pasted, is the ambient-environment row, whose evidence entry names this file:
+//   fault-attack:40-ambient-credential-inherited-by-a-role-environment
+const GENERATED_FOR_LIVE = generatedRoleFiles()
+for (const agent of AGENTS) {
+  for (const role of ROLE_NAMES) {
+    const files = GENERATED_FOR_LIVE[agent][role] as Record<string, string>
+    if (!roleHasShell(files)) {
+      describe(`Engine credential-confinement probes — ${agent}/${role} is granted no shell`, () => {
+        it('denies its file tools every credential route its adapter can deny, having no shell to probe', () => {
+          // With no shell, a file tool is the only route left; each route this adapter's shape denies must be
+          // denied to it in this role's own settings.
+          const undenied = CREDENTIAL_PROBES.filter(
+            (probe) => !deniesCredentialRoute(files, probe.byAdapter[agent])
+          ).map((probe) => probe.row)
+          expect(undenied).toEqual([])
+        })
+      })
+      continue
+    }
+    describe.skipIf(!LIVE || process.platform !== 'linux')(
+      `Engine credential-confinement probes — ${agent}/${role}'s generated launch shape`,
+      () => {
+        let session: SandboxSession | undefined
+        beforeAll(() => {
+          session = openEngineSandboxSession(agent, role)
+        })
+        afterAll(() => session?.dispose())
+
+        for (const probe of CREDENTIAL_PROBES) {
+          const denial = probe.byAdapter[agent]
+          it(
+            `fault-attack:${probe.row} (${denial.kind})`,
+            async () => {
+              const s = session as SandboxSession
+              const result = await s.run(probe.command, {})
+              const leaked = probeLeaked(result.output)
+              // Report a boolean only — never the output, which could carry the canary.
+              console.info(
+                `[engine ${agent}/${role}] fault-attack:${probe.row}: exit ${result.exitCode}, leaked ${leaked}, ${probeAsserts(denial) ? 'asserted-denied' : `observed-owed (${denial.kind})`}`
+              )
+              if (probeAsserts(denial)) {
+                // The adapter denies this route: nothing of the credential may surface.
+                expect(leaked).toBe(false)
+              }
+            },
+            COMMAND_BUDGET_MS + 60_000
+          )
+        }
+      }
+    )
+  }
 }

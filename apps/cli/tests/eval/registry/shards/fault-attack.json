@@ -1143,7 +1143,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "owed": "Codex denies credential reads only through a beta permission profile, which is ignored while sandbox_mode is set; the Engine’s Codex launch requires sandbox_mode."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -1198,7 +1198,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "owed": "Reads are open by design and no sandbox setting inspects outbound content; proving a planted canary never leaves needs an outbound-capture harness this probe does not run."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -1253,7 +1253,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "owed": "Codex denies credential reads only through a beta permission profile, which is ignored while sandbox_mode is set; the Engine’s Codex launch requires sandbox_mode."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -1803,7 +1803,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "owed": "Codex denies credential reads only through a beta permission profile, which is ignored while sandbox_mode is set; the Engine’s Codex launch requires sandbox_mode."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -1858,7 +1858,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "owed": "Codex denies credential reads only through a beta permission profile, which is ignored while sandbox_mode is set; the Engine’s Codex launch requires sandbox_mode."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -1913,7 +1913,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "owed": "Codex denies credential reads only through a beta permission profile, which is ignored while sandbox_mode is set; the Engine’s Codex launch requires sandbox_mode."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -2188,7 +2188,10 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "test": "apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts",
+          "liveGated": {
+            "variable": "VINAYA_SANDBOX_CONFORMANCE"
+          }
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -2903,7 +2906,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "owed": "Residual risk: Codex’s legacy sandbox settings deny no file read, so a credential-store file stays readable to a Codex role; recorded for the Principal’s cutover acceptance."
         }
       },
       "decisionRule": "Pass or accepted: the test runs and its result is recorded; the Engine path either holds the boundary or the residual risk is stated. A residual risk needs the Principal's explicit acceptance in the cutover authorization evidence (gate 17, §6.24). The test keeps running either way.",
@@ -3068,7 +3071,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "owed": "Reads are open by design and no sandbox setting inspects outbound content; proving a planted canary never leaves needs an outbound-capture harness this probe does not run."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -3178,7 +3181,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "owed": "Residual risk: Codex’s legacy sandbox settings deny no file read, so a credential-store file stays readable to a Codex role; recorded for the Principal’s cutover acceptance."
         }
       },
       "decisionRule": "Pass or accepted: the test runs and its result is recorded; the Engine path either holds the boundary or the residual risk is stated. A residual risk needs the Principal's explicit acceptance in the cutover authorization evidence (gate 17, §6.24). The test keeps running either way.",

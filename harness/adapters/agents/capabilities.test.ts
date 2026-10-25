@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@attalabs/aeg-types/dev-tools'
 import { CLAUDE_CAPABILITY_TOOLS, claudeShellRule, claudeToolDecisions } from './claude-code/capabilities'
-import { generateClaudeSettings } from './claude-code/settings'
+import { credentialDenyRead, credentialReadRules, generateClaudeSettings } from './claude-code/settings'
 import {
   CODEX_CAPABILITY_TOOLS,
   CODEX_READ_ONLY_COMMANDS,
@@ -11,7 +11,7 @@ import {
   codexSandbox,
   codexToolDecisions
 } from './codex/capabilities'
-import { generateCodexConfig } from './codex/config'
+import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from './codex/config'
 import {
   CLAUDE_BUILTINS,
   CODEX_BUILTINS,
@@ -142,8 +142,18 @@ describe('the developer before and after the capability contract', () => {
   test('Codex: the same launch, environment, config, execpolicy and hook', () => {
     expect(codex.launch).toEqual(before.codex.launch)
     expect(codex.env).toEqual(before.codex.env)
-    for (const file of ['config.toml', 'rules/role.rules'])
-      expect(codex.files[file]).toBe(before.codex.files[file] as string)
+    // Intended: the config now also keeps every credential-carrying variable out of the role's commands.
+    const credentialEnv = [
+      '[shell_environment_policy.filters]',
+      ...CREDENTIAL_ENV_EXCLUDES.map((name) => `${JSON.stringify(name)} = "exclude"`),
+      '',
+      ''
+    ].join('\n')
+    expect(codex.files['config.toml']).toContain(credentialEnv)
+    expect((codex.files['config.toml'] as string).replace(credentialEnv, '')).toBe(
+      before.codex.files['config.toml'] as string
+    )
+    expect(codex.files['rules/role.rules']).toBe(before.codex.files['rules/role.rules'] as string)
     // The hook's code learned flag-anywhere rules; the policy it embeds is unchanged.
     expect(embeddedPolicy(codex)).toBe(embeddedPolicy(before.codex))
   })
@@ -160,8 +170,18 @@ describe('the developer before and after the capability contract', () => {
     const now = JSON.parse(claude.files['role-settings.json'] as string)
     const then = JSON.parse(before.claude.files['role-settings.json'] as string)
     expect(now.permissions.allow).toEqual(then.permissions.allow.filter((t: string) => !NEWLY_DENIED.includes(t)))
-    expect([...now.permissions.deny].sort()).toEqual([...then.permissions.deny, ...NEWLY_DENIED].sort())
-    expect({ ...now, permissions: null }).toEqual({ ...then, permissions: null })
+    // Intended: every credential route is denied to the sandboxed shell and to the Read tool.
+    const denyRead = credentialDenyRead()
+    expect(now.sandbox.filesystem.denyRead).toEqual(denyRead)
+    const readRules = credentialReadRules(denyRead)
+    expect(now.permissions.deny).toEqual(expect.arrayContaining(readRules))
+    const deny = now.permissions.deny.filter((rule: string) => !readRules.includes(rule))
+    expect([...deny].sort()).toEqual([...then.permissions.deny, ...NEWLY_DENIED].sort())
+    const { denyRead: _denyRead, ...filesystem } = now.sandbox.filesystem
+    expect({ ...now, permissions: null, sandbox: { ...now.sandbox, filesystem } }).toEqual({
+      ...then,
+      permissions: null
+    })
     expect(claude.files['role-mcp.json']).toBe(before.claude.files['role-mcp.json'] as string)
     const policyNow = JSON.parse(embeddedPolicy(claude))
     const policyThen = JSON.parse(embeddedPolicy(before.claude))
