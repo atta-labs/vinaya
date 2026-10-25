@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@attalabs/aeg-types/dev-tools'
 import { CLAUDE_CAPABILITY_TOOLS, claudeShellRule, claudeToolDecisions } from './claude-code/capabilities'
 import { generateClaudeSettings } from './claude-code/settings'
 import {
@@ -166,6 +167,13 @@ describe('the developer before and after the capability contract', () => {
     const policyThen = JSON.parse(embeddedPolicy(before.claude))
     for (const tool of NEWLY_DENIED) policyThen.tools[tool] = 'deny'
     expect(policyNow).toEqual(policyThen)
+  })
+
+  test('both runners give the dev-tools server the shared per-call limit, so a long publish completes', () => {
+    const toolTimeouts = [...(codex.files['config.toml'] as string).matchAll(/^tool_timeout_sec = (\d+)$/gm)]
+    expect(toolTimeouts.map((m) => Number(m[1]))).toEqual([DEV_TOOLS_TOOL_TIMEOUT_SEC])
+    const mcp = JSON.parse(claude.files['role-mcp.json'] as string)
+    expect(mcp.mcpServers.vinaya_dev_tools.timeout).toBe(DEV_TOOLS_TOOL_TIMEOUT_SEC * 1000)
   })
 
   test('the effective capabilities are renamed, not changed', () => {

@@ -25,6 +25,7 @@
  * the driver ends a Claude start whose server was reported failed or skipped.
  */
 
+import { DEV_TOOLS_TOOL_TIMEOUT_SEC as SHARED_DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@attalabs/aeg-types/dev-tools'
 import { cliEntryPath } from '../cli-entry.js'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -36,9 +37,12 @@ import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
  * up on it: thirty minutes, enough for `publish_changes` to run the pre-push
  * hook's affected test suite and push. Codex's default is 60 seconds, which
  * would abandon a publication mid-push; Claude Code's default is longer, and
- * its entry states the same limit so both agents declare one bound.
+ * its entry states the same limit so both agents declare one bound. The value
+ * lives in `@attalabs/aeg-types/dev-tools`, which the Engine adapters under
+ * `harness/` read too, so the standalone loop and the Engine runner declare
+ * one limit.
  */
-export const DEV_TOOLS_TOOL_TIMEOUT_SEC = 1800
+export const DEV_TOOLS_TOOL_TIMEOUT_SEC = SHARED_DEV_TOOLS_TOOL_TIMEOUT_SEC
 
 /** The bridge the agent's MCP client spawns (command + args), pointing at a `dev-bridge --socket <path>` relay. */
 export type BridgeInvocation = { command: string; args: string[] }

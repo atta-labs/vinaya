@@ -62,6 +62,7 @@
     "@atta/models": "file:tests/fixtures/atta-engine/atta-models-0.1.0.tgz",
     "@attalabs/aeg-core": "workspace:*",
     "@attalabs/aeg-forge-state": "workspace:*",
+    "@attalabs/aeg-types": "workspace:*",
     "@atta/typescript-config": "workspace:*",
     "@attalabs/vinaya-sources": "workspace:*",
     "@types/bun": "latest",
