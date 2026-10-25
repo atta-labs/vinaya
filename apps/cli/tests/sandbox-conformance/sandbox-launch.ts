@@ -370,14 +370,23 @@ const CANARY_HOME_FILES = [
  * credential. The directory becomes the live session's `HOME`, so the generated deny rules (resolved from
  * `HOME` at generation time) target it and the probes read it.
  */
-function buildCanaryHome(parent: string): string {
+export function buildCanaryHome(parent: string): string {
   const home = realpathSync(mkdtempSync(join(parent, 'canary-home-')))
   for (const rel of CANARY_HOME_FILES) {
     const abs = join(home, rel)
     mkdirSync(dirname(abs), { recursive: true })
-    writeFileSync(abs, `${ENGINE_PROBE_CANARY}\n`, { mode: 0o600 })
+    writeFileSync(abs, `${canaryContent(rel)}\n`, { mode: 0o600 })
   }
   return home
+}
+
+/** The git credential-store files hold the canary in the URL form the store parses, so an open route yields it. */
+const GIT_CREDENTIAL_STORE_FILES = new Set(['.git-credentials', '.config/git/credentials'])
+
+function canaryContent(rel: string): string {
+  return GIT_CREDENTIAL_STORE_FILES.has(rel)
+    ? `https://canary-user:${ENGINE_PROBE_CANARY}@github.com`
+    : ENGINE_PROBE_CANARY
 }
 
 /**
