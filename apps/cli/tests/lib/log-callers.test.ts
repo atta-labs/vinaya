@@ -463,7 +463,7 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
   },
   {
     // Built here, written by the Engine runner's sink.
-    name: 'review locally, push once — the version 2 flow events and the per-phase time both flows record',
+    name: 'flow-v2-events — review locally, push once: the version 2 flow events and the per-phase time both flows record',
     files: [FLOW_V2_EVENTS_PATH],
     requires: [
       { kind: 'dev_review_loop', event: 'storage_push' },
