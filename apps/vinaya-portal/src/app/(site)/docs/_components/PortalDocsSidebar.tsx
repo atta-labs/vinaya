@@ -21,7 +21,9 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
   const isActive = pathname === page.href
   const inSection = isActive || (page.children ?? []).some((c) => c.href === pathname)
   return (
-    <SidebarMenuItem>
+    // `ml-7.5` (the heading icon's width plus its gap) starts the link, and its hover and active fill, where the
+    // section title's text starts, rather than under the heading's icon.
+    <SidebarMenuItem className='ml-7.5'>
       <SidebarMenuButton
         size='sm'
         isActive={isActive}
@@ -34,14 +36,11 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
         )}
       >
         {/* Only the section headings carry icons; a page link never does, so what can be clicked reads apart from
-            what cannot. Every title lines up with its section's title, past the heading's icon. */}
-        <span className='flex items-center gap-2.5'>
-          <span className='w-5 shrink-0' aria-hidden />
-          {page.title}
-        </span>
+            what cannot. */}
+        {page.title}
       </SidebarMenuButton>
       {inSection && page.children && (
-        <SidebarMenu className='mt-0.5 ml-10 gap-0.5 border-l border-sidebar-border pl-2'>
+        <SidebarMenu className='mt-0.5 ml-2.5 gap-0.5 border-l border-sidebar-border pl-2'>
           {page.children.map((child) => {
             const childActive = pathname === child.href
             return (
@@ -51,7 +50,7 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
                   isActive={childActive}
                   render={<NextLink variant='unstyled' href={child.href} />}
                   className={cn(
-                    'h-auto min-h-7 rounded-md px-2.5 py-1 font-sans text-xs font-normal',
+                    'h-auto min-h-7 rounded-md py-1 pr-1 pl-2.5 font-sans text-xs font-normal',
                     childActive
                       ? 'bg-primary/10 font-medium text-primary data-[active]:bg-primary/10 data-[active]:text-primary'
                       : 'text-sidebar-foreground/60 hover:text-sidebar-foreground'
@@ -70,8 +69,8 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
 
 /** Each docs set's badge at the top of its sidebar: the icon its title names, and what it is. */
 const HEAD_LINE: Record<string, string> = {
-  start: 'Docs · works with any process',
-  process: 'Docs · the default process'
+  start: 'Works with any process',
+  process: 'The default process'
 }
 
 /**

@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 type StickyDocHeaderProps = {
   /** The page title, always shown on the left of the bar. */
@@ -48,6 +49,9 @@ export function StickyDocHeader({
   activeOffset = 64
 }: StickyDocHeaderProps) {
   const [shown, setShown] = useState(false)
+  // The docs pane's full-width slot (`(guide)/layout.tsx`), so the bar spans the pane rather than the article.
+  const [slot, setSlot] = useState<HTMLElement | null>(null)
+  useEffect(() => setSlot(document.getElementById('doc-sticky-slot')), [])
   const [active, setActive] = useState<{ section: string | null; sub: string | null }>({
     section: null,
     sub: null
@@ -76,7 +80,7 @@ export function StickyDocHeader({
     return () => pane.removeEventListener('scroll', onScroll)
   }, [headingSelector, activeOffset])
 
-  return (
+  const bar = (
     // `h-0 overflow-visible`: the bar overlays the page and never takes flow height.
     <div
       aria-hidden={!shown}
@@ -84,30 +88,34 @@ export function StickyDocHeader({
         shown ? 'opacity-100' : 'pointer-events-none opacity-0'
       }`}
     >
-      <div className='flex h-12 items-center gap-2 border-b border-border/60 bg-background/70 font-sans text-sm backdrop-blur-md supports-[backdrop-filter]:bg-background/60'>
-        <span className='max-w-[40%] shrink-0 truncate text-muted-foreground'>{title}</span>
-        <span className='text-muted-foreground/40' aria-hidden>
-          /
-        </span>
-        <Crumb text={active.section ?? 'Overview'} strong={!active.sub} />
-        <AnimatePresence initial={false}>
-          {active.sub && (
-            <motion.span
-              key='sub'
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.18, ease: 'easeOut' }}
-              className='flex min-w-0 items-center gap-2'
-            >
-              <span className='text-muted-foreground/40' aria-hidden>
-                /
-              </span>
-              <Crumb text={active.sub} strong />
-            </motion.span>
-          )}
-        </AnimatePresence>
+      <div className='h-12 bg-background/70 font-sans text-sm backdrop-blur-md supports-[backdrop-filter]:bg-background/60'>
+        {/* The article's own box (`(guide)/layout.tsx`), so the crumbs start where the text starts. */}
+        <div className='mx-auto flex h-full max-w-[54rem] items-center gap-2 px-6 lg:px-12'>
+          <span className='max-w-[40%] shrink-0 truncate text-muted-foreground'>{title}</span>
+          <span className='text-muted-foreground/40' aria-hidden>
+            /
+          </span>
+          <Crumb text={active.section ?? 'Overview'} strong={!active.sub} />
+          <AnimatePresence initial={false}>
+            {active.sub && (
+              <motion.span
+                key='sub'
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className='flex min-w-0 items-center gap-2'
+              >
+                <span className='text-muted-foreground/40' aria-hidden>
+                  /
+                </span>
+                <Crumb text={active.sub} strong />
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
     </div>
   )
+  return slot ? createPortal(bar, slot) : bar
 }
