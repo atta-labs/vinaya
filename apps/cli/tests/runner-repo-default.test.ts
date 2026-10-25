@@ -104,6 +104,33 @@ describe('the runner this repository configures', () => {
     expect('exitCode' in result && result.exitCode).toBe(0)
     expect(readTaskRunner(42, runtime)).toBe('atta-engine')
   })
+
+  it('runs and records standalone when --runner standalone is passed in this repository', async () => {
+    const runtime = root()
+    const repo = configFrom(REPO_ROOT)
+    let loops = 0
+    await runTask(
+      { issue: 42, agent: 'claude', runner: 'standalone' },
+      fixtureDeps({
+        runnerConfig: () => repo,
+        recordRunner: (issue, runner) => recordTaskRunner(issue, runner, runtime),
+        devReviewLoop: async () => {
+          loops++
+          return { task: 42, prNumber: 7, finalDecision: { type: 'publish' } }
+        },
+        engine: {
+          scriptPath: () => '/runner.ts',
+          exists: () => true,
+          spawn: async () => {
+            throw new Error('--runner standalone must not start the Engine')
+          },
+          notice: () => {}
+        }
+      })
+    )
+    expect(loops).toBe(1)
+    expect(readTaskRunner(42, runtime)).toBe('standalone')
+  })
 })
 
 describe('a run with no recorded runner', () => {
