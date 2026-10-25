@@ -51,6 +51,7 @@ import {
   sourceBranch
 } from './sandbox-launch.js'
 import {
+  codexExcludedVariables,
   CREDENTIAL_PROBES,
   deniesCredentialRoute,
   GATE_14_PROBES,
@@ -274,6 +275,32 @@ describe('Engine credential-confinement probes — the command and deny-rule che
     expect(missing).toEqual([])
   })
 
+  it('names, for each Codex gate-14 route, the env filters the legacy settings can carry — and fails when one is dropped', () => {
+    // The parts of the gate-14 routes Codex's legacy settings can deny: the forge tokens, the git and SSH
+    // askpass prompts, the SSH agent's pointer and the keyring's session bus.
+    const carried = GATE_14_PROBES.flatMap((probe) => {
+      const denial = probe.byAdapter.codex
+      return denial.kind === 'owed' ? [...(denial.envExcludes ?? [])] : []
+    })
+    expect(carried).toEqual(expect.arrayContaining(['SSH_AUTH_SOCK', 'DBUS_SESSION_BUS_ADDRESS', 'GH_TOKEN']))
+    for (const role of Object.keys(generated.codex)) {
+      const files = generated.codex[role] as Record<string, string>
+      for (const probe of GATE_14_PROBES) {
+        const denial = probe.byAdapter.codex
+        if (denial.kind !== 'owed' || denial.envExcludes === undefined) continue
+        for (const name of denial.envExcludes) {
+          // Dropping this one filter from this role's config must fail the deny check.
+          const toml = files['config.toml'] ?? ''
+          const line = `${JSON.stringify(name)} = "exclude"\n`
+          expect(toml, `${role} excludes ${name}`).toContain(line)
+          const dropped = { ...files, 'config.toml': toml.replace(line, '') }
+          expect(codexExcludedVariables(dropped['config.toml'])).not.toContain(name)
+          expect(deniesCredentialRoute(dropped, denial), `${probe.row}/${role} without ${name}`).toBe(false)
+        }
+      }
+    }
+  })
+
   it('carries a deny rule in every role for every settings-expressible credential route, both adapters', () => {
     const missing: string[] = []
     for (const probe of CREDENTIAL_PROBES) {
@@ -306,17 +333,22 @@ describe('Engine credential-confinement probes — the command and deny-rule che
       ] as const) {
         const generatedRoot = join(root, agent)
         const launchers = createRoleLaunchers({ vendor, generatedRoot })
-        // The probe's environment is the Engine's allowlisted launch env, so no API-key variable flows into it.
-        const plan = sandboxProbePlanFor(
-          vendor,
-          launchers.developer as { command: string; env: Record<string, string> },
-          join(generatedRoot, 'developer'),
-          root,
-          poisoned
-        )
-        expect(Object.keys(plan.env).filter((name) => apiKey.test(name))).toEqual([])
-        // The allowlist also strips an ambient forge token: a role never inherits GH_TOKEN.
-        expect(plan.env.GH_TOKEN).toBeUndefined()
+        for (const role of ROLE_NAMES) {
+          // The probe's environment is the Engine's allowlisted launch env, so no API-key variable flows into it.
+          const plan = sandboxProbePlanFor(
+            vendor,
+            launchers[role] as { command: string; env: Record<string, string> },
+            join(generatedRoot, role),
+            root,
+            poisoned
+          )
+          expect(
+            Object.keys(plan.env).filter((name) => apiKey.test(name)),
+            `${agent}/${role}`
+          ).toEqual([])
+          // The allowlist also strips an ambient forge token: a role never inherits GH_TOKEN.
+          expect(plan.env.GH_TOKEN, `${agent}/${role}`).toBeUndefined()
+        }
       }
     } finally {
       rmSync(root, { recursive: true, force: true })
@@ -324,7 +356,7 @@ describe('Engine credential-confinement probes — the command and deny-rule che
     // Codex additionally keeps every credential-carrying variable out of the role's commands.
     for (const role of Object.keys(generated.codex)) {
       const toml = generated.codex[role]?.['config.toml'] ?? ''
-      const excluded = [...toml.matchAll(/^"([^"]+)" = "exclude"$/gm)].map((m) => m[1] ?? '')
+      const excluded = codexExcludedVariables(toml)
       expect(excluded).toContain('*_API_KEY')
       expect(excluded).toContain('*_TOKEN')
     }
@@ -633,8 +665,13 @@ for (const agent of AGENTS) {
     const files = GENERATED_FOR_LIVE[agent][role] as Record<string, string>
     if (!roleHasShell(files)) {
       describe(`Engine credential-confinement probes — ${agent}/${role} is granted no shell`, () => {
-        it('cannot run any probe command, so it reaches no credential route through a shell', () => {
-          expect(roleHasShell(files)).toBe(false)
+        it('denies its file tools every credential route its adapter can deny, having no shell to probe', () => {
+          // With no shell, a file tool is the only route left; each route this adapter's shape denies must be
+          // denied to it in this role's own settings.
+          const undenied = CREDENTIAL_PROBES.filter(
+            (probe) => !deniesCredentialRoute(files, probe.byAdapter[agent])
+          ).map((probe) => probe.row)
+          expect(undenied).toEqual([])
         })
       })
       continue

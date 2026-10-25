@@ -36,7 +36,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -381,6 +381,38 @@ function buildCanaryHome(parent: string): string {
 }
 
 /**
+ * A real SSH agent for the canary home, holding one throwaway key whose comment is the canary, reachable at the
+ * socket's default path under the home (`.ssh/agent.sock`). A role that reaches the agent — through an inherited
+ * pointer or that guessable path — lists the canary, so the SSH-agent probe leg can fail. The socket itself sits
+ * in a short directory (a Unix socket path has a length limit) that the home's path links to.
+ */
+function startCanaryAgent(home: string): { socket: string; stop: () => void } {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'vca-')))
+  const socket = join(dir, 'a.sock')
+  const started = execFileSync('ssh-agent', ['-a', socket, '-s'], { encoding: 'utf8' })
+  const pid = started.match(/SSH_AGENT_PID=(\d+)/)?.[1]
+  if (pid === undefined) throw new Error('ssh-agent started no agent for the canary home')
+  const stop = (): void => {
+    try {
+      process.kill(Number(pid))
+    } catch {
+      // The agent already exited.
+    }
+    rmSync(dir, { recursive: true, force: true })
+  }
+  try {
+    const key = join(dir, 'key')
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', ENGINE_PROBE_CANARY, '-f', key])
+    execFileSync('ssh-add', ['-q', key], { env: { ...process.env, SSH_AUTH_SOCK: socket }, stdio: 'ignore' })
+    symlinkSync(socket, join(home, '.ssh', 'agent.sock'))
+  } catch (error) {
+    stop()
+    throw error
+  }
+  return { socket: join(home, '.ssh', 'agent.sock'), stop }
+}
+
+/**
  * A session that runs a command inside the launch shape the ENGINE generates for one role — Claude Code's
  * generated `role-settings.json`, or Codex's generated `config.toml` — never the standalone dispatch's
  * settings. `createRoleLaunchers` writes the same files a real Engine run launches that role from, and the
@@ -399,17 +431,22 @@ export function openEngineSandboxSession(agent: Agent, role = 'developer'): Sand
   const variables = grantVariables(worktreeDir, runDir, REPO_ROOT)
   const scratchDir = variables.SCRATCH as string
   const fixtureHome = buildCanaryHome(scratchDir)
+  const agentRun = startCanaryAgent(fixtureHome)
   const { runtimeDir, store } = controllerSourceStore()
-  // Generate the role settings with HOME pointed at the canary home, so the credential deny rules
-  // (`credentialDenyRead`, resolved from HOME at generation time) name the canary files the probes read.
+  // Generate the role settings with HOME and the agent pointer naming the canary home and its agent, so the
+  // credential deny rules (`credentialDenyRead`, resolved from the env at generation time) name what the probes reach.
   const realHome = process.env.HOME
+  const realAgent = process.env.SSH_AUTH_SOCK
   let launchers: ReturnType<typeof createRoleLaunchers>
   try {
     process.env.HOME = fixtureHome
+    process.env.SSH_AUTH_SOCK = agentRun.socket
     launchers = createRoleLaunchers({ vendor, generatedRoot, variables })
   } finally {
     if (realHome === undefined) delete process.env.HOME
     else process.env.HOME = realHome
+    if (realAgent === undefined) delete process.env.SSH_AUTH_SOCK
+    else process.env.SSH_AUTH_SOCK = realAgent
   }
   const roleDir = join(generatedRoot, role)
   // The credential variables a role must never inherit — forge tokens and the agent/bus socket pointers,
@@ -420,10 +457,12 @@ export function openEngineSandboxSession(agent: Agent, role = 'developer'): Sand
     HOME: fixtureHome,
     GH_TOKEN: ENGINE_PROBE_CANARY,
     GITHUB_TOKEN: ENGINE_PROBE_CANARY,
-    SSH_AUTH_SOCK: join(fixtureHome, '.ssh', 'agent.sock'),
-    DBUS_SESSION_BUS_ADDRESS: `unix:path=${join(fixtureHome, '.dbus', 'bus')}`
+    SSH_AUTH_SOCK: agentRun.socket,
+    // The bus pointer carries the canary, so a role that inherited it prints the canary.
+    DBUS_SESSION_BUS_ADDRESS: `unix:path=${join(fixtureHome, '.dbus', 'bus')},guid=${ENGINE_PROBE_CANARY}`
   }
   const dispose = (): void => {
+    agentRun.stop()
     removeWorktree(worktreeDir)
     rmSync(runDir, { recursive: true, force: true })
     rmSync(runtimeDir, { recursive: true, force: true })
@@ -449,7 +488,12 @@ export function openEngineSandboxSession(agent: Agent, role = 'developer'): Sand
     writeFileSync(
       settingsPath,
       JSON.stringify({
-        network: { allowedDomains: generated.sandbox.network.allowedDomains, deniedDomains: [] },
+        network: {
+          allowedDomains: generated.sandbox.network.allowedDomains,
+          deniedDomains: [],
+          // The host's Unix-socket opt-in ships with the generated settings, so the probes judge that shape too.
+          ...(generated.sandbox.network.allowAllUnixSockets === true ? { allowAllUnixSockets: true } : {})
+        },
         filesystem: {
           denyRead: generated.sandbox.filesystem.denyRead ?? [],
           allowRead: generated.sandbox.filesystem.allowRead ?? [],

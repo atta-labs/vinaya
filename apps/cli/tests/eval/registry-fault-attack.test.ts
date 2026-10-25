@@ -320,11 +320,8 @@ describe('the credential-confinement rows record Engine evidence, owed shrink-on
     })
     expect(unrecorded).toEqual([])
     const owed = CREDENTIAL_ROW_IDS.filter((id) => owedList.owed.includes(id))
+    // The owed list only shrinks under engine-evidence.test.ts's ceiling; this prints where the credential rows stand.
     console.log(`credential-confinement Engine evidence: ${owed.length} of ${CREDENTIAL_ROW_IDS.length} rows owed`)
-    // Shrink-only ratchet: the owed set never grows past the credential rows, and every owed id is a known
-    // credential row — a row leaves only by gaining evidence, never by an unrelated id slipping in.
-    expect(owed.length).toBeLessThanOrEqual(CREDENTIAL_ROW_IDS.length)
-    expect(owed.every((id) => CREDENTIAL_ROW_IDS.includes(id))).toBe(true)
   })
 
   const cutoverOf = new Map(
