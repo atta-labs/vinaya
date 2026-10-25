@@ -477,6 +477,20 @@ describe('re-running a task', () => {
     expect(second.spawns[0]).toBe('develop')
   })
 
+  test('a checkpoint that spent its round budget is not resumed: the run pauses max_rounds durably', async () => {
+    const failingGates = { 'vinaya.assess-gate': async () => ({ exitCode: 1, stdout: 'checks failed' }) }
+    const first = stubRun({ actions: failingGates })
+    const firstResult = await runEngine(first.options)
+    expect(first.trace(firstResult.tracePath).outcome).toBe('exhausted')
+    const second = stubRun({ actions: failingGates }, first.runtimeDir)
+    const result = await runEngine(second.options)
+    expect(second.driverLog()).toContain('spent its round budget')
+    expect(second.driverLog()).not.toContain('uncaught error')
+    expect(second.handoff.calls).toContain('pause-state:max_rounds')
+    expect(second.spawns).toEqual([])
+    expect(result.exitCode).not.toBe(0)
+  })
+
   test('a run whose checkpoint records a completed run has nothing to run', async () => {
     const first = stubRun()
     await runEngine(first.options)

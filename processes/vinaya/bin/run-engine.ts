@@ -1039,7 +1039,9 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           ? `resuming the run from its checkpoint (${identity.runId})`
           : choice.kind === 'completed'
             ? 'the checkpoint records a completed run; nothing to run'
-            : `no checkpoint; starting fresh${branch ? ` on branch ${branch}` : ''}`
+            : choice.kind === 'exhausted'
+              ? 'the checkpoint records a run that spent its round budget; a ruling continues it as a fresh run'
+              : `no checkpoint; starting fresh${branch ? ` on branch ${branch}` : ''}`
       )
       const moved = choice.kind === 'resume' ? revisionMovedLine(choice.checkpointRevision, revision) : null
       if (moved !== null) narrate(moved)
@@ -1064,10 +1066,12 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         recovery?.held !== undefined &&
         recovery.held !== null &&
         !(await (options.heldPullRequestConflicts ?? heldPullRequestConflictsLive(options.taskInput))())
-      if (choice.kind !== 'completed' && recovery?.held && !heldUsable)
+      if (choice.kind !== 'completed' && choice.kind !== 'exhausted' && recovery?.held && !heldUsable)
         narrate('held clean verdict not published: the pull request is in conflict with the default branch')
       if (choice.kind === 'completed') {
         legOutcome = { reason: 'completed' }
+      } else if (choice.kind === 'exhausted') {
+        legOutcome = { reason: 'exhausted' }
       } else if (recovery?.held && heldUsable) {
         // A clean verdict pair still bound to the current head is published as it stands: no review is dispatched again.
         narrate(`held clean verdict from round ${recovery.held.round} still covers the head; publishing it`)

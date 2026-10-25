@@ -213,6 +213,8 @@ export type StartChoice =
   | { kind: 'resume'; identity: RunIdentity; checkpointRevision: string | undefined }
   /** The checkpoint records a run that already completed: there is nothing to continue. */
   | { kind: 'completed'; identity: RunIdentity }
+  /** The checkpoint records a run that spent its round budget: resuming it has nothing to run either. */
+  | { kind: 'exhausted'; identity: RunIdentity }
 
 /** Resumes the task's checkpoint when one exists, and otherwise starts fresh. */
 export async function chooseStart(
@@ -223,6 +225,7 @@ export async function chooseStart(
   if (!checkpoint) return { kind: 'fresh', identity }
   const recorded = await readRunOutcome(checkpointer, identity)
   if (recorded?.reason === 'completed') return { kind: 'completed', identity }
+  if (recorded?.reason === 'exhausted') return { kind: 'exhausted', identity }
   return {
     kind: 'resume',
     identity,
