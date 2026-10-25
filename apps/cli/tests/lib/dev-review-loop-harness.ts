@@ -1204,7 +1204,14 @@ export const OWNED_ENV_KEYS = [
   // in-process must not, or every later `vinaya` child it spawns with an
   // inherited environment runs unattended and logs as a dispatched session.
   'VINAYA_UNATTENDED',
-  'VINAYA_PR'
+  'VINAYA_PR',
+  // The run's producer identity the driver names on itself at start.
+  'VINAYA_PROCESS_ID',
+  'VINAYA_PROCESS_VERSION',
+  'VINAYA_PROCESS_DIGEST',
+  'VINAYA_RUNNER_ID',
+  'VINAYA_RUNNER_VERSION',
+  'VINAYA_RUNTIME'
 ] as const
 
 /** The `OWNED_ENV_KEYS` `withWorldEnv` SETS to this world's own values; every other owned key is cleared. */

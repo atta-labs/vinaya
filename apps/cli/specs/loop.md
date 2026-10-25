@@ -18,6 +18,14 @@ The Engine also starts a role-scoped tool host for the Developer, the code
 reviewer and the security reviewer, so a reviewer reads the controller-pinned
 source manifest through `read_source` on either agent launch shape.
 
+Each runner names itself as the producer of the run's Vinaya Log events at its
+own start, before it writes any event: the runner and its version, the Vinaya
+process's id, version and digest, and the agent runtime it dispatches. The
+standalone loop does it at the top of `devReviewLoop`, so a fresh `task run`
+and a `dev-review-loop --resume` both carry it, and its dispatched roles are
+handed the same values. Which variable carries each value, and what a process
+no run launched records, is `log.md`'s "Who sets them".
+
 The frozen review-input manifest is protocol version 2. In addition to base,
 head, brief hash, objectives version, ruling ordinal, and policy digest, it
 carries `pauseBoundRuling`: either `null` when the round did not follow a

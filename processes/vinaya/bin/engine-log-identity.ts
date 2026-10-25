@@ -2,8 +2,12 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import type { LoadedProcess } from '../../../harness/dev-process/loader/load-process'
 
-/** Stamp the loaded process and installed Engine identities before creating a Log sink. */
-export function setEngineLogIdentity(loaded: LoadedProcess, env: NodeJS.ProcessEnv = process.env): void {
+/** Stamp the loaded process, installed Engine and dispatched agent runtime identities before creating a Log sink. */
+export function setEngineLogIdentity(
+  loaded: LoadedProcess,
+  runtime: string,
+  env: NodeJS.ProcessEnv = process.env
+): void {
   const packagePath = createRequire(import.meta.url).resolve('@atta/engine/package.json')
   const pkg: unknown = JSON.parse(readFileSync(packagePath, 'utf8'))
   if (
@@ -20,4 +24,5 @@ export function setEngineLogIdentity(loaded: LoadedProcess, env: NodeJS.ProcessE
   env.VINAYA_PROCESS_DIGEST = loaded.digest
   env.VINAYA_RUNNER_ID = 'atta-engine'
   env.VINAYA_RUNNER_VERSION = pkg.version
+  env.VINAYA_RUNTIME = runtime
 }

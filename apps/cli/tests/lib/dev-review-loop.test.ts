@@ -78,6 +78,7 @@ import {
   type ObjectivesEditSource,
   parseObjectivesEditComment,
   sanitizeUncaughtErrorForPublicPause,
+  setStandaloneLogIdentity,
   renderDeveloperRoundComment,
   renderReviewerPrompt,
   type ReviewerPromptFacts,
@@ -92,6 +93,7 @@ import {
   renderSecurityComment
 } from '../../src/commands/review-post.js'
 import { spliceObjectivesSection } from '../../src/commands/issue-objectives.js'
+import { loadProcess } from '../../../../harness/dev-process/loader/load-process.js'
 import {
   checkReviewGate,
   DEFAULT_REVIEW_POLICY,
@@ -1263,6 +1265,90 @@ describe('devReviewLoop — the developer flow still works on the loop-created b
     },
     45000
   )
+})
+
+describe('devReviewLoop — every event names the standalone runner, the Vinaya process and the dispatched runtime', () => {
+  const cliVersion = (JSON.parse(readFileSync(join(CLI_ROOT, 'package.json'), 'utf8')) as { version: string }).version
+  const vinaya = loadProcess(join(CLI_ROOT, '..', '..', 'processes', 'vinaya'))
+  const expectedIdentity = {
+    process: { id: 'vinaya', version: vinaya.identity.version, digest: vinaya.digest },
+    runner: { id: 'standalone', version: cliVersion },
+    runtime: 'claude'
+  }
+
+  function identitiesOf(lines: Array<Record<string, unknown>>): unknown[] {
+    return lines.map((l) => {
+      const meta = l.meta as { process: unknown; runner: unknown; runtime: unknown }
+      return { process: meta.process, runner: meta.runner, runtime: meta.runtime }
+    })
+  }
+
+  it('reads the process version and digest from process.yaml and the runner version from the CLI package', async () => {
+    const env: NodeJS.ProcessEnv = {}
+    await setStandaloneLogIdentity(env)
+    expect(vinaya.identity.version).toBe('0.1.0')
+    expect(vinaya.digest).toMatch(/^[0-9a-f]{64}$/)
+    expect(env).toEqual({
+      VINAYA_PROCESS_ID: 'vinaya',
+      VINAYA_PROCESS_VERSION: vinaya.identity.version,
+      VINAYA_PROCESS_DIGEST: vinaya.digest,
+      VINAYA_RUNNER_ID: 'standalone',
+      VINAYA_RUNNER_VERSION: cliVersion
+    })
+  })
+
+  it('names only the runner for a CLI with no process definition beside it, leaving the process version and digest unknown', async () => {
+    const cliRoot = join(tempDir('vinaya-drl-published-'), 'node_modules', '@attalabs', 'vinaya')
+    mkdirSync(cliRoot, { recursive: true })
+    writeFileSync(join(cliRoot, 'package.json'), JSON.stringify({ version: '9.9.9' }))
+    const env: NodeJS.ProcessEnv = {}
+    await setStandaloneLogIdentity(env, cliRoot)
+    expect(env).toEqual({ VINAYA_RUNNER_ID: 'standalone', VINAYA_RUNNER_VERSION: '9.9.9' })
+  })
+
+  it('a fresh start and a resume after a ruling both log every event under that identity', async () => {
+    const world = makeWorld({
+      developerPushed: true,
+      roleOutcomes: {
+        1: {
+          reviewer: {
+            findings: '',
+            report: 'ESCALATE: authority\nSUMMARY: needs a call.\n',
+            objectives: null,
+            sessionId: 'rev-1'
+          }
+        }
+      }
+    })
+    const paused = await runLoopInProcess(world)
+    expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+    const freshLines = ipOutboxLines(world)
+    expect(freshLines.some((l) => l.event === 'loop_started')).toBe(true)
+    expect(new Set(identitiesOf(freshLines).map((i) => JSON.stringify(i)))).toEqual(
+      new Set([JSON.stringify(expectedIdentity)])
+    )
+    // The run's identity is the driver's for its own life only, never left on this test process.
+    expect(process.env.VINAYA_RUNNER_ID).toBeUndefined()
+    expect(process.env.VINAYA_RUNTIME).toBeUndefined()
+
+    world.rulings = ['Go ahead and fix it.']
+    world.rulingOrdinal = 1
+    world.rulingAuthor = 'daniboomerang'
+    world.roleOutcomes[1]!.reviewer = undefined
+    writeFileSync(
+      join(ipTaskRunDir(world), 'driver.pid.json'),
+      JSON.stringify({ pid: deadPid(), startedAt: new Date(0).toISOString() }),
+      'utf8'
+    )
+    // No `--agent`: the resume reads the agent the paused run recorded.
+    const resumed = await runLoopInProcess(world, { resumePr: world.prNumber })
+    expect(resumed.finalDecision.type).toBe('publish')
+    const resumeLines = ipOutboxLines(world).slice(freshLines.length)
+    expect(resumeLines.some((l) => l.event === 'loop_started')).toBe(true)
+    expect(new Set(identitiesOf(resumeLines).map((i) => JSON.stringify(i)))).toEqual(
+      new Set([JSON.stringify(expectedIdentity)])
+    )
+  })
 })
 
 describe('devReviewLoop — round 1 clean, ends on publish', () => {
