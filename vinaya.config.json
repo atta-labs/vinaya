@@ -3,6 +3,7 @@
     "ring1_forgeWriteInterception": true,
     "ring2_asyncAudits": true
   },
+  "runner": "atta-engine",
   "prePush": {
     "alwaysRun": [
       "apps/cli/tests/ci-shards.test.ts",

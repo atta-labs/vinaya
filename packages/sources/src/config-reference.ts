@@ -870,8 +870,9 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'runner',
     type: '"standalone" | "atta-engine" (optional)',
     semantics: [
-      'Selects the task runner. Absent defaults to standalone; any other value is refused at config load. `task run --runner <name>` overrides this setting for one invocation.',
-      'atta-engine starts the workspace Engine script as a Bun subprocess with the resolved task, agent and model. A published install without that script prints one fallback notice and runs standalone. Engine Log events go to the local folder only, even when logs.url is configured.'
+      'Selects the task runner. The default is `standalone`: an absent key runs the standalone loop, so a published install never changes runner on its own. Any value other than `standalone` or `atta-engine` is refused at config load. `task run --runner <name>` overrides this setting for one invocation, so `standalone` stays selectable by this key and by that flag.',
+      'atta-engine starts the workspace Engine script as a Bun subprocess with the resolved task, agent and model. When the Engine runner script is absent — a published install carries none — `task run` prints one fallback notice, `vinaya task run: Engine runner script is unavailable; falling back to standalone.`, and runs standalone. The Engine Log reaches the same configured destination the standalone loop uses, a server included.',
+      'Each run records the runner it actually used, and status, resume and cancel follow that record rather than this key. A run with no recorded runner, started before runs recorded one, is a standalone run, whatever this key now names.'
     ],
     example: `{ "runner": "atta-engine" }`
   },
@@ -879,7 +880,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'logs',
     type: 'false | object (optional)',
     semantics: [
-      '`false` disables every Log destination for both runners: no folder files, no server retry outbox and no server requests, including synchronous process-exit recording. Engine runs otherwise use the local folder only, ignoring a configured server URL.',
+      '`false` disables every Log destination for both runners: no folder files, no server retry outbox and no server requests, including synchronous process-exit recording.',
       "Where the Vinaya Log delivers events LIVE, as they occur — no end-of-round batch, no tracker or code-host comment, and no `logPublish` key any more (removed: a config still carrying it is refused, naming this key). A folder (`logs.folder`) or a server (`logs.url`), never both. Absent — this key's own default — events go to a folder under this repository's own `runtimeDir`: `<runtimeDir>/logs/<owner>-<repo>/<task>.ndjson`, one line appended per event, in order, readable while the run is still going.",
       `A server destination (\`logs.url\`) delivers each event as it occurs too: the sink appends it to a small local retry queue first, then drains that queue in one POST — the queue holds events only while the server is unreachable, and a later event's own drain catches up whatever is still queued, in order, once it is back. \`logs.headers\` are extra HTTP headers merged into that POST; a value may reference an environment variable with \${VAR_NAME} instead of a literal secret, resolved at delivery time so a credential never sits in the committed config.`,
       "Read from the default branch only by an unattended caller, the same rule `runtimeDir` carries: a `logs.folder`/`logs.url` the working tree declares but the default branch does not is refused, and the per-repository default folder is used instead — a pull request under review cannot redirect an unattended run's own telemetry by editing its own diff. An interactively-run command honours the working tree directly. `logs.folder` must also be an absolute path, for the same reason `runtimeDir` requires one.",
