@@ -1,0 +1,4 @@
+[test]
+timeout = 30000
+# The same private runtime directory and environment hygiene the CLI gives its own test runs.
+preload = "../../apps/cli/tests/lib/test-env-preload.ts"
