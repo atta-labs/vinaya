@@ -2866,12 +2866,24 @@ export async function setStandaloneLogIdentity(
   const processFolder = join(checkout, 'processes', 'vinaya')
   if (!existsSync(join(checkout, '.git')) || !existsSync(loaderPath) || !existsSync(processFolder)) return
   const { loadProcess } = (await import(pathToFileURL(loaderPath).href)) as {
-    loadProcess: (folder: string) => { identity: { id: string; version: string }; digest: string }
+    loadProcess: (folder: string) => {
+      identity: { id: string; version: string }
+      digest: string
+      flowKey?: string
+      flowPath?: string
+    }
   }
   const loaded = loadProcess(processFolder)
   env.VINAYA_PROCESS_ID = loaded.identity.id
   env.VINAYA_PROCESS_VERSION = loaded.identity.version
   env.VINAYA_PROCESS_DIGEST = loaded.digest
+  // Which flow ran, as the Engine runner names it: the standalone loop runs the process's default flow, so the Log
+  // compares the two runners — and the two flows — from one field.
+  if (loaded.flowKey && loaded.flowPath) {
+    const flowId = /^id:\s*(\S+)\s*$/m.exec(readFileSync(loaded.flowPath, 'utf8'))?.[1]
+    env.VINAYA_FLOW = flowId ?? loaded.identity.id
+    env.VINAYA_FLOW_VERSION = loaded.flowKey
+  }
 }
 
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
