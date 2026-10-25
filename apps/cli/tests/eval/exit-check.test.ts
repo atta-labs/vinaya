@@ -283,19 +283,28 @@ describe('the global exit check', () => {
     expect(report.pass).toBe(true)
     const gates = report.kinds['cutover-gate'].engine
     const faultRows = report.kinds['fault-attack'].engine
+    const notOwedGates = ['cutover-gate:gate-9', 'cutover-gate:gate-16', 'cutover-gate:gate-11']
     expect(gates).toEqual({
-      evidenced: 1,
-      owed: 15,
+      evidenced: 2,
+      owed: 14,
       owedIds: registry.components
         .map(({ row }) => row.id)
-        .filter(
-          (id) => id.startsWith('cutover-gate:') && id !== 'cutover-gate:gate-16' && id !== 'cutover-gate:gate-11'
-        )
+        .filter((id) => id.startsWith('cutover-gate:') && !notOwedGates.includes(id))
     })
+    expect(faultRows?.evidenced).toBe(28)
+    expect(faultRows?.owed).toBe(28)
+    expect(faultRows?.owedIds).toHaveLength(28)
     // The run-control and governed-effects rows the Engine runner's fault-injection scenarios prove.
-    expect(faultRows?.evidenced).toBe(9)
-    expect(faultRows?.owed).toBe(47)
-    expect(faultRows?.owedIds).toHaveLength(47)
+    expect(faultRows?.owedIds).not.toContain('fault-attack:03-controller-process-death')
+    expect(faultRows?.owedIds).not.toContain('fault-attack:19-forged-or-stale-beyond-surface-record')
+    // Shadow mode's row and gate are proved on the Engine by the shadow conformance suite.
+    expect(faultRows?.owedIds).not.toContain('fault-attack:29-shadow-mode-mutation')
+    // The fault-rows conformance suite proves eighteen rows on the Engine.
+    expect(faultRows?.owedIds).not.toContain('fault-attack:01-developer-process-death')
+    expect(faultRows?.owedIds).not.toContain(
+      'fault-attack:52-hard-budget-exhaustion-turns-rounds-invalid-output-retries'
+    )
+    expect(gates?.owedIds).not.toContain('cutover-gate:gate-9')
     expect(report.kinds.port.engine).toBeUndefined()
     console.log(
       `Engine evidence — cutover-gate: ${gates?.evidenced} evidenced, ${gates?.owed} owed; fault-attack: ${faultRows?.evidenced} evidenced, ${faultRows?.owed} owed; owed to the Operator on one host: ${report.operatorOwed.length}`
