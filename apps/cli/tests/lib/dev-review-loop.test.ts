@@ -1320,6 +1320,8 @@ describe('devReviewLoop — every event names the standalone runner, the Vinaya 
         }
       }
     })
+    const outerRunner = process.env.VINAYA_RUNNER_ID
+    const outerRuntime = process.env.VINAYA_RUNTIME
     const paused = await runLoopInProcess(world)
     expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
     const freshLines = ipOutboxLines(world)
@@ -1327,9 +1329,10 @@ describe('devReviewLoop — every event names the standalone runner, the Vinaya 
     expect(new Set(identitiesOf(freshLines).map((i) => JSON.stringify(i)))).toEqual(
       new Set([JSON.stringify(expectedIdentity)])
     )
-    // The run's identity is the driver's for its own life only, never left on this test process.
-    expect(process.env.VINAYA_RUNNER_ID).toBeUndefined()
-    expect(process.env.VINAYA_RUNTIME).toBeUndefined()
+    // The run's identity is the in-process driver's for its own life only: this
+    // test process gets back whatever it carried before, set or not.
+    expect(process.env.VINAYA_RUNNER_ID).toBe(outerRunner)
+    expect(process.env.VINAYA_RUNTIME).toBe(outerRuntime)
 
     world.rulings = ['Go ahead and fix it.']
     world.rulingOrdinal = 1
