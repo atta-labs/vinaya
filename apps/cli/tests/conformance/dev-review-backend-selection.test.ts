@@ -17,9 +17,10 @@ import {
   type RollbackRehearsalRecord,
   terminateAndRestart
 } from '../../src/lib/backend-rollback.js'
-import type { VinayaConfig } from '../../src/lib/config.js'
+/** The configuration a run reads its runner from. */
+type VinayaConfig = NonNullable<ReturnType<NonNullable<RunTaskDeps['runnerConfig']>>>
 import { isDriverPidAlive, readDriverLock, readPauseState } from '../../src/lib/dev-review-loop/pause-resume.js'
-import { runtimeDirForThisRepo } from '../../src/lib/run-paths.js'
+import { runtimeDir as runtimeDirForThisRepo } from '../../src/lib/dev-review-loop.js'
 import { CrossRunnerRefusedError, runTask, type RunTaskDeps } from '../../src/lib/task-run.js'
 import {
   crossRunnerRefusalReason,

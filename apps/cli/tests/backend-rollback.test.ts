@@ -21,10 +21,10 @@ import {
   rollbackRehearsalPath,
   terminateAndRestart
 } from '../src/lib/backend-rollback.js'
-import type { VinayaConfig } from '../src/lib/config.js'
+/** The configuration a run reads its runner from. */
+type VinayaConfig = NonNullable<ReturnType<NonNullable<RunTaskDeps['runnerConfig']>>>
 import { writeDriverLock, writePauseState } from '../src/lib/dev-review-loop/pause-resume.js'
 import type { EffectIdentity } from '../src/lib/effects.js'
-import { tasksExecutionRoot } from '../src/lib/run-paths.js'
 import { CrossRunnerRefusedError, runTask, type RunTaskDeps } from '../src/lib/task-run.js'
 import {
   crossRunnerRefusal,
@@ -88,7 +88,7 @@ function recordEffect(store: ControlStoreDeps, key: string, round: number, statu
 /** The procedure's deps over one runtime directory, the Engine run recorded and ended by a stand-in cancel. */
 function rollbackWorld(overrides: Partial<BackendRollbackDeps> = {}) {
   const runtimeDir = root()
-  const controlStore = defaultControlStoreDeps(() => tasksExecutionRoot(runtimeDir))
+  const controlStore = defaultControlStoreDeps(() => join(runtimeDir, 'tasks-execution'))
   recordTaskRunner(TASK, 'atta-engine', runtimeDir)
   const steps: string[] = []
   const deps: BackendRollbackDeps = {
@@ -319,7 +319,7 @@ describe('the terminate-and-restart procedure', () => {
 describe('ending the Engine run through public run control', () => {
   it('cancels a held pause through the shared cancel, and fences a halted run with no pause held', async () => {
     const runtimeDir = root()
-    const controlStore = defaultControlStoreDeps(() => tasksExecutionRoot(runtimeDir))
+    const controlStore = defaultControlStoreDeps(() => join(runtimeDir, 'tasks-execution'))
     const cancels: unknown[] = []
     const end = endEngineRunThrough(
       async (input) => {
@@ -378,7 +378,7 @@ describe('ending the Engine run through public run control', () => {
     const end = endEngineRunThrough(
       async () => ({ ok: false, error: taskToolError('authority', 'PR 7 carries no Principal ruling comment yet') }),
       runtimeDir,
-      defaultControlStoreDeps(() => tasksExecutionRoot(runtimeDir))
+      defaultControlStoreDeps(() => join(runtimeDir, 'tasks-execution'))
     )
     const refusal = await end(TASK).catch((error: unknown) => error)
     expect((refusal as BackendRollbackRefusedError).reason).toEqual({
