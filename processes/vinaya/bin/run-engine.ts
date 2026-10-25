@@ -221,6 +221,8 @@ import {
   type ReviewRoundInputs,
   type TaskInput
 } from '../executing/actions'
+import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../executing/v2-actions'
+import { liveV2Functions, stagedPullRequestStore, storagePushLogEvent, withV2DevTools } from './flow-v2-live'
 import { readUnpushedWorkDetail, type UnpushedWork } from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 
 // The Engine path for one task: the Vinaya process run on the packed executor
@@ -434,7 +436,7 @@ export async function dryRunLines(options: {
     lines.push(`step ${step.id} ${step.type}${step.action ? ` ${step.action}` : ''}${step.role ? ` ${step.role}` : ''}`)
   for (const step of steps) {
     if (step.type !== 'mechanical' || !step.action) continue
-    const binding = ACTION_BINDINGS[step.action]
+    const binding = ACTION_BINDINGS[step.action] ?? V2_ACTION_BINDINGS[step.action]
     const names = binding ? binding.adapts.map((fn) => fn.name).join(', ') : '(no binding)'
     lines.push(`bound ${step.id} ${step.action}: ${names}`)
   }
@@ -884,7 +886,9 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   const producers = createVinayaLogProducers({
     loopId: options.loopId,
     task: args.task,
-    baseHead: () => (options.taskInput ? worktreeStats(options.taskInput.worktreePath, 0).baseHead : null)
+    baseHead: () => (options.taskInput ? worktreeStats(options.taskInput.worktreePath, 0).baseHead : null),
+    flow: options.process.flowKey,
+    head: () => (options.taskInput ? worktreeStats(options.taskInput.worktreePath, 0).head : null)
   })
   const logPath = loopLogPathFor(null, args.task, options.runtimeDir)
   // The translator's rows and the runner's own reach the sink through this one wrapper, each narrated once.
@@ -1128,7 +1132,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       taskInput.sandboxPlan = () =>
         sandboxProbePlanFor(vendor, developer, join(runDir, 'generated', 'developer'), taskInput.worktreePath)
     }
-    const base = options.actions ?? createActions(options.taskInput)
+    // Every flow's shared actions, and version 2's own beside them; a flow binds only the ones it names.
+    const base = options.actions ?? { ...createActions(options.taskInput), ...createV2Actions(options.taskInput) }
     // The pull request found by the reconcile step is the one the heartbeat reports.
     const noting: ActionRegistry = Object.fromEntries(
       Object.entries(base).map(([name, action]) => [
@@ -1254,7 +1259,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         const runOptions: ProcessRunOptions = {
           process: runProcess(),
           question: `Task ${args.task}`,
-          bindings: { actions, decisions: (await import('../executing/actions')).decisions, roles },
+          bindings: {
+            actions,
+            decisions: { ...(await import('../executing/actions')).decisions, ...V2_DECISIONS },
+            roles
+          },
           checkpointer: saver,
           workingDirectoryRoot: options.repoRoot,
           // A revision continues the Developer's own session, as the standalone loop resumes it.
@@ -1747,7 +1756,9 @@ export async function liveTaskInput(
     brief: () => forge.fetchFrozenBrief(args.task),
     prBody: () => {
       const pr = forge.findOpenPrForBranch(branch)
-      return pr ? forge.prBody(pr.number) : ''
+      if (pr) return forge.prBody(pr.number)
+      // Version 2 opens no pull request before approval: the reviewers read the body the Developer staged.
+      return args.flow === 'v2' ? (stagedPullRequestStore(runDirectory(runtimeDir, args.task)).read()?.body ?? '') : ''
     },
     diff: (base, head) => sh('git', ['diff', `${base}...${head}`], worktreePath),
     ...lookups.reviewSources
@@ -1782,7 +1793,11 @@ export async function liveTaskInput(
         fetchIssueRulingsAfterBrief: forge.fetchIssueRulingsAfterBrief,
         fetchRulings: forge.fetchRulings
       }),
-      ciConclusion: forge.fetchCiConclusion(judgedHead()),
+      // Version 2 reviews locally before any pull request (and so any CI) exists: the CI conclusion is pending.
+      ciConclusion:
+        args.flow === 'v2' && forge.findOpenPrForBranch(branch) === null
+          ? 'pending'
+          : forge.fetchCiConclusion(judgedHead()),
       revision: forge.fetchSourceRevision(args.task),
       manifest: dispatched?.manifest ?? manifestAt(judgedHead()),
       policy: policyNow(),
@@ -2129,6 +2144,43 @@ async function runLive(
   })
   // A turn whose last publication a driver tool refused has no push coming: the stall names the refusal.
   taskInput.publicationRefusal = () => liveContext.state.turnPublicationRefusal
+  // Version 2 (review locally, push once): storage pushes, a staged pull request, the ready push and CI once.
+  let devToolsContext = liveContext.context
+  if (loaded.flowKey === 'v2') {
+    const store = stagedPullRequestStore(runDirectory(runtimeDir, args.task))
+    const findOpenPullRequest = () => findOpenPrForBranch(taskInput.branch)
+    taskInput.flow = 'v2'
+    taskInput.stagedPullRequest = store.read
+    taskInput.v2 = liveV2Functions({
+      worktreePath: taskInput.worktreePath,
+      branch: taskInput.branch,
+      store,
+      findOpenPullRequest,
+      remoteHead: () => taskInput.remoteHead?.() ?? null,
+      openWithDeveloperTool: (title, body) => liveContext.context.openPullRequest(title, body)
+    })
+    devToolsContext = withV2DevTools(liveContext.context, {
+      worktreePath: taskInput.worktreePath,
+      store,
+      findOpenPullRequest,
+      onStoragePush: (head) =>
+        sink.log(storagePushLogEvent(loopId, taskInput.reviewRound(), taskInput.branch, head) as never)
+    })
+  }
+  const baseFacts = liveDeveloperFacts({
+    takeRulingsOwed: () => {
+      const owed = rulings.owed
+      rulings.owed = false
+      return owed
+    },
+    task: args.task,
+    repoRoot,
+    runtimeDir,
+    branch: taskInput.branch,
+    worktreePath: taskInput.worktreePath,
+    round: taskInput.reviewRound,
+    lastPushRefusal: () => liveContext.state.lastPushRefusal
+  })
   const result = await runEngine({
     args,
     process: loaded,
@@ -2140,20 +2192,7 @@ async function runLive(
     taskInput,
     sink,
     startHost: startDevToolsHost,
-    developerFacts: liveDeveloperFacts({
-      takeRulingsOwed: () => {
-        const owed = rulings.owed
-        rulings.owed = false
-        return owed
-      },
-      task: args.task,
-      repoRoot,
-      runtimeDir,
-      branch: taskInput.branch,
-      worktreePath: taskInput.worktreePath,
-      round: taskInput.reviewRound,
-      lastPushRefusal: () => liveContext.state.lastPushRefusal
-    }),
+    developerFacts: async () => ({ ...(await baseFacts()), flow: loaded.flowKey }),
     allowUnixSockets: linuxUnixSocketFilterOptIn(),
     lifecycle: {
       dispatchConfig: loadConfig()?.dispatch,
@@ -2161,7 +2200,7 @@ async function runLive(
       watch: { deps: liveResumeDeps, pollMs: rulingPollMs(), sleep: abortableSleep },
       publishedWatch: { fetchPrState, fetchMergeableState, pollMs: rulingPollMs(), sleep: abortableSleep }
     },
-    devToolsContext: liveContext.context,
+    devToolsContext,
     onRulingResume: () => {
       rulings.owed = true
     },

@@ -1,0 +1,108 @@
+schema_version: "2.0"
+id: vinaya-dev-review-v2
+display_name: Vinaya developer review, version 2 (review locally, push once)
+description: >-
+  One task from prepared inputs to a reviewed pull request ready for merge, reviewing locally: the Developer pushes
+  every commit as a storage push while no pull request is open, each round's gate is the local checks, and the
+  reviewers judge the local commit. Once both approve, the ready push runs the selected tests, the pull request opens
+  and CI runs once.
+experimental: true
+benchmarked: false
+defaults:
+  model: process-supplied
+agents:
+  - role: developer
+  - role: code-reviewer
+  - role: security-reviewer
+steps:
+  - { id: prepare-run, type: mechanical, action: vinaya.prepare-run }
+  - { id: reconcile-external-state, type: mechanical, action: vinaya.reconcile-external-state }
+  - { id: prepare-sources, type: mechanical, action: vinaya.prepare-sources }
+  # As in version 1, the Developer is listed before the decision that routes to it: true (no pull request is open
+  # yet) develops, false (one is, from an earlier approval) attaches at the local checks.
+  - id: develop
+    type: agent
+    role: developer
+    prompt_template: "Develop the task {{question}}."
+    permission: developer/grants.yaml
+    working_directory: "."
+    max_turns: 200
+    depends_on: [choose-start]
+  - id: choose-start
+    type: mechanical
+    action: vinaya.choose-start
+    depends_on: [prepare-sources]
+    decision: { examine: reconcile-external-state, if_true: develop, if_false: run-mechanical-gates, max_revisions: 3 }
+  # The Developer's turn is validated as in version 1, except that its staged pull request stands for an open one.
+  - { id: validate-developer-output, type: mechanical, action: vinaya.validate-developer-output, depends_on: [develop] }
+  - id: classify-developer-output
+    type: mechanical
+    action: vinaya.classify-developer-output
+    decision: { examine: validate-developer-output, if_true: develop, if_false: run-mechanical-gates, max_revisions: 3 }
+  # A local round: the local checks (`check --all --local`, judging the staged body), the premise against the staged
+  # body, then the shared gate assessment. No mergeability poll and no CI wait: no pull request is open.
+  - { id: run-mechanical-gates, type: mechanical, action: vinaya.v2-local-checks }
+  - { id: check-premise, type: mechanical, action: vinaya.v2-check-premise }
+  - { id: assess-gate, type: mechanical, action: vinaya.assess-gate }
+  - id: classify-gate-result
+    type: mechanical
+    action: vinaya.classify-gate-result
+    decision: { examine: assess-gate, if_true: develop, if_false: run-security-scan, max_revisions: 3 }
+  - { id: run-security-scan, type: mechanical, action: vinaya.run-security-scan }
+  - { id: dispatch-reviewers, type: mechanical, action: vinaya.dispatch-reviewers }
+  - id: code-review
+    type: agent
+    role: code-reviewer
+    prompt_template: "Review the task {{question}}."
+    permission: code-reviewer/grants.yaml
+    working_directory: ""
+    max_turns: 100
+    depends_on: [dispatch-reviewers]
+  - id: security-review
+    type: agent
+    role: security-reviewer
+    prompt_template: "Security-review the task {{question}}."
+    permission: security-reviewer/grants.yaml
+    working_directory: ""
+    max_turns: 100
+    depends_on: [dispatch-reviewers]
+  - { id: validate-reviewer-outputs, type: mechanical, action: vinaya.validate-reviewer-outputs, depends_on: [code-review, security-review] }
+  - id: classify-reviewer-outputs
+    type: mechanical
+    action: vinaya.classify-reviewer-outputs
+    decision: { examine: validate-reviewer-outputs, if_true: dispatch-reviewers, if_false: assess-round, max_revisions: 3 }
+  - { id: assess-round, type: mechanical, action: vinaya.assess-round }
+  - id: build-revision-handoff
+    type: mechanical
+    action: vinaya.build-revision-handoff
+    decision: { examine: assess-round, if_true: develop, if_false: run-live-checks, max_revisions: 3 }
+  - { id: run-live-checks, type: mechanical, action: vinaya.run-live-checks }
+  - id: classify-live-result
+    type: mechanical
+    action: vinaya.classify-live-result
+    decision: { examine: run-live-checks, if_true: develop, if_false: ready-push, max_revisions: 3 }
+  # Both reviewers approved: the ready push runs the selected tests on the approved head (only what a refused one
+  # failed plus what the fix affects, when it follows a refusal). Refused goes back to the Developer with the tests.
+  - { id: ready-push, type: mechanical, action: vinaya.v2-ready-push }
+  - id: classify-ready-push
+    type: mechanical
+    action: vinaya.v2-classify-ready-push
+    decision: { examine: ready-push, if_true: develop, if_false: open-pull-request, max_revisions: 3 }
+  # The pull request opens from the staged body, and storage pushes end for the worktree.
+  - { id: open-pull-request, type: mechanical, action: vinaya.v2-open-pull-request }
+  - id: classify-pr-opened
+    type: mechanical
+    action: vinaya.v2-classify-pr-opened
+    decision: { examine: open-pull-request, if_true: develop, if_false: read-ci-once, max_revisions: 3 }
+  # CI runs once on the approved head. Red goes back to the Developer with the failing checks.
+  - { id: read-ci-once, type: mechanical, action: vinaya.v2-read-ci-once }
+  - id: classify-ci-result
+    type: mechanical
+    action: vinaya.v2-classify-ci-result
+    decision: { examine: read-ci-once, if_true: develop, if_false: check-publish-mergeability, max_revisions: 3 }
+  - { id: check-publish-mergeability, type: mechanical, action: vinaya.check-publish-mergeability }
+  - id: classify-publish-mergeability
+    type: mechanical
+    action: vinaya.classify-publish-mergeability
+    decision: { examine: check-publish-mergeability, if_true: develop, if_false: publish-ready-for-merge, max_revisions: 3 }
+  - { id: publish-ready-for-merge, type: mechanical, action: harness.publish }

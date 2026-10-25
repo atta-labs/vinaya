@@ -377,8 +377,10 @@ describe('a stub run on the Engine path', () => {
     expect(drain).toBeGreaterThan(lastLog)
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
     const kinds = emitted.map((event) => `${(event as { kind: string }).kind}.${(event as { event: string }).event}`)
-    // The stub assessment records no round, so the only event is the single exit record: no node writes a heartbeat.
-    expect(kinds).toEqual(['dev_review_loop.driver_exited'])
+    // The stub assessment records no round, so beside each step's time the only event is the single exit record: no
+    // node writes a heartbeat.
+    expect(kinds).toContain('dev_review_loop.phase_time')
+    expect(kinds.filter((kind) => kind !== 'dev_review_loop.phase_time')).toEqual(['dev_review_loop.driver_exited'])
   })
 
   test('starts the host before the Developer and writes the executable shim', async () => {
@@ -469,7 +471,12 @@ describe('a stub run on the Engine path', () => {
     expect(rest).toEqual(steadyRest)
     // The agents' streams reached their steps exactly as before.
     expect(steps).toEqual(steadySteps)
-    expect(broken.emitted).toEqual(steady.emitted)
+    // Each step's time (`phase_time`) is a wall-clock reading, so the two runs agree on everything but those numbers.
+    const untimed = (events: unknown[]) =>
+      events.map((event) =>
+        (event as { event?: string }).event === 'phase_time' ? { ...(event as object), wall_ms: 0 } : event
+      )
+    expect(untimed(broken.emitted)).toEqual(untimed(steady.emitted))
     // Nothing the broken narration would have written reached the driver log.
     expect(readFileSync(loopLogPathFor(null, 7, broken.options.runtimeDir), 'utf8')).not.toContain('Developer')
     // A renderer that cannot even be built is dropped the same way.

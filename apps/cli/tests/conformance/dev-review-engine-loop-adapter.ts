@@ -735,7 +735,8 @@ function observeEngineRun(
     : null
   const pause = readPauseState(runtimeDir, TASK)
   const controlDir = join(runtimeDir, 'tasks-execution', String(TASK), 'control')
-  const events = lines(join(runtimeDir, 'events.jsonl'))
+  // Each step's time (`phase_time`) is a measurement only the Engine writes, never a round fact the corpus judges.
+  const events = lines(join(runtimeDir, 'events.jsonl')).filter((event) => event.event !== 'phase_time')
   const effects = lines(join(runtimeDir, 'forge.jsonl'))
   const roundStartsByRound: Record<string, number> = {}
   for (const event of events)

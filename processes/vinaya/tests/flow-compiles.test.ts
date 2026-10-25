@@ -88,3 +88,40 @@ describe('Vinaya process packed runtime boundary', () => {
     })
   })
 })
+
+describe('version 2 flow (review locally, push once)', () => {
+  const folder = resolve(import.meta.dir, '..')
+  const loaded = loadProcess(folder, { flow: 'v2' })
+  const flow = camelize(parse(readFileSync(loaded.flowPath, 'utf8'))) as StepsFlow
+  const ids = (flow.steps as Array<{ id: string }>).map((step) => step.id)
+
+  test('loads as v2 beside v1 and compiles into a graph', () => {
+    expect(loaded.flowKey).toBe('v2')
+    expect(loadProcess(folder).flowKey).toBe('v1')
+    const plan = compileFlow(flow, 'Compile the Vinaya process, version 2')
+    expect(() =>
+      buildAgentSpawnStateGraph(plan, async () => ({}), { roles: {}, mechanicalActions: {} } as never)
+    ).not.toThrow()
+  })
+
+  test('a local round reads no forge: no mergeability poll and no CI wait before the reviewers', () => {
+    const reviewers = ids.indexOf('dispatch-reviewers')
+    expect(ids.slice(0, reviewers)).not.toContain('read-forge-ci')
+    expect(ids.slice(0, reviewers)).not.toContain('check-mergeability')
+    expect(ids).not.toContain('read-forge-ci')
+  })
+
+  test('after the approval: ready push, then the pull request opens, then CI once, then publication', () => {
+    const order = [
+      'run-live-checks',
+      'ready-push',
+      'open-pull-request',
+      'read-ci-once',
+      'check-publish-mergeability',
+      'publish-ready-for-merge'
+    ]
+    const positions = order.map((id) => ids.indexOf(id))
+    expect(positions.every((p) => p >= 0)).toBe(true)
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions)
+  })
+})

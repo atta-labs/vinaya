@@ -24,6 +24,7 @@ import { loadRoleGrants, ROLE_NAMES, withModel } from '../../../harness/adapters
 import { sessionIdOf, structuredResult } from '../../../harness/adapters/agents/structured-result'
 import { pullRequestCheckEnv, type PullRequestView } from './pull-request-env'
 import type { Handoff, InputVersions, PauseRequest } from './handoff'
+import type { StagedPullRequest, V2Functions } from './v2-actions'
 import { runCliChecks } from '../../../harness/gates/run-checks'
 import { agentEnvAllowlist } from '../../../harness/adapters/agents/launch-env'
 import type { GeneratedAgentConfig, GeneratorPaths } from '../../../harness/adapters/agents/policy'
@@ -258,6 +259,12 @@ export interface TaskInput {
   prepareSources?: () => Promise<PrepareSourcesResult>
   /** The budget the forge-gate steps poll a pending CI read or an unresolved mergeability within; the standalone loop's own when absent. */
   gatePoll?: GatePoll
+  /** The flow key the run chose (`v1`, `v2`); absent is version 1. */
+  flow?: string
+  /** Version 2: the pull request the Developer staged, which opens only once both reviewers approve. */
+  stagedPullRequest?: () => StagedPullRequest | null
+  /** Version 2's forge and process functions (`v2-actions.ts`). */
+  v2?: V2Functions
 }
 
 /** What only the moment of publication knows. */
@@ -329,7 +336,11 @@ export const STATE_STEPS = [
   'assess-gate',
   'assess-round',
   'run-live-checks',
-  'check-publish-mergeability'
+  'check-publish-mergeability',
+  // Version 2's steps after an approval.
+  'ready-push',
+  'open-pull-request',
+  'read-ci-once'
 ] as const
 
 /** Why the Developer is dispatched again, as the step that sent it back recorded it. */
@@ -343,9 +354,14 @@ export type SendBackKind =
   | 'unpushed'
   | 'review'
   | 'live-red'
+  // Version 2: a ready push or a pull request's opening refused an approved head, or CI was red on it.
+  | 'ready-refused'
+  | 'ci-red'
 
 export interface SendBack {
   kind: SendBackKind
+  /** Why a version 2 step sent the Developer back after an approval, for its next turn's prompt. */
+  detail?: string
   /** The branch head on the remote when the Developer was sent back; a turn that leaves it unchanged pushed nothing. */
   headBefore?: string | null
   /** The files a conflicting head conflicts in, for the conflict turn's prompt. */
@@ -372,7 +388,7 @@ export interface RoundCounters {
   stallCheck: { headBefore: string; refusal: string | null } | null
 }
 
-const NO_COUNTERS: RoundCounters = { unpushedResumeAttempted: false, gateStalledStreak: 0, stallCheck: null }
+export const NO_COUNTERS: RoundCounters = { unpushedResumeAttempted: false, gateStalledStreak: 0, stallCheck: null }
 
 /** One deciding step's record, as read back from its result. */
 export interface LoopRecord {
@@ -459,7 +475,7 @@ function nextSeq(results: Results): number {
 }
 
 /** A deciding step's record as its result's stdout. */
-function recordOutput(
+export function recordOutput(
   results: Results,
   state: LoopState,
   fields: {
@@ -483,11 +499,11 @@ function recordOutput(
 }
 
 /** The step's exit codes: forward, or back (to the Developer, or to the reviewers' dispatch). */
-const FORWARD = 0
-const BACK = 1
+export const FORWARD = 0
+export const BACK = 1
 
 /** A pause the handoff makes durable; throws when no handoff is wired, since a pause nobody records would be lost. */
-function pauseThrough(task: TaskInput, step: string, request: PauseRequest): void {
+export function pauseThrough(task: TaskInput, step: string, request: PauseRequest): void {
   if (!task.handoff) throw new Error(`${step} decided a pause but no handoff is wired to make it durable`)
   task.handoff.pause(request)
 }
@@ -682,7 +698,7 @@ function judgeTurn(
   return failures.length > 0 ? { ok: false, failures } : { ok: true, result }
 }
 
-const safeRead = <T>(read: (() => T) | undefined): T | null => {
+export const safeRead = <T>(read: (() => T) | undefined): T | null => {
   if (read === undefined) return null
   try {
     return read()
@@ -692,7 +708,7 @@ const safeRead = <T>(read: (() => T) | undefined): T | null => {
 }
 
 /** The worktree head, or null when it cannot be read. */
-function worktreeHeadOf(task: TaskInput): string | null {
+export function worktreeHeadOf(task: TaskInput): string | null {
   return safeRead(() => (task.bound?.readWorktreeHead ?? readWorktreeHead)(task.worktreePath))
 }
 
@@ -701,7 +717,7 @@ export function dispatchReviewers(): { exitCode: number; stdout: string } {
   return ok('code-review,security-review')
 }
 
-const ok = (stdout = ''): { exitCode: number; stdout: string } => ({ exitCode: 0, stdout })
+export const ok = (stdout = ''): { exitCode: number; stdout: string } => ({ exitCode: 0, stdout })
 
 // --- the round's review dispatch ----------------------------------------------
 
@@ -1015,7 +1031,9 @@ function validateDeveloperOutput(task: TaskInput, context: ActionContext): { exi
 
   // No pull request after the turn: resumed once with the push-and-open instructions, then an infrastructure pause.
   const pr = safeRead(() => (task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch))
-  if (pr === null) {
+  // Version 2 opens no pull request before approval: the Developer's staged one stands for it.
+  const staged = task.flow === 'v2' ? safeRead(task.stagedPullRequest) : null
+  if (pr === null && staged === null) {
     if (original?.kind === 'open-pull-request') {
       const detail = `no open pull request for ${task.branch} after resuming once with the push-and-open instructions`
       return pause('infrastructure', 'infrastructure', detail, new Error(detail))
@@ -1025,7 +1043,11 @@ function validateDeveloperOutput(task: TaskInput, context: ActionContext): { exi
 
   // A turn sent back for a red gate, a conflict or unpushed work must have moved the branch's remote head.
   if (
-    (original?.kind !== 'gate-red' && original?.kind !== 'conflict' && original?.kind !== 'unpushed') ||
+    (original?.kind !== 'gate-red' &&
+      original?.kind !== 'conflict' &&
+      original?.kind !== 'unpushed' &&
+      original?.kind !== 'ready-refused' &&
+      original?.kind !== 'ci-red') ||
     typeof original.headBefore !== 'string'
   )
     return out(FORWARD, { counters })
@@ -1625,7 +1647,10 @@ export function recordedForgeCi(results: Results): RecordedForgeCi | null {
  * as the standalone loop's gate wait does. A red head the Developer's turn left unchanged has its failed jobs rerun
  * once (`rerunFailedWorkflowJobs`) and is read again. A red local gate decides the round alone, so no CI is read.
  */
-async function readForgeCi(task: TaskInput, context: ActionContext): Promise<{ exitCode: number; stdout: string }> {
+export async function readForgeCi(
+  task: TaskInput,
+  context: ActionContext
+): Promise<{ exitCode: number; stdout: string }> {
   const { results } = context
   const prior = recordedForgeCi(results)
   const rerunHeads = prior?.rerunHeads ?? []
@@ -1903,7 +1928,11 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         previous !== null && previous.round === round && reviews?.round === round && reviews.next === 'retry'
       const inputs = retry ? previous.inputs : (task.reviewInputs?.(round) ?? null)
       // The round marker precedes the reviewers, as the standalone loop posts it; a stub run with no inputs posts none.
-      if (inputs !== null) postRoundMarker(task, context.results, round, inputs)
+      // Version 2's rounds are local while no pull request is open: the Log holds them, and no marker is posted.
+      const markerTarget =
+        task.flow !== 'v2' ||
+        safeRead(() => (task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)) !== null
+      if (inputs !== null && markerTarget) postRoundMarker(task, context.results, round, inputs)
       return ok(JSON.stringify({ round, attempt: retry ? previous.attempt + 1 : 1, inputs }))
     }
   },

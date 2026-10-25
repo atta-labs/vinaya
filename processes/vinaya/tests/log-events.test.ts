@@ -71,8 +71,8 @@ describe('the log inventory', () => {
       ...['raised', 'resolved'].filter((event) => rowsFor('handoff', event).length !== 1).map((e) => `handoff/${e}`)
     ]
     expect(uncovered).toEqual([])
-    expect(loopEventNames).toHaveLength(16)
-    expect(LOG_INVENTORY).toHaveLength(19)
+    expect(loopEventNames).toHaveLength(23)
+    expect(LOG_INVENTORY).toHaveLength(25)
   })
 
   test('no row names an event the schemas do not have', () => {
@@ -351,7 +351,10 @@ function expectValid(run: ReturnType<typeof setup>): string[] {
     if (!parsed.success) throw new Error(`${String(enveloped.event)} does not parse: ${parsed.error.message}`)
   }
   note(run.translator.produced as LogEventInput[])
-  return run.emitted.map((entry) => String(entry.event.event))
+  // Every step also logs the time it spent (`phase_time`); the sequences below are the round's own events.
+  const all = run.emitted.map((entry) => String(entry.event.event))
+  expect(all).toContain('phase_time')
+  return all.filter((name) => name !== 'phase_time')
 }
 
 const heartbeat = 'driver_heartbeat'

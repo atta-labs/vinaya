@@ -107,6 +107,42 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     from: 'the runner: one each time its watch of a published pull request finds it conflicting and starts a fresh run, up to the re-entry bound'
   },
   {
+    family: 'dev_review_loop',
+    events: ['storage_push'],
+    status: 'produced',
+    from: 'the runner, version 2 only: one per Developer push that landed while no pull request is open (a storage push: cheap checks, no tests, no CI)'
+  },
+  {
+    family: 'dev_review_loop',
+    events: ['local_checks_run'],
+    status: 'produced',
+    from: 'the runner, version 2 only, at its run-mechanical-gates step: one per round, whether the local checks passed and how long they took'
+  },
+  {
+    family: 'dev_review_loop',
+    events: ['ready_push', 'failed_tests_rerun'],
+    status: 'produced',
+    from: 'the runner, version 2 only, at its ready-push step: one ready_push per approval it pushes, and failed_tests_rerun when that push re-ran only what a refused one failed plus what the fix affects'
+  },
+  {
+    family: 'dev_review_loop',
+    events: ['pr_opened'],
+    status: 'produced',
+    from: 'the runner, version 2 only, at its open-pull-request step: once, when the approved head opens the pull request'
+  },
+  {
+    family: 'dev_review_loop',
+    events: ['ci_result_read'],
+    status: 'produced',
+    from: 'the runner, version 2 only, at its read-ci-once step: one CI read per approved head'
+  },
+  {
+    family: 'dev_review_loop',
+    events: ['phase_time'],
+    status: 'produced',
+    from: 'every step of either flow, when it completes or fails: the wall time it spent, counted toward its phase'
+  },
+  {
     family: 'handoff',
     events: ['raised'],
     status: 'produced',

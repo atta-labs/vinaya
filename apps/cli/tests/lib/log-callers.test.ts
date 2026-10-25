@@ -40,7 +40,7 @@ const LOG_SYNC_FOLDER_SOURCE_PATH = 'apps/cli/src/lib/log-sync-folder-source.ts'
 const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
 const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
-const FLOW_V2_EVENTS_PATH = 'apps/cli/src/lib/dev-review-loop/flow-v2-events.ts'
+const FLOW_V2_EVENTS_PATH = 'apps/cli/src/lib/flow-v2-events.ts'
 /**
  * The webhook destination is the sink's own delivery mechanism for a
  * `logs.url` server destination, not a second kind of caller: it reads the
