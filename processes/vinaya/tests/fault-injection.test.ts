@@ -107,16 +107,28 @@ afterAll(() => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 // Generous: a runner process starts slowly when the whole suite runs in parallel.
-async function until(done: () => boolean, ms = 60_000): Promise<void> {
+async function until(done: () => boolean, ms = 60_000, what = 'the condition'): Promise<void> {
   for (let waited = 0; !done() && waited < ms; waited += 25) await sleep(25)
-  if (!done()) throw new Error('timed out waiting')
+  if (!done()) throw new Error(`timed out waiting for ${what}`)
 }
+/**
+ * Whether `pid` is still running. A zombie answers the null signal but runs nothing: an agent orphaned by a
+ * killed runner is reparented, and on Linux the new parent can be a subreaper that never collects it, so an
+ * ended agent stays a zombie, which `/proc/<pid>/stat` reports in state `Z`. Where there is no `/proc` (macOS),
+ * an orphan is collected by launchd, so the null signal alone answers.
+ */
 const alive = (pid: number): boolean => {
   try {
     process.kill(pid, 0)
-    return true
   } catch {
     return false
+  }
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    // The state is the field after the parenthesised command name, which may itself hold spaces.
+    return stat.charAt(stat.lastIndexOf(')') + 2) !== 'Z'
+  } catch {
+    return true
   }
 }
 const groupAlive = (pgid: number): boolean => {
@@ -408,7 +420,11 @@ for (const vendor of VENDORS)
         const first = lifecycleRunner(vendor, runtimeDir, script, join(dir, 'first'))
         const leftovers: number[] = []
         try {
-          await until(() => pidIn(join(dir, 'first.child')) !== null && pidIn(join(dir, 'first.agent')) !== null)
+          await until(
+            () => pidIn(join(dir, 'first.child')) !== null && pidIn(join(dir, 'first.agent')) !== null,
+            60_000,
+            'the first runner to launch its agent'
+          )
           const agentPid = pidIn(join(dir, 'first.agent')) as number
           const childPid = pidIn(join(dir, 'first.child')) as number
           leftovers.push(agentPid, childPid)
@@ -418,9 +434,13 @@ for (const vendor of VENDORS)
           expect(alive(agentPid) && alive(childPid)).toBe(true)
           const second = lifecycleRunner(vendor, runtimeDir, script, join(dir, 'second'))
           try {
-            await until(() => !alive(agentPid) && !alive(childPid))
+            await until(() => !alive(agentPid) && !alive(childPid), 60_000, 'the abandoned agent to end')
             // The restarted runner resumes the step the dead one was in, with an agent of its own.
-            await until(() => pidIn(join(dir, 'second.agent')) !== null)
+            await until(
+              () => pidIn(join(dir, 'second.agent')) !== null,
+              60_000,
+              'the second runner to launch its agent'
+            )
             leftovers.push(pidIn(join(dir, 'second.agent')) as number, pidIn(join(dir, 'second.child')) ?? 0)
             expect(readFileSync(loopLogPathFor(null, 7, runtimeDir), 'utf8')).toContain(
               'a runner that died left running'
@@ -659,7 +679,7 @@ for (const vendor of VENDORS)
           started.runner.kill('SIGTERM')
           const exit = await started.exited
           expect(exit.code).toBe(143)
-          await until(() => !alive(agentPid) && !alive(childPid), 15_000)
+          await until(() => !alive(agentPid) && !alive(childPid), 15_000, 'the cancelled agent to end')
           const exits = readFileSync(loopLogPathFor(null, 7, runtimeDir), 'utf8')
             .split('\n')
             .filter((line) => line.includes('driver exited ('))
