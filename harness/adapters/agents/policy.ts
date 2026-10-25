@@ -431,3 +431,16 @@ export function normalizedCapabilities(grants: RoleGrants, vendor: 'claude' | 'c
     close_agent: x.close_agent
   }
 }
+
+/**
+ * The launch environment that keeps package-manager caches inside the role's own writable scratch directory: a
+ * sandboxed agent may not write `~/.npm`, so an `npx` it runs (an adopter's doctrine command is one) would fail on
+ * its cache. Only a role that may write its scratch directory gets one.
+ */
+export function scratchCacheEnv(
+  writableRoots: readonly string[],
+  variables: Readonly<Record<string, string>> | undefined
+): Record<string, string> {
+  const scratch = variables?.SCRATCH
+  return scratch !== undefined && writableRoots.includes(scratch) ? { npm_config_cache: `${scratch}/npm-cache` } : {}
+}

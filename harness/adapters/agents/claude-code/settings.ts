@@ -7,7 +7,8 @@ import {
   resolveGrantValues,
   type GeneratedAgentConfig,
   type GeneratorPaths,
-  type HookPolicy
+  type HookPolicy,
+  scratchCacheEnv
 } from '../policy'
 
 export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths): GeneratedAgentConfig {
@@ -102,7 +103,7 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
       RESUME_SESSION_PLACEHOLDER,
       ...launch.slice(2)
     ],
-    env: {},
+    env: scratchCacheEnv(writableRoots, paths.variables),
     files: {
       'role-settings.json': JSON.stringify(settings, null, 2) + '\n',
       'role-mcp.json': JSON.stringify(mcp, null, 2) + '\n',

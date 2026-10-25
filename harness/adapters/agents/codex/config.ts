@@ -8,7 +8,8 @@ import {
   shellTokens,
   type GeneratedAgentConfig,
   type GeneratorPaths,
-  type HookPolicy
+  type HookPolicy,
+  scratchCacheEnv
 } from '../policy'
 
 const quote = (value: string): string => JSON.stringify(value)
@@ -124,7 +125,7 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     launch,
     // `codex exec resume <id> …` continues that thread, as the CLI's own Codex dispatch resumes its Developer.
     resumeLaunch: [launch[0] as string, launch[1] as string, 'resume', RESUME_SESSION_PLACEHOLDER, ...launch.slice(2)],
-    env: { CODEX_HOME: paths.generatedDir },
+    env: { CODEX_HOME: paths.generatedDir, ...scratchCacheEnv(writableRoots, paths.variables) },
     files: {
       'config.toml': configToml,
       'rules/role.rules': execpolicy,
