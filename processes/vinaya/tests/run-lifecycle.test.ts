@@ -56,6 +56,7 @@ import {
 import {
   chooseStart,
   createChildReaper,
+  liveStartTime,
   lockExitOf,
   recoverRun,
   revisionMovedLine,
@@ -1240,6 +1241,17 @@ describe('no orphaned agent', () => {
     await reaper.reap(200)
     await until(() => !alive(grandchild), 3000)
     expect(reaper.groups()).toEqual([])
+  })
+
+  test('reads one start time for a live process however often it is read', async () => {
+    const reads: (string | null)[] = []
+    for (let read = 0; read < 12; read++) {
+      reads.push(liveStartTime(process.pid))
+      await new Promise((resolve) => setTimeout(resolve, 125))
+    }
+    expect(new Set(reads).size).toBe(1)
+    // Where the kernel's own start time can be read, it is the one recorded.
+    if (existsSync(`/proc/${process.pid}/stat`)) expect(reads[0]).toMatch(/^ticks:\d+$/)
   })
 
   for (const agent of ['claude', 'codex'] as const)

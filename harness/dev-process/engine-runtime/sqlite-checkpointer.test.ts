@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { Database } from 'bun:sqlite'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +12,17 @@ import {
 import { emptyCheckpoint } from '@langchain/langgraph'
 import { loadProcess } from '../loader/load-process'
 import { resumeProcessRun, startProcessRun, type ProcessRunOptions } from './run-process'
-import { SqliteCheckpointer } from './sqlite-checkpointer'
+import {
+  CHECKPOINT_FORMAT_VERSION,
+  CheckpointCorruptError,
+  type CheckpointProvenance,
+  checkpointRefusal,
+  ENGINE_RUNTIME_VERSION,
+  SqliteCheckpointer
+} from './sqlite-checkpointer'
+
+/** The versions every checkpoint this runtime writes records. */
+const CURRENT = { formatVersion: CHECKPOINT_FORMAT_VERSION, runtimeVersion: ENGINE_RUNTIME_VERSION }
 
 const FLOW = `schema_version: "2.0"
 id: sample-flow
@@ -133,7 +144,7 @@ describe('sqlite checkpointer', () => {
     expect(calls).toEqual({ prepare: 1, work: 2, check: 2, finish: 1 })
   })
 
-  test('every checkpoint records the revision and model it was written under, and the latest reads back', async () => {
+  test('every checkpoint records the revision, model and versions it was written under, and the latest reads back', async () => {
     const file = join(scratch(), 'checkpoints.sqlite')
     const config = { configurable: { thread_id: 't1', checkpoint_ns: '' } }
     const older = new SqliteCheckpointer({ path: file, revision: 'rev-old', model: 'model-a' })
@@ -145,9 +156,9 @@ describe('sqlite checkpointer', () => {
     const second = { ...emptyCheckpoint(), id: '00000000-0000-0000-0000-000000000002' }
     await newer.put(written, second, { source: 'loop', step: 1, writes: {}, parents: {} })
 
-    expect(newer.provenanceOf('t1', first.id)).toEqual({ revision: 'rev-old', model: 'model-a' })
-    expect(newer.provenanceOf('t1', second.id)).toEqual({ revision: 'rev-new', model: '' })
-    expect(newer.latestProvenance('t1')).toEqual({ revision: 'rev-new', model: '' })
+    expect(newer.provenanceOf('t1', first.id)).toEqual({ revision: 'rev-old', model: 'model-a', ...CURRENT })
+    expect(newer.provenanceOf('t1', second.id)).toEqual({ revision: 'rev-new', model: '', ...CURRENT })
+    expect(newer.latestProvenance('t1')).toEqual({ revision: 'rev-new', model: '', ...CURRENT })
     expect(newer.latestProvenance('other')).toBeUndefined()
     const latest = await newer.getTuple(config)
     expect(latest?.checkpoint.id).toBe(second.id)
@@ -161,7 +172,72 @@ describe('sqlite checkpointer', () => {
     const saver = new SqliteCheckpointer({ path: file, revision: 'rev-run', model: 'model-run' })
     const outcome = await startProcessRun(options(saver, false))
     expect(outcome.reason).toBe('completed')
-    expect(saver.latestProvenance(outcome.identity.threadId)).toEqual({ revision: 'rev-run', model: 'model-run' })
+    expect(saver.latestProvenance(outcome.identity.threadId)).toEqual({
+      revision: 'rev-run',
+      model: 'model-run',
+      ...CURRENT
+    })
     saver.close()
+  })
+
+  test('a file written before the versions were recorded opens, and its rows record neither', async () => {
+    const file = join(scratch(), 'checkpoints.sqlite')
+    const legacy = new Database(file, { create: true })
+    legacy.exec(`CREATE TABLE checkpoints (thread_id TEXT NOT NULL, checkpoint_ns TEXT NOT NULL,
+      checkpoint_id TEXT NOT NULL, parent_id TEXT, type TEXT NOT NULL, checkpoint BLOB NOT NULL,
+      metadata BLOB NOT NULL, revision TEXT NOT NULL, model TEXT NOT NULL,
+      PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id))`)
+    legacy
+      .query('INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('t1', '', 'c1', null, 'json', '{}', '{}', 'rev-old', '')
+    legacy.close()
+    const saver = new SqliteCheckpointer({ path: file, revision: 'rev-new' })
+    const recorded = saver.latestProvenance('t1')
+    expect(recorded).toEqual({ revision: 'rev-old', model: '', formatVersion: null, runtimeVersion: null })
+    expect(checkpointRefusal(recorded as CheckpointProvenance)?.code).toBe('checkpoint_version_unrecorded')
+    saver.close()
+  })
+
+  test('a file that is not a checkpoint file, or a row whose state cannot be read, is reported as corrupt', async () => {
+    const garbage = join(scratch(), 'checkpoints.sqlite')
+    writeFileSync(garbage, 'this is not a database, it only has its name\n'.repeat(200))
+    expect(() => new SqliteCheckpointer({ path: garbage, revision: 'r' })).toThrow(CheckpointCorruptError)
+
+    const file = join(scratch(), 'checkpoints.sqlite')
+    const saver = new SqliteCheckpointer({ path: file, revision: 'r' })
+    const config = { configurable: { thread_id: 't1', checkpoint_ns: '' } }
+    await saver.put(config, { ...emptyCheckpoint(), id: 'c1' }, { source: 'loop', step: 0, writes: {}, parents: {} })
+    saver.close()
+    const raw = new Database(file)
+    raw.query("UPDATE checkpoints SET checkpoint = X'00FF00FF'").run()
+    raw.close()
+    const reopened = new SqliteCheckpointer({ path: file, revision: 'r' })
+    await expect(reopened.getTuple(config)).rejects.toBeInstanceOf(CheckpointCorruptError)
+    reopened.close()
+  })
+
+  test('only an unrecorded or other format, or a runtime outside the caret range, refuses; a moved revision never does', () => {
+    expect(checkpointRefusal(CURRENT)).toBeNull()
+    expect(
+      checkpointRefusal({ formatVersion: CHECKPOINT_FORMAT_VERSION + 1, runtimeVersion: ENGINE_RUNTIME_VERSION })?.code
+    ).toBe('checkpoint_format_incompatible')
+    expect(checkpointRefusal({ formatVersion: null, runtimeVersion: ENGINE_RUNTIME_VERSION })?.code).toBe(
+      'checkpoint_format_incompatible'
+    )
+    const running = { formatVersion: 1, runtimeVersion: '@atta/engine@0.2.3 @atta/executor-agent-spawn@1.4.0' }
+    const at = (runtimeVersion: string | null) => checkpointRefusal({ formatVersion: 1, runtimeVersion }, running)?.code
+    expect(at('@atta/engine@0.2.1 @atta/executor-agent-spawn@1.0.9')).toBeUndefined()
+    expect(at('@atta/engine@0.1.9 @atta/executor-agent-spawn@1.4.0')).toBe('runtime_version_incompatible')
+    expect(at('@atta/engine@0.2.3 @atta/executor-agent-spawn@2.0.0')).toBe('runtime_version_incompatible')
+    expect(at('@atta/engine@0.2.3')).toBe('runtime_version_incompatible')
+    expect(at('not a runtime')).toBe('runtime_version_incompatible')
+    expect(at(null)).toBe('runtime_version_incompatible')
+    expect(
+      checkpointRefusal(
+        { formatVersion: 1, runtimeVersion: '@atta/engine@0.0.1' },
+        { formatVersion: 1, runtimeVersion: '@atta/engine@0.0.2' }
+      )?.code
+    ).toBe('runtime_version_incompatible')
+    expect(ENGINE_RUNTIME_VERSION).toMatch(/^@atta\/engine@\d+\.\d+\.\d+ @atta\/executor-agent-spawn@\d+\.\d+\.\d+$/)
   })
 })

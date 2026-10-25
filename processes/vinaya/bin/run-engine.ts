@@ -25,7 +25,12 @@ import {
 } from '@atta/executor-agent-spawn'
 import { sessionIdOf } from '../../../harness/adapters/agents/structured-result'
 import { loadProcess, type LoadedProcess } from '../../../harness/dev-process/loader/load-process'
-import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+import {
+  CheckpointCorruptError,
+  type CheckpointRefusal,
+  SqliteCheckpointer
+} from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+import { DispatchUsageLimit, usageLimitPauseDetail } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import {
   resumeProcessRun,
   startProcessRun,
@@ -91,6 +96,8 @@ import { createLogSink, drainLogSink, LOG_FOLDER_ONLY_ENV, type LogSinkDeps } fr
 import { setEngineLogIdentity } from './engine-log-identity'
 import {
   abortableSleep,
+  type AutomaticResumes,
+  checkpointRefusalDetail,
   chooseStart,
   claimResume,
   createChildReaper,
@@ -99,6 +106,7 @@ import {
   lockExitOf,
   onShutdownSignals,
   realLaunchDeps,
+  reapAbandonedGroups,
   recoverRun,
   releaseDriverLock,
   resumeModel,
@@ -110,6 +118,7 @@ import {
   takeDriverLock,
   watchForRuling,
   watchPublishedPullRequest,
+  withUsageLimitWatch,
   type PublishedWatch,
   type RecoveryDeps,
   type ResumeDeps,
@@ -145,7 +154,8 @@ import {
   recordRunnerDeveloperLaunch,
   renderClaudeEvent,
   renderCodexEvent,
-  terminateChildWithGrace
+  terminateChildWithGrace,
+  type UsageLimit
 } from '../../../apps/cli/src/lib/dispatch'
 import { loadConfig } from '../../../apps/cli/src/lib/config'
 import { crossRunnerRefusal, recordTaskRunner } from '../../../apps/cli/src/lib/task-run-engine'
@@ -321,14 +331,26 @@ export function parseResumeArgs(argv: readonly string[]): ResumeArgs {
   return { resume, ...(agent ? { agent } : {}), ...(model ? { model } : {}) }
 }
 
-/** The model the newest checkpoint of the task's run recorded; undefined when the run has none or left the vendor's default. */
+/**
+ * The model the newest checkpoint of the task's run recorded; undefined when the run has none, left the vendor's
+ * default, or its checkpoint file cannot be read (the run itself refuses that checkpoint when it starts).
+ */
 export function recordedCheckpointModel(runtimeDir: string, task: number): string | undefined {
   const file = checkpointPath(runDirectory(runtimeDir, task))
   if (!existsSync(file)) return undefined
-  const saver = new SqliteCheckpointer({ path: file, revision: 'unknown' })
+  let saver: SqliteCheckpointer
+  try {
+    saver = new SqliteCheckpointer({ path: file, revision: 'unknown' })
+  } catch (error) {
+    if (error instanceof CheckpointCorruptError) return undefined
+    throw error
+  }
   try {
     const model = saver.latestProvenance(runIdentityOfTask(task, currentRunGeneration(saver, task)).threadId)?.model
     return model === '' ? undefined : model
+  } catch (error) {
+    if (error instanceof CheckpointCorruptError) return undefined
+    throw error
   } finally {
     saver.close()
   }
@@ -895,9 +917,15 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   // The task's run is this runner's from here: the Operator routes its controls by this record.
   recordTaskRunner(args.task, 'atta-engine', options.runtimeDir)
 
+  // A runner that died left its agents' groups recorded: they are ended before anything is dispatched again.
+  const groupFile = join(runDir, 'agent-groups.json')
+  const abandoned = await reapAbandonedGroups(groupFile, lifecycle.killGraceMs)
+  if (abandoned.length > 0)
+    narrate(`ended ${abandoned.length} agent process group(s) a runner that died left running: ${abandoned.join(', ')}`)
+
   // Each leg of a run has a run control of its own: a halted one cannot be run again.
   let control = options.control ?? createRunControl()
-  const reaper = createChildReaper(options.spawnFn)
+  const reaper = createChildReaper(options.spawnFn, { groupFile })
   // A halt ends the agents' whole process groups at once: the executor signals only the agent it spawned.
   const reapOnHalt = (): void =>
     control.signal.addEventListener('abort', () => void reaper.reap(lifecycle.killGraceMs), { once: true })
@@ -1120,11 +1148,56 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     )
     const actions = recordingActions(tracedActions(noting, trace), translator)
     const revision = options.revision ?? checkoutRevision(options.repoRoot)
-    const saver = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
-    checkpointer = saver
+    // A checkpoint file the saver cannot open is refused like an unreadable checkpoint: no step runs.
+    let refusedFile: CheckpointRefusal | null = null
+    let opened: SqliteCheckpointer | undefined
+    try {
+      opened = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
+    } catch (thrown) {
+      if (!(thrown instanceof CheckpointCorruptError)) throw thrown
+      refusedFile = { code: thrown.code, detail: thrown.message }
+    }
+    checkpointer = opened
+    const saver = opened as SqliteCheckpointer
     // The task's newest run: a completed one is watched, and a conflict on its pull request starts the next.
-    let generation = currentRunGeneration(saver, args.task)
+    let generation = 1
+    if (refusedFile === null) {
+      try {
+        generation = currentRunGeneration(saver, args.task)
+      } catch (thrown) {
+        if (!(thrown instanceof CheckpointCorruptError)) throw thrown
+        refusedFile = { code: thrown.code, detail: thrown.message }
+      }
+    }
     let identity = runIdentityOfTask(args.task, generation)
+    /** Set when the leg's checkpoint was refused: the run stops at its pause, which no ruling or retry repairs. */
+    let checkpointRefused = false
+    const refuseCheckpoint = (refusal: CheckpointRefusal): void => {
+      checkpointRefused = true
+      narrate(`not resuming: the checkpoint is refused (${refusal.code}): ${refusal.detail}`)
+      // The host-repair pause: addressed to the Operator, never retried or watched, continued by the ordinary start
+      // once the checkpoint is repaired or set aside. Its detail leads with the typed code that names the cause.
+      handoff.pause({ reason: 'sandbox_refused', detail: checkpointRefusalDetail(refusal) })
+      legOutcome = { reason: 'paused', haltReason: handoffHaltReason('sandbox_refused') }
+    }
+    // The vendor's usage limit, read from the agent's own output when a launch ends on it: the leg pauses for the
+    // reset rather than failing, and the run control stops the Flow at the next boundary.
+    let usageLimit: UsageLimit | null = null
+    const onUsageLimit = (limit: UsageLimit): void => {
+      usageLimit = limit
+      control.halt('usage_limit')
+    }
+    const usageLimitPause = (limit: UsageLimit): LegOutcome => {
+      const now = (lifecycle.now ?? (() => new Date()))().getTime()
+      narrate(`${limit.agent}'s usage limit was reached; pausing for the reset`)
+      handoff.pause({
+        reason: 'infrastructure',
+        detail: usageLimitPauseDetail(limit, now),
+        error: new DispatchUsageLimit(limit, 'an agent step')
+      })
+      return { reason: 'paused', haltReason: handoffHaltReason('infrastructure') }
+    }
+    const automaticResumes: AutomaticResumes = { usageLimit: 0 }
     // This runner's automatic conflict re-entries of the published pull request.
     let conflictReentries = 0
     // The run compiles its own Flow, ceilings from the review policy; an unreadable policy leaves the checked-in one,
@@ -1142,7 +1215,18 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       outcome = null
       error = undefined
       pausedFor = undefined
+      usageLimit = null
+      if (refusedFile !== null) {
+        refuseCheckpoint(refusedFile)
+        translator.endLeg(legOutcome as LegOutcome)
+        return
+      }
       let choice = await chooseStart(saver, identity)
+      if (choice.kind === 'refused') {
+        refuseCheckpoint(choice.refusal)
+        translator.endLeg(legOutcome as LegOutcome)
+        return
+      }
       // A checkpoint resume continues past steps it already ran, the mergeability check among them: when the pull
       // request is in conflict now, the run starts the next generation instead, as the conflict re-entry does, so the
       // Flow's mergeability step sends the conflict back to the Developer before any publication.
@@ -1252,11 +1336,15 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           spawnFn: tolerateReviewerExit(
             withReviewerWorkingDirectory(
               // Innermost, so the tee sees the directory the launch runs in and the agent's own stdout.
-              withAgentNarration(reaper.spawnFn, join(runDir, 'generated'), {
-                agent: args.agent,
-                logPath,
-                rendererFor: options.narration?.rendererFor
-              }),
+              withAgentNarration(
+                withUsageLimitWatch(reaper.spawnFn, args.agent, onUsageLimit),
+                join(runDir, 'generated'),
+                {
+                  agent: args.agent,
+                  logPath,
+                  rendererFor: options.narration?.rendererFor
+                }
+              ),
               join(runDir, 'generated'),
               (role) =>
                 role === 'developer'
@@ -1278,7 +1366,12 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           ? resumeProcessRun(runOptions, identity)
           : startProcessRun(runOptions, identity))
         legOutcome = outcome as unknown as LegOutcome
-        if (outcome.reason === 'failed') {
+        // The read is the closure's write, which the compiler's flow analysis does not follow.
+        const limited = usageLimit as UsageLimit | null
+        if (limited !== null) {
+          error = undefined
+          legOutcome = { ...legOutcome, ...usageLimitPause(limited) }
+        } else if (outcome.reason === 'failed') {
           // A step that threw is handed off like any other pause, keeping what the checkpoint holds.
           error = outcome.error
           legOutcome = { ...legOutcome, ...handOffError(outcome.error) }
@@ -1345,19 +1438,35 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       const exhausted = legOutcome?.reason === 'exhausted' && signalled === null
       if (exhausted)
         handoff.pause({ reason: 'max_rounds', detail: 'the round cap is reached: a ruling grants a fresh run' })
-      if (!lifecycle.watch || (legOutcome?.reason !== 'paused' && !exhausted) || signalled !== null) break
+      // A refused checkpoint is repaired outside the run, so nothing the watch could read continues it.
+      if (
+        !lifecycle.watch ||
+        (legOutcome?.reason !== 'paused' && !exhausted) ||
+        signalled !== null ||
+        checkpointRefused
+      )
+        break
       narrate('the run is halted; watching for a newer ruling or a cancel')
-      const watched = await watchForRuling(options.runtimeDir, args.task, lifecycle.watch, stopWatching.signal, narrate)
+      const watched = await watchForRuling(
+        options.runtimeDir,
+        args.task,
+        lifecycle.watch,
+        stopWatching.signal,
+        narrate,
+        automaticResumes
+      )
       if (watched.kind === 'ruled') {
         narrate(`a newer ruling resumed escalation ${watched.escalationId}`)
         options.onRulingResume?.()
+      } else if (watched.kind === 'recovered') {
+        narrate(`the usage limit reset: escalation ${watched.escalationId} resumes with no ruling`)
       } else if (watched.kind === 'cancelled') {
         // The Operator's cancel consumed the resolution and fenced the effects; the run only ends.
         cancelledByWatch = true
         narrate('the pause was cancelled; ending')
       } else if (watched.kind === 'consumed') narrate('another process claimed the resolution and owns the run; ending')
       else if (watched.kind === 'refused') narrate(`the resolution was refused: ${watched.message}`)
-      if (watched.kind !== 'ruled') break
+      if (watched.kind !== 'ruled' && watched.kind !== 'recovered') break
       // An exhausted checkpoint would exhaust again at once: the ruling continues as a fresh run of the next
       // generation, which attaches to the open pull request with a fresh revision budget.
       if (exhausted) {
