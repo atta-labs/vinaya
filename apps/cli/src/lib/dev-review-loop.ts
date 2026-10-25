@@ -3158,7 +3158,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // run-start marker and a line saying the sweep is running land in the
   // loop log AND on stderr first. A driver that still has many folders
   // left to classify must never look silent while it works through them.
-  const { log, runId, drain: drainLoopLogSink, switchedAppendPath } = createLogSink(d.logSink)
+  const { log, runId, drain: drainLoopLogSink } = createLogSink(d.logSink)
   if (!process.env.VINAYA_RUN_ID) process.env.VINAYA_RUN_ID = runId
   // O3: two independent sink instances can both have a `log()` call in
   // flight when this driver is about to exit — this closure's own
@@ -3418,13 +3418,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     async function logEvents(events: readonly DevReviewLoopEventInput[]): Promise<void> {
       for (const e of events) {
         assertValidLoopEvent(e)
-        // The sink's own file once a retried trust-anchor read moved it from
-        // the folder to the server mid-run (`switchedAppendPath`), so this
-        // wait never polls a file the sink stopped writing.
-        const outboxPath = switchedAppendPath(task) ?? loopOutboxPath
-        const priorSize = sizeOfSafe(outboxPath)
+        const priorSize = sizeOfSafe(loopOutboxPath)
         log(e)
-        await waitForOwnLoopLine(outboxPath, priorSize, runId, e, d.sleep)
+        await waitForOwnLoopLine(loopOutboxPath, priorSize, runId, e, d.sleep)
         // The plain line for the event just written: text only, after the
         // write, so when and whether the event is logged is unchanged.
         narrateDriverEvent(loopLogPath, e, narratedEvents, task)

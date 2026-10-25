@@ -1484,7 +1484,6 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   warmup: () => void
   drain: () => Promise<void>
   resetContext: () => void
-  switchedAppendPath: (issue: number | null) => string | null
 } {
   const deps: LogSinkDeps = {
     ...defaultDeps(),
@@ -1670,7 +1669,6 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   let destinationRetries = 0
   let destinationRetryDueAt = 0
   let destinationRetryInFlight = false
-  let destinationSwitched = false
   const retryDestinationIfDue = (ctx: SinkContext): void => {
     if (ctx.destination.kind !== 'folder' || ctx.destination.fallbackReason?.kind !== 'anchor-unreadable') return
     if (destinationRetryInFlight || destinationRetries >= LOG_DESTINATION_ANCHOR_MAX_RETRIES) return
@@ -1687,7 +1685,6 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
           if (destination.kind === 'server') {
             settledContext = { ...ctx, destination }
             contextCache = Promise.resolve(settledContext)
-            destinationSwitched = true
             return
           }
           if (destination.kind !== 'folder' || destination.fallbackReason?.kind !== 'anchor-unreadable') {
@@ -1700,19 +1697,6 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         destinationRetryInFlight = false
         destinationRetryDueAt = deps.now().getTime() + LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS
       })
-  }
-
-  /**
-   * The file this sink now appends a `issue` event to, when — and only when —
-   * a re-resolution switched its destination mid-run; `null` otherwise. A
-   * caller that resolved its append path once (`resolveLogAppendPath`) and
-   * polls it for its own lines (`dev-review-loop.ts`'s `logEvents`) reads this
-   * first, so a switch never leaves it polling a file the sink no longer
-   * writes.
-   */
-  const switchedAppendPath = (issue: number | null): string | null => {
-    if (!destinationSwitched || settledContext?.destination.kind !== 'server') return null
-    return outboxPathFor(deps, settledContext.repo, issue)
   }
 
   /**
@@ -1731,7 +1715,6 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     contextCache = undefined
     settledContext = undefined
     destinationRetries = 0
-    destinationSwitched = false
   }
 
   // Every `url`-destination append schedules a drain of the local retry
@@ -2068,7 +2051,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     await drainChain.catch(() => undefined)
   }
 
-  return { log, logSync, runId, warmup, drain, resetContext, switchedAppendPath }
+  return { log, logSync, runId, warmup, drain, resetContext }
 }
 
 const defaultSink = createLogSink()

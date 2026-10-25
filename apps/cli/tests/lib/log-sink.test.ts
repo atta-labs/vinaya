@@ -1672,12 +1672,11 @@ sink.log(event('during-1'))
 sink.log(event('during-2'))
 await sink.drain()
 const waitedMs = Date.now() - started
-const pathDuring = sink.switchedAppendPath(404)
 await new Promise((r) => setTimeout(r, 500))
 sink.log(event('after-1'))
 sink.log(event('after-2'))
 await sink.drain()
-console.log(JSON.stringify({ resolutions, stderr, waitedMs, pathDuring, pathAfter: sink.switchedAppendPath(404) }))
+console.log(JSON.stringify({ resolutions, stderr, waitedMs }))
 `
     )
     try {
@@ -1692,8 +1691,6 @@ console.log(JSON.stringify({ resolutions, stderr, waitedMs, pathDuring, pathAfte
         resolutions: number
         stderr: string[]
         waitedMs: number
-        pathDuring: string | null
-        pathAfter: string | null
       }
       // One first resolution and one retry — the second in-flight-window
       // event started no second retry.
@@ -1717,10 +1714,6 @@ console.log(JSON.stringify({ resolutions, stderr, waitedMs, pathDuring, pathAfte
       expect(out.stderr[0]).toContain('not delivering to the configured log server')
       const driverLog = readFileSync(join(cwd, 'runtime', 'tasks-execution', '404', 'output', 'driver.log'), 'utf8')
       expect(driverLog.split('\n').filter((l) => l.includes('[log] '))).toHaveLength(1)
-
-      // Only after the switch does the sink name its new file to a poller.
-      expect(out.pathDuring).toBeNull()
-      expect(out.pathAfter).toBe(queue)
     } finally {
       server.stop()
     }
@@ -1758,7 +1751,6 @@ console.log(JSON.stringify({ resolutions, stderr, waitedMs, pathDuring, pathAfte
       .filter(Boolean)
     expect(lines).toHaveLength(2 * (LOG_DESTINATION_ANCHOR_MAX_RETRIES + 3))
     expect(stderr).toHaveLength(1)
-    expect(sink.switchedAppendPath(404)).toBeNull()
   })
 
   it('a retry that reads a different url ends the retries and keeps the folder', async () => {
