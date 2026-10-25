@@ -40,6 +40,7 @@ const LOG_SYNC_FOLDER_SOURCE_PATH = 'apps/cli/src/lib/log-sync-folder-source.ts'
 const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
 const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
+const FLOW_V2_EVENTS_PATH = 'apps/cli/src/lib/dev-review-loop/flow-v2-events.ts'
 /**
  * The webhook destination is the sink's own delivery mechanism for a
  * `logs.url` server destination, not a second kind of caller: it reads the
@@ -461,6 +462,20 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
     ]
   },
   {
+    // Built here, written by the Engine runner's sink.
+    name: 'review locally, push once — the version 2 flow events and the per-phase time both flows record',
+    files: [FLOW_V2_EVENTS_PATH],
+    requires: [
+      { kind: 'dev_review_loop', event: 'storage_push' },
+      { kind: 'dev_review_loop', event: 'local_checks_run' },
+      { kind: 'dev_review_loop', event: 'ready_push' },
+      { kind: 'dev_review_loop', event: 'failed_tests_rerun' },
+      { kind: 'dev_review_loop', event: 'pr_opened' },
+      { kind: 'dev_review_loop', event: 'ci_result_read' },
+      { kind: 'dev_review_loop', event: 'phase_time' }
+    ]
+  },
+  {
     name: 'runChecks — one gate `summary` per run, a `checked` observation per check that did not pass',
     files: [RUNNER_PATH],
     requires: [
@@ -589,11 +604,11 @@ describe('log coverage — every schema event maps to a producer boundary', () =
     familyEventsFromSchema(schemaSource, exportName, kind)
   )
 
-  it('sanity: the schema really does declare 33 kind/event pairs across 10 families today', () => {
+  it('sanity: the schema really does declare 40 kind/event pairs across 10 families today', () => {
     // A change to this number is a real schema change (a family or event
     // added/removed) — update it alongside PRODUCER_BOUNDARIES /
     // LOG_COVERAGE_EXEMPTIONS in the same diff, never silently.
-    expect(allDeclaredEvents.length).toBe(33)
+    expect(allDeclaredEvents.length).toBe(40)
   })
 
   it('every declared kind/event pair is required by a producer boundary, or named in LOG_COVERAGE_EXEMPTIONS', () => {

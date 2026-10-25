@@ -121,7 +121,8 @@ const libBinNames = [
   'pre-push-select-tests.ts',
   'pre-push-changed-files.ts',
   'pre-push-cache-test-run.ts',
-  'pre-push-record-tests.ts'
+  'pre-push-record-tests.ts',
+  'pre-push-mode.ts'
 ]
 const libOutdir = join(pkgRoot, 'dist', 'lib')
 await build(

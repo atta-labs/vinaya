@@ -59,6 +59,11 @@ function git(repoRoot: string, args: string[]): string {
 
 /** The ref this push's changes should be measured against — never throws. */
 export function resolveRemoteBase(repoRoot: string): string {
+  // A ready push (review locally, push once) names its base: storage pushes
+  // already moved the branch's upstream to the head, so the upstream would
+  // measure nothing; the change is measured against the default branch.
+  const named = process.env.VINAYA_PUSH_BASE?.trim()
+  if (named) return named
   const upstream = git(repoRoot, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
   if (upstream) return upstream
   const originMain = git(repoRoot, ['rev-parse', '--verify', '--quiet', 'origin/main'])

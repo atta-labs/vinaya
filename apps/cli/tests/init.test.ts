@@ -1534,6 +1534,26 @@ git rev-parse --git-dir 2>&1 || true
     expect(prePush).toContain('pre-push-record-tests.ts passed "" 0')
   })
 
+  it('resolves the push mode after Biome and before the doctrine gate, and a storage push exits before typecheck and tests — vendored repo only', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    const biomeIdx = prePush.indexOf('bunx biome check')
+    const modeIdx = prePush.indexOf('VINAYA_PUSH_MODE="$(bun apps/cli/src/lib/pre-push-mode.ts)" || exit 1')
+    const checkIdx = prePush.indexOf('check --all --local')
+    const storageExitIdx = prePush.indexOf('vinaya pre-push: storage push')
+    const typecheckIdx = prePush.indexOf('bunx turbo typecheck --affected')
+    expect(modeIdx).toBeGreaterThan(biomeIdx)
+    expect(modeIdx).toBeLessThan(checkIdx)
+    expect(storageExitIdx).toBeGreaterThan(checkIdx)
+    expect(storageExitIdx).toBeLessThan(typecheckIdx)
+  })
+
+  it('an ordinary adopter hook carries no push-mode step', async () => {
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    expect(readFileSync(join(root, '.husky/pre-push'), 'utf-8')).not.toContain('VINAYA_PUSH_MODE=')
+  })
+
   it('the old --concurrency=1 guard leaves no trace in turbo.json either — no repo-wide setting CI or the hook would inherit', () => {
     const turboJson = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', 'turbo.json'), 'utf-8'))
     expect(turboJson).not.toHaveProperty('concurrency')
@@ -1562,6 +1582,10 @@ git rev-parse --git-dir 2>&1 || true
     // reaches the fake `bunx` below at the typecheck line.
     mkdirSync(join(root, 'apps/cli/dist'), { recursive: true })
     writeFileSync(join(root, 'apps/cli/dist/index.js'), 'process.exit(0)\n')
+    // The push-mode step is required (a failed mode read refuses the push); this
+    // stand-in answers the ordinary mode so execution reaches the typecheck.
+    mkdirSync(join(root, 'apps/cli/src/lib'), { recursive: true })
+    writeFileSync(join(root, 'apps/cli/src/lib/pre-push-mode.ts'), 'process.stdout.write("default\\n")\n')
 
     // A fake `bunx` on PATH that fails, exactly as a real red typecheck
     // would — this is the mechanism under test, not the real turbo binary.

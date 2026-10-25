@@ -1620,7 +1620,17 @@ VINAYA_CHANGED_FILES="$(${libBinInvocation(selfHost, 'pre-push-changed-files.ts'
 if [ -n "$VINAYA_CHANGED_FILES" ]; then
   echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched -- || exit 1
 fi
+# The push mode: storage (a task-branch push while no pull request is open —
+# cheap checks only, no typecheck, no tests; refused when one is open), ready
+# (after both reviewers approved — the selected tests, measured against the
+# default branch) or default (every other push, unchanged).
+VINAYA_PUSH_MODE="$(${libBinInvocation(selfHost, 'pre-push-mode.ts', 'vinaya-push-mode')})" || exit 1
+export VINAYA_PUSH_MODE
 ${doctrineGate}
+if [ "$VINAYA_PUSH_MODE" = "storage" ]; then
+  echo "vinaya pre-push: storage push — cheap checks only, no tests (no pull request is open)"
+  exit 0
+fi
 # Ring 0 (O6): typecheck, then only the test files the real import graph
 # says the changed files could affect.
 bunx turbo typecheck --affected || exit 1

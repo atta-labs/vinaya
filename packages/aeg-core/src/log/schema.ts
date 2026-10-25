@@ -689,6 +689,92 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       bound: z.number().int().positive()
     })
     .strict(),
+  // Review locally, push once (the developer-review flow's version 2). Seven
+  // NEW, additive members: a line written before them parses unchanged, and
+  // no existing member's fields changed. `storage_push` is one Developer push
+  // to the task branch while no pull request is open (cheap checks only, no
+  // tests, no CI); `local_checks_run` is the round's local gate; `ready_push`
+  // is the push made after both reviewers approved, with the tests it
+  // selected and how many failed; `failed_tests_rerun` is a push that ran only
+  // the tests a refused push failed plus those its fix affects; `pr_opened`
+  // and `ci_result_read` happen once per approval. `phase_time` is written by
+  // both flows: the wall time one step spent, by phase, so the flows' time
+  // per phase is measured from the Log.
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('storage_push'),
+      round: z.number().int(),
+      branch: z.string(),
+      head: z.string()
+    })
+    .strict(),
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('local_checks_run'),
+      round: z.number().int(),
+      head: z.string().nullable(),
+      passed: z.boolean(),
+      wall_ms: z.number().nonnegative()
+    })
+    .strict(),
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('ready_push'),
+      round: z.number().int(),
+      head: z.string(),
+      outcome: z.enum(['passed', 'refused']),
+      selected: z.number().int().nonnegative(),
+      failed: z.number().int().nonnegative(),
+      rerun: z.boolean(),
+      wall_ms: z.number().nonnegative()
+    })
+    .strict(),
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('failed_tests_rerun'),
+      round: z.number().int(),
+      head: z.string(),
+      rerun_of: z.string(),
+      failed_files: z.number().int().nonnegative(),
+      affected_files: z.number().int().nonnegative(),
+      full_count: z.number().int().nonnegative()
+    })
+    .strict(),
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('pr_opened'),
+      round: z.number().int(),
+      pr: z.number().int().positive(),
+      head: z.string()
+    })
+    .strict(),
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('ci_result_read'),
+      round: z.number().int(),
+      pr: z.number().int().positive(),
+      head: z.string(),
+      conclusion: z.enum(['green', 'red', 'pending', 'skipped']),
+      failing_checks: z.array(z.string()),
+      wait_ms: z.number().nonnegative()
+    })
+    .strict(),
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('phase_time'),
+      round: z.number().int(),
+      phase: z.enum(['developer', 'local_checks', 'review', 'push', 'ci', 'other']),
+      step: z.string(),
+      wall_ms: z.number().nonnegative()
+    })
+    .strict(),
   // (O2/O3) Emitted exactly once when a review-loop driver process
   // ends, on every exit path the driver already traces in its role log
   // (a re-exec hand-off, an uncaught error, an OS signal) plus a normal
