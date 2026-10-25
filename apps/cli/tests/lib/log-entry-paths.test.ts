@@ -229,7 +229,8 @@ const checkNames = [
   'issue-surface-globs',
   'issue-milestone-attach',
   'atta-labs/secret-scan',
-  'atta-labs/ui-rules'
+  'atta-labs/ui-rules',
+  'atta-labs/process-version-bump'
 ] as const
 
 function workflowEntries(directory = join(ROOT, '.github', 'workflows')): Map<string, string> {

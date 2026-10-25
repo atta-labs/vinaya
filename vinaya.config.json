@@ -27,6 +27,12 @@
       "scope": "diff",
       "include": ["apps/vinaya-*/**"],
       "env": { "BASE_SHA": { "optional": true } }
+    },
+    "atta-labs/process-version-bump": {
+      "run": "./scripts/vinaya-checks/process-version-bump.ts",
+      "scope": "diff",
+      "include": ["processes/vinaya/**"],
+      "env": { "BASE_SHA": { "optional": true } }
     }
   },
   "ci": {
