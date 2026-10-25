@@ -793,14 +793,33 @@ const signalGroup = (pgid: number, signal: NodeJS.Signals): void => {
 /** One agent process group a runner launched, as its group file records it: the group id and its leader's start time. */
 export interface RecordedGroup {
   pgid: number
-  /** The leader's start time as `ps` reports it; null when it could not be read at launch. */
+  /** The leader's start time as `liveStartTime` reads it; null when it could not be read at launch. */
   startedAt: string | null
 }
 
-/** Reads a process's start time; the live `ps` read unless a test supplies its own. */
+/** Reads a process's start time; the live read unless a test supplies its own. */
 export type StartTimeOf = (pid: number) => string | null
 
-const liveStartTime: StartTimeOf = (pid) => getProcessSnapshot(pid)?.startedAt ?? null
+/**
+ * The kernel's start time of `pid` where `/proc` has it: field 22 of `/proc/<pid>/stat`, in clock ticks since
+ * boot, fixed for the life of the process. Linux `ps` derives `lstart` from the current time minus the uptime,
+ * so two reads of one process can differ by a second and a live agent would read as a reused pid. Elsewhere
+ * (macOS) `ps` reports a fixed `lstart`.
+ */
+export const liveStartTime: StartTimeOf = (pid) => {
+  let stat: string
+  try {
+    stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+  } catch {
+    return getProcessSnapshot(pid)?.startedAt ?? null
+  }
+  // The fields after the parenthesised command name, which may itself hold spaces: state is field 3.
+  const ticks = stat
+    .slice(stat.lastIndexOf(')') + 2)
+    .split(' ')
+    .at(22 - 3)
+  return ticks === undefined ? null : `ticks:${ticks}`
+}
 
 function readGroupFile(path: string): RecordedGroup[] {
   try {

@@ -434,7 +434,11 @@ for (const vendor of VENDORS)
           expect(alive(agentPid) && alive(childPid)).toBe(true)
           const second = lifecycleRunner(vendor, runtimeDir, script, join(dir, 'second'))
           try {
-            await until(() => !alive(agentPid) && !alive(childPid), 60_000, 'the abandoned agent to end')
+            await until(() => !alive(agentPid) && !alive(childPid), 60_000, 'the abandoned agent to end').catch(
+              (error: Error) => {
+                throw new Error(`${error.message}; the second runner printed:\n${second.output().slice(-2000)}`)
+              }
+            )
             // The restarted runner resumes the step the dead one was in, with an agent of its own.
             await until(
               () => pidIn(join(dir, 'second.agent')) !== null,
