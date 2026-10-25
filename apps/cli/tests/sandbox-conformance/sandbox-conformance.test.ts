@@ -30,7 +30,6 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -38,6 +37,7 @@ import { sourceManifestPath, sourceReceiptsPath } from '../../src/lib/source-man
 import { devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
 import { expectGradingSandboxDenies, proveGradingSandbox } from '../eval/grading-sandbox-proof.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../lib/dispatch/driver-socket-reach.js'
+import { spawnSyncBudgeted } from '../lib/process-fixture.js'
 import { ROLE_NAMES } from '../../../../harness/adapters/agents/manifest.js'
 import { createRoleLaunchers, sandboxProbePlanFor } from '../../../../processes/vinaya/executing/actions.js'
 import { commandsTheTextsName, DOCTRINE_SOURCES, isSuiteInput, REPO_ROOT } from './command-sources.js'
@@ -312,18 +312,23 @@ describe('Engine credential-confinement probes — the command and deny-rule che
       // No sandbox and no deny rule: the canary home's credential store is open to the helper, as it would be to a
       // role whose generated settings lost the `.git-credentials` denial.
       const run = (): string => {
-        const result = spawnSync('bash', ['-c', probe.command], {
-          cwd: root,
-          env: {
-            PATH: process.env.PATH ?? '/usr/bin:/bin',
-            HOME: home,
-            GIT_CONFIG_NOSYSTEM: '1',
-            GIT_TERMINAL_PROMPT: '0'
+        const result = spawnSyncBudgeted(
+          'bash',
+          ['-c', probe.command],
+          {
+            cwd: root,
+            env: {
+              PATH: process.env.PATH ?? '/usr/bin:/bin',
+              HOME: home,
+              GIT_CONFIG_NOSYSTEM: '1',
+              GIT_TERMINAL_PROMPT: '0'
+            },
+            encoding: 'utf8'
           },
-          encoding: 'utf8',
-          timeout: 30_000
-        })
-        return `${result.stdout ?? ''}${result.stderr ?? ''}`
+          30_000,
+          'row-34 probe'
+        )
+        return `${result.stdout}${result.stderr}`
       }
       expect(probeLeaked(run())).toBe(true)
       // With the store files gone the same probe surfaces nothing, so the leak it reports comes from the denied route.
