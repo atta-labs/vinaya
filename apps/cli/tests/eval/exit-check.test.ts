@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   checkExit,
+  engineEvidenceOf,
   EXPECTED_COUNTS,
   EXPECTED_SHARDS,
   OPERATOR_EXIT_EXCLUSIONS,
@@ -302,6 +303,13 @@ describe('the global exit check', () => {
       'fault-attack:52-hard-budget-exhaustion-turns-rounds-invalid-output-retries'
     )
     expect(gates?.owedIds).not.toContain('cutover-gate:gate-9')
+    // Gate 13's L2 and L3 suites are proved on the Engine; what it still owes is only its live L6 rehearsal.
+    const gate13 = registry.components.find(({ row }) => row.id === 'cutover-gate:gate-13')?.row
+    expect(gate13 === undefined ? undefined : engineEvidenceOf(gate13)).toEqual({
+      state: 'live-run-owed',
+      test: 'apps/cli/tests/conformance/dev-review-backend-selection.test.ts',
+      variable: 'VINAYA_ROLLBACK_REHEARSAL'
+    })
     expect(report.kinds.port.engine).toBeUndefined()
     console.log(
       `Engine evidence — cutover-gate: ${gates?.evidenced} evidenced, ${gates?.owed} owed; fault-attack: ${faultRows?.evidenced} evidenced, ${faultRows?.owed} owed; owed to the Operator on one host: ${report.operatorOwed.length}`

@@ -34,6 +34,11 @@
  * the gate. With `--background`, the widening happens in this process before
  * the detached controller is launched, never in the controller.
  *
+ * `--rollback` ends the task's in-flight Engine run and restarts it on the
+ * standalone runner: `runTask` runs the terminate-and-restart procedure
+ * (`lib/backend-rollback.js`), which refuses a task whose recorded runner is
+ * not `atta-engine`.
+ *
  * Exit codes (round 2 security review, HIGH): `0` publish OR a watched
  * pause's own genuine end (`'ended'` — merged, closed, or `--cancel`), `1`
  * the one un-watchable pause above, `2` a usage/argv error, `3` any other
@@ -66,7 +71,8 @@ const KNOWN_FLAGS = [
   '--quiet',
   '--widen-surface',
   '--reason',
-  '--runner'
+  '--runner',
+  '--rollback'
 ]
 
 type ParsedFlags = {
@@ -82,6 +88,7 @@ type ParsedFlags = {
   widenSurfaceFlagPresent: boolean
   reason: string | undefined
   reasonFlagPresent: boolean
+  rollback: boolean
   unknown: string[]
 }
 
@@ -113,6 +120,7 @@ export function parseFlags(rest: string[]): ParsedFlags {
   let widenSurfaceFlagPresent = false
   let reason: string | undefined
   let reasonFlagPresent = false
+  let rollback = false
   const unknown: string[] = []
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]
@@ -126,6 +134,8 @@ export function parseFlags(rest: string[]): ParsedFlags {
       issue = rest[++i]
     } else if (a === '--background') {
       background = true
+    } else if (a === '--rollback') {
+      rollback = true
     } else if (a === '--quiet') {
       quiet = true
     } else if (a === '--model') {
@@ -151,6 +161,7 @@ export function parseFlags(rest: string[]): ParsedFlags {
     widenSurfaceFlagPresent,
     reason,
     reasonFlagPresent,
+    rollback,
     unknown
   }
 }
@@ -185,9 +196,36 @@ export function applyQuiet(parsed: Pick<ParsedFlags, 'quiet'>): void {
 }
 
 const USAGE = [
-  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--widen-surface <glob,...> --reason <text>]`,
-  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--widen-surface <glob,...> --reason <text>]`
+  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--widen-surface <glob,...> --reason <text>] [--rollback]`,
+  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--widen-surface <glob,...> --reason <text>] [--rollback]`
 ].join('\n')
+
+/**
+ * `--rollback` runs the terminate-and-restart procedure in this process and always restarts on the standalone
+ * runner, so it takes no `--runner`, no `--widen-surface` and no `--background`; `null` when the flags agree.
+ */
+export function rollbackFlagConflict(
+  parsed: Pick<ParsedFlags, 'rollback' | 'runnerFlagPresent' | 'widenSurfaceFlagPresent' | 'background'>
+): string | null {
+  if (!parsed.rollback) return null
+  const conflicting = [
+    parsed.runnerFlagPresent ? '--runner' : null,
+    parsed.widenSurfaceFlagPresent ? '--widen-surface' : null,
+    parsed.background ? '--background' : null
+  ].filter((flag) => flag !== null)
+  return conflicting.length === 0
+    ? null
+    : `--rollback restarts on the standalone runner in this process and takes no ${conflicting.join(', ')}.`
+}
+
+function rollbackOrExit(parsed: ParsedFlags): { rollback?: true } {
+  const conflict = rollbackFlagConflict(parsed)
+  if (conflict !== null) {
+    console.error(`vinaya task run: ${conflict}\n${USAGE}`)
+    process.exit(2)
+  }
+  return parsed.rollback ? { rollback: true } : {}
+}
 
 /** `parseWidenSurface`, with a usage error reported and exited on. */
 function widenSurfaceOrExit(parsed: ParsedFlags): { widenSurface?: { globs: string[]; reason: string } } {
@@ -401,6 +439,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     }
     const agent = resolveAgentOrReport(parsed)
     if (!agent) process.exit(2)
+    const rollback = rollbackOrExit(parsed)
     const runner = runnerOrExit(parsed)
     const widen = widenSurfaceOrExit(parsed)
     applyQuiet(parsed)
@@ -408,7 +447,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
       await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model, runner, ...widen })
       return
     }
-    await runAndReport({ issue: issueN, agent, model: parsed.model, runner, ...widen })
+    await runAndReport({ issue: issueN, agent, model: parsed.model, runner, ...widen, ...rollback })
     return
   }
 
@@ -434,6 +473,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   }
   const agent = resolveAgentOrReport(parsed)
   if (!agent) process.exit(2)
+  const rollback = rollbackOrExit(parsed)
   const runner = runnerOrExit(parsed)
   const widen = widenSurfaceOrExit(parsed)
   applyQuiet(parsed)
@@ -441,7 +481,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     await runBackgroundAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...widen })
     return
   }
-  await runAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...widen })
+  await runAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...widen, ...rollback })
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'
