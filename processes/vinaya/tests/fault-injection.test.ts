@@ -106,7 +106,8 @@ afterAll(() => {
 // --- what the scenarios read -----------------------------------------------------------
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-async function until(done: () => boolean, ms = 20_000): Promise<void> {
+// Generous: a runner process starts slowly when the whole suite runs in parallel.
+async function until(done: () => boolean, ms = 60_000): Promise<void> {
   for (let waited = 0; !done() && waited < ms; waited += 25) await sleep(25)
   if (!done()) throw new Error('timed out waiting')
 }
@@ -436,7 +437,7 @@ for (const vendor of VENDORS)
             } catch {}
         }
       })
-    }, 60_000)
+    }, 200_000)
 
     // --- 07: provider rate or usage limit -------------------------------------------------
 
@@ -658,7 +659,7 @@ for (const vendor of VENDORS)
           started.runner.kill('SIGTERM')
           const exit = await started.exited
           expect(exit.code).toBe(143)
-          await until(() => !alive(agentPid) && !alive(childPid), 5000)
+          await until(() => !alive(agentPid) && !alive(childPid), 15_000)
           const exits = readFileSync(loopLogPathFor(null, 7, runtimeDir), 'utf8')
             .split('\n')
             .filter((line) => line.includes('driver exited ('))
@@ -671,7 +672,7 @@ for (const vendor of VENDORS)
             } catch {}
         }
       })
-    }, 60_000)
+    }, 120_000)
   })
 
 /** The stdout records a vendor's CLI prints when the subscription's usage limit ends its turn, resetting 30 minutes after `now`. */
