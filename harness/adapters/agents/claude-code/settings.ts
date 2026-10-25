@@ -1,4 +1,6 @@
-import { join } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@attalabs/aeg-types/dev-tools'
 import { mcpRule, type RoleGrants } from '../manifest'
 import {
@@ -11,6 +13,50 @@ import {
   type HookPolicy,
   scratchCacheEnv
 } from '../policy'
+
+/**
+ * The credential routes every role is denied, relative to the home directory: SSH keys, cloud and forge
+ * tokens (the gh token store), the files a git `store` credential helper reads, the vendors' own logins, and
+ * the system credential stores' files (the macOS Keychain directory, the Linux keyring).
+ */
+export const CREDENTIAL_HOME_ROUTES = [
+  '.ssh',
+  '.aws',
+  '.config/gh',
+  '.git-credentials',
+  '.config/git/credentials',
+  '.netrc',
+  '.gnupg',
+  '.codex/auth.json',
+  '.claude/.credentials.json',
+  'Library/Keychains',
+  '.local/share/keyrings'
+] as const
+
+/**
+ * The paths a role's sandbox may not read: each credential route under the real home directory, and the
+ * directory holding the SSH agent's socket when the launching environment names one, so no role reaches the
+ * agent even where Unix sockets are allowed (the Linux host opt-in).
+ */
+export function credentialDenyRead(env: Readonly<Record<string, string | undefined>> = process.env): string[] {
+  // The launching environment's HOME is the home the role's commands see; the OS record answers without one.
+  let home = env.HOME !== undefined && env.HOME !== '' ? env.HOME : homedir()
+  try {
+    home = realpathSync(home)
+  } catch {
+    // A home that cannot be resolved is named as given.
+  }
+  const agentSocket = env.SSH_AUTH_SOCK
+  return [
+    ...CREDENTIAL_HOME_ROUTES.map((route) => join(home, route)),
+    ...(agentSocket !== undefined && agentSocket !== '' ? [dirname(agentSocket)] : [])
+  ]
+}
+
+/** The Read tool's own deny rules for the same paths: the path itself and everything under it. */
+export function credentialReadRules(denyRead: readonly string[]): string[] {
+  return denyRead.flatMap((path) => [`Read(/${path})`, `Read(/${path}/**)`])
+}
 
 export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths): GeneratedAgentConfig {
   const builtinAllow = Object.entries(grants.tools.claude)
@@ -26,6 +72,7 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
   const writableRoots = resolveGrantValues(grants.writable_roots, paths.variables)
   const settingsPath = join(paths.generatedDir, 'role-settings.json')
   const mcpPath = join(paths.generatedDir, 'role-mcp.json')
+  const denyRead = credentialDenyRead()
   const shellDefaultAllow = grants.shell.default === 'allow'
   // The shell's rules matter only when the role has Claude's shell; a role that only reads gets none (Bash is denied).
   const hasShell = grants.tools.claude.Bash === 'allow'
@@ -46,7 +93,8 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
       // shell's default is allow; otherwise only the explicit command rules
       // below authorize shell commands. The deny rules hold either way.
       allow: [...builtinAllow, ...(shellDefaultAllow ? ['Bash'] : []), ...shellAllow, ...mcpAllow],
-      deny: [...builtinDeny, ...shellDeny]
+      // The Read tool is held to the same credential denial as the sandboxed shell.
+      deny: [...builtinDeny, ...shellDeny, ...credentialReadRules(denyRead)]
     },
     sandbox: {
       enabled: true,
@@ -58,7 +106,7 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
         // The host opt-in turns off only the sandbox's Unix-socket seccomp filter.
         ...(paths.allowUnixSockets === true ? { allowAllUnixSockets: true } : {})
       },
-      filesystem: { allowWrite: writableRoots }
+      filesystem: { allowWrite: writableRoots, denyRead }
     },
     hooks: {
       PreToolUse: [

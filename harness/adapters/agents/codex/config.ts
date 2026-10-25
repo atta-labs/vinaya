@@ -15,6 +15,27 @@ import {
 
 const quote = (value: string): string => JSON.stringify(value)
 
+/**
+ * The environment variables that carry a credential route, which no role's commands inherit: the SSH agent's
+ * socket, the forge tokens and git's credential prompts, the session bus a Linux keyring answers on, and any
+ * API key, token or secret. Codex's legacy sandbox settings name no read denial for a file, so the
+ * environment is the route these settings can close; Codex's own default excludes stay on beside them.
+ */
+export const CREDENTIAL_ENV_EXCLUDES = [
+  'SSH_AUTH_SOCK',
+  'SSH_AGENT_PID',
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GH_ENTERPRISE_TOKEN',
+  'GIT_ASKPASS',
+  'SSH_ASKPASS',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'AWS_*',
+  '*_API_KEY',
+  '*_TOKEN',
+  '*_SECRET'
+] as const
+
 export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): GeneratedAgentConfig {
   const hookPath = join(paths.generatedDir, 'hooks', 'pre-tool-use.mjs')
   const domainLines = grants.network_domains.map((domain) => `${quote(domain)} = "allow"`)
@@ -66,6 +87,9 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     '[sandbox_workspace_write]',
     `writable_roots = [${writable}]`,
     'network_access = true',
+    '',
+    '[shell_environment_policy.filters]',
+    ...CREDENTIAL_ENV_EXCLUDES.map((name) => `${quote(name)} = "exclude"`),
     '',
     '[features.network_proxy]',
     'enabled = true',

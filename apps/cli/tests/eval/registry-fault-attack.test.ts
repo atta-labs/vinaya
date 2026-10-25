@@ -14,7 +14,13 @@ import {
   type ModuleCatalog,
   suiteId
 } from '../../src/lib/dev-review-eval/registry'
-import { OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
+import { engineEvidenceOf, OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
+import {
+  CODEX_FILE_READ_RESIDUAL,
+  CODEX_PROFILE_OWED_REASON,
+  CREDENTIAL_PROBES,
+  CREDENTIAL_ROW_IDS
+} from '../sandbox-conformance/engine-attack-probes'
 import {
   FAULT_ATTACK_HEADING,
   type FaultAttackEntry,
@@ -297,5 +303,53 @@ describe('the fault-attack check fails on what it must', () => {
     const report = check(rawShard, { ...universes, 'cutover-gate': ['gate-17'], role: ['developer'] })
     expect(report.kinds).toEqual(['fault-attack'])
     expect(report.complete).toBe(true)
+  })
+})
+
+describe('the credential-confinement rows record Engine evidence, owed shrink-only', () => {
+  const owedList = JSON.parse(readFileSync(join(import.meta.dir, 'engine-evidence-owed.json'), 'utf8')) as {
+    owed: string[]
+  }
+  const byId = new Map(loaded.value.components.map((entry) => [entry.row.id, entry.row]))
+
+  it('lists every credential row and fails while any has no recorded Engine evidence, printing the owed count', () => {
+    const rows = CREDENTIAL_ROW_IDS.map((id) => byId.get(id))
+    expect(rows.every((row) => row !== undefined)).toBe(true)
+    // "Recorded" is a live-gated test entry or a stated owed reason; a row with no entry fails.
+    const unrecorded = rows.filter((row) => row === undefined || engineEvidenceOf(row) === undefined).map((_, i) => i)
+    expect(unrecorded).toEqual([])
+    const owed = CREDENTIAL_ROW_IDS.filter((id) => owedList.owed.includes(id))
+    console.log(`credential-confinement Engine evidence: ${owed.length} of ${CREDENTIAL_ROW_IDS.length} rows owed`)
+    // Shrink-only: every credential row is still owed; none leaves the list until its live output is pasted.
+    expect(owed.length).toBe(CREDENTIAL_ROW_IDS.length)
+  })
+
+  const cutoverOf = new Map(
+    rawShard.components.map((row) => [row.id, (row.faultAttack as { cutover?: string }).cutover])
+  )
+
+  it('records, for each pass-or-accepted credential row, denial on both adapters or its residual risk', () => {
+    for (const probe of CREDENTIAL_PROBES) {
+      const id = `fault-attack:${probe.row}`
+      if (cutoverOf.get(id) !== 'pass-or-accepted') continue
+      const row = byId.get(id)
+      if (row === undefined) throw new Error(`no row for ${probe.row}`)
+      const deniedBoth = Object.values(probe.byAdapter).every((d) => d.kind !== 'owed')
+      const state = engineEvidenceOf(row)
+      const namesResidual = state?.state === 'owed' && state.reason === CODEX_FILE_READ_RESIDUAL
+      expect(deniedBoth || namesResidual).toBe(true)
+    }
+  })
+
+  it('records the ruling reason on each credential row Codex cannot deny', () => {
+    for (const probe of CREDENTIAL_PROBES) {
+      if (probe.byAdapter.codex.kind !== 'owed') continue
+      const row = byId.get(`fault-attack:${probe.row}`)
+      const state = row === undefined ? undefined : engineEvidenceOf(row)
+      expect(state?.state).toBe('owed')
+      if (state?.state === 'owed') {
+        expect([CODEX_PROFILE_OWED_REASON, CODEX_FILE_READ_RESIDUAL]).toContain(state.reason)
+      }
+    }
   })
 })

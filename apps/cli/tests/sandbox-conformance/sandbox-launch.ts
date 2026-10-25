@@ -36,7 +36,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -56,11 +56,16 @@ import {
   stageCodexPolicyHome
 } from '../../src/lib/worker-boundary.js'
 import { sourceManifestPath, sourceReceiptsPath, sourceStoreDir } from '../../src/lib/source-manifest.js'
+import { grantVariables } from '../../../../harness/adapters/agents/variables.js'
+import { createRoleLaunchers, sandboxProbePlanFor } from '../../../../processes/vinaya/executing/actions.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture.js'
 import { isSuiteInput, REPO_ROOT } from './command-sources.js'
 
 export const AGENTS = ['claude', 'codex'] as const
 export type Agent = (typeof AGENTS)[number]
+
+/** The generated canary a credential probe plants in the host environment: never a real secret, proof of a leak if a role sees it. */
+export const ENGINE_PROBE_CANARY = 'VINAYA-CANARY-6f1a9c2e-not-a-real-secret'
 
 /** Pinned so a runtime release never changes the suite's verdict silently — bump deliberately, then re-run. */
 export const SANDBOX_RUNTIME_PACKAGE = '@anthropic-ai/sandbox-runtime@0.0.78'
@@ -344,4 +349,104 @@ function codexSession(): SandboxSession {
 
 export function openSandboxSession(agent: Agent): SandboxSession {
   return agent === 'claude' ? claudeSession() : codexSession()
+}
+
+/**
+ * A session that runs a command inside the launch shape the ENGINE generates for the developer role —
+ * Claude Code's generated `role-settings.json`, or Codex's generated `config.toml` — never the standalone
+ * dispatch's settings. The Engine's generator (`createRoleLaunchers`) writes the same files a real Engine
+ * run launches each role from; this session drives those files through the agent's real sandbox, so a
+ * credential-confinement probe is judged by the boundary the Engine actually ships, not a standalone one.
+ */
+export function openEngineSandboxSession(agent: Agent): SandboxSession {
+  const worktreeDir = createWorktree(agent)
+  const vendor = agent === 'claude' ? 'claude-code' : 'codex'
+  const runDir = realpathSync(mkdtempSync(join(tmpdir(), `engine-${agent}-run-`)))
+  const generatedRoot = join(runDir, 'generated')
+  const variables = grantVariables(worktreeDir, runDir, REPO_ROOT)
+  const scratchDir = variables.SCRATCH as string
+  const launchers = createRoleLaunchers({ vendor, generatedRoot, variables })
+  const developerDir = join(generatedRoot, 'developer')
+  const { runtimeDir, store } = controllerSourceStore()
+  // A host environment that carries every credential route a probe tries to reach, so a probe that still
+  // sees one is a real leak. The Engine's own env allowlist (Claude) and config filters (Codex) must strip
+  // them before the role's commands run.
+  const poisonedHostEnv: Record<string, string> = {
+    GH_TOKEN: ENGINE_PROBE_CANARY,
+    GITHUB_TOKEN: ENGINE_PROBE_CANARY,
+    ANTHROPIC_API_KEY: ENGINE_PROBE_CANARY,
+    OPENAI_API_KEY: ENGINE_PROBE_CANARY,
+    SSH_AUTH_SOCK: join(scratchDir, 'fake-agent.sock'),
+    DBUS_SESSION_BUS_ADDRESS: `unix:path=${join(scratchDir, 'fake-bus')}`
+  }
+  const dispose = (): void => {
+    removeWorktree(worktreeDir)
+    rmSync(runDir, { recursive: true, force: true })
+    rmSync(runtimeDir, { recursive: true, force: true })
+  }
+  const base = {
+    agent,
+    worktreeDir,
+    sourceStore: store,
+    runOutside: (command: string, env: Record<string, string>) => runOutsideSandbox(worktreeDir, command, env),
+    dispose
+  }
+  if (agent === 'claude') {
+    const generated = JSON.parse(readFileSync(join(developerDir, 'role-settings.json'), 'utf8')) as {
+      sandbox: { network: { allowedDomains: string[] }; filesystem: { denyRead?: string[]; allowWrite: string[] } }
+    }
+    const settingsPath = join(runDir, 'srt-settings.json')
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        network: { allowedDomains: generated.sandbox.network.allowedDomains, deniedDomains: [] },
+        filesystem: {
+          denyRead: generated.sandbox.filesystem.denyRead ?? [],
+          allowRead: [],
+          allowWrite: generated.sandbox.filesystem.allowWrite,
+          denyWrite: []
+        }
+      })
+    )
+    // The Engine gives a Claude role only its allowlisted launch env; the credentials above never reach it.
+    const plan = sandboxProbePlanFor('claude-code', launchers.developer!, developerDir, worktreeDir, {
+      ...stripVinayaEnv(),
+      ...poisonedHostEnv
+    })
+    return {
+      ...base,
+      run: (command, env) =>
+        runIn(
+          [process.execPath, 'x', SANDBOX_RUNTIME_PACKAGE, '--settings', settingsPath, '-c', withAbsoluteBun(command)],
+          worktreeDir,
+          { ...plan.env, TMPDIR: scratchDir, ...env },
+          `engine-claude: ${command}`
+        )
+    }
+  }
+  // Codex launches from the generated CODEX_HOME; `codex sandbox` needs the staged mode as a `--config` override.
+  writeFileSync(join(developerDir, 'auth.json'), '{}\n')
+  const configToml = readFileSync(join(developerDir, 'config.toml'), 'utf8')
+  const sandboxMode = configToml.match(/^sandbox_mode = ("[^"]+")$/m)?.[1]
+  if (sandboxMode === undefined) throw new Error('the Engine-generated Codex config names no sandbox_mode')
+  const gitCommonDir = resolveGitCommonDir(worktreeDir)
+  const bunCacheDir = resolveBunInstallCacheDir()
+  const sandboxArgs = addCodexWritableDirs(
+    ['sandbox', '--config', `sandbox_mode=${sandboxMode}`],
+    [scratchDir, bunCacheDir, ...(gitCommonDir ? [gitCommonDir] : [])],
+    true
+  )
+  const envExtras = codexSpawnEnvExtras('codex', developerDir, scratchDir).attribution
+  return {
+    ...base,
+    run: (command, env) =>
+      runIn(
+        [process.execPath, 'x', CODEX_PACKAGE, ...sandboxArgs, '--', 'bash', '-c', withAbsoluteBun(command)],
+        worktreeDir,
+        // Codex receives the poisoned host env; its config's own environment filters must keep each credential
+        // variable out of the role's commands.
+        { ...stripVinayaEnv(), ...poisonedHostEnv, ...envExtras, CODEX_HOME: developerDir, ...env },
+        `engine-codex: ${command}`
+      )
+  }
 }

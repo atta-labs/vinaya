@@ -392,6 +392,14 @@ How to run it:
 
 Without `VINAYA_SANDBOX_CONFORMANCE=1`, an ordinary run of the test file runs only the command-list checks.
 
+### The credential-confinement probes — inside the Engine launch shape
+
+<!-- AEG:CLAIM: apps/cli/tests/sandbox-conformance/engine-attack-probes.ts contains:export const CREDENTIAL_PROBES -->
+<!-- AEG:CLAIM: apps/cli/tests/sandbox-conformance/sandbox-launch.ts contains:export function openEngineSandboxSession( -->
+The standalone conformance suite above launches each command from the standalone dispatch's own settings. A role the Engine runs launches from a different shape — Claude Code from the settings the Engine generates, Codex from the `config.toml` its generated `CODEX_HOME` holds — so a standalone denial says nothing about the Engine path. The credential-confinement rows of the fault-and-attack matrix are proved on the Engine shape by their own probes (`engine-attack-probes.ts`): each row has one attack command, run inside the launch shape the Engine generates for the developer role, once under Claude Code and once under Codex (`openEngineSandboxSession`), with the agent's own env allowlist and config filters in force and a generated canary planted in the host environment. The probes plant no real secret and assert the canary never appears in a probe's output.
+
+Without the variable, the suite checks statically that every gate-14 row (worktree code, the system credential store, the git credential helper, the SSH agent) has a probe command and that the settings the Engine generates for every role, under both adapters, carry a deny rule for that row's credential route. Claude Code denies a route through `filesystem.denyRead` and the Read tool's own `permissions.deny`; Codex, whose legacy sandbox settings deny no file read, keeps each credential-carrying variable out of a role's commands through `shell_environment_policy.filters`. A route the current Codex launch shape cannot deny — a credential read that only a permission profile could refuse, which the `sandbox_mode` the Engine's Codex launch requires turns off — keeps its row on the owed Engine-evidence list with that reason recorded, never marked proved. A credential row leaves the owed list only when a pull request carries the pasted output of the probe run with the variable set, on Linux and on a Mac, under both adapters.
+
 ## 10. Required sources and their receipts — outside every worker's writable roots
 
 <!-- AEG:CLAIM: apps/cli/src/lib/source-manifest.ts contains:return runPath(runtimeDir, scope, { area: 'control', file: SOURCE_STORE_DIRNAME }) -->
