@@ -4086,7 +4086,7 @@
       "suite": ["engine-boundary.l3@1"],
       "tasks": {
         "positive": {
-          "present": "Corpus `operator-intervention`, `cancellation`: INV-090 holds, asserted on the forge-fake ledger. packed-runtime-consumer.test.ts supplies the current packed graph-builder executor proof; packed-runtime-public-run-control.test.ts is the gate-16 start/resume proof when Atta Engine delivers that public seam."
+          "present": "Corpus `operator-intervention`, `cancellation`: INV-090 holds, asserted on the forge-fake ledger. packed-runtime-consumer.test.ts supplies the packed graph-builder executor proof; packed-runtime-public-run-control.test.ts is the delivered gate-16 proof that public start and resume run a caller-supplied executor."
         },
         "negative": {
           "present": "The same scenario with the condition INV-090 governs absent: the behaviour does not occur, asserted on the forge-fake ledger (§9 balance)."
@@ -4320,7 +4320,7 @@
       "suite": ["engine-boundary.l3@1"],
       "tasks": {
         "positive": {
-          "present": "Corpus `happy-path`, `revisions`: INV-099 holds, asserted on the control store. packed-runtime-consumer.test.ts supplies the current packed graph-builder executor proof; packed-runtime-public-run-control.test.ts is the gate-16 start/resume proof when Atta Engine delivers that public seam."
+          "present": "Corpus `happy-path`, `revisions`: INV-099 holds, asserted on the control store. packed-runtime-consumer.test.ts supplies the packed graph-builder executor proof; packed-runtime-public-run-control.test.ts is the delivered gate-16 proof that public start and resume run a caller-supplied executor."
         },
         "negative": {
           "present": "The same scenario with the condition INV-099 governs absent: the behaviour does not occur, asserted on the control store (§9 balance)."
