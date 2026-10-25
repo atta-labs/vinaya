@@ -571,6 +571,7 @@ export function withAgentNarration(
  * The runner's Log sink, each event narrated into the driver log right after it is emitted, with the events
  * narrated before it as context: what the standalone loop's `logEvents` does after each event it writes. The
  * translator and the runner share the one wrapped sink, so no event is narrated twice; a narration failure is dropped.
+ * A conflict re-entry is narrated with no earlier events, as the standalone's watching driver narrates its own.
  */
 export function narratingLog(
   log: (event: unknown) => void,
@@ -582,7 +583,8 @@ export function narratingLog(
   return (event) => {
     log(event)
     try {
-      narrateEvent(logPath, event, narrated, task)
+      const reentry = (event as { event?: unknown } | null)?.event === 'conflict_reentry'
+      narrateEvent(logPath, event, reentry ? [] : narrated, task)
     } catch {}
     narrated.push(event)
   }

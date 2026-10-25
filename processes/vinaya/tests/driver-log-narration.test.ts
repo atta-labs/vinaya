@@ -5,6 +5,12 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loopLogPathFor, narrateDriverEvent } from '../../../apps/cli/src/lib/loop-log'
+import {
+  makeInProcessDeps,
+  makeWorld,
+  runLoopInProcess,
+  taskRunDir
+} from '../../../apps/cli/tests/lib/dev-review-loop-harness'
 import { loadProcess } from '../../../harness/dev-process/loader/load-process'
 import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
 import {
@@ -16,6 +22,7 @@ import {
 } from '../executing/actions'
 import { narratingLog, runEngine, type EngineRunOptions } from '../bin/run-engine'
 import { recordedHandoff } from './handoff-fakes'
+import { records, replay, TASK as REPLAY_TASK, type Step } from './replay-world'
 import { confidentTurn, PASSING_FORGE_GATES } from './round-fakes'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
@@ -90,7 +97,7 @@ async function waitFor(check: () => boolean, ms = 5000): Promise<boolean> {
   return check()
 }
 
-// --- the standalone side: the CLI's own dispatch of each turn, on a fake `claude` -------------
+// --- the standalone side: the standalone loop, each turn launched by the CLI's own dispatch on a fake `claude` -----
 
 function pathWithoutRealVendors(): string {
   return (process.env.PATH ?? '')
@@ -108,40 +115,79 @@ function withoutVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 /**
- * The lines the standalone dispatch writes about its own launch, not about the agent's stream: the permission
- * policy it generates, its start, and the session it records. The Engine's executor launches the agent instead, so
- * these have no Engine counterpart; every other line of the standalone log is compared.
+ * Runs one turn through the standalone dispatch (`vinaya dispatch <role> --role-log-path`) on a fake `claude` that
+ * prints `records`, so the role's lines reach `roleLogPath` exactly as the standalone dispatch writes them.
  */
-const STANDALONE_LAUNCH_LINE = /^[>+x~#] \S+(?: \S+)? {3}(?:permission policy |started$|resumable — )/
-
-/** Dispatches each scripted turn through `vinaya dispatch` and returns the driver log it wrote. */
-function standaloneRound(): string {
-  const root = mkdtempSync(join(tmpdir(), 'narration-standalone-'))
+function standaloneDispatch(
+  role: string,
+  records: readonly Record<string, unknown>[],
+  roleLogPath: string,
+  env: NodeJS.ProcessEnv
+): void {
+  const root = mkdtempSync(join(tmpdir(), `narration-${role}-`))
   const home = join(root, 'home')
-  const cwd = join(root, 'cwd')
   const bin = join(root, 'bin')
-  for (const dir of [home, cwd, bin]) mkdirSync(dir, { recursive: true })
-  const logPath = join(root, 'driver.log')
-  const promptFile = join(cwd, 'prompt.txt')
+  for (const dir of [home, bin]) mkdirSync(dir, { recursive: true })
+  const stream = join(root, 'stream.jsonl')
+  writeFileSync(stream, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+  writeFileSync(join(bin, 'claude'), `#!/bin/sh\ncat > /dev/null\ncat '${stream}'\nexit 0\n`)
+  chmodSync(join(bin, 'claude'), 0o755)
+  const promptFile = join(root, 'prompt.txt')
   writeFileSync(promptFile, 'The scripted turn.\n')
-  for (const role of Object.keys(SCRIPT) as Array<keyof typeof SCRIPT>) {
-    const stream = join(root, `${role}.jsonl`)
-    writeFileSync(stream, `${SCRIPT[role].join('\n')}\n`)
-    writeFileSync(join(bin, 'claude'), `#!/bin/sh\ncat > /dev/null\ncat '${stream}'\nexit 0\n`)
-    chmodSync(join(bin, 'claude'), 0o755)
-    execFileSync(
-      'bun',
-      [CLI_ENTRY, 'dispatch', role, '--agent', 'claude', '--prompt-file', promptFile, '--role-log-path', logPath],
-      {
-        cwd,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...withoutVinayaEnv(process.env), HOME: home, PATH: `${bin}:${pathWithoutRealVendors()}` },
-        timeout: 60_000
-      }
-    )
-  }
-  return logPath
+  execFileSync(
+    'bun',
+    [CLI_ENTRY, 'dispatch', role, '--agent', 'claude', '--prompt-file', promptFile, '--role-log-path', roleLogPath],
+    {
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...withoutVinayaEnv(env), HOME: home, PATH: `${bin}:${pathWithoutRealVendors()}` },
+      timeout: 60_000
+    }
+  )
 }
+
+/** The replay world's recorded stream for each standalone role's turn. */
+const STEP_OF_DISPATCH: Record<string, Step> = {
+  developer: 'develop',
+  'code-reviewer': 'code-review',
+  security: 'security-review'
+}
+
+/**
+ * The standalone loop's driver log for one green round: the loop itself (`runLoopInProcess`), its forge faked by the
+ * loop harness, each turn launched by the real standalone dispatch printing the replay world's recorded stream.
+ */
+async function standaloneRound(): Promise<string[]> {
+  const world = makeWorld()
+  const fakes = makeInProcessDeps(world)
+  const outer = { ...process.env }
+  await runLoopInProcess(world, undefined, {
+    dispatchRole: async (role, agent, prompt, opts) => {
+      const step = STEP_OF_DISPATCH[role]
+      if (step && opts.roleLogPath) standaloneDispatch(role, records('claude', step), opts.roleLogPath, outer)
+      // The turn's outcome is the harness's own: a completed turn, then two clean reviews.
+      return fakes.dispatchRole!(role, agent, prompt, opts)
+    }
+  })
+  return linesOf(join(taskRunDir(world), 'output', 'driver.log'))
+}
+
+/**
+ * The lines the standalone dispatch writes about its own launch, not about the agent's stream: the permission
+ * policy it generates, its start, and the session it records. The Engine's executor launches the agent instead.
+ */
+const STANDALONE_LAUNCH_LINE =
+  /^> (?:Developer|Code review|Security) {3}(?:permission policy v\d+ written to |started$|resumable — session recorded )/
+
+/**
+ * The standalone driver's own progress lines, written with `appendDriverLine` rather than narrated from a Log event:
+ * the Engine runner writes its own milestone lines in their place.
+ */
+const STANDALONE_DRIVER_LINE =
+  /^(?:# Loop {3}(?:Developer starting round \d+ with claude|Reviewers starting round \d+)|> Loop {3}(?:security_scan|review_bound): .*)$/
+
+/** A round's measured length, the one value in a narrated line that is a clock reading. */
+const withoutDuration = (line: string): string => line.replace(/ after \d+m \d+s:/, ' after <duration>:')
 
 // --- the Engine side: the runner on the same turns, its executor launching a fake agent ----------
 
@@ -241,38 +287,38 @@ const launchRole = (args: readonly string[]): keyof typeof SCRIPT | undefined =>
   ROLE_OF_LAUNCH[(args[args.indexOf('--settings') + 1] ?? '').split('/').at(-2) ?? '']
 
 describe('the Engine runner narrates a run into the driver log as the standalone loop does', () => {
-  test('the same scripted Developer, code-review and security-review turns give the same driver-log lines on both runners', async () => {
-    const standalone = linesOf(standaloneRound())
+  test('one scripted round on the standalone loop and on the Engine runner writes the same driver-log lines', async () => {
+    const standalone = await standaloneRound()
+    const engineRun = await replay({ vendor: 'claude' })
+    expect(engineRun.trace.outcome).toBe('completed')
+    const engine = linesOf(loopLogPathFor(null, REPLAY_TASK, engineRun.runtimeDir))
 
-    const emitted: unknown[] = []
-    const options = engineOptions((_command, args) => {
-      const role = launchRole(args)
-      return fakeAgent(role ? SCRIPT[role] : [], async () => {})
-    }, emitted)
-    const result = await runEngine(options)
-    expect(result.exitCode).toBe(0)
-    const engine = linesOf(loopLogPathFor(null, TASK, options.runtimeDir))
-
-    // The turns' lines: each line labelled with one of the three roles, and the detail lines beneath it, in order.
-    const turnLines = (lines: readonly string[]) =>
-      lines.filter((line) => /^[>+x~#] (?:Developer|Code review|Security) {3}/.test(line) || line.startsWith('· '))
-    const standaloneTurns = turnLines(standalone).filter((line) => !STANDALONE_LAUNCH_LINE.test(line))
-    expect(standaloneTurns).toContain('· Reading the brief.')
-    expect(standaloneTurns).toContain('> Security   Writing')
-    expect(turnLines(engine)).toEqual(standaloneTurns)
-
-    // Every Log event the run emitted is narrated with the standalone's own function and earlier-events context.
-    const expectedPath = join(mkdtempSync(join(tmpdir(), 'narration-expected-')), 'driver.log')
-    const earlier: unknown[] = []
-    for (const event of emitted) {
-      narrateDriverEvent(expectedPath, event, earlier, TASK)
-      earlier.push(event)
-    }
-    const eventLines = linesOf(expectedPath)
-    expect(eventLines.length).toBeGreaterThan(0)
-    const loopLines = engine.filter((line) => /^[>+x~#] Loop {3}/.test(line))
-    expect(loopLines).toEqual(eventLines)
-  }, 120_000)
+    // The Engine's file is the standalone's, line for line, timestamps and the round's clock reading removed, with
+    // each difference named here: nothing else is dropped from either file.
+    const fromStandalone = standalone
+      .filter((line) => !STANDALONE_LAUNCH_LINE.test(line) && !STANDALONE_DRIVER_LINE.test(line))
+      .map((line) => (line === '# Loop   run started' ? '# Engine Runner   run started' : line))
+    const engineMilestones = [
+      `no checkpoint; starting fresh on branch task/issue-${REPLAY_TASK}`,
+      'driver exited (finished, publish); driver lock cleared'
+    ]
+    // The standalone writes `driver_exited` to the Log without narrating it; the Engine narrates every event.
+    const engineOnlyNarration = ['+ Loop   The driver finished.']
+    const expected = [
+      fromStandalone[0],
+      engineMilestones[0],
+      ...fromStandalone.slice(1),
+      ...engineOnlyNarration,
+      engineMilestones[1]
+    ].map((line) => withoutDuration(line ?? ''))
+    expect(engine.map(withoutDuration)).toEqual(expected)
+    // The comparison covers each turn and each narrated event.
+    expect(expected).toContain('> Developer   Running ')
+    expect(expected).toContain('> Security   Reading ')
+    expect(expected).toContain('+ Loop   Round 1 verdicts: The code reviewer approved; the security reviewer approved.')
+    // The launch lines the standalone's filter removed are exactly the three each of its three turns wrote.
+    expect(standalone.filter((line) => STANDALONE_LAUNCH_LINE.test(line))).toHaveLength(9)
+  }, 200_000)
 
   test("agent lines appear in the driver log while the fake agent is still running, and the executor's reader still gets every byte", async () => {
     const seenWhileRunning: Record<string, boolean> = {}
@@ -318,6 +364,20 @@ describe('the narrating Log sink', () => {
     log({ event: 'round_ended' })
     expect(calls).toEqual(['log:round_started', 'narrate:round_started', 'log:round_ended', 'narrate:round_ended'])
     expect(contexts).toEqual([0, 1])
+  })
+
+  test('narrates a conflict re-entry with no earlier events, as the standalone watching driver does', () => {
+    const contexts: number[] = []
+    const log = narratingLog(
+      () => {},
+      join(tmpdir(), 'unused.log'),
+      TASK,
+      (_path, _event, earlier) => void contexts.push(earlier.length)
+    )
+    log({ event: 'round_started' })
+    log({ event: 'conflict_reentry' })
+    log({ event: 'round_started' })
+    expect(contexts).toEqual([0, 0, 2])
   })
 
   test("a round's end states the confidence its gate read recorded, as the standalone's narration does", () => {
