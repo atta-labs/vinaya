@@ -147,4 +147,25 @@ describe('real runtime directory guard', () => {
     expect(line).toContain('vinaya-test-runtime-')
     rmSync(inherited, { recursive: true, force: true })
   })
+
+  // A sandbox names a temporary directory that does not exist yet; the preload creates it, or keeps what it was handed.
+  it('starts under a temporary directory that does not exist yet, and under one that cannot be made', () => {
+    const probe = join(mkdtempSync(join(tmpdir(), 'runtime-probe-')), 'probe.test.ts')
+    writeFileSync(
+      probe,
+      "import { it } from 'bun:test'\nit('prints', () => console.log('RUNTIME=' + process.env.VINAYA_RUNTIME_DIR))\n"
+    )
+    const missing = join(mkdtempSync(join(tmpdir(), 'tmp-parent-')), 'claude')
+    for (const [tmp, expected] of [
+      [missing, 'vinaya-test-runtime-'],
+      ['/dev/null/claude', '/inherited']
+    ] as const) {
+      const out = spawnSyncBudgeted('bun', ['test', '--preload', './tests/lib/test-env-preload.ts', probe], {
+        cwd: join(import.meta.dir, '../..'),
+        env: { ...stripVinayaEnv(), TMPDIR: tmp, VINAYA_RUNTIME_DIR: '/inherited' },
+        encoding: 'utf8'
+      })
+      expect(`${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]).toContain(expected)
+    }
+  })
 })

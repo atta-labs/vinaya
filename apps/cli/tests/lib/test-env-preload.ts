@@ -45,7 +45,7 @@
  * `it(...)`, both of which run AFTER this preload and are untouched by it.
  */
 import { afterAll } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
@@ -83,8 +83,18 @@ for (const key of [
  * still fails a test that reaches the real directory some other way, such as
  * a spawned child with `VINAYA_*` stripped.
  */
-const privateRuntimeDir: string = mkdtempSync(join(tmpdir(), 'vinaya-test-runtime-'))
-process.env.VINAYA_RUNTIME_DIR = privateRuntimeDir
+// A sandboxed run names a temporary directory it has not created yet (Claude's sandbox: `/tmp/claude`). Where none
+// can be made at all, the run keeps the directory it was handed rather than failing before any test starts.
+function makePrivateRuntimeDir(): string | null {
+  try {
+    mkdirSync(tmpdir(), { recursive: true })
+    return mkdtempSync(join(tmpdir(), 'vinaya-test-runtime-'))
+  } catch {
+    return null
+  }
+}
+const privateRuntimeDir = makePrivateRuntimeDir()
+if (privateRuntimeDir !== null) process.env.VINAYA_RUNTIME_DIR = privateRuntimeDir
 
 /**
  * `Bun.spawn`/`Bun.spawnSync` called without an `env` give the child the
@@ -118,7 +128,7 @@ Bun.spawnSync = spawnWithCurrentEnv(Bun.spawnSync)
  * covered, whichever files it was given.
  */
 afterAll(() => {
-  rmSync(privateRuntimeDir, { recursive: true, force: true })
+  if (privateRuntimeDir !== null) rmSync(privateRuntimeDir, { recursive: true, force: true })
   const leaked = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
   if (leaked.length > 0) {
     throw new Error(`tests wrote into the real runtime directory: ${leaked.join(' ')}`)
