@@ -3,6 +3,7 @@ import { NextLink } from '@/ui/lib/next-link'
 import { cn } from '@/ui/lib/utils'
 import { Heading, Text } from '@/ui/shared'
 import { WRAP } from '../../vinaya-process/_components/process-styles'
+import { NamedIcon } from '../icons'
 import { ButtonLink } from '../landing/ButtonLink'
 
 // One feature's page: what it is, its real view from home, what it shows, what it never does, how to use it, and
@@ -16,9 +17,8 @@ interface FeatureNeighbour {
 
 interface FeaturePageProps {
   n: number
+  /** The feature's name; its drawn icon is the one the icon registry holds for that name. */
   name: string
-  /** The feature's drawn icon, from `_components/icons`, sized by the page. */
-  icon: (className: string) => ReactNode
   lead: string
   tags: readonly string[]
   docsHref: string
@@ -39,7 +39,7 @@ interface FeaturePageProps {
 const CARD_LINK = 'rounded-xl border border-border/60 transition-colors hover:border-foreground/40'
 
 export function FeaturePage(props: FeaturePageProps) {
-  const { n, name, icon, lead, tags, docsHref, command, liveLabel, live, shows, never, use, prev, next } = props
+  const { n, name, lead, tags, docsHref, command, liveLabel, live, shows, never, use, prev, next } = props
   return (
     <main className='bg-background text-foreground'>
       <section className={cn(WRAP, 'flex flex-col items-start gap-7 pt-12 pb-12 sm:pt-16 sm:pb-16')}>
@@ -47,7 +47,7 @@ export function FeaturePage(props: FeaturePageProps) {
           Feature 0{n} / 05
         </Text>
         <div className='flex flex-wrap items-center gap-5 sm:gap-7'>
-          {icon('size-16 sm:size-22 [&_*]:[stroke-width:1.6]')}
+          <NamedIcon name={name} className='size-16 sm:size-22' />
           <h1 className='font-sans text-6xl leading-none tracking-tighter sm:text-8xl'>{name}</h1>
         </div>
         <p className='max-w-3xl text-xl leading-snug text-muted-foreground sm:text-2xl'>{lead}</p>

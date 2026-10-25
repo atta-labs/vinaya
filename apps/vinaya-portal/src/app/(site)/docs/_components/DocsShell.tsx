@@ -9,32 +9,29 @@ import { Text } from '@/ui/shared'
 import { useDocsChrome } from '../../_components/DocsChrome'
 
 type SidebarShellProps = {
-  /** Pinned at the top of the sidebar, above the content slot. */
-  wordmark: ReactNode
   /** Whatever the page's sidebar shows. The shell knows nothing about it. */
   children: ReactNode
 }
 
 /**
  * The docs sidebar's outer shell, and nothing else: full height, no border, the sidebar
- * surface, the wordmark pinned at the top, and a slot below it for the page's own content.
+ * surface, and a slot for the page's own content (the wordmark now sits in the top bar).
  * It is content-agnostic — the doctrine tree, the CLI command list, the config section
  * list and the harness page's own explanation panel each own what they show and pass it
  * in as `children`.
  *
  * Provides `SidebarProvider` context, so the slot can use the sidebar primitives
- * (`SidebarContent`, `SidebarMenu`, ...); the slot is a flex column under the wordmark, so
+ * (`SidebarContent`, `SidebarMenu`, ...); the slot is a flex column, so
  * a `SidebarContent` child (or any `min-h-0 flex-1 overflow-y-auto` box) fills the height
  * left and scrolls on its own. A plain surface rather than `ChromeFrame variant='rail'`:
  * the rail draws a right border (and under retro a floating inset card), and this shell
  * has neither, without touching the shared frame other apps' rails still use. Hidden below
  * `lg`, where `DocsShell` opens the same content in `SidebarDrawer` instead.
  */
-function SidebarShell({ wordmark, children }: SidebarShellProps) {
+function SidebarShell({ children }: SidebarShellProps) {
   // One width for every docs set, so the sidebar does not change size between the harness and the process docs.
   return (
-    <SidebarProvider className='hidden h-full min-h-0 w-[18.75rem] shrink-0 flex-col bg-sidebar text-sidebar-foreground lg:flex'>
-      <div className='flex h-14 shrink-0 items-center px-4'>{wordmark}</div>
+    <SidebarProvider className='hidden h-full min-h-0 w-64 shrink-0 flex-col bg-background text-sidebar-foreground lg:flex'>
       {children}
     </SidebarProvider>
   )
@@ -163,28 +160,27 @@ type DocsShellProps = {
 }
 
 /**
- * The one layout every docs page renders in, except State Machine (see
- * `usesDocsShell`): `SidebarShell` on the left, and on the right a body whose own top
- * strip carries the site nav and theme toggle — scoped to the body's width, no logo from
- * `lg` up — above the page content. Below `lg` the sidebar is hidden and
- * `SidebarDrawer`'s bar sits between the strip and the content instead, opening the
- * same `sidebar` content as a drawer — so every page that renders here gets the mobile
- * drawer for whatever it passes.
+ * The one layout every docs page renders in, except State Machine (see `usesDocsShell`): the site's top bar across
+ * the full width, then `SidebarShell` on the left and the page body on the right. Below `lg` the sidebar is hidden
+ * and `SidebarDrawer`'s bar sits above the body instead, opening the same `sidebar` content as a drawer — so every
+ * page that renders here gets the mobile drawer for whatever it passes.
  *
- * Fills `SiteContentPad`'s definite `h-dvh` height (`h-full`, no bar padding on these
- * routes), so the sidebar and the body's own pane each scroll inside it. The strip is in
- * flow, not fixed; `relative z-30` keeps its Docs dropdown painting over the pane's own
- * sticky headers below it.
+ * Fills `SiteContentPad`'s definite `h-dvh` height (`h-full`, no bar padding on these routes), so the sidebar and
+ * the body's own pane each scroll inside it. The bar is in flow, not fixed; `relative z-30` keeps its Docs dropdown
+ * painting over the pane's own sticky headers below it.
  */
 export function DocsShell({ sidebar, sidebarLabel, children }: DocsShellProps) {
-  const { wordmark, topStrip } = useDocsChrome()
+  const { topStrip } = useDocsChrome()
+  // One full-width top bar (the site's own, logo included), with the sidebar and the content side by side under it.
   return (
-    <div className='flex h-full min-h-0 w-full overflow-hidden'>
-      <SidebarShell wordmark={wordmark}>{sidebar}</SidebarShell>
-      <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
-        <div className='relative z-30 shrink-0'>{topStrip}</div>
-        <SidebarDrawer label={sidebarLabel}>{sidebar}</SidebarDrawer>
-        {children}
+    <div className='flex h-full min-h-0 w-full flex-col overflow-hidden'>
+      <div className='relative z-30 shrink-0'>{topStrip}</div>
+      <div className='flex min-h-0 w-full flex-1'>
+        <SidebarShell>{sidebar}</SidebarShell>
+        <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
+          <SidebarDrawer label={sidebarLabel}>{sidebar}</SidebarDrawer>
+          {children}
+        </div>
       </div>
     </div>
   )

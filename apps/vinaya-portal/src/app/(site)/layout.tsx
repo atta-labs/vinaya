@@ -31,31 +31,23 @@ export default async function SiteLayout({ children }: { children: ReactNode }) 
   const { branding } = await getPortalCms()
   const logoUrl = branding?.logoSolidDark?.url ?? branding?.logoSolidLight?.url ?? null
 
-  // The docs shell's chrome (see `DocsShell`), built here beside the site-wide bar it
-  // replaces on docs routes. The wordmark is the plain static `Logo` — the footer's
-  // lockup, not `HeroLockup`, whose nodes belong to the landing hero's FLIP loop and
-  // mean nothing in a static sidebar. The docs bar is the site's own nav with the logo
-  // slot visible below `lg` only: from `lg` the wordmark sits at the top of the docs
-  // sidebar instead, and below `lg`, where that sidebar is hidden, the bar keeps the
-  // brand the way every other page's bar does.
+  // The docs shell's chrome (see `DocsShell`), built here beside the site-wide bar it replaces on docs routes. The
+  // wordmark is the plain static `Logo` — the footer's lockup, not `HeroLockup`, whose nodes belong to the landing
+  // hero's FLIP loop.
   const docsWordmark = (
     <NextLink href='/' variant='unstyled' className='flex items-center gap-2'>
       <Logo dark={logoUrl ?? undefined} alt='Vinaya' size='h-10' text={['Development', 'Harness']} />
     </NextLink>
   )
+  // The docs bar is the landing page's own bar, logo included and links placed the same way.
   const docsTopStrip = (
     <TopBar
-      logo={<span className='lg:hidden'>{docsWordmark}</span>}
+      logo={docsWordmark}
       chromeClassName={`${TOPBAR_CHROME_CLASS} @container/bar`}
       links={SITE_LINKS}
       withAuth={false}
       extraActions={<DocsSearch groups={docsSearchIndex()} />}
       colorSchemeToggle='end'
-      // The links start where the docs article starts. The article block is centred in
-      // the pane: 48rem wide, 65rem with its contents from `xl` (docs guide layout).
-      navClassName='left-[max(3rem,calc(50%-24rem))] xl:left-[max(3rem,calc(50%-32.5rem))]'
-      // The panels open from the links and stop short of the bar's right edge.
-      navPanelClassName='max-w-[calc(100cqw-max(3rem,calc(50cqw-24rem)))] xl:max-w-[calc(100cqw-max(3rem,calc(50cqw-32.5rem)))]'
     />
   )
 

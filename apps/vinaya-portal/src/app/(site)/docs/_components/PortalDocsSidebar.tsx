@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowRight, BookA, BookOpen, Route, Users } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import {
   SidebarContent,
@@ -13,7 +13,7 @@ import {
 } from '@/ui/components'
 import { NextLink } from '@/ui/lib/next-link'
 import { cn } from '@/ui/lib/utils'
-import { ELEMENT_ICONS, type Element, SMALL_ICON } from '../../_components/icons'
+import { iconForName, SMALL_ICON } from '../../_components/icons'
 import { DOCS_NAV, type DocsPage, groupForPath } from '../_lib/portal-docs'
 
 /** One sidebar entry; a page's children show while you are in that section. */
@@ -21,7 +21,9 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
   const isActive = pathname === page.href
   const inSection = isActive || (page.children ?? []).some((c) => c.href === pathname)
   return (
-    <SidebarMenuItem>
+    // `ml-7.5` (the heading icon's width plus its gap) starts the link, and its hover and active fill, where the
+    // section title's text starts, rather than under the heading's icon.
+    <SidebarMenuItem className='ml-7.5'>
       <SidebarMenuButton
         size='sm'
         isActive={isActive}
@@ -33,11 +35,12 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
             : 'text-sidebar-foreground/65 hover:text-sidebar-foreground'
         )}
       >
-        {/* Only sections have icons; a page's title lines up with its section's title, past the icon. */}
-        <span className='pl-7.5'>{page.title}</span>
+        {/* Only the section headings carry icons; a page link never does, so what can be clicked reads apart from
+            what cannot. */}
+        {page.title}
       </SidebarMenuButton>
       {inSection && page.children && (
-        <SidebarMenu className='mt-0.5 ml-10 gap-0.5 border-l border-sidebar-border pl-2'>
+        <SidebarMenu className='mt-0.5 ml-2.5 gap-0.5 border-l border-sidebar-border pl-2'>
           {page.children.map((child) => {
             const childActive = pathname === child.href
             return (
@@ -47,13 +50,13 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
                   isActive={childActive}
                   render={<NextLink variant='unstyled' href={child.href} />}
                   className={cn(
-                    'h-auto min-h-7 rounded-md px-2.5 py-1 font-sans text-xs font-normal',
+                    'h-auto min-h-7 rounded-md py-1 pr-1 pl-2.5 font-sans text-xs font-normal',
                     childActive
                       ? 'bg-primary/10 font-medium text-primary data-[active]:bg-primary/10 data-[active]:text-primary'
                       : 'text-sidebar-foreground/60 hover:text-sidebar-foreground'
                   )}
                 >
-                  <span>{child.title}</span>
+                  {child.title}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )
@@ -64,25 +67,10 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
   )
 }
 
-/** The icon beside each sidebar section's title: the element's own icon when the section is one, else a plain one. */
-const SECTION_ELEMENT: Record<string, Element> = {
-  Start: 'get-started',
-  Features: 'features',
-  'Dev Process': 'dev-process',
-  Integration: 'integration',
-  CLI: 'cli'
-}
-const SECTION_PLAIN: Record<string, typeof BookOpen> = {
-  Guides: BookOpen,
-  Parts: Route,
-  'Using it': Users,
-  Reference: BookA
-}
-
-/** Each docs set's badge at the top of its sidebar: its element's icon and what it is. */
-const HEAD: Record<string, { element: Element; line: string }> = {
-  start: { element: 'vinaya-harness', line: 'Docs · works with any process' },
-  process: { element: 'vinaya-process', line: 'Docs · the default process' }
+/** Each docs set's badge at the top of its sidebar: the icon its title names, and what it is. */
+const HEAD_LINE: Record<string, string> = {
+  start: 'Works with any process',
+  process: 'The default process'
 }
 
 /**
@@ -103,27 +91,23 @@ export function PortalDocsSidebar() {
         >
           <span className='flex size-9 shrink-0 items-center justify-center rounded-md border border-sidebar-border bg-background text-sidebar-foreground'>
             {(() => {
-              const Icon = ELEMENT_ICONS[HEAD[active.id]?.element ?? 'vinaya-harness']
-              return <Icon className={SMALL_ICON} />
+              const Icon = iconForName(active.title)
+              return Icon ? <Icon className={SMALL_ICON} still /> : null
             })()}
           </span>
           <span className='flex min-w-0 flex-col'>
             <span className='font-sans text-sm font-medium tracking-tight text-sidebar-foreground'>{active.title}</span>
-            <span className='truncate font-sans text-xs text-sidebar-foreground/60'>{HEAD[active.id]?.line}</span>
+            <span className='truncate font-sans text-xs text-sidebar-foreground/60'>{HEAD_LINE[active.id]}</span>
           </span>
         </NextLink>
       )}
       {active?.sections.map((section) => (
         <SidebarGroup key={section.title} className='py-3'>
-          <SidebarGroupLabel className='h-auto gap-2.5 px-2.5 pb-2 font-sans text-sm font-medium text-sidebar-foreground [&>svg]:size-4'>
+          <SidebarGroupLabel className='h-auto gap-2.5 px-2.5 pb-2 font-sans text-sm font-medium text-sidebar-foreground [&>svg]:size-5'>
+            {/* Every section uses the same custom family as its subject page. */}
             {(() => {
-              const element = SECTION_ELEMENT[section.title]
-              if (element) {
-                const Icon = ELEMENT_ICONS[element]
-                return <Icon className={SMALL_ICON} />
-              }
-              const Plain = SECTION_PLAIN[section.title] ?? BookOpen
-              return <Plain aria-hidden />
+              const Icon = iconForName(section.title)
+              return Icon ? <Icon className={SMALL_ICON} still /> : null
             })()}
             {section.title}
           </SidebarGroupLabel>

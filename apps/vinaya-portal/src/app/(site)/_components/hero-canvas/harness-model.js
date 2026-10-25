@@ -562,23 +562,6 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
   sphere.name = 'main-sphere'
   mainGroup.add(sphere)
 
-  /* silhouette: a slightly larger back-faced shell in ink. Only the sliver that extends
-     past the front sphere is visible, so it reads as one crisp contour from every angle —
-     the 3D equivalent of the source circle's stroke. */
-  const contour = new THREE_.Mesh(
-    new THREE_.SphereGeometry(coreRadius * 1.009, 96, 64),
-    new THREE_.MeshBasicMaterial({
-      name: 'main-contour',
-      color: inkHex,
-      side: THREE_.BackSide,
-      transparent: true,
-      opacity: 0.55,
-      depthWrite: false
-    })
-  )
-  contour.name = 'main-contour'
-  mainGroup.add(contour)
-
   /* wire net: lines that wrap the form are the strongest sphere cue and cost nothing tonally.
      Latitudes crowd toward the top and the terminator rather than an even ladder. Off (no
      lines at all) unless the caller sets CORE.wire, which is also the line alpha. */

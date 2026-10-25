@@ -23,12 +23,12 @@ import {
 import { NextLink } from '@/ui/lib/next-link'
 import { cn } from '@/ui/lib/utils'
 import { Heading, Text } from '@/ui/shared'
-import { iconForHref } from '../../_components/icons'
+import { iconForName, iconForPage } from '../../_components/icons'
 import { type DocsPage, HARNESS_KEYS, PROCESS_KEYS, sectionId } from '../_lib/portal-docs'
 import { CopyPageButton } from './CopyPageButton'
 import { DocAccordion, DocCode, DocTabs } from './DocBlocks'
 import { FlowDiagram, WholeDiagramButton } from './FlowDiagrams'
-import { CommandList, ConfigKeys } from './PortalDoc'
+import { CommandList, ConfigKeys, PageTitle } from './PortalDoc'
 import { StickyDocHeader } from './StickyDocHeader'
 
 const CONTENT_DIR = join(process.cwd(), 'src', 'content', 'docs-tree')
@@ -42,6 +42,55 @@ const textOf = (node: ReactNode): string =>
       : node && typeof node === 'object' && 'props' in node
         ? textOf((node.props as { children?: ReactNode }).children)
         : ''
+
+/** A table cell in a column where every row names a product, agent or subject: its icon, large enough to read, above
+    the name. `markNamedColumns` decides the column, so a table never mixes rows with and without icons. */
+const namedCell = (children: ReactNode): ReactNode => {
+  const Icon = iconForName(textOf(children))
+  // A row with no icon (the Principal) keeps the same centred box, so every name in the column lines up.
+  return (
+    <span className='flex w-28 flex-col items-center gap-2 text-center'>
+      {Icon && <Icon className='size-10 shrink-0' />}
+      <span>{children}</span>
+    </span>
+  )
+}
+
+/** The bits of an HTML syntax tree node this file reads. */
+type HtmlNode = {
+  type: string
+  tagName?: string
+  value?: string
+  properties?: Record<string, unknown>
+  children?: HtmlNode[]
+}
+
+const htmlText = (node: HtmlNode): string =>
+  node.type === 'text' ? (node.value ?? '') : (node.children ?? []).map(htmlText).join('')
+
+const childElements = (node: HtmlNode, tag: string): HtmlNode[] =>
+  (node.children ?? []).filter((c) => c.type === 'element' && c.tagName === tag)
+
+/**
+ * Marks a table's first-column cells `dataNamed` when that column names its rows and most of them have an icon (the
+ * roles table: every role but the Principal). Any other column never carries icons, so a value column such as
+ * "Process part" never mixes rows with and without icons.
+ */
+function markNamedColumns() {
+  const visit = (node: HtmlNode) => {
+    if (node.type === 'element' && node.tagName === 'table') {
+      const firsts = childElements(node, 'tbody')
+        .flatMap((body) => childElements(body, 'tr'))
+        .map((row) => childElements(row, 'td')[0])
+        .filter((cell): cell is HtmlNode => cell !== undefined)
+      const named = firsts.filter((cell) => iconForName(htmlText(cell).trim()) !== undefined)
+      if (firsts.length > 0 && named.length * 2 > firsts.length)
+        for (const cell of firsts) cell.properties = { ...cell.properties, dataNamed: 'true' }
+    }
+    for (const child of node.children ?? []) visit(child)
+  }
+  return (tree: HtmlNode) => visit(tree)
+}
 
 /** Splits a block body on `=== Label` lines into labelled parts. */
 const splitOn = (body: string, marker: RegExp) => {
@@ -117,27 +166,29 @@ function Block({ lang, body }: { lang: string; body: string }) {
       .map((l) => l.match(/^-\s*\[([^\]]+)\]\(([^)]+)\)\s*(.*)$/))
       .filter((m): m is RegExpMatchArray => m !== null)
     // Icons only when every card in the block has one, so a block never mixes cards with and without.
-    const withIcons = cards.every(([, , href]) => iconForHref(href ?? ''))
+    const cardIcon = ([, title, href]: RegExpMatchArray) => iconForPage({ href: href ?? '', title: title ?? '' })
+    const withIcons = cards.every(cardIcon)
     return (
       <div className='my-2 grid gap-3 sm:grid-cols-2'>
-        {cards.map(([, title, href, line]) => (
-          <NextLink key={href} variant='unstyled' href={href ?? '#'} className='block'>
-            <Card variant='link' className='h-full'>
-              <CardHeader className='flex-row items-start gap-3.5 p-4'>
-                {(() => {
-                  const Icon = withIcons ? iconForHref(href ?? '') : undefined
-                  return Icon ? <Icon className='size-9' /> : null
-                })()}
-                <span className='flex min-w-0 flex-col gap-1'>
-                  <CardTitle size='md' weight='medium' family='sans'>
-                    {title}
-                  </CardTitle>
-                  {line && <CardDescription>{line}</CardDescription>}
-                </span>
-              </CardHeader>
-            </Card>
-          </NextLink>
-        ))}
+        {cards.map((card) => {
+          const [, title, href, line] = card
+          const Icon = withIcons ? cardIcon(card) : undefined
+          return (
+            <NextLink key={href} variant='unstyled' href={href ?? '#'} className='block'>
+              <Card variant='link' className='h-full'>
+                <CardHeader className='flex-row items-start gap-3.5 p-4'>
+                  {Icon && <Icon className='size-9' />}
+                  <span className='flex min-w-0 flex-col gap-1'>
+                    <CardTitle size='md' weight='medium' family='sans'>
+                      {title}
+                    </CardTitle>
+                    {line && <CardDescription>{line}</CardDescription>}
+                  </span>
+                </CardHeader>
+              </Card>
+            </NextLink>
+          )
+        })}
       </div>
     )
   }
@@ -237,7 +288,11 @@ const components: Components = {
   tbody: ({ children }) => <TableBody>{children}</TableBody>,
   tr: ({ children }) => <TableRow>{children}</TableRow>,
   th: ({ children }) => <TableHead className='whitespace-nowrap'>{children}</TableHead>,
-  td: ({ children }) => <TableCell className='whitespace-normal'>{children}</TableCell>,
+  td: ({ node, children }) => (
+    <TableCell className='whitespace-normal'>
+      {node?.properties?.dataNamed === 'true' ? namedCell(children) : children}
+    </TableCell>
+  ),
   blockquote: ({ children }) => (
     <blockquote className='border-l-2 border-border pl-4 text-muted-foreground'>{children}</blockquote>
   )
@@ -246,7 +301,7 @@ const components: Components = {
 /** Markdown in the docs' body style, with the docs' own block kinds. */
 function Md({ children }: { children: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[markNamedColumns]} components={components}>
       {children}
     </ReactMarkdown>
   )
@@ -280,7 +335,7 @@ export async function MarkdownDoc({ page, eyebrow }: { page: DocsPage & { source
         </Text>
         <div className='flex items-start justify-between gap-4'>
           <Heading level={1} weight='normal' variant='page' family='sans' tone='foreground'>
-            {page.title}
+            <PageTitle title={page.title} href={page.href} />
           </Heading>
           <CopyPageButton />
         </div>

@@ -1,8 +1,9 @@
 'use client'
 
-import { Code, Eye, GitPullRequest, Shield } from 'lucide-react'
+import { GitPullRequest } from 'lucide-react'
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { cn } from '@/ui/lib/utils'
+import { ELEMENT_ICONS } from '../icons'
 import { Terminal, type TerminalLine, type TerminalMark } from './Terminal'
 
 // The Studio window's loop monitor: every task is one compact row (two rounds of developer, code
@@ -68,19 +69,24 @@ const DEFAULT_LOOP: LoopScript = {
 }
 
 const CELL_CLASS: Record<CellState, string> = {
-  pend: 'border-solid border-muted-foreground text-muted-foreground opacity-30',
-  run: 'border-dashed border-foreground text-foreground',
-  ok: 'border-solid border-success text-success',
-  bad: 'border-solid border-destructive text-destructive'
+  pend: 'text-muted-foreground opacity-30',
+  run: 'text-foreground',
+  ok: 'text-success',
+  bad: 'text-destructive'
 }
 
 // The ring that marks the cell an event has just landed on.
+const FRESH_CELL = 'scale-115'
+// The ring that marks the pull request when it has just opened.
 const FRESH = 'ring-2 ring-current ring-offset-2 ring-offset-background'
 
-const ROLE_ICON: Record<Role, ReactNode> = {
-  dev: <Code className='size-[0.95rem]' />,
-  code: <Eye className='size-[0.95rem]' />,
-  sec: <Shield className='size-[0.95rem]' />
+// The role's own agent mark, no circle: the mark itself takes the cell's state colour, its accent detail included,
+// and moves while that role is running.
+const ROLE_MARK = 'size-full [&_.stroke-ring]:stroke-current [&_.fill-ring]:fill-current'
+const ROLE_ELEMENT = { dev: 'developer', code: 'reviewer', sec: 'security-reviewer' } as const
+function RoleMark({ role, state }: { role: Role; state: CellState }) {
+  const Icon = ELEMENT_ICONS[ROLE_ELEMENT[role]]
+  return <Icon className={ROLE_MARK} still={state !== 'run'} />
 }
 
 // Wide: name, round 1 and round 2 in fixed tracks so the rounds sit right beside the name, then a flexible gap
@@ -105,9 +111,9 @@ function Cell({ state, fresh, children }: { state: CellState; fresh: boolean; ch
   return (
     <span
       className={cn(
-        'grid size-[1.6rem] place-items-center rounded-full border-[1.5px] transition-[border-color,color,opacity,box-shadow] duration-300 motion-reduce:transition-none @[34rem]:size-[1.9rem]',
+        'grid size-[1.6rem] place-items-center transition-[color,opacity,transform] duration-300 motion-reduce:transition-none @[34rem]:size-[1.9rem]',
         CELL_CLASS[state],
-        fresh && FRESH
+        fresh && FRESH_CELL
       )}
     >
       {children}
@@ -174,7 +180,7 @@ function TaskRow({
                   state={round[role]}
                   fresh={last !== null && last[1] === taskIndex && last[2] === roundIndex && last[3].includes(role)}
                 >
-                  {ROLE_ICON[role]}
+                  <RoleMark role={role} state={round[role]} />
                 </Cell>
               </div>
             ))}

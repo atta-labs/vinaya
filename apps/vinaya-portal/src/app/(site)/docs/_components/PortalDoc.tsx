@@ -12,6 +12,7 @@ import {
 } from '@/ui/components'
 import { NextLink } from '@/ui/lib/next-link'
 import { Heading, Text } from '@/ui/shared'
+import { iconForPage } from '../../_components/icons'
 import { DOCS_NAV, type DocsGroup, sectionId, topKey } from '../_lib/portal-docs'
 import { CommandBlock } from '../(standalone)/cli/_components/CommandBlock'
 import { commandSlug } from '../(standalone)/cli/_components/command-slug'
@@ -19,15 +20,30 @@ import { DetailText } from '../(standalone)/cli/_components/DetailText'
 import { ConfigFieldSection } from '../(standalone)/config/_components/ConfigFieldSection'
 import { CopyPageButton } from './CopyPageButton'
 
+/** A docs page's title, led by the icon of the element the page is about or its title names. */
+export function PageTitle({ title, href }: { title: string; href: string }) {
+  const Icon = iconForPage({ href, title })
+  return Icon ? (
+    <span className='inline-flex items-center gap-3'>
+      <Icon className='size-9 shrink-0' />
+      <span>{title}</span>
+    </span>
+  ) : (
+    title
+  )
+}
+
 /** A docs page's head: where it sits (half, then page), its title with the copy control, one line. */
 export function DocHead({
   half,
   title,
+  href,
   line,
   parent
 }: {
   half: DocsGroup['id']
   title: string
+  href: string
   line: string
   parent?: { title: string; href: string }
 }) {
@@ -63,7 +79,7 @@ export function DocHead({
       </Breadcrumb>
       <div className='flex items-start justify-between gap-4'>
         <Heading level={1} weight='normal' variant='page' family='sans' tone='foreground'>
-          {title}
+          <PageTitle title={title} href={href} />
         </Heading>
         <CopyPageButton />
       </div>

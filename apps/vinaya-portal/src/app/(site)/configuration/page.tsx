@@ -1,6 +1,9 @@
+import { KeyRound, Terminal } from 'lucide-react'
 import { FeaturePage } from '../_components/feature-page/FeaturePage'
 import { ConfigLive } from '../_components/feature-page/live'
-import { ConfigurationIcon, SetupCommandsIcon, TrustIcon } from '../_components/icons'
+import { ELEMENT_ICONS } from '../_components/icons'
+
+const ConfigurationIcon = ELEMENT_ICONS['configuration']
 
 export const metadata = { title: 'Configuration · Vinaya' }
 
@@ -9,7 +12,6 @@ export default function ConfigurationPage() {
     <FeaturePage
       n={5}
       name='Configuration'
-      icon={(className) => <ConfigurationIcon className={className} />}
       lead='One file, vinaya.config.json, sets it all up. An empty file is a full harness; add a key only to change what runs.'
       tags={['vinaya.config.json', 'All optional', 'Harness keys', 'Trust anchor']}
       docsHref='/docs/features/configuration'
@@ -30,13 +32,13 @@ export default function ConfigurationPage() {
             title: 'Trust',
             line: 'Keys that decide who may merge are read from the default branch, never from the pull request.',
             href: '/docs/features/configuration/trust',
-            icon: (className) => <TrustIcon className={className} />
+            icon: (className) => <KeyRound className={className} />
           },
           {
             title: 'Setup commands',
             line: 'init installs, doctor diagnoses, upgrade regenerates, eject reverses the install exactly.',
             href: '/docs/features/configuration/setup-commands',
-            icon: (className) => <SetupCommandsIcon className={className} />
+            icon: (className) => <Terminal className={className} />
           }
         ]
       }}
