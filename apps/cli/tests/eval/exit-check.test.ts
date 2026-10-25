@@ -291,11 +291,16 @@ describe('the global exit check', () => {
         .map(({ row }) => row.id)
         .filter((id) => id.startsWith('cutover-gate:') && !notOwedGates.includes(id))
     })
-    expect(faultRows?.evidenced).toBe(1)
-    expect(faultRows?.owed).toBe(55)
-    expect(faultRows?.owedIds).toHaveLength(55)
+    expect(faultRows?.evidenced).toBe(19)
+    expect(faultRows?.owed).toBe(37)
+    expect(faultRows?.owedIds).toHaveLength(37)
     // Shadow mode's row and gate are proved on the Engine by the shadow conformance suite.
     expect(faultRows?.owedIds).not.toContain('fault-attack:29-shadow-mode-mutation')
+    // The fault-rows conformance suite proves eighteen rows on the Engine.
+    expect(faultRows?.owedIds).not.toContain('fault-attack:01-developer-process-death')
+    expect(faultRows?.owedIds).not.toContain(
+      'fault-attack:52-hard-budget-exhaustion-turns-rounds-invalid-output-retries'
+    )
     expect(gates?.owedIds).not.toContain('cutover-gate:gate-9')
     expect(report.kinds.port.engine).toBeUndefined()
     console.log(
