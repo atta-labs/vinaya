@@ -1519,6 +1519,21 @@ git rev-parse --git-dir 2>&1 || true
     }
   })
 
+  it('records the failing files on a refusal and clears the record on green, both before the summary line — vendored repo only', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    const failedIdx = prePush.indexOf('pre-push-record-tests.ts failed "$VINAYA_TEST_LOG"')
+    const refusedIdx = prePush.indexOf('vinaya pre-push: refused')
+    const passedIdx = prePush.indexOf('pre-push-record-tests.ts passed "$VINAYA_TEST_LOG"')
+    const greenIdx = prePush.indexOf('— all green')
+    expect(failedIdx).toBeGreaterThan(-1)
+    expect(failedIdx).toBeLessThan(refusedIdx)
+    expect(passedIdx).toBeGreaterThan(-1)
+    expect(passedIdx).toBeLessThan(greenIdx)
+    expect(prePush).toContain('pre-push-record-tests.ts passed "" 0')
+  })
+
   it('the old --concurrency=1 guard leaves no trace in turbo.json either — no repo-wide setting CI or the hook would inherit', () => {
     const turboJson = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', 'turbo.json'), 'utf-8'))
     expect(turboJson).not.toHaveProperty('concurrency')

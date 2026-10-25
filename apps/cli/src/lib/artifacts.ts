@@ -1690,6 +1690,11 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   VINAYA_TEST_ELAPSED=$(( $(date +%s) - VINAYA_TEST_STARTED ))
   VINAYA_SELECTED_COUNT=$(printf '%s\\n' "$VINAYA_SELECTED_TESTS" | grep -c .)
   if [ "$VINAYA_TEST_STATUS" -ne 0 ]; then
+    # Re-run only what failed: record the failing files at this commit so
+    # the next push runs those plus what the fix affects, not the whole
+    # selection again. Best-effort, and STDERR only — the refusal summary
+    # below stays the tail of this hook's own output.
+    ${libBinInvocation(selfHost, 'pre-push-record-tests.ts', 'vinaya-record-tests')} failed "$VINAYA_TEST_LOG" "$VINAYA_TEST_ELAPSED" 1>&2 || true
     echo ""
     echo "vinaya pre-push: refused — selected \${VINAYA_SELECTED_COUNT} file(s), \${VINAYA_TEST_ELAPSED}s — failing tests:"
     # \`<path>.test.<ext>:\` is this repo's own per-file header (\`isTestFile\`'s
@@ -1709,8 +1714,12 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # the same head/tree naming the identical command reuses it rather than
   # running it again.
   ${libBinInvocation(selfHost, 'pre-push-cache-test-run.ts', 'vinaya-cache-test-run')} "$VINAYA_TEST_CMD" "$VINAYA_TEST_LOG" || true
+  ${libBinInvocation(selfHost, 'pre-push-record-tests.ts', 'vinaya-record-tests')} passed "$VINAYA_TEST_LOG" "$VINAYA_TEST_ELAPSED" 1>&2 || true
   rm -f "$VINAYA_TEST_LOG"
   echo "vinaya pre-push: selected \${VINAYA_SELECTED_COUNT} file(s), \${VINAYA_TEST_ELAPSED}s — all green"
+else
+  # Nothing selected is a green run too: it clears a stale failed-tests record.
+  ${libBinInvocation(selfHost, 'pre-push-record-tests.ts', 'vinaya-record-tests')} passed "" 0 1>&2 || true
 fi`
 }
 
