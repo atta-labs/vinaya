@@ -66,10 +66,13 @@ const KNOWN_FLAGS = [
   '--quiet',
   '--widen-surface',
   '--reason',
-  '--runner'
+  '--runner',
+  '--flow'
 ]
 
 type ParsedFlags = {
+  flow?: string | undefined
+  flowFlagPresent?: boolean
   runner: string | undefined
   runnerFlagPresent: boolean
   agent: string | undefined
@@ -114,9 +117,14 @@ export function parseFlags(rest: string[]): ParsedFlags {
   let reason: string | undefined
   let reasonFlagPresent = false
   const unknown: string[] = []
+  let flow: string | undefined
+  let flowFlagPresent = false
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]
-    if (a === '--runner') {
+    if (a === '--flow') {
+      flowFlagPresent = true
+      flow = rest[++i]
+    } else if (a === '--runner') {
       runnerFlagPresent = true
       runner = rest[++i]
     } else if (a === '--agent') {
@@ -139,6 +147,7 @@ export function parseFlags(rest: string[]): ParsedFlags {
     } else if (a !== undefined) unknown.push(a)
   }
   return {
+    ...(flowFlagPresent ? { flow, flowFlagPresent } : {}),
     runner,
     runnerFlagPresent,
     agent,
@@ -185,8 +194,8 @@ export function applyQuiet(parsed: Pick<ParsedFlags, 'quiet'>): void {
 }
 
 const USAGE = [
-  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--widen-surface <glob,...> --reason <text>]`,
-  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--widen-surface <glob,...> --reason <text>]`
+  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--flow <v1|v2>] [--widen-surface <glob,...> --reason <text>]`,
+  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--flow <v1|v2>] [--widen-surface <glob,...> --reason <text>]`
 ].join('\n')
 
 /** `parseWidenSurface`, with a usage error reported and exited on. */
@@ -206,6 +215,37 @@ export function runnerForFlags(parsed: Pick<ParsedFlags, 'runner' | 'runnerFlagP
     throw new Error('--runner requires standalone or atta-engine')
   }
   return loadTaskRunner(parsed.runner)
+}
+
+/**
+ * `--flow <key>` chooses the developer-review flow a run uses (v1, today's
+ * default, or v2, review locally and push once). Only the Atta Engine runner
+ * runs more than one flow; the standalone loop runs v1 only, so a flow other
+ * than v1 on it is refused rather than silently ignored. `undefined` when the
+ * flag is absent: the process's default flow.
+ */
+export function flowForFlags(
+  parsed: Pick<ParsedFlags, 'flow' | 'flowFlagPresent'>,
+  runner: TaskRunner
+): string | undefined {
+  if (!parsed.flowFlagPresent) return undefined
+  if (!parsed.flow || !/^[a-z0-9][a-z0-9-]*$/.test(parsed.flow)) {
+    throw new Error('--flow requires a flow key such as v1 or v2')
+  }
+  if (runner !== 'atta-engine' && parsed.flow !== 'v1') {
+    throw new Error(`--flow ${parsed.flow} runs on the atta-engine runner only; the standalone runner runs v1`)
+  }
+  return parsed.flow
+}
+
+function flowOrExit(parsed: ParsedFlags, runner: TaskRunner): { flow?: string } {
+  try {
+    const flow = flowForFlags(parsed, runner)
+    return flow ? { flow } : {}
+  } catch (error) {
+    console.error(`vinaya task run: ${error instanceof Error ? error.message : String(error)}`)
+    process.exit(2)
+  }
 }
 
 function runnerOrExit(parsed: ParsedFlags): TaskRunner {
@@ -402,13 +442,14 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     const agent = resolveAgentOrReport(parsed)
     if (!agent) process.exit(2)
     const runner = runnerOrExit(parsed)
+    const flow = flowOrExit(parsed, runner)
     const widen = widenSurfaceOrExit(parsed)
     applyQuiet(parsed)
     if (parsed.background) {
-      await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model, runner, ...widen })
+      await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model, runner, ...flow, ...widen })
       return
     }
-    await runAndReport({ issue: issueN, agent, model: parsed.model, runner, ...widen })
+    await runAndReport({ issue: issueN, agent, model: parsed.model, runner, ...flow, ...widen })
     return
   }
 
@@ -435,13 +476,14 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   const agent = resolveAgentOrReport(parsed)
   if (!agent) process.exit(2)
   const runner = runnerOrExit(parsed)
+  const flow = flowOrExit(parsed, runner)
   const widen = widenSurfaceOrExit(parsed)
   applyQuiet(parsed)
   if (parsed.background) {
-    await runBackgroundAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...widen })
+    await runBackgroundAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...flow, ...widen })
     return
   }
-  await runAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...widen })
+  await runAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...flow, ...widen })
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'

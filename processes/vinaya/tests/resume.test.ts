@@ -16,6 +16,9 @@ import { loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
 import { ACTION_BINDINGS, classifyGateResult, dispatchReviewers, type TaskInput } from '../executing/actions'
 import {
   parseResumeArgs,
+  recordedRunFlow,
+  recordRunFlow,
+  resumeFlow,
   recordedCheckpointModel,
   resumeEngine,
   runEngine,
@@ -572,6 +575,28 @@ describe('--resume <pr>', () => {
     expect(() => parseResumeArgs(['--resume', 'x'])).toThrow('pull request number')
     expect(() => parseResumeArgs(['--agent', 'claude'])).toThrow('Usage')
     expect(() => parseResumeArgs(['--resume', '70', '--task', '7'])).toThrow('Unknown argument')
+  })
+})
+
+describe('the flow a resume runs with', () => {
+  test('the recorded flow is continued; a named one only when it agrees or none was recorded', () => {
+    expect(resumeFlow(undefined, 'v2')).toBe('v2')
+    expect(resumeFlow('v2', 'v2')).toBe('v2')
+    expect(resumeFlow('v2', undefined)).toBe('v2')
+    expect(resumeFlow(undefined, undefined)).toBeUndefined()
+    expect(() => resumeFlow('v1', 'v2')).toThrow('never switches to v1')
+  })
+
+  test('a run records its flow under its run directory and a resume reads it back', () => {
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-flow-'))
+    expect(recordedRunFlow(runtimeDir, 9)).toBeUndefined()
+    recordRunFlow(runtimeDir, 9, 'v2')
+    expect(recordedRunFlow(runtimeDir, 9)).toBe('v2')
+  })
+
+  test('--flow is a resume argument too', () => {
+    expect(parseResumeArgs(['--resume', '70', '--flow', 'v2'])).toEqual({ resume: 70, flow: 'v2' })
+    expect(() => parseResumeArgs(['--resume', '70', '--flow', ''])).toThrow('--flow takes a flow key')
   })
 })
 

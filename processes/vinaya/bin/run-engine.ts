@@ -238,19 +238,29 @@ export interface EngineArgs {
   dryRun: boolean
   /** The agent model for every role whose grants say `process-supplied`; absent leaves the vendor's default. */
   model?: string
+  /** The flow key the run chooses (`v1`, `v2`); absent takes the process's default flow. */
+  flow?: string
 }
 
-const USAGE = 'Usage: run-engine.ts --task <n> --agent <claude|codex> [--model <id>] [--dry-run]'
+const USAGE = 'Usage: run-engine.ts --task <n> --agent <claude|codex> [--model <id>] [--flow <key>] [--dry-run]'
+
+/** A flow key as the process contract spells one. */
+const FLOW_KEY = /^[a-z0-9][a-z0-9-]*$/
 
 export function parseArgs(argv: readonly string[]): EngineArgs {
   let task: number | undefined
   let agent: Agent | undefined
   let dryRun = false
   let model: string | undefined
+  let flow: string | undefined
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]
     if (flag === '--dry-run') dryRun = true
-    else if (flag === '--task') {
+    else if (flag === '--flow') {
+      const value = argv[++i] ?? ''
+      if (!FLOW_KEY.test(value)) throw new Error(`--flow takes a flow key such as v1 or v2. ${USAGE}`)
+      flow = value
+    } else if (flag === '--task') {
       const value = argv[++i] ?? ''
       if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`--task takes a positive integer. ${USAGE}`)
       task = Number(value)
@@ -265,7 +275,7 @@ export function parseArgs(argv: readonly string[]): EngineArgs {
     } else throw new Error(`Unknown argument "${flag}". ${USAGE}`)
   }
   if (task === undefined || agent === undefined) throw new Error(USAGE)
-  return { task, agent, dryRun, ...(model ? { model } : {}) }
+  return { task, agent, dryRun, ...(model ? { model } : {}), ...(flow ? { flow } : {}) }
 }
 
 export interface ResumeArgs {
@@ -274,17 +284,24 @@ export interface ResumeArgs {
   agent?: Agent
   /** The model for the resumed run; absent takes the one the run's checkpoint recorded. */
   model?: string
+  /** The flow key for the resumed run; absent takes the one the run recorded. A different one is refused. */
+  flow?: string
 }
 
-const RESUME_USAGE = 'Usage: run-engine.ts --resume <pr> [--agent <claude|codex>] [--model <id>]'
+const RESUME_USAGE = 'Usage: run-engine.ts --resume <pr> [--agent <claude|codex>] [--model <id>] [--flow <key>]'
 
 export function parseResumeArgs(argv: readonly string[]): ResumeArgs {
   let resume: number | undefined
   let agent: Agent | undefined
   let model: string | undefined
+  let flow: string | undefined
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]
-    if (flag === '--resume') {
+    if (flag === '--flow') {
+      const value = argv[++i] ?? ''
+      if (!FLOW_KEY.test(value)) throw new Error(`--flow takes a flow key such as v1 or v2. ${RESUME_USAGE}`)
+      flow = value
+    } else if (flag === '--resume') {
       const value = argv[++i] ?? ''
       if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`--resume takes a pull request number. ${RESUME_USAGE}`)
       resume = Number(value)
@@ -299,7 +316,7 @@ export function parseResumeArgs(argv: readonly string[]): ResumeArgs {
     } else throw new Error(`Unknown argument "${flag}". ${RESUME_USAGE}`)
   }
   if (resume === undefined) throw new Error(RESUME_USAGE)
-  return { resume, ...(agent ? { agent } : {}), ...(model ? { model } : {}) }
+  return { resume, ...(agent ? { agent } : {}), ...(model ? { model } : {}), ...(flow ? { flow } : {}) }
 }
 
 /** The model the newest checkpoint of the task's run recorded; undefined when the run has none or left the vendor's default. */
@@ -334,7 +351,47 @@ export async function resumeEngine(input: ResumeEngineInput): Promise<EngineRunR
     input.deps ?? liveResumeDeps
   )
   const model = resumeModel(input.args.model, recordedCheckpointModel(input.runtimeDir, claim.task))
-  return input.run({ task: claim.task, agent: claim.agent, dryRun: false, ...(model ? { model } : {}) })
+  const flow = resumeFlow(input.args.flow, recordedRunFlow(input.runtimeDir, claim.task))
+  return input.run({
+    task: claim.task,
+    agent: claim.agent,
+    dryRun: false,
+    ...(model ? { model } : {}),
+    ...(flow ? { flow } : {})
+  })
+}
+
+/** Where a run records the flow it chose: `<run directory>/flow.json`, the run's provenance of which flow it runs. */
+export const runFlowPath = (runtimeDir: string, task: number): string =>
+  join(runDirectory(runtimeDir, task), 'flow.json')
+
+/** Records the flow key a run chose, so its resume continues the same flow. */
+export function recordRunFlow(runtimeDir: string, task: number, flow: string): void {
+  mkdirSync(runDirectory(runtimeDir, task), { recursive: true })
+  writeFileSync(runFlowPath(runtimeDir, task), `${JSON.stringify({ schemaVersion: 1, flow })}\n`)
+}
+
+/** The flow key the task's run recorded; undefined when it recorded none (a run from before flows were chosen ran v1). */
+export function recordedRunFlow(runtimeDir: string, task: number): string | undefined {
+  try {
+    const value = JSON.parse(readFileSync(runFlowPath(runtimeDir, task), 'utf8')) as {
+      schemaVersion?: number
+      flow?: unknown
+    }
+    return value.schemaVersion === 1 && typeof value.flow === 'string' && value.flow !== '' ? value.flow : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The flow a resume runs: the recorded one; a named one only when it agrees or nothing was recorded. */
+export function resumeFlow(named: string | undefined, recorded: string | undefined): string | undefined {
+  if (named !== undefined && recorded !== undefined && named !== recorded) {
+    throw new Error(
+      `run-engine: this run recorded flow ${recorded}; a resume continues that flow and never switches to ${named}.`
+    )
+  }
+  return named ?? recorded
 }
 
 const vendorOf = (agent: Agent): 'claude-code' | 'codex' => (agent === 'claude' ? 'claude-code' : 'codex')
@@ -2050,6 +2107,7 @@ async function runLive(
   // The first Developer turn after a resume from a ruling carries the rulings' text, once.
   const rulings = { owed: opts.rulingsOwed === true }
   refuseAnotherRunnersPause(runtimeDir, args.task)
+  recordRunFlow(runtimeDir, args.task, loaded.flowKey)
   configureEngineLogEnvironment()
   setEngineLogIdentity(loaded, args.agent)
   const sink = createEngineLogSink()
@@ -2127,7 +2185,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   // This process hosts the CLI's code without being the CLI: commands it runs as the CLI start the install's entry.
   process.env[CLI_ENTRY_ENV] = cliEntryOf(VINAYA_ROOT)
   const repoRoot = targetRepoRoot()
-  const loaded = loadProcess(resolve(import.meta.dir, '..'))
+  // The run's flow is chosen by `--flow` (or, on a resume, recorded by the run it continues); none takes the default.
+  const processFolder = resolve(import.meta.dir, '..')
   const runtimeDir = await liveRuntimeDir()
   if (argv.includes('--resume')) {
     const args = parseResumeArgs(argv)
@@ -2136,13 +2195,20 @@ export async function main(argv: readonly string[]): Promise<number> {
       runtimeDir,
       run: async (resolved) => ({
         outcome: null,
-        exitCode: await runLive(resolved, loaded, repoRoot, runtimeDir, { rulingsOwed: true }),
+        exitCode: await runLive(
+          resolved,
+          loadProcess(processFolder, resolved.flow ? { flow: resolved.flow } : {}),
+          repoRoot,
+          runtimeDir,
+          { rulingsOwed: true }
+        ),
         tracePath: ''
       })
     })
     return result.exitCode
   }
   const args = parseArgs(argv)
+  const loaded = loadProcess(processFolder, args.flow ? { flow: args.flow } : {})
   const runDir = runDirectory(runtimeDir, args.task)
   if (args.dryRun) {
     const lines = await dryRunLines({

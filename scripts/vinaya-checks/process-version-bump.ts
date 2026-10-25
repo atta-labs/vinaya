@@ -11,7 +11,8 @@
  *
  * Governed files, relative to the process folder:
  *   - `process.yaml` itself, for any change other than its `version` line
- *   - the flow file the head's `process.yaml` names under `flow`
+ *   - the flow file the head's `process.yaml` names under `flow`, or every
+ *     flow file it names under `flows` (a process with more than one flow)
  *   - `doctrine.md`, `grants.yaml` and `output.schema.json` in every role
  *     folder the head's `process.yaml` names under `roles`
  *   - `executing/actions.ts`, the action and decision bindings
@@ -42,7 +43,8 @@ type CheckError = {
   line?: number
 }
 
-export type ProcessDefinition = { version: string; flow: string; roles: string[] }
+/** `flow` is the first flow; `flows` lists every flow file when the definition declares `flows`. */
+export type ProcessDefinition = { version: string; flow: string; flows?: string[]; roles: string[] }
 
 export type SemVer = { major: number; minor: number; patch: number; prerelease: string[] }
 
@@ -135,16 +137,27 @@ export function parseProcessDefinition(text: string, side: 'base' | 'head'): Pro
       PROCESS_FILE
     )
   }
-  const flow = typeof doc.flow === 'string' ? doc.flow.trim() : ''
+  const flowMap =
+    doc.flows && typeof doc.flows === 'object' && !Array.isArray(doc.flows)
+      ? Object.values(doc.flows as Record<string, unknown>)
+          .filter((f): f is string => typeof f === 'string' && f.trim() !== '')
+          .map((f) => f.trim())
+      : []
+  const flow = typeof doc.flow === 'string' ? doc.flow.trim() : (flowMap[0] ?? '')
   const roles = Array.isArray(doc.roles) ? doc.roles : null
   if (!flow || !roles || roles.length === 0 || roles.some((r) => typeof r !== 'string' || !r.trim())) {
     throw new Undecidable(
-      `${PROCESS_FILE} at the ${side} does not name a \`flow\` and a non-empty list of \`roles\`.`,
+      `${PROCESS_FILE} at the ${side} does not name a \`flow\` (or \`flows\`) and a non-empty list of \`roles\`.`,
       `Declare \`flow\` and \`roles\` in ${PROCESS_FILE}, then re-run this check.`,
       PROCESS_FILE
     )
   }
-  return { version, flow, roles: roles.map((r) => (r as string).trim()) }
+  return {
+    version,
+    flow,
+    ...(flowMap.length > 0 ? { flows: flowMap } : {}),
+    roles: roles.map((r) => (r as string).trim())
+  }
 }
 
 function inFolder(relative: string): string {
@@ -157,6 +170,7 @@ function inFolder(relative: string): string {
  */
 export function governedFiles(head: ProcessDefinition): Set<string> {
   const files = new Set<string>([inFolder(head.flow), inFolder(BINDINGS_FILE)])
+  for (const flow of head.flows ?? []) files.add(inFolder(flow))
   for (const role of head.roles) {
     for (const file of ROLE_FILES) files.add(inFolder(posix.join(role, file)))
   }

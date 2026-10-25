@@ -10,7 +10,7 @@ import type { TaskRunner } from './config.js'
 export const ENGINE_FALLBACK_NOTICE =
   'vinaya task run: Engine runner script is unavailable; falling back to standalone.'
 
-export type EngineRunInput = { task: number; agent: AgentVendor; model?: string }
+export type EngineRunInput = { task: number; agent: AgentVendor; model?: string; flow?: string }
 
 export type RecordedTaskRunner = { schemaVersion: 1; runner: TaskRunner; recordedAt: string }
 
@@ -147,7 +147,8 @@ export async function runTaskEngine(
       String(input.task),
       '--agent',
       input.agent,
-      ...(input.model ? ['--model', input.model] : [])
+      ...(input.model ? ['--model', input.model] : []),
+      ...(input.flow ? ['--flow', input.flow] : [])
     ],
     { stdio: 'inherit' }
   )

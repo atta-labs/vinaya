@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseFlags, runnerForFlags } from '../src/commands/task-run.js'
+import { flowForFlags, parseFlags, runnerForFlags } from '../src/commands/task-run.js'
 import { resolveTaskRunner, VinayaConfigSchema } from '../src/lib/config.js'
 import { runTask, type RunTaskDeps } from '../src/lib/task-run.js'
 import { ENGINE_FALLBACK_NOTICE, runTaskEngine } from '../src/lib/task-run-engine.js'
@@ -150,6 +150,36 @@ describe('task runner selection', () => {
       }
     ])
     expect(result).toMatchObject({ exitCode: 17, task: 42, branch: 'task/sample/2' })
+  })
+
+  it('passes the chosen flow to the Engine script as --flow', async () => {
+    const calls: string[][] = []
+    await runTask(
+      { issue: 42, agent: 'claude', runner: 'atta-engine', flow: 'v2' },
+      fixture({
+        engine: {
+          scriptPath: () => '/s/run-engine.ts',
+          exists: () => true,
+          spawn: async (argv) => {
+            calls.push(argv)
+            return 0
+          },
+          notice: () => {}
+        },
+        devReviewLoop: async () => {
+          throw new Error('unexpected standalone call')
+        }
+      })
+    )
+    expect(calls[0]?.slice(-2)).toEqual(['--flow', 'v2'])
+  })
+
+  it('--flow parses, refuses an empty key, and refuses a flow other than v1 on the standalone runner', () => {
+    expect(flowForFlags(parseFlags(['--flow', 'v2']), 'atta-engine')).toBe('v2')
+    expect(flowForFlags(parseFlags([]), 'standalone')).toBeUndefined()
+    expect(flowForFlags(parseFlags(['--flow', 'v1']), 'standalone')).toBe('v1')
+    expect(() => flowForFlags(parseFlags(['--flow']), 'atta-engine')).toThrow('--flow requires a flow key')
+    expect(() => flowForFlags(parseFlags(['--flow', 'v2']), 'standalone')).toThrow('atta-engine runner only')
   })
 
   it('selects Engine from config and omits an unresolved model', async () => {

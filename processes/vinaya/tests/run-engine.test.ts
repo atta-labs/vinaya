@@ -99,6 +99,20 @@ describe('arguments', () => {
   })
 })
 
+describe('--flow chooses the run flow', () => {
+  test('a flow key is accepted and carried; anything else is refused', () => {
+    expect(parseArgs(['--task', '1', '--agent', 'claude', '--flow', 'v2'])).toEqual({
+      task: 1,
+      agent: 'claude',
+      dryRun: false,
+      flow: 'v2'
+    })
+    expect(parseArgs(['--task', '1', '--agent', 'claude'])).not.toHaveProperty('flow')
+    expect(() => parseArgs(['--task', '1', '--agent', 'claude', '--flow'])).toThrow('--flow takes a flow key')
+    expect(() => parseArgs(['--task', '1', '--agent', 'claude', '--flow', 'V2!'])).toThrow('--flow takes a flow key')
+  })
+})
+
 describe('the dry run', () => {
   for (const agent of ['claude', 'codex'] as const) {
     test(`prints the digest, the steps, the bound functions and each role's launch (${agent})`, async () => {

@@ -42,6 +42,16 @@ describe('semantic versions', () => {
 })
 
 describe('governed files', () => {
+  test('every flow a definition names under flows is governed', () => {
+    const def = parseProcessDefinition(
+      'version: 0.2.0\nflows:\n  v1: executing/dev-review.flow.yaml\n  v2: executing/dev-review-v2.flow.yaml\nroles:\n  - executing/developer\n',
+      'head'
+    )
+    const files = governedFiles(def)
+    expect(files.has(`${DIR}/executing/dev-review.flow.yaml`)).toBe(true)
+    expect(files.has(`${DIR}/executing/dev-review-v2.flow.yaml`)).toBe(true)
+  })
+
   test('come from the flow and roles the process definition names', () => {
     const files = governedFiles(
       parseProcessDefinition(definition('0.1.0', ['executing/developer', 'x/new-role']), 'head')
