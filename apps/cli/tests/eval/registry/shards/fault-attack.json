@@ -1198,10 +1198,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "test": "apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts",
-          "liveGated": {
-            "variable": "VINAYA_SANDBOX_CONFORMANCE"
-          }
+          "owed": "Reads are open by design and no sandbox setting inspects outbound content; proving a planted canary never leaves needs an outbound-capture harness this probe does not run."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -1806,10 +1803,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "test": "apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts",
-          "liveGated": {
-            "variable": "VINAYA_SANDBOX_CONFORMANCE"
-          }
+          "owed": "Codex denies credential reads only through a beta permission profile, which is ignored while sandbox_mode is set; the Engine’s Codex launch requires sandbox_mode."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -1919,10 +1913,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "test": "apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts",
-          "liveGated": {
-            "variable": "VINAYA_SANDBOX_CONFORMANCE"
-          }
+          "owed": "Codex denies credential reads only through a beta permission profile, which is ignored while sandbox_mode is set; the Engine’s Codex launch requires sandbox_mode."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -3080,10 +3071,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "test": "apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts",
-          "liveGated": {
-            "variable": "VINAYA_SANDBOX_CONFORMANCE"
-          }
+          "owed": "Reads are open by design and no sandbox setting inspects outbound content; proving a planted canary never leaves needs an outbound-capture harness this probe does not run."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",

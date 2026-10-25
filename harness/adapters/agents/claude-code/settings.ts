@@ -18,6 +18,13 @@ import {
  * The credential routes every role is denied, relative to the home directory: SSH keys, cloud and forge
  * tokens (the gh token store), the files a git `store` credential helper reads, the vendors' own logins, and
  * the system credential stores' files (the macOS Keychain directory, the Linux keyring).
+ *
+ * This is the file route only. On macOS the Keychain also answers through securityd's IPC, which a filesystem
+ * read-deny of `Library/Keychains` does not close — a disclosed gap (`apps/cli/specs/isolation.md`, Claude's
+ * own mechanism), not something these rules claim to hold. The SSH agent's authority comes from the agent
+ * socket, reached through `SSH_AUTH_SOCK`; that variable never enters a role (the Engine's launch-env
+ * allowlist passes only `PATH`/`HOME`/`USER`/`LOGNAME`), so the agent is the allowlist's to close, with the
+ * private-key file (`.ssh`) denied here as the file-route leg.
  */
 export const CREDENTIAL_HOME_ROUTES = [
   '.ssh',
@@ -33,10 +40,15 @@ export const CREDENTIAL_HOME_ROUTES = [
   '.local/share/keyrings'
 ] as const
 
+/** Directories a credential socket may sit in that are shared with unrelated files; denying the whole directory would over-deny. */
+const SHARED_SOCKET_DIRS = new Set(['/tmp', '/private/tmp', '/run', '/var/run', '/dev/shm'])
+
 /**
- * The paths a role's sandbox may not read: each credential route under the real home directory, and the
- * directory holding the SSH agent's socket when the launching environment names one, so no role reaches the
- * agent even where Unix sockets are allowed (the Linux host opt-in).
+ * The paths a role's sandbox may not read: each credential route under the launching environment's home, and
+ * the SSH agent's socket itself when the environment names one. The socket's own path is denied, never its
+ * parent directory — a socket placed directly in a shared directory such as `/tmp` or `$XDG_RUNTIME_DIR`
+ * would otherwise deny reads of that whole directory to every role. Denying the socket read is a backstop;
+ * the agent is primarily closed by the launch-env allowlist dropping `SSH_AUTH_SOCK`.
  */
 export function credentialDenyRead(env: Readonly<Record<string, string | undefined>> = process.env): string[] {
   // The launching environment's HOME is the home the role's commands see; the OS record answers without one.
@@ -47,10 +59,16 @@ export function credentialDenyRead(env: Readonly<Record<string, string | undefin
     // A home that cannot be resolved is named as given.
   }
   const agentSocket = env.SSH_AUTH_SOCK
-  return [
-    ...CREDENTIAL_HOME_ROUTES.map((route) => join(home, route)),
-    ...(agentSocket !== undefined && agentSocket !== '' ? [dirname(agentSocket)] : [])
-  ]
+  const socketParent = agentSocket ? dirname(agentSocket) : undefined
+  const runtimeDir = env.XDG_RUNTIME_DIR
+  const socketDeny =
+    agentSocket !== undefined && agentSocket !== '' && socketParent !== undefined
+      ? // A private per-agent directory is safe to deny whole; a shared or runtime directory is not, so deny the socket file alone.
+        SHARED_SOCKET_DIRS.has(socketParent) || socketParent === runtimeDir
+        ? [agentSocket]
+        : [socketParent]
+      : []
+  return [...CREDENTIAL_HOME_ROUTES.map((route) => join(home, route)), ...socketDeny]
 }
 
 /** The Read tool's own deny rules for the same paths: the path itself and everything under it. */

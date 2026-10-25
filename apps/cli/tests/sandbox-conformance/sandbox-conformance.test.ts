@@ -37,6 +37,7 @@ import { sourceManifestPath, sourceReceiptsPath } from '../../src/lib/source-man
 import { devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
 import { expectGradingSandboxDenies, proveGradingSandbox } from '../eval/grading-sandbox-proof.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../lib/dispatch/driver-socket-reach.js'
+import { ROLE_NAMES } from '../../../../harness/adapters/agents/manifest.js'
 import { createRoleLaunchers, sandboxProbePlanFor } from '../../../../processes/vinaya/executing/actions.js'
 import { commandsTheTextsName, DOCTRINE_SOURCES, isSuiteInput, REPO_ROOT } from './command-sources.js'
 import {
@@ -50,13 +51,15 @@ import {
   sourceBranch
 } from './sandbox-launch.js'
 import {
-  CODEX_FILE_READ_RESIDUAL,
-  CODEX_PROFILE_OWED_REASON,
   CREDENTIAL_PROBES,
   deniesCredentialRoute,
   GATE_14_PROBES,
   generatedRoleFiles,
-  PROBE_CANARY
+  OWED_REASONS,
+  PROBE_CANARY,
+  probeAsserts,
+  probeLeaked,
+  roleHasShell
 } from './engine-attack-probes.js'
 
 type CommandEntry = {
@@ -262,9 +265,9 @@ describe('Engine credential-confinement probes — the command and deny-rule che
             missing.push(`${probe.row}/${agent}/${role}`)
           }
         }
-        // A route the current launch shape cannot deny is owed, never silently dropped.
+        // A route the current launch shape cannot deny is owed with a recorded reason, never silently dropped.
         if (denial.kind === 'owed') {
-          expect(denial.reason === CODEX_PROFILE_OWED_REASON || denial.reason === CODEX_FILE_READ_RESIDUAL).toBe(true)
+          expect([...OWED_REASONS]).toContain(denial.reason)
         }
       }
     }
@@ -312,6 +315,8 @@ describe('Engine credential-confinement probes — the command and deny-rule che
           poisoned
         )
         expect(Object.keys(plan.env).filter((name) => apiKey.test(name))).toEqual([])
+        // The allowlist also strips an ambient forge token: a role never inherits GH_TOKEN.
+        expect(plan.env.GH_TOKEN).toBeUndefined()
       }
     } finally {
       rmSync(root, { recursive: true, force: true })
@@ -608,50 +613,62 @@ for (const agent of AGENTS) {
 
 // --- The credential-confinement probes, run inside the Engine launch shape ---
 //
-// Live only: `probeAgentSandbox` and this suite run the real sandbox on Linux,
-// outside any agent's sandbox. Each probe runs in the launch shape the Engine
-// generates for the developer role. A route the adapter's generated settings
-// deny must leave the canary absent and the command refused; a route recorded
-// owed is observed and reported, never asserted denied here.
+// Live only: this suite runs the real sandbox on Linux, outside any agent's
+// sandbox, against a throwaway canary home. Each probe runs in the launch
+// shape the Engine generates for a role — through the SAME `sandboxProbePlanFor`
+// env the Engine's own pre-spawn probe uses. A role granted no shell can run no
+// probe at all, which each such role asserts; a role with a shell runs every
+// probe. Where the adapter denies the route (Claude's deny rules, the launch-env
+// allowlist) the probe asserts nothing of the credential surfaced; where the
+// route is owed (Codex's legacy sandbox denies no file read, egress containment)
+// the run is observed, never asserted. No assertion echoes raw output — a leak
+// is a boolean — so a failed run can never print a credential.
 //
-// The rows this suite proves on both adapters once its live output is pasted —
-// its evidence entries name this file, which must carry each row's full id:
-//   fault-attack:22-secret-present-in-generally-readable-material
-//   fault-attack:33-forge-credential-reached-through-the-system-credential-store
-//   fault-attack:35-ssh-agent-access-yielding-forge-authority
+// The only row proved denied on both adapters, live-gated until its output is
+// pasted, is the ambient-environment row, whose evidence entry names this file:
 //   fault-attack:40-ambient-credential-inherited-by-a-role-environment
-//   fault-attack:56-secret-exfiltration-through-an-allowed-host
+const GENERATED_FOR_LIVE = generatedRoleFiles()
 for (const agent of AGENTS) {
-  describe.skipIf(!LIVE || process.platform !== 'linux')(
-    `Engine credential-confinement probes — ${agent}'s generated launch shape`,
-    () => {
-      let session: SandboxSession | undefined
-      beforeAll(() => {
-        session = openEngineSandboxSession(agent)
+  for (const role of ROLE_NAMES) {
+    const files = GENERATED_FOR_LIVE[agent][role] as Record<string, string>
+    if (!roleHasShell(files)) {
+      describe(`Engine credential-confinement probes — ${agent}/${role} is granted no shell`, () => {
+        it('cannot run any probe command, so it reaches no credential route through a shell', () => {
+          expect(roleHasShell(files)).toBe(false)
+        })
       })
-      afterAll(() => session?.dispose())
-
-      for (const probe of CREDENTIAL_PROBES) {
-        const denial = probe.byAdapter[agent]
-        it(
-          `fault-attack:${probe.row} (${denial.kind})`,
-          async () => {
-            const s = session as SandboxSession
-            const result = await s.run(probe.command, {})
-            console.info(`[engine ${agent}] fault-attack:${probe.row}: exit ${result.exitCode} — ${probe.command}`)
-            // Whatever the adapter can do, the canary never appears in the probe's output.
-            expect(result.output).not.toContain(PROBE_CANARY)
-            if (denial.kind === 'owed') {
-              // The current launch shape cannot deny this route; the registry records it owed. Observe only.
-              console.info(`[engine ${agent}] fault-attack:${probe.row}: owed — ${denial.reason}`)
-              return
-            }
-            // A denied credential route leaves nothing of the credential in the output.
-            expect(result.output.toLowerCase()).not.toMatch(/ssh-rsa|ssh-ed25519|oauth_token|gho_|ghp_|github_pat_/)
-          },
-          COMMAND_BUDGET_MS + 60_000
-        )
-      }
+      continue
     }
-  )
+    describe.skipIf(!LIVE || process.platform !== 'linux')(
+      `Engine credential-confinement probes — ${agent}/${role}'s generated launch shape`,
+      () => {
+        let session: SandboxSession | undefined
+        beforeAll(() => {
+          session = openEngineSandboxSession(agent, role)
+        })
+        afterAll(() => session?.dispose())
+
+        for (const probe of CREDENTIAL_PROBES) {
+          const denial = probe.byAdapter[agent]
+          it(
+            `fault-attack:${probe.row} (${denial.kind})`,
+            async () => {
+              const s = session as SandboxSession
+              const result = await s.run(probe.command, {})
+              const leaked = probeLeaked(result.output)
+              // Report a boolean only — never the output, which could carry the canary.
+              console.info(
+                `[engine ${agent}/${role}] fault-attack:${probe.row}: exit ${result.exitCode}, leaked ${leaked}, ${probeAsserts(denial) ? 'asserted-denied' : `observed-owed (${denial.kind})`}`
+              )
+              if (probeAsserts(denial)) {
+                // The adapter denies this route: nothing of the credential may surface.
+                expect(leaked).toBe(false)
+              }
+            },
+            COMMAND_BUDGET_MS + 60_000
+          )
+        }
+      }
+    )
+  }
 }

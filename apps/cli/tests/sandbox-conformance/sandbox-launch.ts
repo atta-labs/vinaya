@@ -38,7 +38,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   addCodexWritableDirs,
   buildCodexExecpolicyRules,
@@ -351,33 +351,77 @@ export function openSandboxSession(agent: Agent): SandboxSession {
   return agent === 'claude' ? claudeSession() : codexSession()
 }
 
+/** The credential files a canary home holds — each written with the canary, never a real secret. */
+const CANARY_HOME_FILES = [
+  '.config/gh/hosts.yml',
+  '.git-credentials',
+  '.netrc',
+  '.config/git/credentials',
+  '.ssh/id_ed25519',
+  '.codex/auth.json',
+  '.claude/.credentials.json',
+  '.aws/credentials',
+  '.local/share/keyrings/login.keyring'
+]
+
 /**
- * A session that runs a command inside the launch shape the ENGINE generates for the developer role —
- * Claude Code's generated `role-settings.json`, or Codex's generated `config.toml` — never the standalone
- * dispatch's settings. The Engine's generator (`createRoleLaunchers`) writes the same files a real Engine
- * run launches each role from; this session drives those files through the agent's real sandbox, so a
- * credential-confinement probe is judged by the boundary the Engine actually ships, not a standalone one.
+ * A throwaway home whose credential files hold ONLY the canary — never the operator's real files. A probe that
+ * reaches a route under this home surfaces the canary at worst, so a failed assertion can never print a real
+ * credential. The directory becomes the live session's `HOME`, so the generated deny rules (resolved from
+ * `HOME` at generation time) target it and the probes read it.
  */
-export function openEngineSandboxSession(agent: Agent): SandboxSession {
+function buildCanaryHome(parent: string): string {
+  const home = realpathSync(mkdtempSync(join(parent, 'canary-home-')))
+  for (const rel of CANARY_HOME_FILES) {
+    const abs = join(home, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    writeFileSync(abs, `${ENGINE_PROBE_CANARY}\n`, { mode: 0o600 })
+  }
+  return home
+}
+
+/**
+ * A session that runs a command inside the launch shape the ENGINE generates for one role — Claude Code's
+ * generated `role-settings.json`, or Codex's generated `config.toml` — never the standalone dispatch's
+ * settings. `createRoleLaunchers` writes the same files a real Engine run launches that role from, and the
+ * command runs through the SAME `sandboxProbePlanFor` env the Engine's own pre-spawn probe uses, so the
+ * boundary judged is the one the Engine ships, with the allowlisted launch env it ships.
+ *
+ * HOME is a throwaway canary home: the generated deny rules target it, the probes read it, and the credential
+ * variables a role must never inherit are injected into the source env so the launch-env allowlist is seen to
+ * strip them. No API-key variable is ever placed in the probe environment.
+ */
+export function openEngineSandboxSession(agent: Agent, role = 'developer'): SandboxSession {
   const worktreeDir = createWorktree(agent)
   const vendor = agent === 'claude' ? 'claude-code' : 'codex'
   const runDir = realpathSync(mkdtempSync(join(tmpdir(), `engine-${agent}-run-`)))
   const generatedRoot = join(runDir, 'generated')
   const variables = grantVariables(worktreeDir, runDir, REPO_ROOT)
   const scratchDir = variables.SCRATCH as string
-  const launchers = createRoleLaunchers({ vendor, generatedRoot, variables })
-  const developerDir = join(generatedRoot, 'developer')
+  const fixtureHome = buildCanaryHome(scratchDir)
   const { runtimeDir, store } = controllerSourceStore()
-  // A host environment that carries every credential route a probe tries to reach, so a probe that still
-  // sees one is a real leak. The Engine's own env allowlist (Claude) and config filters (Codex) must strip
-  // them before the role's commands run.
-  const poisonedHostEnv: Record<string, string> = {
+  // Generate the role settings with HOME pointed at the canary home, so the credential deny rules
+  // (`credentialDenyRead`, resolved from HOME at generation time) name the canary files the probes read.
+  const realHome = process.env.HOME
+  let launchers: ReturnType<typeof createRoleLaunchers>
+  try {
+    process.env.HOME = fixtureHome
+    launchers = createRoleLaunchers({ vendor, generatedRoot, variables })
+  } finally {
+    if (realHome === undefined) delete process.env.HOME
+    else process.env.HOME = realHome
+  }
+  const roleDir = join(generatedRoot, role)
+  // The credential variables a role must never inherit — forge tokens and the agent/bus socket pointers,
+  // carrying the canary. No API-key variable is included (the brief's trap and O5). The launch-env allowlist
+  // (`sandboxProbePlanFor`) passes only PATH/HOME/USER/LOGNAME, so none of these reach the role.
+  const sourceEnv: Record<string, string> = {
+    ...stripVinayaEnv(),
+    HOME: fixtureHome,
     GH_TOKEN: ENGINE_PROBE_CANARY,
     GITHUB_TOKEN: ENGINE_PROBE_CANARY,
-    ANTHROPIC_API_KEY: ENGINE_PROBE_CANARY,
-    OPENAI_API_KEY: ENGINE_PROBE_CANARY,
-    SSH_AUTH_SOCK: join(scratchDir, 'fake-agent.sock'),
-    DBUS_SESSION_BUS_ADDRESS: `unix:path=${join(scratchDir, 'fake-bus')}`
+    SSH_AUTH_SOCK: join(fixtureHome, '.ssh', 'agent.sock'),
+    DBUS_SESSION_BUS_ADDRESS: `unix:path=${join(fixtureHome, '.dbus', 'bus')}`
   }
   const dispose = (): void => {
     removeWorktree(worktreeDir)
@@ -392,8 +436,14 @@ export function openEngineSandboxSession(agent: Agent): SandboxSession {
     dispose
   }
   if (agent === 'claude') {
-    const generated = JSON.parse(readFileSync(join(developerDir, 'role-settings.json'), 'utf8')) as {
-      sandbox: { network: { allowedDomains: string[] }; filesystem: { denyRead?: string[]; allowWrite: string[] } }
+    // The sandbox runtime enforces the filesystem/network sandbox — the shell's boundary — from the generated
+    // settings' own `sandbox` block, verbatim. The Read-tool `permissions.deny` rules are a Claude-Code layer
+    // the runtime does not read; those are proved separately by the static deny-rule check over every role.
+    const generated = JSON.parse(readFileSync(join(roleDir, 'role-settings.json'), 'utf8')) as {
+      sandbox: {
+        network: { allowedDomains: string[]; allowAllUnixSockets?: boolean }
+        filesystem: { denyRead?: string[]; allowRead?: string[]; allowWrite: string[]; denyWrite?: string[] }
+      }
     }
     const settingsPath = join(runDir, 'srt-settings.json')
     writeFileSync(
@@ -402,17 +452,13 @@ export function openEngineSandboxSession(agent: Agent): SandboxSession {
         network: { allowedDomains: generated.sandbox.network.allowedDomains, deniedDomains: [] },
         filesystem: {
           denyRead: generated.sandbox.filesystem.denyRead ?? [],
-          allowRead: [],
+          allowRead: generated.sandbox.filesystem.allowRead ?? [],
           allowWrite: generated.sandbox.filesystem.allowWrite,
-          denyWrite: []
+          denyWrite: generated.sandbox.filesystem.denyWrite ?? []
         }
       })
     )
-    // The Engine gives a Claude role only its allowlisted launch env; the credentials above never reach it.
-    const plan = sandboxProbePlanFor('claude-code', launchers.developer!, developerDir, worktreeDir, {
-      ...stripVinayaEnv(),
-      ...poisonedHostEnv
-    })
+    const plan = sandboxProbePlanFor('claude-code', launchers[role]!, roleDir, worktreeDir, sourceEnv)
     return {
       ...base,
       run: (command, env) =>
@@ -420,33 +466,26 @@ export function openEngineSandboxSession(agent: Agent): SandboxSession {
           [process.execPath, 'x', SANDBOX_RUNTIME_PACKAGE, '--settings', settingsPath, '-c', withAbsoluteBun(command)],
           worktreeDir,
           { ...plan.env, TMPDIR: scratchDir, ...env },
-          `engine-claude: ${command}`
+          `engine-claude[${role}]: ${command}`
         )
     }
   }
-  // Codex launches from the generated CODEX_HOME; `codex sandbox` needs the staged mode as a `--config` override.
-  writeFileSync(join(developerDir, 'auth.json'), '{}\n')
-  const configToml = readFileSync(join(developerDir, 'config.toml'), 'utf8')
-  const sandboxMode = configToml.match(/^sandbox_mode = ("[^"]+")$/m)?.[1]
+  // Codex launches from the generated CODEX_HOME; `codex sandbox` needs the staged mode as a `--config`
+  // override and reads its writable roots from the generated config. The probe env is the allowlisted plan env.
+  writeFileSync(join(roleDir, 'auth.json'), '{}\n')
+  const plan = sandboxProbePlanFor('codex', launchers[role]!, roleDir, worktreeDir, sourceEnv)
+  if (plan.agent !== 'codex') throw new Error('expected a Codex probe plan')
+  const sandboxMode = plan.configToml.match(/^sandbox_mode = ("[^"]+")$/m)?.[1]
   if (sandboxMode === undefined) throw new Error('the Engine-generated Codex config names no sandbox_mode')
-  const gitCommonDir = resolveGitCommonDir(worktreeDir)
-  const bunCacheDir = resolveBunInstallCacheDir()
-  const sandboxArgs = addCodexWritableDirs(
-    ['sandbox', '--config', `sandbox_mode=${sandboxMode}`],
-    [scratchDir, bunCacheDir, ...(gitCommonDir ? [gitCommonDir] : [])],
-    true
-  )
-  const envExtras = codexSpawnEnvExtras('codex', developerDir, scratchDir).attribution
+  const sandboxArgs = plan.withWritableDirs(['sandbox', '--config', `sandbox_mode=${sandboxMode}`])
   return {
     ...base,
     run: (command, env) =>
       runIn(
         [process.execPath, 'x', CODEX_PACKAGE, ...sandboxArgs, '--', 'bash', '-c', withAbsoluteBun(command)],
         worktreeDir,
-        // Codex receives the poisoned host env; its config's own environment filters must keep each credential
-        // variable out of the role's commands.
-        { ...stripVinayaEnv(), ...poisonedHostEnv, ...envExtras, CODEX_HOME: developerDir, ...env },
-        `engine-codex: ${command}`
+        { ...plan.env, TMPDIR: scratchDir, ...env },
+        `engine-codex[${role}]: ${command}`
       )
   }
 }

@@ -17,9 +17,9 @@ import {
 import { engineEvidenceOf, OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
 import {
   CODEX_FILE_READ_RESIDUAL,
-  CODEX_PROFILE_OWED_REASON,
   CREDENTIAL_PROBES,
-  CREDENTIAL_ROW_IDS
+  CREDENTIAL_ROW_IDS,
+  OWED_REASONS
 } from '../sandbox-conformance/engine-attack-probes'
 import {
   FAULT_ATTACK_HEADING,
@@ -313,15 +313,18 @@ describe('the credential-confinement rows record Engine evidence, owed shrink-on
   const byId = new Map(loaded.value.components.map((entry) => [entry.row.id, entry.row]))
 
   it('lists every credential row and fails while any has no recorded Engine evidence, printing the owed count', () => {
-    const rows = CREDENTIAL_ROW_IDS.map((id) => byId.get(id))
-    expect(rows.every((row) => row !== undefined)).toBe(true)
-    // "Recorded" is a live-gated test entry or a stated owed reason; a row with no entry fails.
-    const unrecorded = rows.filter((row) => row === undefined || engineEvidenceOf(row) === undefined).map((_, i) => i)
+    // "Recorded" is a live-gated test entry or a stated owed reason; a row with no entry names itself in the failure.
+    const unrecorded = CREDENTIAL_ROW_IDS.filter((id) => {
+      const row = byId.get(id)
+      return row === undefined || engineEvidenceOf(row) === undefined
+    })
     expect(unrecorded).toEqual([])
     const owed = CREDENTIAL_ROW_IDS.filter((id) => owedList.owed.includes(id))
     console.log(`credential-confinement Engine evidence: ${owed.length} of ${CREDENTIAL_ROW_IDS.length} rows owed`)
-    // Shrink-only: every credential row is still owed; none leaves the list until its live output is pasted.
-    expect(owed.length).toBe(CREDENTIAL_ROW_IDS.length)
+    // Shrink-only ratchet: the owed set never grows past the credential rows, and every owed id is a known
+    // credential row — a row leaves only by gaining evidence, never by an unrelated id slipping in.
+    expect(owed.length).toBeLessThanOrEqual(CREDENTIAL_ROW_IDS.length)
+    expect(owed.every((id) => CREDENTIAL_ROW_IDS.includes(id))).toBe(true)
   })
 
   const cutoverOf = new Map(
@@ -341,14 +344,19 @@ describe('the credential-confinement rows record Engine evidence, owed shrink-on
     }
   })
 
-  it('records the ruling reason on each credential row Codex cannot deny', () => {
+  it('records a recognized owed reason on each credential row an adapter cannot deny, and the ruling reason where it applies', () => {
     for (const probe of CREDENTIAL_PROBES) {
-      if (probe.byAdapter.codex.kind !== 'owed') continue
+      const owedReasons = Object.values(probe.byAdapter)
+        .filter((d) => d.kind === 'owed')
+        .map((d) => (d as { reason: string }).reason)
+      if (owedReasons.length === 0) continue
       const row = byId.get(`fault-attack:${probe.row}`)
       const state = row === undefined ? undefined : engineEvidenceOf(row)
       expect(state?.state).toBe('owed')
       if (state?.state === 'owed') {
-        expect([CODEX_PROFILE_OWED_REASON, CODEX_FILE_READ_RESIDUAL]).toContain(state.reason)
+        expect([...OWED_REASONS]).toContain(state.reason)
+        // The row's recorded owed reason is one its probe's own adapters name — never a reason from elsewhere.
+        expect(owedReasons).toContain(state.reason)
       }
     }
   })
