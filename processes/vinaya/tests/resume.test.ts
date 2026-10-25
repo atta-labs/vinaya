@@ -141,7 +141,11 @@ function stubRun(scenario: Scenario = {}, runtimeDir = mkdtempSync(join(tmpdir()
     runtimeDir,
     loopId: 'resume-test',
     taskInput: { branch: BRANCH } as TaskInput,
-    handoffDeps: handoff.deps,
+    // A checkpoint resume and a held verdict both ask whether the pull request conflicts; the answer is stubbed so no
+    // test reaches the forge. A test that needs a conflict sets this to answer true.
+    heldPullRequestConflicts: async () => false,
+    // These runs wire no input versions, so the escalation record's write fails; its retries go without waiting.
+    handoffDeps: { ...handoff.deps, sleepSync: () => {} },
     actions,
     sink: { log: () => {}, drain: async () => {} },
     startHost: async () => ({ close: async () => {} }),
