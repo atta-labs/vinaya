@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   createTestTempRun,
   currentOwner,
@@ -17,6 +17,7 @@ import {
   testTempRoot
 } from '../../src/lib/test-temp'
 import { fixtureDir } from './test-temp-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 function deadPid(): number {
   const child = spawnSync('true')
@@ -126,5 +127,35 @@ describe('shared-directory cleanup', () => {
     mkdirSync(unrelated)
     await sweepOwnedDirs(root)
     expect(existsSync(unrelated)).toBe(true)
+  })
+})
+
+describe('fixture cleanup reporting', () => {
+  test('a cleanup subprocess failure is returned and preserved for the next startup sweep', async () => {
+    const root = fixtureDir('cleanup-report-')
+    const module = resolve(import.meta.dir, 'test-temp-fixture.ts')
+    const child = spawnSyncBudgeted(
+      process.execPath,
+      [
+        '--eval',
+        `
+      import { fixtureDir, releaseFixtureRun } from ${JSON.stringify(module)};
+      import { dirname } from 'node:path';
+      const dir = dirname(fixtureDir('payload-'));
+      const error = await releaseFixtureRun(['/bin/sh', '-c', 'echo injected-removal-denied >&2; exit 42', 'cleanup']);
+      console.log(JSON.stringify({ dir, error }));
+    `
+      ],
+      { encoding: 'utf8', env: { ...stripVinayaEnv(), VINAYA_TEST_TMP: root } }
+    )
+    expect(child.status).toBe(0)
+    const result = JSON.parse(child.stdout.trim()) as { dir: string; error: string | null }
+    expect(result.error).toContain('42')
+    expect(child.stderr).toContain('injected-removal-denied')
+    const report = await sweepOwnedDirs(join(root, 'vinaya'), {
+      stop: async () => ({ backend: 'registry', terminated: [], killed: [], alreadyGone: [] })
+    })
+    expect(report.failed).toEqual([{ dir: expect.any(String), error: expect.stringContaining('42') }])
+    expect(report.removed).toHaveLength(1)
   })
 })

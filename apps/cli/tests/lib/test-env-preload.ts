@@ -139,8 +139,8 @@ process.env.VINAYA_STEP_ONE_TMP ??= fixtureDir('step-one-')
  * hook every test process loads, so each CI shard and each local run is
  * covered, whichever files it was given.
  */
-afterAll(() => {
-  const fixtures = releaseFixtureRun()
+afterAll(async () => {
+  const fixtures = await releaseFixtureRun()
   if (privateRuntimeDir !== null) rmSync(privateRuntimeDir, { recursive: true, force: true })
   const leaked = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
   if (leaked.length > 0) {

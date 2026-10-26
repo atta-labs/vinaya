@@ -313,8 +313,15 @@ export async function sweepOwnedDirs(parent: string, deps: Partial<SweepDeps> = 
       try {
         const stat = lstatSync(receipt)
         if (stat.isFile() && stat.uid === process.getuid?.() && (stat.mode & 0o022) === 0) {
-          const released = JSON.parse(readFileSync(receipt, 'utf8')) as { original: string; marker: TestTempMarker }
-          if (released.original === original && released.marker?.owner?.host === hostname()) marker = released.marker
+          const released = JSON.parse(readFileSync(receipt, 'utf8')) as {
+            original: string
+            marker: TestTempMarker
+            cleanupError?: string
+          }
+          if (released.original === original && released.marker?.owner?.host === hostname()) {
+            marker = released.marker
+            if (typeof released.cleanupError === 'string') report.failed.push({ dir, error: released.cleanupError })
+          }
         }
       } catch {
         // Older releases still carry their intact inner marker; unknown entries must be retained.
