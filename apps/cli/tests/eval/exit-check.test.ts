@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   checkExit,
+  engineEvidenceOf,
   EXPECTED_COUNTS,
   EXPECTED_SHARDS,
   OPERATOR_EXIT_EXCLUSIONS,
@@ -291,9 +292,12 @@ describe('the global exit check', () => {
         .map(({ row }) => row.id)
         .filter((id) => id.startsWith('cutover-gate:') && !notOwedGates.includes(id))
     })
-    expect(faultRows?.evidenced).toBe(19)
-    expect(faultRows?.owed).toBe(37)
-    expect(faultRows?.owedIds).toHaveLength(37)
+    expect(faultRows?.evidenced).toBe(28)
+    expect(faultRows?.owed).toBe(28)
+    expect(faultRows?.owedIds).toHaveLength(28)
+    // The run-control and governed-effects rows the Engine runner's fault-injection scenarios prove.
+    expect(faultRows?.owedIds).not.toContain('fault-attack:03-controller-process-death')
+    expect(faultRows?.owedIds).not.toContain('fault-attack:19-forged-or-stale-beyond-surface-record')
     // Shadow mode's row and gate are proved on the Engine by the shadow conformance suite.
     expect(faultRows?.owedIds).not.toContain('fault-attack:29-shadow-mode-mutation')
     // The fault-rows conformance suite proves eighteen rows on the Engine.
@@ -302,6 +306,13 @@ describe('the global exit check', () => {
       'fault-attack:52-hard-budget-exhaustion-turns-rounds-invalid-output-retries'
     )
     expect(gates?.owedIds).not.toContain('cutover-gate:gate-9')
+    // Gate 13's L2 and L3 suites are proved on the Engine; what it still owes is only its live L6 rehearsal.
+    const gate13 = registry.components.find(({ row }) => row.id === 'cutover-gate:gate-13')?.row
+    expect(gate13 === undefined ? undefined : engineEvidenceOf(gate13)).toEqual({
+      state: 'live-run-owed',
+      test: 'apps/cli/tests/conformance/dev-review-backend-selection.test.ts',
+      variable: 'VINAYA_ROLLBACK_REHEARSAL'
+    })
     expect(report.kinds.port.engine).toBeUndefined()
     console.log(
       `Engine evidence — cutover-gate: ${gates?.evidenced} evidenced, ${gates?.owed} owed; fault-attack: ${faultRows?.evidenced} evidenced, ${faultRows?.owed} owed; owed to the Operator on one host: ${report.operatorOwed.length}`

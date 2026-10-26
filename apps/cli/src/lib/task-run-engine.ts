@@ -43,15 +43,36 @@ export function recordTaskRunner(
   renameSync(temporary, path)
 }
 
+/** Why a runner refuses to continue a run: the run is recorded on another runner, named with the one requested. */
+export type CrossRunnerRefusalReason = {
+  code: 'recorded_on_another_runner'
+  task: number
+  recorded: TaskRunner
+  requested: TaskRunner
+}
+
 /**
- * The refusal a runner gives a held pause another runner recorded, naming the recorded one; null when the pause is
- * this runner's own. A run with no recorded runner is a standalone run.
+ * The typed refusal a runner gives a held pause another runner recorded; null when the pause is this runner's own.
+ * A run with no recorded runner is a standalone run.
  */
-export function crossRunnerRefusal(task: number, runner: TaskRunner, root: string = runtimeDirForThisRepo()) {
+export function crossRunnerRefusalReason(
+  task: number,
+  runner: TaskRunner,
+  root: string = runtimeDirForThisRepo()
+): CrossRunnerRefusalReason | null {
   const recorded = readTaskRunner(task, root)
-  return recorded === runner
-    ? null
-    : `task ${task}'s paused run was recorded on the ${recorded} runner, and the ${runner} runner never continues another runner's run — resume it on ${recorded}.`
+  return recorded === runner ? null : { code: 'recorded_on_another_runner', task, recorded, requested: runner }
+}
+
+/** The refusal's text, as both runners print it. */
+export function crossRunnerRefusalText(reason: CrossRunnerRefusalReason): string {
+  return `task ${reason.task}'s paused run was recorded on the ${reason.recorded} runner, and the ${reason.requested} runner never continues another runner's run — resume it on ${reason.recorded}.`
+}
+
+/** The refusal a runner gives a held pause another runner recorded, as text; null when the pause is this runner's own. */
+export function crossRunnerRefusal(task: number, runner: TaskRunner, root: string = runtimeDirForThisRepo()) {
+  const reason = crossRunnerRefusalReason(task, runner, root)
+  return reason === null ? null : crossRunnerRefusalText(reason)
 }
 
 /** One task's Engine run directory: `<runtimeDir>/engine-runs/<task>`, where the Engine keeps its checkpoints. */
@@ -75,6 +96,28 @@ export function readEngineRun(task: number, root: string = runtimeDirForThisRepo
     checkpoint: existsSync(join(runDirectory, 'checkpoints.sqlite')),
     lock: lock === null ? null : { pid: lock.pid, alive: isDriverPidAlive(lock.pid) }
   }
+}
+
+/**
+ * Whether the task's Engine run has not ended: its driver is live, its last leg ended short of completed or
+ * cancelled, or it left a checkpoint and no trace at all. A held pause is not needed for a run to be in flight.
+ */
+export function engineRunInFlight(task: number, root: string = runtimeDirForThisRepo()): boolean {
+  const reading = readEngineRun(task, root)
+  if (reading.lock?.alive) return true
+  const tracePath = join(reading.runDirectory, 'trace.json')
+  if (!existsSync(tracePath)) return reading.checkpoint
+  try {
+    const outcome = (JSON.parse(readFileSync(tracePath, 'utf8')) as { outcome?: unknown }).outcome
+    return outcome !== 'completed' && outcome !== 'cancelled'
+  } catch {
+    return true
+  }
+}
+
+/** The refusal's text for an in-flight run another runner recorded that holds no pause. */
+export function crossRunnerInFlightText(reason: CrossRunnerRefusalReason): string {
+  return `task ${reason.task}'s in-flight run was recorded on the ${reason.recorded} runner, and the ${reason.requested} runner never takes over another runner's run — continue it on ${reason.recorded}, or end it and restart with \`task run --rollback\`.`
 }
 
 /** The continuation of a halted Engine run: `--resume <pr>` through its pull request, else its task's checkpoint. */

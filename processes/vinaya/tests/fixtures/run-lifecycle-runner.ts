@@ -5,6 +5,7 @@ import { loadProcess } from '../../../../harness/dev-process/loader/load-process
 import type { ActionRegistry } from '../../../../harness/dev-process/engine-runtime/run-process'
 import { classifyGateResult, dispatchReviewers, ACTION_BINDINGS, type TaskInput } from '../../executing/actions'
 import { runEngine, type Agent } from '../../bin/run-engine'
+import { recordedHandoff } from '../handoff-fakes'
 
 // A real runner process for the lifecycle tests: the Engine run over stub actions, whose agents are real shell
 // processes (each starts a long-lived child of its own), so a signal sent to this process can be checked against
@@ -32,7 +33,10 @@ const result = await runEngine({
   repoRoot,
   runtimeDir,
   loopId: 'signal-test',
-  taskInput: {} as TaskInput,
+  // No forge is reached: no pull request is open, and a pause is recorded but never posted.
+  taskInput: { bound: { findOpenPrForBranch: () => null } } as unknown as TaskInput,
+  handoffDeps: recordedHandoff().deps,
+  heldPullRequestConflicts: async () => false,
   actions,
   sink: { log: () => {}, drain: async () => {} },
   startHost: async () => ({ close: async () => {} }),

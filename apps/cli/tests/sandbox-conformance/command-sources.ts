@@ -52,6 +52,9 @@ export const SUITE_INPUTS: readonly string[] = [
   // The driver code that builds each agent's sandbox settings.
   'apps/cli/src/lib/dispatch.ts',
   'apps/cli/src/lib/worker-boundary.ts',
+  // The Engine's own launch-shape generators and the launcher the credential probes run inside.
+  'harness/adapters/agents/',
+  'processes/vinaya/executing/',
   'apps/cli/src/lib/task-tools/dev-tools-registration.ts',
   // Where the task's required-source store lives, which both sandboxes must not write.
   'apps/cli/src/lib/source-manifest.ts',

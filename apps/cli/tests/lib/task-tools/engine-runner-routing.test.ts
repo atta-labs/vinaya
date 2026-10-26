@@ -14,7 +14,7 @@ import {
 import { engineRunNote, runnerReadingFor } from '../../../src/lib/task-status.js'
 import { runTask, type RunTaskDeps } from '../../../src/lib/task-run.js'
 import {
-  crossRunnerRefusal,
+  crossRunnerRefusalReason,
   engineRunDirectory,
   engineRunnerScriptPath,
   readTaskRunner,
@@ -203,7 +203,7 @@ describe('task_start', () => {
     const deps = (pause: boolean) =>
       fixtureDeps({
         hasPauseState: () => pause,
-        crossRunnerRefusal: (issue, runner) => crossRunnerRefusal(issue, runner, runtime),
+        crossRunnerRefusalReason: (issue, runner) => crossRunnerRefusalReason(issue, runner, runtime),
         devReviewLoop: async () => {
           standaloneStarts += 1
           return { task: 42, prNumber: 7, finalDecision: { type: 'publish' } }
@@ -366,7 +366,7 @@ describe('task_resume', () => {
             prepareIssueTask: async () => ({ issue: task }) as Awaited<ReturnType<RunTaskDeps['prepareIssueTask']>>,
             findOpenPrForBranch: () => ({ number: pr }) as never,
             hasPauseState: (issue) => readPauseState(runtimeDir, issue) !== null,
-            crossRunnerRefusal: (issue, runner) => crossRunnerRefusal(issue, runner, runtimeDir),
+            crossRunnerRefusalReason: (issue, runner) => crossRunnerRefusalReason(issue, runner, runtimeDir),
             devReviewLoop: async () => {
               standaloneStarts += 1
               return { task, prNumber: pr, finalDecision: { type: 'publish' } }

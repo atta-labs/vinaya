@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { generateClaudeSettings } from './claude-code/settings'
-import { generateCodexConfig } from './codex/config'
+import { credentialDenyRead, credentialReadRules, generateClaudeSettings } from './claude-code/settings'
+import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from './codex/config'
 import { claudeShellRule } from './claude-code/capabilities'
 import { CODEX_READ_ONLY_COMMANDS } from './codex/capabilities'
 import {
@@ -526,8 +526,18 @@ describe('role-grant vendor parity', () => {
     for (const config of [claude, codex]) {
       expect(Object.keys(config.env).filter((name) => credential.test(name))).toEqual([])
       expect(Object.values(config.env).filter((value) => credential.test(value))).toEqual([])
-      for (const [path, content] of Object.entries(config.files))
-        if (path !== 'hooks/pre-tool-use.mjs') expect(content, `${config.vendor} ${path}`).not.toMatch(credential)
+      // A credential route may be named only to deny it: the sandbox's denyRead paths, the Read tool's deny
+      // rules, and the variables Codex keeps out of the role's commands.
+      const denials = [
+        ...credentialDenyRead().map((path) => JSON.stringify(path)),
+        ...credentialReadRules(credentialDenyRead()).map((rule) => JSON.stringify(rule)),
+        ...CREDENTIAL_ENV_EXCLUDES.map((name) => `${JSON.stringify(name)} = "exclude"`)
+      ]
+      for (const [path, content] of Object.entries(config.files)) {
+        if (path === 'hooks/pre-tool-use.mjs') continue
+        const granted = denials.reduce((text, denial) => text.replaceAll(denial, ''), content)
+        expect(granted, `${config.vendor} ${path}`).not.toMatch(credential)
+      }
     }
     const settings = JSON.parse(generatedFile(claude, 'role-settings.json'))
     expect(settings.permissions.deny).toContain('Bash(git push:*)')

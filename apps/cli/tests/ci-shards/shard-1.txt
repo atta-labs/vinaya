@@ -103,3 +103,5 @@ tests/lib/ci-test-selection.test.ts
 tests/task-run-engine.test.ts
 tests/lib/log-sink-off.test.ts
 tests/lib/pre-push-mode.test.ts
+tests/backend-rollback.test.ts
+tests/conformance/dev-review-backend-selection.test.ts

@@ -10,9 +10,15 @@ import {
   writeFileSync
 } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
-import { buildReviewInputManifest, DEFAULT_REVIEW_POLICY, objectivesVersion } from '@attalabs/aeg-core'
+import {
+  buildReviewInputManifest,
+  type ControlStoreDeps,
+  DEFAULT_REVIEW_POLICY,
+  defaultControlStoreDeps,
+  objectivesVersion
+} from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/dev-process/loader/load-process.js'
 import { setEngineLogIdentity } from '../../../../processes/vinaya/bin/engine-log-identity.js'
@@ -41,6 +47,7 @@ import {
   readDriverLock,
   readPauseState,
   resolveEscalation,
+  writeDriverLock,
   writeEscalationRecord
 } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { liveHandoffDeps, type HandoffDeps } from '../../../../processes/vinaya/executing/handoff.js'
@@ -58,7 +65,10 @@ import {
   resetDefaultLogSinkContext,
   type LogSinkDeps
 } from '../../src/lib/log-sink.js'
-import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache } from '../../src/lib/run-paths.js'
+import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, tasksExecutionRoot } from '../../src/lib/run-paths.js'
+import { createEffectExecutor, type EffectIdentity, type EffectReconciler, sha256Hex } from '../../src/lib/effects.js'
+import { createTaskCancelHandler } from '../../src/lib/task-tools/cancel.js'
+import { readTaskRunner } from '../../src/lib/task-run-engine.js'
 import { cleanupAllReviewerIsolationArtifacts } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
 import { heldVerdictPath } from '../../src/lib/dev-review-loop/reviewer-dispatch.js'
 import { handoffIdsInPrompt, OWNED_ENV_KEYS } from '../lib/dev-review-loop-harness.js'
@@ -125,8 +135,41 @@ export const CONTROLLER_SECRETS: Readonly<Record<string, string>> = {
   VINAYA_LOG_TOKEN: 'log-token-controller-canary-0003'
 }
 
+/**
+ * The in-flight Engine runs the backend-selection suite rolls back: one in each pause kind (a Principal ruling, an
+ * automatic recovery, an Operator's host repair), one stopped mid-Developer turn, one stopped mid-review and one with
+ * an uncertain publication. Each ends its first leg in that state and is then continued or terminated and restarted.
+ */
+export const IN_FLIGHT_KINDS = [
+  'principal-ruling-pause',
+  'automatic-recovery-pause',
+  'operator-remediation-pause',
+  'mid-developer-turn',
+  'mid-review',
+  'uncertain-effect'
+] as const
+export type InFlightKind = (typeof IN_FLIGHT_KINDS)[number]
+/** The runs whose controller is stopped through the leg's run control while a role's turn is still running. */
+const STOPPED_MID_TURN: Partial<Record<string, Role>> = {
+  'mid-developer-turn': 'developer',
+  'mid-review': 'code-reviewer'
+}
+/** A pid no process holds: the one an exited runner's kept driver lock names. */
+const EXITED_PID = 2 ** 22 + 1
+/** The key and identity the uncertain-effect run's publication is recorded under, before it is attempted. */
+export const PUBLICATION_EFFECT_KEY = 'publication-round-1'
+function publicationIdentity(round: number): EffectIdentity {
+  return {
+    operation: 'pr-comment',
+    target: `pr:${PR}`,
+    inputVersion: round,
+    payloadDigest: sha256Hex(`round ${round}`)
+  }
+}
+
 /** The stream each role's stub ends with, by run: a fault touches only the role and the attempts it names. */
 function streamOf(id: string, role: Role, attempt: number): StubStream {
+  if (STOPPED_MID_TURN[id] === role && attempt === 1) return 'hang'
   if (id === 'developer-process-death' && role === 'developer' && attempt === 1) return 'death'
   if (id === 'reviewer-process-death' && role === 'security-reviewer') return 'death'
   if (id === 'stream-truncation' && role === 'developer') return 'truncated'
@@ -315,6 +358,23 @@ export interface EngineScenarioRun {
   agent: Agent
 }
 
+/**
+ * An in-flight run, once its first leg has ended in its in-flight state: what continues it on the Engine, the
+ * forge-fake ledger and its reconciler, and the shared cancel the Operator would run against it.
+ */
+export interface InFlightEngineRun extends EngineScenarioRun {
+  kind: InFlightKind
+  /** Continues the run on the Engine as its own runner does: the ruling, the repaired host or a re-entry. */
+  continueOnEngine: () => Promise<void>
+  /** Every effect the forge fake performed, in order. */
+  ledger: () => RecordLine[]
+  /** Reads the ledger for an effect's identity: confirmed when its publication is there, absent when not. */
+  reconcile: EffectReconciler
+  /** The Operator's `task_cancel` over this run's records, a Principal's cancel ruling posted. */
+  cancel: ReturnType<typeof createTaskCancelHandler>
+  controlStore: ControlStoreDeps
+}
+
 /** A scenario run in shadow mode (`runShadowEngine`), beside a live run whose runtime directory is `liveRuntimeDir`. */
 export interface EngineShadowMode {
   liveRuntimeDir: string
@@ -330,7 +390,8 @@ export async function runEngineScenario(
   agent: Agent,
   logSink?: Partial<LogSinkDeps>,
   inspect?: (run: EngineScenarioRun) => Promise<void> | void,
-  shadow?: EngineShadowMode
+  shadow?: EngineShadowMode,
+  between?: (run: InFlightEngineRun) => Promise<void>
 ): Promise<Observation> {
   const root = mkdtempSync(join(tmpdir(), 'engine-corpus-'))
   const runtimeDir = join(root, 'runtime')
@@ -363,7 +424,7 @@ export async function runEngineScenario(
   const savedSecrets = Object.fromEntries(Object.keys(CONTROLLER_SECRETS).map((key) => [key, process.env[key]]))
   if (id === 'controller-secret') Object.assign(process.env, CONTROLLER_SECRETS)
   try {
-    const observation = await drive(id, agent, root, runtimeDir, logSink, shadow)
+    const observation = await drive(id, agent, root, runtimeDir, logSink, shadow, between)
     await inspect?.({ runtimeDir, task: TASK, pr: PR, agent })
     return observation
   } finally {
@@ -397,7 +458,8 @@ async function drive(
   root: string,
   runtimeDir: string,
   logSink: Partial<LogSinkDeps> | undefined,
-  shadow: EngineShadowMode | undefined
+  shadow: EngineShadowMode | undefined,
+  between: ((run: InFlightEngineRun) => Promise<void>) | undefined
 ): Promise<Observation> {
   const repo = join(root, 'repo')
   mkdirSync(repo)
@@ -425,6 +487,7 @@ async function drive(
   const eventFile = join(runtimeDir, 'events.jsonl')
   const effectFile = join(runtimeDir, 'forge.jsonl')
   const actionFile = join(runtimeDir, 'actions.jsonl')
+  const controlStore = defaultControlStoreDeps(() => tasksExecutionRoot(runtimeDir))
   const gateState = join(root, 'gate.json')
   const gateCli = join(root, 'gate.ts')
   // The real harness.run-gates action invokes this fake external check command.
@@ -511,21 +574,47 @@ async function drive(
     },
     publishRound: (_runtime, input) => {
       publications += 1
-      append(effectFile, { kind: 'publication-started', round: input.round })
-      if ((id === 'uncertain-effect-crash' || id === 'publication-replay') && publications === 1)
-        throw new Error('simulated crash after the remote publish began')
-      for (const role of ['reviewer', 'security'] as const) {
-        const body = readFileSync(heldVerdictPath(runtimeDir, TASK, input.round, role), 'utf8')
-        append(effectFile, {
-          kind: 'comment',
-          marker: role === 'reviewer' ? 'reviewer-verdict' : 'security-verdict',
-          body
-        })
+      // A rate limit refuses the first publication before any of it is attempted.
+      if (id === 'automatic-recovery-pause' && publications === 1)
+        throw new Error('API rate limit exceeded: the publication was refused before it began')
+      const publish = () => {
+        append(effectFile, { kind: 'publication-started', round: input.round })
+        if (
+          (id === 'uncertain-effect-crash' || id === 'publication-replay' || id === 'uncertain-effect') &&
+          publications === 1
+        )
+          throw new Error('simulated crash after the remote publish began')
+        for (const role of ['reviewer', 'security'] as const) {
+          const body = readFileSync(heldVerdictPath(runtimeDir, TASK, input.round, role), 'utf8')
+          append(effectFile, {
+            kind: 'comment',
+            marker: role === 'reviewer' ? 'reviewer-verdict' : 'security-verdict',
+            body
+          })
+        }
+        append(effectFile, { kind: 'comment', marker: 'summary', round: input.round })
+        append(effectFile, { kind: 'published', round: input.round })
+        return `https://example.com/pull/${PR}#round-${input.round}`
       }
-      append(effectFile, { kind: 'comment', marker: 'summary', round: input.round })
-      append(effectFile, { kind: 'published', round: input.round })
+      if (id !== 'uncertain-effect') {
+        publish()
+        return
+      }
+      // Its identity is recorded before the write, through the shared executor, as the live publication's is.
+      createEffectExecutor(controlStore, TASK, `engine-corpus:${TASK}:publication`, () => {}).execute({
+        key: PUBLICATION_EFFECT_KEY,
+        identity: publicationIdentity(input.round),
+        poster: publish,
+        reconcile: reconcileOnLedger
+      })
     }
   }
+  /** A publication's identity is on the ledger once that round's publication is recorded there. */
+  const reconcileOnLedger: EffectReconciler = (identity) =>
+    identity.target === `pr:${PR}` &&
+    lines(effectFile).some((effect) => effect.kind === 'published' && effect.round === identity.inputVersion)
+      ? { outcome: 'confirmed', url: `https://example.com/pull/${PR}#round-${identity.inputVersion}` }
+      : { outcome: 'absent' }
   const unavailable = async (): Promise<never> => {
     throw new Error('unused fake tool')
   }
@@ -574,7 +663,10 @@ async function drive(
     ...task.bound,
     localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
     probeAgentSandbox: async (plan) => {
-      const refusedProbe = REFUSED_SANDBOX_PROBES[id]
+      // An Operator's host repair is a host whose confinement was missing, then installed before the run continues.
+      const refusedProbe = continuing
+        ? undefined
+        : REFUSED_SANDBOX_PROBES[id === 'operator-remediation-pause' ? 'confinement-missing' : id]
       // A confinement fault runs the real probe reader over the host's refused probe, as on a Linux host.
       return refusedProbe
         ? probeAgentSandbox(plan, { platform: 'linux', run: async () => refusedProbe(plan.agent) })
@@ -643,8 +735,11 @@ async function drive(
     resume: { task: TASK, branch: BRANCH, worktree, remoteHead: head },
     heldReview: null
   })
+  /** The run control of the leg running now: the one a run stopped mid-turn is halted through. */
+  let legControl: ReturnType<typeof createRunControl> | null = null
   const execute = async (args: EngineArgs = { task: TASK, agent, dryRun: false }, watch?: RulingWatch) => {
     const control = createRunControl()
+    legControl = control
     const options: EngineRunOptions = {
       args,
       process: PROCESS,
@@ -695,7 +790,13 @@ async function drive(
         let output: (prompt: string) => unknown
         const stream = streamOf(id, role, attempt)
         const isHumanPause =
-          ['human-pause', 'resume', 'cancellation', 'operator-intervention-unauthenticated'].includes(id) && !continuing
+          [
+            'human-pause',
+            'resume',
+            'cancellation',
+            'operator-intervention-unauthenticated',
+            'principal-ruling-pause'
+          ].includes(id) && !continuing
         if (role === 'developer') {
           // Like the standalone fake Developer, it cites every finding id its prompt hands over.
           output = (prompt) => ({
@@ -772,6 +873,8 @@ async function drive(
           output,
           id === 'provider-failure' && role === 'developer' ? 1 : 0,
           async () => {
+            // The controller is stopped through the leg's run control while this turn still runs.
+            if (stream === 'hang' && STOPPED_MID_TURN[id] === role) legControl?.halt('the controller stopped mid-turn')
             // A turn rejected for an unread source never opens the pull request, as in the standalone world.
             if (role === 'developer' && id !== 'isolation-refusal' && id !== 'required-source-failure') prOpen = true
             if (role === 'developer' && id === 'isolation-refusal')
@@ -831,23 +934,25 @@ async function drive(
     const watching = execute(undefined, { deps: resumeDeps, pollMs: 20, sleep: abortableSleep })
     for (let i = 0; i < 500 && readPauseState(runtimeDir, TASK) === null; i++)
       await new Promise((r) => setTimeout(r, 10))
-    // The cancel's own Log line, written through the shared sink to this scenario's folder, as a separate process's.
     const cancelSink = logSink ?? ownLogFolder(runtimeDir)
-    // The cancel is another process's: its sink reads none of the run's own Log identity (its host, its pull request,
-    // its runner, process and runtime).
-    await cancelOnTheOperatorsBehalf({
-      ...cancelSink,
-      env: () => {
-        const env = { ...process.env }
-        delete env.VINAYA_HOST
-        delete env.VINAYA_PR
-        for (const key of LOG_IDENTITY_ENV_KEYS) delete env[key]
-        return env
-      }
-    })
+    await cancelOnTheOperatorsBehalf(operatorsCancelSink(cancelSink))
     await watching
     for (const line of recordedLogLines(cancelSink)) if (line.event === 'cancelled') append(eventFile, line)
   }
+  /**
+   * The cancel's own Log line, written through the shared sink to this scenario's folder, as a separate process's:
+   * its sink reads none of the run's own Log identity (its host, its pull request, its runner, process and runtime).
+   */
+  const operatorsCancelSink = (cancelSink: Partial<LogSinkDeps>): Partial<LogSinkDeps> => ({
+    ...cancelSink,
+    env: () => {
+      const env = { ...process.env }
+      delete env.VINAYA_HOST
+      delete env.VINAYA_PR
+      for (const key of LOG_IDENTITY_ENV_KEYS) delete env[key]
+      return env
+    }
+  })
   const cancelOnTheOperatorsBehalf = (cancelSink: Partial<LogSinkDeps>) =>
     cancelDevReviewLoop(
       { cancelPr: PR, agent },
@@ -867,6 +972,69 @@ async function drive(
     )
   if (id === 'cancellation') await cancelInItsWatch()
   else await execute()
+  if (between) {
+    // The leg's runner has exited: a driver lock it kept for an automatic recovery names its exited pid.
+    const kept = readDriverLock(runtimeDir, TASK)
+    if (kept !== null && kept.pid === process.pid) writeDriverLock(runtimeDir, TASK, { ...kept, pid: EXITED_PID })
+    const continueOnEngine = async () => {
+      runnerGone()
+      continuing = true
+      if (id !== 'principal-ruling-pause') return execute()
+      ruling = true
+      await resumeEngine({
+        args: { resume: PR, agent },
+        runtimeDir,
+        deps: resumeDeps,
+        run: async (resolved) => {
+          await execute(resolved)
+          return { outcome: null, exitCode: 0, tracePath: '' }
+        }
+      })
+    }
+    // The Principal's cancel ruling is posted where the pause's own comment was: the pull request or the task Issue.
+    const cancelRuling = { rulings: () => ['Cancel it.'], ordinal: () => 1, author: () => 'principal' }
+    const cancel = createTaskCancelHandler({
+      runtimeDir: () => runtimeDir,
+      resolveIssueForRef: () => TASK,
+      fetchRulings: cancelRuling.rulings,
+      fetchNewestRulingOrdinal: cancelRuling.ordinal,
+      fetchIssueRulings: cancelRuling.rulings,
+      fetchNewestIssueRulingOrdinal: cancelRuling.ordinal,
+      cancelDevReviewLoop: (input) =>
+        cancelDevReviewLoop(input, {
+          fetchPrBody: forge.prBody.bind(null, PR),
+          taskFromPrBody,
+          readPauseState,
+          findOpenPrForBranch: forge.findOpenPrForBranch,
+          fetchRulings: cancelRuling.rulings,
+          fetchNewestRulingOrdinal: cancelRuling.ordinal,
+          fetchNewestRulingAuthor: cancelRuling.author,
+          fetchIssueRulings: cancelRuling.rulings,
+          fetchNewestIssueRulingOrdinal: cancelRuling.ordinal,
+          fetchNewestIssueRulingAuthor: cancelRuling.author,
+          runtimeDir: () => runtimeDir,
+          resolveRepo: async () => null,
+          logSink: operatorsCancelSink(logSink ?? ownLogFolder(runtimeDir)),
+          terminateInFlightLaunchesOnShutdown: () => {},
+          sleep: (ms) => new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+        }),
+      hostname,
+      log: () => {},
+      runner: readTaskRunner
+    })
+    await between({
+      kind: id as InFlightKind,
+      runtimeDir,
+      task: TASK,
+      pr: PR,
+      agent,
+      continueOnEngine,
+      ledger: () => lines(effectFile),
+      reconcile: reconcileOnLedger,
+      cancel,
+      controlStore
+    })
+  }
   let refused: unknown
   if (id === 'publication-replay') {
     runnerGone()
@@ -1036,6 +1204,19 @@ const IDS = [
   'publication-replay',
   'isolation-refusal'
 ]
+/**
+ * One in-flight run: its first leg ends in the kind's in-flight state, `between` continues or ends it, and the
+ * observation is taken once `between` returns. `inspect` runs after, while the run's files are still there.
+ */
+export function runInFlightEngineRun(
+  kind: InFlightKind,
+  agent: Agent,
+  between: (run: InFlightEngineRun) => Promise<void>,
+  inspect?: (run: EngineScenarioRun) => Promise<void> | void
+): Promise<Observation> {
+  return runEngineScenario(kind, agent, undefined, inspect, undefined, between)
+}
+
 export const ENGINE_SCENARIO_DRIVERS: Record<string, (agent: Agent) => Promise<Observation>> = Object.fromEntries(
   IDS.map((id) => [id, (agent: Agent) => runEngineScenario(id, agent)])
 )
