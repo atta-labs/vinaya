@@ -492,6 +492,35 @@ describe('tool hosts', () => {
     }
   })
 
+  test('a reconnect after an earlier successful call still marks the dispatch lost', async () => {
+    const dir = mkdtempSync('/tmp/rh-')
+    scratch.push(dir)
+    const socketPath = socketIn(dir, 'h')
+    const capabilities = createDispatchCapabilityTable()
+    const host = await startReplaceableDevToolsHost({
+      socketPath,
+      serverVersion: 'test',
+      context: okContext(),
+      role: 'developer',
+      capabilities
+    })
+    try {
+      const capability = capabilities.mint(60_000)
+      capabilities.bind(capability, process.pid)
+      const connection = await connect(socketPath)
+      expect((await connection.call('run_checks', { [DISPATCH_CAPABILITY_ARGUMENT]: capability })).isError).toBe(false)
+      connection.end()
+      rmSync(socketPath)
+      await expect(connect(socketPath)).rejects.toThrow()
+      expect(host.noteDispatchEnded(capability)).toBe(true)
+      expect(host.consecutiveLosses()).toBe(1)
+      expect(await host.replaceIfSocketMissing()).toBe(true)
+      expect(existsSync(socketPath)).toBe(true)
+    } finally {
+      await host.close()
+    }
+  })
+
   test('a socket deleted mid-turn before the bridge connects: one re-dispatch, no repeated effect, then a named stop', async () => {
     const dir = mkdtempSync('/tmp/rh-')
     scratch.push(dir)

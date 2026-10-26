@@ -333,8 +333,8 @@ export type ReplaceableDevToolsHost = {
   replaceIfSocketMissing: () => Promise<boolean>
   /**
    * Records that the dispatch holding `capability` ended. It lost its tools when the socket was gone by then and it
-   * never had a call served: a bridge that connects after the deletion cannot reach the host, while a connection
-   * already open keeps working. Returns whether it lost them.
+   * may have served earlier calls: those do not prove a later bridge can reconnect. A missing socket requires
+   * a bounded retry; completed effects remain acknowledged in their durable records.
    */
   noteDispatchEnded: (capability: string) => boolean
   /** How many of this role's dispatches in a row lost their tools. */
@@ -352,21 +352,7 @@ export async function startReplaceableDevToolsHost(
 ): Promise<ReplaceableDevToolsHost> {
   const start = deps.start ?? startDevToolsHost
   const socketExists = deps.socketExists ?? existsSync
-  const served = new Set<string>()
-  const { capabilities } = opts
-  const options: StartDevToolsHostOptions = capabilities
-    ? {
-        ...opts,
-        capabilities: {
-          ...capabilities,
-          verify: (supplied, peerPid) => {
-            const refused = capabilities.verify(supplied, peerPid)
-            if (refused === null && supplied !== undefined) served.add(supplied)
-            return refused
-          }
-        }
-      }
-    : opts
+  const options = opts
   let current = await start(options)
   // Whether the started host made its socket file; one that never listens on a file has none to lose.
   let listening = socketExists(opts.socketPath)
@@ -381,9 +367,8 @@ export async function startReplaceableDevToolsHost(
       listening = socketExists(opts.socketPath)
       return true
     },
-    noteDispatchEnded: (capability) => {
-      const lost = listening && !served.has(capability) && !socketExists(opts.socketPath)
-      served.delete(capability)
+    noteDispatchEnded: (_capability) => {
+      const lost = listening && !socketExists(opts.socketPath)
       losses = lost ? losses + 1 : 0
       return lost
     },
