@@ -144,6 +144,8 @@ export function createVinayaLogProducers(
     baseHead?: () => string | null
     /** The flow key the run chose (`v1`, `v2`); version 2 also logs each round's local checks. */
     flow?: string
+    /** The driver counter restored before dispatch, also used by the round-ending actions. */
+    reviewRound?: () => number
     /** Milliseconds since an arbitrary origin, for the time each step spends. */
     now?: () => number
     /** The head the local checks judged, for their event. */
@@ -282,15 +284,17 @@ export function createVinayaLogProducers(
     legStarted: ({ resumed }) => {
       lastDecision = null
       restarting = resumed
+      if (config.flow === 'v2') round = config.reviewRound?.() ?? round
       return resumed ? [loop({ event: 'resumed', round, by: 'principal' })] : []
     },
     // The driver's liveness is the timed heartbeat the runner emits and its exit record; no node writes either.
     nodeStarted: ({ nodeId, attempt: started, steps = {} }) => {
       if (config.flow === 'v2') {
-        // The translator keeps the checkpointed actions' stderr. These markers carry the review counter, which
-        // advances only at the revision handoff. Read before the node runs so the handoff's own time stays in
-        // the round it closes; retries of a Developer turn cannot advance it.
-        round = Math.max(1, ...Object.values(steps).map((step) => decodeExecutionRound(step.stderr)?.round ?? 1))
+        // The driver restores its counter before the translator begins a resumed leg. Its cache may be empty.
+        // Read before the node runs so the handoff's own time stays in the round it closes.
+        round =
+          config.reviewRound?.() ??
+          Math.max(1, ...Object.values(steps).map((step) => decodeExecutionRound(step.stderr)?.round ?? 1))
       } else if (nodeId === DEVELOP_STEP) round = Math.max(1, started)
       nodeStarts.set(nodeId, now())
       return []

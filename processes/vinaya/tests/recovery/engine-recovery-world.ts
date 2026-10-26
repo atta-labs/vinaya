@@ -295,6 +295,7 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
     return died || stopHere(round, 'developer-turn-before-handoff', true)
   }
   const lines: string[] = []
+  const events: Array<Record<string, unknown>> = []
   const result = await runEngine({
     args: { task: TASK, agent: 'claude', dryRun: false },
     process: loaded,
@@ -304,7 +305,12 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
     taskInput: task,
     handoffDeps: recordedHandoff().deps,
     actions,
-    sink: { log: () => {}, drain: async () => {} },
+    sink: {
+      log: (event) => {
+        events.push(event as unknown as Record<string, unknown>)
+      },
+      drain: async () => {}
+    },
     startHost: async () => ({ close: async () => {} }),
     devToolsContext: {} as never,
     control,
@@ -325,7 +331,7 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
       return stubAgent(['{"type":"result"}'])
     }
   })
-  return { result, stopped, round: () => round, lines }
+  return { result, stopped, round: () => round, lines, events }
 }
 
 export const threadOf = (generation = 1) => runIdentityOfTask(TASK, generation).threadId

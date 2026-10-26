@@ -233,3 +233,19 @@ describe('restoring the execution round before dispatch', () => {
     saver.close()
   })
 })
+
+describe('version 2 resumed Log', () => {
+  test('the first resumed and phase events use the restored review round with an empty translator cache', async () => {
+    const world = createWorld()
+    const first = await leg('engine-v2', world, { round: 3, at: 'after-round-marker' })
+    expect(first.stopped).toBe(true)
+    const resumed = await leg('engine-v2', world)
+    expect(resumed.result.exitCode).toBe(0)
+    expect(resumed.events.find((event) => event.event === 'resumed')).toMatchObject({ round: 3 })
+    const phases = resumed.events.filter((event) => event.event === 'phase_time')
+    expect(phases.length).toBeGreaterThan(0)
+    expect(phases.every((event) => event.round === 3)).toBe(true)
+    expect(resumed.round()).toBe(3)
+    await expectCleanRun(world)
+  })
+})

@@ -1136,6 +1136,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     task: args.task,
     baseHead: () => (options.taskInput ? worktreeStats(options.taskInput.worktreePath, 0).baseHead : null),
     flow: options.process.flowKey,
+    reviewRound: options.taskInput?.reviewRound,
     head: () => (options.taskInput ? worktreeStats(options.taskInput.worktreePath, 0).head : null)
   })
   const logPath = loopLogPathFor(null, args.task, options.runtimeDir)
