@@ -48,7 +48,8 @@ import {
   type ActionRegistry,
   type ProcessRunOptions,
   type RoleLauncher,
-  type StepPrompt
+  type StepPrompt,
+  type AgentRedispatch
 } from '../../../harness/dev-process/engine-runtime/run-process'
 import {
   createLogTranslator,
@@ -594,6 +595,30 @@ export function withToolHostBoundaries(
     }
   }
   return bounded
+}
+
+/**
+ * The same-turn re-dispatch of a turn whose dispatch lost its role's tool host: the socket was removed before the
+ * dispatch's bridge could connect. The host is replaced on the same path before the turn is dispatched again.
+ */
+export function toolHostRedispatch(
+  hosts: Readonly<Record<string, { role: string; host: ReplaceableDevToolsHost }>>,
+  narrate: (line: string) => void
+): AgentRedispatch {
+  return {
+    lost: (step) => {
+      const entry = hosts[step]
+      if (entry === undefined || entry.host.consecutiveLosses() === 0) return null
+      return `the ${entry.role} tool host's socket was removed before the dispatch could reach it`
+    },
+    boundary: async (step) => {
+      const entry = hosts[step]
+      if (entry === undefined) return
+      narrate(`re-dispatching the ${step} turn once: its dispatch lost the ${entry.role} tool host`)
+      if (await entry.host.replaceIfSocketMissing())
+        narrate(`the ${entry.role} tool host's socket file was missing; replaced it on the same path`)
+    }
+  }
 }
 
 /** Where one task's run files go: `<runtimeDir>/engine-runs/<task>`. */
@@ -1685,6 +1710,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
               ...(options.allowUnixSockets === true ? [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] : [])
             ]
           }),
+          agentRedispatch: toolHostRedispatch(roleHostsByStep, narrate),
           stepPrompts: withToolHostBoundaries(
             developerFacts
               ? {

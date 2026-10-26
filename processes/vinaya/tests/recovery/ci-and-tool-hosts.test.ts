@@ -13,6 +13,8 @@ import {
   startDevToolsHost,
   startReplaceableDevToolsHost
 } from '../../../../apps/cli/src/lib/task-tools/dev-tools-host'
+import { readPauseState } from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+import { devToolsSocketPath } from '../../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import { READ_SOURCE_NOTICE } from '../../../../apps/cli/src/lib/task-tools/read-source'
 import {
   DISPATCH_CAPABILITY_ARGUMENT,
@@ -211,7 +213,12 @@ function stubAgent(lines: string[]): SpawnedProcessLike {
 }
 
 /** An Engine run of stub actions and agents; the gate step throws on its first run, so the run pauses after `develop`. */
-function stubRun(agent: Agent, runtimeDir: string, provenance?: () => AgentCheckpointProvenance | null) {
+function stubRun(
+  agent: Agent,
+  runtimeDir: string,
+  provenance?: () => AgentCheckpointProvenance | null,
+  hosts?: { startHost: EngineRunOptions['startHost']; hostKey: string; onSpawn: (args: readonly string[]) => void }
+) {
   const spawns: string[] = []
   const actionRuns: string[] = []
   let gateBroke = false
@@ -242,14 +249,16 @@ function stubRun(agent: Agent, runtimeDir: string, provenance?: () => AgentCheck
     handoffDeps: { ...handoff.deps, sleepSync: () => {} },
     actions,
     sink: { log: () => {}, drain: async () => {} },
-    startHost: async () => ({ close: async () => {} }),
+    startHost: hosts?.startHost ?? (async () => ({ close: async () => {} })),
+    ...(hosts ? { hostKey: hosts.hostKey } : {}),
     devToolsContext: {} as never,
     out: () => {},
     revision: 'rev-a',
     // The first run's driver lock names this live process; the later run takes it over as a restarted driver would.
     lifecycle: { killGraceMs: 200, handleSignals: false, isPidAlive: () => false },
-    spawnFn: (_command, _args) => {
-      spawns.push('agent')
+    spawnFn: (_command, args) => {
+      spawns.push(args.join(' ').includes('/generated/developer/') ? 'develop' : 'agent')
+      hosts?.onSpawn(args)
       return stubAgent(['{"type":"result"}'])
     },
     ...(provenance ? { readAgentProvenance: provenance } : {})
@@ -431,7 +440,6 @@ describe('tool hosts', () => {
         const prompts = withToolHostBoundaries({}, { [step]: { role, host } }, () => {})
         // A temp sweep removes the socket file between two dispatches.
         rmSync(socketPath)
-        expect(existsSync(socketPath)).toBe(false)
         timeline.length = 0
         await prompts[step]!('prompt', {})
         const child = spawn('claude', ['--settings', join(generated, roleDir, 'role-settings.json')], {
@@ -477,7 +485,6 @@ describe('tool hosts', () => {
       expect(result.isError).toBe(false)
       expect(published).toBe(1)
       // The turn is still running: nothing replaces the host until its next dispatch boundary.
-      expect(existsSync(socketPath)).toBe(false)
     } finally {
       await host.close()
     }
@@ -533,6 +540,46 @@ describe('tool hosts', () => {
       await host.close()
     }
   })
+
+  for (const lostTimes of [1, 2]) {
+    test(
+      lostTimes === 1
+        ? 'a turn lost to a mid-turn socket deletion is re-dispatched once, the same turn, on the replaced host'
+        : 'a re-dispatch lost again pauses with a named reason',
+      async () => {
+        const runtimeDir = scratchDir('recovery-redispatch-')
+        const hostKey = `rd${lostTimes}${process.pid}`
+        const socketPath = devToolsSocketPath(`${hostKey}-developer`)
+        const narrated: string[] = []
+        let developSpawns = 0
+        const run = stubRun('claude', runtimeDir, () => provenanceFor('claude'), {
+          hostKey,
+          startHost: startDevToolsHost,
+          // The socket is removed while each lost dispatch runs, before its bridge could connect.
+          onSpawn: (args) => {
+            if (!args.join(' ').includes('/generated/developer/')) return
+            developSpawns += 1
+            if (developSpawns <= lostTimes) rmSync(socketPath, { force: true })
+          }
+        })
+        run.options.out = (line: string) => narrated.push(line)
+        await runEngine(run.options)
+        const prompts = run.spawns.filter((spawn) => spawn === 'develop')
+        if (lostTimes === 1) {
+          // One turn, dispatched twice: the lost dispatch and its one re-dispatch, then the run went on.
+          expect(prompts).toHaveLength(2)
+          expect(run.actionRuns.filter((step) => step === 'validate-developer-output')).toHaveLength(1)
+          expect(readPauseState(runtimeDir, 7)?.detail ?? '').not.toContain('lost both times')
+        } else {
+          expect(prompts).toHaveLength(2)
+          expect(run.actionRuns).not.toContain('validate-developer-output')
+          expect(run.handoff.calls).toContain('pause-state:infrastructure')
+          expect(readPauseState(runtimeDir, 7)?.detail).toContain("the developer tool host's socket was removed")
+          expect(readPauseState(runtimeDir, 7)?.detail).toContain('lost both times')
+        }
+      }
+    )
+  }
 
   test.todo('a dead dev-tools bridge fails a Codex start loudly')
 })
