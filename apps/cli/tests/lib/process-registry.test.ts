@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { PROCESS_FIXTURE_BUDGET_MS, stripVinayaEnv } from './process-fixture.js'
+import { fixtureDir } from './test-temp-fixture.js'
 import {
   containmentLogLine,
   identityOf,
@@ -15,7 +16,7 @@ import {
 
 // The registry backend: register-and-acknowledge, identity by pid plus start time, TERM then KILL.
 
-const registryDir = () => mkdtempSync(join(tmpdir(), 'process-registry-'))
+const registryDir = () => fixtureDir('process-registry-')
 
 async function waitGone(pid: number, ms = 3000): Promise<boolean> {
   const until = Date.now() + ms
@@ -50,7 +51,14 @@ describe('process registry', () => {
 
   test('stop sends TERM, then KILL to a process that ignores it, and removes the run records', async () => {
     const dir = registryDir()
-    const child = spawn('sh', ['-c', 'trap "" TERM; while :; do sleep 1; done'], { stdio: 'ignore', detached: true })
+    const child = spawn('sh', ['-c', 'trap "" TERM; while :; do sleep 1; done'], {
+      stdio: 'ignore',
+      detached: true,
+      env: stripVinayaEnv()
+    })
+    // Budget: whatever the assertions below find, the stand-in never outlives this test.
+    const budget = setTimeout(() => child.kill('SIGKILL'), PROCESS_FIXTURE_BUDGET_MS)
+    budget.unref()
     const identity = identityOf(child.pid as number) as { pid: number; startTime: string }
     await registerProcess({ ...identity, runToken: 'r', label: 'stubborn', processGroup: true }, { dir })
     const report = await stopRegistered('r', { graceMs: 200, dir })
@@ -61,7 +69,10 @@ describe('process registry', () => {
 
   test('a process that exits on TERM is reported terminated, with its group', async () => {
     const dir = registryDir()
-    const child = spawn('sh', ['-c', 'sleep 300 & wait'], { stdio: 'ignore', detached: true })
+    const child = spawn('sh', ['-c', 'sleep 300 & wait'], { stdio: 'ignore', detached: true, env: stripVinayaEnv() })
+    // Budget: whatever the assertions below find, the stand-in never outlives this test.
+    const budget = setTimeout(() => child.kill('SIGKILL'), PROCESS_FIXTURE_BUDGET_MS)
+    budget.unref()
     const identity = identityOf(child.pid as number) as { pid: number; startTime: string }
     await registerProcess({ ...identity, runToken: 'r', label: 'group', processGroup: true }, { dir })
     const report = await stopRegistered('r', { graceMs: 3000, dir })

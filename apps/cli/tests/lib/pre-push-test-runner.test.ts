@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentVendor } from '../../src/lib/agent-vendors.js'
 import { buildInitOps } from '../../src/lib/artifacts.js'
+import { PROCESS_FIXTURE_BUDGET_MS, stripVinayaEnv } from './process-fixture.js'
+import { fixtureDir } from './test-temp-fixture.js'
 import { ADOPTER_TEST_RUNNER, NO_LOCAL_TESTS_MARKER, readyTestCommand } from '../../src/lib/pre-push-test-runner.js'
 
 // The adopter test-runner contract, as the generated pre-push hook carries it: in its ready mode the hook runs the
@@ -26,7 +27,7 @@ const prePush = (selfHost: Parameters<typeof buildInitOps>[0]['selfHost']): stri
 
 /** Runs the adopter hook body in a throwaway repository, with a stand-in `npx` for the doctrine gate. */
 function runAdopterHook(mode: string, runner: string | null): { status: number | null; out: string; ran: boolean } {
-  const dir = mkdtempSync(join(tmpdir(), 'adopter-hook-'))
+  const dir = fixtureDir('adopter-hook-')
   const bin = join(dir, 'bin')
   mkdirSync(bin)
   writeFileSync(join(bin, 'npx'), '#!/bin/sh\nexit 0\n')
@@ -40,9 +41,11 @@ function runAdopterHook(mode: string, runner: string | null): { status: number |
     cwd: dir,
     input: 'refs/heads/b 1 refs/heads/b 0\n',
     encoding: 'utf8',
-    env: { PATH: `${bin}:/usr/bin:/bin`, VINAYA_PUSH_MODE: mode }
+    env: { ...stripVinayaEnv({ PATH: `${bin}:/usr/bin:/bin` }), VINAYA_PUSH_MODE: mode },
+    timeout: PROCESS_FIXTURE_BUDGET_MS,
+    killSignal: 'SIGKILL'
   })
-  const ran = spawnSync('test', ['-e', join(dir, 'runner-ran')]).status === 0
+  const ran = existsSync(join(dir, 'runner-ran'))
   return { status: run.status, out: `${run.stdout}${run.stderr}`, ran }
 }
 
