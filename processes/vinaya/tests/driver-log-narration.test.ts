@@ -299,17 +299,20 @@ describe('the Engine runner narrates a run into the driver log as the standalone
       .filter((line) => !STANDALONE_LAUNCH_LINE.test(line) && !STANDALONE_DRIVER_LINE.test(line))
       .map((line) => (line === '# Loop   run started' ? '# Engine Runner   run started' : line))
     const engineMilestones = [
+      // The Engine's first line names the flow the run runs; the standalone loop runs only the default.
+      `engine runner: task ${REPLAY_TASK}, flow v1`,
       `no checkpoint; starting fresh on branch task/issue-${REPLAY_TASK}`,
       'driver exited (finished, publish); driver lock cleared'
     ]
     // The standalone writes `driver_exited` to the Log without narrating it; the Engine narrates every event.
     const engineOnlyNarration = ['+ Loop   The driver finished.']
     const expected = [
-      fromStandalone[0],
       engineMilestones[0],
+      fromStandalone[0],
+      engineMilestones[1],
       ...fromStandalone.slice(1),
       ...engineOnlyNarration,
-      engineMilestones[1]
+      engineMilestones[2]
     ].map((line) => withoutDuration(line ?? ''))
     expect(engine.map(withoutDuration)).toEqual(expected)
     // The comparison covers each turn and each narrated event.
