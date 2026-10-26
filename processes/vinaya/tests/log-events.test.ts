@@ -39,6 +39,7 @@ import {
   encodeLoopState,
   type TaskInput
 } from '../executing/actions'
+import { encodeExecutionRound } from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import { AGENT_STEP_ROLES, createVinayaLogProducers, handoffHaltReason } from '../executing/log-events'
 import { LOG_INVENTORY } from '../executing/log-inventory'
 import { createHandoff } from '../executing/handoff'
@@ -754,5 +755,28 @@ describe('every produced row has a producer that wrote it', () => {
         : []
     ).filter((name) => !seen.has(name))
     expect(missing).toEqual([])
+  })
+})
+
+describe('version 1 Log compatibility', () => {
+  test('review-round markers leave the version 1 Log bytes unchanged', () => {
+    for (const flow of [undefined, 'v1']) {
+      const producer = createVinayaLogProducers({ loopId: 'compatibility', task: 7, flow })
+      const steps = {
+        'build-revision-handoff': {
+          exitCode: 0,
+          stdout: '',
+          stderr: encodeExecutionRound({ round: 2, advancedBy: 'build-revision-handoff' })
+        }
+      }
+      producer.nodeStarted?.({ nodeId: 'develop', attempt: 3, runId: 'run', steps })
+      const bytes = JSON.stringify([
+        ...producer.legStarted!({ resumed: true, steps }),
+        ...producer.runEnded!({ outcome: { reason: 'failed' }, cancelled: true, steps })
+      ])
+      expect(bytes).toBe(
+        '[{"kind":"dev_review_loop","payload":{},"loop_id":"compatibility","event":"resumed","round":3,"by":"principal"},{"kind":"dev_review_loop","payload":{},"loop_id":"compatibility","event":"cancelled","round":3,"by":"principal"}]'
+      )
+    }
   })
 })

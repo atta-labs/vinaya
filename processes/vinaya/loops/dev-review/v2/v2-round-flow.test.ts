@@ -191,3 +191,69 @@ describe('the opened body carries the ready push command as its Test Plan line',
     expect(observed.world.openedBodies[0]).not.toContain('other.test.ts')
   })
 })
+
+describe('Log rounds follow review rounds', () => {
+  function expectReviewRounds(observed: Awaited<ReturnType<typeof runV2>>) {
+    expect(observed.outcome).toBe('completed')
+    const loop = observed.rawEvents.filter((event) => event.kind === 'dev_review_loop')
+    expect(loop.filter((event) => event.event === 'round_ended').map((event) => event.round)).toEqual([1, 2])
+    const checks = loop.filter((event) => event.event === 'local_checks_run')
+    expect(checks.map((event) => event.round)).toEqual([1, 2])
+    for (const round of [1, 2]) {
+      const start = loop.findIndex(
+        (event) => event.event === 'phase_time' && event.step === 'develop' && event.round === round
+      )
+      expect(start).toBeGreaterThanOrEqual(0)
+      const next = loop.findIndex(
+        (event, index) =>
+          index > start && event.event === 'phase_time' && event.step === 'develop' && event.round === round + 1
+      )
+      const events = loop.slice(start, next < 0 ? undefined : next).filter((event) => typeof event.round === 'number')
+      expect(events.length).toBeGreaterThan(0)
+      expect([...new Set(events.map((event) => event.round))]).toEqual([round])
+    }
+  }
+
+  test('validation re-dispatch keeps round 1 and the next review round is round 2', async () => {
+    const observed = await runV2('claude', {
+      developer: (attempt, world) =>
+        attempt === 1
+          ? {
+              act: () => {
+                world.commit(true)
+                world.staged = { title: 'Feat(sample): Do the thing', body: `Closes #${TASK}` }
+              }
+            }
+          : attempt === 2
+            ? { output: confident(90) }
+            : undefined,
+      reviewer: (role, attempt) => (role === 'code-reviewer' && attempt === 1 ? 'request-changes' : 'approve')
+    })
+    expect(observed.spawns.developer).toBe(3)
+    expect(
+      observed.steps.filter((step) => step.node === 'validate-developer-output' && step.exitCode !== 0)
+    ).toHaveLength(1)
+    expectReviewRounds(observed)
+  })
+
+  test('same-turn tool-host re-dispatch keeps the review round after a validation retry', async () => {
+    const observed = await runV2('claude', {
+      developer: (attempt, world) =>
+        attempt === 1
+          ? {
+              act: () => {
+                world.commit(true)
+                world.staged = { title: 'Feat(sample): Do the thing', body: `Closes #${TASK}` }
+              }
+            }
+          : attempt === 2
+            ? { output: confident(90) }
+            : undefined,
+      loseDeveloperToolsAt: 3,
+      reviewer: (role, attempt) => (role === 'code-reviewer' && attempt === 1 ? 'request-changes' : 'approve')
+    })
+    expect(observed.spawns.developer).toBe(4)
+    expect(observed.steps.filter((step) => step.node === 'validate-developer-output')).toHaveLength(3)
+    expectReviewRounds(observed)
+  })
+})

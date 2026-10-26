@@ -6,7 +6,7 @@ import {
   recordFromRun
 } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { DEFAULT_REVIEW_POLICY, objectivesVersion, type ReviewPolicy } from '@attalabs/aeg-core'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../../harness/dev-process/loader/load-process'
@@ -59,7 +59,9 @@ export interface Scenario {
   policy?: Partial<ReviewPolicy>
   clock?: { elapsedMs: number; byPhaseMs: Record<string, number> }
   /** The Developer's launches in turn, by attempt (1-based); the default publishes a new head and reports confidence 90. */
-  developer?: (attempt: number, world: World) => Launch
+  developer?: (attempt: number, world: World) => Launch | undefined
+  /** Deletes this test's Developer socket marker during this launch, exercising same-turn host replacement. */
+  loseDeveloperToolsAt?: number
   /** A reviewer's launches, by role and attempt; the default approves every objective, bound to its prompt. */
   reviewer?: (role: Role, attempt: number, world: World, prompt: string) => Launch | 'approve' | 'request-changes'
   /** Runs after the named step's action, with the world. */
@@ -473,6 +475,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     resume: { task: TASK, branch: BRANCH, worktree, remoteHead: world.remote },
     heldReview: null
   })
+  const sockets = new Map<string, string>()
   const result = await runEngine({
     args: { task: TASK, agent, dryRun: false, flow: 'v2' },
     process: PROCESS,
@@ -483,7 +486,18 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     handoffDeps,
     actions,
     sink: { log: (event) => void rawEvents.push(event as Record<string, unknown>), drain: async () => {} },
-    startHost: async () => ({ close: async () => {} }),
+    ...(scenario.loseDeveloperToolsAt === undefined ? {} : { hostKey: `world-${basename(root)}` }),
+    startHost: async ({ socketPath, role }) => {
+      if (scenario.loseDeveloperToolsAt === undefined) return { close: async () => {} }
+      mkdirSync(dirname(socketPath), { recursive: true })
+      writeFileSync(socketPath, 'listening')
+      sockets.set(role, socketPath)
+      return {
+        close: async () => {
+          rmSync(socketPath, { force: true })
+        }
+      }
+    },
     devToolsContext: {} as never,
     out: () => {},
     developerFacts: async () => facts(),
@@ -491,6 +505,8 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       const role = roleOf(agent, args, options?.env)
       spawns[role] += 1
       const attempt = spawns[role]
+      if (role === 'developer' && attempt === scenario.loseDeveloperToolsAt)
+        rmSync(sockets.get('developer')!, { force: true })
       const sessionId = `${agent}-${role}-${attempt}`
       launchDirectories[role].push(options?.cwd ?? '')
       sessionIds[role].push(sessionId)
