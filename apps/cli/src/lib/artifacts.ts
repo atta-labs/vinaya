@@ -38,6 +38,7 @@ import { type HookDir, TRACKED_HOOK_DIR } from './init-hook-paths.js'
 import type { CreateLabelOp, Op } from './ops.js'
 import { ownVersion } from './own-version.js'
 import { REVIEW_GATE_WORKFLOW_NAME } from './review-gate-check-name.js'
+import { ADOPTER_TEST_RUNNER, NO_LOCAL_TESTS_MARKER } from './pre-push-test-runner.js'
 import type { VendoredVinaya } from './self-host.js'
 
 export { type HookDir, TRACKED_HOOK_DIR } from './init-hook-paths.js'
@@ -1561,6 +1562,25 @@ function libBinInvocation(selfHost: VendoredVinaya | null, file: string, bin: st
   return `npx --yes -p @attalabs/vinaya@${ownVersion()} ${bin}`
 }
 
+/**
+ * The adopter's ready-mode test step (the contract is `pre-push-test-runner.ts`'s): after both reviewers approved,
+ * the push runs the repository's declared test runner, or says plainly that it runs no local tests. Every other
+ * push is unchanged. Nothing here names a toolchain: the runner is the adopter's own executable.
+ */
+function adopterReadyTests(): string {
+  return `# The ready push (after approval) runs the repository's declared test
+# runner, ${ADOPTER_TEST_RUNNER}: an executable run from the repository root
+# with no arguments, whose exit status is the verdict. A repository that
+# declares none runs no local tests, and says so.
+if [ "$VINAYA_PUSH_MODE" = "ready" ]; then
+  if [ -x ${ADOPTER_TEST_RUNNER} ]; then
+    ./${ADOPTER_TEST_RUNNER} || { echo "vinaya pre-push: refused — the declared test runner (${ADOPTER_TEST_RUNNER}) failed"; exit 1; }
+  else
+    echo "${NO_LOCAL_TESTS_MARKER} (no test runner declared at ${ADOPTER_TEST_RUNNER})"
+  fi
+fi`
+}
+
 function prePushBody(selfHost: VendoredVinaya | null): string {
   const doctrineGate = `# Vinaya pre-push gate. Runs branch/dispatch checks before the push leaves.
 # Forward git's own pre-push stdin (one "<local ref> <local sha> <remote
@@ -1570,7 +1590,9 @@ VINAYA_PUSH_REFS="$(cat)"
 export VINAYA_PUSH_REFS
 ${hookRun(selfHost, 'check --all --local')}`
 
-  if (!selfHost) return doctrineGate
+  if (!selfHost)
+    return `${doctrineGate}
+${adopterReadyTests()}`
 
   // Gated on `selfHost`: only a repo vendoring `@attalabs/vinaya` as a
   // workspace member is assumed to run this repo's own Bun/Biome/Turborepo

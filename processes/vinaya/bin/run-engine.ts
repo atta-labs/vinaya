@@ -240,6 +240,7 @@ import {
 } from '../executing/actions'
 import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../loops/dev-review/v2/v2-actions'
 import { runCli } from '../../../harness/gates/run-checks'
+import { refreshPrEvidence } from '../executing/refresh-evidence'
 import {
   endStoragePushes,
   liveV2Functions,
@@ -2436,7 +2437,23 @@ async function runLive(
       store,
       findOpenPullRequest,
       remoteHead: () => taskInput.remoteHead?.() ?? null,
-      openWithDeveloperTool: (title, body) => liveContext.context.openPullRequest(title, body)
+      openWithDeveloperTool: (title, body) => liveContext.context.openPullRequest(title, body),
+      // The loop writes the Evidence block once the pull request is open; the Developer's v2 turn runs no tests.
+      writeEvidence: ({ pr }) => {
+        try {
+          refreshPrEvidence({
+            cliEntry: taskInput.cliEntry,
+            worktreePath: taskInput.worktreePath,
+            prNumber: () => pr,
+            readHead: readWorktreeHead,
+            runCli
+          })
+          return { ok: true }
+        } catch (error) {
+          return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+        }
+      },
+      log: (line) => process.stderr.write(`${new Date().toISOString()}  ${line}\n`)
     })
     devToolsContext = withV2DevTools(liveContext.context, {
       worktreePath: taskInput.worktreePath,

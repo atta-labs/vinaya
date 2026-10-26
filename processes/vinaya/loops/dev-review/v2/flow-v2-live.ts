@@ -1,10 +1,25 @@
-import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
 import { type DevToolContext, devToolError } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { storagePushEvent } from '../../../../../apps/cli/src/lib/flow-v2-events'
-import { gitPath, readLastPushResult } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import {
+  FAILED_TESTS_RECORD,
+  gitPath,
+  readLastPushResult,
+  removeUnderGit
+} from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import {
+  containmentLogLine,
+  identityOf,
+  registerProcess,
+  selectContainmentBackend,
+  stopRegistered
+} from '../../../../../apps/cli/src/lib/process-registry'
+import { NO_LOCAL_TESTS_MARKER } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { PUSH_MODE_MARKER, storageMarkerText } from '../../../../../apps/cli/src/lib/pre-push-mode-logic'
 import type { ReadyGateResult, StagedPullRequest, V2Functions } from './v2-actions'
 
@@ -153,9 +168,58 @@ export function withV2DevTools(
   }
 }
 
+/** What one asynchronous child reported. */
+interface ChildRun {
+  status: number | null
+  signal: NodeJS.Signals | null
+  stdout: string
+  stderr: string
+}
+
+/** The error a cancelled ready gate rejects with: the step is interrupted, never recorded as a refusal. */
+export class ReadyGateCancelledError extends Error {
+  constructor() {
+    super('the ready push was cancelled')
+    this.name = 'ReadyGateCancelledError'
+  }
+}
+
+/** A short git read as an awaited child, ended when `signal` aborts. */
+function runGit(args: string[], cwd: string, env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<ChildRun> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new ReadyGateCancelledError())
+    const child = spawn('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+      stdout += chunk
+    })
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+      stderr += chunk
+    })
+    const onAbort = () => child.kill('SIGKILL')
+    signal?.addEventListener('abort', onAbort, { once: true })
+    child.on('error', (error) => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve({ status: null, signal: null, stdout, stderr: `${stderr}${error.message}` })
+    })
+    child.on('close', (status, sig) => {
+      signal?.removeEventListener('abort', onAbort)
+      if (signal?.aborted) reject(new ReadyGateCancelledError())
+      else resolve({ status, signal: sig, stdout, stderr })
+    })
+  })
+}
+
+const gitEnvOf = (): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
+  return env
+}
+
 /** The worktree's pre-push hook: `core.hooksPath` when set (relative to the worktree), else the git hooks folder. */
-export function prePushHookPath(worktreePath: string): string | null {
-  const configured = spawnSync('git', ['config', '--get', 'core.hooksPath'], { cwd: worktreePath, encoding: 'utf8' })
+export async function prePushHookPath(worktreePath: string, signal?: AbortSignal): Promise<string | null> {
+  const configured = await runGit(['config', '--get', 'core.hooksPath'], worktreePath, gitEnvOf(), signal)
   const hooksPath = configured.status === 0 ? configured.stdout.trim() : ''
   const dir = hooksPath
     ? isAbsolute(hooksPath)
@@ -166,31 +230,48 @@ export function prePushHookPath(worktreePath: string): string | null {
   return existsSync(hook) ? hook : null
 }
 
-/** Thirty minutes: the ready push's selected tests, after which the run reads it as refused. */
-const READY_GATE_TIMEOUT_MS = 30 * 60 * 1000
+/** Twenty minutes: the ready push's deadline. Past it the run is stopped and recorded as a timed-out refusal. */
+export const READY_GATE_DEADLINE_MS = 20 * 60 * 1000
+
+/** How long a stopped test run gets between TERM and KILL. */
+const STOP_GRACE_MS = 5000
+
+/** The line the generated hook prints when the repository declares no test runner: the ready push ran no tests. */
+export { NO_LOCAL_TESTS_MARKER }
 
 /**
  * The ready push: the worktree's own pre-push hook, run in its ready mode on the approved head with the default
  * branch as its base (storage pushes already moved the branch's upstream there). The approved head is already on
  * the remote, so the hook is run as the push would run it — with the push's own ref line on its stdin — rather
  * than through a push that has nothing left to send. The hook's last-push record says what it selected and what
- * failed. A repository with no pre-push hook has nothing to run: the push passes.
+ * failed.
+ *
+ * The hook runs as an awaited child in its own process group, registered (and the registration acknowledged)
+ * before it does any work, with its own temp folder. A cancel (`signal`) stops the group, removes the folder and
+ * rejects with `ReadyGateCancelledError`; the deadline stops it the same way and records a timed-out refusal, and
+ * clears the failed-tests record, since a stopped run left no complete one: the next ready push runs its full
+ * selection. A repository with no pre-push hook, or one whose hook runs no tests, is the `no-local-tests` state,
+ * logged rather than passed silently.
  */
-export function runReadyGateLive(input: {
+export async function runReadyGateLive(input: {
   worktreePath: string
   branch: string
   head: string
   remoteHead: string | null
   defaultBranch?: string
   now?: () => number
-}): ReadyGateResult {
+  signal?: AbortSignal
+  deadlineMs?: number
+  log?: (line: string) => void
+  /** The registry folder for the run's processes (the default registry when absent). */
+  registryDir?: string
+}): Promise<ReadyGateResult> {
   const now = input.now ?? (() => Date.now())
+  const log = input.log ?? (() => {})
   // The hook runs on the working tree, so the tree must be exactly the approved commit: same head, nothing uncommitted.
-  const gitEnv: NodeJS.ProcessEnv = { ...process.env }
-  for (const key of Object.keys(gitEnv)) if (key.startsWith('GIT_')) delete gitEnv[key]
-  const read = (args: string[]) => spawnSync('git', args, { cwd: input.worktreePath, env: gitEnv, encoding: 'utf8' })
-  const actualHead = read(['rev-parse', 'HEAD'])
-  const status = read(['status', '--porcelain'])
+  const gitEnv = gitEnvOf()
+  const actualHead = await runGit(['rev-parse', 'HEAD'], input.worktreePath, gitEnv, input.signal)
+  const status = await runGit(['status', '--porcelain'], input.worktreePath, gitEnv, input.signal)
   const drift =
     actualHead.status !== 0 || actualHead.stdout.trim() !== input.head
       ? `the worktree head is ${actualHead.stdout.trim() || 'unreadable'}, not the approved head ${input.head}`
@@ -201,36 +282,113 @@ export function runReadyGateLive(input: {
           : null
   if (drift !== null)
     return { passed: false, output: `ready push refused: ${drift}`, selection: null, failed: 'all', wallMs: 0 }
-  const hook = prePushHookPath(input.worktreePath)
-  if (hook === null) return { passed: true, output: 'no pre-push hook to run', selection: null, failed: [], wallMs: 0 }
+  const hook = await prePushHookPath(input.worktreePath, input.signal)
+  if (hook === null) {
+    log(`ready push: ${NO_LOCAL_TESTS_MARKER} (the repository has no pre-push hook)`)
+    return {
+      passed: true,
+      output: `${NO_LOCAL_TESTS_MARKER}: the repository has no pre-push hook`,
+      selection: null,
+      failed: [],
+      wallMs: 0,
+      localTests: 'none'
+    }
+  }
+  const backend = selectContainmentBackend()
+  log(`ready push: ${containmentLogLine(backend)}`)
+  const runToken = `ready-gate-${randomUUID()}`
+  const runTemp = mkdtempSync(join(tmpdir(), 'vinaya-ready-gate-'))
+  const registry = input.registryDir ? { dir: input.registryDir } : {}
   const started = now()
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...gitEnv,
+    TMPDIR: runTemp,
     VINAYA_PUSH_MODE: 'ready',
     VINAYA_PUSH_BASE: `origin/${input.defaultBranch ?? 'main'}`
   }
-  for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
   const ref = `refs/heads/${input.branch}`
-  const run = spawnSync('sh', [hook, 'origin', 'origin'], {
+  // The child waits for one acknowledgement line before it becomes the hook, so no work starts unregistered.
+  const child = spawn('sh', ['-c', 'IFS= read -r _vinaya_ack || exit 1; exec sh "$0" "$@"', hook, 'origin', 'origin'], {
     cwd: input.worktreePath,
     env,
-    input: `${ref} ${input.head} ${ref} ${input.remoteHead ?? '0000000000000000000000000000000000000000'}\n`,
-    encoding: 'utf8',
-    maxBuffer: 256 * 1024 * 1024,
-    timeout: READY_GATE_TIMEOUT_MS,
-    killSignal: 'SIGKILL'
+    detached: true,
+    stdio: ['pipe', 'pipe', 'pipe']
   })
-  const wallMs = Math.max(0, now() - started)
-  const output = `${run.stdout ?? ''}${run.stderr ?? ''}${run.signal ? `\nthe ready push was stopped by ${run.signal}` : ''}`
-  const record = readLastPushResult(input.worktreePath)
-  const fresh = record !== null && record.head === input.head
-  const passed = run.status === 0
-  return {
-    passed,
-    output,
-    selection: fresh ? record.selection : null,
-    failed: passed ? [] : fresh ? record.failed : 'all',
-    wallMs
+  let stdout = ''
+  let stderr = ''
+  child.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
+    stdout += chunk
+  })
+  child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
+    stderr += chunk
+  })
+  child.stdin?.on('error', () => {})
+  const exited = new Promise<{ status: number | null; signal: NodeJS.Signals | null; error?: Error }>((resolve) => {
+    child.on('error', (error) => resolve({ status: null, signal: null, error }))
+    child.on('close', (code, sig) => resolve({ status: code, signal: sig }))
+  })
+  const stop = async () => {
+    await stopRegistered(runToken, { graceMs: STOP_GRACE_MS, ...registry }).catch(() => undefined)
+  }
+  let interrupted: 'cancel' | 'deadline' | null = null
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const interruption = new Promise<'cancel' | 'deadline'>((resolve) => {
+    timer = setTimeout(() => resolve('deadline'), input.deadlineMs ?? READY_GATE_DEADLINE_MS)
+    if (input.signal?.aborted) resolve('cancel')
+    input.signal?.addEventListener('abort', () => resolve('cancel'), { once: true })
+  })
+  try {
+    const identity = child.pid !== undefined ? identityOf(child.pid) : null
+    if (child.pid !== undefined && identity !== null) {
+      await registerProcess({ ...identity, runToken, label: 'ready-gate pre-push hook', processGroup: true }, registry)
+      child.stdin?.write('ack\n')
+      child.stdin?.end(
+        `${ref} ${input.head} ${ref} ${input.remoteHead ?? '0000000000000000000000000000000000000000'}\n`
+      )
+    } else {
+      child.stdin?.end()
+    }
+    const outcome = await Promise.race([exited, interruption])
+    if (typeof outcome === 'string') {
+      interrupted = outcome
+      await stop()
+      await exited
+    }
+    // A finished hook can leave undetached descendants in its group: they stop with the run.
+    await stop()
+    if (interrupted === 'cancel') throw new ReadyGateCancelledError()
+    const wallMs = Math.max(0, now() - started)
+    if (interrupted === 'deadline') {
+      removeUnderGit(input.worktreePath, FAILED_TESTS_RECORD)
+      const minutes = Math.round((input.deadlineMs ?? READY_GATE_DEADLINE_MS) / 60000)
+      log(`ready push: timed out after ${minutes} min; the test run was stopped`)
+      return {
+        passed: false,
+        output: `${stdout}${stderr}\nthe ready push timed out after ${minutes} min and was stopped; the next ready push runs its full selection`,
+        selection: null,
+        failed: 'all',
+        wallMs,
+        timedOut: true
+      }
+    }
+    const run = (await exited) as { status: number | null; signal: NodeJS.Signals | null; error?: Error }
+    const output = `${stdout}${stderr}${run.error ? `\n${run.error.message}` : ''}${run.signal ? `\nthe ready push was stopped by ${run.signal}` : ''}`
+    const record = readLastPushResult(input.worktreePath)
+    const fresh = record !== null && record.head === input.head
+    const passed = run.status === 0
+    const noLocalTests = passed && output.includes(NO_LOCAL_TESTS_MARKER)
+    if (noLocalTests) log(`ready push: ${NO_LOCAL_TESTS_MARKER} (the repository declares no test runner)`)
+    return {
+      passed,
+      output,
+      selection: fresh ? record.selection : null,
+      failed: passed ? [] : fresh ? record.failed : 'all',
+      wallMs,
+      ...(noLocalTests ? { localTests: 'none' as const } : {})
+    }
+  } finally {
+    if (timer) clearTimeout(timer)
+    rmSync(runTemp, { recursive: true, force: true })
   }
 }
 
@@ -243,14 +401,20 @@ export function liveV2Functions(input: {
   remoteHead: () => string | null
   /** The Developer's own `open_pull_request` (version 1's), which opens through the forge behind its body checks. */
   openWithDeveloperTool: (title: string, body: string) => ReturnType<DevToolContext['openPullRequest']>
+  /** Writes the open pull request's Evidence block for the head the ready push passed. */
+  writeEvidence?: V2Functions['writeEvidence']
+  /** A line for the driver's log: the containment backend, the no-local-tests state, a timeout. */
+  log?: (line: string) => void
 }): V2Functions {
   return {
-    runReadyGate: ({ head }) =>
+    runReadyGate: ({ head, signal }) =>
       runReadyGateLive({
         worktreePath: input.worktreePath,
         branch: input.branch,
         head,
-        remoteHead: input.remoteHead()
+        remoteHead: input.remoteHead(),
+        ...(signal ? { signal } : {}),
+        ...(input.log ? { log: input.log } : {})
       }),
     stagedPullRequest: input.store.read,
     findOpenPullRequest: input.findOpenPullRequest,
@@ -260,7 +424,8 @@ export function liveV2Functions(input: {
       const error = opened.error as { message?: string; code?: string } | undefined
       return { ok: false, reason: error?.message ?? error?.code ?? JSON.stringify(opened.error) }
     },
-    endStoragePushes: () => endStoragePushes(input.worktreePath)
+    endStoragePushes: () => endStoragePushes(input.worktreePath),
+    ...(input.writeEvidence ? { writeEvidence: input.writeEvidence } : {})
   }
 }
 

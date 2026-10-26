@@ -58,10 +58,10 @@ export interface DeveloperPromptFacts {
 /**
  * Version 2's publishing note: every commit is pushed as a storage push (cheap checks, no tests, no CI) while no
  * pull request is open, and `open_pull_request` only saves the body; the driver opens the pull request once both
- * reviewers approve and the ready push's tests pass.
+ * reviewers approve and the ready push's tests pass. The Developer runs no tests and no evidence refresh in this flow.
  */
 export const FLOW_V2_NOTE =
-  'This run uses review locally, push once: publish every commit with `publish_changes` — while no pull request is open each push is a storage push (cheap checks only, no tests, no CI), so publish often. Call `open_pull_request` once with the full PR-report body: in this flow it saves the body, and the driver opens the pull request itself after both reviewers approve and the ready push runs the selected tests. Do not wait for CI: the reviewers judge your local commit each round.'
+  'This run uses review locally, push once: publish every commit with `publish_changes` — while no pull request is open each push is a storage push (cheap checks only, no tests, no CI), so publish often. Call `open_pull_request` once with the full PR-report body: in this flow it saves the body, and the driver opens the pull request itself after both reviewers approve and the ready push runs the selected tests. Do not wait for CI: the reviewers judge your local commit each round. Run no tests and do not call `refresh_evidence`: the ready push runs the selected tests, and the driver writes the Evidence block once the pull request opens.'
 
 const TOOL_CATALOG = [
   'fetch_documentation',
