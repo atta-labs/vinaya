@@ -1,6 +1,16 @@
 import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { type ProcessIdentity, type StopOptions, type StopReport, stopRegistered } from './process-registry'
@@ -55,8 +65,27 @@ export interface SweepReport {
   failed: Array<{ dir: string; error: string }>
 }
 
-/** The start time the OS reports for `pid`, or null when it cannot be read (no such process, or no `ps`). */
+/**
+ * The start time of `pid`, fixed for the life of the process, or null when it cannot be read (no such process, or
+ * no `ps`). Where `/proc` has it, the kernel's own value (field 22 of `/proc/<pid>/stat`, clock ticks since boot):
+ * Linux `ps` derives `lstart` from the current time minus the uptime, so two reads of one live process can differ
+ * and a live owner would read as gone. Elsewhere (macOS) `ps` reports a fixed `lstart`.
+ */
 export function processStartTime(pid: number): string | null {
+  let stat: string | null = null
+  try {
+    stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+  } catch {
+    // No `/proc` on this host: ask `ps`. A missing entry where `/proc` exists is a process that is gone.
+    if (existsSync('/proc/self/stat')) return null
+  }
+  if (stat !== null) {
+    const ticks = stat
+      .slice(stat.lastIndexOf(')') + 2)
+      .split(' ')
+      .at(22 - 3)
+    return ticks === undefined ? null : `ticks:${ticks}`
+  }
   const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
     encoding: 'utf8',
     env: { PATH: process.env.PATH ?? '/bin:/usr/bin', LC_ALL: 'C' }
