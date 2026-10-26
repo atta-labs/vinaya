@@ -232,7 +232,7 @@ import {
   type ReviewRoundInputs,
   type TaskInput
 } from '../executing/actions'
-import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../executing/v2-actions'
+import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../loops/dev-review/v2/v2-actions'
 import { runCli } from '../../../harness/gates/run-checks'
 import {
   endStoragePushes,
@@ -240,7 +240,7 @@ import {
   stagedPullRequestStore,
   storagePushLogEvent,
   withV2DevTools
-} from './flow-v2-live'
+} from '../loops/dev-review/v2/flow-v2-live'
 import { readUnpushedWorkDetail, type UnpushedWork } from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import { realLocalGateControl } from '../../../apps/cli/src/lib/local-gate-control'
 import {

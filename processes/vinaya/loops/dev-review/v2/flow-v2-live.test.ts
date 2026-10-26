@@ -3,15 +3,15 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { DevToolContext } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
-import { gitPath } from '../../../apps/cli/src/lib/pre-push-failed-tests'
+import type { DevToolContext } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
+import { gitPath } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import {
   beginStoragePushes,
   endStoragePushes,
   runReadyGateLive,
   stagedPullRequestStore,
   withV2DevTools
-} from '../bin/flow-v2-live'
+} from './flow-v2-live'
 
 // The live wiring of version 2: the staged pull request, the storage-push marker and the ready push run through
 // the worktree's real pre-push hook, against throwaway repositories.

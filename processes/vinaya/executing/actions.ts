@@ -24,7 +24,7 @@ import { loadRoleGrants, ROLE_NAMES, withModel } from '../../../harness/adapters
 import { sessionIdOf, structuredResult } from '../../../harness/adapters/agents/structured-result'
 import { pullRequestCheckEnv, type PullRequestView } from './pull-request-env'
 import type { Handoff, InputVersions, PauseRequest } from './handoff'
-import type { StagedPullRequest, V2Functions } from './v2-actions'
+import type { StagedPullRequest, V2Functions } from '../loops/dev-review/v2/v2-actions'
 import { runCliChecks } from '../../../harness/gates/run-checks'
 import { agentEnvAllowlist } from '../../../harness/adapters/agents/launch-env'
 import type { GeneratedAgentConfig, GeneratorPaths } from '../../../harness/adapters/agents/policy'

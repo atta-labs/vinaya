@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { ALL_TESTS, records, runV2, type Scenario, setUpWorld, tearDownWorld } from '../tests/v2-world'
+import { ALL_TESTS, records, runV2, type Scenario, setUpWorld, tearDownWorld } from './v2-world'
 
 // Deterministic evaluations of review locally, push once (version 2 of the developer-review Flow). Each case is a
 // fake task in a throwaway repository, run on the real runner, Flow and actions with stub agents, a fake forge and

@@ -4,7 +4,7 @@ version: 0.2.0
 # A run chooses its flow by key (`task run --flow <key>`); a run that names none gets default_flow.
 flows:
   v1: executing/dev-review.flow.yaml
-  v2: executing/dev-review-v2.flow.yaml
+  v2: loops/dev-review/v2/dev-review-v2.flow.yaml
 default_flow: v1
 roles:
   - executing/developer
