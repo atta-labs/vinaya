@@ -30,13 +30,18 @@ import {
   type CheckpointRefusal,
   SqliteCheckpointer
 } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+import {
+  readAgentProvenance,
+  type AgentCheckpointProvenance
+} from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import { DispatchUsageLimit, usageLimitPauseDetail } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import {
   resumeProcessRun,
   startProcessRun,
   type ActionRegistry,
   type ProcessRunOptions,
-  type RoleLauncher
+  type RoleLauncher,
+  type StepPrompt
 } from '../../../harness/dev-process/engine-runtime/run-process'
 import {
   createLogTranslator,
@@ -163,7 +168,9 @@ import {
   createDispatchCapabilityTable,
   type DispatchCapabilityTable,
   startDevToolsHost,
-  type DevToolsHost
+  startReplaceableDevToolsHost,
+  type DevToolsHost,
+  type ReplaceableDevToolsHost
 } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import {
@@ -497,6 +504,8 @@ export interface RoleDispatches {
   capabilities: DispatchCapabilityTable
   ttlMs: number
   writeShim: (capability?: string) => void
+  /** Told when a dispatch's launched process ended, with the capability it held. */
+  onEnded?: (capability: string) => void
 }
 
 /**
@@ -527,6 +536,7 @@ export function withDispatchCapabilities(
       ended = true
       dispatch.capabilities.revoke(capability)
       dispatch.writeShim()
+      dispatch.onEnded?.(capability)
     }
     let child: SpawnedProcessLike
     try {
@@ -541,6 +551,38 @@ export function withDispatchCapabilities(
     child.on('error', end)
     return child
   }
+}
+
+/** How many dispatches of one role in a row may lose their tools to a removed socket before the run pauses. */
+export const MAX_TOOL_HOST_LOSSES = 2
+
+/**
+ * Each agent step's prompt, preceded at its dispatch boundary by its role host's check: a host whose socket file is
+ * gone is replaced on the same path before the dispatch's capability is minted. A role whose dispatches lost their
+ * tools `MAX_TOOL_HOST_LOSSES` times in a row stops the run with that reason instead of dispatching again.
+ */
+export function withToolHostBoundaries(
+  prompts: Readonly<Record<string, StepPrompt>>,
+  hosts: Readonly<Record<string, { role: string; host: ReplaceableDevToolsHost }>>,
+  narrate: (line: string) => void
+): Record<string, StepPrompt> {
+  const bounded: Record<string, StepPrompt> = { ...prompts }
+  for (const [step, { role, host }] of Object.entries(hosts)) {
+    const prompt = prompts[step]
+    bounded[step] = async (rendered, results, context) => {
+      const losses = host.consecutiveLosses()
+      if (losses >= MAX_TOOL_HOST_LOSSES)
+        throw new Error(
+          `the ${role} tool host lost its socket during ${losses} dispatches in a row, before each could reach it; the ${step} step is not dispatched again`
+        )
+      if (await host.replaceIfSocketMissing())
+        narrate(
+          `the ${role} tool host's socket file was missing at the ${step} dispatch boundary; replaced it on the same path`
+        )
+      return prompt ? prompt(rendered, results, context) : rendered
+    }
+  }
+  return bounded
 }
 
 /** Where one task's run files go: `<runtimeDir>/engine-runs/<task>`. */
@@ -937,6 +979,8 @@ export interface EngineRunOptions {
   onRunHalted?: () => void
   /** Whether the pull request a held verdict would publish is in conflict; the live forge read unless a test supplies its own. */
   heldPullRequestConflicts?: () => Promise<boolean>
+  /** Reads a checkpoint's recorded agent before a resume; the checkpoint's own provenance unless a test supplies its own. */
+  readAgentProvenance?: typeof readAgentProvenance
   /** Called with the Developer's vendor session once its turn's agent has finished. */
   completeDeveloperTurn?: (resumeId: string | null) => void
   /** The Linux host opt-in: the generated Claude settings allow Unix sockets and the variable is forwarded to the agent. */
@@ -987,6 +1031,24 @@ function checkoutRevision(repoRoot: string): string {
 
 /** The file a run's checkpoints are kept in, under its run directory. */
 export const checkpointPath = (runDir: string): string => join(runDir, 'checkpoints.sqlite')
+
+/**
+ * Why a checkpoint resume on `agent` is refused, or null when the checkpoint was started on that agent. A checkpoint
+ * with no recorded agent is always refused: nothing else binds a vendor to a checkpoint generation.
+ */
+export function crossAgentResumeRefusal(
+  provenance: AgentCheckpointProvenance | null,
+  task: number,
+  agent: Agent,
+  checkpointFile: string
+): string | null {
+  const recorded = provenance?.agent ?? null
+  if (recorded === null)
+    return `task ${task}'s checkpoint records no agent, and the Engine continues a run on the agent it started with; start the task fresh: set ${checkpointFile} aside and run the task again.`
+  if (recorded !== agent)
+    return `task ${task}'s checkpoint started on ${recorded}, and the Engine continues a run on the agent it started with; asked for ${agent}.`
+  return null
+}
 
 export interface EngineRunResult {
   outcome: RunOutcome | null
@@ -1233,19 +1295,31 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       })(readInput)
     })
     const roleHosts = [
-      { role: 'developer' as const, context: options.devToolsContext, file: 'developer-dev-bridge.sh' },
-      { role: 'code-reviewer' as const, context: reviewerContext, file: 'code-reviewer-dev-bridge.sh' },
-      { role: 'security' as const, context: reviewerContext, file: 'security-dev-bridge.sh' }
+      {
+        role: 'developer' as const,
+        step: 'develop',
+        context: options.devToolsContext,
+        file: 'developer-dev-bridge.sh'
+      },
+      {
+        role: 'code-reviewer' as const,
+        step: 'code-review',
+        context: reviewerContext,
+        file: 'code-reviewer-dev-bridge.sh'
+      },
+      { role: 'security' as const, step: 'security-review', context: reviewerContext, file: 'security-dev-bridge.sh' }
     ]
+    // Each agent step's role host, replaced at that step's dispatch boundary when its socket file is gone.
+    const roleHostsByStep: Record<string, { role: string; host: ReplaceableDevToolsHost }> = {}
     const mcpCommands: Record<string, string> = {}
     const hostParts: Partial<
-      Record<(typeof roleHosts)[number]['role'], Pick<RoleDispatches, 'capabilities' | 'writeShim'>>
+      Record<(typeof roleHosts)[number]['role'], Pick<RoleDispatches, 'capabilities' | 'writeShim' | 'onEnded'>>
     > = {}
     for (const roleHost of roleHosts) {
       const socketPath = devToolsSocketPath(`${options.hostKey ?? `engine-${args.task}`}-${roleHost.role}`)
       const capabilities = createDispatchCapabilityTable()
-      hosts.push(
-        await options.startHost({
+      const host = await startReplaceableDevToolsHost(
+        {
           socketPath,
           serverVersion: 'engine-run-1',
           context: roleHost.context,
@@ -1256,8 +1330,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
             narrate(
               `refused a ${event.tool} call on the ${event.role} tool host: the per-dispatch capability was ${event.reason} (${event.detail})`
             )
-        })
+        },
+        { start: options.startHost }
       )
+      hosts.push(host)
+      roleHostsByStep[roleHost.step] = { role: roleHost.role, host }
       const shimPath = join(runDir, roleHost.file)
       const writeShim = (capability?: string): void => {
         writeFileSync(
@@ -1273,7 +1350,13 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         chmodSync(shimPath, 0o700)
       }
       writeShim()
-      hostParts[roleHost.role] = { capabilities, writeShim }
+      const onEnded = (capability: string): void => {
+        if (host.noteDispatchEnded(capability))
+          narrate(
+            `the ${roleHost.role} tool host's socket was removed before its dispatch reached it; the host is replaced before the next dispatch`
+          )
+      }
+      hostParts[roleHost.role] = { capabilities, writeShim, onEnded }
       mcpCommands[roleHost.role === 'security' ? 'security-reviewer' : roleHost.role] = shimPath
     }
     const roles: Record<string, RoleLauncher[string]> = {
@@ -1442,6 +1525,23 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         )
         choice = await chooseStart(saver, identity)
       }
+      // A checkpoint resumes only on the agent it started with: another vendor's sessions and effects are not this
+      // one's to continue, and a checkpoint that never recorded its agent cannot prove which one that was.
+      if (choice.kind === 'resume') {
+        const refusal = crossAgentResumeRefusal(
+          (options.readAgentProvenance ?? readAgentProvenance)(checkpointPath(runDir), identity.threadId),
+          args.task,
+          args.agent,
+          checkpointPath(runDir)
+        )
+        if (refusal !== null) {
+          narrate(`not resuming: ${refusal}`)
+          error = refusal
+          legOutcome = { reason: 'failed' }
+          translator.endLeg(legOutcome)
+          return
+        }
+      }
       appendRunStartMarker(logPath, {
         role: 'engine-runner',
         pid: lifecycle.pid ?? process.pid,
@@ -1519,9 +1619,9 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
               ...(options.allowUnixSockets === true ? [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] : [])
             ]
           }),
-          ...(developerFacts
-            ? {
-                stepPrompts: {
+          stepPrompts: withToolHostBoundaries(
+            developerFacts
+              ? {
                   develop: async (rendered, results, context) => {
                     // Each Developer turn records the head it starts from and its launch, as the standalone loop does
                     // at each dispatch. `develop` is an agent step, so the action wrapper below never sees it.
@@ -1537,8 +1637,10 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
                       }
                     : {})
                 }
-              }
-            : {}),
+              : {},
+            roleHostsByStep,
+            narrate
+          ),
           spawnFn: tolerateReviewerExit(
             withReviewerWorkingDirectory(
               // Innermost, so the tee sees the directory the launch runs in and the agent's own stdout.

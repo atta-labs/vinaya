@@ -1107,7 +1107,8 @@ function assessGate(task: TaskInput, context: ActionContext): { exitCode: number
   const ci = recordedForgeCi(results)
   const localGreen = gate.exitCode === 0
   const ciRed = localGreen && ci?.conclusion === 'red'
-  const green = localGreen && !ciRed
+  const unpushed = localGreen && ci?.conclusion === 'unpushed'
+  const green = localGreen && !ciRed && !unpushed
   const failure = !localGreen
     ? gateFailure(gate)
     : ciRed && ci.failingChecks.length > 0
@@ -1166,6 +1167,14 @@ function assessGate(task: TaskInput, context: ActionContext): { exitCode: number
     events.push(...driverDecidedPauseEvents(loopIdOf(state), state, round, stats, 'infrastructure'))
     return paused({ reason: 'infrastructure', detail }, sendBack, new Error(detail))
   }
+
+  // A head the remote does not hold has no CI to judge: the Developer publishes it, and no gate is observed.
+  if (unpushed)
+    return out(
+      BACK,
+      { type: 'dispatch_developer', reason: 'unpushed' },
+      { counters, sendBack: { kind: 'unpushed', headBefore: safeRead(task.remoteHead) } }
+    )
 
   const confidence = round >= 2 && green ? stated(results) : undefined
   const observation: Observations = {
@@ -1476,6 +1485,23 @@ function openPullRequestOf(task: TaskInput, step: string): number {
 const OPEN_PR_LOOKUP_ATTEMPTS = 3
 const OPEN_PR_LOOKUP_SPACING_MS = 5_000
 
+/** A worktree head the remote branch does not hold yet: the head no CI has run on, and the remote head beside it. */
+export interface UnpushedHead {
+  head: string
+  remoteHead: string
+}
+
+/**
+ * The worktree head when it differs from the branch's head on the remote, so no CI can exist for it; null when they
+ * match, or when either head cannot be read (a failed remote read keeps its own handling and is never `unpushed`).
+ */
+export function unpushedHeadOf(task: TaskInput): UnpushedHead | null {
+  const head = worktreeHeadOf(task)
+  const remoteHead = safeRead(task.remoteHead)
+  if (head === null || remoteHead === null || head === remoteHead) return null
+  return { head, remoteHead }
+}
+
 /** The head the forge gates judge: the worktree's, else the branch's on the remote. */
 function judgedHeadOf(task: TaskInput): string {
   const head = worktreeHeadOf(task) ?? safeRead(task.remoteHead)
@@ -1613,7 +1639,8 @@ export function classifyMergeability(context: ActionContext): { exitCode: number
 /** What the CI step recorded: the head it read, its conclusion, the failing check runs and the heads already rerun. */
 export interface RecordedForgeCi {
   head: string | null
-  conclusion: 'green' | 'red' | 'pending' | 'skipped'
+  /** `unpushed`: the worktree head is not on the remote, so no CI was read and the Developer publishes it first. */
+  conclusion: 'green' | 'red' | 'pending' | 'skipped' | 'unpushed'
   failingChecks: string[]
   /** The heads whose failed jobs were rerun, each once. */
   rerunHeads: string[]
@@ -1645,7 +1672,8 @@ export function recordedForgeCi(results: Results): RecordedForgeCi | null {
  * The forge's CI conclusion for the head (`fetchCiConclusion`, which leaves out the review gate and the test-plan
  * wait check), waited on while it reads pending within the gate poll budget; a budget spent on pending reads red,
  * as the standalone loop's gate wait does. A red head the Developer's turn left unchanged has its failed jobs rerun
- * once (`rerunFailedWorkflowJobs`) and is read again. A red local gate decides the round alone, so no CI is read.
+ * once (`rerunFailedWorkflowJobs`) and is read again. A red local gate decides the round alone, so no CI is read;
+ * a worktree head the remote does not hold reads `unpushed` (`unpushedHeadOf`), never polled.
  */
 export async function readForgeCi(
   task: TaskInput,
@@ -1657,6 +1685,18 @@ export async function readForgeCi(
   const gate = results['run-mechanical-gates']
   if (gate !== undefined && gate.exitCode !== 0)
     return ok(JSON.stringify({ head: null, conclusion: 'skipped', failingChecks: [], rerunHeads, rerunRunIds: [] }))
+  const unpushed = unpushedHeadOf(task)
+  if (unpushed !== null)
+    return ok(
+      JSON.stringify({
+        head: unpushed.head,
+        remoteHead: unpushed.remoteHead,
+        conclusion: 'unpushed',
+        failingChecks: [],
+        rerunHeads,
+        rerunRunIds: []
+      })
+    )
   const head = judgedHeadOf(task)
   const readCi = task.bound?.fetchCiConclusion ?? fetchCiConclusion
   const poll = gatePollOf(task)
