@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { spawn } from 'node:child_process'
-import { resolve } from 'node:path'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { delimiter, join, resolve } from 'node:path'
 import { loadProcess } from '../../../../harness/dev-process/loader/load-process'
 import type { ActionRegistry } from '../../../../harness/dev-process/engine-runtime/run-process'
 import { classifyGateResult, dispatchReviewers, ACTION_BINDINGS, type TaskInput } from '../../executing/actions'
@@ -15,6 +15,14 @@ import { recordedHandoff } from '../handoff-fakes'
 
 const [agent, runtimeDir, agentScript, argvFile] = process.argv.slice(2) as [Agent, string, string, string]
 const repoRoot = resolve(import.meta.dir, '../../../..')
+
+// The agent is launched the way a real one is, by the runner's own launcher, as the vendor command on PATH: a stand-in
+// that runs the agent script and keeps the real launch argv for the test to read.
+const bin = `${argvFile}-bin`
+mkdirSync(bin, { recursive: true })
+for (const command of ['claude', 'codex'])
+  writeFileSync(join(bin, command), `#!/bin/sh\nexec sh '${agentScript}' '${argvFile}' "$@"\n`, { mode: 0o755 })
+process.env.PATH = `${bin}${delimiter}${process.env.PATH ?? ''}`
 
 const actions: ActionRegistry = Object.fromEntries(
   Object.keys(ACTION_BINDINGS).map((name) => [
@@ -43,10 +51,7 @@ const result = await runEngine({
   devToolsContext: {} as never,
   out: (line) => process.stdout.write(`${line}\n`),
   revision: 'signal-test',
-  lifecycle: { killGraceMs: 500 },
-  // The agent is the real launch argv's shape, run as a shell script: the argv is kept for the test to read.
-  spawnFn: (_command, args, options) =>
-    spawn('sh', [agentScript, argvFile, ...args], { ...options, stdio: ['pipe', 'pipe', 'pipe'] }) as never
+  lifecycle: { killGraceMs: 500 }
 })
 process.stdout.write(`exit ${result.exitCode}\n`)
 process.exit(result.exitCode)

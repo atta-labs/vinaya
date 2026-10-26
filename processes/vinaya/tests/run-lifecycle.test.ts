@@ -1228,6 +1228,36 @@ describe('no orphaned agent', () => {
     await until(() => !alive(child) && !alive(agent), 5000)
   }, 30_000)
 
+  test('a recorded agent does no work until its group is in the group file', async () => {
+    const dir = fixtureDir('reap-record-')
+    const groupFile = join(dir, 'agent-groups.json')
+    const ready = join(dir, 'ready')
+    let workedBeforeRecorded = null as boolean | null
+    // A slow start-time read (a loaded host) widens the window between the launch and the record.
+    const slowStartTime = (pid: number) => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400)
+      workedBeforeRecorded = existsSync(ready)
+      return liveStartTime(pid)
+    }
+    const reaper = createChildReaper(undefined, { groupFile, startTimeOf: slowStartTime })
+    const child = reaper.spawnFn('sh', ['-c', `echo $$ > ${ready}; exec sleep 300`], { cwd: dir, env: process.env })
+    await until(() => existsSync(ready) && readFileSync(ready, 'utf8').trim() !== '', 5000)
+    expect(workedBeforeRecorded).toBe(false)
+    // The pid the agent sees is the one recorded: the gate hands over to the agent in place.
+    const recorded = JSON.parse(readFileSync(groupFile, 'utf8')) as Array<{ pgid: number }>
+    expect(recorded.map((g) => g.pgid)).toEqual([Number(readFileSync(ready, 'utf8').trim())])
+    expect(recorded[0]?.pgid).toBe((child as unknown as { pid: number }).pid)
+    await reaper.reap(200)
+  })
+
+  test('a recorded launch of a command that does not exist still fails as a spawn error', async () => {
+    const dir = fixtureDir('reap-missing-')
+    const reaper = createChildReaper(undefined, { groupFile: join(dir, 'agent-groups.json') })
+    const child = reaper.spawnFn('vinaya-no-such-command', [], { cwd: dir, env: process.env })
+    const error = await new Promise<Error>((done) => child.on('error', done))
+    expect((error as NodeJS.ErrnoException).code).toBe('ENOENT')
+  })
+
   test('reaps a group whose leader already exited', async () => {
     const reaper = createChildReaper()
     const dir = fixtureDir('reap-leader-')

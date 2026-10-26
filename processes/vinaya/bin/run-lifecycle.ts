@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { delimiter, join, resolve as resolvePath } from 'node:path'
+import type { Writable } from 'node:stream'
 import { hostname } from 'node:os'
 import {
   type EscalationRecord,
@@ -843,6 +845,56 @@ async function endGroups(groups: readonly number[], graceMs: number): Promise<vo
   for (const pgid of groups) if (groupAlive(pgid)) signalGroup(pgid, 'SIGKILL')
 }
 
+function plainSpawn(command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) {
+  return spawn(command, args, {
+    ...options,
+    detached: true,
+    stdio: ['pipe', 'pipe', 'pipe']
+  }) as unknown as SpawnedProcessLike
+}
+
+/**
+ * The gate an agent is held at: it reads one line from descriptor 3 and replaces itself with the agent (same pid,
+ * same start time) only when that line is `go`. A launcher that dies before releasing it closes the pipe, and the
+ * gate exits without running the agent.
+ */
+const AGENT_GATE = 'IFS= read -r go <&3 && [ "$go" = go ] || exit 125; exec 3<&-; exec "$@"'
+
+function gatedSpawn(
+  command: string,
+  args: string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv }
+): { child: SpawnedProcessLike; release: () => void } {
+  const child = spawn('/bin/sh', ['-c', AGENT_GATE, 'vinaya-agent-gate', command, ...args], {
+    ...options,
+    detached: true,
+    stdio: ['pipe', 'pipe', 'pipe', 'pipe']
+  })
+  const gate = child.stdio[3] as Writable
+  // The gate may already be gone (killed before release); its pipe error is that exit, reported by the child.
+  gate.on('error', () => {})
+  return { child: child as unknown as SpawnedProcessLike, release: () => gate.end('go\n') }
+}
+
+/**
+ * True when `command` names a file the gate's `exec` can run. A command that cannot be found is launched without
+ * the gate, so it fails the way a direct launch does (a spawn error), not as the gate's exit status.
+ */
+function isResolvable(command: string, options: { cwd: string; env: NodeJS.ProcessEnv }): boolean {
+  const runnable = (path: string) => {
+    try {
+      accessSync(path, constants.X_OK)
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (command.includes('/')) return runnable(resolvePath(options.cwd, command))
+  return (options.env.PATH ?? '')
+    .split(delimiter)
+    .some((dir) => dir !== '' && runnable(join(resolvePath(options.cwd, dir), command)))
+}
+
 /**
  * Wraps a spawn function so every agent starts in a process group of its own, and records the group. The
  * executor's abort signals only the agent it spawned, so what that agent started would outlive a halted run;
@@ -851,23 +903,29 @@ async function endGroups(groups: readonly number[], graceMs: number): Promise<vo
  * runner ends them by (`reapAbandonedGroups`).
  */
 export function createChildReaper(
-  base: SpawnFn = (command, args, options) =>
-    spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] }) as unknown as SpawnedProcessLike,
+  base?: SpawnFn,
   record: { groupFile?: string; startTimeOf?: StartTimeOf } = {}
 ): ChildReaper {
   const launched = new Map<number, string | null>()
+  // With a group file and the real launcher, an agent starts held at a gate and runs only once its group is
+  // recorded: a runner killed between the launch and the record would otherwise leave a working agent no later
+  // runner knows to end.
+  const gated = base === undefined && record.groupFile !== undefined
+  const launch: SpawnFn = base ?? ((command, args, options) => plainSpawn(command, args, options))
   const writeRecord = (): void => {
     if (record.groupFile === undefined) return
     const groups: RecordedGroup[] = [...launched].map(([pgid, startedAt]) => ({ pgid, startedAt }))
     writeFileSync(record.groupFile, `${JSON.stringify(groups)}\n`, { mode: 0o600 })
   }
   const spawnFn: SpawnFn = (command, args, options) => {
-    const child = base(command, args, { ...options, detached: true } as typeof options)
+    const held = gated && isResolvable(command, options) ? gatedSpawn(command, args, options) : null
+    const child = held?.child ?? launch(command, args, { ...options, detached: true } as typeof options)
     const pid = (child as { pid?: unknown }).pid
     if (typeof pid === 'number') {
       launched.set(pid, record.groupFile === undefined ? null : (record.startTimeOf ?? liveStartTime)(pid))
       writeRecord()
     }
+    held?.release()
     return child
   }
   return {
