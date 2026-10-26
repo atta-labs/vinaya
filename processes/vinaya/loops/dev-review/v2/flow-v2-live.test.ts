@@ -1,7 +1,7 @@
+import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DevToolContext } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { gitPath } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
@@ -18,7 +18,7 @@ import {
 // the worktree's real pre-push hook, against throwaway repositories.
 
 function repo(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'flow-v2-live-'))
+  const dir = fixtureDir('flow-v2-live-')
   const env = { ...process.env }
   for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
   const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, env, stdio: 'ignore' })

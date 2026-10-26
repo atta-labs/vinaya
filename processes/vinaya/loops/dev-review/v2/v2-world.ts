@@ -1,41 +1,20 @@
+import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
 import { execFileSync } from 'node:child_process'
 import {
   chooseTests,
   type FailedTestsRecord,
   recordFromRun
 } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { compileFlow, type StepsFlow } from '@atta/engine'
-import { parse } from 'yaml'
-import { DEFAULT_REVIEW_POLICY, objectivesVersion, readManifest, type ReviewPolicy } from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY, objectivesVersion, type ReviewPolicy } from '@attalabs/aeg-core'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../../harness/dev-process/loader/load-process'
 import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, useRuntimeDir } from '../../../tests/round-fakes'
 import type { ActionRegistry } from '../../../../../harness/dev-process/engine-runtime/run-process'
-import {
-  clearDriverLock,
-  pauseMarker,
-  readPauseState,
-  writePauseState
-} from '../../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
-import { controlStoreRootFor, heldVerdictPath } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
-import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import { pauseMarker, writePauseState } from '../../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { cleanupAllReviewerIsolationArtifacts } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
-import { readUnpushedWorkDetail } from '../../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
-import { defaultDeps } from '../../../../../apps/cli/src/lib/dev-review-loop'
-import {
-  liveTaskInput,
-  readUnpublishedWork,
-  renderedFlowPath,
-  runDirectory,
-  runEngine,
-  type Agent,
-  type EngineForge,
-  type RunTrace
-} from '../../../bin/run-engine'
-import { claimResume, liveResumeDeps, type ResumeDeps } from '../../../bin/run-lifecycle'
+import { liveTaskInput, runEngine, type Agent, type EngineForge, type RunTrace } from '../../../bin/run-engine'
 import { createActions } from '../../../executing/actions'
 import { createV2Actions, type StagedPullRequest } from './v2-actions'
 import type { DeveloperPromptFacts } from '../../../executing/developer-prompt'
@@ -249,7 +228,7 @@ const roots: string[] = []
 /** Call from `beforeAll`: an isolated Codex home and a local-only Log. */
 export function setUpWorld(): void {
   for (const key of ['CODEX_HOME', ...SCENARIO_ENV_KEYS]) savedEnv[key] = process.env[key]
-  const home = mkdtempSync(join(tmpdir(), 'round-decisions-codex-'))
+  const home = fixtureDir('round-decisions-codex-')
   writeFileSync(join(home, 'auth.json'), '{}\n')
   process.env.CODEX_HOME = home
   keepLogLocal()
@@ -271,7 +250,7 @@ export function tearDownWorld(): void {
 }
 
 export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
-  const root = mkdtempSync(join(tmpdir(), 'round-decisions-'))
+  const root = fixtureDir('round-decisions-')
   roots.push(root)
   const runtimeDir = join(root, 'runtime')
   mkdirSync(runtimeDir)
