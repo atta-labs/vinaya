@@ -271,9 +271,19 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
       }
     })
     try {
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolve, reject) => {
         const socket = net.connect(socketPath)
-        socket.on('close', () => resolve())
+        const timeout = setTimeout(() => {
+          socket.destroy()
+          reject(new Error('the host did not refuse the unrelated peer'))
+        }, 5_000)
+        const done = (): void => {
+          clearTimeout(timeout)
+          resolve()
+        }
+        socket.on('close', done)
+        socket.on('end', done)
+        socket.on('error', done)
       })
       expect(events).toEqual(['<connection>:missing'])
     } finally {
