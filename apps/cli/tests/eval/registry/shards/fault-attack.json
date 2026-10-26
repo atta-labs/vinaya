@@ -1968,7 +1968,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "owed": "Residual risk: Codex’s workspace-write network policy permits loopback TCP, so the Engine launch shape cannot deny a raw non-domain route to a controller listener; the server-side per-dispatch capability still refuses unauthorized tool calls."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -2023,7 +2023,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "owed": "Residual risk: neither adapter’s Engine launch shape hides the same-user process table, so a role can inspect controller or sibling process metadata; signalling and environment access remain separately constrained."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",

@@ -16,6 +16,8 @@ import {
 } from '../../src/lib/dev-review-eval/registry'
 import { engineEvidenceOf, OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
 import {
+  CODEX_CONTROLLER_SOCKET_RESIDUAL,
+  CONTROLLER_PROCESS_RESIDUAL,
   CONTROLLER_BOUNDARY_RESIDUAL,
   CONTROLLER_BOUNDARY_ROW_IDS,
   CODEX_FILE_READ_RESIDUAL,
@@ -400,6 +402,17 @@ describe('the capability and controller-boundary rows record Engine evidence, ow
         const evidence = row === undefined ? undefined : engineEvidenceOf(row)
         expect(evidence).toEqual({ state: 'owed', reason: CONTROLLER_BOUNDARY_RESIDUAL })
       }
+    }
+  })
+
+  it('records the exact residual for every controller-boundary route an adapter cannot deny', () => {
+    const expected = new Map([
+      ['fault-attack:36-raw-socket-or-non-domain-path-to-the-controller-s-tool', CODEX_CONTROLLER_SOCKET_RESIDUAL],
+      ['fault-attack:37-inspecting-or-signalling-the-controller-or-another-dispatch', CONTROLLER_PROCESS_RESIDUAL]
+    ])
+    for (const [id, reason] of expected) {
+      const row = rows.find((entry) => entry.id === id)?.row
+      expect(row === undefined ? undefined : engineEvidenceOf(row)).toEqual({ state: 'owed', reason })
     }
   })
 })

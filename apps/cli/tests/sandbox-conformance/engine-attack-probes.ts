@@ -41,6 +41,12 @@ export const CREDENTIAL_ROW_PREFIX = 'fault-attack:'
 export const CONTROLLER_BOUNDARY_RESIDUAL =
   'Residual risk: the adapter sandbox may expose unrelated same-user process metadata or permit non-controller sockets; the server still refuses every tool connection outside the dispatch controller lineage.'
 
+export const CODEX_CONTROLLER_SOCKET_RESIDUAL =
+  'Residual risk: Codex’s workspace-write network policy permits loopback TCP, so the Engine launch shape cannot deny a raw non-domain route to a controller listener; the server-side per-dispatch capability still refuses unauthorized tool calls.'
+
+export const CONTROLLER_PROCESS_RESIDUAL =
+  'Residual risk: neither adapter’s Engine launch shape hides the same-user process table, so a role can inspect controller or sibling process metadata; signalling and environment access remain separately constrained.'
+
 export type ControllerBoundaryProbe = {
   readonly row: string
   readonly command: string
@@ -63,16 +69,16 @@ export const CONTROLLER_BOUNDARY_PROBES: readonly ControllerBoundaryProbe[] = [
   {
     row: '36-raw-socket-or-non-domain-path-to-the-controller-s-tool',
     command: 'bun -e \'fetch("http://127.0.0.1:9").catch(()=>process.exit(23))\'',
-    byAdapter: { claude: 'deny', codex: 'deny' }
+    byAdapter: { claude: 'deny', codex: 'residual' }
   },
   {
     row: '37-inspecting-or-signalling-the-controller-or-another-dispatch',
     command: 'ps -eo pid,ppid,args',
-    byAdapter: { claude: 'deny', codex: 'deny' }
+    byAdapter: { claude: 'residual', codex: 'residual' }
   },
   {
     row: '38-worker-write-to-controller-state-checkpoints-source-receipts',
-    command: `test ! -w "\${VINAYA_RUNTIME_DIR:-/nonexistent}"`,
+    command: `test -w "\${VINAYA_RUNTIME_DIR:-/nonexistent}"`,
     byAdapter: { claude: 'deny', codex: 'deny' }
   },
   {
