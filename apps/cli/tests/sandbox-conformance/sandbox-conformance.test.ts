@@ -842,7 +842,8 @@ async function openControllerTargets(session: SandboxSession): Promise<{
 // Mac. Review-only roles have no shell, which is itself the denial; shell-bearing roles run every row under both
 // adapters, only in the live run. Each probe prints a verdict line: a `deny` row passes when the verdict reports the
 // attack failed and its targets are unchanged; a `controller-refusal` row passes when the call was not served and,
-// where the socket answered, the server named the expected refusal; a `residual` row is printed, never asserted.
+// where the socket answered, the server named the expected refusal; a `residual` or `owed` row is printed, never
+// asserted.
 for (const agent of AGENTS) {
   for (const role of ROLE_NAMES) {
     const files = GENERATED_FOR_LIVE[agent][role] as Record<string, string>
@@ -894,7 +895,7 @@ for (const agent of AGENTS) {
             console.info(
               `[engine ${agent}/${role}] fault-attack:${probe.row}: exit ${result.exitCode}, ${outcome}, verdict ${verdict === null ? 'none' : JSON.stringify(verdict)}`
             )
-            if (outcome === 'residual') return
+            if (outcome === 'residual' || outcome === 'owed') return
             expect(verdict).not.toBeNull()
             expect(verdict?.succeeded).toBe(false)
             if (outcome === 'deny') {

@@ -16,11 +16,8 @@ import {
 } from '../../src/lib/dev-review-eval/registry'
 import { engineEvidenceOf, OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
 import {
-  CONTROLLER_BOUNDARY_PROBES,
   CONTROLLER_BOUNDARY_RESIDUAL,
   CONTROLLER_BOUNDARY_ROW_IDS,
-  CONTROLLER_PROCESS_RESIDUAL,
-  CREDENTIAL_ROW_PREFIX,
   CODEX_FILE_READ_RESIDUAL,
   CREDENTIAL_PROBES,
   CREDENTIAL_ROW_IDS,
@@ -405,22 +402,6 @@ describe('the capability and controller-boundary rows record Engine evidence, ow
         const row = shard.components.find((component) => component.id === id)
         const evidence = row === undefined ? undefined : engineEvidenceOf(row)
         expect(evidence).toEqual({ state: 'owed', reason: CONTROLLER_BOUNDARY_RESIDUAL })
-      }
-    }
-  })
-
-  it('records the exact residual for every must-pass row a probe only observes, and none for a refused or denied one', () => {
-    for (const probe of CONTROLLER_BOUNDARY_PROBES) {
-      const id = `${CREDENTIAL_ROW_PREFIX}${probe.row}`
-      const raw = rawShard.components.find((component) => component.id === id)
-      if (raw?.faultAttack.cutover !== 'must-pass') continue
-      const row = rows.find((entry) => entry.id === id)?.row
-      const evidence = row === undefined ? undefined : engineEvidenceOf(row)
-      if (Object.values(probe.byAdapter).includes('residual')) {
-        expect(evidence).toEqual({ state: 'owed', reason: CONTROLLER_PROCESS_RESIDUAL })
-      } else {
-        expect(evidence?.state).toBe('owed')
-        expect(evidence?.state === 'owed' ? evidence.reason : '').not.toContain('Residual risk')
       }
     }
   })

@@ -41,9 +41,6 @@ export const CREDENTIAL_ROW_PREFIX = 'fault-attack:'
 export const CONTROLLER_BOUNDARY_RESIDUAL =
   'Residual risk: the adapter sandbox may expose unrelated same-user process metadata or permit non-controller sockets; the tool server still refuses every call that does not carry a live capability from inside its own dispatch.'
 
-export const CONTROLLER_PROCESS_RESIDUAL =
-  'Residual risk: the Engine launch shape states no process-isolation setting for either adapter, so whether a role can signal, inspect or read the environment of the controller or another dispatch rests on the adapter’s own sandbox; the probe observes all three against a live dispatch process and asserts none until its outside-sandbox output is pasted.'
-
 /**
  * What the live run stands up for the controller-boundary probes: real tool hosts with capability tables, a live
  * dispatch process, and controller state files, all of them throwaway.
@@ -75,8 +72,10 @@ export type ControllerProbeTargets = {
  * - `controller-refusal`: the tool server must refuse the call — the verdict reports it was not served and, where the
  *   socket answered, names `refusedBy`. The sandbox may also stop the connection first; either way nothing is served.
  * - `residual`: observed and printed, never asserted; the registry records the row owed with its residual risk.
+ * - `owed`: observed and printed, never asserted; no launch-shape setting denies the route yet, so the registry
+ *   records the row owed with that reason.
  */
-export type ControllerProbeOutcome = 'deny' | 'controller-refusal' | 'residual'
+export type ControllerProbeOutcome = 'deny' | 'controller-refusal' | 'residual' | 'owed'
 
 export type ControllerBoundaryProbe = {
   readonly row: string
@@ -147,7 +146,7 @@ export const CONTROLLER_BOUNDARY_PROBES: readonly ControllerBoundaryProbe[] = [
           `ps -o pid= -p "$P" >/dev/null 2>&1 && { ok=1; seen="$seen inspect"; }; ` +
           `{ cat "/proc/$P/environ" 2>/dev/null || ps eww -o command= -p "$P" 2>/dev/null; } | tr '\\0' '\\n' | grep -q ${quote(ENGINE_PROBE_CANARY)} && { ok=1; seen="$seen environment"; }`
       ),
-    byAdapter: { claude: 'residual', codex: 'residual' }
+    byAdapter: { claude: 'owed', codex: 'owed' }
   },
   {
     // Append to each piece of controller state; any write that lands is the attack succeeding.

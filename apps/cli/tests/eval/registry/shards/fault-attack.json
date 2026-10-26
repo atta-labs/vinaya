@@ -2023,7 +2023,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "Residual risk: the Engine launch shape states no process-isolation setting for either adapter, so whether a role can signal, inspect or read the environment of the controller or another dispatch rests on the adapter’s own sandbox; the probe observes all three against a live dispatch process and asserts none until its outside-sandbox output is pasted."
+          "owed": "No setting in the Engine launch shape under harness/adapters/agents isolates processes for either adapter, so a role running as the same user can still signal, inspect or read the environment of the controller or another dispatch; the probe observes all three against a live dispatch process and asserts none."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
