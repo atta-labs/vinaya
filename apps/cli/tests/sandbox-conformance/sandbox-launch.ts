@@ -81,6 +81,12 @@ export type SandboxSession = {
   readonly worktreeDir: string
   /** The task's controller-owned required-source store, holding a manifest and a receipts file the worker must not touch. */
   readonly sourceStore: string
+  /**
+   * An Engine session's controller state the role must never write, laid out as a real run lays it out under the
+   * runtime directory: the source store's manifest and receipts, the run's checkpoint file, and another role's
+   * generated settings.
+   */
+  readonly controllerState?: readonly string[]
   run(command: string, env: Record<string, string>): Promise<CommandResult>
   /** The same command in the same worktree with no sandbox around it — the control that tells a sandbox denial from a command that fails anywhere. */
   runOutside(command: string, env: Record<string, string>): Promise<CommandResult>
@@ -435,13 +441,21 @@ function startCanaryAgent(home: string): { socket: string; stop: () => void } {
 export function openEngineSandboxSession(agent: Agent, role = 'developer'): SandboxSession {
   const worktreeDir = createWorktree(agent)
   const vendor = agent === 'claude' ? 'claude-code' : 'codex'
-  const runDir = realpathSync(mkdtempSync(join(tmpdir(), `engine-${agent}-run-`)))
+  // Short on macOS, as the Claude scratch directory is: the run's scratch directory is the launch's TMPDIR.
+  const runDir = realpathSync(mkdtempSync(join(claudeScratchRoot(), `engine-${agent}-run-`)))
   const generatedRoot = join(runDir, 'generated')
   const variables = grantVariables(worktreeDir, runDir, REPO_ROOT)
   const scratchDir = variables.SCRATCH as string
   const fixtureHome = buildCanaryHome(scratchDir)
   const agentRun = startCanaryAgent(fixtureHome)
   const { runtimeDir, store } = controllerSourceStore()
+  const engineRun = join(runtimeDir, 'engine-runs', '1')
+  const checkpoints = join(engineRun, 'checkpoints.sqlite')
+  const otherRoleSettings = join(engineRun, 'generated', 'code-reviewer', 'role-settings.json')
+  mkdirSync(dirname(otherRoleSettings), { recursive: true, mode: 0o700 })
+  writeFileSync(checkpoints, 'checkpoint\n', { mode: 0o600 })
+  writeFileSync(otherRoleSettings, '{}\n', { mode: 0o600 })
+  const controllerState = [sourceManifestPath(store), sourceReceiptsPath(store), checkpoints, otherRoleSettings]
   // Generate the role settings with HOME and the agent pointer naming the canary home and its agent, so the
   // credential deny rules (`credentialDenyRead`, resolved from the env at generation time) name what the probes reach.
   const realHome = process.env.HOME
@@ -480,6 +494,7 @@ export function openEngineSandboxSession(agent: Agent, role = 'developer'): Sand
     agent,
     worktreeDir,
     sourceStore: store,
+    controllerState,
     runOutside: (command: string, env: Record<string, string>) => runOutsideSandbox(worktreeDir, command, env),
     dispose
   }

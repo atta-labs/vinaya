@@ -16,10 +16,11 @@ import {
 } from '../../src/lib/dev-review-eval/registry'
 import { engineEvidenceOf, OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
 import {
-  CODEX_CONTROLLER_SOCKET_RESIDUAL,
-  CONTROLLER_PROCESS_RESIDUAL,
+  CONTROLLER_BOUNDARY_PROBES,
   CONTROLLER_BOUNDARY_RESIDUAL,
   CONTROLLER_BOUNDARY_ROW_IDS,
+  CONTROLLER_PROCESS_RESIDUAL,
+  CREDENTIAL_ROW_PREFIX,
   CODEX_FILE_READ_RESIDUAL,
   CREDENTIAL_PROBES,
   CREDENTIAL_ROW_IDS,
@@ -385,12 +386,15 @@ describe('the capability and controller-boundary rows record Engine evidence, ow
     for (const { row } of rows) expect(engineEvidenceOf(row)?.state).toBe('owed')
   })
 
-  it('fails if a row leaves the shrink-only list without recorded Engine evidence', () => {
-    const simulated = owed.slice(1)
-    const stillUnproved = rows.filter(({ id, row }) => {
-      return !simulated.includes(id) && engineEvidenceOf(row)?.state !== 'evidenced'
-    })
-    expect(stillUnproved.map(({ id }) => id)).toEqual([CONTROLLER_BOUNDARY_ROW_IDS[0]!])
+  it('fails while a row is off the owed list without recorded Engine evidence, and while an evidenced row stays on it', () => {
+    const offWithoutEvidence = rows.filter(
+      ({ id, row }) => !owedList.owed.includes(id) && engineEvidenceOf(row)?.state !== 'evidenced'
+    )
+    const evidencedButOwed = rows.filter(
+      ({ id, row }) => owedList.owed.includes(id) && engineEvidenceOf(row)?.state === 'evidenced'
+    )
+    expect(offWithoutEvidence.map(({ id }) => id)).toEqual([])
+    expect(evidencedButOwed.map(({ id }) => id)).toEqual([])
   })
 
   it('keeps gate-15 rows free of known failures and records residual risk for pass-or-accepted rows', () => {
@@ -405,14 +409,19 @@ describe('the capability and controller-boundary rows record Engine evidence, ow
     }
   })
 
-  it('records the exact residual for every controller-boundary route an adapter cannot deny', () => {
-    const expected = new Map([
-      ['fault-attack:36-raw-socket-or-non-domain-path-to-the-controller-s-tool', CODEX_CONTROLLER_SOCKET_RESIDUAL],
-      ['fault-attack:37-inspecting-or-signalling-the-controller-or-another-dispatch', CONTROLLER_PROCESS_RESIDUAL]
-    ])
-    for (const [id, reason] of expected) {
+  it('records the exact residual for every must-pass row a probe only observes, and none for a refused or denied one', () => {
+    for (const probe of CONTROLLER_BOUNDARY_PROBES) {
+      const id = `${CREDENTIAL_ROW_PREFIX}${probe.row}`
+      const raw = rawShard.components.find((component) => component.id === id)
+      if (raw?.faultAttack.cutover !== 'must-pass') continue
       const row = rows.find((entry) => entry.id === id)?.row
-      expect(row === undefined ? undefined : engineEvidenceOf(row)).toEqual({ state: 'owed', reason })
+      const evidence = row === undefined ? undefined : engineEvidenceOf(row)
+      if (Object.values(probe.byAdapter).includes('residual')) {
+        expect(evidence).toEqual({ state: 'owed', reason: CONTROLLER_PROCESS_RESIDUAL })
+      } else {
+        expect(evidence?.state).toBe('owed')
+        expect(evidence?.state === 'owed' ? evidence.reason : '').not.toContain('Residual risk')
+      }
     }
   })
 })

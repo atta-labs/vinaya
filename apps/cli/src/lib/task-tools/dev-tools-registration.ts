@@ -89,13 +89,26 @@ export function devToolsSocketPath(key: string): string {
  * they register the server identically. `entry` defaults to this process's own
  * script, which is the vinaya CLI only when the CLI is what is running: under
  * `bun test` it is the test file, so a test that stages a real session passes
- * the CLI entry explicitly.
+ * the CLI entry explicitly. A `capability` (the per-dispatch value a host with
+ * a capability table requires) is passed as `--capability <value>`, and the
+ * bridge adds it to every tool call; the standalone dispatch passes none.
  */
 export function driverDevBridgeInvocation(
   socketPath: string,
-  entry: string = cliEntryPath() ?? 'vinaya'
+  entry: string = cliEntryPath() ?? 'vinaya',
+  capability?: string
 ): BridgeInvocation {
-  return { command: process.execPath, args: [entry, 'task-tools', 'dev-bridge', '--socket', socketPath] }
+  return {
+    command: process.execPath,
+    args: [
+      entry,
+      'task-tools',
+      'dev-bridge',
+      '--socket',
+      socketPath,
+      ...(capability === undefined ? [] : ['--capability', capability])
+    ]
+  }
 }
 
 /**

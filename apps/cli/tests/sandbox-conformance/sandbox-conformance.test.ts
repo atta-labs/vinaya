@@ -30,11 +30,22 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { sourceManifestPath, sourceReceiptsPath } from '../../src/lib/source-manifest.js'
+import {
+  createDispatchCapabilityTable,
+  type DispatchCapabilityTable,
+  startDevToolsHost
+} from '../../src/lib/task-tools/dev-tools-host.js'
 import { devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
+import {
+  type CapabilityRefusalEvent,
+  type DevToolContext,
+  devToolError
+} from '../../src/lib/task-tools/dev-tools-server.js'
 import { expectGradingSandboxDenies, proveGradingSandbox } from '../eval/grading-sandbox-proof.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../lib/dispatch/driver-socket-reach.js'
 import { spawnSyncBudgeted } from '../lib/process-fixture.js'
@@ -56,6 +67,8 @@ import {
   codexExcludedVariables,
   CONTROLLER_BOUNDARY_PROBES,
   CONTROLLER_BOUNDARY_ROW_IDS,
+  type ControllerProbeTargets,
+  controllerProbeVerdict,
   CREDENTIAL_PROBES,
   deniesCredentialRoute,
   GATE_14_PROBES,
@@ -82,11 +95,50 @@ describe('Engine controller-boundary probes — matrix coverage', () => {
     ])
   })
 
+  const sampleTargets: ControllerProbeTargets = {
+    bun: '/bun',
+    probeScript: '/probe.ts',
+    dispatchSocket: '/dispatch.sock',
+    dispatchCapability: 'dispatch-capability-value',
+    foreignCapability: 'foreign-capability-value',
+    ownSocket: '/own.sock',
+    ownCapability: 'own-capability-value',
+    dispatchPid: 4100,
+    controllerState: ['/runtime/engine-runs/1/checkpoints.sqlite']
+  }
+
   it('carries one attack command and an outcome under both adapters for every row', () => {
     for (const probe of CONTROLLER_BOUNDARY_PROBES) {
-      expect(probe.command.trim()).not.toBe('')
+      expect(probe.command(sampleTargets).trim()).not.toBe('')
       expect(Object.keys(probe.byAdapter).sort()).toEqual(['claude', 'codex'])
     }
+  })
+
+  it("aims every refusal probe at a real tool socket, naming the server's refusal, and every denial at real state", () => {
+    for (const probe of CONTROLLER_BOUNDARY_PROBES) {
+      const outcomes = Object.values(probe.byAdapter)
+      const command = probe.command(sampleTargets)
+      if (outcomes.includes('controller-refusal')) {
+        expect(probe.refusedBy).toBeDefined()
+        expect(command).toContain("'/probe.ts'")
+        expect(command.includes("'/dispatch.sock'") || command.includes("'/own.sock'")).toBe(true)
+      }
+      if (outcomes.includes('deny')) {
+        expect(probe.untouched?.(sampleTargets)).toEqual(sampleTargets.controllerState)
+        expect(command).toContain(sampleTargets.controllerState[0] as string)
+      }
+    }
+  })
+
+  it('reads a verdict only from the line the probe printed', () => {
+    expect(controllerProbeVerdict('noise\nCONTROLLER-PROBE {"succeeded":false} signal\n')).toEqual({
+      succeeded: false,
+      seen: 'signal'
+    })
+    expect(
+      controllerProbeVerdict('CONTROLLER-PROBE {"reached":true,"succeeded":false,"check":"role-grant"}\n')
+    ).toEqual({ reached: true, succeeded: false, check: 'role-grant', seen: '' })
+    expect(controllerProbeVerdict('bun: command not found\n')).toBeNull()
   })
 })
 
@@ -709,41 +761,157 @@ for (const agent of AGENTS) {
 
 const GENERATED_FOR_LIVE = generatedRoleFiles()
 
-// These probes use the same generated Engine role launch shape as the credential
-// probes above. Review-only roles have no shell, which is itself the denial;
-// shell-bearing roles execute every row under both adapters only in the live run.
+/** A tool context whose only success is `run_checks`; every other tool refuses, so no probe can cause an effect. */
+const INERT_CONTEXT: DevToolContext = (() => {
+  const refused = async () => ({
+    ok: false as const,
+    error: devToolError('policy_refusal', 'never', 'not_started', 'probe-fixture', 'no effect', 'none')
+  })
+  return {
+    publishChanges: refused,
+    openPullRequest: refused,
+    updatePullRequestBody: refused,
+    refreshEvidence: refused,
+    readPullRequest: refused,
+    runChecks: async () => ({ ok: true as const, result: { passed: true, output: 'probe fixture' } }),
+    fetchDocumentation: refused
+  }
+})()
+
+/**
+ * The live targets of the controller-boundary probes: the developer role's tool host serving one live dispatch (a
+ * launched process holding the canary in its environment, which the probing process is not part of), a second host
+ * whose live dispatch is this test process (so a probe it starts is inside it), and another role's host with a live
+ * dispatch of its own. Every refusal any host makes is collected.
+ */
+async function openControllerTargets(session: SandboxSession): Promise<{
+  targets: ControllerProbeTargets
+  refusals: CapabilityRefusalEvent[]
+  close: () => Promise<void>
+}> {
+  const dir = realpathSync(mkdtempSync(join(process.platform === 'darwin' ? '/tmp' : tmpdir(), 'vcb-')))
+  const refusals: CapabilityRefusalEvent[] = []
+  const dispatchProcess = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], {
+    env: { ...process.env, VINAYA_PROBE_CANARY: PROBE_CANARY },
+    stdio: 'ignore'
+  })
+  const dispatchPid = dispatchProcess.pid as number
+  const dispatchTable = createDispatchCapabilityTable()
+  const ownTable = createDispatchCapabilityTable()
+  const otherRoleTable = createDispatchCapabilityTable()
+  const host = (socketName: string, capabilities: DispatchCapabilityTable) =>
+    startDevToolsHost({
+      socketPath: join(dir, socketName),
+      serverVersion: 'conformance',
+      context: INERT_CONTEXT,
+      role: 'developer',
+      capabilities,
+      audit: (event) => refusals.push(event)
+    })
+  const dispatchHost = await host('d.sock', dispatchTable)
+  const ownHost = await host('o.sock', ownTable)
+  const dispatchCapability = dispatchTable.mint(COMMAND_BUDGET_MS * 20)
+  dispatchTable.bind(dispatchCapability, dispatchPid)
+  const ownCapability = ownTable.mint(COMMAND_BUDGET_MS * 20)
+  ownTable.bind(ownCapability, process.pid)
+  const foreignCapability = otherRoleTable.mint(COMMAND_BUDGET_MS * 20)
+  otherRoleTable.bind(foreignCapability, dispatchPid)
+  return {
+    targets: {
+      bun: process.execPath,
+      probeScript: join(import.meta.dir, 'controller-probe.ts'),
+      dispatchSocket: dispatchHost.socketPath,
+      dispatchCapability,
+      foreignCapability,
+      ownSocket: ownHost.socketPath,
+      ownCapability,
+      dispatchPid,
+      controllerState: session.controllerState ?? []
+    },
+    refusals,
+    close: async () => {
+      dispatchProcess.kill()
+      await dispatchHost.close()
+      await ownHost.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+}
+
+// These probes use the same generated Engine role launch shape as the credential probes below, on Linux and on a
+// Mac. Review-only roles have no shell, which is itself the denial; shell-bearing roles run every row under both
+// adapters, only in the live run. Each probe prints a verdict line: a `deny` row passes when the verdict reports the
+// attack failed and its targets are unchanged; a `controller-refusal` row passes when the call was not served and,
+// where the socket answered, the server named the expected refusal; a `residual` row is printed, never asserted.
 for (const agent of AGENTS) {
   for (const role of ROLE_NAMES) {
     const files = GENERATED_FOR_LIVE[agent][role] as Record<string, string>
-    describe.skipIf(!LIVE || process.platform !== 'linux')(
-      `Engine controller-boundary probes — ${agent}/${role}'s generated launch shape`,
-      () => {
-        if (!roleHasShell(files)) {
-          it('denies every probe because the role is granted no shell', () => {
-            expect(roleHasShell(files)).toBe(false)
-          })
-          return
-        }
-        let session: SandboxSession | undefined
-        beforeAll(() => {
-          session = openEngineSandboxSession(agent, role)
+    describe.skipIf(!LIVE)(`Engine controller-boundary probes — ${agent}/${role}'s generated launch shape`, () => {
+      if (!roleHasShell(files)) {
+        it('denies every probe because the role is granted no shell', () => {
+          expect(roleHasShell(files)).toBe(false)
         })
-        afterAll(() => session?.dispose())
-        for (const probe of CONTROLLER_BOUNDARY_PROBES) {
-          it(
-            `fault-attack:${probe.row} (${probe.byAdapter[agent]})`,
-            async () => {
-              const result = await (session as SandboxSession).run(probe.command, {})
-              console.info(
-                `[engine ${agent}/${role}] fault-attack:${probe.row}: exit ${result.exitCode}, ${probe.byAdapter[agent]}`
-              )
-              if (probe.byAdapter[agent] === 'deny') expect(result.exitCode).not.toBe(0)
-            },
-            COMMAND_BUDGET_MS + 60_000
-          )
-        }
+        return
       }
-    )
+      let session: SandboxSession | undefined
+      let live: Awaited<ReturnType<typeof openControllerTargets>> | undefined
+      beforeAll(async () => {
+        session = openEngineSandboxSession(agent, role)
+        live = await openControllerTargets(session)
+      })
+      afterAll(async () => {
+        await live?.close()
+        session?.dispose()
+      })
+
+      it('the same probe client is served outside any sandbox, from inside its own dispatch', async () => {
+        const { targets } = live as NonNullable<typeof live>
+        const control = await (session as SandboxSession).runOutside(
+          `${JSON.stringify(targets.bun)} ${JSON.stringify(targets.probeScript)} ${JSON.stringify(targets.ownSocket)} run_checks '{}' ${JSON.stringify(targets.ownCapability)}`,
+          {}
+        )
+        expect(controllerProbeVerdict(control.output)).toEqual({
+          reached: true,
+          succeeded: true,
+          check: null,
+          seen: ''
+        })
+      })
+
+      for (const probe of CONTROLLER_BOUNDARY_PROBES) {
+        const outcome = probe.byAdapter[agent]
+        it(
+          `fault-attack:${probe.row} (${outcome})`,
+          async () => {
+            const { targets, refusals } = live as NonNullable<typeof live>
+            const untouched = (probe.untouched?.(targets) ?? []).map(
+              (path) => [path, readFileSync(path, 'utf8')] as const
+            )
+            const refusalsBefore = refusals.length
+            const result = await (session as SandboxSession).run(probe.command(targets), {})
+            const verdict = controllerProbeVerdict(result.output)
+            // The verdict carries booleans and refusal names only, never what a probe read.
+            console.info(
+              `[engine ${agent}/${role}] fault-attack:${probe.row}: exit ${result.exitCode}, ${outcome}, verdict ${verdict === null ? 'none' : JSON.stringify(verdict)}`
+            )
+            if (outcome === 'residual') return
+            expect(verdict).not.toBeNull()
+            expect(verdict?.succeeded).toBe(false)
+            if (outcome === 'deny') {
+              for (const [path, before] of untouched) expect(readFileSync(path, 'utf8')).toBe(before)
+            }
+            if (outcome === 'controller-refusal' && verdict?.reached) {
+              expect(verdict.check).toBe(probe.refusedBy ?? null)
+              // A capability refusal writes its one audit event, naming the role and the tool.
+              if (probe.refusedBy === 'dispatch-capability') {
+                expect(refusals.slice(refusalsBefore).map((event) => event.role)).toEqual(['developer'])
+              }
+            }
+          },
+          COMMAND_BUDGET_MS + 60_000
+        )
+      }
+    })
   }
 }
 

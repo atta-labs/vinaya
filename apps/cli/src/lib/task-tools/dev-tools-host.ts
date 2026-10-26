@@ -14,15 +14,27 @@
  * reach it, while the driver's own confined bridge still can; a unix socket
  * connect is a filesystem operation on that path, not a network egress the
  * domain allowlist gates.
+ *
+ * The owner-only mode keeps other users out, not other processes of the same
+ * user. Where several dispatches share one user (the Engine runs every role's
+ * host at once), the host is started with a `DispatchCapabilityTable`, and a
+ * call is served only with a live capability of one of this role's dispatches,
+ * presented from inside that dispatch's own process tree.
  */
 
 import net from 'node:net'
+import { randomUUID } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { platform } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { dirname } from 'node:path'
 import { devToolsSocketRoot } from './dev-tools-registration.js'
-import { createDevToolsMcpServer, type DevToolContext, type DispatchCapability } from './dev-tools-server.js'
+import {
+  type CapabilityRefusalEvent,
+  type CapabilityRefusalReason,
+  createDevToolsMcpServer,
+  type DevToolContext
+} from './dev-tools-server.js'
 import type { GrantedRole } from './role-grants.js'
 
 export type DevToolsHost = {
@@ -38,33 +50,151 @@ export type StartDevToolsHostOptions = {
   context: DevToolContext
   /** The dispatched role; the host serves only the tools `role-grants.ts` grants it. */
   role: GrantedRole
-  capability?: DispatchCapability
-  /** The dispatch controller process; only its descendants may bind this role host. */
-  controllerPid?: number
+  /**
+   * The capabilities minted for this role's dispatches. With a table, every
+   * call must carry a live capability of a dispatch whose launched process is
+   * an ancestor of the connecting peer; without one, the host serves its single
+   * caller as the standalone dispatch always has.
+   */
+  capabilities?: DispatchCapabilityTable
+  /** Writes the one audit record of each refused call. */
+  audit?: (event: CapabilityRefusalEvent) => void
 }
 
+/**
+ * The capabilities of one role host: one per role dispatch, minted before the
+ * dispatch launches, bound to the process it launched, and revoked when that
+ * process ends (or when its time runs out).
+ *
+ * The value travels in the dispatch's bridge invocation and every call carries
+ * it, but the value alone is not enough: a call is served only when the
+ * connection's kernel-reported peer process descends from the process the
+ * dispatch launched. A process of another dispatch, or any other same-user
+ * process, that learns the value is refused as `replayed`.
+ */
+export type DispatchCapabilityTable = {
+  /** Mints the capability of one dispatch that may run for `ttlMs`; it serves nothing until `bind`. */
+  mint: (ttlMs: number) => string
+  /** Binds a minted capability to the process its dispatch launched. */
+  bind: (value: string, launchPid: number) => void
+  /** Revokes one dispatch's capability: its process ended. */
+  revoke: (value: string) => void
+  /** Revokes every capability: the host is closing. */
+  revokeAll: () => void
+  /** Checks a call's capability for a connection whose peer is `peerPid` (null when it could not be read). */
+  verify: (
+    supplied: string | undefined,
+    peerPid: number | null
+  ) => { reason: CapabilityRefusalReason; detail: string } | null
+}
+
+export function createDispatchCapabilityTable(
+  deps: { now?: () => number; descendsFrom?: (pid: number, ancestor: number) => boolean } = {}
+): DispatchCapabilityTable {
+  const now = deps.now ?? Date.now
+  const descends = deps.descendsFrom ?? descendsFrom
+  const entries = new Map<string, { expiresAt: number; launchPid: number | null; revoked: boolean }>()
+  return {
+    mint: (ttlMs) => {
+      const value = randomUUID()
+      entries.set(value, { expiresAt: now() + ttlMs, launchPid: null, revoked: false })
+      return value
+    },
+    bind: (value, launchPid) => {
+      const entry = entries.get(value)
+      if (entry && !entry.revoked && entry.launchPid === null) entry.launchPid = launchPid
+    },
+    revoke: (value) => {
+      const entry = entries.get(value)
+      if (entry) entry.revoked = true
+    },
+    revokeAll: () => {
+      for (const entry of entries.values()) entry.revoked = true
+    },
+    verify: (supplied, peerPid) => {
+      if (supplied === undefined) return { reason: 'missing', detail: 'the call carried no capability' }
+      const entry = entries.get(supplied)
+      if (entry === undefined) {
+        return { reason: 'replayed', detail: "the capability was not minted for this role's dispatches" }
+      }
+      if (entry.revoked) return { reason: 'revoked', detail: 'the dispatch the capability was minted for has ended' }
+      if (now() >= entry.expiresAt) return { reason: 'expired', detail: "the capability's dispatch ran out of time" }
+      if (entry.launchPid === null) {
+        return { reason: 'replayed', detail: 'the capability is not bound to a launched dispatch yet' }
+      }
+      if (peerPid === null) {
+        return { reason: 'replayed', detail: "the connection's peer process could not be read" }
+      }
+      if (!descends(peerPid, entry.launchPid)) {
+        return {
+          reason: 'replayed',
+          detail: `peer process ${peerPid} is outside the dispatch launched as process ${entry.launchPid}`
+        }
+      }
+      return null
+    }
+  }
+}
+
+type GetSockOpt = (fd: number, level: number, name: number, value: unknown, length: unknown) => number
+let peerCredentialReader: Promise<{ getsockopt: GetSockOpt; ptr: (view: ArrayBufferView) => unknown } | null> | null =
+  null
+
+/** `getsockopt` from the C library, loaded once; null where it cannot be loaded. */
+function loadPeerCredentialReader(): Promise<{
+  getsockopt: GetSockOpt
+  ptr: (view: ArrayBufferView) => unknown
+} | null> {
+  peerCredentialReader ??= (async () => {
+    try {
+      const { dlopen, FFIType, ptr } = await import('bun:ffi')
+      const library = dlopen(platform() === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6', {
+        getsockopt: {
+          args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr],
+          returns: FFIType.i32
+        }
+      })
+      return {
+        getsockopt: library.symbols.getsockopt as unknown as GetSockOpt,
+        ptr: ptr as (v: ArrayBufferView) => unknown
+      }
+    } catch {
+      return null
+    }
+  })()
+  return peerCredentialReader
+}
+
+/**
+ * The process id the kernel reports for a unix-socket peer: `SO_PEERCRED` on
+ * Linux, `LOCAL_PEERPID` on macOS. Neither Node nor Bun exposes it, so it is
+ * read through `bun:ffi` from the C library on the socket's file descriptor,
+ * which Bun keeps on the socket's private `_handle`. Every failure (a C library
+ * that is not `libc.so.6`, as on musl; a Bun whose socket has no `_handle.fd`)
+ * yields null, and a host with a capability table refuses a null peer, so the
+ * reader fails closed. The id is read when the connection is accepted; a peer
+ * that exits and whose id is reused before a call is a residual race the
+ * dispatch's own process lifetime bounds, since its capability is revoked when
+ * its launched process ends.
+ */
 async function unixPeerPid(socket: net.Socket): Promise<number | null> {
   const fd = (socket as unknown as { _handle?: { fd?: number } })._handle?.fd
   if (typeof fd !== 'number') return null
+  const reader = await loadPeerCredentialReader()
+  if (reader === null) return null
   try {
-    const { dlopen, FFIType, ptr } = await import('bun:ffi')
-    const library = dlopen(platform() === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6', {
-      getsockopt: {
-        args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr],
-        returns: FFIType.i32
-      }
-    })
     const credential = new Uint8Array(platform() === 'darwin' ? 4 : 12)
     const length = new Uint32Array([credential.byteLength])
-    const status = library.symbols.getsockopt(
+    const status = reader.getsockopt(
       fd,
       platform() === 'darwin' ? 0 : 1,
       platform() === 'darwin' ? 2 : 17,
-      ptr(credential),
-      ptr(length)
+      reader.ptr(credential),
+      reader.ptr(length)
     )
-    library.close()
-    return status === 0 ? new DataView(credential.buffer).getInt32(0, true) : null
+    if (status !== 0) return null
+    const pid = new DataView(credential.buffer).getInt32(0, true)
+    return pid > 0 ? pid : null
   } catch {
     return null
   }
@@ -119,25 +249,28 @@ export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise
 
   const connections = new Set<net.Socket>()
   const netServer = net.createServer(async (socket) => {
-    const peerPid = await unixPeerPid(socket)
-    if (opts.capability && (peerPid === null || !descendsFrom(peerPid, opts.controllerPid ?? process.pid))) {
-      opts.capability.audit?.({ role: opts.role, tool: '<connection>', reason: 'missing' })
-      socket.destroy()
-      return
-    }
-    const server = createDevToolsMcpServer({
-      serverVersion: opts.serverVersion,
-      context: opts.context,
-      role: opts.role,
-      capability: opts.capability,
-      trustedCapability: opts.capability?.value
-    })
     connections.add(socket)
     socket.on('close', () => connections.delete(socket))
     // A per-connection error (the bridge dying mid-call) must never crash the
     // driver — log to stderr and drop the connection.
     socket.on('error', (err) => {
       process.stderr.write(`vinaya-dev-tools host: connection error — ${err.message}\n`)
+    })
+    const { capabilities } = opts
+    // The peer is read once, as the connection is accepted, and every call on it is checked against it.
+    const peerPid = capabilities ? await unixPeerPid(socket) : null
+    const server = createDevToolsMcpServer({
+      serverVersion: opts.serverVersion,
+      context: opts.context,
+      role: opts.role,
+      ...(capabilities
+        ? {
+            capability: {
+              verify: (supplied: string | undefined) => capabilities.verify(supplied, peerPid),
+              audit: opts.audit ?? (() => {})
+            }
+          }
+        : {})
     })
     void server.serve(socket, socket).catch((err) => {
       process.stderr.write(
@@ -167,7 +300,7 @@ export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise
     new Promise<void>((resolve) => {
       if (closed) return resolve()
       closed = true
-      if (opts.capability) opts.capability.revoked = true
+      opts.capabilities?.revokeAll()
       for (const socket of connections) socket.destroy()
       connections.clear()
       netServer.close(() => {

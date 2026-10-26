@@ -43,7 +43,7 @@
  */
 
 import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from './mcp-protocol.js'
-import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
+import { DEV_TOOLS_MCP_SERVER_NAME, DISPATCH_CAPABILITY_ARGUMENT } from './dev-tools-names.js'
 import type { FailedCheckLog } from './pr-facts.js'
 import { AGENT_TOOL_CATALOG, DEV_TOOL_CATALOG, DEV_TOOL_NAMES, serveTool } from './tool-catalog.js'
 import { type GrantedRole, isToolGranted, ROLE_TOOL_GRANTS, servedTools } from './role-grants.js'
@@ -99,14 +99,29 @@ export type DevToolRefusal = {
   fix: string
 }
 
-export type DispatchCapability = {
-  value: string
-  expiresAt: number
-  revoked?: boolean
-  audit?: (event: { role: GrantedRole; tool: string; reason: 'missing' | 'expired' | 'revoked' | 'replayed' }) => void
+/** Why a call's per-dispatch capability was refused. */
+export type CapabilityRefusalReason = 'missing' | 'expired' | 'revoked' | 'replayed'
+
+/** The one audit record every refused call writes: the role, the tool, the reason and what was observed. */
+export type CapabilityRefusalEvent = {
+  role: GrantedRole
+  tool: string
+  reason: CapabilityRefusalReason
+  detail: string
 }
 
-const CAPABILITY_ARGUMENT = '__vinayaDispatchCapability'
+/**
+ * How the tool server checks the capability one call carries, before the role
+ * grant and before any handler. `verify` answers for the connection the call
+ * arrived on (the host binds it to that connection's kernel-reported peer), so
+ * the server never compares a value with itself.
+ */
+export type DispatchCapabilityCheck = {
+  verify: (supplied: string | undefined) => { reason: CapabilityRefusalReason; detail: string } | null
+  audit: (event: CapabilityRefusalEvent) => void
+}
+
+export { DISPATCH_CAPABILITY_ARGUMENT }
 
 /** A driver-side tool outcome: a typed success value, or a structured refusal. */
 export type DevToolResult<T> = { ok: true; result: T } | { ok: false; error: DevToolRefusal }
@@ -206,8 +221,10 @@ function readString(args: unknown, key: string): string | null {
 }
 
 /**
- * Dispatches one dev-tool call to its `DevToolContext` method, refusing a tool
- * `role` is not granted and then validating the arguments. Returns the
+ * Dispatches one dev-tool call to its `DevToolContext` method: with a
+ * `capability` check, first refusing (and auditing) a call whose per-dispatch
+ * capability is missing, expired, revoked or replayed; then refusing a tool
+ * `role` is not granted; then validating the arguments. Returns the
  * driver-side `DevToolResult` (success or refusal); the protocol core reflects
  * a refusal into `isError: true`.
  */
@@ -216,37 +233,31 @@ export async function dispatchDevTool(
   role: GrantedRole,
   name: string,
   args: unknown,
-  capability?: DispatchCapability
+  capability?: DispatchCapabilityCheck
 ): Promise<DevToolResult<unknown>> {
+  // The capability is the first check: before the role grant, argument validation and any handler.
   if (capability) {
     const supplied =
-      typeof args === 'object' && args !== null ? (args as Record<string, unknown>)[CAPABILITY_ARGUMENT] : undefined
-    const reason =
-      typeof supplied !== 'string'
-        ? 'missing'
-        : capability.revoked
-          ? 'revoked'
-          : Date.now() >= capability.expiresAt
-            ? 'expired'
-            : supplied !== capability.value
-              ? 'replayed'
-              : null
-    if (reason) {
-      capability.audit?.({ role, tool: name, reason })
+      typeof args === 'object' && args !== null
+        ? (args as Record<string, unknown>)[DISPATCH_CAPABILITY_ARGUMENT]
+        : undefined
+    const refused = capability.verify(typeof supplied === 'string' && supplied.length > 0 ? supplied : undefined)
+    if (refused) {
+      capability.audit({ role, tool: name, ...refused })
       return {
         ok: false,
         error: devToolError(
           'unauthorized',
-          reason === 'expired' || reason === 'revoked' ? 'new_attempt' : 'never',
+          refused.reason === 'expired' || refused.reason === 'revoked' ? 'new_attempt' : 'never',
           'not_started',
           'dispatch-capability',
-          `the per-dispatch capability was ${reason}.`,
+          `the per-dispatch capability was ${refused.reason}.`,
           'Use only the tool registration minted by the controller for this dispatch.'
         )
       }
     }
-    args = { ...(args as Record<string, unknown>) }
-    delete (args as Record<string, unknown>)[CAPABILITY_ARGUMENT]
+    const { [DISPATCH_CAPABILITY_ARGUMENT]: _carried, ...rest } = args as Record<string, unknown>
+    args = rest
   }
   if (!isToolGranted(role, name)) {
     const granted = ROLE_TOOL_GRANTS[role]
@@ -403,9 +414,8 @@ export type CreateDevToolsMcpServerOptions = {
   context: DevToolContext
   /** The dispatched role whose grant decides what is listed and what may be called. */
   role: GrantedRole
-  capability?: DispatchCapability
-  /** A transport-authenticated value injected by the host, never supplied by the worker. */
-  trustedCapability?: string
+  /** Checks the capability each call carries; absent, the server serves its single caller as the standalone dispatch does. */
+  capability?: DispatchCapabilityCheck
 }
 
 /**
@@ -420,18 +430,6 @@ export function createDevToolsMcpServer(opts: CreateDevToolsMcpServerOptions): M
     serverName: DEV_TOOLS_MCP_SERVER_NAME,
     serverVersion: opts.serverVersion,
     listTools: () => servedTools(opts.role).map(serveTool),
-    callTool: (name, args) =>
-      dispatchDevTool(
-        opts.context,
-        opts.role,
-        name,
-        opts.trustedCapability
-          ? {
-              ...(typeof args === 'object' && args !== null ? args : {}),
-              [CAPABILITY_ARGUMENT]: opts.trustedCapability
-            }
-          : args,
-        opts.capability
-      )
+    callTool: (name, args) => dispatchDevTool(opts.context, opts.role, name, args, opts.capability)
   })
 }

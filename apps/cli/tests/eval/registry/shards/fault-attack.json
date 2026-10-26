@@ -1968,7 +1968,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "Residual risk: Codex’s workspace-write network policy permits loopback TCP, so the Engine launch shape cannot deny a raw non-domain route to a controller listener; the server-side per-dispatch capability still refuses unauthorized tool calls."
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -2023,7 +2023,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "Residual risk: neither adapter’s Engine launch shape hides the same-user process table, so a role can inspect controller or sibling process metadata; signalling and environment access remain separately constrained."
+          "owed": "Residual risk: the Engine launch shape states no process-isolation setting for either adapter, so whether a role can signal, inspect or read the environment of the controller or another dispatch rests on the adapter’s own sandbox; the probe observes all three against a live dispatch process and asserts none until its outside-sandbox output is pasted."
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
@@ -2961,7 +2961,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "Residual risk: the adapter sandbox may expose unrelated same-user process metadata or permit non-controller sockets; the server still refuses every tool connection outside the dispatch controller lineage."
+          "owed": "Residual risk: the adapter sandbox may expose unrelated same-user process metadata or permit non-controller sockets; the tool server still refuses every call that does not carry a live capability from inside its own dispatch."
         }
       },
       "decisionRule": "Pass or accepted: the test runs and its result is recorded; the Engine path either holds the boundary or the residual risk is stated. A residual risk needs the Principal's explicit acceptance in the cutover authorization evidence (gate 17, §6.24). The test keeps running either way.",
@@ -3016,7 +3016,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "Residual risk: the adapter sandbox may expose unrelated same-user process metadata or permit non-controller sockets; the server still refuses every tool connection outside the dispatch controller lineage."
+          "owed": "Residual risk: the adapter sandbox may expose unrelated same-user process metadata or permit non-controller sockets; the tool server still refuses every call that does not carry a live capability from inside its own dispatch."
         }
       },
       "decisionRule": "Pass or accepted: the test runs and its result is recorded; the Engine path either holds the boundary or the residual risk is stated. A residual risk needs the Principal's explicit acceptance in the cutover authorization evidence (gate 17, §6.24). The test keeps running either way.",

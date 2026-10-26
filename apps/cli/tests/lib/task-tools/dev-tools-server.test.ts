@@ -1,15 +1,22 @@
 import { describe, expect, it } from 'bun:test'
 import net from 'node:net'
+import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { parseBridgeArgs } from '../../../src/lib/task-tools/dev-tools-bridge.js'
-import { startDevToolsHost } from '../../../src/lib/task-tools/dev-tools-host.js'
-import { devToolsSocketPath } from '../../../src/lib/task-tools/dev-tools-registration.js'
+import { parseBridgeArgs, withDispatchCapability } from '../../../src/lib/task-tools/dev-tools-bridge.js'
 import {
+  createDispatchCapabilityTable,
+  type DispatchCapabilityTable,
+  startDevToolsHost
+} from '../../../src/lib/task-tools/dev-tools-host.js'
+import { devToolsSocketPath, driverDevBridgeInvocation } from '../../../src/lib/task-tools/dev-tools-registration.js'
+import {
+  type CapabilityRefusalEvent,
   createDevToolsMcpServer,
   DEV_TOOL_NAMES,
   DEV_TOOLS_MCP_SERVER_NAME,
+  DISPATCH_CAPABILITY_ARGUMENT,
   devToolError,
   dispatchDevTool,
   type DevToolContext
@@ -196,34 +203,126 @@ describe('dispatchDevTool — direct dispatch of each tool', () => {
 })
 
 describe('dispatch capability', () => {
-  it.each([
-    ['missing', undefined, { value: 'own', expiresAt: Date.now() + 60_000 }],
-    ['expired', 'own', { value: 'own', expiresAt: 0 }],
-    ['revoked', 'own', { value: 'own', expiresAt: Date.now() + 60_000, revoked: true }],
-    ['replayed', 'other', { value: 'own', expiresAt: Date.now() + 60_000 }]
-  ] as const)('refuses a %s capability and audits it', async (reason, supplied, capability) => {
-    const events: string[] = []
+  /** A table whose clock is fixed and whose peer `pid` is inside a dispatch only when it is the launched process. */
+  function table(clock = { now: 1_000 }) {
+    return createDispatchCapabilityTable({ now: () => clock.now, descendsFrom: (pid, ancestor) => pid === ancestor })
+  }
+
+  /** Dispatches `run_checks` carrying `supplied` from peer `peerPid`, collecting each audit event. */
+  async function callFrom(capabilities: DispatchCapabilityTable, supplied: string | undefined, peerPid: number | null) {
+    const events: CapabilityRefusalEvent[] = []
     const result = await dispatchDevTool(
       okContext(),
       'developer',
       'run_checks',
-      { ...(supplied ? { __vinayaDispatchCapability: supplied } : {}) },
-      { ...capability, audit: (event) => events.push(event.reason) }
+      supplied === undefined ? {} : { [DISPATCH_CAPABILITY_ARGUMENT]: supplied },
+      { verify: (value) => capabilities.verify(value, peerPid), audit: (event) => events.push(event) }
     )
+    return { result, events }
+  }
+
+  it('refuses a missing capability and audits it, naming the role and the tool', async () => {
+    const { result, events } = await callFrom(table(), undefined, 4100)
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error.check).toBe('dispatch-capability')
-    expect(events).toEqual([reason])
+    if (!result.ok) expect(result.error).toMatchObject({ check: 'dispatch-capability', errorClass: 'unauthorized' })
+    expect(events).toEqual([
+      { role: 'developer', tool: 'run_checks', reason: 'missing', detail: 'the call carried no capability' }
+    ])
   })
 
-  it('serves the capability minted for this dispatch', async () => {
-    const result = await dispatchDevTool(
+  it('refuses an expired capability', async () => {
+    const clock = { now: 1_000 }
+    const capabilities = table(clock)
+    const value = capabilities.mint(60_000)
+    capabilities.bind(value, 4100)
+    clock.now += 60_000
+    const { events } = await callFrom(capabilities, value, 4100)
+    expect(events.map((event) => event.reason)).toEqual(['expired'])
+  })
+
+  it('refuses a revoked capability: its dispatch has ended', async () => {
+    const capabilities = table()
+    const value = capabilities.mint(60_000)
+    capabilities.bind(value, 4100)
+    capabilities.revoke(value)
+    const { events } = await callFrom(capabilities, value, 4100)
+    expect(events.map((event) => event.reason)).toEqual(['revoked'])
+  })
+
+  it("refuses a capability replayed from outside its dispatch, from another role's host, or never bound", async () => {
+    const own = table()
+    const other = table()
+    const value = own.mint(60_000)
+    own.bind(value, 4100)
+    const foreign = other.mint(60_000)
+    other.bind(foreign, 4200)
+    const unbound = own.mint(60_000)
+    const outside = await callFrom(own, value, 4999)
+    const otherRole = await callFrom(own, foreign, 4200)
+    const notLaunched = await callFrom(own, unbound, 4100)
+    const unreadPeer = await callFrom(own, value, null)
+    for (const { result, events } of [outside, otherRole, notLaunched, unreadPeer]) {
+      expect(result.ok).toBe(false)
+      expect(events.map((event) => event.reason)).toEqual(['replayed'])
+    }
+    expect(outside.events[0]?.detail).toContain('peer process 4999 is outside the dispatch launched as process 4100')
+  })
+
+  it('checks the capability before the role grant and before argument validation', async () => {
+    const events: CapabilityRefusalEvent[] = []
+    const ungranted = await dispatchDevTool(
       okContext(),
-      'developer',
-      'run_checks',
-      { __vinayaDispatchCapability: 'own' },
-      { value: 'own', expiresAt: Date.now() + 60_000 }
+      'code-reviewer',
+      'publish_changes',
+      { header: 42 },
+      {
+        verify: () => ({ reason: 'missing', detail: 'none' }),
+        audit: (event) => events.push(event)
+      }
     )
+    expect(ungranted.ok).toBe(false)
+    if (!ungranted.ok) expect(ungranted.error.check).toBe('dispatch-capability')
+    expect(events.map((event) => event.tool)).toEqual(['publish_changes'])
+  })
+
+  it('serves its own dispatch and removes the capability before the strict argument check', async () => {
+    const capabilities = table()
+    const value = capabilities.mint(60_000)
+    capabilities.bind(value, 4100)
+    const { result, events } = await callFrom(capabilities, value, 4100)
     expect(result.ok).toBe(true)
+    expect(events).toEqual([])
+  })
+
+  it('a host without a capability table serves its single caller as before', async () => {
+    const result = await dispatchDevTool(okContext(), 'developer', 'run_checks', {})
+    expect(result.ok).toBe(true)
+  })
+})
+
+describe('the bridge carries the capability into every tool call', () => {
+  it('adds the capability to a tools/call and leaves every other message as it is', () => {
+    const call = JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'run_checks' } })
+    expect(JSON.parse(withDispatchCapability(call, 'cap-1')).params).toEqual({
+      name: 'run_checks',
+      arguments: { [DISPATCH_CAPABILITY_ARGUMENT]: 'cap-1' }
+    })
+    const init = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' })
+    expect(withDispatchCapability(init, 'cap-1')).toBe(init)
+    expect(withDispatchCapability('not json', 'cap-1')).toBe('not json')
+  })
+
+  it("puts the capability into the bridge invocation the agent's registration names", () => {
+    expect(driverDevBridgeInvocation('/s.sock', '/cli.ts', 'cap-1').args).toEqual([
+      '/cli.ts',
+      'task-tools',
+      'dev-bridge',
+      '--socket',
+      '/s.sock',
+      '--capability',
+      'cap-1'
+    ])
+    expect(driverDevBridgeInvocation('/s.sock', '/cli.ts').args).not.toContain('--capability')
   })
 })
 
@@ -235,8 +334,7 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
       socketPath,
       serverVersion: '0.0.0-test',
       context: okContext(),
-      role: 'developer',
-      capability: { value: 'host-only', expiresAt: Date.now() + 60_000 }
+      role: 'developer'
     })
     try {
       const responses = await driveOverSocket(socketPath, [
@@ -254,38 +352,91 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
     }
   })
 
-  it('refuses a same-user process outside the dispatch controller lineage', async () => {
+  it('serves a call only with a live capability of a dispatch the connecting peer belongs to, auditing each refusal', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dev-tools-host-peer-'))
     const socketPath = join(dir, 'driver.sock')
-    const events: string[] = []
+    const capabilities = createDispatchCapabilityTable()
+    const events: CapabilityRefusalEvent[] = []
     const host = await startDevToolsHost({
       socketPath,
       serverVersion: '0.0.0-test',
       context: okContext(),
       role: 'developer',
-      controllerPid: 2_147_483_647,
-      capability: {
-        value: 'host-only',
-        expiresAt: Date.now() + 60_000,
-        audit: (event) => events.push(`${event.tool}:${event.reason}`)
-      }
+      capabilities,
+      audit: (event) => events.push(event)
     })
+    // This test process connects, so a dispatch launched as this process holds it; one launched as another does not.
+    const own = capabilities.mint(60_000)
+    capabilities.bind(own, process.pid)
+    const elsewhere = spawn('sleep', ['30'])
+    const foreign = capabilities.mint(60_000)
+    capabilities.bind(foreign, elsewhere.pid as number)
+    const ended = capabilities.mint(60_000)
+    capabilities.bind(ended, process.pid)
+    capabilities.revoke(ended)
     try {
-      await new Promise<void>((resolve, reject) => {
-        const socket = net.connect(socketPath)
-        const timeout = setTimeout(() => {
-          socket.destroy()
-          reject(new Error('the host did not refuse the unrelated peer'))
-        }, 5_000)
-        const done = (): void => {
-          clearTimeout(timeout)
-          resolve()
+      const call = (id: number, supplied?: string) => ({
+        jsonrpc: '2.0',
+        id,
+        method: 'tools/call',
+        params: {
+          name: 'run_checks',
+          arguments: supplied === undefined ? {} : { [DISPATCH_CAPABILITY_ARGUMENT]: supplied }
         }
-        socket.on('close', done)
-        socket.on('end', done)
-        socket.on('error', done)
       })
-      expect(events).toEqual(['<connection>:missing'])
+      const responses = await driveOverSocket(socketPath, [
+        call(1, own),
+        call(2),
+        call(3, foreign),
+        call(4, ended),
+        call(5, 'forged')
+      ])
+      const outcomes = responses.map((response) => {
+        const result = response.result as { isError?: boolean; structuredContent?: { error?: { check?: string } } }
+        return result.isError ? result.structuredContent?.error?.check : 'served'
+      })
+      expect(outcomes).toEqual([
+        'served',
+        'dispatch-capability',
+        'dispatch-capability',
+        'dispatch-capability',
+        'dispatch-capability'
+      ])
+      expect(events.map((event) => `${event.role}:${event.tool}:${event.reason}`)).toEqual([
+        'developer:run_checks:missing',
+        'developer:run_checks:replayed',
+        'developer:run_checks:revoked',
+        'developer:run_checks:replayed'
+      ])
+    } finally {
+      elsewhere.kill()
+      await host.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves the bridge a dispatch launched, carrying its capability; the same bridge without it is refused', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dev-tools-host-bridge-'))
+    const socketPath = join(dir, 'driver.sock')
+    const capabilities = createDispatchCapabilityTable()
+    const events: CapabilityRefusalEvent[] = []
+    const host = await startDevToolsHost({
+      socketPath,
+      serverVersion: '0.0.0-test',
+      context: okContext(),
+      role: 'developer',
+      capabilities,
+      audit: (event) => events.push(event)
+    })
+    // The bridge is a child of this process, as an agent's bridge is a descendant of the launch its dispatch made.
+    const capability = capabilities.mint(60_000)
+    capabilities.bind(capability, process.pid)
+    try {
+      const carried = await throughBridge(driverDevBridgeInvocation(socketPath, CLI_ENTRY, capability))
+      const bare = await throughBridge(driverDevBridgeInvocation(socketPath, CLI_ENTRY))
+      expect(carried.isError).toBe(false)
+      expect(bare.isError).toBe(true)
+      expect(events.map((event) => event.reason)).toEqual(['missing'])
     } finally {
       await host.close()
       rmSync(dir, { recursive: true, force: true })
@@ -317,11 +468,58 @@ describe('bridge argument parsing', () => {
   it('reads --socket <path>', () => {
     expect(parseBridgeArgs(['--socket', '/tmp/x.sock'])).toEqual({ socketPath: '/tmp/x.sock' })
   })
+  it('reads the --capability <value> a dispatch carries', () => {
+    expect(parseBridgeArgs(['--socket', '/tmp/x.sock', '--capability', 'cap-1'])).toEqual({
+      socketPath: '/tmp/x.sock',
+      capability: 'cap-1'
+    })
+  })
   it('refuses a missing --socket', () => {
     const parsed = parseBridgeArgs([])
     expect('error' in parsed).toBe(true)
   })
+  it('refuses an empty --capability', () => {
+    expect('error' in parseBridgeArgs(['--socket', '/tmp/x.sock', '--capability'])).toBe(true)
+  })
 })
+
+const CLI_ENTRY = join(import.meta.dir, '../../../src/index.ts')
+
+/** Runs the real bridge, sends initialize and one `run_checks` call through it, and returns the call's result. */
+function throughBridge(bridge: { command: string; args: string[] }): Promise<{ isError?: boolean }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bridge.command, bridge.args, { stdio: ['pipe', 'pipe', 'inherit'] })
+    let buffer = ''
+    const timeout = setTimeout(() => {
+      child.kill()
+      reject(new Error('the bridge returned no tool result'))
+    }, 20_000)
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      buffer += chunk
+      for (const line of buffer.split('\n')) {
+        if (line.trim().length === 0) continue
+        let message: { id?: number; result?: { isError?: boolean } }
+        try {
+          message = JSON.parse(line)
+        } catch {
+          continue
+        }
+        if (message.id === 2 && message.result) {
+          clearTimeout(timeout)
+          child.stdin.end()
+          resolve(message.result)
+          return
+        }
+      }
+    })
+    child.on('error', reject)
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' })}\n`)
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'run_checks', arguments: {} } })}\n`
+    )
+  })
+}
 
 /** Sends each message as one newline-delimited line, collecting one response per message. */
 function driveOverSocket(socketPath: string, messages: unknown[]): Promise<Array<{ result: Record<string, unknown> }>> {
