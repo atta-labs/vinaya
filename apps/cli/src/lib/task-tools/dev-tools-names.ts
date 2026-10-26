@@ -10,3 +10,10 @@
 
 /** The one MCP server name both per-dispatch registrations use — distinct from the Operator's `vinaya-task-tools`. */
 export const DEV_TOOLS_MCP_SERVER_NAME = 'vinaya-dev-tools'
+
+/**
+ * The call argument the bridge adds to every `tools/call` it relays: the
+ * per-dispatch capability. The server removes it before argument validation,
+ * so no tool schema names it.
+ */
+export const DISPATCH_CAPABILITY_ARGUMENT = '__vinayaDispatchCapability'
