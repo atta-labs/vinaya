@@ -108,6 +108,9 @@ The `AEG:EVIDENCE` block is populated by `vinaya pr report --write <body-file>` 
 
 **After open, regenerating `AEG:EVIDENCE` is the driver's job.** Under the review loop the driver runs the same engine `vinaya pr report --push` calls, in-process, the moment your head's CI turns green, every round, and posts the round marker comment in your place. `refresh_evidence` is the tool for a regeneration you need mid-turn. Working manually, `vinaya pr report --push <n>` regenerates it on the open PR; its `--body-file <path>` mode also splices a section outside the two generated blocks — a Decisions bullet, most often — that only ever existed in a local draft.
 
+<!-- AEG:CLAIM: processes/vinaya/loops/dev-review/v2/v2-actions.ts contains:const evidence = await writeEvidenceFor(fns, pr, head) -->
+**Under the review-locally, push-once flow (version 2) only: no tests and no `refresh_evidence` in your turn.** In that flow the ready push runs the selected tests on the approved commit, and the driver writes the Evidence block once the pull request opens. Your turn runs the local checks (`run_checks`) and publishes; it runs no test suite and never calls `refresh_evidence`. Every other flow, and manual work, is unchanged: you run the tests and keep the Evidence block fresh as described above.
+
 ---
 
 ## Documentation is part of every task

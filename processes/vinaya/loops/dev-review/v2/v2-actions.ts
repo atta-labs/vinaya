@@ -9,6 +9,7 @@ import {
 import { discardHeldVerdicts } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { checkPremiseAtHead } from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import type { SelectionNote } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { readUnpushedWorkDetail } from '../../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import {
   BACK,
@@ -44,6 +45,10 @@ export interface ReadyGateResult {
   /** The failing test files, or `all` when the run failed without naming any. */
   failed: string[] | 'all'
   wallMs: number
+  /** True when the run passed its deadline and was stopped: a recorded refusal, never a hang. */
+  timedOut?: boolean
+  /** `none` when the repository runs no local tests (no pre-push hook, or no declared test runner). */
+  localTests?: 'none'
 }
 
 /** The staged pull request: what the Developer's `open_pull_request` saved while no pull request may open yet. */
@@ -55,7 +60,7 @@ export interface StagedPullRequest {
 /** The forge and process functions version 2's steps call; the runner supplies the live ones, a test its fakes. */
 export interface V2Functions {
   /** Runs the repository's pre-push hook in its ready mode on `head`. */
-  runReadyGate: (input: { head: string }) => Promise<ReadyGateResult> | ReadyGateResult
+  runReadyGate: (input: { head: string; signal?: AbortSignal }) => Promise<ReadyGateResult> | ReadyGateResult
   /** The staged pull request, or null when the Developer staged none. */
   stagedPullRequest: () => StagedPullRequest | null
   /** The open pull request for the task branch, or null. */
@@ -69,6 +74,14 @@ export interface V2Functions {
     | { ok: false; reason: string }
   /** Ends storage pushes for the task worktree: from now on its pushes run the selected tests. */
   endStoragePushes: () => void
+  /**
+   * Writes the open pull request's Evidence block for `head`, the head the ready push passed: the loop's job in
+   * this flow, so the Developer runs no tests and no evidence refresh in its turn.
+   */
+  writeEvidence?: (input: {
+    pr: number
+    head: string
+  }) => Promise<{ ok: true } | { ok: false; reason: string }> | { ok: true } | { ok: false; reason: string }
   /** The local checks of a round: `vinaya check --all --local` with the staged body as the pull-request body. */
   runLocalChecks?: (env: Record<string, string>) => { passed: boolean; output: string }
   /** Milliseconds since an arbitrary origin, for the time a step spends. */
@@ -201,6 +214,8 @@ const loopOf = (task: TaskInput, results: Results) => ({
 
 /** The failing tests of a refused ready push, one per line, for the Developer's prompt. */
 function failingTestLines(gate: ReadyGateResult): string {
+  if (gate.timedOut)
+    return `the test run passed its deadline and was stopped. Its output (tail):\n\n${gate.output.slice(-4000)}`
   if (gate.failed === 'all')
     return `the test run failed without naming a test file. Its output (tail):\n\n${gate.output.slice(-4000)}`
   const tail = gate.output
@@ -245,7 +260,7 @@ export async function readyPush(
   }
   const now = nowOf(fns)
   const started = now()
-  const gate = await fns.runReadyGate({ head })
+  const gate = await fns.runReadyGate({ head, ...(context.signal ? { signal: context.signal } : {}) })
   const wallMs = gate.wallMs > 0 ? gate.wallMs : Math.max(0, now() - started)
   const selected = gate.selection?.selected.length ?? 0
   const failedCount = gate.failed === 'all' ? Math.max(selected, 1) : gate.failed.length
@@ -280,6 +295,7 @@ export async function readyPush(
         outcome: 'passed',
         head,
         selection: gate.selection,
+        ...(gate.localTests ? { localTests: gate.localTests } : {}),
         events
       })
     }
@@ -288,8 +304,14 @@ export async function readyPush(
     task,
     results,
     'ready-refused',
-    `both reviewers approved ${head}, but the ready push refused it: the selected tests failed.\n\n${failingTestLines(gate)}`,
-    { outcome: 'refused', head, selection: gate.selection, failed: gate.failed, events }
+    `both reviewers approved ${head}, but the ready push refused it: ${gate.timedOut ? 'the selected tests ran past the deadline' : 'the selected tests failed'}.\n\n${failingTestLines(gate)}`,
+    {
+      outcome: gate.timedOut ? 'timed-out' : 'refused',
+      head,
+      selection: gate.selection,
+      failed: gate.failed,
+      events
+    }
   )
 }
 
@@ -314,23 +336,32 @@ export async function openPullRequestStep(
   const head = worktreeHeadOf(task) ?? ''
   const loop = loopOf(task, results)
   const previous = latestRecord(results)
-  const forward = (pr: number, opened: boolean, events: unknown[]) => ({
-    exitCode: FORWARD,
-    stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
-      counters: previous?.counters ?? NO_COUNTERS,
-      decision: { type: opened ? 'pr_opened' : 'pr_kept' },
-      pr,
-      opened,
-      head,
-      events
-    })
-  })
+  const forward = async (pr: number, opened: boolean, events: unknown[]) => {
+    const evidence = await writeEvidenceFor(fns, pr, head)
+    return {
+      exitCode: FORWARD,
+      stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+        counters: previous?.counters ?? NO_COUNTERS,
+        decision: { type: opened ? 'pr_opened' : 'pr_kept' },
+        pr,
+        opened,
+        head,
+        ...(evidence ? { evidence } : {}),
+        events
+      })
+    }
+  }
   const open = safeRead(fns.findOpenPullRequest)
   if (open !== null) {
     fns.endStoragePushes()
     return forward(open.number, false, [])
   }
-  const staged = safeRead(fns.stagedPullRequest)
+  const stagedBody = safeRead(fns.stagedPullRequest)
+  const command = readyGateCommand(results)
+  const staged =
+    stagedBody !== null && command !== null
+      ? { ...stagedBody, body: withReadyTestCommand(stagedBody.body, command) }
+      : stagedBody
   if (staged === null) {
     return sendBackAfterApproval(
       task,
@@ -352,6 +383,66 @@ export async function openPullRequestStep(
   }
   fns.endStoragePushes()
   return forward(opened.pr, true, [prOpenedEvent(loop, opened.pr, head)])
+}
+
+/**
+ * The Evidence block for the head the ready push passed, written by the loop once the pull request is open. A write
+ * that fails is recorded, not routed: the pull request's evidence check reads the block, and CI's one read sends the
+ * Developer back if it is red.
+ */
+async function writeEvidenceFor(fns: V2Functions, pr: number, head: string): Promise<string | null> {
+  if (!fns.writeEvidence) return null
+  try {
+    const written = await fns.writeEvidence({ pr, head })
+    return written.ok ? 'written' : `not written: ${written.reason}`
+  } catch (error) {
+    return `not written: ${error instanceof Error ? error.message : String(error)}`
+  }
+}
+
+/** The test command the passed ready push ran (its selection, as the hook runs it), or null when it ran none. */
+function readyGateCommand(results: Results): string | null {
+  const ready = results['ready-push']
+  if (!ready || !('stdout' in ready)) return null
+  try {
+    const selected = (JSON.parse(String(ready.stdout)) as { selection?: SelectionNote | null }).selection?.selected
+    return selected && selected.length > 0 ? readyTestCommand(selected) : null
+  } catch {
+    return null
+  }
+}
+
+const isTestRunLine = (line: string): boolean => /^(bun\s+)?test(\s|$)/.test(line.split('→')[0]?.trim() ?? '')
+
+/**
+ * The staged body with its Test Plan's test-run line set to `command`, the ready push's own: the Evidence write then
+ * reuses that run, cached for the same head, instead of running the tests again. The first fenced block under the
+ * Test Plan heading is the command list; its test-run lines become this one line, and every other command stays. A
+ * body with no such block is returned unchanged.
+ */
+export function withReadyTestCommand(body: string, command: string): string {
+  const lines = body.split('\n')
+  const heading = lines.findIndex((line) => /^#{1,6}\s+test plan\b/i.test(line.trim()))
+  if (heading === -1) return body
+  let open = -1
+  for (let i = heading + 1; i < lines.length; i++) {
+    const line = lines[i] as string
+    if (/^#{1,6}\s/.test(line.trim())) return body
+    if (line.trim().startsWith('```')) {
+      open = i
+      break
+    }
+  }
+  if (open === -1) return body
+  const close = lines.findIndex((line, i) => i > open && line.trim().startsWith('```'))
+  if (close === -1) return body
+  const kept = lines.slice(open + 1, close).filter((line) => !isTestRunLine(line))
+  return [
+    ...lines.slice(0, open + 1),
+    `${command} → every selected test file passes`,
+    ...kept,
+    ...lines.slice(close)
+  ].join('\n')
 }
 
 /** Records how the opening routed; the decision on this step reads that step's own exit result. */

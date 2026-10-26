@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { DevToolContext } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
@@ -8,6 +8,7 @@ import { gitPath } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import {
   beginStoragePushes,
   endStoragePushes,
+  NO_LOCAL_TESTS_MARKER,
   runReadyGateLive,
   stagedPullRequestStore,
   withV2DevTools
@@ -153,21 +154,21 @@ describe('runReadyGateLive', () => {
 
   const headOf = (dir: string) => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
 
-  test('runs the hook in ready mode against the default branch, with the push ref line on its stdin', () => {
+  test('runs the hook in ready mode against the default branch, with the push ref line on its stdin', async () => {
     const dir = repo()
     const head = headOf(dir)
     withHook(dir, 'read line; echo "mode=$VINAYA_PUSH_MODE base=$VINAYA_PUSH_BASE ref=$line"; exit 0')
-    const result = runReadyGateLive({ worktreePath: dir, branch: 'task/issue-1', head, remoteHead: head })
+    const result = await runReadyGateLive({ worktreePath: dir, branch: 'task/issue-1', head, remoteHead: head })
     expect(result.passed).toBe(true)
     expect(result.output).toContain(
       `mode=ready base=origin/main ref=refs/heads/task/issue-1 ${head} refs/heads/task/issue-1 ${head}`
     )
   })
 
-  test('refuses, without running the hook, when the worktree head is not the approved head', () => {
+  test('refuses, without running the hook, when the worktree head is not the approved head', async () => {
     const dir = repo()
     withHook(dir, 'echo HOOK-RAN; exit 0')
-    const result = runReadyGateLive({
+    const result = await runReadyGateLive({
       worktreePath: dir,
       branch: 'task/issue-1',
       head: 'f'.repeat(40),
@@ -178,28 +179,112 @@ describe('runReadyGateLive', () => {
     expect(result.output).not.toContain('HOOK-RAN')
   })
 
-  test('refuses, without running the hook, when the worktree holds uncommitted changes', () => {
+  test('refuses, without running the hook, when the worktree holds uncommitted changes', async () => {
     const dir = repo()
     const head = headOf(dir)
     withHook(dir, 'echo HOOK-RAN; exit 0')
     writeFileSync(join(dir, 'stray.ts'), 'export {}\n')
-    const result = runReadyGateLive({ worktreePath: dir, branch: 'task/issue-1', head, remoteHead: head })
+    const result = await runReadyGateLive({ worktreePath: dir, branch: 'task/issue-1', head, remoteHead: head })
     expect(result.passed).toBe(false)
     expect(result.output).toContain('uncommitted changes')
     expect(result.output).not.toContain('HOOK-RAN')
   })
 
-  test('a refusing hook with no fresh record fails every test (`all`)', () => {
+  test('a refusing hook with no fresh record fails every test (`all`)', async () => {
     const dir = repo()
     const head = headOf(dir)
     withHook(dir, 'echo refused; exit 1')
-    const result = runReadyGateLive({ worktreePath: dir, branch: 'task/issue-1', head, remoteHead: head })
+    const result = await runReadyGateLive({ worktreePath: dir, branch: 'task/issue-1', head, remoteHead: head })
     expect(result.passed).toBe(false)
     expect(result.failed).toBe('all')
   })
 
-  test('a repository with no pre-push hook has nothing to run', () => {
+  test('a repository with no pre-push hook is the logged no-local-tests state, not a silent pass', async () => {
     const dir = repo()
-    expect(runReadyGateLive({ worktreePath: dir, branch: 'b', head: headOf(dir), remoteHead: null }).passed).toBe(true)
+    const lines: string[] = []
+    const result = await runReadyGateLive({
+      worktreePath: dir,
+      branch: 'b',
+      head: headOf(dir),
+      remoteHead: null,
+      log: (line) => lines.push(line)
+    })
+    expect(result.passed).toBe(true)
+    expect(result.localTests).toBe('none')
+    expect(lines.join('\n')).toContain(NO_LOCAL_TESTS_MARKER)
+  })
+
+  test('a hook that declares no test runner is the logged no-local-tests state', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    withHook(dir, `echo "${NO_LOCAL_TESTS_MARKER} (no test runner declared)"; exit 0`)
+    const lines: string[] = []
+    const result = await runReadyGateLive({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      head,
+      remoteHead: head,
+      log: (line) => lines.push(line)
+    })
+    expect(result.passed).toBe(true)
+    expect(result.localTests).toBe('none')
+    expect(lines.some((line) => line.includes(NO_LOCAL_TESTS_MARKER))).toBe(true)
+  })
+
+  test('logs the containment backend before the tests start', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    withHook(dir, 'exit 0')
+    const lines: string[] = []
+    const result = await runReadyGateLive({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      head,
+      remoteHead: head,
+      registryDir: join(dir, 'registry'),
+      log: (line) => lines.push(line)
+    })
+    expect(result.passed).toBe(true)
+    expect(result.localTests).toBeUndefined()
+    expect(lines[0]).toContain('containment backend: registry')
+  })
+
+  test('the hook starts only once its registration is acknowledged, in its own process group', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    const registry = join(dir, 'registry')
+    // The hook reports whether a registration for its own pid existed when it started, and its group.
+    withHook(
+      dir,
+      `found=$(grep -l "pid.:$$," "${registry}"/*/*.json 2>/dev/null | head -1); echo "registered=\${found:+yes} pgid=$(ps -o pgid= -p $$ | tr -d ' ') pid=$$"; exit 0`
+    )
+    const result = await runReadyGateLive({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      head,
+      remoteHead: head,
+      registryDir: registry
+    })
+    expect(result.output).toContain('registered=yes')
+    const match = /pgid=(\d+) pid=(\d+)/.exec(result.output)
+    expect(match?.[1]).toBe(match?.[2])
+    // The run's registrations are removed once it ends.
+    expect(existsSync(registry) ? readdirSync(registry) : []).toEqual([])
+  })
+
+  test('the selected tests see their own temp folder, removed when the run ends', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    withHook(dir, 'echo "tmp=$TMPDIR"; touch "$TMPDIR/left-behind"; exit 0')
+    const result = await runReadyGateLive({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      head,
+      remoteHead: head,
+      registryDir: join(dir, 'registry')
+    })
+    const tmp = /tmp=(\S+)/.exec(result.output)?.[1] ?? ''
+    expect(tmp).toContain('vinaya-ready-gate-')
+    expect(existsSync(tmp)).toBe(false)
   })
 })

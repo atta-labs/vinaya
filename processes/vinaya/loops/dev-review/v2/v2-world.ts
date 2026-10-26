@@ -71,6 +71,8 @@ export interface Scenario {
   ci?: Array<'green' | 'red'>
   /** The test files that fail at each ready push (1-based attempt); default none. */
   failingTests?: (readyAttempt: number) => string[]
+  /** Whether the ready push at this attempt (1-based) runs past its deadline; default never. */
+  readyTimesOut?: (readyAttempt: number) => boolean
   /** The test files the changes since a refused push affect; default none. */
   affectedSince?: string[]
   /** The gate results in turn; the last repeats. */
@@ -104,6 +106,12 @@ export interface World {
   remoteAfterTurn: string[]
   /** Calls that ended storage pushes. */
   storageEnded: number
+  /** The pull request and head of each Evidence block the loop wrote. */
+  evidenceWrites: Array<{ pr: number; head: string }>
+  /** The body each opening was given. */
+  openedBodies: string[]
+  /** Whether each ready push was handed the run's abort signal. */
+  readySignals: boolean[]
   repo: string
   worktree: string
   runtimeDir: string
@@ -294,6 +302,9 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     prOpen: false,
     staged: null,
     readyRuns: [],
+    evidenceWrites: [],
+    openedBodies: [],
+    readySignals: [],
     prsOpened: 0,
     ciReads: 0,
     prOpenAtReview: [],
@@ -380,7 +391,8 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
   task.v2 = {
     stagedPullRequest: () => world.staged,
     findOpenPullRequest: () => (world.prOpen ? { number: PR } : null),
-    runReadyGate: ({ head }) => {
+    runReadyGate: ({ head, signal }) => {
+      world.readySignals.push(signal !== undefined)
       const note = chooseTests({
         record,
         head,
@@ -391,6 +403,11 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
         exists: () => true
       })
       world.readyRuns.push(note.selected)
+      if (scenario.readyTimesOut?.(world.readyRuns.length)) {
+        // A stopped run leaves no complete failure record: the next ready push runs its full selection.
+        record = null
+        return { passed: false, output: 'timed out', selection: null, failed: 'all', wallMs: 5, timedOut: true }
+      }
       const failing = scenario.failingTests?.(world.readyRuns.length) ?? []
       const failed = note.selected.filter((file) => failing.includes(file))
       record = recordFromRun(failed.length > 0 ? 'failed' : 'passed', failed, head, BRANCH, new Date(0))
@@ -402,13 +419,18 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
         wallMs: 5
       }
     },
-    openPullRequest: () => {
+    openPullRequest: (staged) => {
+      world.openedBodies.push(staged.body)
       world.prOpen = true
       world.prsOpened += 1
       return { ok: true, pr: PR }
     },
     endStoragePushes: () => {
       world.storageEnded += 1
+    },
+    writeEvidence: ({ pr, head }) => {
+      world.evidenceWrites.push({ pr, head })
+      return { ok: true }
     }
   }
   if (scenario.attachAtRound !== undefined) {

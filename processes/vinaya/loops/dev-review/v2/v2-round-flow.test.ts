@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { ALL_TESTS, AGENTS, confident, PR, records, TASK, runV2, setUpWorld, tearDownWorld } from './v2-world'
 
 // Version 2 of the developer-review Flow (review locally, push once), end to end on the real runner, Flow and
@@ -150,5 +151,43 @@ describe('the ready push tests exactly the approved commit', () => {
       (step) => step.node === 'ready-push' && step.stdout.includes('uncommitted changes')
     )
     expect(refused).toBeDefined()
+  })
+})
+
+describe('a ready push past its deadline', () => {
+  test('is a recorded timeout that goes back to the Developer, and the next ready push runs its full selection', async () => {
+    const observed = await runV2('claude', { readyTimesOut: (attempt) => attempt === 1 })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.world.readyRuns).toEqual([ALL_TESTS, ALL_TESTS])
+    const [timedOut, passed] = records(observed, 'ready-push')
+    expect(timedOut?.outcome).toBe('timed-out')
+    expect(timedOut?.sendBack).toMatchObject({ kind: 'ready-refused' })
+    expect(passed?.outcome).toBe('passed')
+    expect(observed.prompts.developer[1]).toContain('ran past the deadline')
+  })
+})
+
+describe('the loop writes the Evidence block', () => {
+  test('once the pull request opens, for the head the ready push passed; every ready push gets the run signal', async () => {
+    const observed = await runV2('claude')
+    expect(observed.world.evidenceWrites).toEqual([{ pr: PR, head: observed.world.remote }])
+    expect(records(observed, 'open-pull-request')[0]?.evidence).toBe('written')
+    expect(observed.world.readySignals).toEqual([true])
+  })
+})
+
+describe('the opened body carries the ready push command as its Test Plan line', () => {
+  test('so the Evidence write reuses that run instead of running the tests again', async () => {
+    const body = ['## Test plan', '', '```', 'bun test other.test.ts → passes', '```', ''].join('\n')
+    const observed = await runV2('claude', {
+      after: {
+        'ready-push': (world) => {
+          world.staged = { title: 'Feat(x): y', body }
+        }
+      }
+    })
+    expect(observed.world.openedBodies).toHaveLength(1)
+    expect(observed.world.openedBodies[0]).toContain(readyTestCommand(ALL_TESTS))
+    expect(observed.world.openedBodies[0]).not.toContain('other.test.ts')
   })
 })

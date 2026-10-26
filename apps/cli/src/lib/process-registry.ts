@@ -1,10 +1,26 @@
-// Owner: agent D (containment of interrupted test runs, the registry backend).
-// Shared interface only: types and stubs, no behaviour yet. The test-temp sweep calls `stopRegistered` to end a
-// run's surviving processes before it deletes that run's directories.
+// Containment of interrupted test runs: a supervisor-owned registry of the processes a run started. The test-temp
+// sweep calls `stopRegistered` to end a run's surviving processes before it deletes that run's directories.
 //
 // A process is known by its pid plus its start time, so a reused pid is never mistaken for the original. A child
 // registers before it does any work and the supervisor acknowledges it; stopping sends TERM, waits, then KILL.
-// Limit: a subprocess that never registers (an adopter's own uninstrumented tool) is not contained by this backend.
+// A registered process group is signalled as a group, so its undetached descendants stop with it.
+// Limit: a subprocess that never registers and leaves the registered group (an adopter's own uninstrumented tool
+// that detaches, for example with `setsid`) is not contained by this backend, on any OS.
+
+import { execFileSync } from 'node:child_process'
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeSync
+} from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 /** Which containment backend a run used; logged before tests start. */
 export type ContainmentBackend = 'registry' | 'cgroup-scope'
@@ -22,11 +38,15 @@ export interface RegisteredProcess extends ProcessIdentity {
   runToken: string
   /** A short label for logs, for example the fixture that spawned it. */
   label: string
+  /** True when the process leads its own process group: stopping it signals the whole group. */
+  processGroup?: boolean
 }
 
 export interface StopOptions {
   /** How long to wait after TERM before sending KILL. */
   graceMs: number
+  /** The registry folder; defaults to `registryDir()`. */
+  dir?: string
 }
 
 /** What stopping a run's processes did. */
@@ -38,31 +58,164 @@ export interface StopReport {
   alreadyGone: ProcessIdentity[]
 }
 
-function notImplemented(name: string): never {
-  throw new Error(`${name}: not implemented`)
+/** Where registrations live: `VINAYA_PROCESS_REGISTRY_DIR`, else `~/.vinaya/process-registry`. */
+export function registryDir(): string {
+  return process.env.VINAYA_PROCESS_REGISTRY_DIR || join(homedir(), '.vinaya', 'process-registry')
 }
 
-/** The backend this host will use for a run. */
+/** A run token as a safe folder name. */
+const runFolder = (dir: string, runToken: string): string => join(dir, encodeURIComponent(runToken))
+
+/**
+ * The backend this host will use for a run. The registry is used on every OS; a cgroup scope backend is not built,
+ * so a run on Linux uses the registry too and its log line says so.
+ */
 export function selectContainmentBackend(): ContainmentBackend {
-  return notImplemented('selectContainmentBackend')
+  return 'registry'
 }
 
-/** Records `process` for `runToken` and returns once the registration is durable (the acknowledgement). */
-export function registerProcess(_process: RegisteredProcess): Promise<void> {
-  return notImplemented('registerProcess')
+/** The line a run logs before its tests start, naming the backend and what it does not contain. */
+export function containmentLogLine(backend: ContainmentBackend): string {
+  return `containment backend: ${backend} (the test run's process group is stopped on cancel and deadline; a subprocess that leaves that group without registering is not contained)`
+}
+
+/**
+ * Records `process` for `runToken` and returns once the registration is durable (the acknowledgement): the record
+ * is written, flushed and renamed into place before this resolves, so a crash after it still leaves the record.
+ */
+export async function registerProcess(entry: RegisteredProcess, opts: { dir?: string } = {}): Promise<void> {
+  const folder = runFolder(opts.dir ?? registryDir(), entry.runToken)
+  mkdirSync(folder, { recursive: true })
+  const final = join(folder, `${entry.pid}.json`)
+  const temp = `${final}.${process.pid}.tmp`
+  const fd = openSync(temp, 'w', 0o600)
+  try {
+    writeSync(fd, `${JSON.stringify(entry)}\n`)
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  renameSync(temp, final)
+}
+
+/** The processes registered for `runToken`. */
+export function registeredProcesses(runToken: string, opts: { dir?: string } = {}): RegisteredProcess[] {
+  const folder = runFolder(opts.dir ?? registryDir(), runToken)
+  let names: string[]
+  try {
+    names = readdirSync(folder)
+  } catch {
+    return []
+  }
+  const entries: RegisteredProcess[] = []
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue
+    try {
+      const value = JSON.parse(readFileSync(join(folder, name), 'utf8')) as RegisteredProcess
+      if (Number.isInteger(value.pid) && typeof value.startTime === 'string') entries.push(value)
+    } catch {
+      // A torn or foreign file is not a registration.
+    }
+  }
+  return entries
+}
+
+/** Linux: the start time in clock ticks since boot, field 22 of `/proc/<pid>/stat`. */
+function linuxStartTime(pid: number): string | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
+    return fields[19] ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Other OSes: `ps`'s full start time. */
+function psStartTime(pid: number): string | null {
+  try {
+    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+    return out === '' ? null : out
+  } catch {
+    return null
+  }
 }
 
 /** The identity of a live process, or null when `pid` is not running. */
-export function identityOf(_pid: number): ProcessIdentity | null {
-  return notImplemented('identityOf')
+export function identityOf(pid: number): ProcessIdentity | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null
+  const startTime = process.platform === 'linux' ? linuxStartTime(pid) : psStartTime(pid)
+  return startTime === null ? null : { pid, startTime }
 }
 
 /** True when `identity` is still the same running process (same pid and same start time). */
-export function isSameProcessAlive(_identity: ProcessIdentity): boolean {
-  return notImplemented('isSameProcessAlive')
+export function isSameProcessAlive(identity: ProcessIdentity): boolean {
+  return identityOf(identity.pid)?.startTime === identity.startTime
 }
 
-/** Stops every process registered for `runToken`: TERM, wait `graceMs`, then KILL. */
-export function stopRegistered(_runToken: string, _opts: StopOptions): Promise<StopReport> {
-  return notImplemented('stopRegistered')
+/** True while a process group with id `pgid` has any member. */
+function groupExists(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/**
+ * Whether `entry` (or, for a group, any member of its group) is still ours to signal. A group whose leader is gone
+ * is still ours while the group exists and no other process holds the leader's pid: a pid is not reused while a
+ * group of that id exists, so the members are the leader's own descendants.
+ */
+function stillOurs(entry: RegisteredProcess): boolean {
+  const now = identityOf(entry.pid)
+  if (now !== null) return now.startTime === entry.startTime
+  return entry.processGroup === true && groupExists(entry.pid)
+}
+
+function signal(entry: RegisteredProcess, sig: NodeJS.Signals): void {
+  try {
+    process.kill(entry.processGroup ? -entry.pid : entry.pid, sig)
+  } catch {
+    // Already gone.
+  }
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/** Stops every process registered for `runToken`: TERM, wait `graceMs`, then KILL. Removes the run's records. */
+export async function stopRegistered(runToken: string, opts: StopOptions): Promise<StopReport> {
+  const dir = opts.dir ?? registryDir()
+  const entries = registeredProcesses(runToken, { dir })
+  const identity = (entry: RegisteredProcess): ProcessIdentity => ({ pid: entry.pid, startTime: entry.startTime })
+  const report: StopReport = { backend: 'registry', terminated: [], killed: [], alreadyGone: [] }
+  const live = entries.filter((entry) => {
+    if (stillOurs(entry)) return true
+    report.alreadyGone.push(identity(entry))
+    return false
+  })
+  for (const entry of live) signal(entry, 'SIGTERM')
+  const deadline = Date.now() + Math.max(0, opts.graceMs)
+  let remaining = live
+  while (remaining.length > 0 && Date.now() < deadline) {
+    await sleep(Math.min(50, Math.max(1, deadline - Date.now())))
+    remaining = remaining.filter(stillOurs)
+  }
+  for (const entry of live) if (!remaining.includes(entry)) report.terminated.push(identity(entry))
+  for (const entry of remaining) {
+    signal(entry, 'SIGKILL')
+    report.killed.push(identity(entry))
+  }
+  // KILL cannot be ignored; wait briefly so a caller deleting the run's directories next never races the exit.
+  const killDeadline = Date.now() + 2000
+  while (remaining.length > 0 && Date.now() < killDeadline) {
+    await sleep(20)
+    remaining = remaining.filter(stillOurs)
+  }
+  rmSync(runFolder(dir, runToken), { recursive: true, force: true })
+  return report
 }

@@ -101,3 +101,4 @@ tests/lib/dev-review-loop/unpushed-work.test.ts
 tests/runner-repo-default.test.ts
 tests/lib/pre-push-failed-tests.test.ts
 tests/lib/test-temp.test.ts
+tests/lib/process-registry.test.ts
