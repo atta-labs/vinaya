@@ -1585,20 +1585,6 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         translator.endLeg(legOutcome as LegOutcome)
         return
       }
-      // A checkpoint resume continues past steps it already ran, the mergeability check among them: when the pull
-      // request is in conflict now, the run starts the next generation instead, as the conflict re-entry does, so the
-      // Flow's mergeability step sends the conflict back to the Developer before any publication.
-      if (
-        choice.kind === 'resume' &&
-        (await (options.heldPullRequestConflicts ?? heldPullRequestConflictsLive(options.taskInput))())
-      ) {
-        generation += 1
-        identity = runIdentityOfTask(args.task, generation)
-        narrate(
-          `the pull request is in conflict with the default branch: starting a fresh run (${identity.runId}) instead of resuming the checkpoint`
-        )
-        choice = await chooseStart(saver, identity)
-      }
       // A checkpoint resumes only on the agent it started with: another vendor's sessions and effects are not this
       // one's to continue, and a checkpoint that never recorded its agent cannot prove which one that was.
       if (choice.kind === 'resume') {
@@ -1615,6 +1601,20 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           translator.endLeg(legOutcome)
           return
         }
+      }
+      // A checkpoint resume continues past steps it already ran, the mergeability check among them: when the pull
+      // request is in conflict now, the run starts the next generation instead, as the conflict re-entry does, so the
+      // Flow's mergeability step sends the conflict back to the Developer before any publication.
+      if (
+        choice.kind === 'resume' &&
+        (await (options.heldPullRequestConflicts ?? heldPullRequestConflictsLive(options.taskInput))())
+      ) {
+        generation += 1
+        identity = runIdentityOfTask(args.task, generation)
+        narrate(
+          `the pull request is in conflict with the default branch: starting a fresh run (${identity.runId}) instead of resuming the checkpoint`
+        )
+        choice = await chooseStart(saver, identity)
       }
       appendRunStartMarker(logPath, {
         role: 'engine-runner',

@@ -285,28 +285,30 @@ describe('engine resume', () => {
     ['a Codex checkpoint resumed with Claude is refused and changes nothing', 'codex'],
     ['a legacy checkpoint is refused with the fresh-start instruction and changes nothing', null]
   ] as const) {
-    test(name, async () => {
-      const runtimeDir = scratchDir('recovery-resume-')
-      const first = stubRun('codex', runtimeDir, () => provenanceFor('codex'))
-      await runEngine(first.options)
-      expect(first.spawns).toHaveLength(1)
-      const checkpoint = join(runtimeDir, 'engine-runs', '7', 'checkpoints.sqlite')
-      const before = readFileSync(checkpoint)
-      const pausesBefore = first.handoff.calls.length
-      const asked: string[] = []
-      const second = stubRun('claude', runtimeDir, () => {
-        asked.push('read')
-        return provenanceFor(recorded)
+    for (const conflicts of [false, true])
+      test(`${name}; conflicts=${conflicts}`, async () => {
+        const runtimeDir = scratchDir('recovery-resume-')
+        const first = stubRun('codex', runtimeDir, () => provenanceFor('codex'))
+        await runEngine(first.options)
+        expect(first.spawns).toHaveLength(1)
+        const checkpoint = join(runtimeDir, 'engine-runs', '7', 'checkpoints.sqlite')
+        const before = readFileSync(checkpoint)
+        const pausesBefore = first.handoff.calls.length
+        const asked: string[] = []
+        const second = stubRun('claude', runtimeDir, () => {
+          asked.push('read')
+          return provenanceFor(recorded)
+        })
+        second.options.heldPullRequestConflicts = async () => conflicts
+        const result = await runEngine(second.options)
+        expect(asked).toEqual(['read'])
+        expect(second.spawns).toEqual([])
+        expect(second.actionRuns).toEqual([])
+        expect(second.handoff.calls).toEqual([])
+        expect(readFileSync(checkpoint).equals(before)).toBe(true)
+        expect(first.handoff.calls).toHaveLength(pausesBefore)
+        expect(result.exitCode).not.toBe(0)
       })
-      const result = await runEngine(second.options)
-      expect(asked).toEqual(['read'])
-      expect(second.spawns).toEqual([])
-      expect(second.actionRuns).toEqual([])
-      expect(second.handoff.calls).toEqual([])
-      expect(readFileSync(checkpoint).equals(before)).toBe(true)
-      expect(first.handoff.calls).toHaveLength(pausesBefore)
-      expect(result.exitCode).not.toBe(0)
-    })
   }
 
   test('a checkpoint resumed on its own agent continues', async () => {
