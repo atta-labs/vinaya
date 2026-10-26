@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { beyondSurfacePaths, redact, withBeyondSurfaceBlock } from '@attalabs/aeg-core'
 import {
@@ -11,6 +11,7 @@ import {
   type AgentVendor
 } from '../dispatch'
 import { publishingInstructionLine } from '../dev-review-loop'
+import { runtimeDirForThisRepo } from '../run-paths'
 import { startDevToolsHost } from '../task-tools/dev-tools-host'
 import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
 import { buildWorkerEnv, containerClaudeLogin, stageCodexPolicyHome } from '../worker-boundary'
@@ -296,6 +297,20 @@ export function resolveGradingCodex(toolRoot: string): string {
   return realpathSync(executable)
 }
 
+/** The setting that moves step one's working folders; tests point it at their own fixture directory. */
+export const STEP_ONE_WORK_ROOT_ENV = 'VINAYA_STEP_ONE_TMP'
+
+/**
+ * Where step one's trial, grading and sandbox folders live: a disk folder under this repo's runtime area, never the
+ * OS temp folder, which on a host with a small, quota-limited tmpfs fills with clones and refuses every later write.
+ */
+export function stepOneWorkRoot(env: Readonly<Record<string, string | undefined>> = process.env): string {
+  const configured = env[STEP_ONE_WORK_ROOT_ENV]
+  const root = configured !== undefined && configured !== '' ? configured : join(runtimeDirForThisRepo(), 'step-one')
+  mkdirSync(root, { recursive: true })
+  return root
+}
+
 /**
  * Opens the one confinement every step over a trial's workspace runs in:
  * `codex sandbox` with network disabled, `/tmp` and `$TMPDIR` excluded, and
@@ -306,8 +321,8 @@ export function resolveGradingCodex(toolRoot: string): string {
  * scratch directory) and `CODEX_HOME`. No forge, log or vendor token reaches it.
  */
 export function openGradingSandbox(): GradingSandbox {
-  const policyRoot = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-grading-policy-')))
-  const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-grading-scratch-')))
+  const policyRoot = realpathSync(mkdtempSync(join(stepOneWorkRoot(), 'step-one-grading-policy-')))
+  const scratch = realpathSync(mkdtempSync(join(stepOneWorkRoot(), 'step-one-grading-scratch-')))
   const dispose = () => {
     rmSync(policyRoot, { recursive: true, force: true })
     rmSync(scratch, { recursive: true, force: true })
@@ -848,7 +863,7 @@ const SANDBOX_STEP_BUDGET_MS = 600_000
  * network disabled.
  */
 async function warmPackageCache(sandbox: GradingSandbox, repository: string, baseCommit: string): Promise<void> {
-  const parent = mkdtempSync(join(tmpdir(), 'step-one-base-'))
+  const parent = mkdtempSync(join(stepOneWorkRoot(), 'step-one-base-'))
   try {
     const checkout = join(parent, 'repository')
     git(parent, [
@@ -1194,9 +1209,9 @@ async function runDeveloperTrial<T>(
   steps: VinayaProcessSteps = PRODUCTION_VINAYA_PROCESS_STEPS
 ): Promise<Staged<T>> {
   const suite = await import('../../../tests/eval/developer-capability-suite')
-  const parent = mkdtempSync(join(tmpdir(), 'step-one-developer-'))
-  const submissionParent = mkdtempSync(join(tmpdir(), 'step-one-submission-'))
-  const gradingParent = mkdtempSync(join(tmpdir(), 'step-one-grading-'))
+  const parent = mkdtempSync(join(stepOneWorkRoot(), 'step-one-developer-'))
+  const submissionParent = mkdtempSync(join(stepOneWorkRoot(), 'step-one-submission-'))
+  const gradingParent = mkdtempSync(join(stepOneWorkRoot(), 'step-one-grading-'))
   const hidden = steps.hiddenInputs(context.repository, item)
   const staging = steps.stageTrial({
     trialId: `${item.id}.${input.adapter}.${input.attempt}`,
@@ -1394,7 +1409,7 @@ async function runDeveloperInTree(
   const tree = container.workingTree
   const base = git(tree, ['rev-parse', 'HEAD']).trim()
   // The prompt file lives outside the working tree, so it is never part of the role's diff.
-  const parent = mkdtempSync(join(tmpdir(), 'step-one-container-'))
+  const parent = mkdtempSync(join(stepOneWorkRoot(), 'step-one-container-'))
   let toolHost: Awaited<ReturnType<typeof startDevToolsHost>> | null = null
   const transcript: string[] = []
   let handle: Awaited<ReturnType<typeof dispatchRole>> | null = null
@@ -1529,7 +1544,7 @@ async function runReviewerTrial<T>(
   finish: (handle: Awaited<ReturnType<typeof dispatchRole>>, transcript: readonly string[]) => Promise<T> | T,
   steps: VinayaProcessSteps = PRODUCTION_VINAYA_PROCESS_STEPS
 ): Promise<T> {
-  const parent = mkdtempSync(join(tmpdir(), 'step-one-reviewer-'))
+  const parent = mkdtempSync(join(stepOneWorkRoot(), 'step-one-reviewer-'))
   const role = item.role === 'security-reviewer' ? 'security' : 'code-reviewer'
   if (context.container !== undefined) {
     try {
@@ -1964,7 +1979,7 @@ async function runAnswerCase(
     'Return status completed, addressedFindingIds [], reportedChecks null, and sourceUses that cites only the delivered documents you used.'
   ].join('\n\n')
   const container = context.container
-  const parent = mkdtempSync(join(tmpdir(), 'step-one-answer-'))
+  const parent = mkdtempSync(join(stepOneWorkRoot(), 'step-one-answer-'))
   const workspace = container?.workingTree ?? join(parent, 'workspace')
   if (container === undefined) mkdirSync(workspace)
   for (const source of item.sources.filter((entry) => entry.deliveryMode === 'injected')) {

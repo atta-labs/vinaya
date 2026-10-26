@@ -576,7 +576,14 @@ directory) and `CODEX_HOME`. The host fills the scratch directory's package
 cache from the base commit, cloned from the pinned repository, so the
 sandboxed installs need no network; they run with lifecycle scripts disabled.
 If that sandbox cannot start, the trial is unavailable and is never graded
-unconfined. The vendor sandbox does not deny reads of `~/.ssh` or
+unconfined.
+Every folder step one makes for a trial — the policy home, the scratch
+directory, the base, worktree, submission, grading, container, reviewer and
+answer folders — lives on disk under the repository's runtime area
+(`<runtime>/step-one`, `stepOneWorkRoot`), never in the OS temp folder, so a
+small quota-limited tmpfs cannot fill and refuse later writes;
+`VINAYA_STEP_ONE_TMP` moves it, and the test preload points it at the test
+run's own owned fixture storage. The vendor sandbox does not deny reads of `~/.ssh` or
 `/proc/*/environ`, matching a Developer dispatch; no network and no forge,
 log, or vendor token in the grading environment prevent those reads from
 leaving the host.

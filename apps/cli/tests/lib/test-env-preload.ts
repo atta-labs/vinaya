@@ -48,7 +48,7 @@ import { afterAll } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { releaseFixtureRun, sweepAbandonedFixtureRuns } from './test-temp-fixture'
+import { fixtureDir, releaseFixtureRun, sweepAbandonedFixtureRuns } from './test-temp-fixture'
 import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
 
 /**
@@ -128,6 +128,9 @@ Bun.spawnSync = spawnWithCurrentEnv(Bun.spawnSync)
  */
 const sweep = await sweepAbandonedFixtureRuns()
 for (const { dir, error } of sweep.failed) console.error(`test temp: could not sweep ${dir}: ${error}`)
+
+// Step one's trial and grading folders (`dev-review-eval/step-one.ts`) go to this run's owned fixture storage too.
+process.env.VINAYA_STEP_ONE_TMP ??= fixtureDir('step-one-')
 
 /**
  * Once, after every test file this process ran: remove the private runtime
