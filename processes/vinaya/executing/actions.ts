@@ -25,6 +25,7 @@ import { sessionIdOf, structuredResult } from '../../../harness/adapters/agents/
 import { pullRequestCheckEnv, type PullRequestView } from './pull-request-env'
 import type { Handoff, InputVersions, PauseRequest } from './handoff'
 import type { StagedPullRequest, V2Functions } from '../loops/dev-review/v2/v2-actions'
+import { encodeExecutionRound } from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import { runCliChecks } from '../../../harness/gates/run-checks'
 import { agentEnvAllowlist } from '../../../harness/adapters/agents/launch-env'
 import type { GeneratedAgentConfig, GeneratorPaths } from '../../../harness/adapters/agents/policy'
@@ -1856,7 +1857,11 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
           return refuse({ reason: 'sandbox_refused', detail: refusal.message, error: refusal })
         }
       }
-      return ok(readiness.output)
+      // The round the run starts in, recorded with the step: a resume before any round ends continues in it.
+      const round = task.reviewRound?.()
+      return round === undefined
+        ? ok(readiness.output)
+        : { ...ok(readiness.output), stderr: encodeExecutionRound({ round, advancedBy: 'prepare-run' }) }
     }
   },
   'vinaya.reconcile-external-state': {
@@ -2003,11 +2008,18 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         throw new Error(
           `build-revision-handoff found no decision type in the assess-round output: ${stdout.slice(0, 200)}`
         )
-      if (decision === 'publish') return ok()
+      // The step ends the round: its result records the round it leaves the run in, the checkpoint's authority for it.
+      const recorded = (stdout: string) => ({
+        ...ok(stdout),
+        stderr: encodeExecutionRound({ round: task.reviewRound(), advancedBy: 'build-revision-handoff' })
+      })
+      if (decision === 'publish') return recorded('')
       // A pause does not end the round: the ruling that resumes it sends the Developer back to the same round,
       // so the round stays open and no verdict is consumed.
-      if (decision === 'pause') return ok(JSON.stringify(handoffFindings(task.reviewRound())))
-      return ok(JSON.stringify(handoffFindings(task.reviewRound(), ...task.verdicts(context.results))))
+      if (decision === 'pause') return recorded(JSON.stringify(handoffFindings(task.reviewRound())))
+      // The findings are numbered in the round they answer; reading the verdicts is what moves the round on.
+      const findings = handoffFindings(task.reviewRound(), ...task.verdicts(context.results))
+      return recorded(JSON.stringify(findings))
     }
   },
   'vinaya.run-live-checks': {

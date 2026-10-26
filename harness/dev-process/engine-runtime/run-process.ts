@@ -14,9 +14,11 @@ import {
   type SpawnFn,
   type StepNodeResult,
   type StartControlledRunParams,
+  buildAgentSpawnStateGraph,
   executeAgentSpawnNode,
   renderStepPrompt,
   resumeControlledRun,
+  runInvokeConfig,
   startControlledRun
 } from '@atta/executor-agent-spawn'
 import { parse } from 'yaml'
@@ -104,6 +106,11 @@ export interface ProcessRunOptions {
    * work). The Flow's `resume` names only a prior step, so a step's own continuation is the runner's.
    */
   continueSessions?: readonly string[]
+  /**
+   * Awaited before every step starts, so no dispatch or effect depends on a write that has not persisted. Defaults to
+   * the checkpointer's own `assertPersisted` when it has one; a throw fails the step before it does anything.
+   */
+  persistenceBarrier?: () => Promise<void>
 }
 
 export type StepPrompt = (
@@ -168,9 +175,11 @@ function nodeExecutor(
   config: AgentSpawnExecutorConfig,
   spawnFn: SpawnFn | undefined,
   stepPrompts: Readonly<Record<string, StepPrompt>> = {},
-  continueSessions: readonly string[] = []
+  continueSessions: readonly string[] = [],
+  persistenceBarrier?: () => Promise<void>
 ): AgentLifecycleNodeExecutor {
   return async (state: AgentSpawnGraphStateValue, { node, plan, signal }) => {
+    await persistenceBarrier?.()
     if (node.kind === 'mechanical') {
       const action = actions[node.action]
       if (!action) throw new Error(`Action "${node.action}" (step "${node.id}") has no entry in the action registry`)
@@ -262,9 +271,16 @@ function prepare(options: ProcessRunOptions): PreparedLeg {
       config,
       options.spawnFn,
       options.stepPrompts,
-      options.continueSessions
+      options.continueSessions,
+      options.persistenceBarrier ?? checkpointerBarrier(options.checkpointer)
     )
   }
+}
+
+/** The checkpointer's own persistence barrier, when it keeps one. */
+function checkpointerBarrier(checkpointer: ProcessRunOptions['checkpointer']): (() => Promise<void>) | undefined {
+  const persisted = (checkpointer as { assertPersisted?: () => Promise<void> } | undefined)?.assertPersisted
+  return typeof persisted === 'function' ? () => persisted.call(checkpointer) : undefined
 }
 
 // The executor cannot serialise legs of one run: two concurrent legs on a
@@ -309,8 +325,9 @@ export async function startProcessRun(options: ProcessRunOptions, identity?: Run
 /** Continues a halted run from its checkpoint on the same checkpointer; completed steps do not run again. */
 export async function resumeProcessRun(options: ProcessRunOptions, identity: RunIdentity): Promise<RunOutcome> {
   const { plan, config, executor } = prepare(options)
-  return inLeg(identity.threadId, () =>
-    resumeControlledRun({
+  return inLeg(identity.threadId, async () => {
+    await foldCompletedPendingWrites(plan, config, options.checkpointer, identity)
+    return resumeControlledRun({
       plan,
       config,
       checkpointer: options.checkpointer,
@@ -318,7 +335,32 @@ export async function resumeProcessRun(options: ProcessRunOptions, identity: Run
       executor,
       identity
     })
-  )
+  })
+}
+
+/**
+ * A run that stopped after its last step's writes were stored but before the next full checkpoint was saved (the
+ * executor saves checkpoints without blocking) holds every pending step completed: the executor would read that as a
+ * terminal run and refuse the resume. Applying those writes once, stopping before any next step runs, saves the full
+ * checkpoint the run would have saved, so the resume continues from the step after them and never re-runs them.
+ */
+async function foldCompletedPendingWrites(
+  plan: Plan,
+  config: AgentSpawnExecutorConfig,
+  checkpointer: ProcessRunOptions['checkpointer'],
+  identity: RunIdentity
+): Promise<void> {
+  if (checkpointer === undefined) return
+  const never: AgentLifecycleNodeExecutor = async (_state, { node }) => {
+    throw new Error(`step "${node.id}" ran while folding stored writes into a checkpoint`)
+  }
+  const graph = buildAgentSpawnStateGraph(plan, never, config, { checkpointer })
+  const invokeConfig = runInvokeConfig(identity)
+  const snapshot = await graph.getState(invokeConfig)
+  if (snapshot.next.length > 0 || snapshot.tasks.length === 0) return
+  const completed = snapshot.tasks.every((task) => task.error === undefined && task.interrupts.length === 0)
+  if (!completed) return
+  await graph.invoke(null, { ...invokeConfig, interruptBefore: '*' })
 }
 
 /**

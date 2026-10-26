@@ -1,4 +1,5 @@
 import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
+import { encodeExecutionRound } from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import { describe, expect, test } from 'bun:test'
 import { recordedHandoff } from './handoff-fakes'
 import { handoffHaltReason } from '../executing/log-events'
@@ -435,7 +436,14 @@ describe('re-running a task', () => {
     const control = createRunControl()
     const first = stubRun({
       control,
-      actions: { 'harness.run-gates': () => haltThen(control, 'stop') }
+      actions: {
+        // The run started in round 1, and its checkpoint records it.
+        'vinaya.prepare-run': () => ({
+          exitCode: 0,
+          stderr: encodeExecutionRound({ round: 1, advancedBy: 'prepare-run' })
+        }),
+        'harness.run-gates': () => haltThen(control, 'stop')
+      }
     })
     expect((await runEngine(first.options)).exitCode).toBe(2)
     const second = stubRun({}, first.runtimeDir)
@@ -461,7 +469,8 @@ describe('re-running a task', () => {
     second.options.heldPullRequestConflicts = async () => false
     await runEngine(second.options)
     expect(second.driverLog()).toContain('resuming the run from its checkpoint')
-    expect(seededRounds).toEqual([])
+    // The round the checkpoint records, never the journal's next one (2).
+    expect(seededRounds).toEqual([1])
   })
 
   test('a checkpoint whose pull request is now in conflict is not resumed: a fresh run sends the Developer back', async () => {

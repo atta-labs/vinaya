@@ -7,13 +7,16 @@ import { join, resolve } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import {
+  type ControlStoreDeps,
   initialLoopState,
   buildReviewInputManifest,
   DEFAULT_REVIEW_POLICY,
   type DevReviewLoopEventInput,
   type LoopConfig,
   type LoopState,
-  type ReviewInputManifest
+  type ReviewInputManifest,
+  defaultControlStoreDeps,
+  writeExecutionRoundMirror
 } from '@attalabs/aeg-core'
 import {
   createRunControl,
@@ -35,6 +38,10 @@ import {
   type AgentCheckpointProvenance
 } from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import { DispatchUsageLimit, usageLimitPauseDetail } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import {
+  mirrorExecutionRoundOnCommit,
+  readEffectiveResumedStateFrom
+} from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import {
   resumeProcessRun,
   startProcessRun,
@@ -114,6 +121,9 @@ import {
   reapAbandonedGroups,
   recoverRun,
   releaseDriverLock,
+  restoreExecutionRound,
+  restoreExecutionRoundBeforeDispatch,
+  type ExecutionRoundRestore,
   resumeModel,
   revisionMovedLine,
   roleTimeouts,
@@ -201,6 +211,7 @@ import {
 import { fetchLoopHistory } from '../../../apps/cli/src/lib/dev-review-loop/journal-history'
 import {
   buildVerdictFromReview,
+  controlStoreRootFor,
   heldVerdictPath,
   latestHeldCleanVerdict,
   persistManifestRecord
@@ -1018,6 +1029,11 @@ export interface EngineLifecycleOptions {
    * conflict with the default branch; absent ends the runner at completion.
    */
   publishedWatch?: PublishedWatch
+  /**
+   * Where the execution round is mirrored and the effect records a resume checks it against; absent, a resume still
+   * restores the round from its checkpoint but writes and checks no mirror.
+   */
+  executionRound?: { store: ControlStoreDeps; repository: string }
 }
 
 /** The HEAD of the checkout at `repoRoot`, or `unknown` when it is not a git checkout. */
@@ -1436,7 +1452,26 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     let refusedFile: CheckpointRefusal | null = null
     let opened: SqliteCheckpointer | undefined
     try {
-      opened = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
+      const mirror = lifecycle.executionRound
+      opened = new SqliteCheckpointer({
+        path: checkpointPath(runDir),
+        revision,
+        model: args.model,
+        agent: args.agent,
+        // The round is mirrored once the saver's own write has committed; a failed mirror stops the next step.
+        ...(mirror
+          ? {
+              onCommit: mirrorExecutionRoundOnCommit(
+                { repository: mirror.repository, task: args.task },
+                ({ task, ...record }) =>
+                  writeExecutionRoundMirror(mirror.store, task, {
+                    ...record,
+                    recordedAt: mirror.store.now().toISOString()
+                  })
+              )
+            }
+          : {})
+      })
     } catch (thrown) {
       if (!(thrown instanceof CheckpointCorruptError)) throw thrown
       refusedFile = { code: thrown.code, detail: thrown.message }
@@ -1494,6 +1529,20 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         maxRounds = undefined
       }
       return maxRounds === undefined ? options.process : withPolicyCeilings(options.process, runDir, maxRounds)
+    }
+    // The round a resumed thread is in, from its effective resumed state; mirrored and checked when a store is wired.
+    const restoreRoundOf = async (opened: SqliteCheckpointer, threadId: string): Promise<ExecutionRoundRestore> => {
+      const resumed = await readEffectiveResumedStateFrom(opened, threadId)
+      const mirror = lifecycle.executionRound
+      return mirror
+        ? restoreExecutionRoundBeforeDispatch({
+            store: mirror.store,
+            repository: mirror.repository,
+            task: args.task,
+            threadId,
+            resumed
+          })
+        : restoreExecutionRound({ threadId, resumed, mirror: { status: 'absent' }, effects: [] })
     }
     const runLeg = async (): Promise<void> => {
       outcome = null
@@ -1561,13 +1610,30 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       const moved = choice.kind === 'resume' ? revisionMovedLine(choice.checkpointRevision, revision) : null
       if (moved !== null) narrate(moved)
 
+      // A checkpoint resume continues inside the round it stopped in: the round its checkpoint records, checked
+      // against the control store before anything is dispatched, never the counter this process started at.
+      const restored: ExecutionRoundRestore | null =
+        choice.kind === 'resume' ? await restoreRoundOf(saver, identity.threadId) : null
+      if (restored?.kind === 'refused') {
+        narrate(`not dispatching: ${restored.detail}`)
+        throw new Error(restored.detail)
+      }
+      if (restored?.kind === 'restored') {
+        options.taskInput?.seedRound?.(restored.round)
+        if (restored.note !== null) narrate(restored.note)
+        for (const effect of restored.interrupted)
+          narrate(
+            `effect ${effect.key} was issued at input version ${effect.inputVersion} and never acknowledged; its retry reconciles it at that version`
+          )
+      }
       // What a re-run reads before it dispatches: the prior launch, the round journal and any held verdict.
       const recovery = lifecycle.recovery ? recoverRun(lifecycle.recovery) : null
       if (recovery !== null && options.taskInput) {
         options.taskInput.loopState = recovery.state
-        // A checkpoint resume continues inside the round it stopped in, so it keeps that round; only a fresh start
-        // on an existing branch begins the round after the journal's last.
-        if (recovery.nextRound !== null && choice.kind !== 'resume') options.taskInput.seedRound?.(recovery.nextRound)
+        // Only a run whose checkpoint records no round yet (a fresh start, or a resume before its first step
+        // completed) begins at the round after the journal's last.
+        if (recovery.nextRound !== null && (restored === null || restored.kind === 'unrecorded'))
+          options.taskInput.seedRound?.(recovery.nextRound)
       }
       if (recovery?.refusal) {
         narrate(`not dispatching: ${recovery.refusal}`)
@@ -2623,6 +2689,11 @@ async function runLive(
     lifecycle: {
       dispatchConfig: loadConfig()?.dispatch,
       recovery: liveRecovery({ args, runtimeDir, taskInput }),
+      // The same control store the push's effect records are written to.
+      executionRound: {
+        store: defaultControlStoreDeps(() => controlStoreRootFor(runtimeDir)),
+        repository: repo ? `${repo.owner}/${repo.repo}` : 'unknown'
+      },
       watch: { deps: liveResumeDeps, pollMs: rulingPollMs(), sleep: abortableSleep },
       publishedWatch: { fetchPrState, fetchMergeableState, pollMs: rulingPollMs(), sleep: abortableSleep }
     },

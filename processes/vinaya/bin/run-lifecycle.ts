@@ -4,11 +4,18 @@ import { delimiter, join, resolve as resolvePath } from 'node:path'
 import type { Writable } from 'node:stream'
 import { hostname } from 'node:os'
 import {
+  type ControlStoreDeps,
+  type EffectRecord,
   type EscalationRecord,
+  type ExecutionRoundMirrorRecord,
+  type ParsedRecord,
   type ResolutionRecord,
   compareManifest,
   manifestAsEchoed,
   nextRoundNumber,
+  readEffects,
+  readExecutionRoundMirror,
+  writeExecutionRoundMirror,
   type LoopState,
   type ReconstructedJournal,
   type ReviewInputManifest
@@ -22,6 +29,10 @@ import {
   type SpawnFn
 } from '@atta/executor-agent-spawn'
 import type { BaseCheckpointSaver } from '@langchain/langgraph'
+import {
+  type EffectiveResumedState,
+  readExecutionRound
+} from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import {
   CheckpointCorruptError,
   type CheckpointProvenance,
@@ -269,6 +280,104 @@ async function chooseReadableStart(
   if (recorded?.reason === 'completed') return { kind: 'completed', identity }
   if (recorded?.reason === 'exhausted') return { kind: 'exhausted', identity }
   return { kind: 'resume', identity, checkpointRevision: provenance?.revision }
+}
+
+// --- the execution round a resume continues in ----------------------------------------
+
+/** An effect issued but never acknowledged: a retry reconciles it under the input version it was issued with. */
+export interface InterruptedEffect {
+  key: string
+  operation: string
+  inputVersion: number
+}
+
+/** What a resume restores as its execution round, read from the checkpoint and checked against the control store. */
+export type ExecutionRoundRestore =
+  | {
+      kind: 'restored'
+      round: number
+      checkpointId: string
+      /** The mirror is absent, unreadable or disagrees with the checkpoint, so it is rewritten from the checkpoint. */
+      rewriteMirror: boolean
+      interrupted: InterruptedEffect[]
+      /** A line for the driver log when the mirror disagreed; null when it agreed. */
+      note: string | null
+    }
+  /** No step of the thread has recorded a round yet: the run is still in the round it started in. */
+  | { kind: 'unrecorded' }
+  | { kind: 'refused'; detail: string }
+
+/**
+ * The execution round a resume continues in: the one the resumed state (the checkpoint with its pending writes)
+ * records, never the in-memory counter of the process that wrote it. The mirror is checked against it and loses on
+ * any disagreement. An effect record issued at a later input version than that round refuses the resume, since every
+ * request it made from there would be refused as a replay; an effect never acknowledged is handed back with the input
+ * version it was issued with.
+ */
+export function restoreExecutionRound(input: {
+  threadId: string
+  resumed: EffectiveResumedState | null
+  mirror: ParsedRecord<ExecutionRoundMirrorRecord>
+  effects: readonly ParsedRecord<EffectRecord>[]
+}): ExecutionRoundRestore {
+  const recorded = input.resumed === null ? null : readExecutionRound(input.resumed)
+  if (recorded === null || input.resumed === null) return { kind: 'unrecorded' }
+  const { round } = recorded
+  const effects = input.effects.flatMap((effect) => (effect.status === 'ok' ? [effect.value] : []))
+  const ahead = effects.filter((effect) => effect.inputVersion > round)
+  if (ahead.length > 0) {
+    const named = ahead.map((effect) => `${effect.key} at input version ${effect.inputVersion}`).join(', ')
+    return {
+      kind: 'refused',
+      detail: `the checkpoint holds execution round ${round}, but the control store records effects issued later (${named}); resuming would present an older input version than the one recorded`
+    }
+  }
+  const interrupted = effects
+    .filter((effect) => effect.status === 'started')
+    .map((effect) => ({ key: effect.key, operation: effect.operation, inputVersion: effect.inputVersion }))
+  const mirror = input.mirror.status === 'ok' ? input.mirror.value : null
+  const agrees = mirror !== null && mirror.threadId === input.threadId && mirror.round === round
+  const note =
+    mirror !== null && !agrees
+      ? `the control-store mirror records round ${mirror.round} at checkpoint ${mirror.checkpointId}; the checkpoint holds round ${round}, which wins`
+      : null
+  return {
+    kind: 'restored',
+    round,
+    checkpointId: input.resumed.checkpointId,
+    rewriteMirror: !agrees || mirror?.checkpointId !== input.resumed.checkpointId,
+    interrupted,
+    note
+  }
+}
+
+/**
+ * Restores a resume's execution round before any dispatch: reads the mirror and the effect records, decides, and
+ * rewrites the mirror from the checkpoint when it must. The rewrite is a required write: a failure throws, and the
+ * run dispatches nothing.
+ */
+export function restoreExecutionRoundBeforeDispatch(input: {
+  store: ControlStoreDeps
+  repository: string
+  task: number
+  threadId: string
+  resumed: EffectiveResumedState | null
+}): ExecutionRoundRestore {
+  const restore = restoreExecutionRound({
+    threadId: input.threadId,
+    resumed: input.resumed,
+    mirror: readExecutionRoundMirror(input.store, input.task, input.threadId),
+    effects: readEffects(input.store, input.task)
+  })
+  if (restore.kind === 'restored' && restore.rewriteMirror)
+    writeExecutionRoundMirror(input.store, input.task, {
+      repository: input.repository,
+      threadId: input.threadId,
+      checkpointId: restore.checkpointId,
+      round: restore.round,
+      recordedAt: input.store.now().toISOString()
+    })
+  return restore
 }
 
 /** The pause detail of a refused checkpoint: its typed code first, so a reader routes on it. */
