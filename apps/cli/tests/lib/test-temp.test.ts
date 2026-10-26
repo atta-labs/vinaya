@@ -159,3 +159,87 @@ describe('fixture cleanup reporting', () => {
     expect(report.removed).toHaveLength(1)
   })
 })
+
+describe('read-only default test storage', () => {
+  function sandboxHome() {
+    const root = fixtureDir('readonly-home-')
+    const home = join(root, 'home')
+    const scratch = join(root, 'scratch')
+    const defaultRoot = join(home, '.vinaya', 'test-tmp', 'vinaya')
+    mkdirSync(defaultRoot, { recursive: true })
+    mkdirSync(scratch)
+    chmodSync(defaultRoot, 0o500)
+    return { root, home, scratch, defaultRoot }
+  }
+
+  test('a heavy fixture falls back and recovers when the default root is read-only', async () => {
+    const { root, home, scratch, defaultRoot } = sandboxHome()
+    const fixtures = resolve(import.meta.dir, 'test-temp-fixture.ts')
+    const storage = resolve(import.meta.dir, '../../src/lib/test-temp.ts')
+    const env = { ...stripVinayaEnv(), HOME: home, TMPDIR: scratch }
+    const child = spawnSyncBudgeted(
+      process.execPath,
+      [
+        '--eval',
+        `
+      import { fixtureDir } from ${JSON.stringify(fixtures)};
+      import { mkdirSync, writeFileSync, statSync } from 'node:fs';
+      import { join } from 'node:path';
+      const dir = fixtureDir('clone-');
+      mkdirSync(join(dir, 'objects'));
+      const data = join(dir, 'objects', 'pack');
+      writeFileSync(data, Buffer.alloc(128 * 1024, 7));
+      console.log(JSON.stringify({ dir, bytes: statSync(data).size }));
+    `
+      ],
+      { encoding: 'utf8', cwd: root, env }
+    )
+    expect(child.status).toBe(0)
+    const fixture = JSON.parse(child.stdout.trim()) as { dir: string; bytes: number }
+    expect(fixture.dir.startsWith(join(scratch, 'vinaya-test-tmp', 'vinaya'))).toBe(true)
+    expect(fixture.bytes).toBe(128 * 1024)
+    expect(child.stderr).toContain(defaultRoot)
+    expect(child.stderr).toContain('falling back')
+    expect(child.stderr).toContain('VINAYA_TEST_TMP')
+    const recovery = spawnSyncBudgeted(
+      process.execPath,
+      [
+        '--eval',
+        `
+      import { sweepAbandoned } from ${JSON.stringify(storage)};
+      console.log(JSON.stringify(await sweepAbandoned('vinaya')));
+    `
+      ],
+      { encoding: 'utf8', cwd: root, env }
+    )
+    expect(recovery.status).toBe(0)
+    const report = JSON.parse(recovery.stdout.trim()) as { removed: string[]; failed: unknown[] }
+    expect(report.failed).toEqual([])
+    expect(report.removed).toHaveLength(1)
+    expect(existsSync(fixture.dir)).toBe(false)
+  })
+
+  test('preload does not allocate a heavy fixture for a test that never requests one', () => {
+    const { root, home, scratch } = sandboxHome()
+    const smoke = join(root, 'lazy.test.ts')
+    writeFileSync(
+      smoke,
+      `
+      import { test, expect } from 'bun:test';
+      import { existsSync } from 'node:fs';
+      test('lazy storage', () => {
+        expect(process.env.VINAYA_STEP_ONE_TMP).toBeDefined();
+        expect(existsSync(process.env.VINAYA_STEP_ONE_TMP!)).toBe(false);
+        expect(existsSync(${JSON.stringify(join(scratch, 'vinaya-test-tmp'))})).toBe(false);
+      });
+    `
+    )
+    const child = spawnSyncBudgeted(
+      process.execPath,
+      ['test', '--preload', resolve(import.meta.dir, 'test-env-preload.ts'), smoke],
+      { encoding: 'utf8', cwd: root, env: { ...stripVinayaEnv(), HOME: home, TMPDIR: scratch } }
+    )
+    expect(child.stderr).not.toContain('falling back')
+    expect(child.status).toBe(0)
+  })
+})

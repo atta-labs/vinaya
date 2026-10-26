@@ -11,14 +11,15 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
-import { homedir, hostname } from 'node:os'
+import { homedir, hostname, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { type ProcessIdentity, type StopOptions, type StopReport, stopRegistered } from './process-registry'
 
 // Test temp storage on disk, with owned cleanup.
 //
 // Heavy test fixtures (clones, replay worlds, engine runs, review inputs) create their directories under one
-// disk-backed root, never under the OS temp dir, so a quota-limited tmpfs cannot fill. The root comes from its
+// disk-backed root so a quota-limited tmpfs cannot fill. A sandbox that denies the default home root falls back
+// to its writable TMPDIR and logs that choice; an explicit setting is never overridden. The root comes from its
 // own setting, default `~/.vinaya/test-tmp/<repo-id>/<run-uuid>`, and is never derived from VINAYA_RUNTIME_DIR
 // (the test preload redirects that into temporary storage). Every run directory carries an ownership marker; a
 // sweep removes a directory only when its owner is gone, after stopping the owner's surviving processes.
@@ -149,17 +150,30 @@ function storageError(action: string, path: string, error: unknown): Error {
 }
 
 /** Creates this process's run directory with its ownership marker, under `root` (default: `testTempRoot`). */
-export function createTestTempRun(repoId: string, root: string = testTempRoot(repoId)): TestTempRun {
+export function createTestTempRun(repoId: string, root?: string): TestTempRun {
+  const requestedRoot = root ?? testTempRoot(repoId)
   const owner = currentOwner(randomUUID())
-  const dir = join(root, owner.runToken)
+  const dir = join(requestedRoot, owner.runToken)
   // Built under a staging name and renamed, so the run directory never exists without its marker.
-  const staging = join(root, `${CREATING_PREFIX}${owner.runToken}`)
+  const staging = join(requestedRoot, `${CREATING_PREFIX}${owner.runToken}`)
   try {
     mkdirSync(staging, { recursive: true })
     const marker = writeOwnerMarker(staging, owner)
     renameSync(staging, dir)
     return { dir, marker }
   } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (
+      root === undefined &&
+      !process.env[TEST_TEMP_ROOT_ENV] &&
+      (code === 'EROFS' || code === 'EACCES' || code === 'EPERM')
+    ) {
+      const fallback = join(tmpdir(), 'vinaya-test-tmp', repoId)
+      console.warn(
+        `test temp: default root ${requestedRoot} is not writable (${code}); falling back to ${fallback} — set ${TEST_TEMP_ROOT_ENV} to choose a disk path`
+      )
+      return createTestTempRun(repoId, fallback)
+    }
     throw storageError('create the test-temp run directory', dir, error)
   }
 }
@@ -359,10 +373,18 @@ export async function sweepOwnedDirs(parent: string, deps: Partial<SweepDeps> = 
 }
 
 /** Removes abandoned run directories under the root: stops owned processes first, never touches a live owner's. */
-export function sweepAbandoned(
+export async function sweepAbandoned(
   repoId: string,
   deps: Partial<SweepDeps> & { root?: string } = {}
 ): Promise<SweepReport> {
   const { root, ...rest } = deps
-  return sweepOwnedDirs(root ?? testTempRoot(repoId), rest)
+  const primary = await sweepOwnedDirs(root ?? testTempRoot(repoId), rest)
+  if (root !== undefined || process.env[TEST_TEMP_ROOT_ENV]) return primary
+  // A previous sandboxed run may have fallen back even though the default is writable to this process.
+  const fallback = await sweepOwnedDirs(join(tmpdir(), 'vinaya-test-tmp', repoId), rest)
+  return {
+    removed: [...primary.removed, ...fallback.removed],
+    kept: [...primary.kept, ...fallback.kept],
+    failed: [...primary.failed, ...fallback.failed]
+  }
 }
