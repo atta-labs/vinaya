@@ -1,7 +1,7 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { DEFAULT_REVIEW_POLICY, objectivesVersion } from '@attalabs/aeg-core'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
@@ -158,7 +158,7 @@ const savedEnv: Record<string, string | undefined> = {}
 const roots: string[] = []
 beforeAll(() => {
   for (const key of ['CODEX_HOME', ...SCENARIO_ENV_KEYS]) savedEnv[key] = process.env[key]
-  const home = mkdtempSync(join(tmpdir(), 'forge-gates-codex-'))
+  const home = fixtureDir('forge-gates-codex-')
   writeFileSync(join(home, 'auth.json'), '{}\n')
   process.env.CODEX_HOME = home
   keepLogLocal()
@@ -195,7 +195,7 @@ async function run(
   forge: Forge,
   developerPushes: (attempt: number) => boolean = () => true
 ): Promise<Observed> {
-  const root = mkdtempSync(join(tmpdir(), 'forge-gates-'))
+  const root = fixtureDir('forge-gates-')
   roots.push(root)
   const runtimeDir = join(root, 'runtime')
   mkdirSync(runtimeDir)
@@ -580,7 +580,7 @@ for (const agent of AGENTS) {
   describe(`the rebase onto the default tip, through the Engine's shared Developer context (${agent})`, () => {
     /** A repository whose default branch moved a protected path after the task branched, and the task's own commit. */
     function drifted(conflicting: boolean) {
-      const root = mkdtempSync(join(tmpdir(), 'forge-gates-rebase-'))
+      const root = fixtureDir('forge-gates-rebase-')
       roots.push(root)
       const git = gitIn(root)
       git('init', '-q', '-b', 'main')
@@ -616,7 +616,7 @@ for (const agent of AGENTS) {
         branch: 'task/t/8',
         worktreePath: repo.root,
         task: 8,
-        runtimeDir: mkdtempSync(join(tmpdir(), 'forge-gates-rebase-runtime-')),
+        runtimeDir: fixtureDir('forge-gates-rebase-runtime-'),
         agent,
         repo: null,
         round: () => 1,

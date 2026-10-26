@@ -67,6 +67,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
+import { currentOwner, removeTree, type SweepDeps, sweepOwnedDirs, writeOwnerMarker } from './test-temp'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname, tmpdir } from 'node:os'
@@ -4190,6 +4191,40 @@ export function isReviewerResume(role: Role, resumeId: string | undefined): bool
   return (role === 'code-reviewer' || role === 'security') && resumeId !== undefined
 }
 
+/** The name prefix of a Claude dispatch's sandbox scratch directory in the OS temp dir. */
+export const CLAUDE_SANDBOX_PREFIX = 'vinaya-claude-sandbox-'
+
+/**
+ * Mints a Claude dispatch's sandbox scratch directory, marked with this driver as its owner. First it sweeps the
+ * scratch directories earlier drivers left behind when they died before their own cleanup ran (a killed driver
+ * never reaches `finish()`): one is removed only when its owning driver is gone, after that driver's registered
+ * processes are stopped. A directory with no marker, or a live owner's, is never touched. Every sweep failure is
+ * reported through `report`.
+ */
+export async function mintClaudeScratchDir(
+  runToken: string,
+  report: (line: string) => void,
+  parent: string = tmpdir(),
+  sweepDeps: Partial<SweepDeps> = {}
+): Promise<string> {
+  const swept = await sweepOwnedDirs(parent, { ...sweepDeps, select: (name) => name.startsWith(CLAUDE_SANDBOX_PREFIX) })
+  for (const { dir, error } of swept.failed)
+    report(`could not remove an abandoned sandbox scratch directory ${dir}: ${error}`)
+  const dir = realpathSync(mkdtempSync(join(parent, CLAUDE_SANDBOX_PREFIX)))
+  writeOwnerMarker(dir, currentOwner(runToken))
+  return dir
+}
+
+/**
+ * Removes a Claude dispatch's sandbox scratch directory, read-only subdirectories included (a plain recursive
+ * remove cannot unlink entries of a directory the sandboxed agent made read-only). A failure is reported, and the
+ * marked directory is left for a later sweep.
+ */
+export function releaseClaudeScratchDir(dir: string, report: (line: string) => void): void {
+  const error = removeTree(dir)
+  if (error !== null) report(`could not remove the sandbox scratch directory ${dir}: ${error}`)
+}
+
 /**
  * Starts `agent`'s headless mode for `role`, attributes the child's
  * environment, and records the dispatch through `log()`. Never throws — a
@@ -4536,9 +4571,7 @@ export async function dispatchRole(
   // uses, and is removed in `finish()` below alongside every other
   // dispatch-scoped temp resource.
   const claudeScratchDir =
-    agent === 'claude' && opts.unattended === true
-      ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-claude-sandbox-')))
-      : null
+    agent === 'claude' && opts.unattended === true ? await mintClaudeScratchDir(effectId, writeLifecycle) : null
   // The task's required-source store — the manifest and every delivery
   // receipt — is controller-owned: a Developer's sandbox never writes it.
   // Claude's sandbox names it in `denyWrite`; for both agents the dispatch
@@ -4932,13 +4965,7 @@ export async function dispatchRole(
     // O1/O2: never leak the scratch directory minted for Claude's own
     // confinement (above) on this early refusal — `finish()`'s own cleanup
     // is never reached from this `return`.
-    if (claudeScratchDir !== null) {
-      try {
-        rmSync(claudeScratchDir, { recursive: true, force: true })
-      } catch {
-        // best-effort, same reasoning as `finish()`'s own cleanup.
-      }
-    }
+    if (claudeScratchDir !== null) releaseClaudeScratchDir(claudeScratchDir, writeLifecycle)
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return {
@@ -5122,13 +5149,7 @@ export async function dispatchRole(
         // best-effort, same reasoning as `finish()`'s own cleanup.
       }
     }
-    if (claudeScratchDir !== null) {
-      try {
-        rmSync(claudeScratchDir, { recursive: true, force: true })
-      } catch {
-        // best-effort cleanup on this early refusal.
-      }
-    }
+    if (claudeScratchDir !== null) releaseClaudeScratchDir(claudeScratchDir, writeLifecycle)
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     // The probe's refusal travels typed, beside the shared `'refused'`
@@ -5635,7 +5656,8 @@ export async function dispatchRole(
       // other filesystem-bookkeeping concern in this file (`removeIfPresent`,
       // `reviewer-isolation.ts`'s own posture), never blocking `finish()` on
       // a filesystem fault.
-      for (const scratchDir of [claudeScratchDir, codexScratchDir, turnSchemaDir]) {
+      if (claudeScratchDir !== null) releaseClaudeScratchDir(claudeScratchDir, writeLifecycle)
+      for (const scratchDir of [codexScratchDir, turnSchemaDir]) {
         if (scratchDir === null) continue
         try {
           rmSync(scratchDir, { recursive: true, force: true })

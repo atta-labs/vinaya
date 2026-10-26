@@ -1,8 +1,8 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   type EscalationRecord,
@@ -88,7 +88,7 @@ const savedEnv: Record<string, string | undefined> = {}
 beforeAll(() => {
   // The operator's Codex login the runner copies into each Codex role's generated home.
   codexHome = process.env.CODEX_HOME
-  const home = mkdtempSync(join(tmpdir(), 'fault-codex-home-'))
+  const home = fixtureDir('fault-codex-home-')
   writeFileSync(join(home, 'auth.json'), '{"tokens":"replay"}')
   process.env.CODEX_HOME = home
   for (const key of SCENARIO_ENV_KEYS) savedEnv[key] = process.env[key]
@@ -395,7 +395,6 @@ for (const vendor of VENDORS)
         const steps = await greenSteps(vendor)
         expect(steps.length).toBeGreaterThanOrEqual(20)
         const problems = (await inParallel(steps, 4, (step) => killAndRestart(vendor, `node:${step}`, steps))).flat()
-        console.log(`${ROWS.controllerDeath} (${vendor}): ${steps.length} checkpoint boundaries killed and restarted`)
         expect(problems).toEqual([])
       })
     }, 300_000)
@@ -407,14 +406,13 @@ for (const vendor of VENDORS)
           EFFECT_PHASES.map((phase) => `effect:1-${effect}:${phase}`)
         )
         const problems = (await inParallel(boundaries, 4, (b) => killAndRestart(vendor, b, steps))).flat()
-        console.log(`${ROWS.controllerDeath} (${vendor}): ${boundaries.length} effect boundaries killed and restarted`)
         expect(problems).toEqual([])
       })
     }, 300_000)
 
     test(`${ROWS.controllerDeath} — the agents a runner killed mid-launch left running are ended when the next runner starts`, async () => {
       await holds(ROWS.controllerDeath, async () => {
-        const dir = mkdtempSync(join(tmpdir(), 'fault-orphan-'))
+        const dir = fixtureDir('fault-orphan-')
         const runtimeDir = join(dir, 'runtime')
         const script = agentScript(dir)
         const first = lifecycleRunner(vendor, runtimeDir, script, join(dir, 'first'))
@@ -670,7 +668,7 @@ for (const vendor of VENDORS)
 
     test(`${ROWS.cancellationRace} — a second SIGTERM racing the first ends the runner once and leaves no agent process`, async () => {
       await holds(ROWS.cancellationRace, async () => {
-        const dir = mkdtempSync(join(tmpdir(), 'fault-cancel-'))
+        const dir = fixtureDir('fault-cancel-')
         const runtimeDir = join(dir, 'runtime')
         const started = lifecycleRunner(vendor, runtimeDir, agentScript(dir), join(dir, 'argv'))
         const leftovers: number[] = []
@@ -867,7 +865,7 @@ for (const vendor of VENDORS)
           branch: BRANCH,
           worktreePath: '/worktree',
           task: 8,
-          runtimeDir: mkdtempSync(join(tmpdir(), 'fault-beyond-')),
+          runtimeDir: fixtureDir('fault-beyond-'),
           agent: vendor,
           repo: null,
           round: () => 1,

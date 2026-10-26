@@ -1,7 +1,7 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { MemorySaver } from '@langchain/langgraph'
-import { mkdtempSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { basename, dirname, resolve } from 'node:path'
 import { parse } from 'yaml'
 import { assessRound } from '@attalabs/aeg-core'
@@ -58,7 +58,7 @@ describe('bindings cover the Flow', () => {
     expect(actionNames.filter((name) => !Object.hasOwn(ACTION_BINDINGS, name))).toEqual([])
     const decisionIds = steps.flatMap((step) => (step.decision ? [step.id] : []))
     expect(decisionIds.filter((id) => !Object.hasOwn(decisions, id))).toEqual([])
-    const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: mkdtempSync(`${tmpdir()}/roles-`) })
+    const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: fixtureDir('roles-') })
     const flowRoles = steps.flatMap((step) => (step.type === 'agent' && step.role ? [step.role] : []))
     expect(flowRoles.filter((role) => !Object.hasOwn(roles, role))).toEqual([])
     expect(Object.keys(roles).sort()).toEqual(['code-reviewer', 'developer', 'security-reviewer'])
@@ -237,7 +237,7 @@ function setup(scenario: Scenario = {}) {
     ])
   )
 
-  const generatedRoot = mkdtempSync(`${tmpdir()}/flow-roles-`)
+  const generatedRoot = fixtureDir('flow-roles-')
   const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot })
   const spawnFn: ProcessRunOptions['spawnFn'] = (_command, args) => {
     const settings = args[args.indexOf('--settings') + 1] ?? ''
@@ -254,7 +254,7 @@ function setup(scenario: Scenario = {}) {
     question: 'the task',
     bindings: { actions, decisions, roles },
     checkpointer: new MemorySaver(),
-    workingDirectoryRoot: mkdtempSync(`${tmpdir()}/flow-root-`),
+    workingDirectoryRoot: fixtureDir('flow-root-'),
     spawnFn
   }
   return { options, stepCalls, spawns, killed }

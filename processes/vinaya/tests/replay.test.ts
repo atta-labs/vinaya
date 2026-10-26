@@ -1,6 +1,6 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { runDirectory } from '../bin/run-engine'
 import { blocked, git, PR, replay, requestChanges, TASK, VINAYA_INSTALL } from './replay-world'
@@ -14,7 +14,7 @@ let codexHome: string | undefined
 beforeAll(() => {
   // The operator's Codex login the runner copies into each Codex role's generated home.
   codexHome = process.env.CODEX_HOME
-  const home = mkdtempSync(join(tmpdir(), 'replay-codex-home-'))
+  const home = fixtureDir('replay-codex-home-')
   writeFileSync(join(home, 'auth.json'), '{"tokens":"replay"}')
   process.env.CODEX_HOME = home
 })

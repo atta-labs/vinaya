@@ -1,6 +1,6 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { EscalationRecord, ResolutionRecord } from '@attalabs/aeg-core'
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
@@ -45,7 +45,7 @@ const PR = 70
 const BRANCH = 'task/issue-7'
 
 // A stub login keeps the real role launcher from copying an operator's Codex credential into a test run.
-const stubHome = mkdtempSync(join(tmpdir(), 'resume-codex-home-'))
+const stubHome = fixtureDir('resume-codex-home-')
 writeFileSync(join(stubHome, 'auth.json'), '{}\n')
 process.env.CODEX_HOME = stubHome
 
@@ -120,7 +120,7 @@ interface Scenario {
   watch?: RulingWatch
 }
 
-function stubRun(scenario: Scenario = {}, runtimeDir = mkdtempSync(join(tmpdir(), 'resume-'))) {
+function stubRun(scenario: Scenario = {}, runtimeDir = fixtureDir('resume-')) {
   const agent = scenario.agent ?? 'claude'
   const spawns: string[] = []
   const actionRuns: Record<string, number> = {}
@@ -330,7 +330,7 @@ for (const agent of AGENTS) {
     test('a poll that finds no ruling resumes nothing, and the watch ends when it is stopped', async () => {
       const { forge, deps } = fakeForge()
       const stop = new AbortController()
-      const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-watch-'))
+      const runtimeDir = fixtureDir('resume-watch-')
       writePauseState(runtimeDir, heldPause())
       const watch = watching(deps, (poll) => {
         if (poll === 3) stop.abort()
@@ -346,7 +346,7 @@ for (const agent of AGENTS) {
       forge.ordinal = 2
       forge.escalation = { rulingOrdinal: 2 } as EscalationRecord
       const stop = new AbortController()
-      const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-watch-'))
+      const runtimeDir = fixtureDir('resume-watch-')
       writePauseState(runtimeDir, heldPause())
       const watch = watching(deps, (poll) => {
         if (poll === 1) forge.post()
@@ -359,7 +359,7 @@ for (const agent of AGENTS) {
 
     test('a cancel ends the watch with no resume', async () => {
       const { forge, deps } = fakeForge()
-      const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-watch-'))
+      const runtimeDir = fixtureDir('resume-watch-')
       writePauseState(runtimeDir, heldPause())
       const watch = watching(deps, () => {
         forge.resolution = resolutionOf('cancel')
@@ -372,7 +372,7 @@ for (const agent of AGENTS) {
     test('a resolution another process claimed first ends the watch without a second resume', async () => {
       const { forge, deps } = fakeForge()
       forge.consumed = resolutionOf('resume')
-      const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-watch-'))
+      const runtimeDir = fixtureDir('resume-watch-')
       writePauseState(runtimeDir, heldPause())
       const watch = watching(deps, () => forge.post())
       const result = await watchForRuling(runtimeDir, TASK, watch, new AbortController().signal)
@@ -391,7 +391,7 @@ for (const agent of AGENTS) {
           return forge.ordinal
         }
       }
-      const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-watch-'))
+      const runtimeDir = fixtureDir('resume-watch-')
       writePauseState(runtimeDir, heldPause())
       const lines: string[] = []
       const watch = watching(flaky, (poll) => {
@@ -470,7 +470,7 @@ for (const agent of AGENTS) {
 
 describe('--resume <pr>', () => {
   const claimFor = (agent: Agent | undefined, setup: (f: ReturnType<typeof fakeForge>) => void = () => {}) => {
-    const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-claim-'))
+    const runtimeDir = fixtureDir('resume-claim-')
     const fake = fakeForge()
     writePauseState(runtimeDir, heldPause())
     setup(fake)
@@ -492,9 +492,7 @@ describe('--resume <pr>', () => {
 
   test('refuses when no pause is held for the task, or it names another pull request', () => {
     const none = fakeForge()
-    expect(() => claimResume(mkdtempSync(join(tmpdir(), 'resume-claim-')), { pr: PR }, none.deps)).toThrow(
-      'no held pause state'
-    )
+    expect(() => claimResume(fixtureDir('resume-claim-'), { pr: PR }, none.deps)).toThrow('no held pause state')
     const other = claimFor('claude', ({ forge }) => (forge.body = 'Closes #7'))
     writePauseState(other.runtimeDir, heldPause({ prNumber: 99 }))
     expect(other.claim).toThrow('names PR #99, not PR #70')
@@ -598,7 +596,7 @@ describe('the flow a resume runs with', () => {
   })
 
   test('a run records its flow under its run directory and a resume reads it back', () => {
-    const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-flow-'))
+    const runtimeDir = fixtureDir('resume-flow-')
     expect(recordedRunFlow(runtimeDir, 9)).toBeUndefined()
     recordRunFlow(runtimeDir, 9, 'v2')
     expect(recordedRunFlow(runtimeDir, 9)).toBe('v2')

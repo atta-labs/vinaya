@@ -1,11 +1,13 @@
-import { describe, expect, test } from 'bun:test'
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
+import { afterAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loopLogPathFor, narrateDriverEvent } from '../../../apps/cli/src/lib/loop-log'
 import {
+  cleanupWorlds,
   makeInProcessDeps,
   makeWorld,
   runLoopInProcess,
@@ -24,6 +26,9 @@ import { narratingLog, runEngine, type EngineRunOptions } from '../bin/run-engin
 import { recordedHandoff } from './handoff-fakes'
 import { records, replay, TASK as REPLAY_TASK, type Step } from './replay-world'
 import { confidentTurn, PASSING_FORGE_GATES } from './round-fakes'
+
+// The loop harness's worlds live in the OS temp dir; they are removed once this file's tests have run.
+afterAll(cleanupWorlds)
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
 const repoRoot = resolve(import.meta.dir, '../../..')
@@ -124,7 +129,7 @@ function standaloneDispatch(
   roleLogPath: string,
   env: NodeJS.ProcessEnv
 ): void {
-  const root = mkdtempSync(join(tmpdir(), `narration-${role}-`))
+  const root = fixtureDir(`narration-${role}-`)
   const home = join(root, 'home')
   const bin = join(root, 'bin')
   for (const dir of [home, bin]) mkdirSync(dir, { recursive: true })
@@ -265,7 +270,7 @@ function engineOptions(spawnFn: EngineRunOptions['spawnFn'], emitted: unknown[])
     args: { task: TASK, agent: 'claude', dryRun: false },
     process: loaded,
     repoRoot,
-    runtimeDir: mkdtempSync(join(tmpdir(), 'narration-engine-')),
+    runtimeDir: fixtureDir('narration-engine-'),
     loopId: 'loop-under-test',
     taskInput: {
       inputVersions: () => ({ briefHash: null, objectivesVersion: null, rulingOrdinal: 0, policyDigest: 'test' })
@@ -351,7 +356,7 @@ describe('the Engine runner narrates a run into the driver log as the standalone
 
 describe('the narrating Log sink', () => {
   test('narrates each event after it is emitted, with the events before it as context, once', () => {
-    const path = join(mkdtempSync(join(tmpdir(), 'narration-sink-')), 'driver.log')
+    const path = join(fixtureDir('narration-sink-'), 'driver.log')
     const calls: string[] = []
     const contexts: number[] = []
     const log = narratingLog(
@@ -384,13 +389,13 @@ describe('the narrating Log sink', () => {
   })
 
   test("a round's end states the confidence its gate read recorded, as the standalone's narration does", () => {
-    const path = join(mkdtempSync(join(tmpdir(), 'narration-sink-')), 'driver.log')
+    const path = join(fixtureDir('narration-sink-'), 'driver.log')
     const log = narratingLog(() => {}, path, TASK)
     const base = { kind: 'dev_review_loop', payload: {}, loop_id: 'l', task: TASK, round: 1 }
     log({ ...base, event: 'round_started' })
     log({ ...base, event: 'gate_result_read', green: true, confidence_value: 90 })
     log({ ...base, event: 'round_ended', outcome: 'green' })
-    const expectedPath = join(mkdtempSync(join(tmpdir(), 'narration-expected-')), 'driver.log')
+    const expectedPath = join(fixtureDir('narration-expected-'), 'driver.log')
     const events = [
       { ...base, event: 'round_started' },
       { ...base, event: 'gate_result_read', green: true, confidence_value: 90 },

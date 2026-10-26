@@ -1,7 +1,7 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { MemorySaver } from '@langchain/langgraph'
-import { mkdtempSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parse } from 'yaml'
 import {
@@ -292,7 +292,7 @@ function setup(scenario: Scenario = {}) {
     emitted.push({ event, enveloped: { ...event, ...envelope(emitted.length) } })
   )
 
-  const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: mkdtempSync(`${tmpdir()}/log-roles-`) })
+  const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: fixtureDir('log-roles-') })
   // The role launcher stubs are plain spawn stubs: nothing here hands them the emit function.
   const spawnFn: ProcessRunOptions['spawnFn'] = () => fakeAgent()
   const options: ProcessRunOptions = {
@@ -300,7 +300,7 @@ function setup(scenario: Scenario = {}) {
     question: 'the task',
     bindings: { actions: recordingActions(stubs, translator), decisions, roles },
     checkpointer: new MemorySaver(),
-    workingDirectoryRoot: mkdtempSync(`${tmpdir()}/log-root-`),
+    workingDirectoryRoot: fixtureDir('log-root-'),
     spawnFn,
     onEvent: (event) => {
       const before = translator.produced.length
@@ -441,7 +441,7 @@ describe('the Engine path writes the review loop events from the run', () => {
   })
 
   test('the role launchers are handed no emit function, and no role may write to the Log', () => {
-    const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: mkdtempSync(`${tmpdir()}/log-roles-`) })
+    const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: fixtureDir('log-roles-') })
     for (const launcher of Object.values(roles)) {
       expect(Object.keys(launcher).sort()).toEqual(['allowedPermissions', 'buildArgs', 'command', 'env'])
     }
@@ -602,7 +602,7 @@ describe('the deciding steps write their own rows', () => {
 
   test('a reviewer with no usable review on its fresh retry writes its role attempt, then the pause', async () => {
     const task = {
-      runtimeDir: mkdtempSync(`${tmpdir()}/log-reviewers-`),
+      runtimeDir: fixtureDir('log-reviewers-'),
       issueNumber: 1570,
       worktreePath: '/missing',
       loopState: initialLoopState(config),
@@ -660,7 +660,7 @@ describe('the deciding steps write their own rows', () => {
       }
     }
     const task = {
-      runtimeDir: mkdtempSync(`${tmpdir()}/log-unpushed-`),
+      runtimeDir: fixtureDir('log-unpushed-'),
       issueNumber: 1570,
       branch: 'task/issue-1570',
       worktreePath: '/missing',
@@ -716,7 +716,7 @@ describe('the handoff writes its rows', () => {
       log: (event: unknown) => void events.push(event as Record<string, unknown>)
     }
     recorded.postResult = { attempts: 3, posted: true }
-    const runtimeDir = mkdtempSync(`${tmpdir()}/handoff-log-`)
+    const runtimeDir = fixtureDir('handoff-log-')
     createHandoff(
       {
         task: 1570,

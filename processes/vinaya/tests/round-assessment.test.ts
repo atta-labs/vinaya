@@ -1,7 +1,7 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { assessRound, initialLoopState, type LoopState, type VerdictObservation } from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
@@ -29,7 +29,7 @@ type Action = (context: never) => Promise<{ exitCode: number; stdout?: string }>
 
 // A worktree whose `origin/main` sits one commit behind HEAD, so the gate observation can read a diff.
 function worktree(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'round-wt-'))
+  const dir = fixtureDir('round-wt-')
   const git = (...args: string[]) =>
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' }).trim()
   git('init', '-q')
@@ -270,7 +270,7 @@ describe('the round assessment across a resume', () => {
 
   for (const vendor of ['claude-code', 'codex'] as const) {
     test(`a halted run resumed on a new saver carries the round and the pending round forward (${vendor})`, async () => {
-      const root = mkdtempSync(join(tmpdir(), 'round-resume-'))
+      const root = fixtureDir('round-resume-')
       const file = join(root, 'run', 'checkpoints.sqlite')
       const control = createRunControl()
       const verdictsByRound = [changesRequested, approving]

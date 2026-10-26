@@ -1,7 +1,7 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { DEFAULT_REVIEW_POLICY, initialLoopState, objectivesVersion, type VerdictObservation } from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike, type StepNodeResult } from '@atta/executor-agent-spawn'
@@ -24,7 +24,7 @@ const AGENTS: readonly Agent[] = ['claude', 'codex']
 
 /** A git repository whose `origin/main` sits one commit behind HEAD, so a round's diff can be read. */
 function worktree(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'completion-wt-'))
+  const dir = fixtureDir('completion-wt-')
   const git = (...args: string[]) =>
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' }).trim()
   git('init', '-q')
@@ -126,7 +126,7 @@ interface Observed {
 }
 
 async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
-  const root = mkdtempSync(join(tmpdir(), 'completion-run-'))
+  const root = fixtureDir('completion-run-')
   const runtimeDir = join(root, 'runtime')
   mkdirSync(runtimeDir)
   const savedHome = process.env.CODEX_HOME
@@ -493,7 +493,7 @@ describe.each(AGENTS)('the deferred-findings Issue (%s)', (agent) => {
 
 describe.each(AGENTS)('the reviewer prompts (%s)', (agent) => {
   async function prompts(resolveReviewerDoctrine?: (role: 'reviewer' | 'security') => Promise<string | null>) {
-    const repo = mkdtempSync(join(tmpdir(), 'completion-prompt-'))
+    const repo = fixtureDir('completion-prompt-')
     const runtimeDir = join(repo, 'runtime')
     mkdirSync(runtimeDir)
     const git = (...args: string[]) =>
