@@ -111,6 +111,18 @@ export interface ProcessRunOptions {
    * the checkpointer's own `assertPersisted` when it has one; a throw fails the step before it does anything.
    */
   persistenceBarrier?: () => Promise<void>
+  /** Re-dispatches an agent turn once when its dispatch lost what it needed to run (its tool host, say). */
+  agentRedispatch?: AgentRedispatch
+}
+
+/**
+ * The one same-turn re-dispatch of an agent step: after a dispatch ends, `lost` says why it lost what it needed, or
+ * null when it did not. A lost turn is dispatched again exactly once, with the same prompt and session, after
+ * `boundary` repaired the loss; a re-dispatch that is lost too fails the step with both reasons.
+ */
+export interface AgentRedispatch {
+  lost: (stepId: string) => string | null
+  boundary: (stepId: string) => Promise<void>
 }
 
 export type StepPrompt = (
@@ -176,7 +188,8 @@ function nodeExecutor(
   spawnFn: SpawnFn | undefined,
   stepPrompts: Readonly<Record<string, StepPrompt>> = {},
   continueSessions: readonly string[] = [],
-  persistenceBarrier?: () => Promise<void>
+  persistenceBarrier?: () => Promise<void>,
+  redispatch?: AgentRedispatch
 ): AgentLifecycleNodeExecutor {
   return async (state: AgentSpawnGraphStateValue, { node, plan, signal }) => {
     await persistenceBarrier?.()
@@ -212,7 +225,17 @@ function nodeExecutor(
     const prompt = complete
       ? await complete(rendered, state.results, resumeSessionId === undefined ? {} : { resumeSessionId })
       : rendered
-    const result = await executeAgentSpawnNode({ node, prompt, resumeSessionId, config, spawnFn, signal })
+    let result = await executeAgentSpawnNode({ node, prompt, resumeSessionId, config, spawnFn, signal })
+    const lost = redispatch?.lost(node.id) ?? null
+    if (redispatch && lost !== null) {
+      // The same turn again: the lost dispatch's output is discarded, never reported, and its effects are the
+      // records' to reconcile.
+      await redispatch.boundary(node.id)
+      result = await executeAgentSpawnNode({ node, prompt, resumeSessionId, config, spawnFn, signal })
+      const again = redispatch.lost(node.id)
+      if (again !== null)
+        throw new Error(`step "${node.id}" was dispatched twice and lost both times: ${lost}; then ${again}`)
+    }
     // The executor's own node executor reports what the agent printed as streaming events; this one
     // replaces it, so it reports the same records the same way.
     for (const reported of result.events) {
@@ -272,7 +295,8 @@ function prepare(options: ProcessRunOptions): PreparedLeg {
       options.spawnFn,
       options.stepPrompts,
       options.continueSessions,
-      options.persistenceBarrier ?? checkpointerBarrier(options.checkpointer)
+      options.persistenceBarrier ?? checkpointerBarrier(options.checkpointer),
+      options.agentRedispatch
     )
   }
 }
