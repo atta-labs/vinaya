@@ -65,12 +65,14 @@ import { dirname, join, resolve, sep } from 'node:path'
 import {
   type EffectRecord,
   type EscalationRecord,
+  type ExecutionRoundMirrorRecord,
   type InputRecord,
   type LoopStateRecord,
   type ManifestRecord,
   type OwnershipRecord,
   parseEffectRecord,
   parseEscalationRecord,
+  parseExecutionRoundMirrorRecord,
   parseInputRecord,
   parseLoopStateRecord,
   parseManifestRecord,
@@ -574,6 +576,11 @@ function effectDir(root: string, task: number): string {
   return join(taskRoot(root, task), 'effect')
 }
 
+function executionRoundPath(root: string, task: number, threadId: string): string {
+  assertSafeRunId(threadId)
+  return join(taskRoot(root, task), 'execution-round', `${threadId}.json`)
+}
+
 function escalationPath(root: string, task: number, escalationId: string): string {
   assertSafeEscalationId(escalationId)
   return join(taskRoot(root, task), 'escalation', `${escalationId}.json`)
@@ -941,6 +948,45 @@ export function markEffectUncertain(
     status: 'uncertain',
     recordedAt: deps.now().toISOString()
   })
+}
+
+/**
+ * Every effect record on disk for `task`, each as its own three-way read: what a resume cross-checks its restored
+ * execution round against before any dispatch. A corrupt record is returned as `'corrupt'`, never dropped.
+ */
+export function readEffects(deps: Pick<ControlStoreDeps, 'root'>, task: number): ParsedRecord<EffectRecord>[] {
+  const dir = effectDir(deps.root(), task)
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter((entry) => entry.endsWith('.json'))
+    .sort()
+    .map((entry) => readRecord(join(dir, entry), parseEffectRecord))
+}
+
+export type ExecutionRoundMirrorInput = Omit<ExecutionRoundMirrorRecord, 'version' | 'kind' | 'task'>
+
+/**
+ * Writes the mirror of one checkpoint thread's execution round. Not epoch-fenced, as `writeLoopState` is not: the
+ * checkpoint is the authority and this record only mirrors it, so a resume rewrites it from the checkpoint whenever
+ * the two disagree. The write is atomic and throws on failure: a caller treats it as a required write.
+ */
+export function writeExecutionRoundMirror(
+  deps: ControlStoreDeps,
+  task: number,
+  input: ExecutionRoundMirrorInput
+): ExecutionRoundMirrorRecord {
+  const record: ExecutionRoundMirrorRecord = { version: 1, kind: 'execution_round', task, ...input }
+  atomicWriteFile(executionRoundPath(deps.root(), task, input.threadId), JSON.stringify(record), deps.root())
+  return record
+}
+
+/** The execution-round mirror recorded for `(task, threadId)`, or `'absent'`/`'corrupt'`. */
+export function readExecutionRoundMirror(
+  deps: Pick<ControlStoreDeps, 'root'>,
+  task: number,
+  threadId: string
+): ParsedRecord<ExecutionRoundMirrorRecord> {
+  return readRecord(executionRoundPath(deps.root(), task, threadId), parseExecutionRoundMirrorRecord)
 }
 
 export type EscalationInput = Omit<EscalationRecord, 'version' | 'kind' | 'task'>

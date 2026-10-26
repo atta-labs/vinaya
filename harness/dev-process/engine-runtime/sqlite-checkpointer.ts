@@ -29,6 +29,9 @@ export const ENGINE_RUNTIME_VERSION = `${enginePackage.name}@${enginePackage.ver
 /** Channel carrying packets sent to nodes but not yet processed; the checkpoint omits them. */
 const TASKS_CHANNEL = '__pregel_tasks'
 
+/** The executor's channel of recorded step results. */
+const RESULTS_CHANNEL = 'results'
+
 /** Special writes take negative slots so they never collide with a step's regular writes. */
 const SPECIAL_WRITE_SLOTS: Readonly<Record<string, number>> = {
   __error__: -1,
@@ -147,6 +150,41 @@ export interface SqliteCheckpointerOptions {
   formatVersion?: number
   /** The Engine runtime version recorded on every checkpoint; the running one unless a test writes another. */
   runtimeVersion?: string
+  /** The agent the run was started with, recorded on every checkpoint; unrecorded (null) when absent. */
+  agent?: string
+  /**
+   * Called after each database write has committed, with what it committed. A throw is a failed required write: the
+   * saver keeps it and `assertPersisted` raises it, so the run pauses before its next step without undoing the commit.
+   */
+  onCommit?: (commit: CheckpointCommit) => void
+}
+
+/** One committed database write: a full checkpoint, or the pending writes of a completed step. */
+export interface CheckpointCommit {
+  threadId: string
+  checkpointNs: string
+  /** The checkpoint the write is stored under; for pending writes, the last full checkpoint they apply to. */
+  checkpointId: string
+  kind: 'checkpoint' | 'writes'
+  /** The step results the write carries: a full checkpoint's whole `results` channel, or one step's own result. */
+  results: Readonly<Record<string, unknown>>
+}
+
+/** The results a thread continues from: its latest full checkpoint's `results` with its pending writes applied. */
+export interface EffectiveResults {
+  checkpointId: string
+  results: Record<string, unknown>
+}
+
+/** A required write that followed a committed checkpoint write failed: the run must not progress past it. */
+export class CheckpointCommitFollowUpError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `a required write after a committed checkpoint failed, so the run pauses before its next step: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause }
+    )
+    this.name = 'CheckpointCommitFollowUpError'
+  }
 }
 
 interface CheckpointRow {
@@ -161,6 +199,7 @@ interface CheckpointRow {
   model: string
   format_version: number | null
   runtime_version: string | null
+  agent: string | null
 }
 
 interface WriteRow {
@@ -186,6 +225,9 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
   private readonly model: string
   private readonly formatVersion: number
   private readonly runtimeVersion: string
+  private readonly agent: string | null
+  private readonly onCommit: ((commit: CheckpointCommit) => void) | undefined
+  private commitFailure: CheckpointCommitFollowUpError | null = null
 
   /** Opens or creates the file; throws `CheckpointCorruptError` when it is not a checkpoint file this saver can read. */
   constructor(options: SqliteCheckpointerOptions) {
@@ -196,6 +238,8 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
     this.model = options.model ?? ''
     this.formatVersion = options.formatVersion ?? CHECKPOINT_FORMAT_VERSION
     this.runtimeVersion = options.runtimeVersion ?? ENGINE_RUNTIME_VERSION
+    this.agent = options.agent ?? null
+    this.onCommit = options.onCommit
     try {
       this.db = new Database(options.path, { create: true })
     } catch (error) {
@@ -224,6 +268,7 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
         model TEXT NOT NULL,
         format_version INTEGER,
         runtime_version TEXT,
+        agent TEXT,
         PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
       );
       CREATE TABLE IF NOT EXISTS writes (
@@ -247,6 +292,7 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
     )
     if (!columns.has('format_version')) this.db.exec('ALTER TABLE checkpoints ADD COLUMN format_version INTEGER')
     if (!columns.has('runtime_version')) this.db.exec('ALTER TABLE checkpoints ADD COLUMN runtime_version TEXT')
+    if (!columns.has('agent')) this.db.exec('ALTER TABLE checkpoints ADD COLUMN agent TEXT')
   }
 
   /** Closes the file; the saver is unusable afterwards. */
@@ -277,6 +323,57 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
         .get(threadId, checkpointNs, checkpointId)
     )
     return row ? provenanceOfRow(row) : undefined
+  }
+
+  /** The agent recorded on the thread's latest checkpoint: null when unrecorded, undefined when it has no checkpoint. */
+  latestAgent(threadId: string, checkpointNs = ''): string | null | undefined {
+    const row = this.read(() =>
+      this.db
+        .query<{ agent: string | null }, [string, string]>(
+          `SELECT agent FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ?
+           ORDER BY checkpoint_id DESC LIMIT 1`
+        )
+        .get(threadId, checkpointNs)
+    )
+    return row ? row.agent : undefined
+  }
+
+  /**
+   * The `results` a resume of the thread continues from: the latest full checkpoint's, with the pending writes of
+   * the steps that completed after it applied, as the executor applies them on resume. Undefined when the thread has
+   * no checkpoint.
+   */
+  async effectiveResults(threadId: string, checkpointNs = ''): Promise<EffectiveResults | undefined> {
+    const tuple = await this.getTuple({ configurable: { thread_id: threadId, checkpoint_ns: checkpointNs } })
+    if (tuple === undefined) return undefined
+    const stored = (tuple.checkpoint.channel_values as Record<string, unknown>).results
+    const results: Record<string, unknown> = { ...((stored as Record<string, unknown> | undefined) ?? {}) }
+    for (const [, channel, value] of tuple.pendingWrites ?? []) {
+      if (channel === RESULTS_CHANNEL && value !== null && typeof value === 'object') Object.assign(results, value)
+    }
+    return { checkpointId: tuple.checkpoint.id, results }
+  }
+
+  /**
+   * Raises the failure of a required write that followed a committed checkpoint write, once every save the executor
+   * has scheduled so far has run. A run calls it before each step, so nothing dependent starts past a failed write.
+   */
+  async assertPersisted(): Promise<void> {
+    await new Promise((settle) => setImmediate(settle))
+    if (this.commitFailure !== null) throw this.commitFailure
+  }
+
+  /**
+   * Hands a committed write to `onCommit`. A throw is kept for `assertPersisted` rather than raised here: the commit
+   * stands, the executor's later saves still run in order, and the run stops at its next step's barrier.
+   */
+  private committed(commit: CheckpointCommit): void {
+    if (this.onCommit === undefined || this.commitFailure !== null) return
+    try {
+      this.onCommit(commit)
+    } catch (error) {
+      this.commitFailure = new CheckpointCommitFollowUpError(error)
+    }
   }
 
   /** One read of the file; a file it cannot read is reported as corrupt. */
@@ -428,8 +525,8 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
       .query(
         `INSERT OR REPLACE INTO checkpoints
          (thread_id, checkpoint_ns, checkpoint_id, parent_id, type, checkpoint, metadata, revision, model,
-          format_version, runtime_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          format_version, runtime_version, agent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         threadId,
@@ -442,8 +539,17 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
         this.revision,
         this.model,
         this.formatVersion,
-        this.runtimeVersion
+        this.runtimeVersion,
+        this.agent
       )
+    const results = (checkpoint.channel_values as Record<string, unknown>)[RESULTS_CHANNEL]
+    this.committed({
+      threadId,
+      checkpointNs: ns,
+      checkpointId: checkpoint.id,
+      kind: 'checkpoint',
+      results: (results as Record<string, unknown> | undefined) ?? {}
+    })
     return { configurable: { thread_id: threadId, checkpoint_ns: ns, checkpoint_id: checkpoint.id } }
   }
 
@@ -474,5 +580,11 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
         statement.run(threadId, ns, checkpointId, taskId, special ?? index, channel, type, serialized)
       })
     })()
+    const results: Record<string, unknown> = {}
+    for (const [channel, value] of writes) {
+      if (channel === RESULTS_CHANNEL && value !== null && typeof value === 'object') Object.assign(results, value)
+    }
+    if (Object.keys(results).length > 0)
+      this.committed({ threadId, checkpointNs: ns, checkpointId, kind: 'writes', results })
   }
 }
