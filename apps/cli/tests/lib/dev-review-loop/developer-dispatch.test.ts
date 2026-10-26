@@ -11,7 +11,8 @@ import {
   DEVELOPER_CHECKLIST_HEADINGS,
   developerBranchFor,
   extractDeveloperSection,
-  launchNeverSpawned,
+  freshDispatchLogLine,
+  launchEnded,
   reconcileLaunch,
   type ReconcileLaunchDeps,
   renderDeveloperDoctrineBlock,
@@ -149,10 +150,10 @@ describe('checkTaskDispatchReadiness', () => {
   })
 })
 
-// A launch refused before any vendor
-// process started has no session AND no turn state to lose, so recovery
-// dispatches a fresh developer session instead of pausing the task forever;
-// a launch that DID spawn and lost its session still pauses, unchanged.
+// A Developer launch that ended without ever binding a vendor session has no
+// session AND no turn state to lose, so recovery dispatches a fresh developer
+// session instead of pausing the task forever; a launch whose process is still
+// alive is never raced, and a bound session still resumes exactly.
 
 const RECOVERY_HOST = 'recovery-test-host'
 
@@ -183,12 +184,23 @@ function launchRecord(overrides: Partial<LaunchRecord> = {}): LaunchRecord {
   }
 }
 
-/** Deps that find no process at all — every case below reconciles a launch that is already over. */
+/** Deps that find no process at all — the prior launch's child and dispatcher are both gone. */
 const noProcess: ReconcileLaunchDeps = {
   isPidAlive: () => false,
   hostname: () => RECOVERY_HOST,
   getProcessSnapshot: () => null,
   terminateChild: () => {}
+}
+
+/** Deps under which `record`'s child still answers at its pid, parented to `ppid`, with only the pids in `alive` alive. */
+function processAt(record: LaunchRecord, ppid: number, alive: number[]): ReconcileLaunchDeps {
+  return {
+    isPidAlive: (pid) => alive.includes(pid),
+    hostname: () => RECOVERY_HOST,
+    getProcessSnapshot: (pid) =>
+      pid === record.childPid ? { ppid, startedAt: record.childStartedAt, command: record.childCommand } : null,
+    terminateChild: () => {}
+  }
 }
 
 /** The pre-spawn refusal shape `dispatchRole` writes: a terminal record, a reason, and no child pid ever stamped. */
@@ -208,51 +220,118 @@ function preSpawnRefusal(failureReason: LaunchRecord['failureReason']): { status
   }
 }
 
-describe('reconcileLaunch — a launch refused before any process started (O1/O2)', () => {
-  it.each([['authentication-failed'], ['startup-failed'], ['hook-setup-failed'], ['refused']] as const)(
-    'a pre-spawn %s refusal dispatches fresh — never the continuity pause',
+/** A launch that spawned its child and ended with no session bound. */
+function endedUnbound(overrides: Partial<LaunchRecord>): ParsedLaunch {
+  return { status: 'ok', record: launchRecord({ resumeId: null, boundAt: null, ...overrides }) }
+}
+
+describe('reconcileLaunch — a launch that ended before binding a session dispatches fresh (O1)', () => {
+  it.each([
+    ['authentication-failed'],
+    ['startup-failed'],
+    ['hook-setup-failed'],
+    ['refused'],
+    ['connection-failed']
+  ] as const)('a pre-spawn %s refusal dispatches fresh — never the continuity pause', (failureReason) => {
+    const out = reconcileLaunch(preSpawnRefusal(failureReason), { requireContinuity: true }, noProcess)
+    expect(out.kind).toBe('fresh')
+  })
+
+  it('a launch stopped by a signal before its session bound (process gone, no session) dispatches fresh', () => {
+    const out = reconcileLaunch(
+      endedUnbound({ status: 'interrupted', failureReason: 'signal' }),
+      { requireContinuity: true },
+      noProcess
+    )
+    expect(out.kind).toBe('fresh')
+    if (out.kind === 'fresh') expect(out.outcome.status).toBe('cancelled')
+  })
+
+  it('a launch whose agent exited on a sign-in failure before binding dispatches fresh', () => {
+    const out = reconcileLaunch(
+      endedUnbound({ status: 'interrupted', failureReason: 'authentication-failed' }),
+      { requireContinuity: true },
+      noProcess
+    )
+    expect(out.kind).toBe('fresh')
+  })
+
+  it.each([['crash'], ['unbound'], ['timeout'], [null]] as const)(
+    'a spawned launch that ended %s with no session bound dispatches fresh',
     (failureReason) => {
-      const out = reconcileLaunch(preSpawnRefusal(failureReason), { requireContinuity: true }, noProcess)
+      const status = failureReason === null ? 'completed' : 'interrupted'
+      const out = reconcileLaunch(endedUnbound({ status, failureReason }), { requireContinuity: true }, noProcess)
       expect(out.kind).toBe('fresh')
     }
   )
 
-  it('is decided from the record, not from the reason string — an unrecognised future pre-spawn reason needs no new case', () => {
-    // `launchNeverSpawned` is the whole decision, and it never reads which
-    // reason the record carries: a reason this code has never heard of, on
-    // the same never-spawned lifecycle shape, still dispatches fresh.
-    expect(launchNeverSpawned(preSpawnRefusal('connection-failed').record)).toBe(true)
+  it('a runner launch left `launched` with no child pid dispatches fresh once its dispatcher is gone', () => {
+    // The Engine runner records no child pid; a run stopped before its session
+    // bound leaves the record non-terminal, and the dispatcher is the probe.
+    const parsed = endedUnbound({ status: 'launched', childPid: null, finishedAt: null })
+    expect(reconcileLaunch(parsed, { requireContinuity: true }, noProcess).kind).toBe('fresh')
   })
 
-  it('a launch that DID spawn and lost its session still pauses — continuity is only waived when there was none', () => {
-    const parsed: ParsedLaunch = {
-      status: 'ok',
-      record: launchRecord({ status: 'interrupted', failureReason: 'crash', resumeId: null, boundAt: null })
-    }
-    const out = reconcileLaunch(parsed, { requireContinuity: true }, noProcess)
+  it('a launch left `launched` on another host, which can never be probed here, dispatches fresh', () => {
+    const parsed = endedUnbound({ status: 'launched', childPid: null, finishedAt: null, host: 'elsewhere' })
+    const deps = { ...noProcess, isPidAlive: () => true }
+    expect(reconcileLaunch(parsed, { requireContinuity: true }, deps).kind).toBe('fresh')
+  })
+
+  it("carries the prior attempt's outcome and failure reason into the run-log line (O4)", () => {
+    const out = reconcileLaunch(
+      endedUnbound({ attempt: 7, status: 'interrupted', failureReason: 'signal' }),
+      { requireContinuity: true },
+      noProcess
+    )
+    if (out.kind !== 'fresh') throw new Error(`expected fresh, got ${out.kind}`)
+    const line = freshDispatchLogLine(out)
+    expect(line).toContain('launch_ended_unbound')
+    expect(line).toContain('attempt=7')
+    expect(line).toContain('outcome=cancelled')
+    expect(line).toContain('reason=signal')
+    expect(line).toContain('dispatching a fresh developer session')
+  })
+})
+
+describe('reconcileLaunch — a launch whose process may still run is never raced (O2)', () => {
+  it('a live prior launch, with no session bound, is reported live', () => {
+    const record = launchRecord({ status: 'launched', resumeId: null, boundAt: null, finishedAt: null })
+    const out = reconcileLaunch({ status: 'ok', record }, { requireContinuity: true }, processAt(record, 1000, [1000]))
+    expect(out.kind).toBe('live')
+  })
+
+  it('an orphaned child not yet reaped pauses — never a fresh session beside it', () => {
+    const record = launchRecord({ status: 'launched', resumeId: null, boundAt: null, finishedAt: null })
+    // Alive, but reparented to init: still running until it is reaped.
+    expect(launchEnded(record, processAt(record, 1, []))).toBe(false)
+    const out = reconcileLaunch({ status: 'ok', record }, { requireContinuity: true }, processAt(record, 1, []))
     expect(out.kind).toBe('pause')
-    if (out.kind === 'pause') expect(out.detail).toContain('would lose worker continuity')
+    if (out.kind === 'pause') expect(out.detail).toContain('may still be running')
   })
 
-  it('a launch interrupted before its pid was ever stamped is possibly-spawned, and still pauses', () => {
-    // The dispatcher died in the window between `spawn` returning and the
-    // pid being stamped: the record never reached a terminal state, so
-    // "no pid on record" is not proof that nothing ran.
-    const parsed: ParsedLaunch = {
-      status: 'ok',
-      record: launchRecord({ status: 'launched', failureReason: null, childPid: null, resumeId: null, boundAt: null })
-    }
-    expect(launchNeverSpawned(parsed.record)).toBe(false)
-    expect(reconcileLaunch(parsed, { requireContinuity: true }, noProcess).kind).toBe('pause')
+  it('a launch left `launched` with no child pid pauses while its dispatcher is still alive', () => {
+    const parsed = endedUnbound({ status: 'launched', childPid: null, finishedAt: null })
+    const deps = { ...noProcess, isPidAlive: (pid: number) => pid === 1000 }
+    expect(reconcileLaunch(parsed, { requireContinuity: true }, deps).kind).toBe('pause')
+  })
+})
+
+describe('reconcileLaunch — a bound session still resumes exactly (O3)', () => {
+  it('a finished launch resumes its exact session', () => {
+    const out = reconcileLaunch({ status: 'ok', record: launchRecord() }, { requireContinuity: true }, noProcess)
+    expect(out).toMatchObject({ kind: 'resume', resumeId: 'sess-1' })
   })
 
-  it('a pre-spawn refusal whose session was somehow bound still resumes that exact session', () => {
+  it('an attempt interrupted after binding resumes that exact session, never a fresh one', () => {
     const parsed: ParsedLaunch = {
       status: 'ok',
       record: launchRecord({ status: 'interrupted', failureReason: 'authentication-failed', resumeId: 'sess-live' })
     }
-    const out = reconcileLaunch(parsed, { requireContinuity: true }, noProcess)
-    expect(out.kind).toBe('resume')
+    expect(reconcileLaunch(parsed, { requireContinuity: true }, noProcess)).toMatchObject({
+      kind: 'resume',
+      resumeId: 'sess-live'
+    })
   })
 })
 

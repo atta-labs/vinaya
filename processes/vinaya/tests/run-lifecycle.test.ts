@@ -736,17 +736,18 @@ describe('recovering a re-run', () => {
     expect(run.trace(result.tracePath).error).toContain('is still running')
   })
 
-  test('a launch that spawned but never bound a session cannot be resumed, so nothing is dispatched', async () => {
+  test('a launch that ended before binding a session dispatches a fresh Developer, and the Log records the prior attempt', async () => {
     const run = stubRun({
       lifecycle: {
         recovery: recoveryDeps({
-          readLaunch: () => ({ status: 'ok', record: launchRecord({ status: 'interrupted', failureReason: 'crash' }) })
+          readLaunch: () => ({ status: 'ok', record: launchRecord({ status: 'interrupted', failureReason: 'signal' }) })
         })
       }
     })
     const result = await runEngine(run.options)
-    expect(result.exitCode).toBe(2)
-    expect(run.spawns).toEqual([])
+    expect(result.exitCode).toBe(0)
+    expect(run.spawns).toEqual(['develop', 'code-review', 'security-review'])
+    expect(run.driverLog()).toContain('launch_ended_unbound: attempt=1 outcome=cancelled reason=signal')
   })
 
   test('a corrupt launch record is reconciled as a pause, never a silent fresh start', () => {

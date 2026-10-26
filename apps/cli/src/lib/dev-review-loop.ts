@@ -210,6 +210,7 @@ import {
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchPrBody,
+  freshDispatchLogLine,
   fetchRulings,
   fetchRulingText,
   fetchSourceRevision,
@@ -5200,10 +5201,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * so a second worker never races the first and a lost session pauses
      * explicitly instead of silently starting fresh. A recoverable session
      * (now including one bound on an INTERRUPTED attempt — O1) sets
-     * `devResumeId` to the exact session. A launch refused before any vendor
-     * process was ever spawned is `fresh`, never a pause: there is no session
-     * and no turn state to lose, so the round dispatches a fresh developer
-     * session (a sign-in refusal used to block the task here forever).
+     * `devResumeId` to the exact session. A launch that ended without ever
+     * binding a session is `fresh`, never a pause: there is no session and
+     * no turn state to lose, so the round dispatches a fresh developer
+     * session (a sign-in failure used to block the task here forever).
      * `none` — no launch record, the
      * common case, and the only case every existing fixture reaches with its
      * scratch `$HOME` — falls back to the durable resume-record read the loop
@@ -5222,19 +5223,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         return
       }
       if (recon.kind === 'fresh') {
-        // A launch refused before any vendor process started (a sign-in
-        // refusal, a sandbox start-up refusal) — narrated in this driver's
-        // own role log, never a pause: nothing was ever running, so the
-        // dispatch below simply starts a fresh session. Falls through to the
-        // same resume-record read as 'none': that record is the bound-session
-        // view of this very launch record, so it reads `null` here and leaves
-        // whatever session an EARLIER, genuinely-spawned attempt bound intact
-        // rather than throwing continuity away on this refusal's account.
-        appendRoleLine(
-          loopLogPath,
-          'dev-review-loop',
-          `launch_never_spawned: attempt=${recon.record.attempt} reason=${recon.record.failureReason ?? 'unknown'} — dispatching a fresh developer session`
-        )
+        // A launch that ended before binding a session (a refusal before
+        // spawn, a signal, a sign-in failure) — narrated in this driver's
+        // own role log with its outcome and reason, never a pause: no session
+        // ever existed, so the dispatch below simply starts a fresh one. Falls
+        // through to the same resume-record read as 'none': that record is the
+        // bound-session view of this very launch record, so it reads `null`
+        // here and leaves whatever session an EARLIER attempt bound intact
+        // rather than throwing continuity away on this attempt's account.
+        appendRoleLine(loopLogPath, 'dev-review-loop', freshDispatchLogLine(recon))
       }
       // 'none' | 'finished' | 'fresh' — no continuity-required session to reconcile;
       // fall back to the durable resume-record read the loop already used.
