@@ -52,9 +52,17 @@ export async function releaseFixtureRun(remover: readonly string[] = ['rm', '-rf
     const claimed = ${JSON.stringify(result.claimed)};
     const receipt = ${JSON.stringify(receipt)};
     const command = ${JSON.stringify(remover)};
+    const deadline = Date.now() + ${PROCESS_FIXTURE_BUDGET_MS};
+    const execute = (executable, args) => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error('cleanup exceeded its process budget');
+      const result = spawnSync(executable, args, { encoding: 'utf8', timeout: remaining, killSignal: 'SIGKILL' });
+      if (result.error || result.status !== 0) throw new Error('cleanup ' + executable + ' exit ' + result.status + ': ' + (result.error?.message ?? result.stderr));
+    };
     try {
-      const result = spawnSync(command[0], [...command.slice(1), claimed], { encoding: 'utf8', timeout: ${PROCESS_FIXTURE_BUDGET_MS}, killSignal: 'SIGKILL' });
-      if (result.error || result.status !== 0) throw new Error('cleanup exit ' + result.status + ': ' + (result.error?.message ?? result.stderr));
+      // Restore only owner write within the claimed tree; never follow links into another directory.
+      execute('chmod', ['-R', 'u+w', claimed]);
+      execute(command[0], [...command.slice(1), claimed]);
       rmSync(receipt, { force: true });
     } catch (error) {
       let message = String(error);

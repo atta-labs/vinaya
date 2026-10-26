@@ -131,6 +131,49 @@ describe('shared-directory cleanup', () => {
 })
 
 describe('fixture cleanup reporting', () => {
+  test('released reviewer candidates regain owner write without changing symlink targets outside the owned run', () => {
+    const root = fixtureDir('readonly-candidate-cleanup-')
+    try {
+      const module = resolve(import.meta.dir, 'test-temp-fixture.ts')
+      const child = spawnSyncBudgeted(
+        process.execPath,
+        [
+          '--eval',
+          `
+        import { fixtureDir, releaseFixtureRun } from ${JSON.stringify(module)};
+        import { mkdirSync, writeFileSync, chmodSync, symlinkSync, statSync, existsSync } from 'node:fs';
+        import { join, dirname, basename } from 'node:path';
+        const outside = ${JSON.stringify(join(root, 'outside'))};
+        mkdirSync(outside);
+        writeFileSync(join(outside, 'keep.md'), 'keep');
+        chmodSync(join(outside, 'keep.md'), 0o444);
+        chmodSync(outside, 0o555);
+        const fixture = fixtureDir('review-');
+        const candidate = join(fixture, 'candidate');
+        mkdirSync(candidate);
+        writeFileSync(join(candidate, 'docs.md'), 'reviewed content');
+        symlinkSync(outside, join(candidate, 'external'), 'dir');
+        chmodSync(join(candidate, 'docs.md'), 0o444);
+        chmodSync(candidate, 0o555);
+        chmodSync(fixture, 0o555);
+        const run = dirname(fixture);
+        const claimed = join(dirname(run), '.removing-' + basename(run));
+        const error = await releaseFixtureRun();
+        console.log(JSON.stringify({ error, remaining: existsSync(claimed), receipt: existsSync(claimed + '.owner.json'),
+          outsideMode: statSync(outside).mode & 0o777, fileMode: statSync(join(outside, 'keep.md')).mode & 0o777 }));
+      `
+        ],
+        { encoding: 'utf8', env: { ...stripVinayaEnv(), VINAYA_TEST_TMP: join(root, 'runs') } }
+      )
+      expect(child.status).toBe(0)
+      const result = JSON.parse(child.stdout.trim()) as Record<string, unknown>
+      expect(result).toEqual({ error: null, remaining: false, receipt: false, outsideMode: 0o555, fileMode: 0o444 })
+      expect(child.stderr).not.toContain('Permission denied')
+    } finally {
+      expect(removeTree(root)).toBeNull()
+    }
+  })
+
   test('a cleanup subprocess failure is returned and preserved for the next startup sweep', async () => {
     const root = fixtureDir('cleanup-report-')
     const module = resolve(import.meta.dir, 'test-temp-fixture.ts')
