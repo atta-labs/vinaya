@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { FAILED_TESTS_RECORD, gitPath } from '../../../../apps/cli/src/lib/pre-push-failed-tests'
 import { identityOf } from '../../../../apps/cli/src/lib/process-registry'
+import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
 import { ReadyGateCancelledError, runReadyGateLive } from '../../loops/dev-review/v2/flow-v2-live'
 import type { RecoveryRunner } from './runners'
 
@@ -14,7 +14,7 @@ import type { RecoveryRunner } from './runners'
 const READY_GATE_RUNNERS: readonly RecoveryRunner[] = ['engine-v2']
 
 function repo(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'ready-gate-recovery-'))
+  const dir = fixtureDir('ready-gate-recovery-')
   const env = { ...process.env }
   for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
   const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, env, stdio: 'ignore' })

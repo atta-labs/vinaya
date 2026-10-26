@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   agentCommandText,
@@ -12,6 +11,7 @@ import {
   type TestRunCacheRecord
 } from '../../../../../apps/cli/src/lib/pr-report-engine'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
+import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
 import { withReadyTestCommand } from './v2-actions'
 
 // The loop writes the ready push's own test command as the staged body's Test Plan line, so the Evidence write
@@ -36,8 +36,8 @@ const BODY = [
 ].join('\n')
 
 function worktree(): { dir: string; marker: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'ready-evidence-'))
-  const marker = join(mkdtempSync(join(tmpdir(), 'ready-evidence-marker-')), 'ran')
+  const dir = fixtureDir('ready-evidence-')
+  const marker = join(fixtureDir('ready-evidence-marker-'), 'ran')
   // A test file that leaves a marker outside the worktree whenever it really runs.
   writeFileSync(
     join(dir, 'a.test.ts'),
