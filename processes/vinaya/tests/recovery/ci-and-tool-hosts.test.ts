@@ -580,6 +580,4 @@ describe('tool hosts', () => {
       }
     )
   }
-
-  test.todo('a dead dev-tools bridge fails a Codex start loudly')
 })

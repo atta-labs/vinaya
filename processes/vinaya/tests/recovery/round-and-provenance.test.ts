@@ -126,8 +126,6 @@ describe.each(ENGINE_RUNNERS)('%s', (runner) => {
   })
 
   // The refusal of these resumes is the Engine dispatch path's, built on `readAgentProvenance` above.
-  test.todo('a resume with a different agent is refused and changes nothing')
-  test.todo('a checkpoint with no recorded agent is refused with a fresh-start instruction')
 })
 
 describe('restoring the execution round before dispatch', () => {
