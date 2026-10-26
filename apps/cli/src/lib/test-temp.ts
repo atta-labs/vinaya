@@ -24,7 +24,7 @@ import { type ProcessIdentity, type StopOptions, type StopReport, stopRegistered
 // sweep removes a directory only when its owner is gone, after stopping the owner's surviving processes.
 //
 // Removal first renames a directory to a `.removing-` name, so a removal interrupted half-way (a killed process,
-// a read-only subtree) is recognisable as released and the next sweep finishes it without asking about owners.
+// a read-only subtree) is recognisable as released. A sibling receipt preserves ownership during partial deletion.
 
 /** The environment variable that sets the test-temp root; CI sets it explicitly to a disk path. */
 export const TEST_TEMP_ROOT_ENV = 'VINAYA_TEST_TMP'
@@ -231,18 +231,22 @@ export function removeTree(dir: string): string | null {
 
 /** Releases `dir` (renamed to a `.removing-` name beside it), then removes it; the result goes into `report`. */
 function releaseAndRemove(dir: string, report: SweepReport): void {
-  const released = join(dirname(dir), `${REMOVING_PREFIX}${basename(dir)}`)
-  try {
-    renameSync(dir, released)
-  } catch (error) {
-    // Another sweep released it first; that one finishes it.
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
-    report.failed.push({ dir, error: describeError(error) })
+  const marker = readOwnerMarker(dir)
+  if (marker === null) {
+    report.failed.push({ dir, error: 'ownership marker missing; refusing removal' })
     return
   }
+  const result = claimTestTempRun({ dir, marker })
+  if ('error' in result) {
+    report.failed.push({ dir, error: result.error })
+    return
+  }
+  const released = result.claimed
   const error = removeTree(released)
-  if (error === null) report.removed.push(dir)
-  else report.failed.push({ dir, error })
+  if (error === null) {
+    rmSync(`${released}.owner.json`, { force: true })
+    report.removed.push(dir)
+  } else report.failed.push({ dir, error })
 }
 
 /**
@@ -252,6 +256,11 @@ function releaseAndRemove(dir: string, report: SweepReport): void {
 export function claimTestTempRun(run: TestTempRun): { claimed: string } | { error: string } {
   const claimed = join(dirname(run.dir), `${REMOVING_PREFIX}${basename(run.dir)}`)
   try {
+    // Outside the payload: recursive deletion can remove the inner marker before it is interrupted.
+    writeFileSync(`${claimed}.owner.json`, JSON.stringify({ original: basename(run.dir), marker: run.marker }), {
+      flag: 'wx',
+      mode: 0o600
+    })
     renameSync(run.dir, claimed)
     return { claimed }
   } catch (error) {
@@ -294,10 +303,35 @@ export async function sweepOwnedDirs(parent: string, deps: Partial<SweepDeps> = 
   }
   for (const name of names) {
     const dir = join(parent, name)
+    if (name.endsWith('.owner.json')) continue
     if (name.startsWith(REMOVING_PREFIX)) {
-      const error = removeTree(dir)
-      if (error === null) report.removed.push(dir)
-      else report.failed.push({ dir, error })
+      const original = name.slice(REMOVING_PREFIX.length)
+      if (!select(original)) continue
+      // A filename alone is never proof of ownership in a shared OS temp directory.
+      let marker = readOwnerMarker(dir)
+      const receipt = `${dir}.owner.json`
+      try {
+        const stat = lstatSync(receipt)
+        if (stat.isFile() && stat.uid === process.getuid?.() && (stat.mode & 0o022) === 0) {
+          const released = JSON.parse(readFileSync(receipt, 'utf8')) as { original: string; marker: TestTempMarker }
+          if (released.original === original && released.marker?.owner?.host === hostname()) marker = released.marker
+        }
+      } catch {
+        // Older releases still carry their intact inner marker; unknown entries must be retained.
+      }
+      if (marker === null || marker.owner.host !== hostname()) {
+        report.kept.push(dir)
+        continue
+      }
+      try {
+        await stop(marker.owner.runToken, { graceMs })
+        const error = removeTree(dir)
+        if (error !== null) throw new Error(error)
+        rmSync(receipt, { force: true })
+        report.removed.push(dir)
+      } catch (error) {
+        report.failed.push({ dir, error: describeError(error) })
+      }
       continue
     }
     if (!select(name)) continue

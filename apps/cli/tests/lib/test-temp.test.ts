@@ -12,6 +12,7 @@ import {
   readOwnerMarker,
   removeTestTempRun,
   removeTree,
+  sweepOwnedDirs,
   TEST_TEMP_ROOT_ENV,
   testTempRoot
 } from '../../src/lib/test-temp'
@@ -105,5 +106,25 @@ describe('removal', () => {
     const report = removeTestTempRun(run)
     expect(report).toEqual({ removed: [run.dir], kept: [], failed: [] })
     expect(readdirSync(root)).toEqual([])
+  })
+})
+
+describe('shared-directory cleanup', () => {
+  test('never deletes unrelated released names, even with an ownership marker outside the selection', async () => {
+    const root = fixtureDir('shared-sweep-')
+    const unrelated = join(root, '.removing-some-other-program')
+    mkdirSync(unrelated)
+    writeFileSync(join(unrelated, 'live-data'), 'keep')
+    const report = await sweepOwnedDirs(root, { select: (name) => name.startsWith('vinaya-claude-sandbox-') })
+    expect(existsSync(join(unrelated, 'live-data'))).toBe(true)
+    expect(report.removed).toEqual([])
+  })
+
+  test('requires ownership evidence before finishing a released directory', async () => {
+    const root = fixtureDir('shared-sweep-')
+    const unrelated = join(root, '.removing-foreign')
+    mkdirSync(unrelated)
+    await sweepOwnedDirs(root)
+    expect(existsSync(unrelated)).toBe(true)
   })
 })

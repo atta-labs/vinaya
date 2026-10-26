@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { StopOptions, StopReport } from '../../../../apps/cli/src/lib/process-registry'
 import {
+  claimTestTempRun,
   createTestTempRun,
   currentOwner,
   makeFixtureDir,
+  OWNER_MARKER_FILE,
   readOwnerMarker,
   sweepAbandoned,
   writeOwnerMarker
@@ -55,12 +57,13 @@ describe.each(ALL_RUNNERS)('%s', () => {
     chmodSync(join(fixture, 'cache', 'pkg'), 0o500)
     // The owner released its directory, then died before the removal finished (the marker may already be gone).
     const released = join(root, `.removing-${run.marker.owner.runToken}`)
-    renameSync(run.dir, released)
+    expect(claimTestTempRun(run)).toEqual({ claimed: released })
+    rmSync(join(released, OWNER_MARKER_FILE))
     const stops: Array<{ runToken: string; present: string[] }> = []
     const report = await sweepAbandoned('repo', { root, stop: recordingStop(root, stops) })
     expect(report).toEqual({ removed: [released], kept: [], failed: [] })
     expect(readdirSync(root)).toEqual([])
-    expect(stops).toEqual([])
+    expect(stops.map((s) => s.runToken)).toEqual([run.marker.owner.runToken])
   })
 
   test('an abandoned run directory is swept and a live owner keeps its directory', async () => {
