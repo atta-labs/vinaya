@@ -21,6 +21,7 @@ import {
   dispatchDevTool,
   type DevToolContext
 } from '../../../src/lib/task-tools/dev-tools-server.js'
+import { stripVinayaEnv } from '../process-fixture.js'
 
 /**
  * The driver-run dev-tools server (O1–O3): the seven tools over the shared wire
@@ -368,7 +369,7 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
     // This test process connects, so a dispatch launched as this process holds it; one launched as another does not.
     const own = capabilities.mint(60_000)
     capabilities.bind(own, process.pid)
-    const elsewhere = spawn('sleep', ['30'])
+    const elsewhere = spawn('sleep', ['30'], { env: stripVinayaEnv(), stdio: 'ignore' })
     const foreign = capabilities.mint(60_000)
     capabilities.bind(foreign, elsewhere.pid as number)
     const ended = capabilities.mint(60_000)
@@ -409,7 +410,7 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
         'developer:run_checks:replayed'
       ])
     } finally {
-      elsewhere.kill()
+      elsewhere.kill('SIGKILL')
       await host.close()
       rmSync(dir, { recursive: true, force: true })
     }
@@ -488,10 +489,10 @@ const CLI_ENTRY = join(import.meta.dir, '../../../src/index.ts')
 /** Runs the real bridge, sends initialize and one `run_checks` call through it, and returns the call's result. */
 function throughBridge(bridge: { command: string; args: string[] }): Promise<{ isError?: boolean }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bridge.command, bridge.args, { stdio: ['pipe', 'pipe', 'inherit'] })
+    const child = spawn(bridge.command, bridge.args, { env: stripVinayaEnv(), stdio: ['pipe', 'pipe', 'inherit'] })
     let buffer = ''
     const timeout = setTimeout(() => {
-      child.kill()
+      child.kill('SIGKILL')
       reject(new Error('the bridge returned no tool result'))
     }, 20_000)
     child.stdout.setEncoding('utf8')

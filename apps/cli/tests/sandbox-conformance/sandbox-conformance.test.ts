@@ -48,7 +48,7 @@ import {
 } from '../../src/lib/task-tools/dev-tools-server.js'
 import { expectGradingSandboxDenies, proveGradingSandbox } from '../eval/grading-sandbox-proof.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../lib/dispatch/driver-socket-reach.js'
-import { spawnSyncBudgeted } from '../lib/process-fixture.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture.js'
 import { ROLE_NAMES } from '../../../../harness/adapters/agents/manifest.js'
 import { createRoleLaunchers, sandboxProbePlanFor } from '../../../../processes/vinaya/executing/actions.js'
 import { commandsTheTextsName, DOCTRINE_SOURCES, isSuiteInput, REPO_ROOT } from './command-sources.js'
@@ -792,7 +792,7 @@ async function openControllerTargets(session: SandboxSession): Promise<{
   const dir = realpathSync(mkdtempSync(join(process.platform === 'darwin' ? '/tmp' : tmpdir(), 'vcb-')))
   const refusals: CapabilityRefusalEvent[] = []
   const dispatchProcess = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], {
-    env: { ...process.env, VINAYA_PROBE_CANARY: PROBE_CANARY },
+    env: { ...stripVinayaEnv(), VINAYA_PROBE_CANARY: PROBE_CANARY },
     stdio: 'ignore'
   })
   const dispatchPid = dispatchProcess.pid as number
@@ -830,7 +830,7 @@ async function openControllerTargets(session: SandboxSession): Promise<{
     },
     refusals,
     close: async () => {
-      dispatchProcess.kill()
+      dispatchProcess.kill('SIGKILL')
       await dispatchHost.close()
       await ownHost.close()
       rmSync(dir, { recursive: true, force: true })
