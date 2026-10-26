@@ -5,6 +5,7 @@ import type {
   RecordedSteps,
   RunEndContext
 } from '../../../harness/dev-process/logging/translate'
+import { decodeExecutionRound } from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import type { DriverExitReason } from '../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
 import { localChecksRunEvent, phaseOfStep, phaseTimeEvent } from '../../../apps/cli/src/lib/flow-v2-events'
 
@@ -284,8 +285,13 @@ export function createVinayaLogProducers(
       return resumed ? [loop({ event: 'resumed', round, by: 'principal' })] : []
     },
     // The driver's liveness is the timed heartbeat the runner emits and its exit record; no node writes either.
-    nodeStarted: ({ nodeId, attempt: started }) => {
-      if (nodeId === DEVELOP_STEP) round = Math.max(1, started)
+    nodeStarted: ({ nodeId, attempt: started, steps = {} }) => {
+      if (config.flow === 'v2') {
+        // The translator keeps the checkpointed actions' stderr. These markers carry the review counter, which
+        // advances only at the revision handoff. Read before the node runs so the handoff's own time stays in
+        // the round it closes; retries of a Developer turn cannot advance it.
+        round = Math.max(1, ...Object.values(steps).map((step) => decodeExecutionRound(step.stderr)?.round ?? 1))
+      } else if (nodeId === DEVELOP_STEP) round = Math.max(1, started)
       nodeStarts.set(nodeId, now())
       return []
     },
