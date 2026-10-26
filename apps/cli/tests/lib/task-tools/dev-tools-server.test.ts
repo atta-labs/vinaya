@@ -263,7 +263,7 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
       serverVersion: '0.0.0-test',
       context: okContext(),
       role: 'developer',
-      controllerPid: 1,
+      controllerPid: 2_147_483_647,
       capability: {
         value: 'host-only',
         expiresAt: Date.now() + 60_000,
