@@ -86,6 +86,47 @@ describe.each(READY_GATE_RUNNERS)('%s', () => {
     expect(existsSync(registry) ? readdirSync(registry) : []).toEqual([])
   })
 
+  test('the deadline settles even when an unregistered detached child holds the output pipe open', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    const pidFile = join(dir, '.git', 'detached-pid')
+    const script = join(dir, '.git', 'detach.ts')
+    writeFileSync(
+      script,
+      `import { spawn } from 'node:child_process'; import { writeFileSync } from 'node:fs';
+      const child = spawn(process.execPath, ['--eval', 'setInterval(() => {}, 1000)'], { detached: true, stdio: ['ignore', 1, 2] });
+      writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); child.unref();`
+    )
+    writeFileSync(join(dir, '.git', 'hooks', 'pre-push'), `exec '${process.execPath}' '${script}'`)
+    const run = runReadyGateLive({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      head,
+      remoteHead: head,
+      deadlineMs: 500,
+      registryDir: join(dir, '.git', 'registry')
+    })
+    let result: Awaited<typeof run> | null = null
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await waitFor(() => existsSync(pidFile))
+      result = await Promise.race([
+        run,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), 2500)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+      // Only this fixture's recorded, detached child is outside the registry's containment guarantee.
+      const pid = Number(readFileSync(pidFile, 'utf8'))
+      if (identityOf(pid) !== null) process.kill(-pid, 'SIGKILL')
+      await run
+    }
+    expect(result).not.toBeNull()
+    expect(result?.timedOut).toBe(true)
+  })
+
   test('a ready gate past its deadline records a timeout instead of hanging', async () => {
     const dir = repo()
     const head = headOf(dir)

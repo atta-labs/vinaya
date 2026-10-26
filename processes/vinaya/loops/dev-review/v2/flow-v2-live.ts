@@ -327,6 +327,10 @@ export async function runReadyGateLive(input: {
     child.on('error', (error) => resolve({ status: null, signal: null, error }))
     child.on('close', (code, sig) => resolve({ status: code, signal: sig }))
   })
+  const leaderExited = new Promise<void>((resolve) => {
+    child.on('error', () => resolve())
+    child.on('exit', () => resolve())
+  })
   const stop = async () => {
     await stopRegistered(runToken, { graceMs: STOP_GRACE_MS, ...registry }).catch(() => undefined)
   }
@@ -352,7 +356,11 @@ export async function runReadyGateLive(input: {
     if (typeof outcome === 'string') {
       interrupted = outcome
       await stop()
-      await exited
+      // A detached, unregistered descendant may still own a pipe. It cannot extend this run's deadline.
+      child.stdin?.destroy()
+      child.stdout?.destroy()
+      child.stderr?.destroy()
+      await leaderExited
     }
     // A finished hook can leave undetached descendants in its group: they stop with the run.
     await stop()
