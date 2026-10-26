@@ -344,20 +344,17 @@ describe('reconcileLaunch (O3) — required continuity resumes the exact session
   })
 })
 
-describe('reconcileLaunch (O3) — an unavailable session pauses explicitly', () => {
-  it('expired/gone session: an interrupted launch whose session was never bound cannot be resumed — pause explicitly', () => {
-    // The honest "there is no session to resume" case — a fresh session would
-    // silently lose the worker's continuity, so recovery pauses instead.
+describe('reconcileLaunch (O3) — a session that was never bound', () => {
+  it('an interrupted launch whose session was never bound, and whose process is gone, dispatches fresh', () => {
+    // No session was ever bound, so there is no continuity to lose: a fresh
+    // session is dispatched rather than blocking the task.
     const parsed: ParsedLaunch = {
       status: 'ok',
       record: record({ status: 'interrupted', failureReason: 'crash', resumeId: null, boundAt: null })
     }
     const out = reconcileLaunch(parsed, { requireContinuity: true }, deps(false))
-    expect(out.kind).toBe('pause')
-    if (out.kind === 'pause') {
-      expect(out.reason).toBe('infrastructure')
-      expect(out.detail).toContain('cannot resume the exact session')
-    }
+    expect(out.kind).toBe('fresh')
+    if (out.kind === 'fresh') expect(out.outcome.status).toBe('infrastructure-failed')
   })
 })
 
@@ -543,8 +540,8 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
       // the call was routed through `deps.terminateChild`, not a hardcoded
       // `terminateChildWithGrace` the test's own spy could never intercept.
       expect(result.stillAlive).toBe(true)
-      // With no session ever bound, continuity required, and the record still
-      // reading 'launched': pause explicitly once the (fake) reap has run.
+      // With no session ever bound and the (fake) reap a no-op, the orphan is
+      // still alive: pause rather than start a fresh session beside it.
       expect(result.kind).toBe('pause')
     } finally {
       // The one real kill this test performs — unconditional, regardless of

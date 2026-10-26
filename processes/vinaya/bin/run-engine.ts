@@ -183,7 +183,8 @@ import {
   resolveDeveloperDoctrineText,
   describeObjectivesEdit,
   resolveIssueObjectives,
-  reviewPolicyForLoop
+  reviewPolicyForLoop,
+  freshDispatchLogLine
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import { fetchLoopHistory } from '../../../apps/cli/src/lib/dev-review-loop/journal-history'
 import {
@@ -1272,6 +1273,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         narrate(`not dispatching: ${recovery.refusal}`)
         throw new Error(recovery.refusal)
       }
+      if (recovery?.launch.kind === 'fresh') narrate(freshDispatchLogLine(recovery.launch))
       translator.beginLeg({ resumed: choice.kind === 'resume' })
       // A held verdict is published only while its pull request is not in conflict: a conflicting head runs the
       // Flow, whose mergeability step sends it back to the Developer before any publication.

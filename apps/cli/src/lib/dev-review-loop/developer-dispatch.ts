@@ -1142,15 +1142,17 @@ export function fetchPrBody(pr: number): string {
  *   - `resume`   — the launch is over, this worker's continuity IS required,
  *                  and its exact vendor session is available: resume THAT
  *                  session, never a fresh one.
- *   - `fresh`    — the launch was refused before any vendor process was ever
- *                  spawned, so no session, and no turn state, ever existed to
- *                  lose: dispatch fresh, exactly like `none`, but carrying the
- *                  refused record so the caller can narrate what it recovered
- *                  from.
- *   - `pause`    — continuity is required, the launch DID spawn, and its
- *                  session is gone (never bound, or the record is corrupt):
- *                  pause explicitly rather than silently starting a fresh
- *                  session that would lose the worker's continuity.
+ *   - `fresh`    — continuity is required, no vendor session was ever
+ *                  bound, and the launch has ended (`launchEnded`): no
+ *                  session, and no turn state, ever existed to lose —
+ *                  dispatch fresh, exactly like `none`, but carrying the
+ *                  ended record and its outcome so the caller can narrate
+ *                  what it recovered from (`freshDispatchLogLine`).
+ *   - `pause`    — continuity is required and either the record is corrupt,
+ *                  or no session was bound and the launch's process may
+ *                  still be running (an orphan not yet reaped, or no child
+ *                  pid on record while its dispatcher is still alive): pause
+ *                  explicitly rather than start a second worker beside it.
  */
 export type LaunchReconciliation =
   | { kind: 'none' }
@@ -1253,40 +1255,41 @@ function outcomeSignalsFor(record: LaunchRecord, artifactsPresent: boolean): Out
 }
 
 /**
- * Pure: did this launch end without ever spawning a vendor process at all?
+ * Pure: has a launch that is not `'live'` provably ended — is no process of
+ * its own left that a fresh session could race?
  *
- * Decided from the record's own lifecycle facts, never from which
- * `DispatchFailureReason` it carries — every pre-spawn refusal
- * `dispatchRole` can raise (an authentication refusal, a sandbox/boundary
- * start-up refusal, a hook-setup refusal, a capability refusal, a `spawn`
- * that threw) already writes this same shape, and a future one will too,
- * with no new case to add here:
- *
- *   - `childPid === null` — the child pid is stamped the instant `spawn`
- *     returns, so no pid on record means no spawn identity was ever
- *     captured.
- *   - `status === 'interrupted'` with a `failureReason` — the dispatcher
- *     itself stayed alive long enough to reach its own failure path and
- *     write a terminal record. Together with the missing pid that is proof
- *     of "refused before spawn", not merely "we cannot tell": a dispatcher
- *     killed in the window between `spawn` returning and the pid being
- *     stamped leaves a non-terminal `'launched'` record instead, which is
- *     read here as possibly-spawned and keeps the continuity pause.
- *
- * A record with a bound session is never asked this question (a session
- * exists only after a spawn), and a launch that DID spawn is never treated
- * as having nothing to lose — its turn state is exactly what the continuity
- * pause protects.
+ *   - A child pid on record is probed by identity (`classifyChildLiveness`):
+ *     ended only when no process of this launch answers there
+ *     (`'not-ours'`). An `'orphaned'` child is still alive until
+ *     `recoverDeveloperLaunch` has reaped it, so it has not ended.
+ *   - No child pid and a terminal record: the dispatcher reached its own
+ *     failure or completion path, so nothing it launched is still running.
+ *   - No child pid and a record still `'launched'` (a dispatcher stopped
+ *     before it stamped the pid, or a runner that records no child pid at
+ *     all): the dispatcher is the only probe left — ended once its pid no
+ *     longer answers on this host. A launch recorded on another host can
+ *     never be probed here and is read as ended, as `classifyChildLiveness`
+ *     already reads it.
  */
-export function launchNeverSpawned(record: LaunchRecord): boolean {
-  return record.childPid === null && record.status === 'interrupted' && record.failureReason !== null
+export function launchEnded(record: LaunchRecord, deps: ReconcileLaunchDeps): boolean {
+  if (record.childPid !== null) return classifyChildLiveness(record, deps) === 'not-ours'
+  if (record.status !== 'launched') return true
+  return record.host !== deps.hostname() || !deps.isPidAlive(record.dispatcherPid)
+}
+
+/** The run-log line a `fresh` disposition is narrated with — which attempt ended, how, and why — before a fresh developer session is dispatched. Shared by the dev-review loop and the Engine runner. */
+export function freshDispatchLogLine(recon: { record: LaunchRecord; outcome: NormalizedOutcome }): string {
+  return (
+    `launch_ended_unbound: attempt=${recon.record.attempt} outcome=${recon.outcome.status} ` +
+    `reason=${recon.record.failureReason ?? 'none'} — no vendor session was bound; dispatching a fresh developer session`
+  )
 }
 
 /**
  * Pure (O3): reconcile a prior launch — live, finished, or uncertain — into
  * one disposition, from its parsed record plus injected pid-liveness. Never
  * reads disk or probes a process itself; `recoverDeveloperLaunch` below is the
- * disk-and-pid-reading wrapper. See `LaunchReconciliation` for the five
+ * disk-and-pid-reading wrapper. See `LaunchReconciliation` for the six
  * dispositions and when each is reached.
  */
 export function reconcileLaunch(
@@ -1329,22 +1332,22 @@ export function reconcileLaunch(
 
   // Continuity required (the developer). Resume the EXACT session when one was
   // bound — even from an interrupted attempt, now that the session survives an
-  // interruption (O1). When none was ever bound, the session is genuinely gone
-  // and there is nothing to resume: pause explicitly rather than start fresh.
+  // interruption (O1).
   if (record.resumeId !== null) return { kind: 'resume', record, resumeId: record.resumeId, outcome }
-  // Refused before any vendor process started (`launchNeverSpawned`): there
-  // is no session AND no turn state — nothing a fresh dispatch could lose —
-  // so this is dispatched fresh rather than paused. Without this, a launch
-  // that never ran blocked its task forever behind a continuity rule with no
+  // No session was ever bound. `dispatchRole` binds it from the vendor
+  // stream's first event, before the agent can act, so an unbound launch did
+  // no turn work a fresh session could lose or repeat: once its process is
+  // gone (a refusal before spawn, a signal before binding, an agent that
+  // exited on a sign-in failure) it is dispatched fresh. A launch that ended
+  // this way used to block its task forever behind a continuity rule with no
   // continuity to protect.
-  if (launchNeverSpawned(record)) return { kind: 'fresh', record, outcome }
+  if (launchEnded(record, deps)) return { kind: 'fresh', record, outcome }
   return {
     kind: 'pause',
     reason: 'infrastructure',
     detail:
-      `the developer's prior launch (attempt ${record.attempt}) ended ${outcome.status} ` +
-      `(${record.failureReason ?? 'no failure recorded'}) before its vendor session was ever bound — ` +
-      'cannot resume the exact session, and starting a fresh one would lose worker continuity'
+      `the developer's prior launch (attempt ${record.attempt}) bound no vendor session and its process may still ` +
+      'be running — refusing to start a second worker beside it'
   }
 }
 
