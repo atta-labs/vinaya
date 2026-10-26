@@ -143,7 +143,7 @@ export function checkPremiseStaged(task: TaskInput): { exitCode: number; stdout:
 function sendBackAfterApproval(
   task: TaskInput,
   results: Results,
-  kind: 'ready-refused' | 'ci-red',
+  kind: 'ready-refused' | 'ci-red' | 'unpushed',
   detail: string,
   extra: Record<string, unknown>
 ): { exitCode: number; stdout: string } {
@@ -363,7 +363,8 @@ export function classifyPullRequestOpened(context: ActionContext): { exitCode: n
 
 /**
  * The one CI read of the approved head: waited on while pending (the forge gates' own read, `readForgeCi`). Red
- * sends the Developer back with the failing checks; green goes on to publication.
+ * sends the Developer back with the failing checks, and so does a head the remote does not hold yet, to publish it
+ * with no CI read; anything else goes on to publication.
  */
 export async function readCiOnce(
   task: TaskInput,
@@ -384,10 +385,18 @@ export async function readCiOnce(
   const waitMs = Math.max(0, now() - started)
   const ci = JSON.parse(read.stdout) as {
     head: string | null
-    conclusion: 'green' | 'red' | 'pending' | 'skipped'
+    conclusion: 'green' | 'red' | 'pending' | 'skipped' | 'unpushed'
     failingChecks: string[]
   }
   const head = ci.head ?? worktreeHeadOf(task) ?? ''
+  if (ci.conclusion === 'unpushed')
+    return sendBackAfterApproval(
+      task,
+      results,
+      'unpushed',
+      `The head ${head} is not on the remote branch, so no CI has run on it. Publish it with publish_changes on this SAME branch.`,
+      ci
+    )
   const events = [
     ciResultReadEvent(loop, {
       pr: open.number,
