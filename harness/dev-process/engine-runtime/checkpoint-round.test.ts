@@ -17,7 +17,7 @@ import {
   readExecutionRound
 } from './checkpoint-round'
 import { type ProcessRunOptions, resumeProcessRun, startProcessRun } from './run-process'
-import { type CheckpointCommit, SqliteCheckpointer } from './sqlite-checkpointer'
+import { type CheckpointCommit, CheckpointCorruptError, SqliteCheckpointer } from './sqlite-checkpointer'
 
 // A sample Flow whose `advance` step ends a round: it records the round it leaves the run in, inside its own result,
 // and loops back to the agent step once. `prepare` records the round the run starts in.
@@ -384,5 +384,13 @@ describe('the agent in checkpoint provenance', () => {
     after.close()
     expect(columns.map((column) => column.name)).not.toContain('agent')
     expect(statSync(path).mtimeMs).toBe(before)
+  })
+})
+
+describe('reading provenance from a file that is not a checkpoint file', () => {
+  test('raises the typed corrupt error', () => {
+    const path = join(scratch(), 'garbage.sqlite')
+    writeFileSync(path, 'this is not a database file, not even close to one')
+    expect(() => readAgentProvenance(path, 'thread')).toThrow(CheckpointCorruptError)
   })
 })

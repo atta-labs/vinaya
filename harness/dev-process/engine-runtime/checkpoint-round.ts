@@ -1,7 +1,12 @@
 import { Database } from 'bun:sqlite'
 import { existsSync } from 'node:fs'
 import type { StepNodeResult } from '@atta/executor-agent-spawn'
-import { type CheckpointCommit, type CheckpointProvenance, SqliteCheckpointer } from './sqlite-checkpointer'
+import {
+  type CheckpointCommit,
+  CheckpointCorruptError,
+  type CheckpointProvenance,
+  SqliteCheckpointer
+} from './sqlite-checkpointer'
 
 // The execution round as checkpoint authority, and the agent in checkpoint provenance. Other runner code reads the
 // execution round and the recorded agent through these functions and never changes the checkpoint format itself.
@@ -143,11 +148,16 @@ export function mirrorExecutionRoundOnCommit(
 /**
  * The provenance of the latest checkpoint of `threadId`, including the agent it was started with; null when the file
  * or the thread has no checkpoint. Read-only: a file written before the agent was recorded is read as it stands, its
- * agent null, and is never migrated by the read.
+ * agent null, and is never migrated by the read. A file it cannot read raises `CheckpointCorruptError`.
  */
 export function readAgentProvenance(checkpointPath: string, threadId: string): AgentCheckpointProvenance | null {
   if (!existsSync(checkpointPath)) return null
-  const db = new Database(checkpointPath, { readonly: true })
+  let db: Database
+  try {
+    db = new Database(checkpointPath, { readonly: true })
+  } catch (error) {
+    throw new CheckpointCorruptError(checkpointPath, error)
+  }
   try {
     const columns = new Set(
       db
@@ -180,6 +190,8 @@ export function readAgentProvenance(checkpointPath: string, threadId: string): A
       runtimeVersion: row.runtime_version,
       agent: isAgent(row.agent) ? row.agent : null
     }
+  } catch (error) {
+    throw error instanceof CheckpointCorruptError ? error : new CheckpointCorruptError(checkpointPath, error)
   } finally {
     db.close()
   }
