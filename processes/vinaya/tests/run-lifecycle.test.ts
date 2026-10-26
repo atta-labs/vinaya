@@ -1,9 +1,10 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { recordedHandoff } from './handoff-fakes'
 import { handoffHaltReason } from '../executing/log-events'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { hostname, tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { hostname } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import {
   buildReviewInputManifest,
@@ -78,7 +79,7 @@ const repoRoot = resolve(import.meta.dir, '../../..')
 const TASK = 7
 
 // A stub login keeps the real role launcher from copying an operator's Codex credential into a test run.
-const stubHome = mkdtempSync(join(tmpdir(), 'lifecycle-codex-home-'))
+const stubHome = fixtureDir('lifecycle-codex-home-')
 writeFileSync(join(stubHome, 'auth.json'), '{}\n')
 process.env.CODEX_HOME = stubHome
 
@@ -173,7 +174,7 @@ interface Scenario {
   hang?: string[]
 }
 
-function stubRun(scenario: Scenario = {}, runtimeDir = mkdtempSync(join(tmpdir(), 'lifecycle-'))) {
+function stubRun(scenario: Scenario = {}, runtimeDir = fixtureDir('lifecycle-')) {
   const agent = scenario.agent ?? 'claude'
   const calls: string[] = []
   const events: Array<{ kind: string; event: string; [field: string]: unknown }> = []
@@ -260,7 +261,7 @@ describe('one Engine runner per task', () => {
   })
 
   test('the lock is an exclusive create: a lost race is refused when its winner is alive', () => {
-    const root = mkdtempSync(join(tmpdir(), 'lifecycle-lock-'))
+    const root = fixtureDir('lifecycle-lock-')
     expect(acquireDriverLockAtomic(root, TASK, { pid: 1, startedAt: 'then', token: 'a' })).toBe(true)
     const outcome = takeDriverLock(root, TASK, {
       pid: 2,
@@ -990,7 +991,7 @@ describe('the ceiling each role launches with', () => {
 
   for (const vendor of ['claude-code', 'codex'] as const)
     test(`reaches each role's launcher as its timeoutMs (${vendor})`, () => {
-      const generatedRoot = mkdtempSync(join(tmpdir(), 'ceiling-roles-'))
+      const generatedRoot = fixtureDir('ceiling-roles-')
       const roles = createRoleLaunchers({
         vendor,
         generatedRoot,
@@ -1113,7 +1114,7 @@ describe('the heartbeat and the exit record', () => {
   })
 
   test('a pause raised before any pull request existed is bound to the one the reconcile step then finds', async () => {
-    const runtimeDir = mkdtempSync(join(tmpdir(), 'lifecycle-'))
+    const runtimeDir = fixtureDir('lifecycle-')
     writePauseState(runtimeDir, {
       task: TASK,
       round: 1,
@@ -1172,7 +1173,7 @@ const agentScript = (dir: string): string => {
 
 describe('no orphaned agent', () => {
   test('decide: halting the run control alone leaves what the agent started running', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'decide-'))
+    const dir = fixtureDir('decide-')
     const pidFile = join(dir, 'child.pid')
     const control = createRunControl()
     const actions: ActionRegistry = Object.fromEntries(
@@ -1209,7 +1210,7 @@ describe('no orphaned agent', () => {
   }, 30_000)
 
   test('the runner ends the agent’s whole process group when the run control is halted mid-launch', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'reap-'))
+    const dir = fixtureDir('reap-')
     const record = join(dir, 'argv')
     const script = agentScript(dir)
     const control = createRunControl()
@@ -1229,7 +1230,7 @@ describe('no orphaned agent', () => {
 
   test('reaps a group whose leader already exited', async () => {
     const reaper = createChildReaper()
-    const dir = mkdtempSync(join(tmpdir(), 'reap-leader-'))
+    const dir = fixtureDir('reap-leader-')
     const pidFile = join(dir, 'child.pid')
     const child = reaper.spawnFn('sh', ['-c', `sleep 300 >/dev/null 2>&1 & echo $! > ${pidFile}`], {
       cwd: dir,
@@ -1258,7 +1259,7 @@ describe('no orphaned agent', () => {
   for (const agent of ['claude', 'codex'] as const)
     for (const signal of ['SIGTERM', 'SIGINT'] as const)
       test(`${signal} sent to the runner during a ${agent} launch leaves no process of the agent`, async () => {
-        const dir = mkdtempSync(join(tmpdir(), 'signal-'))
+        const dir = fixtureDir('signal-')
         const record = join(dir, 'argv')
         const runner = spawn(
           process.execPath,
@@ -1303,7 +1304,7 @@ describe('no orphaned agent', () => {
       }, 40_000)
 
   test('a signalled run records one exit by signal and clears its lock', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'signal-exit-'))
+    const dir = fixtureDir('signal-exit-')
     const record = join(dir, 'argv')
     const runtimeDir = join(dir, 'runtime')
     const runner = spawn(

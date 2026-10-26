@@ -1,3 +1,4 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { recordedHandoff } from './handoff-fakes'
 import { PASSING_FORGE_GATES } from './round-fakes'
@@ -6,7 +7,6 @@ import { execFileSync, spawn } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -121,7 +121,7 @@ describe('the dry run', () => {
       const lines = await dryRunLines({
         process: loaded,
         agent,
-        generatedRoot: mkdtempSync(join(tmpdir(), 'dry-run-')),
+        generatedRoot: fixtureDir('dry-run-'),
         shimPath: '/runs/1/dev-bridge.sh'
       })
       expect(lines[0]).toBe(`process ${loaded.identity.id}@${loaded.identity.version} digest ${loaded.digest}`)
@@ -243,7 +243,7 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
   const emitted: unknown[] = []
   const observed: NodeLifecycle[] = []
   const control = createRunControl()
-  const runtimeDir = mkdtempSync(join(tmpdir(), 'engine-run-'))
+  const runtimeDir = fixtureDir('engine-run-')
   const actions: ActionRegistry = Object.fromEntries(
     [
       'vinaya.prepare-run',
@@ -825,8 +825,8 @@ describe('agent-step failures and the live task context', () => {
   })
 
   test('staging the review input writes run files under the runtime directory, nothing under the repository', async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'engine-repo-')))
-    const runtimeDir = realpathSync(mkdtempSync(join(tmpdir(), 'engine-runtime-')))
+    const root = realpathSync(fixtureDir('engine-repo-'))
+    const runtimeDir = realpathSync(fixtureDir('engine-runtime-'))
     const git = (...a: string[]) =>
       execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: root, encoding: 'utf8' }).trim()
     git('init', '-q')
@@ -891,7 +891,7 @@ const recordedLaunches: Array<{ task: number; agent: string; round: number | nul
 const completedLaunches: Array<{ runId: string; resumeId: string | null }> = []
 
 function liveContext(world: World, overrides: Partial<ReturnType<typeof fakeDeps>> = {}, task = 8) {
-  const runtimeDir = mkdtempSync(join(tmpdir(), 'engine-live-context-'))
+  const runtimeDir = fixtureDir('engine-live-context-')
   const live = engineLiveDevToolsContext({
     branch: BRANCH,
     worktreePath: '/worktree',
@@ -1117,7 +1117,7 @@ const SPEC = 'specs/isolation.md'
 
 describe('the tool host serves the reviewer roles as well as the Developer', () => {
   test('starts a host per role, and each reviewer reads a pinned source through read_source', async () => {
-    const repo = mkdtempSync(join(tmpdir(), 'engine-read-source-'))
+    const repo = fixtureDir('engine-read-source-')
     const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
     git('init', '-q')
     git('config', 'user.email', 'test@example.com')
@@ -1167,7 +1167,7 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
     ['codex', 'config.toml']
   ] as const) {
     test(`each reviewer ${vendor} launch runs in that attempt's scratch directory, the Developer in its worktree`, () => {
-      const generatedRoot = mkdtempSync(join(tmpdir(), 'engine-reviewer-cwd-'))
+      const generatedRoot = fixtureDir('engine-reviewer-cwd-')
       const roles = createRoleLaunchers({ vendor, generatedRoot })
       const seen: Array<{ cwd?: string; args: string[] }> = []
       const wrapped = withReviewerWorkingDirectory(
@@ -1194,7 +1194,7 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
     })
 
     test(`each reviewer's ${vendor} launch names its own host`, () => {
-      const generatedRoot = mkdtempSync(join(tmpdir(), 'engine-launch-shapes-'))
+      const generatedRoot = fixtureDir('engine-launch-shapes-')
       createRoleLaunchers({
         vendor,
         generatedRoot,
@@ -1213,7 +1213,7 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
     })
 
     test(`each ${vendor} role launch carries a capability of its own dispatch, revoked when that launch ends`, () => {
-      const generatedRoot = mkdtempSync(join(tmpdir(), 'engine-dispatch-capability-'))
+      const generatedRoot = fixtureDir('engine-dispatch-capability-')
       const roles = createRoleLaunchers({ vendor, generatedRoot })
       // A peer is inside a dispatch only when it is that dispatch's own launched process.
       const tables = {
@@ -1286,7 +1286,7 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
 
 describe('the repository a run works in', () => {
   test('is the git top level of the starting directory, not the folder the runner ships in', () => {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'engine-target-repo-')))
+    const dir = realpathSync(fixtureDir('engine-target-repo-'))
     execFileSync('git', ['init', '-q'], { cwd: dir })
     mkdirSync(join(dir, 'nested'))
     expect(targetRepoRoot(join(dir, 'nested'))).toBe(dir)
@@ -1315,7 +1315,7 @@ describe('the Developer launch schema', () => {
     expect(wrapped.buildArgs({} as never)[2]).toBe(JSON.stringify({ sources: ['`b.md`'] }))
   })
   test('Codex gets a rewritten schema file at every launch', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'turn-schema-'))
+    const dir = fixtureDir('turn-schema-')
     const wrapped = withTurnSchema(launcher(['exec', '--output-schema', '/static.json']), dir, () => ({ n: 1 }))
     const args = wrapped.buildArgs({} as never)
     expect(args[2]).toBe(join(dir, 'turn-output.schema.json'))

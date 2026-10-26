@@ -1,7 +1,7 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { compileFlow, type StepsFlow } from '@atta/engine'
 import { parse } from 'yaml'
@@ -211,7 +211,7 @@ const savedEnv: Record<string, string | undefined> = {}
 const roots: string[] = []
 beforeAll(() => {
   for (const key of ['CODEX_HOME', ...SCENARIO_ENV_KEYS]) savedEnv[key] = process.env[key]
-  const home = mkdtempSync(join(tmpdir(), 'round-decisions-codex-'))
+  const home = fixtureDir('round-decisions-codex-')
   writeFileSync(join(home, 'auth.json'), '{}\n')
   process.env.CODEX_HOME = home
   keepLogLocal()
@@ -232,7 +232,7 @@ afterAll(() => {
 })
 
 async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
-  const root = mkdtempSync(join(tmpdir(), 'round-decisions-'))
+  const root = fixtureDir('round-decisions-')
   roots.push(root)
   const runtimeDir = join(root, 'runtime')
   mkdirSync(runtimeDir)
@@ -470,7 +470,7 @@ test("the standalone loop's unpushed-work dependency is the shared reader itself
 })
 
 test('the Engine runner reads unpushed work with the standalone reader, and nothing for a worktree that is gone', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'round-decisions-reader-'))
+  const dir = fixtureDir('round-decisions-reader-')
   roots.push(dir)
   const git = (...args: string[]) =>
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], {

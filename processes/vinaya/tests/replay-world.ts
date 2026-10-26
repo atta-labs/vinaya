@@ -1,17 +1,8 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { recordedHandoff } from './handoff-fakes'
 import { keepLogLocal, QUIET_FORGE_GATES, useRuntimeDir } from './round-fakes'
 import { execFileSync } from 'node:child_process'
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-  writeSync
-} from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync, writeSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { DEFAULT_REVIEW_POLICY, defaultControlStoreDeps } from '@attalabs/aeg-core'
 import type { RunControl, SpawnedProcessLike } from '@atta/executor-agent-spawn'
@@ -254,8 +245,8 @@ function updateLedger(runtimeDir: string, change: (ledger: ForgeLedger) => void)
 
 /** Creates the temporary repository and runtime directory a task is replayed in. */
 export function createWorld(gates: number[] = [0]): World {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'replay-repo-')))
-  const runtimeDir = realpathSync(mkdtempSync(join(tmpdir(), 'replay-runtime-')))
+  const root = realpathSync(fixtureDir('replay-repo-'))
+  const runtimeDir = realpathSync(fixtureDir('replay-runtime-'))
   const cliDir = join(root, 'apps', 'cli', 'src')
   mkdirSync(cliDir, { recursive: true })
   writeFileSync(join(cliDir, 'index.ts'), FAKE_CLI.replace('__DIR__', runtimeDir))

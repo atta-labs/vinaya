@@ -1,6 +1,5 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { MemorySaver } from '@langchain/langgraph'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
@@ -94,13 +93,13 @@ for (const vendor of ['claude-code', 'codex'] as const)
             }
           ])
         )
-        const roles = createRoleLaunchers({ vendor, generatedRoot: mkdtempSync(`${tmpdir()}/session-roles-`) })
+        const roles = createRoleLaunchers({ vendor, generatedRoot: fixtureDir('session-roles-') })
         const options: ProcessRunOptions = {
           process: loaded,
           question: 'the task',
           bindings: { actions, decisions, roles },
           checkpointer: new MemorySaver(),
-          workingDirectoryRoot: mkdtempSync(`${tmpdir()}/session-root-`),
+          workingDirectoryRoot: fixtureDir('session-root-'),
           continueSessions: ['develop'],
           stepPrompts: {
             develop: (rendered, _results, context) => {

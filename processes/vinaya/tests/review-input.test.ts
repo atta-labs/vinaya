@@ -1,7 +1,7 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
 import type { ReviewerPromptFacts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
@@ -9,7 +9,7 @@ import { writeHeldVerdict } from '../../../apps/cli/src/lib/dev-review-loop/revi
 import { createVinayaReviewInputStager, renderVinayaReviewerPrompt, reviewerRulings } from '../executing/review-input'
 
 function repoWithCommit(): { worktree: string; head: string } {
-  const worktree = mkdtempSync(join(tmpdir(), 'review-input-wt-'))
+  const worktree = fixtureDir('review-input-wt-')
   const git = (...args: string[]) => execFileSync('git', args, { cwd: worktree, encoding: 'utf8' }).trim()
   git('init', '-q')
   writeFileSync(join(worktree, 'code.ts'), 'export const x = 1\n')
@@ -21,7 +21,7 @@ function repoWithCommit(): { worktree: string; head: string } {
 describe('the Vinaya review input', () => {
   test('stages a copy of the judged head with the named input files, once per round', () => {
     const { worktree, head } = repoWithCommit()
-    const root = mkdtempSync(join(tmpdir(), 'review-input-root-'))
+    const root = fixtureDir('review-input-root-')
     const calls: string[] = []
     const stager = createVinayaReviewInputStager({
       root,
@@ -77,7 +77,7 @@ describe('the Vinaya review input', () => {
 
   test('builds a fresh isolated copy per role and attempt from identical staged bytes', () => {
     const { worktree, head } = repoWithCommit()
-    const root = mkdtempSync(join(tmpdir(), 'review-input-root-'))
+    const root = fixtureDir('review-input-root-')
     const stager = createVinayaReviewInputStager({
       root,
       task: 9,
@@ -124,7 +124,7 @@ describe('the Vinaya review input', () => {
   })
 
   test('a head that cannot be copied stages nothing and the prompt names no input paths', () => {
-    const root = mkdtempSync(join(tmpdir(), 'review-input-root-'))
+    const root = fixtureDir('review-input-root-')
     const stager = createVinayaReviewInputStager({
       root,
       task: 9,
@@ -142,7 +142,7 @@ describe('the Vinaya review input', () => {
 
   test('a worktree whose head moves during the copy yields no candidate', () => {
     const { worktree, head } = repoWithCommit()
-    const root = mkdtempSync(join(tmpdir(), 'review-input-root-'))
+    const root = fixtureDir('review-input-root-')
     let reads = 0
     const stager = createVinayaReviewInputStager({
       root,
@@ -162,7 +162,7 @@ describe('the Vinaya review input', () => {
 
   test('a failed input write keeps the candidate but names no input file', () => {
     const { worktree, head } = repoWithCommit()
-    const root = mkdtempSync(join(tmpdir(), 'review-input-root-'))
+    const root = fixtureDir('review-input-root-')
     const stager = createVinayaReviewInputStager({
       root,
       task: 9,
@@ -182,7 +182,7 @@ describe('the Vinaya review input', () => {
 
   test('an unfetchable brief, body or diff becomes a placeholder naming the failure', () => {
     const { worktree, head } = repoWithCommit()
-    const root = mkdtempSync(join(tmpdir(), 'review-input-root-'))
+    const root = fixtureDir('review-input-root-')
     const boom = (what: string) => () => {
       throw new Error(`${what} down`)
     }
@@ -262,7 +262,7 @@ describe('reviewerRulings', () => {
 describe('a staged review input reused across runs in one process', () => {
   test('is rebuilt when its copy was removed or the judged head moved', () => {
     const { worktree, head } = repoWithCommit()
-    const root = mkdtempSync(join(tmpdir(), 'review-input-root-'))
+    const root = fixtureDir('review-input-root-')
     let judged = head
     const stager = createVinayaReviewInputStager({
       root,
