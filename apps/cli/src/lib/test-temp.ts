@@ -245,6 +245,20 @@ function releaseAndRemove(dir: string, report: SweepReport): void {
   else report.failed.push({ dir, error })
 }
 
+/**
+ * Claims `run` for removal: renames it to its `.removing-` name, which is quick whatever the directory holds. Returns
+ * the claimed path, or the error. A claimed directory belongs to no one, and any later sweep finishes removing it.
+ */
+export function claimTestTempRun(run: TestTempRun): { claimed: string } | { error: string } {
+  const claimed = join(dirname(run.dir), `${REMOVING_PREFIX}${basename(run.dir)}`)
+  try {
+    renameSync(run.dir, claimed)
+    return { claimed }
+  } catch (error) {
+    return { error: describeError(error) }
+  }
+}
+
 /** Removes `run`'s directories and reports every error. */
 export function removeTestTempRun(run: TestTempRun): SweepReport {
   const report: SweepReport = { removed: [], kept: [], failed: [] }

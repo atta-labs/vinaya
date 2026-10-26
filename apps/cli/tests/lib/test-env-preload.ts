@@ -143,7 +143,5 @@ afterAll(() => {
   if (leaked.length > 0) {
     throw new Error(`tests wrote into the real runtime directory: ${leaked.join(' ')}`)
   }
-  if (fixtures !== null && fixtures.failed.length > 0) {
-    throw new Error(`test temp: could not remove ${fixtures.failed.map((f) => `${f.dir} (${f.error})`).join(', ')}`)
-  }
+  if (fixtures !== null) throw new Error(`test temp: could not release the run directory ${fixtures}`)
 })
