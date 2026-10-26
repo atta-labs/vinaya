@@ -16,6 +16,8 @@ import {
 } from '../../src/lib/dev-review-eval/registry'
 import { engineEvidenceOf, OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
 import {
+  CONTROLLER_BOUNDARY_RESIDUAL,
+  CONTROLLER_BOUNDARY_ROW_IDS,
   CODEX_FILE_READ_RESIDUAL,
   CREDENTIAL_PROBES,
   CREDENTIAL_ROW_IDS,
@@ -161,8 +163,8 @@ describe('the fault-attack shard', () => {
     const report = check(rawShard)
     const mismatches = compareWithTable(rawShard.components, ACTIVE_UNIVERSE)
     const mustPass = ACTIVE_UNIVERSE.filter((entry) => entry.cutover === 'must-pass').length
-    console.log(
-      `fault-attack shard: ${shard.components.length} rows (${mustPass} must pass, ${ACTIVE_UNIVERSE.length - mustPass} pass or accepted); missing ${report.missing.length}, extra ${report.extra.length}, invalid ${report.invalid.length}, differing ${mismatches.length}`
+    process.stdout.write(
+      `fault-attack shard: ${shard.components.length} rows (${mustPass} must pass, ${ACTIVE_UNIVERSE.length - mustPass} pass or accepted); missing ${report.missing.length}, extra ${report.extra.length}, invalid ${report.invalid.length}, differing ${mismatches.length}\n`
     )
     expect(report.missing).toEqual([])
     expect(report.extra).toEqual([])
@@ -321,7 +323,9 @@ describe('the credential-confinement rows record Engine evidence, owed shrink-on
     expect(unrecorded).toEqual([])
     const owed = CREDENTIAL_ROW_IDS.filter((id) => owedList.owed.includes(id))
     // The owed list only shrinks under engine-evidence.test.ts's ceiling; this prints where the credential rows stand.
-    console.log(`credential-confinement Engine evidence: ${owed.length} of ${CREDENTIAL_ROW_IDS.length} rows owed`)
+    process.stdout.write(
+      `credential-confinement Engine evidence: ${owed.length} of ${CREDENTIAL_ROW_IDS.length} rows owed\n`
+    )
   })
 
   const cutoverOf = new Map(
@@ -354,6 +358,50 @@ describe('the credential-confinement rows record Engine evidence, owed shrink-on
         expect([...OWED_REASONS]).toContain(state.reason)
         // The row's recorded owed reason is one its probe's own adapters name — never a reason from elsewhere.
         expect(owedReasons).toContain(state.reason)
+      }
+    }
+  })
+})
+
+describe('the capability and controller-boundary rows record Engine evidence, owed shrink-only', () => {
+  const owedList = JSON.parse(readFileSync(join(import.meta.dir, 'engine-evidence-owed.json'), 'utf8')) as {
+    owed: string[]
+  }
+  const rows = CONTROLLER_BOUNDARY_ROW_IDS.map((id) => {
+    const row = shard.components.find((component) => component.id === id)
+    if (row === undefined) throw new Error(`${id} is not a row of the fault-attack shard`)
+    return { id, row }
+  })
+  /** Remove entries only after the outside-sandbox Linux/macOS Claude/Codex output is pasted. */
+  const owed = CONTROLLER_BOUNDARY_ROW_IDS.filter((id) => owedList.owed.includes(id))
+  const owedCeiling = 9
+
+  it('enumerates every task row and prints the count still owed', () => {
+    process.stdout.write(`controller-boundary Engine evidence: ${owed.length} of ${rows.length} rows owed\n`)
+    expect(owed).toEqual([...CONTROLLER_BOUNDARY_ROW_IDS])
+    expect(owed.length).toBeLessThanOrEqual(owedCeiling)
+    for (const { row } of rows) expect(engineEvidenceOf(row)?.state).toBe('owed')
+  })
+
+  it('fails while a row is off the owed list without recorded Engine evidence, and while an evidenced row stays on it', () => {
+    const offWithoutEvidence = rows.filter(
+      ({ id, row }) => !owedList.owed.includes(id) && engineEvidenceOf(row)?.state !== 'evidenced'
+    )
+    const evidencedButOwed = rows.filter(
+      ({ id, row }) => owedList.owed.includes(id) && engineEvidenceOf(row)?.state === 'evidenced'
+    )
+    expect(offWithoutEvidence.map(({ id }) => id)).toEqual([])
+    expect(evidencedButOwed.map(({ id }) => id)).toEqual([])
+  })
+
+  it('keeps gate-15 rows free of known failures and records residual risk for pass-or-accepted rows', () => {
+    for (const { id } of rows) {
+      const raw = rawShard.components.find((component) => component.id === id)
+      expect(raw?.faultAttack.knownFailure).toBeUndefined()
+      if (raw?.faultAttack.cutover === 'pass-or-accepted') {
+        const row = shard.components.find((component) => component.id === id)
+        const evidence = row === undefined ? undefined : engineEvidenceOf(row)
+        expect(evidence).toEqual({ state: 'owed', reason: CONTROLLER_BOUNDARY_RESIDUAL })
       }
     }
   })
@@ -392,8 +440,8 @@ describe('the Engine fault-injection rows', () => {
 
   it('each records its Engine evidence, and the rows still owed shrink only; prints the count owed', () => {
     const owed = owedEngineRows(rows)
-    console.log(
-      `Engine fault-injection rows: ${rows.length}; owed Engine evidence: ${owed.length} (ceiling ${ENGINE_FAULT_INJECTION_OWED_CEILING})`
+    process.stdout.write(
+      `Engine fault-injection rows: ${rows.length}; owed Engine evidence: ${owed.length} (ceiling ${ENGINE_FAULT_INJECTION_OWED_CEILING})\n`
     )
     expect(owed).toEqual([...ENGINE_FAULT_INJECTION_OWED])
     expect(ENGINE_FAULT_INJECTION_OWED.length).toBeLessThanOrEqual(ENGINE_FAULT_INJECTION_OWED_CEILING)

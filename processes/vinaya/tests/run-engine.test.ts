@@ -68,9 +68,11 @@ import {
   type EngineRunOptions,
   type RunTrace,
   targetRepoRoot,
+  withDispatchCapabilities,
   withTurnSchema,
   tolerateReviewerExit
 } from '../bin/run-engine'
+import { createDispatchCapabilityTable } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
 const repoRoot = resolve(import.meta.dir, '../../..')
@@ -165,6 +167,12 @@ describe('the relay shim', () => {
 
   test('quotes a path that holds a quote', () => {
     expect(shimContent("/tmp/it's/s.sock", '/bun', '/e.ts')).toContain(`'/tmp/it'\\''s/s.sock'`)
+  })
+
+  test("carries a dispatch's capability to the bridge while that dispatch runs", () => {
+    expect(shimContent('/tmp/x/s.sock', '/bun', '/e.ts', 'cap-1')).toBe(
+      "#!/bin/sh\nexec '/bun' '/e.ts' task-tools dev-bridge --socket '/tmp/x/s.sock' --capability 'cap-1'\n"
+    )
   })
 })
 
@@ -296,6 +304,9 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
       if (scenario.hostFails) throw new Error('no socket')
       expect(host.socketPath).toBe(devToolsSocketPath(`engine-7-${host.role}`))
       expect(['developer', 'code-reviewer', 'security']).toContain(host.role)
+      // Each role host checks its own dispatches' capabilities and audits every refusal.
+      expect(host.capabilities).toBeDefined()
+      expect(host.audit).toBeDefined()
       return { close: async () => void calls.push('host-close') }
     },
     devToolsContext: {} as never,
@@ -390,6 +401,7 @@ describe('a stub run on the Engine path', () => {
     expect(readFileSync(shim, 'utf8')).toBe(
       shimContent(devToolsSocketPath('engine-7-developer'), process.execPath, join(repoRoot, 'apps/cli/src/index.ts'))
     )
+    expect(readFileSync(shim, 'utf8')).not.toContain('capability')
     expect(statSync(shim).mode & 0o111).not.toBe(0)
     expect(result.exitCode).toBe(0)
     const generated = join(options.runtimeDir, 'engine-runs', '7', 'generated', 'developer')
@@ -1198,6 +1210,76 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
         for (const other of ['developer', 'code-reviewer', 'security-reviewer'].filter((name) => name !== role))
           expect(config).not.toContain(`/shims/${other}.sh`)
       }
+    })
+
+    test(`each ${vendor} role launch carries a capability of its own dispatch, revoked when that launch ends`, () => {
+      const generatedRoot = mkdtempSync(join(tmpdir(), 'engine-dispatch-capability-'))
+      const roles = createRoleLaunchers({ vendor, generatedRoot })
+      // A peer is inside a dispatch only when it is that dispatch's own launched process.
+      const tables = {
+        developer: createDispatchCapabilityTable({ descendsFrom: (pid, ancestor) => pid === ancestor }),
+        reviewer: createDispatchCapabilityTable({ descendsFrom: (pid, ancestor) => pid === ancestor }),
+        security: createDispatchCapabilityTable({ descendsFrom: (pid, ancestor) => pid === ancestor })
+      }
+      const shims: Record<keyof typeof tables, Array<string | undefined>> = {
+        developer: [],
+        reviewer: [],
+        security: []
+      }
+      const dispatches = Object.fromEntries(
+        (Object.keys(tables) as Array<keyof typeof tables>).map((role) => [
+          role,
+          {
+            capabilities: tables[role],
+            ttlMs: 60_000,
+            writeShim: (capability?: string) => shims[role].push(capability)
+          }
+        ])
+      )
+      const closers: Array<() => void> = []
+      let nextPid = 4100
+      const wrapped = withDispatchCapabilities(
+        () => {
+          const pid = nextPid++
+          let onClose: ((code: number | null) => void) | undefined
+          closers.push(() => onClose?.(0))
+          return {
+            pid,
+            stdin: null,
+            stdout: null,
+            stderr: null,
+            on: (event: string, listener: (value: never) => void) => {
+              if (event === 'close') onClose = listener as (code: number | null) => void
+            },
+            kill: () => {}
+          } as unknown as SpawnedProcessLike
+        },
+        generatedRoot,
+        dispatches
+      )
+      for (const role of ['developer', 'code-reviewer', 'security-reviewer'] as const) {
+        const launcher = roles[role]
+        if (!launcher) throw new Error(`missing ${role} launcher`)
+        wrapped(launcher.command, launcher.buildArgs({ permission: `${role}/grants.yaml`, maxTurns: 100 }), {
+          env: launcher.env ?? {},
+          cwd: '/repo'
+        })
+      }
+      const developer = shims.developer[0] as string
+      const reviewer = shims.reviewer[0] as string
+      expect(developer).toMatch(/^[0-9a-f-]{36}$/)
+      expect(new Set([developer, reviewer, shims.security[0]]).size).toBe(3)
+      // Served only from inside the dispatch it was minted for.
+      expect(tables.developer.verify(developer, 4100)).toBeNull()
+      expect(tables.developer.verify(developer, 4101)?.reason).toBe('replayed')
+      // Another role's capability on this role's host is replayed from another dispatch.
+      expect(tables.developer.verify(reviewer, 4100)?.reason).toBe('replayed')
+      expect(tables.developer.verify(undefined, 4100)?.reason).toBe('missing')
+      // The Developer's launch ends: its capability is revoked and its shim carries none.
+      closers[0]?.()
+      expect(tables.developer.verify(developer, 4100)?.reason).toBe('revoked')
+      expect(shims.developer).toEqual([developer, undefined])
+      expect(tables.reviewer.verify(reviewer, 4101)).toBeNull()
     })
   }
 })

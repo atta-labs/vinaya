@@ -159,7 +159,12 @@ import {
 } from '../../../apps/cli/src/lib/dispatch'
 import { loadConfig } from '../../../apps/cli/src/lib/config'
 import { crossRunnerRefusal, recordTaskRunner } from '../../../apps/cli/src/lib/task-run-engine'
-import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
+import {
+  createDispatchCapabilityTable,
+  type DispatchCapabilityTable,
+  startDevToolsHost,
+  type DevToolsHost
+} from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import {
   attributeDriverToolCalls,
@@ -472,9 +477,69 @@ const vendorOf = (agent: Agent): 'claude-code' | 'codex' => (agent === 'claude' 
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 
-/** The script a vendor's MCP settings name as the dev-tools server: it relays to the runner's host socket. */
-export function shimContent(socketPath: string, execPath: string, entry: string): string {
-  return `#!/bin/sh\nexec ${shellQuote(execPath)} ${shellQuote(entry)} task-tools dev-bridge --socket ${shellQuote(socketPath)}\n`
+/**
+ * The script a vendor's MCP settings name as the dev-tools server: it relays to the runner's host socket. While a
+ * dispatch of the role runs, it also carries that dispatch's capability; between dispatches it carries none.
+ */
+export function shimContent(socketPath: string, execPath: string, entry: string, capability?: string): string {
+  const carried = capability === undefined ? '' : ` --capability ${shellQuote(capability)}`
+  return `#!/bin/sh\nexec ${shellQuote(execPath)} ${shellQuote(entry)} task-tools dev-bridge --socket ${shellQuote(socketPath)}${carried}\n`
+}
+
+/** How long the executor lets an agent launch run when its role states no timeout. */
+const DEFAULT_AGENT_TIMEOUT_MS = 10 * 60 * 1000
+/** What a dispatch's capability outlives its launch timeout by: the time a killed launch is given to exit. */
+const DISPATCH_CAPABILITY_GRACE_MS = 60 * 1000
+
+/** One role's dispatches: its host's capability table, how long a dispatch may run, and its shim's writer. */
+export interface RoleDispatches {
+  capabilities: DispatchCapabilityTable
+  ttlMs: number
+  writeShim: (capability?: string) => void
+}
+
+/**
+ * Mints a capability for each role launch, just before it is spawned: the role's shim is rewritten to carry it, the
+ * capability is bound to the launched process, and it is revoked (and the shim rewritten without it) when that
+ * process ends. A launch whose process reports no id is never bound, so its capability serves nothing. Launches that
+ * are none of the roles' generated launches pass through untouched.
+ */
+export function withDispatchCapabilities(
+  spawnFn: SpawnFn,
+  generatedRoot: string,
+  dispatches: Readonly<Partial<Record<HeldVerdictRole | 'developer', RoleDispatches>>>
+): SpawnFn {
+  const roots = {
+    reviewer: join(generatedRoot, 'code-reviewer'),
+    security: join(generatedRoot, 'security-reviewer'),
+    developer: join(generatedRoot, 'developer')
+  } as const
+  return (command, args, options) => {
+    const role = launchRoleOf(roots, args, options?.env)
+    const dispatch = role === undefined ? undefined : dispatches[role]
+    if (dispatch === undefined) return spawnFn(command, args, options)
+    const capability = dispatch.capabilities.mint(dispatch.ttlMs)
+    dispatch.writeShim(capability)
+    let ended = false
+    const end = (): void => {
+      if (ended) return
+      ended = true
+      dispatch.capabilities.revoke(capability)
+      dispatch.writeShim()
+    }
+    let child: SpawnedProcessLike
+    try {
+      child = spawnFn(command, args, options)
+    } catch (thrown) {
+      end()
+      throw thrown
+    }
+    const pid = (child as { pid?: unknown }).pid
+    if (typeof pid === 'number') dispatch.capabilities.bind(capability, pid)
+    child.on('close', end)
+    child.on('error', end)
+    return child
+  }
 }
 
 /** Where one task's run files go: `<runtimeDir>/engine-runs/<task>`. */
@@ -1172,22 +1237,42 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       { role: 'security' as const, context: reviewerContext, file: 'security-dev-bridge.sh' }
     ]
     const mcpCommands: Record<string, string> = {}
+    const hostParts: Partial<
+      Record<(typeof roleHosts)[number]['role'], Pick<RoleDispatches, 'capabilities' | 'writeShim'>>
+    > = {}
     for (const roleHost of roleHosts) {
       const socketPath = devToolsSocketPath(`${options.hostKey ?? `engine-${args.task}`}-${roleHost.role}`)
+      const capabilities = createDispatchCapabilityTable()
       hosts.push(
         await options.startHost({
           socketPath,
           serverVersion: 'engine-run-1',
           context: roleHost.context,
-          role: roleHost.role
+          role: roleHost.role,
+          capabilities,
+          // Every refused call is recorded in the task's driver log, which outlives the run.
+          audit: (event) =>
+            narrate(
+              `refused a ${event.tool} call on the ${event.role} tool host: the per-dispatch capability was ${event.reason} (${event.detail})`
+            )
         })
       )
       const shimPath = join(runDir, roleHost.file)
-      writeFileSync(
-        shimPath,
-        shimContent(socketPath, options.execPath ?? process.execPath, cliEntryOf(options.cliRoot ?? options.repoRoot))
-      )
-      chmodSync(shimPath, 0o755)
+      const writeShim = (capability?: string): void => {
+        writeFileSync(
+          shimPath,
+          shimContent(
+            socketPath,
+            options.execPath ?? process.execPath,
+            cliEntryOf(options.cliRoot ?? options.repoRoot),
+            capability
+          ),
+          { mode: 0o700 }
+        )
+        chmodSync(shimPath, 0o700)
+      }
+      writeShim()
+      hostParts[roleHost.role] = { capabilities, writeShim }
       mcpCommands[roleHost.role === 'security' ? 'security-reviewer' : roleHost.role] = shimPath
     }
     const roles: Record<string, RoleLauncher[string]> = {
@@ -1210,6 +1295,21 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       roles.developer = withTurnSchema(roles.developer, join(runDir, 'generated', 'developer'), () =>
         developerTurnResultJsonSchema(options.taskInput.developerContext)
       )
+    }
+    // A dispatch's capability lasts as long as its launch may run, plus the grace a killed process is given to exit.
+    const dispatchTtl = (launcher: RoleLauncher[string] | undefined): number =>
+      (launcher?.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS) + DISPATCH_CAPABILITY_GRACE_MS
+    const dispatchOf = (
+      role: (typeof roleHosts)[number]['role'],
+      launcher: RoleLauncher[string] | undefined
+    ): RoleDispatches | undefined => {
+      const parts = hostParts[role]
+      return parts && { ...parts, ttlMs: dispatchTtl(launcher) }
+    }
+    const roleDispatches = {
+      developer: dispatchOf('developer', roles.developer),
+      reviewer: dispatchOf('code-reviewer', roles['code-reviewer']),
+      security: dispatchOf('security', roles['security-reviewer'])
     }
     // The Developer's sandbox is probed from the launch shape just generated, before the first agent step.
     if (options.taskInput && roles.developer) {
@@ -1442,7 +1542,12 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
             withReviewerWorkingDirectory(
               // Innermost, so the tee sees the directory the launch runs in and the agent's own stdout.
               withAgentNarration(
-                withUsageLimitWatch(reaper.spawnFn, args.agent, onUsageLimit),
+                withUsageLimitWatch(
+                  // Innermost of all, so each capability is bound to the very process a launch spawned.
+                  withDispatchCapabilities(reaper.spawnFn, join(runDir, 'generated'), roleDispatches),
+                  args.agent,
+                  onUsageLimit
+                ),
                 join(runDir, 'generated'),
                 {
                   agent: args.agent,
