@@ -93,9 +93,20 @@ export function devToolsSocketPath(key: string): string {
  */
 export function driverDevBridgeInvocation(
   socketPath: string,
-  entry: string = cliEntryPath() ?? 'vinaya'
+  entry: string = cliEntryPath() ?? 'vinaya',
+  capability?: string
 ): BridgeInvocation {
-  return { command: process.execPath, args: [entry, 'task-tools', 'dev-bridge', '--socket', socketPath] }
+  return {
+    command: process.execPath,
+    args: [
+      entry,
+      'task-tools',
+      'dev-bridge',
+      '--socket',
+      socketPath,
+      ...(capability ? ['--capability', capability] : [])
+    ]
+  }
 }
 
 /**

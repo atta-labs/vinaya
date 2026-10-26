@@ -20,7 +20,7 @@ import net from 'node:net'
 import { chmodSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { devToolsSocketRoot } from './dev-tools-registration.js'
-import { createDevToolsMcpServer, type DevToolContext } from './dev-tools-server.js'
+import { createDevToolsMcpServer, type DevToolContext, type DispatchCapability } from './dev-tools-server.js'
 import type { GrantedRole } from './role-grants.js'
 
 export type DevToolsHost = {
@@ -36,6 +36,7 @@ export type StartDevToolsHostOptions = {
   context: DevToolContext
   /** The dispatched role; the host serves only the tools `role-grants.ts` grants it. */
   role: GrantedRole
+  capability?: DispatchCapability
 }
 
 /**
@@ -63,7 +64,8 @@ export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise
   const server = createDevToolsMcpServer({
     serverVersion: opts.serverVersion,
     context: opts.context,
-    role: opts.role
+    role: opts.role,
+    capability: opts.capability
   })
 
   const connections = new Set<net.Socket>()
@@ -103,6 +105,7 @@ export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise
     new Promise<void>((resolve) => {
       if (closed) return resolve()
       closed = true
+      if (opts.capability) opts.capability.revoked = true
       for (const socket of connections) socket.destroy()
       connections.clear()
       netServer.close(() => {

@@ -99,6 +99,15 @@ export type DevToolRefusal = {
   fix: string
 }
 
+export type DispatchCapability = {
+  value: string
+  expiresAt: number
+  revoked?: boolean
+  audit?: (event: { role: GrantedRole; tool: string; reason: 'missing' | 'expired' | 'revoked' | 'replayed' }) => void
+}
+
+const CAPABILITY_ARGUMENT = '__vinayaDispatchCapability'
+
 /** A driver-side tool outcome: a typed success value, or a structured refusal. */
 export type DevToolResult<T> = { ok: true; result: T } | { ok: false; error: DevToolRefusal }
 
@@ -206,8 +215,39 @@ export async function dispatchDevTool(
   context: DevToolContext,
   role: GrantedRole,
   name: string,
-  args: unknown
+  args: unknown,
+  capability?: DispatchCapability
 ): Promise<DevToolResult<unknown>> {
+  if (capability) {
+    const supplied =
+      typeof args === 'object' && args !== null ? (args as Record<string, unknown>)[CAPABILITY_ARGUMENT] : undefined
+    const reason =
+      typeof supplied !== 'string'
+        ? 'missing'
+        : capability.revoked
+          ? 'revoked'
+          : Date.now() >= capability.expiresAt
+            ? 'expired'
+            : supplied !== capability.value
+              ? 'replayed'
+              : null
+    if (reason) {
+      capability.audit?.({ role, tool: name, reason })
+      return {
+        ok: false,
+        error: devToolError(
+          'unauthorized',
+          reason === 'expired' || reason === 'revoked' ? 'new_attempt' : 'never',
+          'not_started',
+          'dispatch-capability',
+          `the per-dispatch capability was ${reason}.`,
+          'Use only the tool registration minted by the controller for this dispatch.'
+        )
+      }
+    }
+    args = { ...(args as Record<string, unknown>) }
+    delete (args as Record<string, unknown>)[CAPABILITY_ARGUMENT]
+  }
   if (!isToolGranted(role, name)) {
     const granted = ROLE_TOOL_GRANTS[role]
     return {
@@ -363,6 +403,7 @@ export type CreateDevToolsMcpServerOptions = {
   context: DevToolContext
   /** The dispatched role whose grant decides what is listed and what may be called. */
   role: GrantedRole
+  capability?: DispatchCapability
 }
 
 /**
@@ -377,6 +418,6 @@ export function createDevToolsMcpServer(opts: CreateDevToolsMcpServerOptions): M
     serverName: DEV_TOOLS_MCP_SERVER_NAME,
     serverVersion: opts.serverVersion,
     listTools: () => servedTools(opts.role).map(serveTool),
-    callTool: (name, args) => dispatchDevTool(opts.context, opts.role, name, args)
+    callTool: (name, args) => dispatchDevTool(opts.context, opts.role, name, args, opts.capability)
   })
 }

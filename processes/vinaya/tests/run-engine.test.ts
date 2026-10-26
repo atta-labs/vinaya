@@ -372,9 +372,14 @@ describe('a stub run on the Engine path', () => {
     const result = await runEngine(options)
     expect(calls.indexOf('host-start')).toBeLessThan(calls.indexOf('spawn:develop'))
     const shim = join(options.runtimeDir, 'engine-runs', '7', 'developer-dev-bridge.sh')
-    expect(readFileSync(shim, 'utf8')).toBe(
-      shimContent(devToolsSocketPath('engine-7-developer'), process.execPath, join(repoRoot, 'apps/cli/src/index.ts'))
+    expect(readFileSync(shim, 'utf8')).toContain(
+      shimContent(
+        devToolsSocketPath('engine-7-developer'),
+        process.execPath,
+        join(repoRoot, 'apps/cli/src/index.ts')
+      ).trimEnd()
     )
+    expect(readFileSync(shim, 'utf8')).toContain("--capability '")
     expect(statSync(shim).mode & 0o111).not.toBe(0)
     expect(result.exitCode).toBe(0)
     const generated = join(options.runtimeDir, 'engine-runs', '7', 'generated', 'developer')

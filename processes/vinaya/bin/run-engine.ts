@@ -383,8 +383,8 @@ const vendorOf = (agent: Agent): 'claude-code' | 'codex' => (agent === 'claude' 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 
 /** The script a vendor's MCP settings name as the dev-tools server: it relays to the runner's host socket. */
-export function shimContent(socketPath: string, execPath: string, entry: string): string {
-  return `#!/bin/sh\nexec ${shellQuote(execPath)} ${shellQuote(entry)} task-tools dev-bridge --socket ${shellQuote(socketPath)}\n`
+export function shimContent(socketPath: string, execPath: string, entry: string, capability?: string): string {
+  return `#!/bin/sh\nexec ${shellQuote(execPath)} ${shellQuote(entry)} task-tools dev-bridge --socket ${shellQuote(socketPath)}${capability ? ` --capability ${shellQuote(capability)}` : ''}\n`
 }
 
 /** Where one task's run files go: `<runtimeDir>/engine-runs/<task>`. */
@@ -1075,18 +1075,30 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     const mcpCommands: Record<string, string> = {}
     for (const roleHost of roleHosts) {
       const socketPath = devToolsSocketPath(`${options.hostKey ?? `engine-${args.task}`}-${roleHost.role}`)
+      const capability = randomUUID()
       hosts.push(
         await options.startHost({
           socketPath,
           serverVersion: 'engine-run-1',
           context: roleHost.context,
-          role: roleHost.role
+          role: roleHost.role,
+          capability: {
+            value: capability,
+            expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+            audit: (event) =>
+              process.stderr.write(`${JSON.stringify({ event: 'dev-tool-capability-refusal', ...event })}\n`)
+          }
         })
       )
       const shimPath = join(runDir, roleHost.file)
       writeFileSync(
         shimPath,
-        shimContent(socketPath, options.execPath ?? process.execPath, cliEntryOf(options.cliRoot ?? options.repoRoot))
+        shimContent(
+          socketPath,
+          options.execPath ?? process.execPath,
+          cliEntryOf(options.cliRoot ?? options.repoRoot),
+          capability
+        )
       )
       chmodSync(shimPath, 0o755)
       mcpCommands[roleHost.role === 'security' ? 'security-reviewer' : roleHost.role] = shimPath

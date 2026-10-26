@@ -195,6 +195,38 @@ describe('dispatchDevTool — direct dispatch of each tool', () => {
   })
 })
 
+describe('dispatch capability', () => {
+  it.each([
+    ['missing', undefined, { value: 'own', expiresAt: Date.now() + 60_000 }],
+    ['expired', 'own', { value: 'own', expiresAt: 0 }],
+    ['revoked', 'own', { value: 'own', expiresAt: Date.now() + 60_000, revoked: true }],
+    ['replayed', 'other', { value: 'own', expiresAt: Date.now() + 60_000 }]
+  ] as const)('refuses a %s capability and audits it', async (reason, supplied, capability) => {
+    const events: string[] = []
+    const result = await dispatchDevTool(
+      okContext(),
+      'developer',
+      'run_checks',
+      { ...(supplied ? { __vinayaDispatchCapability: supplied } : {}) },
+      { ...capability, audit: (event) => events.push(event.reason) }
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.check).toBe('dispatch-capability')
+    expect(events).toEqual([reason])
+  })
+
+  it('serves the capability minted for this dispatch', async () => {
+    const result = await dispatchDevTool(
+      okContext(),
+      'developer',
+      'run_checks',
+      { __vinayaDispatchCapability: 'own' },
+      { value: 'own', expiresAt: Date.now() + 60_000 }
+    )
+    expect(result.ok).toBe(true)
+  })
+})
+
 describe('dev-tools host — a real unix socket is the driver transport', () => {
   it('answers initialize and a tool call over a socket connection', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dev-tools-host-'))
