@@ -383,8 +383,8 @@ const vendorOf = (agent: Agent): 'claude-code' | 'codex' => (agent === 'claude' 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 
 /** The script a vendor's MCP settings name as the dev-tools server: it relays to the runner's host socket. */
-export function shimContent(socketPath: string, execPath: string, entry: string, capability?: string): string {
-  return `#!/bin/sh\nexec ${shellQuote(execPath)} ${shellQuote(entry)} task-tools dev-bridge --socket ${shellQuote(socketPath)}${capability ? ` --capability ${shellQuote(capability)}` : ''}\n`
+export function shimContent(socketPath: string, execPath: string, entry: string): string {
+  return `#!/bin/sh\nexec ${shellQuote(execPath)} ${shellQuote(entry)} task-tools dev-bridge --socket ${shellQuote(socketPath)}\n`
 }
 
 /** Where one task's run files go: `<runtimeDir>/engine-runs/<task>`. */
@@ -1093,12 +1093,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       const shimPath = join(runDir, roleHost.file)
       writeFileSync(
         shimPath,
-        shimContent(
-          socketPath,
-          options.execPath ?? process.execPath,
-          cliEntryOf(options.cliRoot ?? options.repoRoot),
-          capability
-        )
+        shimContent(socketPath, options.execPath ?? process.execPath, cliEntryOf(options.cliRoot ?? options.repoRoot))
       )
       chmodSync(shimPath, 0o755)
       mcpCommands[roleHost.role === 'security' ? 'security-reviewer' : roleHost.role] = shimPath

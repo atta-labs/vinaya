@@ -404,6 +404,8 @@ export type CreateDevToolsMcpServerOptions = {
   /** The dispatched role whose grant decides what is listed and what may be called. */
   role: GrantedRole
   capability?: DispatchCapability
+  /** A transport-authenticated value injected by the host, never supplied by the worker. */
+  trustedCapability?: string
 }
 
 /**
@@ -418,6 +420,18 @@ export function createDevToolsMcpServer(opts: CreateDevToolsMcpServerOptions): M
     serverName: DEV_TOOLS_MCP_SERVER_NAME,
     serverVersion: opts.serverVersion,
     listTools: () => servedTools(opts.role).map(serveTool),
-    callTool: (name, args) => dispatchDevTool(opts.context, opts.role, name, args, opts.capability)
+    callTool: (name, args) =>
+      dispatchDevTool(
+        opts.context,
+        opts.role,
+        name,
+        opts.trustedCapability
+          ? {
+              ...(typeof args === 'object' && args !== null ? args : {}),
+              [CAPABILITY_ARGUMENT]: opts.trustedCapability
+            }
+          : args,
+        opts.capability
+      )
   })
 }

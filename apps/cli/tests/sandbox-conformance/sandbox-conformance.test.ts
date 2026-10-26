@@ -54,6 +54,8 @@ import {
 } from './sandbox-launch.js'
 import {
   codexExcludedVariables,
+  CONTROLLER_BOUNDARY_PROBES,
+  CONTROLLER_BOUNDARY_ROW_IDS,
   CREDENTIAL_PROBES,
   deniesCredentialRoute,
   GATE_14_PROBES,
@@ -64,6 +66,29 @@ import {
   probeLeaked,
   roleHasShell
 } from './engine-attack-probes.js'
+
+describe('Engine controller-boundary probes — matrix coverage', () => {
+  it('names exactly the nine capability and controller-boundary rows', () => {
+    expect(CONTROLLER_BOUNDARY_ROW_IDS).toEqual([
+      'fault-attack:24-tool-call-without-a-valid-per-dispatch-capability-missing',
+      'fault-attack:25-tool-socket-reached-by-another-same-user-process',
+      'fault-attack:36-raw-socket-or-non-domain-path-to-the-controller-s-tool',
+      'fault-attack:37-inspecting-or-signalling-the-controller-or-another-dispatch',
+      'fault-attack:38-worker-write-to-controller-state-checkpoints-source-receipts',
+      'fault-attack:42-tool-arguments-that-pass-discovery-but-fail-at-execution',
+      'fault-attack:43-hook-or-permission-prompt-bypassed',
+      'fault-attack:54-raw-sockets-to-destinations-other-than-the-controller-or',
+      'fault-attack:55-inspecting-unrelated-processes-of-the-same-user'
+    ])
+  })
+
+  it('carries one attack command and an outcome under both adapters for every row', () => {
+    for (const probe of CONTROLLER_BOUNDARY_PROBES) {
+      expect(probe.command.trim()).not.toBe('')
+      expect(Object.keys(probe.byAdapter).sort()).toEqual(['claude', 'codex'])
+    }
+  })
+})
 
 type CommandEntry = {
   id: string
@@ -682,6 +707,46 @@ for (const agent of AGENTS) {
   })
 }
 
+const GENERATED_FOR_LIVE = generatedRoleFiles()
+
+// These probes use the same generated Engine role launch shape as the credential
+// probes above. Review-only roles have no shell, which is itself the denial;
+// shell-bearing roles execute every row under both adapters only in the live run.
+for (const agent of AGENTS) {
+  for (const role of ROLE_NAMES) {
+    const files = GENERATED_FOR_LIVE[agent][role] as Record<string, string>
+    describe.skipIf(!LIVE || process.platform !== 'linux')(
+      `Engine controller-boundary probes — ${agent}/${role}'s generated launch shape`,
+      () => {
+        if (!roleHasShell(files)) {
+          it('denies every probe because the role is granted no shell', () => {
+            expect(roleHasShell(files)).toBe(false)
+          })
+          return
+        }
+        let session: SandboxSession | undefined
+        beforeAll(() => {
+          session = openEngineSandboxSession(agent, role)
+        })
+        afterAll(() => session?.dispose())
+        for (const probe of CONTROLLER_BOUNDARY_PROBES) {
+          it(
+            `fault-attack:${probe.row} (${probe.byAdapter[agent]})`,
+            async () => {
+              const result = await (session as SandboxSession).run(probe.command, {})
+              console.info(
+                `[engine ${agent}/${role}] fault-attack:${probe.row}: exit ${result.exitCode}, ${probe.byAdapter[agent]}`
+              )
+              if (probe.byAdapter[agent] === 'deny') expect(result.exitCode).not.toBe(0)
+            },
+            COMMAND_BUDGET_MS + 60_000
+          )
+        }
+      }
+    )
+  }
+}
+
 // --- The credential-confinement probes, run inside the Engine launch shape ---
 //
 // Live only: this suite runs the real sandbox on Linux, outside any agent's
@@ -698,7 +763,6 @@ for (const agent of AGENTS) {
 // The only row proved denied on both adapters, live-gated until its output is
 // pasted, is the ambient-environment row, whose evidence entry names this file:
 //   fault-attack:40-ambient-credential-inherited-by-a-role-environment
-const GENERATED_FOR_LIVE = generatedRoleFiles()
 for (const agent of AGENTS) {
   for (const role of ROLE_NAMES) {
     const files = GENERATED_FOR_LIVE[agent][role] as Record<string, string>

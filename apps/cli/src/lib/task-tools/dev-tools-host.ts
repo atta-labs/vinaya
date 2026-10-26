@@ -17,7 +17,9 @@
  */
 
 import net from 'node:net'
-import { chmodSync, mkdirSync, rmSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { platform } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { dirname } from 'node:path'
 import { devToolsSocketRoot } from './dev-tools-registration.js'
 import { createDevToolsMcpServer, type DevToolContext, type DispatchCapability } from './dev-tools-server.js'
@@ -37,6 +39,60 @@ export type StartDevToolsHostOptions = {
   /** The dispatched role; the host serves only the tools `role-grants.ts` grants it. */
   role: GrantedRole
   capability?: DispatchCapability
+  /** The dispatch controller process; only its descendants may bind this role host. */
+  controllerPid?: number
+}
+
+async function unixPeerPid(socket: net.Socket): Promise<number | null> {
+  const fd = (socket as unknown as { _handle?: { fd?: number } })._handle?.fd
+  if (typeof fd !== 'number') return null
+  try {
+    const { dlopen, FFIType, ptr } = await import('bun:ffi')
+    const library = dlopen(platform() === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6', {
+      getsockopt: {
+        args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr],
+        returns: FFIType.i32
+      }
+    })
+    const credential = new Uint8Array(platform() === 'darwin' ? 4 : 12)
+    const length = new Uint32Array([credential.byteLength])
+    const status = library.symbols.getsockopt(
+      fd,
+      platform() === 'darwin' ? 0 : 1,
+      platform() === 'darwin' ? 2 : 17,
+      ptr(credential),
+      ptr(length)
+    )
+    library.close()
+    return status === 0 ? new DataView(credential.buffer).getInt32(0, true) : null
+  } catch {
+    return null
+  }
+}
+
+function parentPid(pid: number): number | null {
+  try {
+    if (platform() === 'linux') {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+      const afterName = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
+      const value = Number(afterName[1])
+      return Number.isInteger(value) && value > 0 ? value : null
+    }
+    const result = spawnSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' })
+    const value = Number(result.stdout.trim())
+    return result.status === 0 && Number.isInteger(value) && value > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+function descendsFrom(pid: number, ancestor: number): boolean {
+  const seen = new Set<number>()
+  for (let current: number | null = pid; current !== null && !seen.has(current); current = parentPid(current)) {
+    if (current === ancestor) return true
+    seen.add(current)
+  }
+  return false
 }
 
 /**
@@ -61,15 +117,21 @@ export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise
     // A missing or unremovable stale socket is handled by listen() itself below.
   }
 
-  const server = createDevToolsMcpServer({
-    serverVersion: opts.serverVersion,
-    context: opts.context,
-    role: opts.role,
-    capability: opts.capability
-  })
-
   const connections = new Set<net.Socket>()
-  const netServer = net.createServer((socket) => {
+  const netServer = net.createServer(async (socket) => {
+    const peerPid = await unixPeerPid(socket)
+    if (opts.capability && (peerPid === null || !descendsFrom(peerPid, opts.controllerPid ?? process.pid))) {
+      opts.capability.audit?.({ role: opts.role, tool: '<connection>', reason: 'missing' })
+      socket.destroy()
+      return
+    }
+    const server = createDevToolsMcpServer({
+      serverVersion: opts.serverVersion,
+      context: opts.context,
+      role: opts.role,
+      capability: opts.capability,
+      trustedCapability: opts.capability?.value
+    })
     connections.add(socket)
     socket.on('close', () => connections.delete(socket))
     // A per-connection error (the bridge dying mid-call) must never crash the

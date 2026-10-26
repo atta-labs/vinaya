@@ -235,7 +235,8 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
       socketPath,
       serverVersion: '0.0.0-test',
       context: okContext(),
-      role: 'developer'
+      role: 'developer',
+      capability: { value: 'host-only', expiresAt: Date.now() + 60_000 }
     })
     try {
       const responses = await driveOverSocket(socketPath, [
@@ -247,6 +248,34 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
       expect(init?.serverInfo?.name).toBe(DEV_TOOLS_MCP_SERVER_NAME)
       expect(call?.isError).toBe(false)
       expect(call?.structuredContent?.passed).toBe(true)
+    } finally {
+      await host.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a same-user process outside the dispatch controller lineage', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dev-tools-host-peer-'))
+    const socketPath = join(dir, 'driver.sock')
+    const events: string[] = []
+    const host = await startDevToolsHost({
+      socketPath,
+      serverVersion: '0.0.0-test',
+      context: okContext(),
+      role: 'developer',
+      controllerPid: 1,
+      capability: {
+        value: 'host-only',
+        expiresAt: Date.now() + 60_000,
+        audit: (event) => events.push(`${event.tool}:${event.reason}`)
+      }
+    })
+    try {
+      await new Promise<void>((resolve) => {
+        const socket = net.connect(socketPath)
+        socket.on('close', () => resolve())
+      })
+      expect(events).toEqual(['<connection>:missing'])
     } finally {
       await host.close()
       rmSync(dir, { recursive: true, force: true })

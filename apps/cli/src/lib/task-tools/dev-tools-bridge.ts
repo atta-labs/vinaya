@@ -17,9 +17,7 @@
 import net from 'node:net'
 
 /** Parses `--socket <path>` out of the bridge's own argv. */
-export function parseBridgeArgs(
-  args: readonly string[]
-): { socketPath: string; capability?: string } | { error: string } {
+export function parseBridgeArgs(args: readonly string[]): { socketPath: string } | { error: string } {
   const idx = args.indexOf('--socket')
   if (idx === -1 || idx === args.length - 1) {
     return { error: 'vinaya dev-tools bridge: missing required --socket <path>' }
@@ -28,14 +26,11 @@ export function parseBridgeArgs(
   if (!socketPath || socketPath.length === 0) {
     return { error: 'vinaya dev-tools bridge: --socket requires a non-empty path' }
   }
-  const capabilityIndex = args.indexOf('--capability')
-  const capability = capabilityIndex >= 0 ? args[capabilityIndex + 1] : undefined
-  if (capabilityIndex >= 0 && !capability) return { error: 'vinaya dev-tools bridge: --capability requires a value' }
-  return { socketPath, ...(capability ? { capability } : {}) }
+  return { socketPath }
 }
 
 /** Relays this process's stdin/stdout to the socket at `socketPath`. Resolves when either side closes. */
-export function runDevToolsBridge(socketPath: string, capability?: string): Promise<void> {
+export function runDevToolsBridge(socketPath: string): Promise<void> {
   return new Promise<void>((resolve) => {
     const socket = net.connect(socketPath)
     socket.on('error', (err) => {
@@ -44,31 +39,7 @@ export function runDevToolsBridge(socketPath: string, capability?: string): Prom
       resolve()
     })
     socket.on('connect', () => {
-      if (capability) {
-        let buffer = ''
-        process.stdin.setEncoding('utf8')
-        process.stdin.on('data', (chunk: string) => {
-          buffer += chunk
-          for (;;) {
-            const newline = buffer.indexOf('\n')
-            if (newline < 0) break
-            const line = buffer.slice(0, newline)
-            buffer = buffer.slice(newline + 1)
-            try {
-              const message = JSON.parse(line) as { method?: string; params?: { arguments?: Record<string, unknown> } }
-              if (message.method === 'tools/call' && message.params) {
-                message.params.arguments = {
-                  ...(message.params.arguments ?? {}),
-                  __vinayaDispatchCapability: capability
-                }
-              }
-              socket.write(`${JSON.stringify(message)}\n`)
-            } catch {
-              socket.write(`${line}\n`)
-            }
-          }
-        })
-      } else process.stdin.pipe(socket)
+      process.stdin.pipe(socket)
       socket.pipe(process.stdout)
     })
     const done = (): void => resolve()
@@ -85,5 +56,5 @@ export async function devToolsBridgeCommand(args: string[]): Promise<void> {
     process.exitCode = 2
     return
   }
-  await runDevToolsBridge(parsed.socketPath, parsed.capability)
+  await runDevToolsBridge(parsed.socketPath)
 }

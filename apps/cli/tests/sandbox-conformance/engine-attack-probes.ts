@@ -38,6 +38,69 @@ import { AGENTS, type Agent, ENGINE_PROBE_CANARY } from './sandbox-launch.js'
 
 export const CREDENTIAL_ROW_PREFIX = 'fault-attack:'
 
+export const CONTROLLER_BOUNDARY_RESIDUAL =
+  'Residual risk: the adapter sandbox may expose unrelated same-user process metadata or permit non-controller sockets; the server still refuses every tool connection outside the dispatch controller lineage.'
+
+export type ControllerBoundaryProbe = {
+  readonly row: string
+  readonly command: string
+  readonly byAdapter: Readonly<Record<Agent, 'deny' | 'controller-refusal' | 'residual'>>
+}
+
+/** Controller-boundary attacks exercised in every Engine role launch under both adapters. */
+export const CONTROLLER_BOUNDARY_PROBES: readonly ControllerBoundaryProbe[] = [
+  {
+    row: '24-tool-call-without-a-valid-per-dispatch-capability-missing',
+    command:
+      'printf \'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_checks","arguments":{}}}\\n\'',
+    byAdapter: { claude: 'controller-refusal', codex: 'controller-refusal' }
+  },
+  {
+    row: '25-tool-socket-reached-by-another-same-user-process',
+    command: 'test ! -r /proc/1/cmdline || ps -p 1 -o pid=',
+    byAdapter: { claude: 'controller-refusal', codex: 'controller-refusal' }
+  },
+  {
+    row: '36-raw-socket-or-non-domain-path-to-the-controller-s-tool',
+    command: 'bun -e \'fetch("http://127.0.0.1:9").catch(()=>process.exit(23))\'',
+    byAdapter: { claude: 'deny', codex: 'deny' }
+  },
+  {
+    row: '37-inspecting-or-signalling-the-controller-or-another-dispatch',
+    command: 'ps -eo pid,ppid,args',
+    byAdapter: { claude: 'deny', codex: 'deny' }
+  },
+  {
+    row: '38-worker-write-to-controller-state-checkpoints-source-receipts',
+    command: `test ! -w "\${VINAYA_RUNTIME_DIR:-/nonexistent}"`,
+    byAdapter: { claude: 'deny', codex: 'deny' }
+  },
+  {
+    row: '42-tool-arguments-that-pass-discovery-but-fail-at-execution',
+    command: 'printf \'{"header":42}\' >/dev/null',
+    byAdapter: { claude: 'controller-refusal', codex: 'controller-refusal' }
+  },
+  {
+    row: '43-hook-or-permission-prompt-bypassed',
+    command: 'git commit --no-verify --allow-empty -m conformance-probe',
+    byAdapter: { claude: 'deny', codex: 'deny' }
+  },
+  {
+    row: '54-raw-sockets-to-destinations-other-than-the-controller-or',
+    command: 'bun -e \'fetch("https://example.com").then(()=>process.exit(0)).catch(()=>process.exit(23))\'',
+    byAdapter: { claude: 'residual', codex: 'residual' }
+  },
+  {
+    row: '55-inspecting-unrelated-processes-of-the-same-user',
+    command: 'ps -u "$(id -u)" -o pid,ppid,args',
+    byAdapter: { claude: 'residual', codex: 'residual' }
+  }
+] as const
+
+export const CONTROLLER_BOUNDARY_ROW_IDS = CONTROLLER_BOUNDARY_PROBES.map(
+  (probe) => `${CREDENTIAL_ROW_PREFIX}${probe.row}`
+)
+
 /** A canary that is never a real secret: a generated marker the fixture home holds and the probe proves it cannot surface. */
 export const PROBE_CANARY = ENGINE_PROBE_CANARY
 
