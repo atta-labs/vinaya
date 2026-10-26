@@ -127,6 +127,35 @@ describe.each(READY_GATE_RUNNERS)('%s', () => {
     expect(result?.timedOut).toBe(true)
   })
 
+  for (const code of ['ENOSPC', 'EACCES'])
+    test(`registration failure ${code} reaps the unacknowledged gated child`, async () => {
+      const dir = repo()
+      const head = headOf(dir)
+      const started = join(dir, '.git', 'hook-started')
+      writeFileSync(join(dir, '.git', 'hooks', 'pre-push'), `touch '${started}'`)
+      let pid = 0
+      try {
+        await expect(
+          runReadyGateLive({
+            worktreePath: dir,
+            branch: 'task/issue-1',
+            head,
+            remoteHead: head,
+            registryDir: join(dir, '.git', 'registry'),
+            register: async (entry) => {
+              pid = entry.pid
+              throw Object.assign(new Error(`${code}: registration refused`), { code })
+            }
+          })
+        ).rejects.toThrow(`${code}: registration refused`)
+        expect(pid).toBeGreaterThan(0)
+        expect(existsSync(started)).toBe(false)
+        expect(identityOf(pid)).toBeNull()
+      } finally {
+        if (pid > 0 && identityOf(pid) !== null) process.kill(-pid, 'SIGKILL')
+      }
+    })
+
   test('a ready gate past its deadline records a timeout instead of hanging', async () => {
     const dir = repo()
     const head = headOf(dir)

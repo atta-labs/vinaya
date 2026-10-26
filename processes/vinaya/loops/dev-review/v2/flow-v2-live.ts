@@ -265,6 +265,8 @@ export async function runReadyGateLive(input: {
   log?: (line: string) => void
   /** The registry folder for the run's processes (the default registry when absent). */
   registryDir?: string
+  /** Durable registration boundary, injectable for storage-failure tests. */
+  register?: typeof registerProcess
 }): Promise<ReadyGateResult> {
   const now = input.now ?? (() => Date.now())
   const log = input.log ?? (() => {})
@@ -332,7 +334,7 @@ export async function runReadyGateLive(input: {
     child.on('exit', () => resolve())
   })
   const stop = async () => {
-    await stopRegistered(runToken, { graceMs: STOP_GRACE_MS, ...registry }).catch(() => undefined)
+    await stopRegistered(runToken, { graceMs: STOP_GRACE_MS, ...registry })
   }
   let interrupted: 'cancel' | 'deadline' | null = null
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -344,7 +346,10 @@ export async function runReadyGateLive(input: {
   try {
     const identity = child.pid !== undefined ? identityOf(child.pid) : null
     if (child.pid !== undefined && identity !== null) {
-      await registerProcess({ ...identity, runToken, label: 'ready-gate pre-push hook', processGroup: true }, registry)
+      await (input.register ?? registerProcess)(
+        { ...identity, runToken, label: 'ready-gate pre-push hook', processGroup: true },
+        registry
+      )
       child.stdin?.write('ack\n')
       child.stdin?.end(
         `${ref} ${input.head} ${ref} ${input.remoteHead ?? '0000000000000000000000000000000000000000'}\n`
@@ -394,6 +399,22 @@ export async function runReadyGateLive(input: {
       wallMs,
       ...(noLocalTests ? { localTests: 'none' as const } : {})
     }
+  } catch (error) {
+    // Registration can fail before the acknowledgement: the blocked shell still belongs to this driver.
+    child.stdin?.destroy()
+    child.kill('SIGTERM')
+    const killTimer = setTimeout(() => child.kill('SIGKILL'), STOP_GRACE_MS)
+    try {
+      await leaderExited
+      await stop()
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'ready gate failed and process cleanup also failed')
+    } finally {
+      clearTimeout(killTimer)
+      child.stdout?.destroy()
+      child.stderr?.destroy()
+    }
+    throw error
   } finally {
     if (timer) clearTimeout(timer)
     rmSync(runTemp, { recursive: true, force: true })
