@@ -60,6 +60,7 @@ import {
   unlinkSync,
   writeSync
 } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { hostname as osHostname } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import {
@@ -576,9 +577,10 @@ function effectDir(root: string, task: number): string {
   return join(taskRoot(root, task), 'effect')
 }
 
+/** A checkpoint thread id names its executor's own scheme (`<kind>:<run>`), so its file is named by its digest. */
 function executionRoundPath(root: string, task: number, threadId: string): string {
-  assertSafeRunId(threadId)
-  return join(taskRoot(root, task), 'execution-round', `${threadId}.json`)
+  const digest = createHash('sha256').update(threadId).digest('hex')
+  return join(taskRoot(root, task), 'execution-round', `${digest}.json`)
 }
 
 function escalationPath(root: string, task: number, escalationId: string): string {
@@ -986,7 +988,10 @@ export function readExecutionRoundMirror(
   task: number,
   threadId: string
 ): ParsedRecord<ExecutionRoundMirrorRecord> {
-  return readRecord(executionRoundPath(deps.root(), task, threadId), parseExecutionRoundMirrorRecord)
+  const read = readRecord(executionRoundPath(deps.root(), task, threadId), parseExecutionRoundMirrorRecord)
+  if (read.status === 'ok' && read.value.threadId !== threadId)
+    return { status: 'corrupt', reason: `the record names thread ${read.value.threadId}, not ${threadId}` }
+  return read
 }
 
 export type EscalationInput = Omit<EscalationRecord, 'version' | 'kind' | 'task'>

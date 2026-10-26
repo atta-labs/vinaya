@@ -1,11 +1,10 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   acquireOwnership,
   type ControlStoreDeps,
-  InvalidRunIdError,
   readEffects,
   readExecutionRoundMirror,
   writeEffect,
@@ -48,13 +47,20 @@ describe('the execution-round mirror', () => {
   })
 
   it('reports a torn record as corrupt, never absent', () => {
-    mkdirSync(join(root, '7', 'control', 'execution-round'), { recursive: true })
-    writeFileSync(join(root, '7', 'control', 'execution-round', 'engine-task-7.json'), '{"version":1,')
+    writeExecutionRoundMirror(deps, 7, mirror)
+    const dir = join(root, '7', 'control', 'execution-round')
+    for (const file of readdirSync(dir)) writeFileSync(join(dir, file), '{"version":1,')
     expect(readExecutionRoundMirror(deps, 7, 'engine-task-7').status).toBe('corrupt')
   })
 
-  it('refuses an unsafe thread id', () => {
-    expect(() => writeExecutionRoundMirror(deps, 7, { ...mirror, threadId: '../x' })).toThrow(InvalidRunIdError)
+  it('keeps a thread id in the executor scheme, and only ever inside the task folder', () => {
+    for (const threadId of ['agent-spawn-run:engine-task-7', '../../escape']) {
+      writeExecutionRoundMirror(deps, 7, { ...mirror, threadId })
+      const read = readExecutionRoundMirror(deps, 7, threadId)
+      expect(read.status === 'ok' && read.value.threadId).toBe(threadId)
+    }
+    expect(readdirSync(join(root, '7', 'control', 'execution-round'))).toHaveLength(2)
+    expect(readdirSync(root)).toEqual(['7'])
   })
 })
 
