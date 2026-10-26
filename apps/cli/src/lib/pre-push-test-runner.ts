@@ -13,3 +13,11 @@ export const ADOPTER_TEST_RUNNER = '.vinaya/test-runner'
 
 /** The line the hook prints when the repository runs no local tests. */
 export const NO_LOCAL_TESTS_MARKER = 'vinaya pre-push: no local tests'
+
+/**
+ * The exact test command the generated hook (in a repository that vendors the CLI) runs and caches for `files`:
+ * the same text its `VINAYA_TEST_CMD` line builds, so a Test Plan line written from it reuses that cached run.
+ */
+export function readyTestCommand(files: readonly string[]): string {
+  return `bun test --timeout=30000 -- ${files.join(' ')}`
+}

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentVendor } from '../../src/lib/agent-vendors.js'
 import { buildInitOps } from '../../src/lib/artifacts.js'
-import { ADOPTER_TEST_RUNNER, NO_LOCAL_TESTS_MARKER } from '../../src/lib/pre-push-test-runner.js'
+import { ADOPTER_TEST_RUNNER, NO_LOCAL_TESTS_MARKER, readyTestCommand } from '../../src/lib/pre-push-test-runner.js'
 
 // The adopter test-runner contract, as the generated pre-push hook carries it: in its ready mode the hook runs the
 // repository's declared runner, or prints the no-local-tests line; every other push is unchanged; no toolchain is
@@ -73,5 +73,12 @@ describe('the adopter pre-push hook and its test runner', () => {
   test('the adopter hook assumes no toolchain: no bun, biome or turbo', () => {
     const body = prePush(null)
     expect(body).not.toMatch(/\bbun\b|\bbunx\b|biome|turbo/)
+  })
+})
+
+describe('the ready test command', () => {
+  test('is the exact text the vendored hook builds and caches as its test command', () => {
+    const body = prePush({ dir: 'apps/cli', bin: 'apps/cli/dist/index.js' } as never)
+    expect(body).toContain(`VINAYA_TEST_CMD="${readyTestCommand([]).trimEnd()} $(printf`)
   })
 })

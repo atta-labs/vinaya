@@ -9,6 +9,7 @@ import {
 import { discardHeldVerdicts } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { checkPremiseAtHead } from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import type { SelectionNote } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { readUnpushedWorkDetail } from '../../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import {
   BACK,
@@ -355,7 +356,12 @@ export async function openPullRequestStep(
     fns.endStoragePushes()
     return forward(open.number, false, [])
   }
-  const staged = safeRead(fns.stagedPullRequest)
+  const stagedBody = safeRead(fns.stagedPullRequest)
+  const command = readyGateCommand(results)
+  const staged =
+    stagedBody !== null && command !== null
+      ? { ...stagedBody, body: withReadyTestCommand(stagedBody.body, command) }
+      : stagedBody
   if (staged === null) {
     return sendBackAfterApproval(
       task,
@@ -392,6 +398,51 @@ async function writeEvidenceFor(fns: V2Functions, pr: number, head: string): Pro
   } catch (error) {
     return `not written: ${error instanceof Error ? error.message : String(error)}`
   }
+}
+
+/** The test command the passed ready push ran (its selection, as the hook runs it), or null when it ran none. */
+function readyGateCommand(results: Results): string | null {
+  const ready = results['ready-push']
+  if (!ready || !('stdout' in ready)) return null
+  try {
+    const selected = (JSON.parse(String(ready.stdout)) as { selection?: SelectionNote | null }).selection?.selected
+    return selected && selected.length > 0 ? readyTestCommand(selected) : null
+  } catch {
+    return null
+  }
+}
+
+const isTestRunLine = (line: string): boolean => /^(bun\s+)?test(\s|$)/.test(line.split('→')[0]?.trim() ?? '')
+
+/**
+ * The staged body with its Test Plan's test-run line set to `command`, the ready push's own: the Evidence write then
+ * reuses that run, cached for the same head, instead of running the tests again. The first fenced block under the
+ * Test Plan heading is the command list; its test-run lines become this one line, and every other command stays. A
+ * body with no such block is returned unchanged.
+ */
+export function withReadyTestCommand(body: string, command: string): string {
+  const lines = body.split('\n')
+  const heading = lines.findIndex((line) => /^#{1,6}\s+test plan\b/i.test(line.trim()))
+  if (heading === -1) return body
+  let open = -1
+  for (let i = heading + 1; i < lines.length; i++) {
+    const line = lines[i] as string
+    if (/^#{1,6}\s/.test(line.trim())) return body
+    if (line.trim().startsWith('```')) {
+      open = i
+      break
+    }
+  }
+  if (open === -1) return body
+  const close = lines.findIndex((line, i) => i > open && line.trim().startsWith('```'))
+  if (close === -1) return body
+  const kept = lines.slice(open + 1, close).filter((line) => !isTestRunLine(line))
+  return [
+    ...lines.slice(0, open + 1),
+    `${command} → every selected test file passes`,
+    ...kept,
+    ...lines.slice(close)
+  ].join('\n')
 }
 
 /** Records how the opening routed; the decision on this step reads that step's own exit result. */

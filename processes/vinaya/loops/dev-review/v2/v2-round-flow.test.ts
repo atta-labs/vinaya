@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { ALL_TESTS, AGENTS, confident, PR, records, TASK, runV2, setUpWorld, tearDownWorld } from './v2-world'
 
 // Version 2 of the developer-review Flow (review locally, push once), end to end on the real runner, Flow and
@@ -172,5 +173,21 @@ describe('the loop writes the Evidence block', () => {
     expect(observed.world.evidenceWrites).toEqual([{ pr: PR, head: observed.world.remote }])
     expect(records(observed, 'open-pull-request')[0]?.evidence).toBe('written')
     expect(observed.world.readySignals).toEqual([true])
+  })
+})
+
+describe('the opened body carries the ready push command as its Test Plan line', () => {
+  test('so the Evidence write reuses that run instead of running the tests again', async () => {
+    const body = ['## Test plan', '', '```', 'bun test other.test.ts → passes', '```', ''].join('\n')
+    const observed = await runV2('claude', {
+      after: {
+        'ready-push': (world) => {
+          world.staged = { title: 'Feat(x): y', body }
+        }
+      }
+    })
+    expect(observed.world.openedBodies).toHaveLength(1)
+    expect(observed.world.openedBodies[0]).toContain(readyTestCommand(ALL_TESTS))
+    expect(observed.world.openedBodies[0]).not.toContain('other.test.ts')
   })
 })

@@ -108,6 +108,8 @@ export interface World {
   storageEnded: number
   /** The pull request and head of each Evidence block the loop wrote. */
   evidenceWrites: Array<{ pr: number; head: string }>
+  /** The body each opening was given. */
+  openedBodies: string[]
   /** Whether each ready push was handed the run's abort signal. */
   readySignals: boolean[]
   repo: string
@@ -301,6 +303,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     staged: null,
     readyRuns: [],
     evidenceWrites: [],
+    openedBodies: [],
     readySignals: [],
     prsOpened: 0,
     ciReads: 0,
@@ -416,7 +419,8 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
         wallMs: 5
       }
     },
-    openPullRequest: () => {
+    openPullRequest: (staged) => {
+      world.openedBodies.push(staged.body)
       world.prOpen = true
       world.prsOpened += 1
       return { ok: true, pr: PR }
