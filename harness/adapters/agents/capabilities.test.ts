@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@attalabs/aeg-types/dev-tools'
 import { CLAUDE_CAPABILITY_TOOLS, claudeShellRule, claudeToolDecisions } from './claude-code/capabilities'
@@ -12,13 +13,15 @@ import {
   codexToolDecisions
 } from './codex/capabilities'
 import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from './codex/config'
+import { stageCodexAuth } from './codex/auth'
 import {
   CLAUDE_BUILTINS,
   CODEX_BUILTINS,
   loadRoleGrants,
   type RoleCapabilities,
   type RoleContract,
-  resolveRoleGrants
+  resolveRoleGrants,
+  ROLE_NAMES
 } from './manifest'
 import type { GeneratedAgentConfig } from './policy'
 
@@ -139,7 +142,7 @@ describe('the developer before and after the capability contract', () => {
   // Built-ins no capability maps, which the old grants allowed: denied now, by design.
   const NEWLY_DENIED = ['EndConversation', 'EnterWorktree', 'ExitWorktree']
 
-  test('Codex: the same launch, environment, config, execpolicy and hook', () => {
+  test('Codex: the same launch, environment, execpolicy and hook, with credential filters and required dev tools', () => {
     expect(codex.launch).toEqual(before.codex.launch)
     expect(codex.env).toEqual(before.codex.env)
     // Intended: the config now also keeps every credential-carrying variable out of the role's commands.
@@ -150,13 +153,50 @@ describe('the developer before and after the capability contract', () => {
       ''
     ].join('\n')
     expect(codex.files['config.toml']).toContain(credentialEnv)
-    expect((codex.files['config.toml'] as string).replace(credentialEnv, '')).toBe(
+    expect((codex.files['config.toml'] as string).replace(credentialEnv, '').replace('required = true\n', '')).toBe(
       before.codex.files['config.toml'] as string
     )
     expect(codex.files['rules/role.rules']).toBe(before.codex.files['rules/role.rules'] as string)
     // The hook's code learned flag-anywhere rules; the policy it embeds is unchanged.
     expect(embeddedPolicy(codex)).toBe(embeddedPolicy(before.codex))
   })
+
+  for (const role of ROLE_NAMES)
+    test(`Codex ${role} requires its dev-tools server at startup`, () => {
+      const roleGrants = loadRoleGrants(join(processRoot, role, 'grants.yaml'))
+      const generated = generateCodexConfig(roleGrants, paths)
+      const settings = Bun.TOML.parse(generated.files['config.toml'] as string)
+      expect(settings).toHaveProperty('mcp_servers.vinaya_dev_tools.required', true)
+    })
+
+  test.skipIf(process.env.VINAYA_CODEX_STARTUP_PROOF !== '1')(
+    'Codex refuses startup naming the required dev-tools server when its bridge is unavailable',
+    () => {
+      const home = mkdtempSync(join(tmpdir(), 'codex-required-tools-'))
+      try {
+        stageCodexAuth(home)
+        const generated = generateCodexConfig(grants, {
+          ...paths,
+          generatedDir: home,
+          mcpCommand: join(home, 'missing-bridge')
+        })
+        writeFileSync(join(home, 'config.toml'), generated.files['config.toml'] as string)
+        const env: NodeJS.ProcessEnv = { ...process.env, CODEX_HOME: home }
+        delete env.OPENAI_API_KEY
+        delete env.CODEX_API_KEY
+        const run = Bun.spawnSync(
+          ['codex', 'exec', '--ephemeral', '--skip-git-repo-check', '--json', '--sandbox', 'read-only', 'Return OK.'],
+          { cwd: home, env, stdin: 'ignore', timeout: 15_000 }
+        )
+        const output = `${run.stdout.toString()}${run.stderr.toString()}`
+        expect(run.signalCode ?? null, output).toBeNull()
+        expect(run.exitCode).not.toBe(0)
+        expect(output).toMatch(/required MCP servers (?:failed to|did not) initialize: vinaya_dev_tools/)
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    }
+  )
 
   test('Claude: the same settings except the listed built-ins, now denied', () => {
     // Intended: Claude now prints JSON events (stream-json), so its session id and structured result are read.
