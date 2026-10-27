@@ -13,7 +13,11 @@ export async function generateMetadata(): Promise<Metadata> {
     title: 'Vinaya Development Harness',
     description:
       'A development process teams can govern: coding agents on planned tasks, checked by machine before merge.',
-    icons: buildFaviconIcons(branding)
+    // The theme-coloured SVG tab icon (`app/favicon.svg`) after the CMS's `.ico`, which stays the fallback
+    icons: [
+      ...buildFaviconIcons(branding),
+      ...(branding?.logoFavicon?.url ? [{ rel: 'icon', type: 'image/svg+xml', url: '/favicon.svg' }] : [])
+    ]
   }
 }
 

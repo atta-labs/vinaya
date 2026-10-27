@@ -32,10 +32,18 @@ async function fetchCmsSvg(url: string): Promise<string | null> {
   }
 }
 
-export async function getLogoMarkup(branding: CMSBranding | null): Promise<string | null> {
-  const url = branding?.logoSolidDark?.url ?? branding?.logoSolidLight?.url
+async function sanitizedCmsSvg(url: string | undefined): Promise<string | null> {
   const body = url ? await fetchCmsSvg(url) : null
   if (!body) return null
   const markup = sanitizeSvg(body)
   return markup.includes('<svg') ? markup : null
+}
+
+export function getLogoMarkup(branding: CMSBranding | null): Promise<string | null> {
+  return sanitizedCmsSvg(branding?.logoSolidDark?.url ?? branding?.logoSolidLight?.url)
+}
+
+/** The CMS branding's favicon SVG (`logoFavicon`), sanitized the same way; `app/favicon.svg` serves it. */
+export function getFaviconMarkup(branding: CMSBranding | null): Promise<string | null> {
+  return sanitizedCmsSvg(branding?.logoFavicon?.url)
 }
