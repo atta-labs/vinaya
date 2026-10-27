@@ -1516,7 +1516,7 @@ describe('launch usage attribution', () => {
     const first = claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 2)
     const resumed = claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 2)
     expect([first.attempt, resumed.attempt]).toEqual([1, 2])
-    expect(claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 3).attempt).toBe(1)
+    expect(claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 3).attempt).toBe(3)
   })
 })
 describe('launch usage model attribution', () => {
@@ -1529,6 +1529,10 @@ describe('launch usage model attribution', () => {
         (event: any) => event.kind === 'role_attempt' && event.actor === 'claude'
       ) as Array<{ model: string | null }>
       expect(attempts).toHaveLength(3)
-      expect(attempts.map((event) => event.model)).toEqual([requested ?? null, requested ?? null, requested ?? null])
+      expect(attempts.map((event) => event.model)).toEqual([
+        requested ? `requested:${requested}` : null,
+        requested ? `requested:${requested}` : null,
+        requested ? `requested:${requested}` : null
+      ])
     })
 })

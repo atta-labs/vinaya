@@ -15,7 +15,7 @@
  */
 
 import { afterEach, beforeAll, describe, expect, it } from 'bun:test'
-import { execFileSync, execSync, spawnSync } from 'node:child_process'
+import { execFileSync, execSync, spawn, spawnSync } from 'node:child_process'
 import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from 'node:child_process'
 import {
   chmodSync,
@@ -87,6 +87,13 @@ import {
 } from '../../src/lib/worker-boundary.js'
 import { surfaceOpenedAgentConfigPaths } from '../../src/lib/dev-review-loop.js'
 import { devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
+
+import {
+  claimLaunchAttribution,
+  createEngineLogSink,
+  launchUsageEvents,
+  withDispatchUsage
+} from '../../../../processes/vinaya/bin/run-engine'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -6119,4 +6126,115 @@ describe('dispatchRole — container mode on a faked Linux host with no bubblewr
     expect(run.calls).toEqual([])
     expect(run.stderr).toContain('CLAUDE_CODE_OAUTH_TOKEN, which is unset')
   }, 40_000)
+})
+
+describe('dispatch usage envelopes match between runners', () => {
+  for (const agent of ['claude', 'codex'] as const)
+    for (const role of ['developer', 'code-reviewer', 'security'] as const)
+      it(`${agent} ${role} preserves fields and order when a fresh driver continues the next round`, async () => {
+        const home = tempDir('dispatch-parity-home-')
+        const cwd = tempDir('dispatch-parity-cwd-')
+        const bin = tempDir('dispatch-parity-bin-')
+        const prompt = join(cwd, 'prompt.txt')
+        writeFileSync(prompt, 'Review the task')
+        const events =
+          agent === 'claude'
+            ? [
+                { type: 'system', subtype: 'init', session_id: 'parity-session', model: 'parity-model' },
+                {
+                  type: 'result',
+                  usage: {
+                    input_tokens: 101,
+                    output_tokens: 17,
+                    cache_read_input_tokens: 5,
+                    cache_creation_input_tokens: 1
+                  }
+                }
+              ]
+            : [
+                { type: 'thread.started', thread_id: 'parity-thread' },
+                { type: 'turn.completed', usage: { input_tokens: 101, output_tokens: 17, cached_input_tokens: 6 } }
+              ]
+        const stdout = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
+        const script = `#!${process.execPath}\nprocess.stdin.resume(); process.stdin.on('end', () => process.stdout.write(${JSON.stringify(stdout)}))\n`
+        writeFakeBinary(bin, agent, script)
+        const runDir = join(cwd, 'engine-run')
+        const folder = join(cwd, 'engine-logs')
+        const family = (row: any) => row.kind === 'usage' || (row.kind === 'role_attempt' && row.actor === agent)
+        const comparable = (row: any) => {
+          const { meta, subject, effect_id, duration_ms, ...fields } = row
+          expect(typeof effect_id === 'string' || row.kind === 'usage').toBe(true)
+          return { ...fields, subject, provenance: meta.provenance, attemptLineage: meta.lineage.attempt }
+        }
+        for (const round of [1, 2]) {
+          const result = runDispatch(
+            [
+              role,
+              '--agent',
+              agent,
+              '--model',
+              'parity-model',
+              '--task',
+              '9001',
+              '--round',
+              String(round),
+              '--prompt-file',
+              prompt
+            ],
+            cwd,
+            home,
+            `${bin}:${pathWithoutRealVendors()}`,
+            { VINAYA_LOG_FOLDER_ONLY: '1' }
+          )
+          expect(result.status, result.stderr).toBe(0)
+          const standalone = (outboxLines(home, 9001) as any[]).filter(family)
+          const sink = createEngineLogSink({
+            env: () => ({
+              VINAYA_ROLE: 'operator',
+              VINAYA_TASK: '9001',
+              VINAYA_RUNTIME: agent,
+              VINAYA_LOG_FOLDER_ONLY: '1'
+            }),
+            cwd: () => cwd,
+            home: () => home,
+            readConfig: () => null,
+            resolveRepo: async () => null,
+            resolveBranchIssue: async () => null,
+            resolveLogDestination: () => ({ kind: 'folder', folder }),
+            unresolvedLogDestination: () => ({ kind: 'folder', folder })
+          })
+          const launchRole = role === 'code-reviewer' ? 'reviewer' : role
+          const attribution = claimLaunchAttribution(runDir, 'resumed-thread', launchRole, round)
+          const launcherRole = role === 'security' ? 'security-reviewer' : role
+          const wrapped = withDispatchUsage(
+            () =>
+              spawn(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(stdout)})`], {
+                stdio: ['ignore', 'pipe', 'pipe']
+              }),
+            join(cwd, 'generated'),
+            agent,
+            (launch) => {
+              for (const event of launchUsageEvents(launch, agent, `launch-${role}-${round}`, 'parity-model'))
+                sink.log(event as never, launch.attribution)
+            },
+            Date.now,
+            () => attribution
+          )
+          const child = wrapped('fixture', ['--settings', join(cwd, 'generated', launcherRole, 'settings.json')], {
+            cwd,
+            env: { CODEX_HOME: agent === 'codex' ? join(cwd, 'generated', launcherRole) : undefined }
+          })
+          await new Promise<void>((resolve) => child.on('close', () => resolve()))
+          await sink.drain()
+          const engine = readFileSync(join(folder, 'unresolved', '9001.ndjson'), 'utf8')
+            .trim()
+            .split('\n')
+            .map((line) => JSON.parse(line))
+            .filter(family)
+          expect(engine.map(comparable)).toEqual(standalone.map(comparable))
+          expect(engine.filter((row) => row.kind === 'role_attempt').map((row) => row.attempt)).toEqual(
+            Array.from({ length: round }, (_, index) => index + 1)
+          )
+        }
+      })
 })

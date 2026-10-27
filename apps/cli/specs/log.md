@@ -605,4 +605,4 @@ The no-producer rows are an explicit shrinking list: there are **42** today. The
 
 ### Engine launch attribution
 
-A driver can pass a trusted launch attribution to the Log sink for one event. The sink snapshots its role, review round and attempt with parent-attributed provenance; the shared driver environment stays unchanged. Engine launches capture this attribution before their output is observed, and allocate attempts per role, round and checkpoint thread in the run directory. Concurrent reviewer completions cannot inherit another launch's context. This uses the existing envelope schema.
+A driver can pass a trusted launch attribution to the Log sink for one event. The sink snapshots its role, review round and attempt with parent-attributed provenance; the shared driver environment stays unchanged. Engine launches capture this attribution before their output is observed, and allocate attempts per role and checkpoint thread in the run directory, carrying the current review round separately. Concurrent reviewer completions cannot inherit another launch's context. This uses the existing envelope schema.

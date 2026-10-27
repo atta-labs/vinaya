@@ -983,7 +983,7 @@ export function claimLaunchAttribution(
   const path = join(runDir, 'launch-attempts.json')
   let attempts: Record<string, number> = {}
   if (existsSync(path)) attempts = JSON.parse(readFileSync(path, 'utf8'))
-  const key = JSON.stringify([thread, role, round])
+  const key = JSON.stringify([thread, role])
   const attempt = (attempts[key] ?? 0) + 1
   attempts[key] = attempt
   mkdirSync(runDir, { recursive: true })
@@ -998,7 +998,7 @@ export function claimLaunchAttribution(
  * the launch's attempt names the agent that ran it as its actor, where the loop's own attempts name the role.
  */
 export function launchUsageEvents(launch: LaunchUsage, agent: Agent, effectId: string, requestedModel: string | null) {
-  const model = launch.reading.model ?? requestedModel
+  const model = launch.reading.model ?? (requestedModel === null ? null : `requested:${requestedModel}`)
   return [
     {
       kind: 'role_attempt',
