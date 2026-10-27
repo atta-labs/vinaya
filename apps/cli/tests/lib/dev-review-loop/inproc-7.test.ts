@@ -365,7 +365,10 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(resumedIdx).toBeGreaterThanOrEqual(0)
     const resumedRunLines = lines.slice(resumedIdx)
     const lineageRuns = new Set(resumedRunLines.map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run))
-    expect(lineageRuns.size).toBe(1)
+    const byRun = resumedRunLines.map(
+      (l) => `${(l.meta as { lineage: { run: string | null } }).lineage.run} ${l.kind}/${l.event}`
+    )
+    expect({ runs: lineageRuns.size, lines: byRun }).toEqual({ runs: 1, lines: byRun })
     expect([...lineageRuns][0]).not.toBeNull()
   })
 })
