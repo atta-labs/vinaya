@@ -73,7 +73,9 @@ import {
   withDispatchCapabilities,
   withTurnSchema,
   tolerateReviewerExit,
-  launcherRoleOf
+  launcherRoleOf,
+  roleBridgeCommands,
+  ROLE_HOST_BRIDGES
 } from '../bin/run-engine'
 import { ROLE_NAMES } from '../../../harness/adapters/agents/manifest'
 import { createDispatchCapabilityTable } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
@@ -1546,4 +1548,30 @@ describe('tool-host bridges reach their own role launcher', () => {
     expect(launcherRoleOf('security')).toBe('security-reviewer')
     expect(new Set(hostRoles.map(launcherRoleOf)).size).toBe(hostRoles.length)
   })
+})
+
+describe('generated role configs reach their own bridge', () => {
+  const bridgeOf = (vendor: 'claude-code' | 'codex', roleDir: string): string => {
+    if (vendor === 'claude-code') {
+      const mcp = JSON.parse(readFileSync(join(roleDir, 'role-mcp.json'), 'utf8')) as {
+        mcpServers: Record<string, { command: string }>
+      }
+      return mcp.mcpServers.vinaya_dev_tools?.command ?? ''
+    }
+    const toml = readFileSync(join(roleDir, 'config.toml'), 'utf8')
+    const table = toml.slice(toml.indexOf('[mcp_servers.vinaya_dev_tools]'))
+    return /command = "([^"]*)"/.exec(table)?.[1] ?? ''
+  }
+  for (const vendor of ['claude-code', 'codex'] as const) {
+    test(`${vendor}: every role's vinaya_dev_tools command is that role's own bridge shim`, () => {
+      const runDir = fixtureDir('role-bridges-')
+      const generatedRoot = join(runDir, 'generated')
+      createRoleLaunchers({ vendor, generatedRoot, mcpCommands: roleBridgeCommands(runDir, ROLE_HOST_BRIDGES) })
+      for (const bridge of ROLE_HOST_BRIDGES) {
+        const command = bridgeOf(vendor, join(generatedRoot, launcherRoleOf(bridge.role)))
+        expect({ role: bridge.role, command }).toEqual({ role: bridge.role, command: join(runDir, bridge.file) })
+        expect(command).not.toBe('vinaya-dev-bridge')
+      }
+    })
+  }
 })

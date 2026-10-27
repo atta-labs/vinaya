@@ -657,6 +657,23 @@ export function launcherRoleOf(hostRole: 'developer' | 'code-reviewer' | 'securi
   return hostRole === 'security' ? 'security-reviewer' : hostRole
 }
 
+/** The Engine run's tool hosts: each role's agent step and the bridge shim it is reached through. */
+export const ROLE_HOST_BRIDGES = [
+  { role: 'developer', step: 'develop', file: 'developer-dev-bridge.sh' },
+  { role: 'code-reviewer', step: 'code-review', file: 'code-reviewer-dev-bridge.sh' },
+  { role: 'security', step: 'security-review', file: 'security-dev-bridge.sh' }
+] as const
+
+/** Each role launcher's bridge command: the tool host's own shim in the run directory, keyed by its launcher role. */
+export function roleBridgeCommands(
+  runDir: string,
+  roleHosts: ReadonlyArray<{ role: 'developer' | 'code-reviewer' | 'security'; file: string }>
+): Partial<Record<RoleName, string>> {
+  const commands: Partial<Record<RoleName, string>> = {}
+  for (const roleHost of roleHosts) commands[launcherRoleOf(roleHost.role)] = join(runDir, roleHost.file)
+  return commands
+}
+
 /** Reports a failed turn's transport loss and acknowledges successful turns without replaying them. */
 export function toolHostRedispatch(
   hosts: Readonly<Record<string, { role: string; host: ReplaceableDevToolsHost }>>
@@ -1533,24 +1550,10 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         readObject: realSourceProviderDeps(options.taskInput.worktreePath).readObject
       })(readInput)
     })
-    const roleHosts = [
-      {
-        role: 'developer' as const,
-        step: 'develop',
-        context: options.devToolsContext,
-        file: 'developer-dev-bridge.sh'
-      },
-      {
-        role: 'code-reviewer' as const,
-        step: 'code-review',
-        context: reviewerContext,
-        file: 'code-reviewer-dev-bridge.sh'
-      },
-      { role: 'security' as const, step: 'security-review', context: reviewerContext, file: 'security-dev-bridge.sh' }
-    ]
+    const contexts = { developer: options.devToolsContext, 'code-reviewer': reviewerContext, security: reviewerContext }
+    const roleHosts = ROLE_HOST_BRIDGES.map((bridge) => ({ ...bridge, context: contexts[bridge.role] }))
     // Each agent step's role host, replaced at that step's dispatch boundary when its socket file is gone.
     const roleHostsByStep: Record<string, { role: string; host: ReplaceableDevToolsHost }> = {}
-    const mcpCommands: Partial<Record<RoleName, string>> = {}
     const hostParts: Partial<
       Record<(typeof roleHosts)[number]['role'], Pick<RoleDispatches, 'capabilities' | 'writeShim' | 'onEnded'>>
     > = {}
@@ -1596,8 +1599,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           )
       }
       hostParts[roleHost.role] = { capabilities, writeShim, onEnded }
-      mcpCommands[launcherRoleOf(roleHost.role)] = shimPath
     }
+    const mcpCommands = roleBridgeCommands(runDir, roleHosts)
     const roles: Record<string, RoleLauncher[string]> = {
       ...createRoleLaunchers({
         vendor: vendorOf(args.agent),
