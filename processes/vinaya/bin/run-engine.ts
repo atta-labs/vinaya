@@ -2,7 +2,7 @@
 import { Database } from 'bun:sqlite'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
@@ -106,7 +106,13 @@ import {
   type DevToolResult
 } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { createReadSourceTool } from '../../../apps/cli/src/lib/task-tools/read-source'
-import { createLogSink, drainLogSink, LOG_FOLDER_ONLY_ENV, type LogSinkDeps } from '../../../apps/cli/src/lib/log-sink'
+import {
+  createLogSink,
+  drainLogSink,
+  LOG_FOLDER_ONLY_ENV,
+  type LogSinkDeps,
+  type LaunchLogAttribution
+} from '../../../apps/cli/src/lib/log-sink'
 import { setEngineLogIdentity } from './engine-log-identity'
 import {
   abortableSleep,
@@ -889,6 +895,7 @@ export interface LaunchUsage {
   reading: DispatchUsageReading
   exitCode: number | null
   durationMs: number
+  attribution?: LaunchLogAttribution
 }
 
 /** The most of a launch's stdout kept at each end: the session id and model are printed first, the usage line last. */
@@ -905,7 +912,8 @@ export function withDispatchUsage(
   generatedRoot: string,
   agent: Agent,
   onUsage: (launch: LaunchUsage) => void,
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  attributionOf?: (role: LaunchUsage['role']) => LaunchLogAttribution
 ): SpawnFn {
   const roots = {
     developer: join(generatedRoot, 'developer'),
@@ -917,6 +925,7 @@ export function withDispatchUsage(
     try {
       const role = launchRoleOf(roots, args, options?.env)
       if (role === undefined || !child.stdout) return child
+      const attribution = attributionOf?.(role)
       const startedAt = now()
       const decoder = new StringDecoder('utf8')
       let head = ''
@@ -929,7 +938,7 @@ export function withDispatchUsage(
       child.on('close', (code: number | null) => {
         try {
           const reading = readDispatchUsage(agent, { tail, head })
-          onUsage({ role, reading, exitCode: code, durationMs: now() - startedAt })
+          onUsage({ role, reading, exitCode: code, durationMs: now() - startedAt, attribution })
         } catch {
           // Reading usage never ends the run it observes.
         }
@@ -937,6 +946,26 @@ export function withDispatchUsage(
     } catch {}
     return child
   }
+}
+
+/** Advances a role's launch attempt durably before the launch can emit usage. */
+export function claimLaunchAttribution(
+  runDir: string,
+  thread: string,
+  role: LaunchUsage['role'],
+  round: number
+): LaunchLogAttribution {
+  const path = join(runDir, 'launch-attempts.json')
+  let attempts: Record<string, number> = {}
+  if (existsSync(path)) attempts = JSON.parse(readFileSync(path, 'utf8'))
+  const key = JSON.stringify([thread, role, round])
+  const attempt = (attempts[key] ?? 0) + 1
+  attempts[key] = attempt
+  mkdirSync(runDir, { recursive: true })
+  const temporary = `${path}.${process.pid}.tmp`
+  writeFileSync(temporary, JSON.stringify(attempts), { mode: 0o600 })
+  renameSync(temporary, path)
+  return { role: role === 'reviewer' ? 'code-reviewer' : role === 'security' ? 'security' : role, round, attempt }
 }
 
 /**
@@ -951,7 +980,7 @@ export function launchUsageEvents(launch: LaunchUsage, agent: Agent, effectId: s
       event: 'attempted',
       payload: {},
       actor: agent,
-      attempt: null,
+      attempt: launch.attribution?.attempt ?? null,
       effect_id: effectId,
       model,
       outcome: classifyRoleAttemptOutcome(false, false, false, launch.exitCode),
@@ -979,14 +1008,14 @@ export function launchUsageEvents(launch: LaunchUsage, agent: Agent, effectId: s
  * A conflict re-entry is narrated with no earlier events, as the standalone's watching driver narrates its own.
  */
 export function narratingLog(
-  log: (event: unknown) => void,
+  log: (event: unknown, attribution?: LaunchLogAttribution) => void,
   logPath: string,
   task: number,
   narrateEvent: typeof narrateDriverEvent = narrateDriverEvent
-): (event: unknown) => void {
+): (event: unknown, attribution?: LaunchLogAttribution) => void {
   const narrated: unknown[] = []
-  return (event) => {
-    log(event)
+  return (event, attribution) => {
+    log(event, attribution)
     try {
       const reentry = (event as { event?: unknown } | null)?.event === 'conflict_reentry'
       narrateEvent(logPath, event, reentry ? [] : narrated, task)
@@ -1107,7 +1136,7 @@ export function tracedActions(
 }
 
 export interface LogSinkLike {
-  log: (event: never) => void
+  log: (event: never, attribution?: LaunchLogAttribution) => void
   drain: () => Promise<void>
 }
 
@@ -1274,7 +1303,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   const logPath = loopLogPathFor(null, args.task, options.runtimeDir)
   // The translator's rows and the runner's own reach the sink through this one wrapper, each narrated once.
   const sinkLog = narratingLog(
-    options.sink.log as unknown as (event: unknown) => void,
+    options.sink.log as unknown as (event: unknown, attribution?: LaunchLogAttribution) => void,
     logPath,
     args.task,
     options.narration?.narrateEvent
@@ -1532,7 +1561,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           )
       }
       hostParts[roleHost.role] = { capabilities, writeShim, onEnded }
-      mcpCommands[roleHost.role === 'security' ? 'security-reviewer' : roleHost.role] = shimPath
+      mcpCommands[roleHost.role === 'security' ? 'security' : roleHost.role] = shimPath
     }
     const roles: Record<string, RoleLauncher[string]> = {
       ...createRoleLaunchers({
@@ -1687,7 +1716,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         `${options.loopId}:${launch.role}:${launchSeq}`,
         requested
       ))
-        sinkLog(event)
+        sinkLog(event, launch.attribution)
     }
     const automaticResumes: AutomaticResumes = { usageLimit: 0 }
     // This runner's automatic conflict re-entries of the published pull request.
@@ -1894,7 +1923,10 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
                   ),
                   join(runDir, 'generated'),
                   args.agent,
-                  onLaunchUsage
+                  onLaunchUsage,
+                  Date.now,
+                  (role) =>
+                    claimLaunchAttribution(runDir, identity.threadId, role, options.taskInput.reviewRound?.() ?? 1)
                 ),
                 join(runDir, 'generated'),
                 {

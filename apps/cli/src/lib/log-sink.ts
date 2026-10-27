@@ -87,6 +87,13 @@ export type LogSinkInputVersions = {
   pauseBoundRuling?: { rulingId: string; pauseId: string; contentDigest: string } | null
 }
 
+/** Trusted driver attribution captured for one launch, without mutating the shared process environment. */
+export type LaunchLogAttribution = {
+  role: 'developer' | 'code-reviewer' | 'security'
+  round: number
+  attempt: number
+}
+
 /**
  * Where THIS process's `log()` calls land, resolved once per sink instance
  * (the sink's shared context, below) — a folder the sink appends directly to,
@@ -1478,7 +1485,7 @@ function appendLine(path: string, line: string, warn: (message: string) => void)
 
 /** Injectable for tests; the default instance below is wired to the real reads (env, git, the resolved `logs` destination). */
 export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
-  log: (e: LogEventInput) => void
+  log: (e: LogEventInput, attribution?: LaunchLogAttribution) => void
   logSync: (e: LogEventInput, opts?: LogSyncOptions) => void
   runId: string
   warmup: () => void
@@ -1759,7 +1766,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   }
 
   /** What a call knows at the moment it is made — see `snapshot`. */
-  type CallSnapshot = { host: Host; now: Date; seq: number; envFields: HeaderInput['env'] }
+  type CallSnapshot = { host: Host; now: Date; seq: number; envFields: HeaderInput['env']; attributed: boolean }
 
   // Captured synchronously, as plain values, at the moment `log()` or
   // `logSync()` is called — never a live reference into `env` read later
@@ -1776,16 +1783,17 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   // mutation lands between this synchronous call and the microtask
   // below. Snapshotting here closes that race regardless of what
   // `process.env` does afterward (round 2 security review, HIGH).
-  const snapshot = (): CallSnapshot => {
+  const snapshot = (attribution?: LaunchLogAttribution): CallSnapshot => {
     const env = deps.env()
     return {
+      attributed: attribution !== undefined,
       host: hostFromEnv(env),
       now: deps.now(),
       seq: seq++,
       envFields: {
-        role: env.VINAYA_ROLE,
+        role: attribution?.role ?? env.VINAYA_ROLE,
         task: env.VINAYA_TASK,
-        round: env.VINAYA_ROUND,
+        round: attribution ? String(attribution.round) : env.VINAYA_ROUND,
         pr: env.VINAYA_PR,
         // "Linked to the current run" —
         // a producer that structurally knows a broader run identity
@@ -1796,7 +1804,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         // non-invented default rather than leaving the slot `null`
         // forever for want of a caller that never opts in.
         run: env.VINAYA_RUN || runId,
-        attempt: env.VINAYA_ATTEMPT,
+        attempt: attribution ? String(attribution.attempt) : env.VINAYA_ATTEMPT,
         parent: env.VINAYA_PARENT_EVENT,
         workRef: env.VINAYA_WORK_REF,
         flow: env.VINAYA_FLOW,
@@ -1860,7 +1868,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       eventId: randomUUID(),
       processId,
       revision: headSha,
-      provenance: deps.provenance,
+      provenance: call.attributed ? 'parent_attributed' : deps.provenance,
       inputVersions: deps.inputVersions()
     })
     // A gate event names the commit it was checked at, omitted when the
@@ -1912,9 +1920,9 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     }
   }
 
-  function log(e: LogEventInput): void {
+  function log(e: LogEventInput, attribution?: LaunchLogAttribution): void {
     try {
-      const call = snapshot()
+      const call = snapshot(attribution)
       const write = async (): Promise<void> => {
         const ctx = await context()
         // Never awaited: a due re-resolution of an `anchor-unreadable`

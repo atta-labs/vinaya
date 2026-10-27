@@ -55,6 +55,7 @@ import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/
 import { currentRunGeneration, runIdentityOfTask } from '../bin/run-lifecycle'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
+  claimLaunchAttribution,
   checkpointPath,
   createTraceRecorder,
   tracedActions,
@@ -1423,4 +1424,27 @@ describe("the reviewers' Tokens line on the Engine path", () => {
         expect(live.usageOf?.(role)).toEqual({ input: 4321, output: 87 })
         expect(live.buildVerdict(role, completed(role), inputs).rendered).toContain(`${agent} — 4321/87/—`)
       })
+})
+
+describe('launch usage attribution', () => {
+  test('each role launch snapshots its review round and durable attempt before completion', async () => {
+    const run = stubRun()
+    run.options.taskInput.reviewRound = () => 2
+    const observed: unknown[] = []
+    run.options.sink.log = (event, attribution) => {
+      if ((event as { kind: string }).kind === 'usage') observed.push(attribution)
+    }
+    await runEngine(run.options)
+    expect(observed).toEqual(
+      expect.arrayContaining([
+        { role: 'developer', round: 2, attempt: 1 },
+        { role: 'code-reviewer', round: 2, attempt: 1 },
+        { role: 'security', round: 2, attempt: 1 }
+      ])
+    )
+    const first = claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 2)
+    const resumed = claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 2)
+    expect([first.attempt, resumed.attempt]).toEqual([1, 2])
+    expect(claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 3).attempt).toBe(1)
+  })
 })
