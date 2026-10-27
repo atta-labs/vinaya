@@ -6207,10 +6207,16 @@ describe('dispatch usage envelopes match between runners', () => {
           const attribution = claimLaunchAttribution(runDir, 'resumed-thread', launchRole, round)
           const launcherRole = role === 'security' ? 'security-reviewer' : role
           const wrapped = withDispatchUsage(
-            () =>
-              spawn(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(stdout)})`], {
+            () => {
+              const child = spawn(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(stdout)})`], {
+                cwd,
+                env: { ...stripVinayaEnv(process.env), HOME: home },
                 stdio: ['ignore', 'pipe', 'pipe']
-              }),
+              })
+              const budget = setTimeout(() => child.kill('SIGKILL'), 2000)
+              child.once('close', () => clearTimeout(budget))
+              return child
+            },
             join(cwd, 'generated'),
             agent,
             (launch) => {
