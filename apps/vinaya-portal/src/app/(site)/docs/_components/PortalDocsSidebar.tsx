@@ -31,7 +31,7 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
         className={cn(
           'h-auto min-h-8 rounded-md px-2.5 py-1.5 font-sans text-sm font-normal',
           isActive
-            ? 'bg-primary/10 font-medium text-primary data-[active]:bg-primary/10 data-[active]:text-primary'
+            ? 'bg-ring/10 font-medium text-ring data-[active]:bg-ring/10 data-[active]:text-ring'
             : 'text-sidebar-foreground/65 hover:text-sidebar-foreground'
         )}
       >
@@ -52,7 +52,7 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
                   className={cn(
                     'h-auto min-h-7 rounded-md py-1 pr-1 pl-2.5 font-sans text-xs font-normal',
                     childActive
-                      ? 'bg-primary/10 font-medium text-primary data-[active]:bg-primary/10 data-[active]:text-primary'
+                      ? 'bg-ring/10 font-medium text-ring data-[active]:bg-ring/10 data-[active]:text-ring'
                       : 'text-sidebar-foreground/60 hover:text-sidebar-foreground'
                   )}
                 >
