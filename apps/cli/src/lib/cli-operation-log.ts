@@ -58,7 +58,7 @@ const COMMAND_NAMES: ReadonlySet<string> = new Set([
 /** The two commands whose subcommand is part of the target, and the subcommands that are. Any other subcommand records the command alone. */
 const SUBCOMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
   log: new Set(['selftest', 'send']),
-  task: new Set(['dispatch', 'brief', 'run', 'status', 'sweep'])
+  task: new Set(['dispatch', 'brief', 'run', 'switch', 'status', 'sweep'])
 }
 
 /** The target `vinaya log send` maps to — the drain that delivers events, which records nothing, so delivery never logs itself. */

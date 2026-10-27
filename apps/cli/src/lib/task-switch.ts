@@ -7,11 +7,15 @@
  * itself, so there the switch changes nothing on disk.
  */
 
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
+import { assembleAndRenderBrief } from './brief-assembly.js'
 import type { TaskRunner } from './config.js'
 import type { AgentVendor } from './dispatch.js'
+import { developerBranchFor, findOpenPrForBranch } from './dev-review-loop/developer-dispatch.js'
 import { isDriverPidAlive, readDriverLock } from './dev-review-loop/pause-resume.js'
+import { runtimeDir as thisRepoRuntimeDir } from './dev-review-loop/reviewer-dispatch.js'
 import { appendDriverLine, loopLogPathFor } from './loop-log.js'
 import { engineRunDirectory, readTaskRunner } from './task-run-engine.js'
 
@@ -160,4 +164,47 @@ export function liveSwitchDeps(runtimeDir: string, published: SwitchTaskDeps['ha
     logLine: (task, words) => appendDriverLine(loopLogPathFor(null, task, runtimeDir), words),
     now: () => new Date()
   }
+}
+
+/** Commits the branch holds beyond the default branch, counted against the remote when the branch is there; 0 when git cannot say. */
+function commitsBeyondMain(branch: string): number {
+  for (const ref of [`origin/${branch}`, branch]) {
+    try {
+      const count = execFileSync('git', ['rev-list', '--count', `origin/main..${ref}`], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+      return Number.parseInt(count.trim(), 10) || 0
+    } catch {
+      // The ref is not there: try the next one.
+    }
+  }
+  return 0
+}
+
+export type TaskSwitchRequest = ({ tranche: string; n: number } | { issue: number }) & {
+  agent: AgentVendor
+  model?: string | undefined
+}
+
+/**
+ * The command's whole run over this repository: resolves the task's Issue (a `<tranche> <n>` address through the
+ * read-only brief render, `--issue` as given), then switches it. Throws when the address cannot be resolved.
+ */
+export async function runTaskSwitch(request: TaskSwitchRequest): Promise<SwitchTaskResult> {
+  let task: number
+  if ('issue' in request) task = request.issue
+  else {
+    const rendered = await assembleAndRenderBrief(request.tranche, String(request.n))
+    if (!rendered.ok) {
+      throw new Error(
+        `vinaya task switch: could not resolve task ${request.n} in tranche \`${request.tranche}\`:\n${rendered.missing.map((m) => `  - ${m}`).join('\n')}`
+      )
+    }
+    task = rendered.issue
+  }
+  const deps = liveSwitchDeps(thisRepoRuntimeDir(), (issue) =>
+    realHasPublishedWork(issue, { developerBranchFor, findOpenPrForBranch, commitsBeyondMain })
+  )
+  return switchTask({ task, agent: request.agent, ...(request.model ? { model: request.model } : {}) }, deps)
 }

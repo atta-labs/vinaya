@@ -6,12 +6,8 @@
  * live driver refuses it.
  */
 
-import { execFileSync } from 'node:child_process'
 import { DISPATCH_AGENTS, type DispatchAgent } from '../lib/dispatch-task.js'
-import { assembleAndRenderBrief } from '../lib/brief-assembly.js'
-import { developerBranchFor, findOpenPrForBranch } from '../lib/dev-review-loop/developer-dispatch.js'
-import { runtimeDir } from '../lib/dev-review-loop/reviewer-dispatch.js'
-import { liveSwitchDeps, realHasPublishedWork, switchTask } from '../lib/task-switch.js'
+import { runTaskSwitch } from '../lib/task-switch.js'
 
 const AGENTS = DISPATCH_AGENTS.join(' | ')
 
@@ -38,22 +34,6 @@ export function parseSwitchFlags(rest: string[]): SwitchFlags {
     } else if (a !== undefined) flags.unknown.push(a)
   }
   return flags
-}
-
-/** Commits the branch holds beyond the default branch, counted against the remote when the branch is there; 0 when git cannot say. */
-function commitsBeyondMain(branch: string): number {
-  for (const ref of [`origin/${branch}`, branch]) {
-    try {
-      const count = execFileSync('git', ['rev-list', '--count', `origin/main..${ref}`], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore']
-      })
-      return Number.parseInt(count.trim(), 10) || 0
-    } catch {
-      // The ref is not there: try the next one.
-    }
-  }
-  return 0
 }
 
 function fail(message: string): never {
@@ -88,28 +68,21 @@ export async function taskSwitchCommand(args: string[]): Promise<void> {
   if (flags.model !== undefined && (flags.model === '' || flags.model.startsWith('--')))
     fail('--model takes a model id.')
 
-  let task: number
+  let address: { tranche: string; n: number } | { issue: number }
   if (positional === null) {
-    task = Number.parseInt(flags.issue ?? '', 10)
-    if (!Number.isInteger(task) || String(task) !== flags.issue) fail(`--issue must be numeric — got "${flags.issue}".`)
-  } else {
-    const rendered = await assembleAndRenderBrief(positional.tranche, String(positional.n))
-    if (!rendered.ok) {
-      console.error(
-        `Error: vinaya task switch: could not resolve task ${positional.n} in tranche \`${positional.tranche}\`:\n${rendered.missing.map((m) => `  - ${m}`).join('\n')}`
-      )
-      process.exit(3)
-    }
-    task = rendered.issue
-  }
+    const issue = Number.parseInt(flags.issue ?? '', 10)
+    if (!Number.isInteger(issue) || String(issue) !== flags.issue)
+      fail(`--issue must be numeric — got "${flags.issue}".`)
+    address = { issue }
+  } else address = positional
 
-  const deps = liveSwitchDeps(runtimeDir(), (issue) =>
-    realHasPublishedWork(issue, { developerBranchFor, findOpenPrForBranch, commitsBeyondMain })
-  )
-  const result = await switchTask(
-    { task, agent: flags.agent as DispatchAgent, ...(flags.model ? { model: flags.model } : {}) },
-    deps
-  )
+  let result: Awaited<ReturnType<typeof runTaskSwitch>>
+  try {
+    result = await runTaskSwitch({ ...address, agent: flags.agent as DispatchAgent, model: flags.model })
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(3)
+  }
   if (result.kind === 'refused') {
     console.error(result.message)
     process.exit(3)
