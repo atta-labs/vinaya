@@ -1,5 +1,6 @@
 import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
+import { DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
 import { recordedHandoff } from './handoff-fakes'
 import { PASSING_FORGE_GATES } from './round-fakes'
 import { Database } from 'bun:sqlite'
@@ -388,9 +389,12 @@ describe('a stub run on the Engine path', () => {
     expect(drain).toBeGreaterThan(lastLog)
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
     const kinds = emitted.map((event) => `${(event as { kind: string }).kind}.${(event as { event: string }).event}`)
-    // The stub assessment records no round, so the only event is the single exit record: no node writes a heartbeat,
-    // and a version 1 run writes no step time (`phase_time` is version 2's alone).
-    expect(kinds).toEqual(['dev_review_loop.driver_exited'])
+    // The stub assessment records no round, so beside each agent launch's attempt and usage the only event is the
+    // single exit record: no node writes a heartbeat, and a version 1 run writes no step time (version 2's alone).
+    expect(kinds).toEqual([
+      ...Array.from({ length: 3 }, () => ['role_attempt.attempted', 'usage.observed']).flat(),
+      'dev_review_loop.driver_exited'
+    ])
   })
 
   test('starts the host before the Developer and writes the executable shim', async () => {
@@ -497,10 +501,15 @@ describe('a stub run on the Engine path', () => {
     expect(rest).toEqual(steadyRest)
     // The agents' streams reached their steps exactly as before.
     expect(steps).toEqual(steadySteps)
-    // Each step's time (`phase_time`) is a wall-clock reading, so the two runs agree on everything but those numbers.
+    // Each step's time (`phase_time`) and each launch's are wall-clock readings, so the two runs agree on everything
+    // but those numbers.
     const untimed = (events: unknown[]) =>
       events.map((event) =>
-        (event as { event?: string }).event === 'phase_time' ? { ...(event as object), wall_ms: 0 } : event
+        (event as { event?: string }).event === 'phase_time'
+          ? { ...(event as object), wall_ms: 0 }
+          : 'duration_ms' in (event as object)
+            ? { ...(event as object), duration_ms: 0 }
+            : event
       )
     expect(untimed(broken.emitted)).toEqual(untimed(steady.emitted))
     // Nothing the broken narration would have written reached the driver log.
@@ -1373,4 +1382,45 @@ describe('a reviewer launch that exits non-zero', () => {
       stderr: 'Not inside a trusted directory'
     })
   })
+})
+
+describe("the reviewers' Tokens line on the Engine path", () => {
+  const head = 'a'.repeat(40)
+  const inputs = {
+    manifest: {
+      headSha: head,
+      baseSha: 'e'.repeat(40),
+      briefHash: 'b'.repeat(64),
+      objectivesVersion: 'c'.repeat(64),
+      rulingOrdinal: 0,
+      policyDigest: 'd'.repeat(64)
+    },
+    objectives: []
+  } as never
+  const completed = (role: 'reviewer' | 'security') =>
+    ({
+      schemaVersion: 1,
+      status: 'completed',
+      role: role === 'reviewer' ? 'code-reviewer' : 'security-reviewer',
+      headSha: head,
+      manifestDigest: 'f'.repeat(64),
+      summary: role === 'reviewer' ? 'Conforms to the brief.' : 'none found — atta-labs/secret-scan passed',
+      findings: [],
+      objectiveResults: []
+    }) as never
+
+  for (const agent of ['claude', 'codex'] as const)
+    for (const role of ['reviewer', 'security'] as const)
+      test(`a ${agent} ${role} verdict carries the tokens its launch reported`, async () => {
+        const runtimeDir = fixtureDir('engine-tokens-')
+        const live = await liveTaskInput({ task: 7, agent, dryRun: false }, runtimeDir, runtimeDir, 'loop-1', {
+          fetchTitle: () => 'A task',
+          fetchLabels: () => [],
+          policy: () => DEFAULT_REVIEW_POLICY
+        })
+        expect(live.buildVerdict(role, completed(role), inputs).rendered).toContain('—/—/—')
+        live.recordUsage?.(role, { input: 4321, output: 87 })
+        expect(live.usageOf?.(role)).toEqual({ input: 4321, output: 87 })
+        expect(live.buildVerdict(role, completed(role), inputs).rendered).toContain(`${agent} — 4321/87/—`)
+      })
 })

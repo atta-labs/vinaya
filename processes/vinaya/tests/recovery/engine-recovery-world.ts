@@ -101,9 +101,17 @@ export interface World {
   /** Each round-ending step's run, by the round it ran in. */
   handoffs: number[]
   published: number[]
+  /** The agent every launch runs under. */
+  agent: 'claude' | 'codex'
+  /** What each role's launch prints before it closes; a role not named prints a bare result line. */
+  agentOutput: Partial<Record<string, string[]>>
+  /** Each launch's tokens as the runner recorded them on the task input, by role, in launch order. */
+  recordedUsage: Array<{ role: string; usage: { input: number; output: number } | null }>
 }
 
-export function createWorld(): World {
+export function createWorld(
+  options: { agent?: 'claude' | 'codex'; agentOutput?: Partial<Record<string, string[]>> } = {}
+): World {
   const runtimeDir = mkdtempSync(join(tmpdir(), 'round-recovery-'))
   scratch.push(runtimeDir)
   return {
@@ -118,26 +126,29 @@ export function createWorld(): World {
     refusals: [],
     markers: [],
     handoffs: [],
-    published: []
+    published: [],
+    agent: options.agent ?? 'claude',
+    agentOutput: options.agentOutput ?? {},
+    recordedUsage: []
   }
 }
 
 /** A child that reports `lines` and closes, or one that never closes until it is killed. */
 function stubAgent(lines: string[], hang = false): SpawnedProcessLike {
   const closeListeners: Array<(code: number | null) => void> = []
-  let stdout: ((chunk: string) => void) | undefined
+  const stdout: Array<(chunk: string) => void> = []
   return {
     stdin: {
       write: () => {},
       end: () => {
         if (hang) return
         setTimeout(() => {
-          for (const line of lines) stdout?.(`${line}\n`)
+          for (const line of lines) for (const listener of stdout) listener(`${line}\n`)
           for (const listener of closeListeners) listener(0)
         }, 0)
       }
     },
-    stdout: { on: (_event, listener) => (stdout = listener as (chunk: string) => void) },
+    stdout: { on: (_event, listener) => void stdout.push(listener as (chunk: string) => void) },
     stderr: { on: () => {} },
     on: ((event: string, listener: (code: number | null) => void) => {
       if (event === 'close') closeListeners.push(listener)
@@ -151,7 +162,10 @@ function stubAgent(lines: string[], hang = false): SpawnedProcessLike {
 }
 
 /** The role a Claude launch is for: it names its role's generated settings. */
-const roleOfLaunch = (args: string[]): string => (args[args.indexOf('--settings') + 1] ?? '').split('/').at(-2) ?? ''
+const roleOfLaunch = (args: string[], env?: Readonly<Record<string, string | undefined>>): string =>
+  (env?.CODEX_HOME ?? (args[args.indexOf('--settings') + 1] ?? '').split('/').slice(0, -1).join('/'))
+    .split('/')
+    .at(-1) ?? ''
 
 /** A Developer authenticated as the broker authenticates one: against the launch record its controller wrote. */
 const RUN_ID = 'round-recovery-run'
@@ -213,6 +227,9 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
     loopState: initialLoopState({ loopId: 'l', task: TASK, reviewers: [], models: {}, maxRounds: 5 } as never),
     reviewPolicy: () => DEFAULT_REVIEW_POLICY,
     reviewRound: () => round,
+    recordUsage: (role: string, usage: { input: number; output: number } | null) => {
+      world.recordedUsage.push({ role, usage })
+    },
     seedRound: (next: number) => {
       round = Math.max(round, next)
     },
@@ -299,7 +316,7 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
   const lines: string[] = []
   const events: Array<Record<string, unknown>> = []
   const result = await runEngine({
-    args: { task: TASK, agent: 'claude', dryRun: false },
+    args: { task: TASK, agent: world.agent, dryRun: false },
     process: loaded,
     repoRoot: REPO_ROOT,
     runtimeDir: world.runtimeDir,
@@ -325,12 +342,13 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
       recovery: recovery(world, () => task.loopState),
       executionRound: { store: world.store, repository: 'owner/repo' }
     },
-    spawnFn: (_command, args) => {
-      const role = roleOfLaunch(args)
+    spawnFn: (_command, args, spawnOptions) => {
+      const role = roleOfLaunch(args, spawnOptions?.env)
       world.launches.push({ role, args: [...args] })
-      if (role === 'developer') return stubAgent(['{"type":"result"}'], developerTurn())
+      const output = world.agentOutput[role] ?? ['{"type":"result"}']
+      if (role === 'developer') return stubAgent(output, developerTurn())
       world.reviewedSinceCommit = true
-      return stubAgent(['{"type":"result"}'])
+      return stubAgent(output)
     }
   })
   return { result, stopped, round: () => round, lines, events }

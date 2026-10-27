@@ -171,7 +171,10 @@ import {
   recordRunnerDeveloperLaunch,
   renderClaudeEvent,
   renderCodexEvent,
+  classifyRoleAttemptOutcome,
+  readDispatchUsage,
   terminateChildWithGrace,
+  type DispatchUsageReading,
   type UsageLimit
 } from '../../../apps/cli/src/lib/dispatch'
 import { loadConfig } from '../../../apps/cli/src/lib/config'
@@ -873,6 +876,92 @@ export function withAgentNarration(
   }
 }
 
+/** What one role's agent launch used, as `withDispatchUsage` reports it when the launch ends. */
+export interface LaunchUsage {
+  role: HeldVerdictRole | 'developer'
+  reading: DispatchUsageReading
+  exitCode: number | null
+  durationMs: number
+}
+
+/** The most of a launch's stdout kept at each end: the session id and model are printed first, the usage line last. */
+const USAGE_STDOUT_KEEP = 4 * 1024 * 1024
+
+/**
+ * Reads each role launch's token usage from its own stdout when it ends, the way the standalone dispatch reads it
+ * (`readDispatchUsage`), and reports it to `onUsage`. The read is a second `data` listener, so the executor's own reader
+ * still gets every byte; a launch that is none of the roles' generated launches, and any failure here, is passed
+ * through untouched.
+ */
+export function withDispatchUsage(
+  spawnFn: SpawnFn,
+  generatedRoot: string,
+  agent: Agent,
+  onUsage: (launch: LaunchUsage) => void,
+  now: () => number = Date.now
+): SpawnFn {
+  const roots = {
+    developer: join(generatedRoot, 'developer'),
+    reviewer: join(generatedRoot, 'code-reviewer'),
+    security: join(generatedRoot, 'security-reviewer')
+  } as const
+  return (command, args, options) => {
+    const child = spawnFn(command, args, options)
+    try {
+      const role = launchRoleOf(roots, args, options?.env)
+      if (role === undefined || !child.stdout) return child
+      const startedAt = now()
+      const decoder = new StringDecoder('utf8')
+      let head = ''
+      let tail = ''
+      child.stdout.on('data', (chunk: Buffer | string) => {
+        const text = typeof chunk === 'string' ? chunk : decoder.write(chunk)
+        if (head.length < USAGE_STDOUT_KEEP) head += text.slice(0, USAGE_STDOUT_KEEP - head.length)
+        tail = (tail + text).slice(-USAGE_STDOUT_KEEP)
+      })
+      child.on('close', (code: number | null) => {
+        try {
+          const reading = readDispatchUsage(agent, { tail, head })
+          onUsage({ role, reading, exitCode: code, durationMs: now() - startedAt })
+        } catch {
+          // Reading usage never ends the run it observes.
+        }
+      })
+    } catch {}
+    return child
+  }
+}
+
+/** The `role_attempt` and `usage` events one ended launch writes, as the standalone dispatch writes them for its own. */
+export function launchUsageEvents(launch: LaunchUsage, effectId: string, requestedModel: string | null) {
+  const model = launch.reading.model ?? requestedModel
+  return [
+    {
+      kind: 'role_attempt',
+      event: 'attempted',
+      payload: {},
+      actor: launch.role,
+      attempt: null,
+      effect_id: effectId,
+      model,
+      outcome: classifyRoleAttemptOutcome(false, false, false, launch.exitCode),
+      usage: launch.reading.usage,
+      duration_ms: launch.durationMs
+    },
+    {
+      kind: 'usage',
+      event: 'observed',
+      payload: {},
+      model,
+      source: launch.reading.source,
+      semantics: 'cumulative',
+      units: launch.reading.units.units,
+      unknown_reason: launch.reading.units.unknownReason,
+      duration_ms: launch.durationMs
+    }
+  ] as const
+}
+
 /**
  * The runner's Log sink, each event narrated into the driver log right after it is emitted, with the events
  * narrated before it as context: what the standalone loop's `logEvents` does after each event it writes. The
@@ -1181,6 +1270,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     options.narration?.narrateEvent
   )
   const translator = createLogTranslator(producers, sinkLog as unknown as EmitLogEvent)
+  let launchSeq = 0
   const narrate = (line: string): void => appendLoopLogLine(logPath, `${new Date().toISOString()}  ${line}`)
   let pausedFor: string | undefined
   const writeTrace = (
@@ -1576,6 +1666,14 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       })
       return { reason: 'paused', haltReason: handoffHaltReason('infrastructure') }
     }
+    // Each role launch's tokens: recorded for the verdict's Tokens line, and written to the Log as the standalone does.
+    const onLaunchUsage = (launch: LaunchUsage): void => {
+      launchSeq += 1
+      options.taskInput?.recordUsage?.(launch.role, launch.reading.usage)
+      const requested = launch.role === 'developer' ? (args.model ?? args.agent) : args.agent
+      for (const event of launchUsageEvents(launch, `${options.loopId}:${launch.role}:${launchSeq}`, requested))
+        sinkLog(event)
+    }
     const automaticResumes: AutomaticResumes = { usageLimit: 0 }
     // This runner's automatic conflict re-entries of the published pull request.
     let conflictReentries = 0
@@ -1772,11 +1870,16 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
             withReviewerWorkingDirectory(
               // Innermost, so the tee sees the directory the launch runs in and the agent's own stdout.
               withAgentNarration(
-                withUsageLimitWatch(
-                  // Innermost of all, so each capability is bound to the very process a launch spawned.
-                  withDispatchCapabilities(reaper.spawnFn, join(runDir, 'generated'), roleDispatches),
+                withDispatchUsage(
+                  withUsageLimitWatch(
+                    // Innermost of all, so each capability is bound to the very process a launch spawned.
+                    withDispatchCapabilities(reaper.spawnFn, join(runDir, 'generated'), roleDispatches),
+                    args.agent,
+                    onUsageLimit
+                  ),
+                  join(runDir, 'generated'),
                   args.agent,
-                  onUsageLimit
+                  onLaunchUsage
                 ),
                 join(runDir, 'generated'),
                 {
@@ -2196,6 +2299,9 @@ export async function liveTaskInput(
     return readPolicy
   }
   let loopState: LoopState | null = null
+  // Each role's latest launch's tokens, recorded by the runner when the launch ends.
+  const launchUsage = new Map<HeldVerdictRole | 'developer', { input: number; output: number } | null>()
+  const usageOf = (role: HeldVerdictRole | 'developer') => launchUsage.get(role) ?? null
   // The review round advances when a revision handoff reads the verdicts it answers.
   let round = 1
   const manifestAt = (headSha: string): ReviewInputManifest => {
@@ -2246,7 +2352,12 @@ export async function liveTaskInput(
       review,
       args.agent === 'claude' ? 'claude' : 'codex',
       args.task,
-      { exitCode: 0, durationMs: 0, usage: null, ...(sessionId === undefined ? {} : { resumeId: sessionId }) } as never,
+      {
+        exitCode: 0,
+        durationMs: 0,
+        usage: usageOf(role),
+        ...(sessionId === undefined ? {} : { resumeId: sessionId })
+      } as never,
       inputs.manifest,
       policyNow(),
       inputs.objectives
@@ -2429,6 +2540,10 @@ export async function liveTaskInput(
       return edit ? describeObjectivesEdit(args.task, edit) : null
     },
     reviewInputs,
+    usageOf,
+    recordUsage: (role, usage) => {
+      launchUsage.set(role, usage)
+    },
     buildVerdict,
     verdicts: (results) => {
       const verdicts = recordedVerdicts(results)
