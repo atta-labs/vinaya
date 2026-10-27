@@ -178,6 +178,10 @@ export async function runTaskEngine(
   const deps = { ...defaultEngineRunnerDeps, ...overrides }
   const script = deps.scriptPath()
   if (!deps.exists(script)) {
+    if (input.flow && input.flow !== 'v1')
+      throw new Error(
+        `flow ${input.flow} requires the Engine; its runner script is unavailable. Install the workspace runner before starting this flow.`
+      )
     deps.notice(ENGINE_FALLBACK_NOTICE)
     return null
   }

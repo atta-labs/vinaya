@@ -248,6 +248,23 @@ describe('task runner selection', () => {
     expect(result.prNumber).toBe(7)
   })
 
+  it('refuses explicit v2 when the Engine is absent without starting standalone', async () => {
+    let standalone = 0
+    await expect(
+      runTask(
+        { issue: 42, agent: 'claude', runner: 'atta-engine', flow: 'v2' },
+        fixture({
+          engine: { exists: () => false, notice: () => {}, spawn: async () => 0 },
+          devReviewLoop: async () => {
+            standalone++
+            return { task: 42, prNumber: 7, finalDecision: { type: 'publish' } }
+          }
+        })
+      )
+    ).rejects.toThrow('flow v2 requires the Engine')
+    expect(standalone).toBe(0)
+  })
+
   it('propagates a spawn failure without silently switching runners', async () => {
     await expect(
       runTaskEngine(
