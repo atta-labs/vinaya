@@ -74,8 +74,13 @@ import {
 } from './sandbox-launch.js'
 import {
   branchConfigurationIgnored,
+  apiWriteLeg,
   CONTAINMENT_PROBES,
   CONTAINMENT_ROW_IDS,
+  egressLeg,
+  FORGE_API_WRITE_URL,
+  INJECTED_POST_URL,
+  pushLeg,
   type ContainmentProbe,
   type ContainmentTargets,
   containmentVerdict,
@@ -616,6 +621,98 @@ describe('Engine containment probes — the command, canary, deny-rule and launc
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  it('catches the push and the requests when nothing confines them: run unsandboxed, each leg lands', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'engine-containment-legs-')))
+    // A host that cannot bind a local port (an agent's own sandbox) cannot run the two request legs; the push leg still runs.
+    let server: ReturnType<typeof Bun.serve> | undefined
+    try {
+      server = Bun.serve({
+        port: 0,
+        hostname: '127.0.0.1',
+        fetch: (request) => new Response('accepted', { status: request.method === 'POST' ? 201 : 405 })
+      })
+    } catch {
+      console.info('containment legs control: no local port could be bound; the request legs were not run')
+    }
+    try {
+      const worktree = join(root, 'worktree')
+      const bareRemote = join(root, 'remote.git')
+      mkdirSync(worktree)
+      execFileSync('git', ['init', '-q', '--bare', bareRemote])
+      const git = (...args: string[]) =>
+        execFileSync('git', [
+          '-C',
+          worktree,
+          '-c',
+          'user.name=probe',
+          '-c',
+          'user.email=probe@example.invalid',
+          ...args
+        ])
+      git('init', '-q', '-b', 'main')
+      writeFileSync(join(worktree, 'tracked.txt'), 'tracked\n')
+      git('add', '.')
+      git('commit', '-q', '-m', 'fixture')
+      const targets: ContainmentTargets = {
+        ...sample,
+        worktree,
+        bareRemote,
+        canary: freshCanary(),
+        bun: process.execPath
+      }
+      const url = `http://127.0.0.1:${server?.port}/`
+      const leg = (body: string): string => {
+        const result = spawnSyncBudgeted(
+          'bash',
+          ['-c', `ok=0; seen=''; ${body}; echo "reached=$ok$seen"`],
+          { cwd: worktree, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: root }, encoding: 'utf8' },
+          30_000,
+          'containment leg control'
+        )
+        return `${result.stdout}`
+      }
+      expect(leg(pushLeg(targets, 'control'))).toContain('reached=1 push')
+      expect(
+        execFileSync('git', ['-C', bareRemote, 'rev-parse', 'refs/heads/control'], { encoding: 'utf8' }).trim()
+      ).toMatch(/^[0-9a-f]{40}$/)
+      if (server !== undefined) {
+        expect(leg(egressLeg(targets, url, JSON.stringify(targets.canary), 'egress'))).toContain('reached=1 egress')
+        expect(leg(apiWriteLeg(targets, url))).toContain('reached=1 api-write')
+      }
+      // The legs name the real targets the probes aim at.
+      expect(FORGE_API_WRITE_URL).toContain('api.github.com')
+      expect(INJECTED_POST_URL).toBe('https://example.com')
+    } finally {
+      server?.stop(true)
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fault-attack:50-policy-refusal: the refusal a role is given is typed, never retried, and the corpus run it belongs to opens no further round', async () => {
+    const refused = await INERT_CONTEXT.publishChanges({ header: 'Fix(x): refused' } as never)
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) {
+      expect(refused.error.errorClass).toBe('policy_refusal')
+      expect(refused.error.retryDisposition).toBe('never')
+    }
+    // The Engine corpus scenario for a refused publication: an infrastructure pause that commits, pushes and
+    // dispatches nothing further. Its expectation is read from the corpus, which this test only reads.
+    const corpus = JSON.parse(
+      readFileSync(join(import.meta.dir, '..', 'fixtures', 'dev-review-engine-scenarios.json'), 'utf8')
+    ) as {
+      scenarios: { id: string; expect: { decision: string; effects: Record<string, unknown> } }[]
+    }
+    const scenario = corpus.scenarios.find((entry) => entry.id === 'isolation-refusal')
+    expect(scenario?.expect.decision).toBe('pause:infrastructure')
+    expect(scenario?.expect.effects).toMatchObject({
+      commits: 0,
+      pushes: 0,
+      prOpens: 0,
+      codeReviewerDispatches: 0,
+      publishedRounds: []
+    })
   })
 
   it('reads a verdict only from the line the probe printed', () => {
@@ -1304,7 +1401,9 @@ for (const agent of AGENTS) {
             expect(verdict).not.toBeNull()
             expect(verdict?.succeeded).toBe(false)
             for (const [path, before] of untouched) expect(readFileSync(path, 'utf8')).toBe(before)
-            if (refusedCall && (verdict as { reached?: boolean }).reached) {
+            if (refusedCall) {
+              // The call must reach the tool host: an unreached socket would pass with no audit event written.
+              expect((verdict as { reached?: boolean }).reached).toBe(true)
               expect((verdict as { check?: string | null }).check).toBe(probe.refusedBy ?? null)
               expect(refusals.slice(refusalsBefore).map((event) => event.role as string)).toEqual([
                 probe.auditedRole as string
@@ -1332,8 +1431,10 @@ for (const agent of AGENTS) {
             )
             expect(verdict).not.toBeNull()
             expect(verdict?.succeeded).toBe(false)
-            // The fixture's typed `policy_refusal` names its check, and carries a `never` retry class.
-            if (verdict?.reached) expect(verdict.check).toBe('probe-fixture')
+            // The host answered with the typed refusal the fixture issues (its class and `never` retry class are
+            // asserted by the check above that reads the fixture), never a success and never an unreached socket.
+            expect(verdict?.reached).toBe(true)
+            expect(verdict?.check).toBe('probe-fixture')
           } finally {
             await controller.close()
           }
