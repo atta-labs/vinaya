@@ -490,9 +490,15 @@ export function freshRunFlow(
 export function continuationFlow(runtimeDir: string, task: number, named?: string): string | undefined {
   const path = checkpointPath(runDirectory(runtimeDir, task))
   if (!existsSync(path)) return named
-  const db = new Database(path, { readonly: true })
   let checkpointFlow: string | undefined
   let hasCheckpoint = false
+  let db: Database
+  try {
+    db = new Database(path, { readonly: true })
+  } catch {
+    // An unreadable checkpoint is refused later with its typed reason; selection must not pre-empt that.
+    return resumeFlow(named, recordedRunFlow(runtimeDir, task))
+  }
   try {
     const columns = db.query<{ name: string }, []>('PRAGMA table_info(checkpoints)').all()
     if (columns.length !== 0) {
@@ -506,6 +512,8 @@ export function continuationFlow(runtimeDir: string, task: number, named?: strin
         checkpointFlow = row?.flow ?? undefined
       }
     }
+  } catch {
+    return resumeFlow(named, recordedRunFlow(runtimeDir, task))
   } finally {
     db.close()
   }
