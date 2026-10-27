@@ -1410,6 +1410,77 @@ describe("the reviewers' Tokens line on the Engine path", () => {
       objectiveResults: []
     }) as never
 
+  test('a fresh task input restores checkpointed reviewer usage after a restart before verdict construction', async () => {
+    const run = stubRun()
+    const fresh = () =>
+      liveTaskInput({ task: 7, agent: 'claude', dryRun: false }, run.runtimeDir, run.runtimeDir, 'loop-under-test', {
+        fetchTitle: () => 'A task',
+        fetchLabels: () => [],
+        policy: () => DEFAULT_REVIEW_POLICY
+      })
+    const firstTask = await fresh()
+    run.options.taskInput = { ...run.options.taskInput, recordUsage: firstTask.recordUsage, reviewRound: () => 1 }
+    let rendered: string[] = []
+    run.options.actions = {
+      ...run.options.actions,
+      'vinaya.validate-reviewer-outputs': () => {
+        rendered = ['reviewer', 'security'].map(
+          (role) =>
+            firstTask.buildVerdict(role as 'reviewer' | 'security', completed(role as 'reviewer' | 'security'), inputs)
+              .rendered
+        )
+        return { exitCode: 0 }
+      }
+    }
+    let launches = 0
+    run.options.spawnFn = (_command, args) => {
+      launches++
+      const role = (args[args.indexOf('--settings') + 1] ?? '').split('/').at(-2) ?? ''
+      return stubAgent(role, [
+        ...(AGENT_LINES[role] ?? []),
+        JSON.stringify({ type: 'result', usage: { input_tokens: 4321, output_tokens: 87 } })
+      ])
+    }
+    const completedSteps = new Set<string>()
+    run.options.observe = (event) => {
+      if (event.type === 'node:complete' && ['code-review', 'security-review'].includes(event.nodeId)) {
+        completedSteps.add(event.nodeId)
+        if (completedSteps.size === 2) run.options.control!.halt('driver stopped before verdict')
+      }
+    }
+    const first = await runEngine(run.options)
+    expect(first.exitCode).toBe(2)
+    expect(rendered).toEqual([])
+    expect(launches).toBe(3)
+    const restoredTask = await fresh()
+    expect(restoredTask.usageOf?.('reviewer')).toBeNull()
+    run.options.taskInput = { ...run.options.taskInput, recordUsage: restoredTask.recordUsage }
+    run.options.actions = {
+      ...run.options.actions,
+      'vinaya.validate-reviewer-outputs': () => {
+        rendered = ['reviewer', 'security'].map(
+          (role) =>
+            restoredTask.buildVerdict(
+              role as 'reviewer' | 'security',
+              completed(role as 'reviewer' | 'security'),
+              inputs
+            ).rendered
+        )
+        return { exitCode: 0 }
+      }
+    }
+    const resumed = await runEngine({
+      ...run.options,
+      control: createRunControl(),
+      observe: () => {},
+      heldPullRequestConflicts: async () => false
+    })
+    expect(resumed.exitCode).toBe(0)
+    expect(launches).toBe(3)
+    expect(rendered).toHaveLength(2)
+    for (const verdict of rendered) expect(verdict).toContain('claude — 4321/87/—')
+  })
+
   for (const agent of ['claude', 'codex'] as const)
     for (const role of ['reviewer', 'security'] as const)
       test(`a ${agent} ${role} verdict carries the tokens its launch reported`, async () => {

@@ -948,6 +948,31 @@ export function withDispatchUsage(
   }
 }
 
+/** Restores only checkpointed observations, without emitting another launch or usage event. */
+export function restoreCheckpointUsage(task: TaskInput, agent: Agent, results: Record<string, StepNodeResult>): void {
+  if (!task.recordUsage) return
+  for (const [role, step] of [
+    ['developer', 'develop'],
+    ['reviewer', 'code-review'],
+    ['security', 'security-review']
+  ] as const) {
+    const result = results[step]
+    let usage: DispatchUsageReading['usage'] = null
+    if (result?.kind === 'agent-spawn') {
+      try {
+        const stdout = result.events
+          .map((event) => (typeof event === 'string' ? event : JSON.stringify(event)))
+          .join('\n')
+        usage = readDispatchUsage(agent, {
+          head: stdout.slice(0, USAGE_STDOUT_KEEP),
+          tail: stdout.slice(-USAGE_STDOUT_KEEP)
+        }).usage
+      } catch {}
+    }
+    task.recordUsage(role, usage)
+  }
+}
+
 /** Advances a role's launch attempt durably before the launch can emit usage. */
 export function claimLaunchAttribution(
   runDir: string,
@@ -1619,6 +1644,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
             const develop = context.results.develop as { sessionId?: string; events?: unknown[] } | undefined
             options.completeDeveloperTurn?.(develop?.sessionId ?? sessionIdOf(develop?.events ?? []) ?? null)
           }
+          if (context.nodeId === 'validate-reviewer-outputs' || context.nodeId === 'validate-developer-output')
+            restoreCheckpointUsage(options.taskInput, args.agent, context.results)
           const result = await action(context)
           if (context.nodeId === 'reconcile-external-state') {
             try {
