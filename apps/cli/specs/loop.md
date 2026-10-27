@@ -20,7 +20,9 @@ source manifest through `read_source` on either agent launch shape.
 
 Each runner names itself as the producer of the run's Vinaya Log events at its
 own start, before it writes any event: the runner and its version, the Vinaya
-process's id, version and digest, and the agent runtime it dispatches. The
+process's id, version and digest, the flow it runs (the Flow file's `id` and
+the flow key, `v1` or `v2`; the standalone loop always runs the default flow),
+and the agent runtime it dispatches. The
 standalone loop does it at the top of `devReviewLoop`, so a fresh `task run`
 and a `dev-review-loop --resume` both carry it, and its dispatched roles are
 handed the same values. Which variable carries each value, and what a process

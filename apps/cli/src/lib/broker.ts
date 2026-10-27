@@ -500,6 +500,20 @@ export function requestEffect(
   // (`effects.ts`) picks up the write itself.
   logEvent(operationEvent(request.operation, request.target, 'ok', null))
 
+  // Publishing the same commit is the same intent even after the driver advances its round.
+  // Keep the durable identity so an interrupted push is reconciled before any poster can run.
+  const existing = readEffect(deps, context.task, request.key)
+  const payloadDigest = sha256Hex(request.payload)
+  const publication = request.operation === 'branch-push' || request.operation === 'branch-lease-push'
+  const inputVersion =
+    publication &&
+    existing.status === 'ok' &&
+    existing.value.operation === request.operation &&
+    existing.value.target === request.target &&
+    existing.value.payloadDigest === payloadDigest
+      ? existing.value.inputVersion
+      : request.inputVersion
+
   const ownerId = `broker:${context.task}:${context.role}:${request.operation}:${request.key}`
   const executor = createEffectExecutor(deps, context.task, ownerId, logEvent)
   return executor.execute({
@@ -507,8 +521,8 @@ export function requestEffect(
     identity: {
       operation: request.operation,
       target: request.target,
-      inputVersion: request.inputVersion,
-      payloadDigest: sha256Hex(request.payload)
+      inputVersion,
+      payloadDigest
     },
     poster: request.poster,
     reconcile: request.reconcile

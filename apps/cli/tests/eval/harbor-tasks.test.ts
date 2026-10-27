@@ -8,20 +8,19 @@
  * `1` and each known-bad variant `0`; the trial entry records an agent part
  * on a fake process run; and the held-out path refuses without its approval.
  */
+import { fixtureDir } from '../lib/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync
 } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import {
   gradeTrial,
@@ -74,7 +73,7 @@ const REQUIRED_FILES = [
 
 const temporary: string[] = []
 const tempDir = (prefix: string) => {
-  const dir = mkdtempSync(join(tmpdir(), prefix))
+  const dir = fixtureDir(prefix)
   temporary.push(dir)
   return dir
 }

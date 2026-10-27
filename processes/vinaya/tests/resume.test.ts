@@ -1,6 +1,6 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { EscalationRecord, ResolutionRecord } from '@attalabs/aeg-core'
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
@@ -16,6 +16,10 @@ import { loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
 import { ACTION_BINDINGS, classifyGateResult, dispatchReviewers, type TaskInput } from '../executing/actions'
 import {
   parseResumeArgs,
+  recordedRunFlow,
+  recordRunFlow,
+  resumeFlow,
+  freshRunFlow,
   recordedCheckpointModel,
   resumeEngine,
   runEngine,
@@ -41,7 +45,7 @@ const PR = 70
 const BRANCH = 'task/issue-7'
 
 // A stub login keeps the real role launcher from copying an operator's Codex credential into a test run.
-const stubHome = mkdtempSync(join(tmpdir(), 'resume-codex-home-'))
+const stubHome = fixtureDir('resume-codex-home-')
 writeFileSync(join(stubHome, 'auth.json'), '{}\n')
 process.env.CODEX_HOME = stubHome
 
@@ -116,7 +120,7 @@ interface Scenario {
   watch?: RulingWatch
 }
 
-function stubRun(scenario: Scenario = {}, runtimeDir = mkdtempSync(join(tmpdir(), 'resume-'))) {
+function stubRun(scenario: Scenario = {}, runtimeDir = fixtureDir('resume-')) {
   const agent = scenario.agent ?? 'claude'
   const spawns: string[] = []
   const actionRuns: Record<string, number> = {}
@@ -326,7 +330,7 @@ for (const agent of AGENTS) {
     test('a poll that finds no ruling resumes nothing, and the watch ends when it is stopped', async () => {
       const { forge, deps } = fakeForge()
       const stop = new AbortController()
-      const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-watch-'))
+      const runtimeDir = fixtureDir('resume-watch-')
       writePauseState(runtimeDir, heldPause())
       const watch = watching(deps, (poll) => {
         if (poll === 3) stop.abort()
@@ -342,7 +346,7 @@ for (const agent of AGENTS) {
       forge.ordinal = 2
       forge.escalation = { rulingOrdinal: 2 } as EscalationRecord
       const stop = new AbortController()
-      const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-watch-'))
+      const runtimeDir = fixtureDir('resume-watch-')
       writePauseState(runtimeDir, heldPause())
       const watch = watching(deps, (poll) => {
         if (poll === 1) forge.post()
@@ -355,7 +359,7 @@ for (const agent of AGENTS) {
 
     test('a cancel ends the watch with no resume', async () => {
       const { forge, deps } = fakeForge()
-      const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-watch-'))
+      const runtimeDir = fixtureDir('resume-watch-')
       writePauseState(runtimeDir, heldPause())
       const watch = watching(deps, () => {
         forge.resolution = resolutionOf('cancel')
@@ -368,7 +372,7 @@ for (const agent of AGENTS) {
     test('a resolution another process claimed first ends the watch without a second resume', async () => {
       const { forge, deps } = fakeForge()
       forge.consumed = resolutionOf('resume')
-      const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-watch-'))
+      const runtimeDir = fixtureDir('resume-watch-')
       writePauseState(runtimeDir, heldPause())
       const watch = watching(deps, () => forge.post())
       const result = await watchForRuling(runtimeDir, TASK, watch, new AbortController().signal)
@@ -387,7 +391,7 @@ for (const agent of AGENTS) {
           return forge.ordinal
         }
       }
-      const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-watch-'))
+      const runtimeDir = fixtureDir('resume-watch-')
       writePauseState(runtimeDir, heldPause())
       const lines: string[] = []
       const watch = watching(flaky, (poll) => {
@@ -466,7 +470,7 @@ for (const agent of AGENTS) {
 
 describe('--resume <pr>', () => {
   const claimFor = (agent: Agent | undefined, setup: (f: ReturnType<typeof fakeForge>) => void = () => {}) => {
-    const runtimeDir = mkdtempSync(join(tmpdir(), 'resume-claim-'))
+    const runtimeDir = fixtureDir('resume-claim-')
     const fake = fakeForge()
     writePauseState(runtimeDir, heldPause())
     setup(fake)
@@ -488,9 +492,7 @@ describe('--resume <pr>', () => {
 
   test('refuses when no pause is held for the task, or it names another pull request', () => {
     const none = fakeForge()
-    expect(() => claimResume(mkdtempSync(join(tmpdir(), 'resume-claim-')), { pr: PR }, none.deps)).toThrow(
-      'no held pause state'
-    )
+    expect(() => claimResume(fixtureDir('resume-claim-'), { pr: PR }, none.deps)).toThrow('no held pause state')
     const other = claimFor('claude', ({ forge }) => (forge.body = 'Closes #7'))
     writePauseState(other.runtimeDir, heldPause({ prNumber: 99 }))
     expect(other.claim).toThrow('names PR #99, not PR #70')
@@ -572,6 +574,37 @@ describe('--resume <pr>', () => {
     expect(() => parseResumeArgs(['--resume', 'x'])).toThrow('pull request number')
     expect(() => parseResumeArgs(['--agent', 'claude'])).toThrow('Usage')
     expect(() => parseResumeArgs(['--resume', '70', '--task', '7'])).toThrow('Unknown argument')
+  })
+})
+
+describe('the flow a resume runs with', () => {
+  test('the recorded flow is continued; a named one only when it agrees or none was recorded', () => {
+    expect(resumeFlow(undefined, 'v2')).toBe('v2')
+    expect(resumeFlow('v2', 'v2')).toBe('v2')
+    expect(resumeFlow('v2', undefined)).toBe('v2')
+    expect(resumeFlow(undefined, undefined)).toBeUndefined()
+    expect(() => resumeFlow('v1', 'v2')).toThrow('never switches to v1')
+  })
+
+  test('a fresh run never inherits a recorded flow: it takes the named one, else the default, with a note', () => {
+    expect(freshRunFlow(undefined, 'v2').flow).toBeUndefined()
+    expect(freshRunFlow(undefined, 'v2').note).toContain('pass --flow v2 to continue it')
+    expect(freshRunFlow('v2', undefined)).toEqual({ flow: 'v2' })
+    expect(freshRunFlow('v1', 'v2')).toEqual({ flow: 'v1' })
+    expect(freshRunFlow(undefined, undefined)).toEqual({})
+    expect(freshRunFlow(undefined, 'v1')).toEqual({})
+  })
+
+  test('a run records its flow under its run directory and a resume reads it back', () => {
+    const runtimeDir = fixtureDir('resume-flow-')
+    expect(recordedRunFlow(runtimeDir, 9)).toBeUndefined()
+    recordRunFlow(runtimeDir, 9, 'v2')
+    expect(recordedRunFlow(runtimeDir, 9)).toBe('v2')
+  })
+
+  test('--flow is a resume argument too', () => {
+    expect(parseResumeArgs(['--resume', '70', '--flow', 'v2'])).toEqual({ resume: 70, flow: 'v2' })
+    expect(() => parseResumeArgs(['--resume', '70', '--flow', ''])).toThrow('--flow takes a flow key')
   })
 })
 

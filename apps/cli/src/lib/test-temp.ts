@@ -1,0 +1,390 @@
+import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { homedir, hostname, tmpdir } from 'node:os'
+import { basename, dirname, join } from 'node:path'
+import { type ProcessIdentity, type StopOptions, type StopReport, stopRegistered } from './process-registry'
+
+// Test temp storage on disk, with owned cleanup.
+//
+// Heavy test fixtures (clones, replay worlds, engine runs, review inputs) create their directories under one
+// disk-backed root so a quota-limited tmpfs cannot fill. A sandbox that denies the default home root falls back
+// to its writable TMPDIR and logs that choice; an explicit setting is never overridden. The root comes from its
+// own setting, default `~/.vinaya/test-tmp/<repo-id>/<run-uuid>`, and is never derived from VINAYA_RUNTIME_DIR
+// (the test preload redirects that into temporary storage). Every run directory carries an ownership marker; a
+// sweep removes a directory only when its owner is gone, after stopping the owner's surviving processes.
+//
+// Removal first renames a directory to a `.removing-` name, so a removal interrupted half-way (a killed process,
+// a read-only subtree) is recognisable as released. A sibling receipt preserves ownership during partial deletion.
+
+/** The environment variable that sets the test-temp root; CI sets it explicitly to a disk path. */
+export const TEST_TEMP_ROOT_ENV = 'VINAYA_TEST_TMP'
+
+/** The marker file's name inside an owned directory. */
+export const OWNER_MARKER_FILE = '.vinaya-owner.json'
+
+const REMOVING_PREFIX = '.removing-'
+// A run directory under construction; its marker is written before the rename, so it is judged like any other.
+const CREATING_PREFIX = '.creating-'
+
+/** Who owns a run directory. */
+export interface TestTempOwner extends ProcessIdentity {
+  host: string
+  /** A random token naming this test run; also the process registry's run token. */
+  runToken: string
+}
+
+/** The marker file written into every run directory. */
+export interface TestTempMarker {
+  owner: TestTempOwner
+  createdAt: string
+}
+
+/** One test run's directory under the root. */
+export interface TestTempRun {
+  /** `<root>/<repo-id>/<run-uuid>` */
+  dir: string
+  marker: TestTempMarker
+}
+
+/** What a sweep did. */
+export interface SweepReport {
+  removed: string[]
+  /** Directories kept because their owner is alive or on another host. */
+  kept: string[]
+  /** Directories whose removal failed, with the error; never swallowed. */
+  failed: Array<{ dir: string; error: string }>
+}
+
+/**
+ * The start time of `pid`, fixed for the life of the process, or null when it cannot be read (no such process, or
+ * no `ps`). Where `/proc` has it, the kernel's own value (field 22 of `/proc/<pid>/stat`, clock ticks since boot):
+ * Linux `ps` derives `lstart` from the current time minus the uptime, so two reads of one live process can differ
+ * and a live owner would read as gone. Elsewhere (macOS) `ps` reports a fixed `lstart`.
+ */
+export function processStartTime(pid: number): string | null {
+  let stat: string | null = null
+  try {
+    stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+  } catch {
+    // No `/proc` on this host: ask `ps`. A missing entry where `/proc` exists is a process that is gone.
+    if (existsSync('/proc/self/stat')) return null
+  }
+  if (stat !== null) {
+    const ticks = stat
+      .slice(stat.lastIndexOf(')') + 2)
+      .split(' ')
+      .at(22 - 3)
+    return ticks === undefined ? null : `ticks:${ticks}`
+  }
+  const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+    encoding: 'utf8',
+    env: { PATH: process.env.PATH ?? '/bin:/usr/bin', LC_ALL: 'C' }
+  })
+  if (result.status !== 0 || typeof result.stdout !== 'string') return null
+  const text = result.stdout.trim()
+  return text === '' ? null : text
+}
+
+let ownStartTime: string | undefined
+/** This process as an owner of directories under `runToken`. */
+export function currentOwner(runToken: string): TestTempOwner {
+  ownStartTime ??= processStartTime(process.pid) ?? 'unknown'
+  return { host: hostname(), pid: process.pid, startTime: ownStartTime, runToken }
+}
+
+/** Writes the ownership marker into `dir`. */
+export function writeOwnerMarker(dir: string, owner: TestTempOwner): TestTempMarker {
+  const marker: TestTempMarker = { owner, createdAt: new Date().toISOString() }
+  writeFileSync(join(dir, OWNER_MARKER_FILE), `${JSON.stringify(marker)}\n`)
+  return marker
+}
+
+/** The marker in `dir`, or null when there is none or it does not parse. */
+export function readOwnerMarker(dir: string): TestTempMarker | null {
+  try {
+    const parsed = JSON.parse(readFileSync(join(dir, OWNER_MARKER_FILE), 'utf8')) as TestTempMarker
+    const o = parsed?.owner
+    if (
+      typeof o?.host !== 'string' ||
+      typeof o.pid !== 'number' ||
+      typeof o.startTime !== 'string' ||
+      typeof o.runToken !== 'string'
+    )
+      return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+/** The test-temp root for `repoId`: the setting when present, otherwise the default under the home directory. */
+export function testTempRoot(repoId: string, env: Readonly<Record<string, string | undefined>> = process.env): string {
+  const configured = env[TEST_TEMP_ROOT_ENV]
+  const base = configured !== undefined && configured !== '' ? configured : join(homedir(), '.vinaya', 'test-tmp')
+  return join(base, repoId)
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** An error that names where test temp lives and how to move it, for a write the disk refused. */
+function storageError(action: string, path: string, error: unknown): Error {
+  const code = (error as NodeJS.ErrnoException)?.code
+  const space = code === 'ENOSPC' || code === 'EDQUOT' ? ' (no space or quota left)' : ''
+  return new Error(
+    `test temp: could not ${action} ${path}${space}: ${describeError(error)} — set ${TEST_TEMP_ROOT_ENV} to a disk path with room`,
+    { cause: error }
+  )
+}
+
+/** Creates this process's run directory with its ownership marker, under `root` (default: `testTempRoot`). */
+export function createTestTempRun(repoId: string, root?: string): TestTempRun {
+  const requestedRoot = root ?? testTempRoot(repoId)
+  const owner = currentOwner(randomUUID())
+  const dir = join(requestedRoot, owner.runToken)
+  // Built under a staging name and renamed, so the run directory never exists without its marker.
+  const staging = join(requestedRoot, `${CREATING_PREFIX}${owner.runToken}`)
+  try {
+    mkdirSync(staging, { recursive: true })
+    const marker = writeOwnerMarker(staging, owner)
+    renameSync(staging, dir)
+    return { dir, marker }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (
+      root === undefined &&
+      !process.env[TEST_TEMP_ROOT_ENV] &&
+      (code === 'EROFS' || code === 'EACCES' || code === 'EPERM')
+    ) {
+      const fallback = join(tmpdir(), 'vinaya-test-tmp', repoId)
+      console.warn(
+        `test temp: default root ${requestedRoot} is not writable (${code}); falling back to ${fallback} — set ${TEST_TEMP_ROOT_ENV} to choose a disk path`
+      )
+      return createTestTempRun(repoId, fallback)
+    }
+    throw storageError('create the test-temp run directory', dir, error)
+  }
+}
+
+export interface FixtureDirDeps {
+  mkdir: (path: string) => void
+}
+
+/** Creates a fixture directory inside `run`, for a test to use instead of the OS temp dir. */
+export function makeFixtureDir(
+  run: TestTempRun,
+  prefix: string,
+  deps: FixtureDirDeps = { mkdir: (p) => mkdirSync(p) }
+): string {
+  const dir = join(run.dir, `${prefix}${randomUUID().slice(0, 8)}`)
+  try {
+    deps.mkdir(dir)
+  } catch (error) {
+    throw storageError('create the fixture directory', dir, error)
+  }
+  return dir
+}
+
+/** True when `owner` is on this host and its process (pid plus start time) is still running. */
+export function isOwnerAlive(owner: TestTempOwner): boolean {
+  if (owner.host !== hostname()) return true
+  try {
+    process.kill(owner.pid, 0)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EPERM') return false
+  }
+  const now = processStartTime(owner.pid)
+  // A start time that cannot be read is no proof the owner is gone; only a different one is (a reused pid).
+  if (now === null || owner.startTime === 'unknown') return true
+  return now === owner.startTime
+}
+
+/** Makes every directory under `dir` writable so its entries can be unlinked; files need no change. */
+function makeTreeWritable(dir: string): void {
+  try {
+    if (!lstatSync(dir).isDirectory()) return
+    chmodSync(dir, 0o700)
+    for (const entry of readdirSync(dir)) makeTreeWritable(join(dir, entry))
+  } catch {
+    // The removal that follows reports what is still in the way.
+  }
+}
+
+/**
+ * Removes `dir` and everything in it, read-only subdirectories included (a module cache or a tool's sandbox
+ * marks them read-only, which a plain recursive remove cannot unlink). Returns the error text, or null.
+ */
+export function removeTree(dir: string): string | null {
+  try {
+    rmSync(dir, { recursive: true, force: true })
+    return null
+  } catch (first) {
+    const code = (first as NodeJS.ErrnoException).code
+    if (code !== 'EACCES' && code !== 'EPERM' && code !== 'ENOTEMPTY') return describeError(first)
+  }
+  makeTreeWritable(dir)
+  try {
+    rmSync(dir, { recursive: true, force: true })
+    return null
+  } catch (second) {
+    return describeError(second)
+  }
+}
+
+/** Releases `dir` (renamed to a `.removing-` name beside it), then removes it; the result goes into `report`. */
+function releaseAndRemove(dir: string, report: SweepReport): void {
+  const marker = readOwnerMarker(dir)
+  if (marker === null) {
+    report.failed.push({ dir, error: 'ownership marker missing; refusing removal' })
+    return
+  }
+  const result = claimTestTempRun({ dir, marker })
+  if ('error' in result) {
+    report.failed.push({ dir, error: result.error })
+    return
+  }
+  const released = result.claimed
+  const error = removeTree(released)
+  if (error === null) {
+    rmSync(`${released}.owner.json`, { force: true })
+    report.removed.push(dir)
+  } else report.failed.push({ dir, error })
+}
+
+/**
+ * Claims `run` for removal: renames it to its `.removing-` name, which is quick whatever the directory holds. Returns
+ * the claimed path, or the error. A claimed directory belongs to no one, and any later sweep finishes removing it.
+ */
+export function claimTestTempRun(run: TestTempRun): { claimed: string } | { error: string } {
+  const claimed = join(dirname(run.dir), `${REMOVING_PREFIX}${basename(run.dir)}`)
+  try {
+    // Outside the payload: recursive deletion can remove the inner marker before it is interrupted.
+    writeFileSync(`${claimed}.owner.json`, JSON.stringify({ original: basename(run.dir), marker: run.marker }), {
+      flag: 'wx',
+      mode: 0o600
+    })
+    renameSync(run.dir, claimed)
+    return { claimed }
+  } catch (error) {
+    return { error: describeError(error) }
+  }
+}
+
+/** Removes `run`'s directories and reports every error. */
+export function removeTestTempRun(run: TestTempRun): SweepReport {
+  const report: SweepReport = { removed: [], kept: [], failed: [] }
+  releaseAndRemove(run.dir, report)
+  return report
+}
+
+export interface SweepDeps {
+  /** Stops a gone owner's surviving processes; the process registry's `stopRegistered` by default. */
+  stop: (runToken: string, opts: StopOptions, directory: string) => Promise<StopReport>
+  graceMs: number
+  /** Which entries of the parent directory the sweep judges; every entry by default. */
+  select: (name: string) => boolean
+}
+
+const DEFAULT_SWEEP: SweepDeps = { stop: stopRegistered, graceMs: 2000, select: () => true }
+
+/**
+ * Sweeps the owned directories directly under `parent`: a released (`.removing-`) one is finished; one whose
+ * owner is gone has the owner's processes stopped, then is removed; one whose owner is alive, on another host,
+ * or unknown (no marker) is kept. A stop that fails leaves the directory in place and is reported.
+ */
+export async function sweepOwnedDirs(parent: string, deps: Partial<SweepDeps> = {}): Promise<SweepReport> {
+  const { stop, graceMs, select } = { ...DEFAULT_SWEEP, ...deps }
+  const report: SweepReport = { removed: [], kept: [], failed: [] }
+  let names: string[]
+  try {
+    names = readdirSync(parent)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return report
+    report.failed.push({ dir: parent, error: describeError(error) })
+    return report
+  }
+  for (const name of names) {
+    const dir = join(parent, name)
+    if (name.endsWith('.owner.json')) continue
+    if (name.startsWith(REMOVING_PREFIX)) {
+      const original = name.slice(REMOVING_PREFIX.length)
+      if (!select(original)) continue
+      // A filename alone is never proof of ownership in a shared OS temp directory.
+      let marker = readOwnerMarker(dir)
+      const receipt = `${dir}.owner.json`
+      try {
+        const stat = lstatSync(receipt)
+        if (stat.isFile() && stat.uid === process.getuid?.() && (stat.mode & 0o022) === 0) {
+          const released = JSON.parse(readFileSync(receipt, 'utf8')) as {
+            original: string
+            marker: TestTempMarker
+            cleanupError?: string
+          }
+          if (released.original === original && released.marker?.owner?.host === hostname()) {
+            marker = released.marker
+            if (typeof released.cleanupError === 'string') report.failed.push({ dir, error: released.cleanupError })
+          }
+        }
+      } catch {
+        // Older releases still carry their intact inner marker; unknown entries must be retained.
+      }
+      if (marker === null || marker.owner.host !== hostname()) {
+        report.kept.push(dir)
+        continue
+      }
+      try {
+        await stop(marker.owner.runToken, { graceMs }, dir)
+        const error = removeTree(dir)
+        if (error !== null) throw new Error(error)
+        rmSync(receipt, { force: true })
+        report.removed.push(dir)
+      } catch (error) {
+        report.failed.push({ dir, error: describeError(error) })
+      }
+      continue
+    }
+    if (!select(name)) continue
+    const marker = readOwnerMarker(dir)
+    if (marker === null || isOwnerAlive(marker.owner)) {
+      report.kept.push(dir)
+      continue
+    }
+    try {
+      await stop(marker.owner.runToken, { graceMs }, dir)
+    } catch (error) {
+      report.failed.push({ dir, error: `stopping the owner's processes failed: ${describeError(error)}` })
+      continue
+    }
+    releaseAndRemove(dir, report)
+  }
+  return report
+}
+
+/** Removes abandoned run directories under the root: stops owned processes first, never touches a live owner's. */
+export async function sweepAbandoned(
+  repoId: string,
+  deps: Partial<SweepDeps> & { root?: string } = {}
+): Promise<SweepReport> {
+  const { root, ...rest } = deps
+  const primary = await sweepOwnedDirs(root ?? testTempRoot(repoId), rest)
+  if (root !== undefined || process.env[TEST_TEMP_ROOT_ENV]) return primary
+  // A previous sandboxed run may have fallen back even though the default is writable to this process.
+  const fallback = await sweepOwnedDirs(join(tmpdir(), 'vinaya-test-tmp', repoId), rest)
+  return {
+    removed: [...primary.removed, ...fallback.removed],
+    kept: [...primary.kept, ...fallback.kept],
+    failed: [...primary.failed, ...fallback.failed]
+  }
+}

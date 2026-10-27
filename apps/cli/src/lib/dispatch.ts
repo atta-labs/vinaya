@@ -67,6 +67,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
+import { currentOwner, removeTree, type SweepDeps, sweepOwnedDirs, writeOwnerMarker } from './test-temp'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname, tmpdir } from 'node:os'
@@ -3747,6 +3748,46 @@ function promptHashOf(prompt: string): string {
   return `sha256:${createHash('sha256').update(prompt).digest('hex')}`
 }
 
+/** What one agent launch used, read from its own stdout the way every dispatch reads it. */
+export interface DispatchUsageReading {
+  /** Input and output tokens, or `null` when the stream carried no usage. */
+  usage: { input: number; output: number } | null
+  /** The cache read and creation tokens of the same usage object. */
+  cacheUsage: { read: number; creation: number } | null
+  /** The `usage` family's units, with the reason when nothing was observed. */
+  units: UsageObservation
+  /** The `usage` event's `source`: the vendor, or the Claude transcript it fell back to. */
+  source: string
+  /** The vendor's own receipt of which model ran, or `null` when it emits none. */
+  model: string | null
+}
+
+/**
+ * Reads one launch's usage from its stdout. Usage comes from the `tail` (the vendor prints its terminal usage line
+ * last); the session id, when none was bound while the launch ran, from the `head`. The stream is the primary source:
+ * only a Claude launch whose stream carried no usage line falls back to the session's own transcript.
+ */
+export function readDispatchUsage(
+  agent: AgentVendor,
+  stdout: { tail: string; head?: string; sessionId?: string | null },
+  configDir: string = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+): DispatchUsageReading {
+  const vendor = VENDOR_TABLE[agent]
+  const head = stdout.head ?? stdout.tail
+  const streamUnits = vendor.parseUsageUnits(stdout.tail)
+  const resolved =
+    agent === 'claude'
+      ? resolveClaudeUsageUnits(streamUnits, stdout.sessionId ?? vendor.parseResumeId(head), configDir)
+      : { observation: streamUnits, source: 'stream' as const }
+  return {
+    usage: vendor.parseUsage(stdout.tail),
+    cacheUsage: vendor.parseCacheUsage(stdout.tail),
+    units: resolved.observation,
+    source: resolved.source === 'stream' ? agent : resolved.source,
+    model: vendor.parseModel(head)
+  }
+}
+
 /**
  * The generic launcher's own honest classification
  * — never `@attalabs/aeg-core`'s `normalizeOutcome`, which requires
@@ -4190,6 +4231,40 @@ export function isReviewerResume(role: Role, resumeId: string | undefined): bool
   return (role === 'code-reviewer' || role === 'security') && resumeId !== undefined
 }
 
+/** The name prefix of a Claude dispatch's sandbox scratch directory in the OS temp dir. */
+export const CLAUDE_SANDBOX_PREFIX = 'vinaya-claude-sandbox-'
+
+/**
+ * Mints a Claude dispatch's sandbox scratch directory, marked with this driver as its owner. First it sweeps the
+ * scratch directories earlier drivers left behind when they died before their own cleanup ran (a killed driver
+ * never reaches `finish()`): one is removed only when its owning driver is gone, after that driver's registered
+ * processes are stopped. A directory with no marker, or a live owner's, is never touched. Every sweep failure is
+ * reported through `report`.
+ */
+export async function mintClaudeScratchDir(
+  runToken: string,
+  report: (line: string) => void,
+  parent: string = tmpdir(),
+  sweepDeps: Partial<SweepDeps> = {}
+): Promise<string> {
+  const swept = await sweepOwnedDirs(parent, { ...sweepDeps, select: (name) => name.startsWith(CLAUDE_SANDBOX_PREFIX) })
+  for (const { dir, error } of swept.failed)
+    report(`could not remove an abandoned sandbox scratch directory ${dir}: ${error}`)
+  const dir = realpathSync(mkdtempSync(join(parent, CLAUDE_SANDBOX_PREFIX)))
+  writeOwnerMarker(dir, currentOwner(runToken))
+  return dir
+}
+
+/**
+ * Removes a Claude dispatch's sandbox scratch directory, read-only subdirectories included (a plain recursive
+ * remove cannot unlink entries of a directory the sandboxed agent made read-only). A failure is reported, and the
+ * marked directory is left for a later sweep.
+ */
+export function releaseClaudeScratchDir(dir: string, report: (line: string) => void): void {
+  const error = removeTree(dir)
+  if (error !== null) report(`could not remove the sandbox scratch directory ${dir}: ${error}`)
+}
+
 /**
  * Starts `agent`'s headless mode for `role`, attributes the child's
  * environment, and records the dispatch through `log()`. Never throws — a
@@ -4536,9 +4611,7 @@ export async function dispatchRole(
   // uses, and is removed in `finish()` below alongside every other
   // dispatch-scoped temp resource.
   const claudeScratchDir =
-    agent === 'claude' && opts.unattended === true
-      ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-claude-sandbox-')))
-      : null
+    agent === 'claude' && opts.unattended === true ? await mintClaudeScratchDir(effectId, writeLifecycle) : null
   // The task's required-source store — the manifest and every delivery
   // receipt — is controller-owned: a Developer's sandbox never writes it.
   // Claude's sandbox names it in `denyWrite`; for both agents the dispatch
@@ -4932,13 +5005,7 @@ export async function dispatchRole(
     // O1/O2: never leak the scratch directory minted for Claude's own
     // confinement (above) on this early refusal — `finish()`'s own cleanup
     // is never reached from this `return`.
-    if (claudeScratchDir !== null) {
-      try {
-        rmSync(claudeScratchDir, { recursive: true, force: true })
-      } catch {
-        // best-effort, same reasoning as `finish()`'s own cleanup.
-      }
-    }
+    if (claudeScratchDir !== null) releaseClaudeScratchDir(claudeScratchDir, writeLifecycle)
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return {
@@ -5122,13 +5189,7 @@ export async function dispatchRole(
         // best-effort, same reasoning as `finish()`'s own cleanup.
       }
     }
-    if (claudeScratchDir !== null) {
-      try {
-        rmSync(claudeScratchDir, { recursive: true, force: true })
-      } catch {
-        // best-effort cleanup on this early refusal.
-      }
-    }
+    if (claudeScratchDir !== null) releaseClaudeScratchDir(claudeScratchDir, writeLifecycle)
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     // The probe's refusal travels typed, beside the shared `'refused'`
@@ -5635,7 +5696,8 @@ export async function dispatchRole(
       // other filesystem-bookkeeping concern in this file (`removeIfPresent`,
       // `reviewer-isolation.ts`'s own posture), never blocking `finish()` on
       // a filesystem fault.
-      for (const scratchDir of [claudeScratchDir, codexScratchDir, turnSchemaDir]) {
+      if (claudeScratchDir !== null) releaseClaudeScratchDir(claudeScratchDir, writeLifecycle)
+      for (const scratchDir of [codexScratchDir, turnSchemaDir]) {
         if (scratchDir === null) continue
         try {
           rmSync(scratchDir, { recursive: true, force: true })
@@ -5727,28 +5789,22 @@ export async function dispatchRole(
       // Usage is read from the tail, not the head: the vendor prints its
       // terminal usage line last, past the head cap on a long session. The
       // session id and model stay read from the head, where they are printed.
-      const usage = vendor.parseUsage(stdoutTail)
-      const cacheUsage = vendor.parseCacheUsage(stdoutTail)
+      const {
+        usage,
+        cacheUsage,
+        units: usageUnits,
+        source: usageSource
+      } = readDispatchUsage(agent, {
+        tail: stdoutTail,
+        head: stdoutBuf,
+        sessionId: launch.resumeId
+      })
       // The SAME survives-the-manner-of-death
       // treatment `usage` already gets, extended to the vendor's own model
       // receipt and the richer `usage`-family units — read once here, from
       // the same buffer, and reused by whichever branch below actually logs.
       const reportedModel = vendor.parseModel(stdoutBuf)
       const attemptModel = reportedModel ?? resolvedModel
-      const streamUsageUnits = vendor.parseUsageUnits(stdoutTail)
-      // The stream is the primary source. Only a Claude dispatch whose stream
-      // carried no usage line falls back to the session's own transcript,
-      // located by the session id this dispatch already records.
-      const resolvedUsage =
-        agent === 'claude'
-          ? resolveClaudeUsageUnits(
-              streamUsageUnits,
-              launch.resumeId ?? vendor.parseResumeId(stdoutBuf),
-              process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
-            )
-          : { observation: streamUsageUnits, source: 'stream' as const }
-      const usageUnits = resolvedUsage.observation
-      const usageSource = resolvedUsage.source === 'stream' ? agent : resolvedUsage.source
       // O5: this dispatch never produced a working vendor
       // session — checked against the SAME two sources every other resumeId
       // read in this function already uses (the stream-bound `launch.resumeId`,

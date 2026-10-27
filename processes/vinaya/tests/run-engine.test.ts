@@ -1,4 +1,6 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
+import { DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
 import { recordedHandoff } from './handoff-fakes'
 import { PASSING_FORGE_GATES } from './round-fakes'
 import { Database } from 'bun:sqlite'
@@ -6,7 +8,6 @@ import { execFileSync, spawn } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -54,6 +55,7 @@ import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/
 import { currentRunGeneration, runIdentityOfTask } from '../bin/run-lifecycle'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
+  claimLaunchAttribution,
   checkpointPath,
   createTraceRecorder,
   tracedActions,
@@ -101,13 +103,27 @@ describe('arguments', () => {
   })
 })
 
+describe('--flow chooses the run flow', () => {
+  test('a flow key is accepted and carried; anything else is refused', () => {
+    expect(parseArgs(['--task', '1', '--agent', 'claude', '--flow', 'v2'])).toEqual({
+      task: 1,
+      agent: 'claude',
+      dryRun: false,
+      flow: 'v2'
+    })
+    expect(parseArgs(['--task', '1', '--agent', 'claude'])).not.toHaveProperty('flow')
+    expect(() => parseArgs(['--task', '1', '--agent', 'claude', '--flow'])).toThrow('--flow takes a flow key')
+    expect(() => parseArgs(['--task', '1', '--agent', 'claude', '--flow', 'V2!'])).toThrow('--flow takes a flow key')
+  })
+})
+
 describe('the dry run', () => {
   for (const agent of ['claude', 'codex'] as const) {
     test(`prints the digest, the steps, the bound functions and each role's launch (${agent})`, async () => {
       const lines = await dryRunLines({
         process: loaded,
         agent,
-        generatedRoot: mkdtempSync(join(tmpdir(), 'dry-run-')),
+        generatedRoot: fixtureDir('dry-run-'),
         shimPath: '/runs/1/dev-bridge.sh'
       })
       expect(lines[0]).toBe(`process ${loaded.identity.id}@${loaded.identity.version} digest ${loaded.digest}`)
@@ -229,7 +245,7 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
   const emitted: unknown[] = []
   const observed: NodeLifecycle[] = []
   const control = createRunControl()
-  const runtimeDir = mkdtempSync(join(tmpdir(), 'engine-run-'))
+  const runtimeDir = fixtureDir('engine-run-')
   const actions: ActionRegistry = Object.fromEntries(
     [
       'vinaya.prepare-run',
@@ -374,8 +390,12 @@ describe('a stub run on the Engine path', () => {
     expect(drain).toBeGreaterThan(lastLog)
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
     const kinds = emitted.map((event) => `${(event as { kind: string }).kind}.${(event as { event: string }).event}`)
-    // The stub assessment records no round, so the only event is the single exit record: no node writes a heartbeat.
-    expect(kinds).toEqual(['dev_review_loop.driver_exited'])
+    // The stub assessment records no round, so beside each agent launch's attempt and usage the only event is the
+    // single exit record: no node writes a heartbeat, and a version 1 run writes no step time (version 2's alone).
+    expect(kinds).toEqual([
+      ...Array.from({ length: 3 }, () => ['role_attempt.attempted', 'usage.observed']).flat(),
+      'dev_review_loop.driver_exited'
+    ])
   })
 
   test('starts the host before the Developer and writes the executable shim', async () => {
@@ -450,6 +470,21 @@ describe('a stub run on the Engine path', () => {
     expect(log).toMatch(/Z {2}\+ Loop {3}The driver finished\.$/m)
   })
 
+  test("the driver log's first line names the flow the run runs", async () => {
+    const { options } = stubRun()
+    await runEngine(options)
+    const first = readFileSync(loopLogPathFor(null, 7, options.runtimeDir), 'utf8').split('\n')[0] ?? ''
+    expect(first).toContain(`flow ${options.process.flowKey}`)
+  })
+
+  test('tells the run it halted when it pauses, so version 2 ends its storage pushes', async () => {
+    const { options } = stubRun({ haltAt: 'validate-developer-output' })
+    let halted = 0
+    const result = await runEngine({ ...options, onRunHalted: () => halted++ })
+    expect(result.exitCode).toBe(2)
+    expect(halted).toBeGreaterThan(0)
+  })
+
   test('a renderer that throws leaves the step results, the trace and the Log rows unchanged', async () => {
     const steady = stubRun()
     const steadyResult = await runEngine(steady.options)
@@ -467,7 +502,17 @@ describe('a stub run on the Engine path', () => {
     expect(rest).toEqual(steadyRest)
     // The agents' streams reached their steps exactly as before.
     expect(steps).toEqual(steadySteps)
-    expect(broken.emitted).toEqual(steady.emitted)
+    // Each step's time (`phase_time`) and each launch's are wall-clock readings, so the two runs agree on everything
+    // but those numbers.
+    const untimed = (events: unknown[]) =>
+      events.map((event) =>
+        (event as { event?: string }).event === 'phase_time'
+          ? { ...(event as object), wall_ms: 0 }
+          : 'duration_ms' in (event as object)
+            ? { ...(event as object), duration_ms: 0 }
+            : event
+      )
+    expect(untimed(broken.emitted)).toEqual(untimed(steady.emitted))
     // Nothing the broken narration would have written reached the driver log.
     expect(readFileSync(loopLogPathFor(null, 7, broken.options.runtimeDir), 'utf8')).not.toContain('Developer')
     // A renderer that cannot even be built is dropped the same way.
@@ -790,8 +835,8 @@ describe('agent-step failures and the live task context', () => {
   })
 
   test('staging the review input writes run files under the runtime directory, nothing under the repository', async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'engine-repo-')))
-    const runtimeDir = realpathSync(mkdtempSync(join(tmpdir(), 'engine-runtime-')))
+    const root = realpathSync(fixtureDir('engine-repo-'))
+    const runtimeDir = realpathSync(fixtureDir('engine-runtime-'))
     const git = (...a: string[]) =>
       execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: root, encoding: 'utf8' }).trim()
     git('init', '-q')
@@ -856,7 +901,7 @@ const recordedLaunches: Array<{ task: number; agent: string; round: number | nul
 const completedLaunches: Array<{ runId: string; resumeId: string | null }> = []
 
 function liveContext(world: World, overrides: Partial<ReturnType<typeof fakeDeps>> = {}, task = 8) {
-  const runtimeDir = mkdtempSync(join(tmpdir(), 'engine-live-context-'))
+  const runtimeDir = fixtureDir('engine-live-context-')
   const live = engineLiveDevToolsContext({
     branch: BRANCH,
     worktreePath: '/worktree',
@@ -1082,7 +1127,7 @@ const SPEC = 'specs/isolation.md'
 
 describe('the tool host serves the reviewer roles as well as the Developer', () => {
   test('starts a host per role, and each reviewer reads a pinned source through read_source', async () => {
-    const repo = mkdtempSync(join(tmpdir(), 'engine-read-source-'))
+    const repo = fixtureDir('engine-read-source-')
     const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
     git('init', '-q')
     git('config', 'user.email', 'test@example.com')
@@ -1132,7 +1177,7 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
     ['codex', 'config.toml']
   ] as const) {
     test(`each reviewer ${vendor} launch runs in that attempt's scratch directory, the Developer in its worktree`, () => {
-      const generatedRoot = mkdtempSync(join(tmpdir(), 'engine-reviewer-cwd-'))
+      const generatedRoot = fixtureDir('engine-reviewer-cwd-')
       const roles = createRoleLaunchers({ vendor, generatedRoot })
       const seen: Array<{ cwd?: string; args: string[] }> = []
       const wrapped = withReviewerWorkingDirectory(
@@ -1159,7 +1204,7 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
     })
 
     test(`each reviewer's ${vendor} launch names its own host`, () => {
-      const generatedRoot = mkdtempSync(join(tmpdir(), 'engine-launch-shapes-'))
+      const generatedRoot = fixtureDir('engine-launch-shapes-')
       createRoleLaunchers({
         vendor,
         generatedRoot,
@@ -1178,7 +1223,7 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
     })
 
     test(`each ${vendor} role launch carries a capability of its own dispatch, revoked when that launch ends`, () => {
-      const generatedRoot = mkdtempSync(join(tmpdir(), 'engine-dispatch-capability-'))
+      const generatedRoot = fixtureDir('engine-dispatch-capability-')
       const roles = createRoleLaunchers({ vendor, generatedRoot })
       // A peer is inside a dispatch only when it is that dispatch's own launched process.
       const tables = {
@@ -1251,7 +1296,7 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
 
 describe('the repository a run works in', () => {
   test('is the git top level of the starting directory, not the folder the runner ships in', () => {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'engine-target-repo-')))
+    const dir = realpathSync(fixtureDir('engine-target-repo-'))
     execFileSync('git', ['init', '-q'], { cwd: dir })
     mkdirSync(join(dir, 'nested'))
     expect(targetRepoRoot(join(dir, 'nested'))).toBe(dir)
@@ -1280,7 +1325,7 @@ describe('the Developer launch schema', () => {
     expect(wrapped.buildArgs({} as never)[2]).toBe(JSON.stringify({ sources: ['`b.md`'] }))
   })
   test('Codex gets a rewritten schema file at every launch', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'turn-schema-'))
+    const dir = fixtureDir('turn-schema-')
     const wrapped = withTurnSchema(launcher(['exec', '--output-schema', '/static.json']), dir, () => ({ n: 1 }))
     const args = wrapped.buildArgs({} as never)
     expect(args[2]).toBe(join(dir, 'turn-output.schema.json'))
@@ -1338,4 +1383,156 @@ describe('a reviewer launch that exits non-zero', () => {
       stderr: 'Not inside a trusted directory'
     })
   })
+})
+
+describe("the reviewers' Tokens line on the Engine path", () => {
+  const head = 'a'.repeat(40)
+  const inputs = {
+    manifest: {
+      headSha: head,
+      baseSha: 'e'.repeat(40),
+      briefHash: 'b'.repeat(64),
+      objectivesVersion: 'c'.repeat(64),
+      rulingOrdinal: 0,
+      policyDigest: 'd'.repeat(64)
+    },
+    objectives: []
+  } as never
+  const completed = (role: 'reviewer' | 'security') =>
+    ({
+      schemaVersion: 1,
+      status: 'completed',
+      role: role === 'reviewer' ? 'code-reviewer' : 'security-reviewer',
+      headSha: head,
+      manifestDigest: 'f'.repeat(64),
+      summary: role === 'reviewer' ? 'Conforms to the brief.' : 'none found — atta-labs/secret-scan passed',
+      findings: [],
+      objectiveResults: []
+    }) as never
+
+  test('a fresh task input restores checkpointed reviewer usage after a restart before verdict construction', async () => {
+    const run = stubRun()
+    const fresh = () =>
+      liveTaskInput({ task: 7, agent: 'claude', dryRun: false }, run.runtimeDir, run.runtimeDir, 'loop-under-test', {
+        fetchTitle: () => 'A task',
+        fetchLabels: () => [],
+        policy: () => DEFAULT_REVIEW_POLICY
+      })
+    const firstTask = await fresh()
+    run.options.taskInput = { ...run.options.taskInput, recordUsage: firstTask.recordUsage, reviewRound: () => 1 }
+    let rendered: string[] = []
+    run.options.actions = {
+      ...run.options.actions,
+      'vinaya.validate-reviewer-outputs': () => {
+        rendered = ['reviewer', 'security'].map(
+          (role) =>
+            firstTask.buildVerdict(role as 'reviewer' | 'security', completed(role as 'reviewer' | 'security'), inputs)
+              .rendered
+        )
+        return { exitCode: 0 }
+      }
+    }
+    let launches = 0
+    run.options.spawnFn = (_command, args) => {
+      launches++
+      const role = (args[args.indexOf('--settings') + 1] ?? '').split('/').at(-2) ?? ''
+      return stubAgent(role, [
+        ...(AGENT_LINES[role] ?? []),
+        JSON.stringify({ type: 'result', usage: { input_tokens: 4321, output_tokens: 87 } })
+      ])
+    }
+    const completedSteps = new Set<string>()
+    run.options.observe = (event) => {
+      if (event.type === 'node:complete' && ['code-review', 'security-review'].includes(event.nodeId)) {
+        completedSteps.add(event.nodeId)
+        if (completedSteps.size === 2) run.options.control!.halt('driver stopped before verdict')
+      }
+    }
+    const first = await runEngine(run.options)
+    expect(first.exitCode).toBe(2)
+    expect(rendered).toEqual([])
+    expect(launches).toBe(3)
+    const restoredTask = await fresh()
+    expect(restoredTask.usageOf?.('reviewer')).toBeNull()
+    run.options.taskInput = { ...run.options.taskInput, recordUsage: restoredTask.recordUsage }
+    run.options.actions = {
+      ...run.options.actions,
+      'vinaya.validate-reviewer-outputs': () => {
+        rendered = ['reviewer', 'security'].map(
+          (role) =>
+            restoredTask.buildVerdict(
+              role as 'reviewer' | 'security',
+              completed(role as 'reviewer' | 'security'),
+              inputs
+            ).rendered
+        )
+        return { exitCode: 0 }
+      }
+    }
+    const resumed = await runEngine({
+      ...run.options,
+      control: createRunControl(),
+      observe: () => {},
+      heldPullRequestConflicts: async () => false
+    })
+    expect(resumed.exitCode).toBe(0)
+    expect(launches).toBe(3)
+    expect(rendered).toHaveLength(2)
+    for (const verdict of rendered) expect(verdict).toContain('claude — 4321/87/—')
+  })
+
+  for (const agent of ['claude', 'codex'] as const)
+    for (const role of ['reviewer', 'security'] as const)
+      test(`a ${agent} ${role} verdict carries the tokens its launch reported`, async () => {
+        const runtimeDir = fixtureDir('engine-tokens-')
+        const live = await liveTaskInput({ task: 7, agent, dryRun: false }, runtimeDir, runtimeDir, 'loop-1', {
+          fetchTitle: () => 'A task',
+          fetchLabels: () => [],
+          policy: () => DEFAULT_REVIEW_POLICY
+        })
+        expect(live.buildVerdict(role, completed(role), inputs).rendered).toContain('—/—/—')
+        live.recordUsage?.(role, { input: 4321, output: 87 })
+        expect(live.usageOf?.(role)).toEqual({ input: 4321, output: 87 })
+        expect(live.buildVerdict(role, completed(role), inputs).rendered).toContain(`${agent} — 4321/87/—`)
+      })
+})
+
+describe('launch usage attribution', () => {
+  test('each role launch snapshots its review round and durable attempt before completion', async () => {
+    const run = stubRun()
+    run.options.taskInput.reviewRound = () => 2
+    const observed: unknown[] = []
+    run.options.sink.log = (event, attribution) => {
+      if ((event as { kind: string }).kind === 'usage') observed.push(attribution)
+    }
+    await runEngine(run.options)
+    expect(observed).toEqual(
+      expect.arrayContaining([
+        { role: 'developer', round: 2, attempt: 1 },
+        { role: 'code-reviewer', round: 2, attempt: 1 },
+        { role: 'security', round: 2, attempt: 1 }
+      ])
+    )
+    const first = claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 2)
+    const resumed = claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 2)
+    expect([first.attempt, resumed.attempt]).toEqual([1, 2])
+    expect(claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 3).attempt).toBe(3)
+  })
+})
+describe('launch usage model attribution', () => {
+  for (const requested of [undefined, 'requested-review-model'])
+    test(`all roles preserve the requested model or explicit unknown (${requested ?? 'unknown'})`, async () => {
+      const run = stubRun()
+      run.options.args.model = requested
+      await runEngine(run.options)
+      const attempts = run.emitted.filter(
+        (event: any) => event.kind === 'role_attempt' && event.actor === 'claude'
+      ) as Array<{ model: string | null }>
+      expect(attempts).toHaveLength(3)
+      expect(attempts.map((event) => event.model)).toEqual([
+        requested ? `requested:${requested}` : null,
+        requested ? `requested:${requested}` : null,
+        requested ? `requested:${requested}` : null
+      ])
+    })
 })

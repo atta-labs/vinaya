@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadProcess, ProcessLoadError, type ProcessLoadReason, processSchema } from './load-process'
+import { loadProcess, ProcessLoadError, type ProcessLoadReason, processFields } from './load-process'
 
 const processesRoot = join(import.meta.dir, '..', '..', '..', 'processes')
 const schemaPath = join(import.meta.dir, '..', 'contract', 'process.schema.json')
@@ -71,6 +71,27 @@ describe('loadProcess', () => {
     ['missing-process-file', 'no process.yaml', null, {}],
     ['unparseable-yaml', 'YAML that does not parse', 'id: [unclosed\n', {}],
     ['schema-violation', 'a required field absent', 'id: sample\nversion: v1\nroles: [a]\n', {}, 'flow'],
+    [
+      'schema-violation',
+      'both flow and flows',
+      'id: sample\nversion: v1\nflow: flow.yaml\nflows:\n  v1: flow.yaml\nroles: [roles/worker]\n',
+      VALID_FILES,
+      'flow'
+    ],
+    [
+      'schema-violation',
+      'a default_flow that names no declared flow',
+      'id: sample\nversion: v1\nflows:\n  v1: flow.yaml\ndefault_flow: v9\nroles: [roles/worker]\n',
+      VALID_FILES,
+      'default_flow'
+    ],
+    [
+      'declared-path-missing',
+      'a declared flow file that does not exist',
+      'id: sample\nversion: v1\nflows:\n  v1: flow.yaml\n  v2: missing.yaml\nroles: [roles/worker]\n',
+      VALID_FILES,
+      'flows.v2'
+    ],
     ['schema-violation', 'a field of the wrong type', 'id: sample\nversion: v1\nflow: f\nroles: nope\n', {}, 'roles'],
     ['declared-path-missing', 'a declared path that does not exist', VALID, { 'flow.yaml': 'x' }],
     [
@@ -94,13 +115,66 @@ describe('loadProcess', () => {
   }
 })
 
+describe('two flows side by side', () => {
+  const TWO =
+    'id: sample\nversion: 1.0.0\nflows:\n  v1: flow.yaml\n  v2: flow-v2.yaml\ndefault_flow: v1\nroles:\n  - roles/worker\n'
+  const TWO_FILES = { ...VALID_FILES, 'flow-v2.yaml': 'steps: [v2]\n' }
+
+  test('a run that names no flow gets the default; naming one selects its file', () => {
+    const folder = processFolder(TWO, TWO_FILES)
+    const v1 = loadProcess(folder)
+    expect(v1.flowKey).toBe('v1')
+    expect(v1.flowPath).toBe(join(folder, 'flow.yaml'))
+    const v2 = loadProcess(folder, { flow: 'v2' })
+    expect(v2.flowKey).toBe('v2')
+    expect(v2.flowPath).toBe(join(folder, 'flow-v2.yaml'))
+    expect(Object.keys(v2.flowPaths).sort()).toEqual(['v1', 'v2'])
+  })
+
+  test('the digest pins every declared flow and does not depend on the one chosen', () => {
+    const folder = processFolder(TWO, TWO_FILES)
+    const first = loadProcess(folder).digest
+    expect(loadProcess(folder, { flow: 'v2' }).digest).toBe(first)
+    writeFileSync(join(folder, 'flow-v2.yaml'), 'steps: [changed]\n')
+    expect(loadProcess(folder).digest).not.toBe(first)
+  })
+
+  test('without default_flow, v1 is the default, else the first key', () => {
+    const withV1 = processFolder(TWO.replace('default_flow: v1\n', ''), TWO_FILES)
+    expect(loadProcess(withV1).flowKey).toBe('v1')
+    const noV1 = processFolder(
+      'id: sample\nversion: 1.0.0\nflows:\n  alpha: flow.yaml\n  beta: flow-v2.yaml\nroles: [roles/worker]\n',
+      TWO_FILES
+    )
+    expect(loadProcess(noV1).flowKey).toBe('alpha')
+  })
+
+  test('a single-flow process answers to the default key and refuses any other', () => {
+    const folder = processFolder(VALID, VALID_FILES)
+    expect(loadProcess(folder).flowKey).toBe('default')
+    expect(() => loadProcess(folder, { flow: 'v2' })).toThrow(/flow "v2" is not declared/)
+  })
+
+  test('an undeclared flow key is refused as unknown-flow', () => {
+    const folder = processFolder(TWO, TWO_FILES)
+    try {
+      loadProcess(folder, { flow: 'v3' })
+      throw new Error('expected a refusal')
+    } catch (error) {
+      expect((error as ProcessLoadError).reason).toBe('unknown-flow')
+    }
+  })
+})
+
 describe('process contract', () => {
   test('the JSON schema and the validator require the same fields', () => {
     const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as {
       required: string[]
       properties: Record<string, unknown>
     }
-    expect([...schema.required].sort()).toEqual(['flow', 'id', 'roles', 'version'])
-    expect(Object.keys(schema.properties).sort()).toEqual(Object.keys(processSchema.shape).sort())
+    expect([...schema.required].sort()).toEqual(['id', 'roles', 'version'])
+    expect(Object.keys(schema.properties).sort()).toEqual(Object.keys(processFields.shape).sort())
+    const oneOf = (schema as unknown as { oneOf: Array<{ required: string[] }> }).oneOf
+    expect(oneOf.map((branch) => branch.required)).toEqual([['flow'], ['flows']])
   })
 })

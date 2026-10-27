@@ -122,6 +122,8 @@ export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) 
   agent: AgentVendor
   model?: string
   runner?: TaskRunner
+  /** The developer-review flow key the Engine runner runs (`v1`, `v2`); absent takes the process default. */
+  flow?: string
   /**
    * `--widen-surface <glob,...> --reason <text>`: continue a pre-pull-request
    * escalation whose Developer asked for `widen_surface` — supersede the
@@ -565,7 +567,12 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   deps.assignIssue(issue)
   if (runner === 'atta-engine') {
     const exitCode = await runTaskEngine(
-      { task: issue, agent, ...(resolvedModel ? { model: resolvedModel } : {}) },
+      {
+        task: issue,
+        agent,
+        ...(resolvedModel ? { model: resolvedModel } : {}),
+        ...(input.flow ? { flow: input.flow } : {})
+      },
       deps.engine,
       // Recorded once the Engine is known to start, so a fallback is never recorded as an Engine run.
       () => deps.recordRunner?.(issue, 'atta-engine')

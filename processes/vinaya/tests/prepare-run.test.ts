@@ -1,6 +1,6 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { initialLoopState } from '@attalabs/aeg-core'
 import { createRunControl, type RunControl } from '@atta/executor-agent-spawn'
@@ -68,7 +68,7 @@ function handoffFor(runtimeDir: string, control: RunControl, recorded: ReturnTyp
 
 /** One run of the Flow's preparation steps over a runtime folder of its own, its pauses handed off and recorded. */
 function setup(overrides: Partial<TaskInput> = {}) {
-  const runtimeDir = overrides.runtimeDir ?? mkdtempSync(join(tmpdir(), 'prepare-run-'))
+  const runtimeDir = overrides.runtimeDir ?? fixtureDir('prepare-run-')
   const control = createRunControl()
   const recorded = recordedHandoff()
   const handoff = handoffFor(runtimeDir, control, recorded)
@@ -114,7 +114,7 @@ const paused = (runtimeDir: string) => readPauseState(runtimeDir, TASK)
 
 describe('prepare-run reads the review policy', () => {
   test('an unreadable policy pauses through the handoff and the run input is still built', async () => {
-    const runtimeDir = mkdtempSync(join(tmpdir(), 'prepare-run-live-'))
+    const runtimeDir = fixtureDir('prepare-run-live-')
     // The input is built without a policy read: a throw here would end the start before any record is written.
     const live = await liveTaskInput({ task: TASK, agent: 'claude', dryRun: false }, runtimeDir, runtimeDir, 'loop-1', {
       fetchTitle: () => 'A task',
@@ -218,7 +218,7 @@ steps:
 
 /** Runs PREPARE_FLOW on the Engine runner until prepare-run refuses, fixes the cause, then resumes the run. */
 async function refuseThenResume(refuse: (task: TaskInput) => void, fix: (task: TaskInput) => void) {
-  const folder = mkdtempSync(join(tmpdir(), 'prepare-run-flow-'))
+  const folder = fixtureDir('prepare-run-flow-')
   writeFileSync(join(folder, 'flow.yaml'), PREPARE_FLOW)
   mkdirSync(join(folder, 'worker'))
   writeFileSync(join(folder, 'worker', 'grants.yaml'), 'role: worker\n')
@@ -314,7 +314,7 @@ describe('a refused prepare-run runs again when the Engine run resumes', () => {
 describe('prepare-run proves the agent sandbox', () => {
   for (const vendor of ['claude-code', 'codex'] as const) {
     test(`a probe that cannot run a command pauses sandbox_refused for the Operator (${vendor})`, async () => {
-      const generatedRoot = mkdtempSync(join(tmpdir(), 'prepare-run-roles-'))
+      const generatedRoot = fixtureDir('prepare-run-roles-')
       const launchers = createRoleLaunchers({ vendor, generatedRoot })
       const probed: SandboxProbePlan[] = []
       const setupped = setup()
@@ -411,7 +411,7 @@ describe('prepare-sources pauses on a source it cannot read', () => {
   })
 
   test('a missing worktree pauses as an infrastructure stop naming its path, never as a missing source', async () => {
-    const missing = join(mkdtempSync(join(tmpdir(), 'prepare-sources-gone-')), 'worktree')
+    const missing = join(fixtureDir('prepare-sources-gone-'), 'worktree')
     const setupped = setup({
       prepareSources: async () => {
         throw new SourceReaderUnavailable(missing, 'the worktree does not exist')
@@ -464,7 +464,7 @@ describe('an empty fetch issues no source receipt on the Engine path', () => {
   }
 
   const fetchThenValidate = async (body: string) => {
-    const runtimeDir = mkdtempSync(join(tmpdir(), 'prepare-run-fetch-'))
+    const runtimeDir = fixtureDir('prepare-run-fetch-')
     const live = engineLiveDevToolsContext({
       recordLaunch: () => 'test-run',
       completeLaunch: () => {},

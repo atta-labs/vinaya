@@ -119,6 +119,19 @@ const objectSchema = (properties: Record<string, unknown>, required = Object.key
 })
 const str = { type: 'string' } as const
 const nullableString = { anyOf: [str, { type: 'null' }] } as const
+/**
+ * A pull-request tool's success: the pull request's number, or — in review locally, push once, while no pull
+ * request may open yet — the saved (staged) body, which the driver opens once both reviewers approve.
+ */
+const prNumberOrStaged = {
+  type: 'object',
+  properties: { prNumber: { type: 'integer', minimum: 1 }, staged: { const: true }, note: str },
+  additionalProperties: false,
+  anyOf: [
+    objectSchema({ prNumber: { type: 'integer', minimum: 1 } }),
+    objectSchema({ staged: { const: true }, note: str }, ['staged'])
+  ]
+} as const
 const nullableBoolean = { anyOf: [{ type: 'boolean' }, { type: 'null' }] } as const
 const annotations = (
   readOnlyHint: boolean,
@@ -227,7 +240,7 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
       neighboringTools: ['publish_changes', 'update_pull_request_body']
     },
     inputSchema: objectSchema({ title: { type: 'string', minLength: 1 }, body: { type: 'string', minLength: 1 } }),
-    successOutputSchema: objectSchema({ prNumber: { type: 'integer', minimum: 1 } }),
+    successOutputSchema: prNumberOrStaged,
     requiredAuthority: 'Controller-held forge pull-request creation authority for this task branch.',
     idempotencyAndReplay: 'Create-once effect; reconcile by task branch before retrying an uncertain result.',
     preconditions: ['Task branch is published and no task pull request exists.'],
@@ -247,7 +260,7 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
       neighboringTools: ['open_pull_request', 'refresh_evidence']
     },
     inputSchema: stringInput('body'),
-    successOutputSchema: objectSchema({ prNumber: { type: 'integer', minimum: 1 } }),
+    successOutputSchema: prNumberOrStaged,
     requiredAuthority: 'Controller-held forge authority to edit this task pull request.',
     idempotencyAndReplay: 'Idempotent for the same body; replay produces the same text.',
     preconditions: ['The task pull request exists and the body passes validation.'],

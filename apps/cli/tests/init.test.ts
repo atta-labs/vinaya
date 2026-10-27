@@ -12,7 +12,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { parse } from 'yaml'
 import { DOC_OWNERS_PATH, LABELS, parseRegistry, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { AGENT_VENDORS, type AgentVendor } from '../src/lib/agent-vendors.js'
@@ -1422,7 +1422,7 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     expect(prePush).toContain('unset "${_vinaya_git_var%=*}"')
     const selectIdx = prePush.indexOf('pre-push-select-tests.ts')
     const unsetIdx = prePush.indexOf('_vinaya_git_var')
-    const runTestsIdx = prePush.indexOf('xargs bun test')
+    const runTestsIdx = prePush.indexOf('pre-push-record-tests.ts run')
     expect(selectIdx).toBeLessThan(unsetIdx)
     expect(unsetIdx).toBeLessThan(runTestsIdx)
   })
@@ -1476,12 +1476,12 @@ git rev-parse --git-dir 2>&1 || true
     expect(out).not.toContain('core.bare')
   })
 
-  it("both xargs pipelines stop flag parsing with a trailing '--' before the file list, so a tracked file named like a CLI flag is never forwarded as one (round-4 security review, HIGH/MEDIUM)", async () => {
+  it('the generated hook delegates tests to the supervised runner and keeps Biome flag parsing bounded', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
     expect(prePush).toContain('xargs bunx biome check --no-errors-on-unmatched -- ||')
-    expect(prePush).toContain('xargs bun test --timeout=30000 --')
+    expect(prePush).toContain('xargs bun apps/cli/src/lib/pre-push-record-tests.ts run')
   })
 
   it("real subprocess: 'bun test --' really does refuse to treat a selected file named like a flag as one — without it, a tracked file named '--preload=<module>' would load and run that module (round-4 security review, HIGH)", () => {
@@ -1519,6 +1519,41 @@ git rev-parse --git-dir 2>&1 || true
     }
   })
 
+  it('records the failing files on a refusal and clears the record on green, both before the summary line — vendored repo only', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    const failedIdx = prePush.indexOf('pre-push-record-tests.ts failed "$VINAYA_TEST_LOG"')
+    const refusedIdx = prePush.indexOf('vinaya pre-push: refused')
+    const passedIdx = prePush.indexOf('pre-push-record-tests.ts passed "$VINAYA_TEST_LOG"')
+    const greenIdx = prePush.indexOf('— all green')
+    expect(failedIdx).toBeGreaterThan(-1)
+    expect(failedIdx).toBeLessThan(refusedIdx)
+    expect(passedIdx).toBeGreaterThan(-1)
+    expect(passedIdx).toBeLessThan(greenIdx)
+    expect(prePush).toContain('pre-push-record-tests.ts passed "" 0')
+  })
+
+  it('resolves the push mode after Biome and before the doctrine gate, and a storage push exits before typecheck and tests — vendored repo only', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    const biomeIdx = prePush.indexOf('bunx biome check')
+    const modeIdx = prePush.indexOf('VINAYA_PUSH_MODE="$(bun apps/cli/src/lib/pre-push-mode.ts)" || exit 1')
+    const checkIdx = prePush.indexOf('check --all --local')
+    const storageExitIdx = prePush.indexOf('vinaya pre-push: storage push')
+    const typecheckIdx = prePush.indexOf('bunx turbo typecheck --affected')
+    expect(modeIdx).toBeGreaterThan(biomeIdx)
+    expect(modeIdx).toBeLessThan(checkIdx)
+    expect(storageExitIdx).toBeGreaterThan(checkIdx)
+    expect(storageExitIdx).toBeLessThan(typecheckIdx)
+  })
+
+  it('an ordinary adopter hook carries no push-mode step', async () => {
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    expect(readFileSync(join(root, '.husky/pre-push'), 'utf-8')).not.toContain('VINAYA_PUSH_MODE=')
+  })
+
   it('the old --concurrency=1 guard leaves no trace in turbo.json either — no repo-wide setting CI or the hook would inherit', () => {
     const turboJson = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', 'turbo.json'), 'utf-8'))
     expect(turboJson).not.toHaveProperty('concurrency')
@@ -1547,6 +1582,10 @@ git rev-parse --git-dir 2>&1 || true
     // reaches the fake `bunx` below at the typecheck line.
     mkdirSync(join(root, 'apps/cli/dist'), { recursive: true })
     writeFileSync(join(root, 'apps/cli/dist/index.js'), 'process.exit(0)\n')
+    // The push-mode step is required (a failed mode read refuses the push); this
+    // stand-in answers the ordinary mode so execution reaches the typecheck.
+    mkdirSync(join(root, 'apps/cli/src/lib'), { recursive: true })
+    writeFileSync(join(root, 'apps/cli/src/lib/pre-push-mode.ts'), 'process.stdout.write("default\\n")\n')
 
     // A fake `bunx` on PATH that fails, exactly as a real red typecheck
     // would — this is the mechanism under test, not the real turbo binary.
@@ -1591,6 +1630,12 @@ git rev-parse --git-dir 2>&1 || true
     expect(snippet).toContain('vinaya pre-push: refused')
 
     const fixtureDir = mkdtempSync(join(tmpdir(), 'vinaya-o6-summary-'))
+    const supervisor = join(fixtureDir, 'apps/cli/src/lib/pre-push-record-tests.ts')
+    mkdirSync(dirname(supervisor), { recursive: true })
+    writeFileSync(
+      supervisor,
+      `import ${JSON.stringify(new URL('../src/lib/pre-push-record-tests.ts', import.meta.url).pathname)}\n`
+    )
     writeFileSync(
       join(fixtureDir, 'a-fixture-failure.test.ts'),
       'import { expect, test } from "bun:test"\ntest("this fixture always breaks", () => { expect(1).toBe(2) })\n'

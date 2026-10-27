@@ -1,7 +1,7 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { readDriverLock } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { join, resolve } from 'node:path'
 import ts from 'typescript'
@@ -28,7 +28,7 @@ import { parseArgs, prepareShadowCheckout, runShadowEngine, type ShadowEngineRun
 const ROOT = resolve(import.meta.dir, '../../..')
 const dirs: string[] = []
 const scratch = (prefix: string): string => {
-  const dir = mkdtempSync(join(tmpdir(), prefix))
+  const dir = fixtureDir(prefix)
   dirs.push(dir)
   return dir
 }

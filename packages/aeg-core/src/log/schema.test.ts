@@ -397,6 +397,49 @@ describe('LogEventSchema — dev_review_loop family', () => {
     expect(LogEventSchema.safeParse({ ...line, attempt: 0 }).success).toBe(false)
   })
 
+  it('parses each review-locally-push-once event, and refuses an unknown phase or ready-push outcome', () => {
+    const common = { meta, subject, kind: 'dev_review_loop' as const, payload: {}, loop_id: 'loop-1', round: 1 }
+    const lines = [
+      { ...common, event: 'storage_push', branch: 'task/issue-1', head: 'abc' },
+      { ...common, event: 'local_checks_run', head: 'abc', passed: true, wall_ms: 1200 },
+      { ...common, event: 'local_checks_run', head: null, passed: false, wall_ms: 0 },
+      {
+        ...common,
+        event: 'ready_push',
+        head: 'abc',
+        outcome: 'refused',
+        selected: 4,
+        failed: 1,
+        rerun: false,
+        wall_ms: 900
+      },
+      {
+        ...common,
+        event: 'failed_tests_rerun',
+        head: 'def',
+        rerun_of: 'abc',
+        failed_files: 1,
+        affected_files: 2,
+        full_count: 30
+      },
+      { ...common, event: 'pr_opened', pr: 12, head: 'def' },
+      {
+        ...common,
+        event: 'ci_result_read',
+        pr: 12,
+        head: 'def',
+        conclusion: 'red',
+        failing_checks: ['ci'],
+        wait_ms: 60000
+      },
+      { ...common, event: 'phase_time', phase: 'review', step: 'code-review', wall_ms: 3000 }
+    ]
+    for (const line of lines) expect(LogEventSchema.safeParse(line).success, line.event).toBe(true)
+    expect(LogEventSchema.safeParse({ ...lines[7], phase: 'lunch' }).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...lines[3], outcome: 'maybe' }).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...lines[5], pr: 0 }).success).toBe(false)
+  })
+
   it('parses a driver_heartbeat line with a pull request (#949, O1/O3)', () => {
     const line = {
       meta,

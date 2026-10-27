@@ -5,7 +5,9 @@ import type {
   RecordedSteps,
   RunEndContext
 } from '../../../harness/dev-process/logging/translate'
+import { decodeExecutionRound } from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import type { DriverExitReason } from '../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
+import { localChecksRunEvent, phaseOfStep, phaseTimeEvent } from '../../../apps/cli/src/lib/flow-v2-events'
 
 // The Log events the developer review Flow's run produces, for the harness
 // translator. Nothing here reaches the Log: each producer returns events
@@ -20,8 +22,13 @@ export const DECIDING_STEPS: readonly string[] = [
   'check-mergeability',
   'assess-gate',
   'validate-reviewer-outputs',
-  ASSESS_STEP
+  ASSESS_STEP,
+  // Version 2's steps after an approval: the ready push, the pull request's opening and the one CI read.
+  'ready-push',
+  'open-pull-request',
+  'read-ci-once'
 ]
+const GATE_STEP = 'run-mechanical-gates'
 const LIVE_STEP = 'run-live-checks'
 const PUBLISH_STEP = 'publish-ready-for-merge'
 const DEVELOP_STEP = 'develop'
@@ -135,6 +142,14 @@ export function createVinayaLogProducers(
   config: Pick<LoopConfig, 'loopId' | 'task'> & {
     /** The base a resumed leg's restarted round names when the recorded state carries none. */
     baseHead?: () => string | null
+    /** The flow key the run chose (`v1`, `v2`); version 2 also logs each round's local checks. */
+    flow?: string
+    /** The driver counter restored before dispatch, also used by the round-ending actions. */
+    reviewRound?: () => number
+    /** Milliseconds since an arbitrary origin, for the time each step spends. */
+    now?: () => number
+    /** The head the local checks judged, for their event. */
+    head?: () => string | null
   }
 ): LogProducers & { exit: (context: RunEndContext) => LegExit } {
   let round = 1
@@ -145,6 +160,29 @@ export function createVinayaLogProducers(
   let totalWallMs = 0
   let filesChanged = 0
   let finalized = false
+  const now = config.now ?? (() => Date.now())
+  const nodeStarts = new Map<string, number>()
+
+  /**
+   * Version 2 only: the time the node spent, counted toward its phase, and the local checks' own event. Version 1's
+   * Log is unchanged, so its runs never write an event a log server not yet redeployed would reject.
+   */
+  const timed = (nodeId: string, steps: RecordedSteps): LogEventInput[] => {
+    if (config.flow !== 'v2') return []
+    const started = nodeStarts.get(nodeId)
+    if (started === undefined) return []
+    nodeStarts.delete(nodeId)
+    const wallMs = Math.max(0, now() - started)
+    const loopRef = { loopId: config.loopId, round }
+    const events = [phaseTimeEvent(loopRef, phaseOfStep(nodeId), nodeId, wallMs) as unknown as LogEventInput]
+    if (nodeId === GATE_STEP) {
+      const gate = steps[GATE_STEP]
+      events.push(
+        localChecksRunEvent(loopRef, config.head?.() ?? null, gate?.exitCode === 0, wallMs) as unknown as LogEventInput
+      )
+    }
+    return events
+  }
 
   const loop = (fields: Record<string, unknown>): LogEventInput =>
     ({ kind: 'dev_review_loop', payload: {}, loop_id: config.loopId, ...fields }) as unknown as LogEventInput
@@ -246,15 +284,23 @@ export function createVinayaLogProducers(
     legStarted: ({ resumed }) => {
       lastDecision = null
       restarting = resumed
+      if (config.flow === 'v2') round = config.reviewRound?.() ?? round
       return resumed ? [loop({ event: 'resumed', round, by: 'principal' })] : []
     },
     // The driver's liveness is the timed heartbeat the runner emits and its exit record; no node writes either.
-    nodeStarted: ({ nodeId, attempt: started }) => {
-      if (nodeId === DEVELOP_STEP) round = Math.max(1, started)
+    nodeStarted: ({ nodeId, attempt: started, steps = {} }) => {
+      if (config.flow === 'v2') {
+        // The driver restores its counter before the translator begins a resumed leg. Its cache may be empty.
+        // Read before the node runs so the handoff's own time stays in the round it closes.
+        round =
+          config.reviewRound?.() ??
+          Math.max(1, ...Object.values(steps).map((step) => decodeExecutionRound(step.stderr)?.round ?? 1))
+      } else if (nodeId === DEVELOP_STEP) round = Math.max(1, started)
+      nodeStarts.set(nodeId, now())
       return []
     },
-    nodeCompleted: ({ nodeId, steps }) =>
-      restarted(
+    nodeCompleted: ({ nodeId, steps }) => [
+      ...restarted(
         steps,
         DECIDING_STEPS.includes(nodeId)
           ? assessed(steps, nodeId)
@@ -264,11 +310,15 @@ export function createVinayaLogProducers(
               ? published(steps)
               : []
       ),
-    nodeFailed: ({ nodeId, steps }) =>
-      restarted(
+      ...timed(nodeId, steps)
+    ],
+    nodeFailed: ({ nodeId, steps }) => [
+      ...restarted(
         steps,
         DECIDING_STEPS.includes(nodeId) ? assessed(steps, nodeId) : nodeId === LIVE_STEP ? liveChecked(steps) : []
       ),
+      ...timed(nodeId, steps)
+    ],
     runEnded: ({ outcome, cancelled }) => {
       if (cancelled) return [loop({ event: 'cancelled', round, by: 'principal' })]
       switch (outcome.reason) {

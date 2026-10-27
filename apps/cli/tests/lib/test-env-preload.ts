@@ -48,6 +48,7 @@ import { afterAll } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { releaseFixtureRun, sweepAbandonedFixtureRuns } from './test-temp-fixture'
 import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
 
 /**
@@ -121,16 +122,29 @@ Bun.spawn = spawnWithCurrentEnv(Bun.spawn)
 Bun.spawnSync = spawnWithCurrentEnv(Bun.spawnSync)
 
 /**
+ * Heavy-fixture storage (`test-temp-fixture.ts`): before any test, sweep the run directories earlier test
+ * processes abandoned (killed, or interrupted mid-cleanup). A failure is printed, never hidden; it does not stop
+ * this run, which uses its own fresh run directory.
+ */
+const sweep = await sweepAbandonedFixtureRuns()
+for (const { dir, error } of sweep.failed) console.error(`test temp: could not sweep ${dir}: ${error}`)
+
+// Step one creates this private directory only when used; an unrelated test needs no heavy-fixture storage.
+process.env.VINAYA_STEP_ONE_TMP ??= join(privateRuntimeDir ?? tmpdir(), 'step-one')
+
+/**
  * Once, after every test file this process ran: remove the private runtime
  * directory above, and fail the run if any test wrote into the REAL runtime
  * directory (`real-runtime-guard-core.ts`). A preload `afterAll` is the one
  * hook every test process loads, so each CI shard and each local run is
  * covered, whichever files it was given.
  */
-afterAll(() => {
+afterAll(async () => {
+  const fixtures = await releaseFixtureRun()
   if (privateRuntimeDir !== null) rmSync(privateRuntimeDir, { recursive: true, force: true })
   const leaked = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
   if (leaked.length > 0) {
     throw new Error(`tests wrote into the real runtime directory: ${leaked.join(' ')}`)
   }
+  if (fixtures !== null) throw new Error(`test temp: could not release the run directory ${fixtures}`)
 })

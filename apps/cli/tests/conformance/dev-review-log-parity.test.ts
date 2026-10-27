@@ -110,7 +110,9 @@ function flatten(value: unknown, prefix: string, out: Map<string, unknown>): voi
  * Each sink's lines in that sink's own order, the run's sinks first and the
  * module's default sink last — the order it drains in on both runners.
  */
-function canonical(lines: Line[]): Line[] {
+function canonical(all: Line[]): Line[] {
+  // Each step's time (`phase_time`) is a measurement only the Engine runner writes, so it has no standalone twin.
+  const lines = all.filter((l) => l.event !== 'phase_time')
   const runOf = (l: Line) => String((l.meta as Line | undefined)?.run_id)
   const streams = new Map<string, Line[]>()
   for (const l of lines) streams.set(runOf(l), [...(streams.get(runOf(l)) ?? []), l])

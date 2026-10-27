@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type ControlStoreDeps, defaultControlStoreDeps, StaleEpochWriteError } from '@attalabs/aeg-core'
+import { type ControlStoreDeps, defaultControlStoreDeps, readEffect, StaleEpochWriteError } from '@attalabs/aeg-core'
 import type { DispatchTeeRecoveryDeps } from '../../../src/lib/dispatch'
 import {
   acquireOwnership,
@@ -301,6 +301,38 @@ describe('requestEffect', () => {
     })
     expect(posts).toBe(1)
     expect(url).toBe('https://example.com/comment/2')
+  })
+
+  it('reconciles an interrupted publication at its original version after the execution round advances', () => {
+    let posts = 0
+    let reconciles = 0
+    const request = {
+      operation: 'branch-push',
+      target: scopeTarget(2, 'refs/heads/task/recovery'),
+      key: 'branch-push-sha',
+      payload: 'sha',
+      poster: () => {
+        posts++
+        throw new Error('crash after remote publication')
+      },
+      reconcile: () => {
+        reconciles++
+        return { outcome: 'confirmed' as const, url: 'sha' }
+      }
+    }
+    expect(() => requestEffect(deps, worker, { ...request, inputVersion: 2 })).toThrow('crash after remote publication')
+    expect(readEffect(deps, 2, request.key)).toMatchObject({
+      status: 'ok',
+      value: { status: 'started', inputVersion: 2 }
+    })
+    expect(() => requestEffect(deps, worker, { ...request, inputVersion: 3 })).not.toThrow()
+    expect(requestEffect(deps, worker, { ...request, inputVersion: 3 })).toBe('sha')
+    expect(posts).toBe(1)
+    expect(reconciles).toBe(1)
+    expect(readEffect(deps, 2, request.key)).toMatchObject({
+      status: 'ok',
+      value: { status: 'verified', inputVersion: 2 }
+    })
   })
 
   it('owner epoch checked — a competing epoch acquired mid-flight (inside the poster) makes the write refuse rather than land silently', () => {

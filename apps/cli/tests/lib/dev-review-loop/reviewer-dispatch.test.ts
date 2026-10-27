@@ -321,6 +321,12 @@ describe('renderReviewerPrompt — the banned-framing lint checks only the text 
     'The developer says the fix is done; according to the developer CI is green. ' +
     'In my opinion that is not enough — I think the PR body says otherwise, and the diff clearly contradicts it.'
 
+  it('a local review (no pull request, so no CI yet) says CI has not run and runs once after approval, in passing driver text', () => {
+    const prompt = renderReviewerDispatchPrompt('security', { ...FACTS, ciConclusion: 'not_run' })
+    expect(prompt).toContain('CI: not run. This run reviews locally')
+    expect(prompt).toContain('CI runs once on the head both reviewers approve')
+  })
+
   it('renders a ruling carrying every banned phrase, verbatim, instead of ending the round', () => {
     const prompt = renderReviewerDispatchPrompt('reviewer', { ...FACTS, rulings: [RULING_WITH_EVERY_BANNED_PHRASE] })
     expect(prompt).toContain(`1. ${RULING_WITH_EVERY_BANNED_PHRASE}`)

@@ -19,6 +19,17 @@ test('stamps the loaded Vinaya process, installed Engine version and dispatched 
     VINAYA_PROCESS_DIGEST: loaded.digest,
     VINAYA_RUNNER_ID: 'atta-engine',
     VINAYA_RUNNER_VERSION: installed.version,
-    VINAYA_RUNTIME: 'codex'
+    VINAYA_RUNTIME: 'codex',
+    VINAYA_FLOW: 'vinaya-dev-review',
+    VINAYA_FLOW_VERSION: 'v1'
   })
+})
+
+test('a run that chose a flow stamps that flow file id and key as the Log flow identity', () => {
+  const folder = resolve(import.meta.dir, '..')
+  const loaded = loadProcess(folder)
+  const env: NodeJS.ProcessEnv = {}
+  setEngineLogIdentity({ ...loaded, flowKey: 'v9', identity: { ...loaded.identity } }, 'claude', env)
+  expect(env.VINAYA_FLOW_VERSION).toBe('v9')
+  expect(env.VINAYA_FLOW).toBe('vinaya-dev-review')
 })

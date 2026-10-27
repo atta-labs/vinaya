@@ -279,3 +279,13 @@ describe("the Engine Developer's prompt after a forge gate sent it back", () => 
     expect(prompt).not.toContain('# Frozen brief')
   })
 })
+
+describe('the Developer runs no tests and no evidence refresh in version 2 only', () => {
+  test('a version 2 turn is told to run no tests and not to call refresh_evidence; a version 1 turn is not', () => {
+    const v2 = developerPrompt('', { ...FACTS, flow: 'v2' }, {})
+    expect(v2).toContain('Run no tests and do not call `refresh_evidence`')
+    const v1 = developerPrompt('', FACTS, {})
+    expect(v1).not.toContain('Run no tests')
+    expect(v1).not.toContain('do not call `refresh_evidence`')
+  })
+})

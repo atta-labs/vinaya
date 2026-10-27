@@ -24,7 +24,7 @@
 
 import net from 'node:net'
 import { randomUUID } from 'node:crypto'
-import { chmodSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { platform } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { dirname } from 'node:path'
@@ -314,4 +314,68 @@ export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise
     })
 
   return { socketPath: opts.socketPath, close }
+}
+
+/**
+ * A role host that outlives its socket file: something outside the driver (a temp-directory sweep) may delete the
+ * socket while the listening server keeps its unlinked inode, so no later bridge can connect. The host is replaced
+ * only at a dispatch boundary, never during a turn, on the same socket path.
+ */
+export type ReplaceableDevToolsHost = {
+  socketPath: string
+  /** Closes the current host. */
+  close: () => Promise<void>
+  /**
+   * At a dispatch boundary, before the next dispatch's capability is minted: when the socket file is missing, closes
+   * this host, awaits its closure (which unlinks the path, so it must finish before the replacement listens), and
+   * starts the replacement on the same path. Returns whether it replaced the host.
+   */
+  replaceIfSocketMissing: () => Promise<boolean>
+  /**
+   * Records a missing socket when the dispatch ends. The runtime keeps successful turns and pauses failed
+   * ones without replay; pathname absence alone does not prove a completed turn lost its connection.
+   */
+  noteDispatchEnded: (capability: string) => boolean
+  /** How many of this role's dispatches in a row lost their tools. */
+  consecutiveLosses: () => number
+  /** A completed turn remains valid even when its open socket was unlinked. */
+  noteDispatchSucceeded?: () => void
+}
+
+type ClosableHost = Pick<DevToolsHost, 'close'>
+
+export async function startReplaceableDevToolsHost(
+  opts: StartDevToolsHostOptions,
+  deps: {
+    start?: (options: StartDevToolsHostOptions) => Promise<ClosableHost>
+    socketExists?: (path: string) => boolean
+  } = {}
+): Promise<ReplaceableDevToolsHost> {
+  const start = deps.start ?? startDevToolsHost
+  const socketExists = deps.socketExists ?? existsSync
+  const options = opts
+  let current = await start(options)
+  // Whether the started host made its socket file; one that never listens on a file has none to lose.
+  let listening = socketExists(opts.socketPath)
+  let losses = 0
+  return {
+    socketPath: opts.socketPath,
+    close: () => current.close(),
+    replaceIfSocketMissing: async () => {
+      if (!listening || socketExists(opts.socketPath)) return false
+      await current.close()
+      current = await start(options)
+      listening = socketExists(opts.socketPath)
+      return true
+    },
+    noteDispatchEnded: (_capability) => {
+      const lost = listening && !socketExists(opts.socketPath)
+      losses = lost ? losses + 1 : 0
+      return lost
+    },
+    noteDispatchSucceeded: () => {
+      losses = 0
+    },
+    consecutiveLosses: () => losses
+  }
 }

@@ -76,6 +76,26 @@ function testDeps(overrides: Partial<LogSinkDeps> = {}): { dir: string; deps: Pa
 }
 
 describe('log-sink — a valid line', () => {
+  it('snapshots concurrent launch roles, rounds and attempts without changing the driver environment', async () => {
+    const { dir, deps } = testDeps()
+    const sink = createLogSink(deps)
+    sink.log(DISPATCHED, { role: 'code-reviewer', round: 2, attempt: 3 })
+    sink.log(DISPATCHED, { role: 'security', round: 2, attempt: 1 })
+    sink.log(DISPATCHED)
+    await sink.drain()
+    const rows = readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(rows.map((row) => [row.subject.role, row.subject.round, row.meta.lineage.attempt])).toEqual([
+      ['code-reviewer', 2, 3],
+      ['security', 2, 1],
+      ['developer', undefined, null]
+    ])
+    expect(rows[0].meta.provenance).toBe('parent_attributed')
+    expect(deps.env?.().VINAYA_ROLE).toBe('developer')
+  })
+
   it('appends one ndjson line whose meta/subject are filled from the injected environment', async () => {
     const { dir, deps } = testDeps()
     const { log } = createLogSink(deps)

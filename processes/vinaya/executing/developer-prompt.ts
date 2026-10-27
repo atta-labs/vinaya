@@ -51,7 +51,17 @@ export interface DeveloperPromptFacts {
   resume: { task: number; branch: string; worktree: string; remoteHead: string | null }
   /** The previous round's held review verdicts, rendered (reviewer, then security). */
   heldReview: string | null
+  /** The flow key the run chose; version 2 tells the Developer how its pushes and pull request work. */
+  flow?: string
 }
+
+/**
+ * Version 2's publishing note: every commit is pushed as a storage push (cheap checks, no tests, no CI) while no
+ * pull request is open, and `open_pull_request` only saves the body; the driver opens the pull request once both
+ * reviewers approve and the ready push's tests pass. The Developer runs no tests and no evidence refresh in this flow.
+ */
+export const FLOW_V2_NOTE =
+  'This run uses review locally, push once: publish every commit with `publish_changes` — while no pull request is open each push is a storage push (cheap checks only, no tests, no CI), so publish often. Call `open_pull_request` once with the full PR-report body: in this flow it saves the body, and the driver opens the pull request itself after both reviewers approve and the ready push runs the selected tests. Do not wait for CI: the reviewers judge your local commit each round. Run no tests and do not call `refresh_evidence`: the ready push runs the selected tests, and the driver writes the Evidence block once the pull request opens.'
 
 const TOOL_CATALOG = [
   'fetch_documentation',
@@ -181,6 +191,8 @@ export type DeveloperTurnKind =
   | 'open-pull-request'
   | 'unpushed'
   | 'ask-confidence'
+  | 'ready-refused'
+  | 'ci-red'
 
 /** Why the Developer runs again: first turn, a red gate or a conflict on its last head, a failed live line, a rejected turn result, no push, or the round's review findings. */
 export function developerTurnKind(
@@ -197,6 +209,8 @@ export function developerTurnKind(
     case 'ask-confidence':
     case 'gate-red':
     case 'conflict':
+    case 'ready-refused':
+    case 'ci-red':
       return sendBack.kind
     case 'live-red':
       return headSha !== undefined && liveWithdrawalOf(results, headSha) !== null ? 'live-red' : 'review'
@@ -229,9 +243,12 @@ function answerPromptText(
       })
     case 'open-pull-request':
       return join([
-        'Your previous turn left no commit on this branch yet, and no open pull request.',
+        facts.flow === 'v2'
+          ? 'Your previous turn left no staged pull-request body: call `open_pull_request` with the full PR-report body.'
+          : 'Your previous turn left no commit on this branch yet, and no open pull request.',
         issueRulingsBlock(facts.issueRulings),
-        doctrineLine
+        doctrineLine,
+        facts.flow === 'v2' ? FLOW_V2_NOTE : null
       ])
     case 'unpushed':
       return commitAndPushPrompt(facts.lastPushRefusal ?? null, publishingInstructionLine())
@@ -266,7 +283,9 @@ function revisionPromptText(
             ].join('\n\n')
           : kind === 'live-red'
             ? (liveWithdrawalOf(results, facts.headSha) ?? '')
-            : `Round ${facts.round} review findings:\n\n${facts.heldReview ?? '(no held review was found for the previous round)'}\n`,
+            : kind === 'ready-refused' || kind === 'ci-red'
+              ? (latestSendBack(results)?.detail ?? '')
+              : `Round ${facts.round} review findings:\n\n${facts.heldReview ?? '(no held review was found for the previous round)'}\n`,
     handoff.length > 0
       ? `Finding ids in this handoff — cite the ones you address in your turn result's \`addressedFindingIds\`:\n${handoff.map((f) => `- ${f.id}: ${f.description}`).join('\n')}`
       : '',
@@ -313,6 +332,7 @@ export function developerPrompt(
       facts.sources.block,
       facts.doctrine ? renderDeveloperDoctrineBlock(facts.doctrine) : null,
       `When your work is ready, ${publishingInstructionLine()}`,
+      facts.flow === 'v2' ? FLOW_V2_NOTE : null,
       issueRulingsBlock(facts.issueRulings),
       keptWorkNote(facts.keptWork),
       pushRefusalPrompt(facts),

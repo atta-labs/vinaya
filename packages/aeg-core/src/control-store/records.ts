@@ -398,6 +398,26 @@ export const ResolutionRecordSchema = z
   .strict()
 export type ResolutionRecord = z.infer<typeof ResolutionRecordSchema>
 
+/**
+ * The control-store mirror of a run's execution round: the round the run's checkpoint holds for one checkpoint
+ * thread, keyed by task and thread id and naming the checkpoint it was read at. Written only after the checkpoint
+ * saver's own database write has committed, and read for status and for the resume's cross-check only: on any
+ * disagreement the checkpoint wins and the mirror is rewritten from it. One record per thread, overwritten in place.
+ */
+export const ExecutionRoundMirrorRecordSchema = z
+  .object({
+    version: z.literal(1),
+    kind: z.literal('execution_round'),
+    task: taskId,
+    repository: z.string().min(1),
+    threadId: z.string().min(1),
+    checkpointId: z.string().min(1),
+    round: z.number().int().positive(),
+    recordedAt: isoTimestamp
+  })
+  .strict()
+export type ExecutionRoundMirrorRecord = z.infer<typeof ExecutionRoundMirrorRecordSchema>
+
 export type ControlRecord =
   | RunRecord
   | InputRecord
@@ -408,6 +428,7 @@ export type ControlRecord =
   | EffectRecord
   | EscalationRecord
   | ResolutionRecord
+  | ExecutionRoundMirrorRecord
 
 /**
  * `'absent'` — nothing was ever written at this path.
@@ -471,4 +492,8 @@ export function parseEscalationRecord(raw: string | undefined): ParsedRecord<Esc
 
 export function parseResolutionRecord(raw: string | undefined): ParsedRecord<ResolutionRecord> {
   return parseWith(ResolutionRecordSchema, raw)
+}
+
+export function parseExecutionRoundMirrorRecord(raw: string | undefined): ParsedRecord<ExecutionRoundMirrorRecord> {
+  return parseWith(ExecutionRoundMirrorRecordSchema, raw)
 }

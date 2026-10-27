@@ -1,7 +1,7 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { MemorySaver } from '@langchain/langgraph'
-import { mkdtempSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parse } from 'yaml'
 import {
@@ -39,6 +39,7 @@ import {
   encodeLoopState,
   type TaskInput
 } from '../executing/actions'
+import { encodeExecutionRound } from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import { AGENT_STEP_ROLES, createVinayaLogProducers, handoffHaltReason } from '../executing/log-events'
 import { LOG_INVENTORY } from '../executing/log-inventory'
 import { createHandoff } from '../executing/handoff'
@@ -71,8 +72,8 @@ describe('the log inventory', () => {
       ...['raised', 'resolved'].filter((event) => rowsFor('handoff', event).length !== 1).map((e) => `handoff/${e}`)
     ]
     expect(uncovered).toEqual([])
-    expect(loopEventNames).toHaveLength(16)
-    expect(LOG_INVENTORY).toHaveLength(19)
+    expect(loopEventNames).toHaveLength(23)
+    expect(LOG_INVENTORY).toHaveLength(25)
   })
 
   test('no row names an event the schemas do not have', () => {
@@ -292,7 +293,7 @@ function setup(scenario: Scenario = {}) {
     emitted.push({ event, enveloped: { ...event, ...envelope(emitted.length) } })
   )
 
-  const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: mkdtempSync(`${tmpdir()}/log-roles-`) })
+  const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: fixtureDir('log-roles-') })
   // The role launcher stubs are plain spawn stubs: nothing here hands them the emit function.
   const spawnFn: ProcessRunOptions['spawnFn'] = () => fakeAgent()
   const options: ProcessRunOptions = {
@@ -300,7 +301,7 @@ function setup(scenario: Scenario = {}) {
     question: 'the task',
     bindings: { actions: recordingActions(stubs, translator), decisions, roles },
     checkpointer: new MemorySaver(),
-    workingDirectoryRoot: mkdtempSync(`${tmpdir()}/log-root-`),
+    workingDirectoryRoot: fixtureDir('log-root-'),
     spawnFn,
     onEvent: (event) => {
       const before = translator.produced.length
@@ -351,7 +352,10 @@ function expectValid(run: ReturnType<typeof setup>): string[] {
     if (!parsed.success) throw new Error(`${String(enveloped.event)} does not parse: ${parsed.error.message}`)
   }
   note(run.translator.produced as LogEventInput[])
-  return run.emitted.map((entry) => String(entry.event.event))
+  // Version 1's Log is unchanged: no step logs the time it spent (`phase_time` is version 2's alone).
+  const all = run.emitted.map((entry) => String(entry.event.event))
+  expect(all).not.toContain('phase_time')
+  return all
 }
 
 const heartbeat = 'driver_heartbeat'
@@ -438,7 +442,7 @@ describe('the Engine path writes the review loop events from the run', () => {
   })
 
   test('the role launchers are handed no emit function, and no role may write to the Log', () => {
-    const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: mkdtempSync(`${tmpdir()}/log-roles-`) })
+    const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: fixtureDir('log-roles-') })
     for (const launcher of Object.values(roles)) {
       expect(Object.keys(launcher).sort()).toEqual(['allowedPermissions', 'buildArgs', 'command', 'env'])
     }
@@ -462,6 +466,21 @@ describe('the producers cover every end a run can come to', () => {
     note(events)
     return (events ?? []).map((event) => String(event.event))
   }
+
+  test("phase_time is version 2's alone: a version 1 run's steps write none", () => {
+    const steps = { 'run-mechanical-gates': { exitCode: 0, stdout: '' } } as never
+    let clock = 0
+    for (const [flow, expected] of [
+      ['v1', []],
+      [undefined, []],
+      ['v2', ['phase_time', 'local_checks_run']]
+    ] as const) {
+      const run = createVinayaLogProducers({ ...config, ...(flow ? { flow } : {}), now: () => (clock += 10) })
+      run.nodeStarted?.({ nodeId: 'run-mechanical-gates', attempt: 1 } as never)
+      const produced = names(run.nodeCompleted?.({ nodeId: 'run-mechanical-gates', steps } as never))
+      expect(produced.filter((name) => name === 'phase_time' || name === 'local_checks_run')).toEqual([...expected])
+    }
+  })
 
   test('a cancelled leg writes cancelled, and its exit is by signal', () => {
     const context = { outcome: { reason: 'failed', error: 'x' }, cancelled: true, steps: {} } as const
@@ -584,7 +603,7 @@ describe('the deciding steps write their own rows', () => {
 
   test('a reviewer with no usable review on its fresh retry writes its role attempt, then the pause', async () => {
     const task = {
-      runtimeDir: mkdtempSync(`${tmpdir()}/log-reviewers-`),
+      runtimeDir: fixtureDir('log-reviewers-'),
       issueNumber: 1570,
       worktreePath: '/missing',
       loopState: initialLoopState(config),
@@ -642,7 +661,7 @@ describe('the deciding steps write their own rows', () => {
       }
     }
     const task = {
-      runtimeDir: mkdtempSync(`${tmpdir()}/log-unpushed-`),
+      runtimeDir: fixtureDir('log-unpushed-'),
       issueNumber: 1570,
       branch: 'task/issue-1570',
       worktreePath: '/missing',
@@ -698,7 +717,7 @@ describe('the handoff writes its rows', () => {
       log: (event: unknown) => void events.push(event as Record<string, unknown>)
     }
     recorded.postResult = { attempts: 3, posted: true }
-    const runtimeDir = mkdtempSync(`${tmpdir()}/handoff-log-`)
+    const runtimeDir = fixtureDir('handoff-log-')
     createHandoff(
       {
         task: 1570,
@@ -736,5 +755,28 @@ describe('every produced row has a producer that wrote it', () => {
         : []
     ).filter((name) => !seen.has(name))
     expect(missing).toEqual([])
+  })
+})
+
+describe('version 1 Log compatibility', () => {
+  test('review-round markers leave the version 1 Log bytes unchanged', () => {
+    for (const flow of [undefined, 'v1']) {
+      const producer = createVinayaLogProducers({ loopId: 'compatibility', task: 7, flow })
+      const steps = {
+        'build-revision-handoff': {
+          exitCode: 0,
+          stdout: '',
+          stderr: encodeExecutionRound({ round: 2, advancedBy: 'build-revision-handoff' })
+        }
+      }
+      producer.nodeStarted?.({ nodeId: 'develop', attempt: 3, runId: 'run', steps })
+      const bytes = JSON.stringify([
+        ...producer.legStarted!({ resumed: true, steps }),
+        ...producer.runEnded!({ outcome: { reason: 'failed' }, cancelled: true, steps })
+      ])
+      expect(bytes).toBe(
+        '[{"kind":"dev_review_loop","payload":{},"loop_id":"compatibility","event":"resumed","round":3,"by":"principal"},{"kind":"dev_review_loop","payload":{},"loop_id":"compatibility","event":"cancelled","round":3,"by":"principal"}]'
+      )
+    }
   })
 })

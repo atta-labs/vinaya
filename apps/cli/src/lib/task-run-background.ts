@@ -395,6 +395,7 @@ export async function startBackgroundRun(
   // explicit choice to the class-mapped/vendor-default model instead.
   if (input.model) argv.push('--model', input.model)
   if (input.runner) argv.push('--runner', input.runner)
+  if (input.flow) argv.push('--flow', input.flow)
   const fd = openLoopLogAppendFd(logPath)
   let child: SpawnedController
   try {

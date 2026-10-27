@@ -1,7 +1,7 @@
+import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { initialLoopState, type VerdictObservation } from '@attalabs/aeg-core'
 import { createRunControl } from '@atta/executor-agent-spawn'
@@ -28,7 +28,7 @@ type Action = (context: never) => Promise<{ exitCode: number; stdout?: string }>
 
 // A worktree whose `origin/main` sits one commit behind HEAD, so the gate observation can read a diff.
 function worktree(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'handoff-wt-'))
+  const dir = fixtureDir('handoff-wt-')
   const git = (...args: string[]) =>
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' }).trim()
   git('init', '-q')
@@ -49,7 +49,7 @@ function setup(options: {
   versions?: () => never
   runtimeDir?: string
 }) {
-  const runtimeDir = options.runtimeDir ?? mkdtempSync(join(tmpdir(), 'handoff-run-'))
+  const runtimeDir = options.runtimeDir ?? fixtureDir('handoff-run-')
   const control = createRunControl()
   const recorded = recordedHandoff()
   // The pause record must already be on disk when the forge is told: a comment is the last thing written.
@@ -228,7 +228,7 @@ for (const agent of ['claude', 'codex'] as const) {
     })
 
     test('a forge read that fails once still leaves the escalation record a ruling resolves', () => {
-      const runtimeDir = mkdtempSync(join(tmpdir(), 'handoff-run-'))
+      const runtimeDir = fixtureDir('handoff-run-')
       const recorded = recordedHandoff()
       const reported: string[] = []
       let reads = 0
@@ -261,7 +261,7 @@ for (const agent of ['claude', 'codex'] as const) {
 
     test('the pause comment names the Engine resume command, with and without a pull request', () => {
       for (const pr of [70, null]) {
-        const runtimeDir = mkdtempSync(join(tmpdir(), 'handoff-run-'))
+        const runtimeDir = fixtureDir('handoff-run-')
         const recorded = recordedHandoff()
         const bodies: string[] = []
         const deps = {

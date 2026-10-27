@@ -1,19 +1,23 @@
 #!/usr/bin/env bun
+import { Database } from 'bun:sqlite'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import {
+  type ControlStoreDeps,
   initialLoopState,
   buildReviewInputManifest,
   DEFAULT_REVIEW_POLICY,
   type DevReviewLoopEventInput,
   type LoopConfig,
   type LoopState,
-  type ReviewInputManifest
+  type ReviewInputManifest,
+  defaultControlStoreDeps,
+  writeExecutionRoundMirror
 } from '@attalabs/aeg-core'
 import {
   createRunControl,
@@ -30,13 +34,23 @@ import {
   type CheckpointRefusal,
   SqliteCheckpointer
 } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+import {
+  readAgentProvenance,
+  type AgentCheckpointProvenance
+} from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import { DispatchUsageLimit, usageLimitPauseDetail } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import {
+  mirrorExecutionRoundOnCommit,
+  readEffectiveResumedStateFrom
+} from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import {
   resumeProcessRun,
   startProcessRun,
   type ActionRegistry,
   type ProcessRunOptions,
-  type RoleLauncher
+  type RoleLauncher,
+  type StepPrompt,
+  type AgentRedispatch
 } from '../../../harness/dev-process/engine-runtime/run-process'
 import {
   createLogTranslator,
@@ -92,7 +106,13 @@ import {
   type DevToolResult
 } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { createReadSourceTool } from '../../../apps/cli/src/lib/task-tools/read-source'
-import { createLogSink, drainLogSink, LOG_FOLDER_ONLY_ENV, type LogSinkDeps } from '../../../apps/cli/src/lib/log-sink'
+import {
+  createLogSink,
+  drainLogSink,
+  LOG_FOLDER_ONLY_ENV,
+  type LogSinkDeps,
+  type LaunchLogAttribution
+} from '../../../apps/cli/src/lib/log-sink'
 import { setEngineLogIdentity } from './engine-log-identity'
 import {
   abortableSleep,
@@ -109,6 +129,9 @@ import {
   reapAbandonedGroups,
   recoverRun,
   releaseDriverLock,
+  restoreExecutionRound,
+  restoreExecutionRoundBeforeDispatch,
+  type ExecutionRoundRestore,
   resumeModel,
   revisionMovedLine,
   roleTimeouts,
@@ -154,7 +177,10 @@ import {
   recordRunnerDeveloperLaunch,
   renderClaudeEvent,
   renderCodexEvent,
+  classifyRoleAttemptOutcome,
+  readDispatchUsage,
   terminateChildWithGrace,
+  type DispatchUsageReading,
   type UsageLimit
 } from '../../../apps/cli/src/lib/dispatch'
 import { loadConfig } from '../../../apps/cli/src/lib/config'
@@ -163,7 +189,9 @@ import {
   createDispatchCapabilityTable,
   type DispatchCapabilityTable,
   startDevToolsHost,
-  type DevToolsHost
+  startReplaceableDevToolsHost,
+  type DevToolsHost,
+  type ReplaceableDevToolsHost
 } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import {
@@ -194,6 +222,7 @@ import {
 import { fetchLoopHistory } from '../../../apps/cli/src/lib/dev-review-loop/journal-history'
 import {
   buildVerdictFromReview,
+  controlStoreRootFor,
   heldVerdictPath,
   latestHeldCleanVerdict,
   persistManifestRecord
@@ -238,6 +267,17 @@ import {
   type ReviewRoundInputs,
   type TaskInput
 } from '../executing/actions'
+import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../loops/dev-review/v2/v2-actions'
+import { runCli } from '../../../harness/gates/run-checks'
+import {
+  endStoragePushes,
+  liveV2Functions,
+  readyGateEvidence,
+  stagedPullRequestStore,
+  sweepReadyGateRuns,
+  storagePushLogEvent,
+  withV2DevTools
+} from '../loops/dev-review/v2/flow-v2-live'
 import { readUnpushedWorkDetail, type UnpushedWork } from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import { realLocalGateControl } from '../../../apps/cli/src/lib/local-gate-control'
 import {
@@ -266,22 +306,33 @@ export interface EngineArgs {
   dryRun: boolean
   /** The agent model for every role whose grants say `process-supplied`; absent leaves the vendor's default. */
   model?: string
+  /** The flow key the run chooses (`v1`, `v2`); absent takes the process's default flow. */
+  flow?: string
   /** The runtime directory of a shadow run of the task, beside its live run; absent runs the task live. */
   shadow?: string
 }
 
-const USAGE = 'Usage: run-engine.ts --task <n> --agent <claude|codex> [--model <id>] [--dry-run] [--shadow <dir>]'
+const USAGE =
+  'Usage: run-engine.ts --task <n> --agent <claude|codex> [--model <id>] [--flow <key>] [--dry-run] [--shadow <dir>]'
+
+/** A flow key as the process contract spells one. */
+const FLOW_KEY = /^[a-z0-9][a-z0-9-]*$/
 
 export function parseArgs(argv: readonly string[]): EngineArgs {
   let task: number | undefined
   let agent: Agent | undefined
   let dryRun = false
   let model: string | undefined
+  let flow: string | undefined
   let shadow: string | undefined
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]
     if (flag === '--dry-run') dryRun = true
-    else if (flag === '--shadow') {
+    else if (flag === '--flow') {
+      const value = argv[++i] ?? ''
+      if (!FLOW_KEY.test(value)) throw new Error(`--flow takes a flow key such as v1 or v2. ${USAGE}`)
+      flow = value
+    } else if (flag === '--shadow') {
       const value = argv[++i] ?? ''
       if (value === '' || value.startsWith('--')) throw new Error(`--shadow takes a runtime directory. ${USAGE}`)
       shadow = value
@@ -300,7 +351,14 @@ export function parseArgs(argv: readonly string[]): EngineArgs {
     } else throw new Error(`Unknown argument "${flag}". ${USAGE}`)
   }
   if (task === undefined || agent === undefined) throw new Error(USAGE)
-  return { task, agent, dryRun, ...(model ? { model } : {}), ...(shadow ? { shadow } : {}) }
+  return {
+    task,
+    agent,
+    dryRun,
+    ...(model ? { model } : {}),
+    ...(flow ? { flow } : {}),
+    ...(shadow ? { shadow } : {})
+  }
 }
 
 export interface ResumeArgs {
@@ -309,17 +367,24 @@ export interface ResumeArgs {
   agent?: Agent
   /** The model for the resumed run; absent takes the one the run's checkpoint recorded. */
   model?: string
+  /** The flow key for the resumed run; absent takes the one the run recorded. A different one is refused. */
+  flow?: string
 }
 
-const RESUME_USAGE = 'Usage: run-engine.ts --resume <pr> [--agent <claude|codex>] [--model <id>]'
+const RESUME_USAGE = 'Usage: run-engine.ts --resume <pr> [--agent <claude|codex>] [--model <id>] [--flow <key>]'
 
 export function parseResumeArgs(argv: readonly string[]): ResumeArgs {
   let resume: number | undefined
   let agent: Agent | undefined
   let model: string | undefined
+  let flow: string | undefined
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]
-    if (flag === '--resume') {
+    if (flag === '--flow') {
+      const value = argv[++i] ?? ''
+      if (!FLOW_KEY.test(value)) throw new Error(`--flow takes a flow key such as v1 or v2. ${RESUME_USAGE}`)
+      flow = value
+    } else if (flag === '--resume') {
       const value = argv[++i] ?? ''
       if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`--resume takes a pull request number. ${RESUME_USAGE}`)
       resume = Number(value)
@@ -334,7 +399,7 @@ export function parseResumeArgs(argv: readonly string[]): ResumeArgs {
     } else throw new Error(`Unknown argument "${flag}". ${RESUME_USAGE}`)
   }
   if (resume === undefined) throw new Error(RESUME_USAGE)
-  return { resume, ...(agent ? { agent } : {}), ...(model ? { model } : {}) }
+  return { resume, ...(agent ? { agent } : {}), ...(model ? { model } : {}), ...(flow ? { flow } : {}) }
 }
 
 /**
@@ -381,7 +446,101 @@ export async function resumeEngine(input: ResumeEngineInput): Promise<EngineRunR
     input.deps ?? liveResumeDeps
   )
   const model = resumeModel(input.args.model, recordedCheckpointModel(input.runtimeDir, claim.task))
-  return input.run({ task: claim.task, agent: claim.agent, dryRun: false, ...(model ? { model } : {}) })
+  const flow = continuationFlow(input.runtimeDir, claim.task, input.args.flow)
+  return input.run({
+    task: claim.task,
+    agent: claim.agent,
+    dryRun: false,
+    ...(model ? { model } : {}),
+    ...(flow ? { flow } : {})
+  })
+}
+
+/** Where a run records the flow it chose: `<run directory>/flow.json`, the run's provenance of which flow it runs. */
+export const runFlowPath = (runtimeDir: string, task: number): string =>
+  join(runDirectory(runtimeDir, task), 'flow.json')
+
+/** Records the flow key a run chose, so its resume continues the same flow. */
+export function recordRunFlow(runtimeDir: string, task: number, flow: string): void {
+  continuationFlow(runtimeDir, task, flow)
+  mkdirSync(runDirectory(runtimeDir, task), { recursive: true })
+  writeFileSync(runFlowPath(runtimeDir, task), `${JSON.stringify({ schemaVersion: 1, flow })}\n`)
+}
+
+/** The flow key the task's run recorded; undefined when it recorded none (a run from before flows were chosen ran v1). */
+export function recordedRunFlow(runtimeDir: string, task: number): string | undefined {
+  try {
+    const value = JSON.parse(readFileSync(runFlowPath(runtimeDir, task), 'utf8')) as {
+      schemaVersion?: number
+      flow?: unknown
+    }
+    return value.schemaVersion === 1 && typeof value.flow === 'string' && value.flow !== '' ? value.flow : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The flow a fresh run (not a resume) runs: the one it names, else none — the process's default. A recorded flow is
+ * never inherited by a fresh run; when it differs from what the run takes, the note says how to continue it.
+ */
+export function freshRunFlow(
+  named: string | undefined,
+  recorded: string | undefined
+): { flow?: string; note?: string } {
+  if (named !== undefined) return { flow: named }
+  if (recorded === undefined || recorded === 'v1') return {}
+  return {
+    note: `run-engine: this task last ran flow ${recorded}; this fresh run takes the process's default flow — pass --flow ${recorded} to continue it.`
+  }
+}
+
+/** Flow selection for task continuations. */
+export function continuationFlow(runtimeDir: string, task: number, named?: string): string | undefined {
+  const path = checkpointPath(runDirectory(runtimeDir, task))
+  if (!existsSync(path)) return named
+  let checkpointFlow: string | undefined
+  let hasCheckpoint = false
+  let db: Database
+  try {
+    db = new Database(path, { readonly: true })
+  } catch {
+    // An unreadable checkpoint is refused later with its typed reason; selection must not pre-empt that.
+    return resumeFlow(named, recordedRunFlow(runtimeDir, task))
+  }
+  try {
+    const columns = db.query<{ name: string }, []>('PRAGMA table_info(checkpoints)').all()
+    if (columns.length !== 0) {
+      hasCheckpoint = db.query('SELECT 1 FROM checkpoints LIMIT 1').get() !== null
+      if (columns.some((column) => column.name === 'flow')) {
+        const row = db
+          .query<{ flow: string | null }, []>(
+            "SELECT flow FROM checkpoints WHERE checkpoint_ns = '' ORDER BY checkpoint_id DESC LIMIT 1"
+          )
+          .get()
+        checkpointFlow = row?.flow ?? undefined
+      }
+    }
+  } catch {
+    return resumeFlow(named, recordedRunFlow(runtimeDir, task))
+  } finally {
+    db.close()
+  }
+  if (!hasCheckpoint) return named
+  const recorded = checkpointFlow ?? recordedRunFlow(runtimeDir, task)
+  if (recorded === undefined)
+    throw new Error('run-engine: checkpoint flow is unrecorded; start a new generation instead of guessing its flow')
+  return resumeFlow(named, recorded)
+}
+
+/** The flow a resume runs: the recorded one; a named one only when it agrees or nothing was recorded. */
+export function resumeFlow(named: string | undefined, recorded: string | undefined): string | undefined {
+  if (named !== undefined && recorded !== undefined && named !== recorded) {
+    throw new Error(
+      `run-engine: this run recorded flow ${recorded}; a resume continues that flow and never switches to ${named}.`
+    )
+  }
+  return named ?? recorded
 }
 
 const vendorOf = (agent: Agent): 'claude-code' | 'codex' => (agent === 'claude' ? 'claude-code' : 'codex')
@@ -407,6 +566,8 @@ export interface RoleDispatches {
   capabilities: DispatchCapabilityTable
   ttlMs: number
   writeShim: (capability?: string) => void
+  /** Told when a dispatch's launched process ended, with the capability it held. */
+  onEnded?: (capability: string) => void
 }
 
 /**
@@ -437,6 +598,7 @@ export function withDispatchCapabilities(
       ended = true
       dispatch.capabilities.revoke(capability)
       dispatch.writeShim()
+      dispatch.onEnded?.(capability)
     }
     let child: SpawnedProcessLike
     try {
@@ -450,6 +612,52 @@ export function withDispatchCapabilities(
     child.on('close', end)
     child.on('error', end)
     return child
+  }
+}
+
+/** How many dispatches of one role in a row may lose their tools to a removed socket before the run pauses. */
+export const MAX_TOOL_HOST_LOSSES = 2
+
+/**
+ * Each agent step's prompt, preceded at its dispatch boundary by its role host's check: a host whose socket file is
+ * gone is replaced on the same path before the dispatch's capability is minted. A role whose dispatches lost their
+ * tools `MAX_TOOL_HOST_LOSSES` times in a row stops the run with that reason instead of dispatching again.
+ */
+export function withToolHostBoundaries(
+  prompts: Readonly<Record<string, StepPrompt>>,
+  hosts: Readonly<Record<string, { role: string; host: ReplaceableDevToolsHost }>>,
+  narrate: (line: string) => void
+): Record<string, StepPrompt> {
+  const bounded: Record<string, StepPrompt> = { ...prompts }
+  for (const [step, { role, host }] of Object.entries(hosts)) {
+    const prompt = prompts[step]
+    bounded[step] = async (rendered, results, context) => {
+      const losses = host.consecutiveLosses()
+      if (losses >= MAX_TOOL_HOST_LOSSES)
+        throw new Error(
+          `the ${role} tool host lost its socket during ${losses} dispatches in a row, before each could reach it; the ${step} step is not dispatched again`
+        )
+      if (await host.replaceIfSocketMissing())
+        narrate(
+          `the ${role} tool host's socket file was missing at the ${step} dispatch boundary; replaced it on the same path`
+        )
+      return prompt ? prompt(rendered, results, context) : rendered
+    }
+  }
+  return bounded
+}
+
+/** Reports a failed turn's transport loss and acknowledges successful turns without replaying them. */
+export function toolHostRedispatch(
+  hosts: Readonly<Record<string, { role: string; host: ReplaceableDevToolsHost }>>
+): AgentRedispatch {
+  return {
+    lost: (step) => {
+      const entry = hosts[step]
+      if (entry === undefined || entry.host.consecutiveLosses() === 0) return null
+      return `the ${entry.role} tool host's socket disappeared during the dispatch`
+    },
+    succeeded: (step) => hosts[step]?.host.noteDispatchSucceeded?.()
   }
 }
 
@@ -484,7 +692,7 @@ export async function dryRunLines(options: {
     lines.push(`step ${step.id} ${step.type}${step.action ? ` ${step.action}` : ''}${step.role ? ` ${step.role}` : ''}`)
   for (const step of steps) {
     if (step.type !== 'mechanical' || !step.action) continue
-    const binding = ACTION_BINDINGS[step.action]
+    const binding = ACTION_BINDINGS[step.action] ?? V2_ACTION_BINDINGS[step.action]
     const names = binding ? binding.adapts.map((fn) => fn.name).join(', ') : '(no binding)'
     lines.push(`bound ${step.id} ${step.action}: ${names}`)
   }
@@ -675,20 +883,164 @@ export function withAgentNarration(
 }
 
 /**
+ * Whether a Log event is one an agent launch writes when it ends (its `role_attempt` and `usage`), rather than one the
+ * loop writes: a launch's attempt names the agent as its actor, the loop's own attempts name a role.
+ */
+export const isAgentLaunchEvent = (event: { kind?: unknown; actor?: unknown }): boolean =>
+  event.kind === 'usage' || (event.kind === 'role_attempt' && (event.actor === 'claude' || event.actor === 'codex'))
+
+/** What one role's agent launch used, as `withDispatchUsage` reports it when the launch ends. */
+export interface LaunchUsage {
+  role: HeldVerdictRole | 'developer'
+  reading: DispatchUsageReading
+  exitCode: number | null
+  durationMs: number
+  attribution?: LaunchLogAttribution
+}
+
+/** The most of a launch's stdout kept at each end: the session id and model are printed first, the usage line last. */
+const USAGE_STDOUT_KEEP = 4 * 1024 * 1024
+
+/**
+ * Reads each role launch's token usage from its own stdout when it ends, the way the standalone dispatch reads it
+ * (`readDispatchUsage`), and reports it to `onUsage`. The read is a second `data` listener, so the executor's own reader
+ * still gets every byte; a launch that is none of the roles' generated launches, and any failure here, is passed
+ * through untouched.
+ */
+export function withDispatchUsage(
+  spawnFn: SpawnFn,
+  generatedRoot: string,
+  agent: Agent,
+  onUsage: (launch: LaunchUsage) => void,
+  now: () => number = Date.now,
+  attributionOf?: (role: LaunchUsage['role']) => LaunchLogAttribution
+): SpawnFn {
+  const roots = {
+    developer: join(generatedRoot, 'developer'),
+    reviewer: join(generatedRoot, 'code-reviewer'),
+    security: join(generatedRoot, 'security-reviewer')
+  } as const
+  return (command, args, options) => {
+    const child = spawnFn(command, args, options)
+    try {
+      const role = launchRoleOf(roots, args, options?.env)
+      if (role === undefined || !child.stdout) return child
+      const attribution = attributionOf?.(role)
+      const startedAt = now()
+      const decoder = new StringDecoder('utf8')
+      let head = ''
+      let tail = ''
+      child.stdout.on('data', (chunk: Buffer | string) => {
+        const text = typeof chunk === 'string' ? chunk : decoder.write(chunk)
+        if (head.length < USAGE_STDOUT_KEEP) head += text.slice(0, USAGE_STDOUT_KEEP - head.length)
+        tail = (tail + text).slice(-USAGE_STDOUT_KEEP)
+      })
+      child.on('close', (code: number | null) => {
+        try {
+          const reading = readDispatchUsage(agent, { tail, head })
+          onUsage({ role, reading, exitCode: code, durationMs: now() - startedAt, attribution })
+        } catch {
+          // Reading usage never ends the run it observes.
+        }
+      })
+    } catch {}
+    return child
+  }
+}
+
+/** Restores only checkpointed observations, without emitting another launch or usage event. */
+export function restoreCheckpointUsage(task: TaskInput, agent: Agent, results: Record<string, StepNodeResult>): void {
+  if (!task.recordUsage) return
+  for (const [role, step] of [
+    ['developer', 'develop'],
+    ['reviewer', 'code-review'],
+    ['security', 'security-review']
+  ] as const) {
+    const result = results[step]
+    let usage: DispatchUsageReading['usage'] = null
+    if (result?.kind === 'agent-spawn') {
+      try {
+        const stdout = result.events
+          .map((event) => (typeof event === 'string' ? event : JSON.stringify(event)))
+          .join('\n')
+        usage = readDispatchUsage(agent, {
+          head: stdout.slice(0, USAGE_STDOUT_KEEP),
+          tail: stdout.slice(-USAGE_STDOUT_KEEP)
+        }).usage
+      } catch {}
+    }
+    task.recordUsage(role, usage)
+  }
+}
+
+/** Advances a role's launch attempt durably before the launch can emit usage. */
+export function claimLaunchAttribution(
+  runDir: string,
+  thread: string,
+  role: LaunchUsage['role'],
+  round: number
+): LaunchLogAttribution {
+  const path = join(runDir, 'launch-attempts.json')
+  let attempts: Record<string, number> = {}
+  if (existsSync(path)) attempts = JSON.parse(readFileSync(path, 'utf8'))
+  const key = JSON.stringify([thread, role])
+  const attempt = (attempts[key] ?? 0) + 1
+  attempts[key] = attempt
+  mkdirSync(runDir, { recursive: true })
+  const temporary = `${path}.${process.pid}.tmp`
+  writeFileSync(temporary, JSON.stringify(attempts), { mode: 0o600 })
+  renameSync(temporary, path)
+  return { role: role === 'reviewer' ? 'code-reviewer' : role === 'security' ? 'security' : role, round, attempt }
+}
+
+/**
+ * The `role_attempt` and `usage` events one ended launch writes, as the standalone dispatch writes them for its own:
+ * the launch's attempt names the agent that ran it as its actor, where the loop's own attempts name the role.
+ */
+export function launchUsageEvents(launch: LaunchUsage, agent: Agent, effectId: string, requestedModel: string | null) {
+  const model = launch.reading.model ?? (requestedModel === null ? null : `requested:${requestedModel}`)
+  return [
+    {
+      kind: 'role_attempt',
+      event: 'attempted',
+      payload: {},
+      actor: agent,
+      attempt: launch.attribution?.attempt ?? null,
+      effect_id: effectId,
+      model,
+      outcome: classifyRoleAttemptOutcome(false, false, false, launch.exitCode),
+      usage: launch.reading.usage,
+      duration_ms: launch.durationMs
+    },
+    {
+      kind: 'usage',
+      event: 'observed',
+      payload: {},
+      model,
+      source: launch.reading.source,
+      semantics: 'cumulative',
+      units: launch.reading.units.units,
+      unknown_reason: launch.reading.units.unknownReason,
+      duration_ms: launch.durationMs
+    }
+  ] as const
+}
+
+/**
  * The runner's Log sink, each event narrated into the driver log right after it is emitted, with the events
  * narrated before it as context: what the standalone loop's `logEvents` does after each event it writes. The
  * translator and the runner share the one wrapped sink, so no event is narrated twice; a narration failure is dropped.
  * A conflict re-entry is narrated with no earlier events, as the standalone's watching driver narrates its own.
  */
 export function narratingLog(
-  log: (event: unknown) => void,
+  log: (event: unknown, attribution?: LaunchLogAttribution) => void,
   logPath: string,
   task: number,
   narrateEvent: typeof narrateDriverEvent = narrateDriverEvent
-): (event: unknown) => void {
+): (event: unknown, attribution?: LaunchLogAttribution) => void {
   const narrated: unknown[] = []
-  return (event) => {
-    log(event)
+  return (event, attribution) => {
+    log(event, attribution)
     try {
       const reentry = (event as { event?: unknown } | null)?.event === 'conflict_reentry'
       narrateEvent(logPath, event, reentry ? [] : narrated, task)
@@ -809,7 +1161,7 @@ export function tracedActions(
 }
 
 export interface LogSinkLike {
-  log: (event: never) => void
+  log: (event: never, attribution?: LaunchLogAttribution) => void
   drain: () => Promise<void>
 }
 
@@ -840,8 +1192,15 @@ export interface EngineRunOptions {
   beginDeveloperTurn?: () => Promise<void>
   /** Called when a newer ruling resumes the halted run, so the next Developer turn carries the rulings' text. */
   onRulingResume?: () => void
+  /**
+   * Called whenever the run stops working: before it watches a pause (a halt, the round cap, a cancel) and once
+   * more as it ends, however it ends. Version 2 ends its storage pushes here, so no later push skips the tests.
+   */
+  onRunHalted?: () => void
   /** Whether the pull request a held verdict would publish is in conflict; the live forge read unless a test supplies its own. */
   heldPullRequestConflicts?: () => Promise<boolean>
+  /** Reads a checkpoint's recorded agent before a resume; the checkpoint's own provenance unless a test supplies its own. */
+  readAgentProvenance?: typeof readAgentProvenance
   /** Called with the Developer's vendor session once its turn's agent has finished. */
   completeDeveloperTurn?: (resumeId: string | null) => void
   /** The Linux host opt-in: the generated Claude settings allow Unix sockets and the variable is forwarded to the agent. */
@@ -879,6 +1238,11 @@ export interface EngineLifecycleOptions {
    * conflict with the default branch; absent ends the runner at completion.
    */
   publishedWatch?: PublishedWatch
+  /**
+   * Where the execution round is mirrored and the effect records a resume checks it against; absent, a resume still
+   * restores the round from its checkpoint but writes and checks no mirror.
+   */
+  executionRound?: { store: ControlStoreDeps; repository: string }
 }
 
 /** The HEAD of the checkout at `repoRoot`, or `unknown` when it is not a git checkout. */
@@ -892,6 +1256,24 @@ function checkoutRevision(repoRoot: string): string {
 
 /** The file a run's checkpoints are kept in, under its run directory. */
 export const checkpointPath = (runDir: string): string => join(runDir, 'checkpoints.sqlite')
+
+/**
+ * Why a checkpoint resume on `agent` is refused, or null when the checkpoint was started on that agent. A checkpoint
+ * with no recorded agent is always refused: nothing else binds a vendor to a checkpoint generation.
+ */
+export function crossAgentResumeRefusal(
+  provenance: AgentCheckpointProvenance | null,
+  task: number,
+  agent: Agent,
+  checkpointFile: string
+): string | null {
+  const recorded = provenance?.agent ?? null
+  if (recorded === null)
+    return `task ${task}'s checkpoint records no agent, and the Engine continues a run on the agent it started with; start the task fresh: set ${checkpointFile} aside and run the task again.`
+  if (recorded !== agent)
+    return `task ${task}'s checkpoint started on ${recorded}, and the Engine continues a run on the agent it started with; asked for ${agent}.`
+  return null
+}
 
 export interface EngineRunResult {
   outcome: RunOutcome | null
@@ -925,6 +1307,8 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
 
 /** Runs the task's legs. The host is closed and the sink drained on every way out. */
 async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult> {
+  continuationFlow(options.runtimeDir, options.args.task, options.process.flowKey)
+  if (options.process.flowKey === 'v2') await sweepReadyGateRuns()
   const out = options.out ?? ((line: string) => process.stdout.write(`${line}\n`))
   const { args } = options
   const lifecycle = options.lifecycle ?? {}
@@ -936,17 +1320,21 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   const producers = createVinayaLogProducers({
     loopId: options.loopId,
     task: args.task,
-    baseHead: () => (options.taskInput ? worktreeStats(options.taskInput.worktreePath, 0).baseHead : null)
+    baseHead: () => (options.taskInput ? worktreeStats(options.taskInput.worktreePath, 0).baseHead : null),
+    flow: options.process.flowKey,
+    reviewRound: options.taskInput?.reviewRound,
+    head: () => (options.taskInput ? worktreeStats(options.taskInput.worktreePath, 0).head : null)
   })
   const logPath = loopLogPathFor(null, args.task, options.runtimeDir)
   // The translator's rows and the runner's own reach the sink through this one wrapper, each narrated once.
   const sinkLog = narratingLog(
-    options.sink.log as unknown as (event: unknown) => void,
+    options.sink.log as unknown as (event: unknown, attribution?: LaunchLogAttribution) => void,
     logPath,
     args.task,
     options.narration?.narrateEvent
   )
   const translator = createLogTranslator(producers, sinkLog as unknown as EmitLogEvent)
+  let launchSeq = 0
   const narrate = (line: string): void => appendLoopLogLine(logPath, `${new Date().toISOString()}  ${line}`)
   let pausedFor: string | undefined
   const writeTrace = (
@@ -963,6 +1351,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     out(`trace ${path}`)
   }
 
+  // The run's first driver-log line names the flow it runs, so a reader never has to infer it.
+  narrate(`engine runner: task ${args.task}, flow ${options.process.flowKey}`)
   // One runner per task: a held lock ends this start before anything is dispatched.
   const lock = takeDriverLock(options.runtimeDir, args.task, {
     pid: lifecycle.pid ?? process.pid,
@@ -1134,19 +1524,31 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       })(readInput)
     })
     const roleHosts = [
-      { role: 'developer' as const, context: options.devToolsContext, file: 'developer-dev-bridge.sh' },
-      { role: 'code-reviewer' as const, context: reviewerContext, file: 'code-reviewer-dev-bridge.sh' },
-      { role: 'security' as const, context: reviewerContext, file: 'security-dev-bridge.sh' }
+      {
+        role: 'developer' as const,
+        step: 'develop',
+        context: options.devToolsContext,
+        file: 'developer-dev-bridge.sh'
+      },
+      {
+        role: 'code-reviewer' as const,
+        step: 'code-review',
+        context: reviewerContext,
+        file: 'code-reviewer-dev-bridge.sh'
+      },
+      { role: 'security' as const, step: 'security-review', context: reviewerContext, file: 'security-dev-bridge.sh' }
     ]
+    // Each agent step's role host, replaced at that step's dispatch boundary when its socket file is gone.
+    const roleHostsByStep: Record<string, { role: string; host: ReplaceableDevToolsHost }> = {}
     const mcpCommands: Record<string, string> = {}
     const hostParts: Partial<
-      Record<(typeof roleHosts)[number]['role'], Pick<RoleDispatches, 'capabilities' | 'writeShim'>>
+      Record<(typeof roleHosts)[number]['role'], Pick<RoleDispatches, 'capabilities' | 'writeShim' | 'onEnded'>>
     > = {}
     for (const roleHost of roleHosts) {
       const socketPath = devToolsSocketPath(`${options.hostKey ?? `engine-${args.task}`}-${roleHost.role}`)
       const capabilities = createDispatchCapabilityTable()
-      hosts.push(
-        await options.startHost({
+      const host = await startReplaceableDevToolsHost(
+        {
           socketPath,
           serverVersion: 'engine-run-1',
           context: roleHost.context,
@@ -1157,8 +1559,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
             narrate(
               `refused a ${event.tool} call on the ${event.role} tool host: the per-dispatch capability was ${event.reason} (${event.detail})`
             )
-        })
+        },
+        { start: options.startHost }
       )
+      hosts.push(host)
+      roleHostsByStep[roleHost.step] = { role: roleHost.role, host }
       const shimPath = join(runDir, roleHost.file)
       const writeShim = (capability?: string): void => {
         writeFileSync(
@@ -1174,8 +1579,14 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         chmodSync(shimPath, 0o700)
       }
       writeShim()
-      hostParts[roleHost.role] = { capabilities, writeShim }
-      mcpCommands[roleHost.role === 'security' ? 'security-reviewer' : roleHost.role] = shimPath
+      const onEnded = (capability: string): void => {
+        if (host.noteDispatchEnded(capability))
+          narrate(
+            `the ${roleHost.role} tool host's socket disappeared during its dispatch; a successful turn is kept, and a failed turn pauses without automatic replay`
+          )
+      }
+      hostParts[roleHost.role] = { capabilities, writeShim, onEnded }
+      mcpCommands[roleHost.role === 'security' ? 'security' : roleHost.role] = shimPath
     }
     const roles: Record<string, RoleLauncher[string]> = {
       ...createRoleLaunchers({
@@ -1221,7 +1632,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       taskInput.sandboxPlan = () =>
         sandboxProbePlanFor(vendor, developer, join(runDir, 'generated', 'developer'), taskInput.worktreePath)
     }
-    const base = options.actions ?? createActions(options.taskInput)
+    // Every flow's shared actions, and version 2's own beside them; a flow binds only the ones it names.
+    const base = options.actions ?? { ...createActions(options.taskInput), ...createV2Actions(options.taskInput) }
     // The pull request found by the reconcile step is the one the heartbeat reports.
     const noting: ActionRegistry = Object.fromEntries(
       Object.entries(base).map(([name, action]) => [
@@ -1232,6 +1644,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
             const develop = context.results.develop as { sessionId?: string; events?: unknown[] } | undefined
             options.completeDeveloperTurn?.(develop?.sessionId ?? sessionIdOf(develop?.events ?? []) ?? null)
           }
+          if (context.nodeId === 'validate-reviewer-outputs' || context.nodeId === 'validate-developer-output')
+            restoreCheckpointUsage(options.taskInput, args.agent, context.results)
           const result = await action(context)
           if (context.nodeId === 'reconcile-external-state') {
             try {
@@ -1253,7 +1667,27 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     let refusedFile: CheckpointRefusal | null = null
     let opened: SqliteCheckpointer | undefined
     try {
-      opened = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
+      const mirror = lifecycle.executionRound
+      opened = new SqliteCheckpointer({
+        path: checkpointPath(runDir),
+        revision,
+        model: args.model,
+        agent: args.agent,
+        flow: options.process.flowKey,
+        // The round is mirrored once the saver's own write has committed; a failed mirror stops the next step.
+        ...(mirror
+          ? {
+              onCommit: mirrorExecutionRoundOnCommit(
+                { repository: mirror.repository, task: args.task },
+                ({ task, ...record }) =>
+                  writeExecutionRoundMirror(mirror.store, task, {
+                    ...record,
+                    recordedAt: mirror.store.now().toISOString()
+                  })
+              )
+            }
+          : {})
+      })
     } catch (thrown) {
       if (!(thrown instanceof CheckpointCorruptError)) throw thrown
       refusedFile = { code: thrown.code, detail: thrown.message }
@@ -1298,6 +1732,19 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       })
       return { reason: 'paused', haltReason: handoffHaltReason('infrastructure') }
     }
+    // Each role launch's tokens: recorded for the verdict's Tokens line, and written to the Log as the standalone does.
+    const onLaunchUsage = (launch: LaunchUsage): void => {
+      launchSeq += 1
+      options.taskInput?.recordUsage?.(launch.role, launch.reading.usage)
+      const requested = args.model ?? null
+      for (const event of launchUsageEvents(
+        launch,
+        args.agent,
+        `${options.loopId}:${launch.role}:${launchSeq}`,
+        requested
+      ))
+        sinkLog(event, launch.attribution)
+    }
     const automaticResumes: AutomaticResumes = { usageLimit: 0 }
     // This runner's automatic conflict re-entries of the published pull request.
     let conflictReentries = 0
@@ -1311,6 +1758,20 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         maxRounds = undefined
       }
       return maxRounds === undefined ? options.process : withPolicyCeilings(options.process, runDir, maxRounds)
+    }
+    // The round a resumed thread is in, from its effective resumed state; mirrored and checked when a store is wired.
+    const restoreRoundOf = async (opened: SqliteCheckpointer, threadId: string): Promise<ExecutionRoundRestore> => {
+      const resumed = await readEffectiveResumedStateFrom(opened, threadId)
+      const mirror = lifecycle.executionRound
+      return mirror
+        ? restoreExecutionRoundBeforeDispatch({
+            store: mirror.store,
+            repository: mirror.repository,
+            task: args.task,
+            threadId,
+            resumed
+          })
+        : restoreExecutionRound({ threadId, resumed, mirror: { status: 'absent' }, effects: [] })
     }
     const runLeg = async (): Promise<void> => {
       outcome = null
@@ -1327,6 +1788,23 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         refuseCheckpoint(choice.refusal)
         translator.endLeg(legOutcome as LegOutcome)
         return
+      }
+      // A checkpoint resumes only on the agent it started with: another vendor's sessions and effects are not this
+      // one's to continue, and a checkpoint that never recorded its agent cannot prove which one that was.
+      if (choice.kind === 'resume') {
+        const refusal = crossAgentResumeRefusal(
+          (options.readAgentProvenance ?? readAgentProvenance)(checkpointPath(runDir), identity.threadId),
+          args.task,
+          args.agent,
+          checkpointPath(runDir)
+        )
+        if (refusal !== null) {
+          narrate(`not resuming: ${refusal}`)
+          error = refusal
+          legOutcome = { reason: 'failed' }
+          translator.endLeg(legOutcome)
+          return
+        }
       }
       // A checkpoint resume continues past steps it already ran, the mergeability check among them: when the pull
       // request is in conflict now, the run starts the next generation instead, as the conflict re-entry does, so the
@@ -1361,13 +1839,30 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       const moved = choice.kind === 'resume' ? revisionMovedLine(choice.checkpointRevision, revision) : null
       if (moved !== null) narrate(moved)
 
+      // A checkpoint resume continues inside the round it stopped in: the round its checkpoint records, checked
+      // against the control store before anything is dispatched, never the counter this process started at.
+      const restored: ExecutionRoundRestore | null =
+        choice.kind === 'resume' ? await restoreRoundOf(saver, identity.threadId) : null
+      if (restored?.kind === 'refused') {
+        narrate(`not dispatching: ${restored.detail}`)
+        throw new Error(restored.detail)
+      }
+      if (restored?.kind === 'restored') {
+        options.taskInput?.seedRound?.(restored.round)
+        if (restored.note !== null) narrate(restored.note)
+        for (const effect of restored.interrupted)
+          narrate(
+            `effect ${effect.key} was issued at input version ${effect.inputVersion} and never acknowledged; its retry reconciles it at that version`
+          )
+      }
       // What a re-run reads before it dispatches: the prior launch, the round journal and any held verdict.
       const recovery = lifecycle.recovery ? recoverRun(lifecycle.recovery) : null
       if (recovery !== null && options.taskInput) {
         options.taskInput.loopState = recovery.state
-        // A checkpoint resume continues inside the round it stopped in, so it keeps that round; only a fresh start
-        // on an existing branch begins the round after the journal's last.
-        if (recovery.nextRound !== null && choice.kind !== 'resume') options.taskInput.seedRound?.(recovery.nextRound)
+        // Only a run whose checkpoint records no round yet (a fresh start, or a resume before its first step
+        // completed) begins at the round after the journal's last.
+        if (recovery.nextRound !== null && (restored === null || restored.kind === 'unrecorded'))
+          options.taskInput.seedRound?.(recovery.nextRound)
       }
       if (recovery?.refusal) {
         narrate(`not dispatching: ${recovery.refusal}`)
@@ -1404,7 +1899,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         const runOptions: ProcessRunOptions = {
           process: runProcess(),
           question: `Task ${args.task}`,
-          bindings: { actions, decisions: (await import('../executing/actions')).decisions, roles },
+          bindings: {
+            actions,
+            decisions: { ...(await import('../executing/actions')).decisions, ...V2_DECISIONS },
+            roles
+          },
           checkpointer: saver,
           workingDirectoryRoot: options.repoRoot,
           // A revision continues the Developer's own session, as the standalone loop resumes it.
@@ -1415,9 +1914,10 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
               ...(options.allowUnixSockets === true ? [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] : [])
             ]
           }),
-          ...(developerFacts
-            ? {
-                stepPrompts: {
+          agentRedispatch: toolHostRedispatch(roleHostsByStep),
+          stepPrompts: withToolHostBoundaries(
+            developerFacts
+              ? {
                   develop: async (rendered, results, context) => {
                     // Each Developer turn records the head it starts from and its launch, as the standalone loop does
                     // at each dispatch. `develop` is an agent step, so the action wrapper below never sees it.
@@ -1433,17 +1933,27 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
                       }
                     : {})
                 }
-              }
-            : {}),
+              : {},
+            roleHostsByStep,
+            narrate
+          ),
           spawnFn: tolerateReviewerExit(
             withReviewerWorkingDirectory(
               // Innermost, so the tee sees the directory the launch runs in and the agent's own stdout.
               withAgentNarration(
-                withUsageLimitWatch(
-                  // Innermost of all, so each capability is bound to the very process a launch spawned.
-                  withDispatchCapabilities(reaper.spawnFn, join(runDir, 'generated'), roleDispatches),
+                withDispatchUsage(
+                  withUsageLimitWatch(
+                    // Innermost of all, so each capability is bound to the very process a launch spawned.
+                    withDispatchCapabilities(reaper.spawnFn, join(runDir, 'generated'), roleDispatches),
+                    args.agent,
+                    onUsageLimit
+                  ),
+                  join(runDir, 'generated'),
                   args.agent,
-                  onUsageLimit
+                  onLaunchUsage,
+                  Date.now,
+                  (role) =>
+                    claimLaunchAttribution(runDir, identity.threadId, role, options.taskInput.reviewRound?.() ?? 1)
                 ),
                 join(runDir, 'generated'),
                 {
@@ -1553,6 +2063,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         checkpointRefused
       )
         break
+      options.onRunHalted?.()
       narrate('the run is halted; watching for a newer ruling or a cancel')
       const watched = await watchForRuling(
         options.runtimeDir,
@@ -1592,6 +2103,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     translator.endLeg(legOutcome)
   } finally {
     stopSignals()
+    options.onRunHalted?.()
     // No agent outlives the run: whatever a halted or finished launch left running is ended with its group.
     await reaper.reap(lifecycle.killGraceMs)
     // The exit is recorded once, before the sink drains, and the lock is kept or cleared by the shared rule.
@@ -1861,6 +2373,9 @@ export async function liveTaskInput(
     return readPolicy
   }
   let loopState: LoopState | null = null
+  // Each role's latest launch's tokens, recorded by the runner when the launch ends.
+  const launchUsage = new Map<HeldVerdictRole | 'developer', { input: number; output: number } | null>()
+  const usageOf = (role: HeldVerdictRole | 'developer') => launchUsage.get(role) ?? null
   // The review round advances when a revision handoff reads the verdicts it answers.
   let round = 1
   const manifestAt = (headSha: string): ReviewInputManifest => {
@@ -1911,7 +2426,12 @@ export async function liveTaskInput(
       review,
       args.agent === 'claude' ? 'claude' : 'codex',
       args.task,
-      { exitCode: 0, durationMs: 0, usage: null, ...(sessionId === undefined ? {} : { resumeId: sessionId }) } as never,
+      {
+        exitCode: 0,
+        durationMs: 0,
+        usage: usageOf(role),
+        ...(sessionId === undefined ? {} : { resumeId: sessionId })
+      } as never,
       inputs.manifest,
       policyNow(),
       inputs.objectives
@@ -1927,7 +2447,9 @@ export async function liveTaskInput(
     brief: () => forge.fetchFrozenBrief(args.task),
     prBody: () => {
       const pr = forge.findOpenPrForBranch(branch)
-      return pr ? forge.prBody(pr.number) : ''
+      if (pr) return forge.prBody(pr.number)
+      // Version 2 opens no pull request before approval: the reviewers read the body the Developer staged.
+      return args.flow === 'v2' ? (stagedPullRequestStore(runDirectory(runtimeDir, args.task)).read()?.body ?? '') : ''
     },
     diff: (base, head) => sh('git', ['diff', `${base}...${head}`], worktreePath),
     ...lookups.reviewSources
@@ -1962,7 +2484,11 @@ export async function liveTaskInput(
         fetchIssueRulingsAfterBrief: forge.fetchIssueRulingsAfterBrief,
         fetchRulings: forge.fetchRulings
       }),
-      ciConclusion: forge.fetchCiConclusion(judgedHead()),
+      // Version 2 reviews locally before any pull request (and so any CI) exists: CI has not run, by design.
+      ciConclusion:
+        args.flow === 'v2' && forge.findOpenPrForBranch(branch) === null
+          ? 'not_run'
+          : forge.fetchCiConclusion(judgedHead()),
       revision: forge.fetchSourceRevision(args.task),
       manifest: dispatched?.manifest ?? manifestAt(judgedHead()),
       policy: policyNow(),
@@ -2088,6 +2614,10 @@ export async function liveTaskInput(
       return edit ? describeObjectivesEdit(args.task, edit) : null
     },
     reviewInputs,
+    usageOf,
+    recordUsage: (role, usage) => {
+      launchUsage.set(role, usage)
+    },
     buildVerdict,
     verdicts: (results) => {
       const verdicts = recordedVerdicts(results)
@@ -2287,6 +2817,7 @@ async function runLive(
   // The first Developer turn after a resume from a ruling carries the rulings' text, once.
   const rulings = { owed: opts.rulingsOwed === true }
   refuseAnotherRunnersPause(runtimeDir, args.task)
+  recordRunFlow(runtimeDir, args.task, loaded.flowKey)
   configureEngineLogEnvironment()
   setEngineLogIdentity(loaded, args.agent)
   const sink = createEngineLogSink()
@@ -2308,6 +2839,91 @@ async function runLive(
   })
   // A turn whose last publication a driver tool refused has no push coming: the stall names the refusal.
   taskInput.publicationRefusal = () => liveContext.state.turnPublicationRefusal
+  // Whatever storage marker an earlier run left in this worktree (a crash, a pause) ends now, for every flow: only
+  // this run's own `publish_changes` writes a fresh one, and only in version 2.
+  endStoragePushes(taskInput.worktreePath)
+  // Version 2 (review locally, push once): storage pushes, a staged pull request, the ready push and CI once.
+  let devToolsContext = liveContext.context
+  if (loaded.flowKey === 'v2') {
+    const store = stagedPullRequestStore(runDirectory(runtimeDir, args.task))
+    const findOpenPullRequest = () => findOpenPrForBranch(taskInput.branch)
+    taskInput.flow = 'v2'
+    taskInput.stagedPullRequest = store.read
+    taskInput.v2 = liveV2Functions({
+      worktreePath: taskInput.worktreePath,
+      branch: taskInput.branch,
+      store,
+      findOpenPullRequest,
+      remoteHead: () => taskInput.remoteHead?.() ?? null,
+      openWithDeveloperTool: (title, body) => liveContext.context.openPullRequest(title, body),
+      // The loop writes the Evidence block once the pull request is open; the Developer's v2 turn runs no tests.
+      writeEvidence: async ({ pr, head }) => {
+        try {
+          const body = await readyGateEvidence({
+            body: liveForge.prBody(pr),
+            head,
+            resultPath: store.gateResultPath,
+            worktreePath: taskInput.worktreePath
+          })
+          const updated = await liveContext.context.updatePullRequestBody(body)
+          if (!updated.ok) return { ok: false, reason: JSON.stringify(updated.error) }
+          return { ok: true }
+        } catch (error) {
+          return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+        }
+      },
+      log: (line) => process.stderr.write(`${new Date().toISOString()}  ${line}\n`)
+    })
+    devToolsContext = withV2DevTools(liveContext.context, {
+      worktreePath: taskInput.worktreePath,
+      runId: loopId,
+      store,
+      findOpenPullRequest,
+      onStoragePush: (head) =>
+        sink.log(storagePushLogEvent(loopId, taskInput.reviewRound(), taskInput.branch, head) as never),
+      // The round's own local checks: what `run_checks` runs while no pull request is open.
+      runLocalChecks: (env) => {
+        const res = runCli(taskInput.cliEntry, taskInput.worktreePath, ['check', '--all', '--local'], env)
+        return { passed: res.status === 0, output: `${res.stdout}${res.stderr}` }
+      },
+      branch: taskInput.branch,
+      validateBody: async (title, body) => {
+        let changedFiles: string[]
+        try {
+          changedFiles = sh('git', ['diff', '--name-only', 'origin/main...HEAD'], taskInput.worktreePath)
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+        } catch {
+          return { ok: false, reason: 'the task’s changed files could not be read against origin/main' }
+        }
+        const errors = await defaultDeps().validatePrBodyForCreate({
+          body,
+          title,
+          changedFiles,
+          branch: taskInput.branch,
+          baseBranch: 'main'
+        })
+        return errors.length === 0
+          ? { ok: true }
+          : { ok: false, reason: errors.map((e) => `${e.check}: ${e.message}`).join('; ') }
+      }
+    })
+  }
+  const baseFacts = liveDeveloperFacts({
+    takeRulingsOwed: () => {
+      const owed = rulings.owed
+      rulings.owed = false
+      return owed
+    },
+    task: args.task,
+    repoRoot,
+    runtimeDir,
+    branch: taskInput.branch,
+    worktreePath: taskInput.worktreePath,
+    round: taskInput.reviewRound,
+    lastPushRefusal: () => liveContext.state.lastPushRefusal
+  })
   const result = await runEngine({
     args,
     process: loaded,
@@ -2319,31 +2935,24 @@ async function runLive(
     taskInput,
     sink,
     startHost: startDevToolsHost,
-    developerFacts: liveDeveloperFacts({
-      takeRulingsOwed: () => {
-        const owed = rulings.owed
-        rulings.owed = false
-        return owed
-      },
-      task: args.task,
-      repoRoot,
-      runtimeDir,
-      branch: taskInput.branch,
-      worktreePath: taskInput.worktreePath,
-      round: taskInput.reviewRound,
-      lastPushRefusal: () => liveContext.state.lastPushRefusal
-    }),
+    developerFacts: async () => ({ ...(await baseFacts()), flow: loaded.flowKey }),
     allowUnixSockets: linuxUnixSocketFilterOptIn(),
     lifecycle: {
       dispatchConfig: loadConfig()?.dispatch,
       recovery: liveRecovery({ args, runtimeDir, taskInput }),
+      // The same control store the push's effect records are written to.
+      executionRound: {
+        store: defaultControlStoreDeps(() => controlStoreRootFor(runtimeDir)),
+        repository: repo ? `${repo.owner}/${repo.repo}` : 'unknown'
+      },
       watch: { deps: liveResumeDeps, pollMs: rulingPollMs(), sleep: abortableSleep },
       publishedWatch: { fetchPrState, fetchMergeableState, pollMs: rulingPollMs(), sleep: abortableSleep }
     },
-    devToolsContext: liveContext.context,
+    devToolsContext,
     onRulingResume: () => {
       rulings.owed = true
     },
+    onRunHalted: () => endStoragePushes(taskInput.worktreePath),
     beginDeveloperTurn: liveContext.beginTurn,
     completeDeveloperTurn: liveContext.completeTurn
   })
@@ -2515,7 +3124,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   // This process hosts the CLI's code without being the CLI: commands it runs as the CLI start the install's entry.
   process.env[CLI_ENTRY_ENV] = cliEntryOf(VINAYA_ROOT)
   const repoRoot = targetRepoRoot()
-  const loaded = loadProcess(resolve(import.meta.dir, '..'))
+  // The run's flow is chosen by `--flow` (or, on a resume, recorded by the run it continues); none takes the default.
+  const processFolder = resolve(import.meta.dir, '..')
   const runtimeDir = await liveRuntimeDir()
   if (argv.includes('--resume')) {
     const args = parseResumeArgs(argv)
@@ -2524,13 +3134,23 @@ export async function main(argv: readonly string[]): Promise<number> {
       runtimeDir,
       run: async (resolved) => ({
         outcome: null,
-        exitCode: await runLive(resolved, loaded, repoRoot, runtimeDir, { rulingsOwed: true }),
+        exitCode: await runLive(
+          resolved,
+          loadProcess(processFolder, resolved.flow ? { flow: resolved.flow } : {}),
+          repoRoot,
+          runtimeDir,
+          { rulingsOwed: true }
+        ),
         tracePath: ''
       })
     })
     return result.exitCode
   }
-  const args = parseArgs(argv)
+  const parsed = parseArgs(argv)
+  // --task also continues an existing checkpoint; only a new generation may choose another flow.
+  const flow = continuationFlow(runtimeDir, parsed.task, parsed.flow)
+  const args: EngineArgs = { ...parsed, ...(flow ? { flow } : {}) }
+  const loaded = loadProcess(processFolder, args.flow ? { flow: args.flow } : {})
   const runDir = runDirectory(runtimeDir, args.task)
   if (args.dryRun) {
     const lines = await dryRunLines({

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { type CloneStaging, git } from '../../src/lib/dev-review-eval/staging'
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
 import { DEV_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/dev-tools-names'
 import { spawnBudgetedAsync } from '../lib/process-fixture'
+import { fixtureDir } from '../lib/test-temp-fixture'
 import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import {
   commitInWorkingTree,
@@ -158,7 +158,7 @@ describe('development-only step one', () => {
   })
 
   it('launches every trial step only through codex sandbox, network off, with a placeholder login and no token', () => {
-    const target = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-isolation-')))
+    const target = realpathSync(fixtureDir('step-one-isolation-'))
     const sandbox = openGradingSandbox()
     try {
       const launched = sandbox.launch(['bun', 'test', 'planted.test.ts'], [target])
@@ -187,7 +187,7 @@ describe('development-only step one', () => {
 
   it('never launches a fake codex planted in the writable scratch bunx cache', async () => {
     const sandbox = openGradingSandbox()
-    const target = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-fake-codex-target-')))
+    const target = realpathSync(fixtureDir('step-one-fake-codex-target-'))
     try {
       const marker = join(sandbox.scratch, 'fake-codex-ran')
       const fake = join(sandbox.scratch, '.bun', 'install', 'cache', 'codex')
@@ -205,7 +205,7 @@ describe('development-only step one', () => {
   }, 120_000)
 
   it('never resolves the host grading executable through PATH', () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-fake-path-')))
+    const root = realpathSync(fixtureDir('step-one-fake-path-'))
     const tool = join(root, 'tool')
     const marker = join(root, 'fake-codex-ran')
     const fake = join(root, 'codex')
@@ -233,7 +233,7 @@ describe('development-only step one', () => {
 
   describe('the trial commit the host verifies', () => {
     const repository = () => {
-      const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-commit-')))
+      const workspace = realpathSync(fixtureDir('step-one-commit-'))
       git(workspace, ['init', '--quiet'])
       const commit = (message: string) => {
         git(workspace, [
@@ -325,7 +325,7 @@ describe('development-only step one', () => {
         ok: true,
         commit: head
       })
-      const parent = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-import-')))
+      const parent = realpathSync(fixtureDir('step-one-import-'))
       const imported = importTrialBundle({
         repository: workspace,
         baseCommit: staging.baseCommit,
@@ -344,7 +344,7 @@ describe('development-only step one', () => {
       async () => {
         const { workspace, staging, commit } = repository()
         commit('agent work')
-        const outside = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-attack-')))
+        const outside = realpathSync(fixtureDir('step-one-attack-'))
         const marker = join(outside, 'ssh-ran')
         git(workspace, ['config', 'remote.origin.promisor', 'true'])
         git(workspace, ['config', 'extensions.partialClone', 'origin'])
@@ -742,7 +742,7 @@ describe('development-only step one', () => {
         '0.95'
       ]
       const prices = ['--input-cost-per-million', '0', '--output-cost-per-million', '0']
-      const out = join(mkdtempSync(join(tmpdir(), 'step-one-selection-')), 'result.json')
+      const out = join(fixtureDir('step-one-selection-'), 'result.json')
       const run = (...flags: string[]) =>
         runStepOneCommand(
           ['run', '--split', 'development', '--backend', 'standalone', ...flags, ...common, ...prices, '--out', out],
@@ -802,7 +802,7 @@ describe('development-only step one', () => {
       ['source-delivery-neutral.l5', 7]
     ])
     const calls: string[] = []
-    const out = join(mkdtempSync(join(tmpdir(), 'step-one-command-')), 'result.json')
+    const out = join(fixtureDir('step-one-command-'), 'result.json')
     const result = await runStepOneCommand(
       [
         'run',
@@ -895,7 +895,7 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
     'prepareGradingCopy',
     'gradeInSandbox'
   ]
-  const tempDir = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)))
+  const tempDir = (prefix: string) => realpathSync(fixtureDir(prefix))
   const commitAll = (dir: string, message: string) => {
     git(dir, ['add', '-A'])
     git(dir, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '--allow-empty', '-m', message])

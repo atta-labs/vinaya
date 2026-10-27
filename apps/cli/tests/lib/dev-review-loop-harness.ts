@@ -731,6 +731,14 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     fetchCiConclusion: (_head) => world.gate,
     fetchFailingCheckRuns: (_head) => world.failingCheckRuns.map((c) => ({ ...c })) as never,
     readFailedCheckLogTail: (jobId) => world.failedCheckLogTails[jobId] ?? null,
+    // The failed-workflow rerun reads and writes are forge calls too: left
+    // unfaked, a red gate reaches the real `gh`, whose fixture repo never
+    // resolves, and its read retry sleeps a real 1.5s per round. A fixture
+    // exercising a rerun overrides both.
+    fetchFailedCheckWorkflowRunIds: (_head) => [],
+    rerunFailedWorkflowJobs: (runId) => {
+      throw new Error(`rerunFailedWorkflowJobs: no failed workflow run ${runId} in this in-process world`)
+    },
     fetchRulings: (_pr) => [...world.rulings],
     fetchRulingText: (rulingId) => {
       if (world.rulingsById) return world.rulingsById[rulingId] ?? null
