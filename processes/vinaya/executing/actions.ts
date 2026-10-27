@@ -65,7 +65,8 @@ import {
   enforcementControlsActive,
   type EnforcementControl
 } from '../../../apps/cli/src/lib/enforcement-controls'
-import { realLocalGateControl } from '../../../apps/cli/src/lib/local-gate-control'
+import { hookRoutingRepairLine, repairLocalGateControl } from '../../../apps/cli/src/lib/local-gate-control'
+import { appendDriverLine, loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
 import {
   countedSourceIds,
   readSourceDeliveryReceipts,
@@ -1838,7 +1839,13 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         task.issueNumber
       )
       const controls = enforcementControlsActive([
-        (task.bound?.localGateControl ?? (() => realLocalGateControl(task.repoRoot ?? process.cwd())))()
+        (
+          task.bound?.localGateControl ??
+          (() =>
+            repairLocalGateControl(task.repoRoot ?? process.cwd(), (change) => {
+              appendDriverLine(loopLogPathFor(null, task.issueNumber, task.runtimeDir), hookRoutingRepairLine(change))
+            }).control)
+        )()
       ])
       if (!controls.active) {
         const detail = describeInactiveControls(controls)

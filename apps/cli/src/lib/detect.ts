@@ -3,7 +3,7 @@
 // calls go through array-form execFile (no shell) so nothing is interpolated
 // into a command line.
 
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -255,8 +255,15 @@ export async function readCoreHooksPath(repoRoot: string): Promise<string | null
  * present) copy. This is the one thing git cannot version — every fresh clone
  * runs it once, and `doctor` names the exact command until it has been run.
  */
-export async function setCoreHooksPath(repoRoot: string, dir: string): Promise<void> {
-  await execFileAsync('git', ['-C', repoRoot, 'config', 'core.hooksPath', dir])
+export function setCoreHooksPath(repoRoot: string, dir: string): Promise<void>
+export function setCoreHooksPath(repoRoot: string, dir: string, synchronous: true): void
+export function setCoreHooksPath(repoRoot: string, dir: string, synchronous?: true): Promise<void> | void {
+  const args = ['-C', repoRoot, 'config', 'core.hooksPath', dir]
+  if (synchronous) {
+    execFileSync('git', args, { stdio: 'pipe' })
+    return
+  }
+  return execFileAsync('git', args).then(() => {})
 }
 
 /** Inverse of `setCoreHooksPath` — used by eject. `--unset` of an absent key

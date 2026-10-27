@@ -279,7 +279,7 @@ import {
   withV2DevTools
 } from '../loops/dev-review/v2/flow-v2-live'
 import { readUnpushedWorkDetail, type UnpushedWork } from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
-import { realLocalGateControl } from '../../../apps/cli/src/lib/local-gate-control'
+import { hookRoutingRepairLine, repairLocalGateControl } from '../../../apps/cli/src/lib/local-gate-control'
 import {
   createShadowRecorder,
   refusedAttemptsPath,
@@ -3065,7 +3065,13 @@ async function runShadowLive(
     ...(repo ? { repository: `${repo.owner}/${repo.repo}` } : {})
   })
   // The enforcement controls are the live repository's: the copy installs no hooks of its own.
-  taskInput.bound = { ...taskInput.bound, localGateControl: () => realLocalGateControl(repoRoot) }
+  taskInput.bound = {
+    ...taskInput.bound,
+    localGateControl: () =>
+      repairLocalGateControl(repoRoot, (change) => {
+        appendLoopLogLine(loopLogPathFor(null, args.task, runtimeDir), hookRoutingRepairLine(change))
+      }).control
+  }
   const shadowContext = engineLiveDevToolsContext({
     branch: taskInput.branch,
     worktreePath: taskInput.worktreePath,
