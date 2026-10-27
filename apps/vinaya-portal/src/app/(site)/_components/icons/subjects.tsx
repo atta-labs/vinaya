@@ -45,15 +45,16 @@ export function ThinkingIcon({ className, still = false }: IconProps) {
 export function ExecutingIcon({ className, still = false }: IconProps) {
   const paused = useIconStill(still)
   return (
-    <Glyph className={className} viewBox='3.571 2.371 16.858 19.258'>
+    <Glyph className={className} viewBox='1.917 1.917 20.166 20.166'>
+      {/* A gear whose six teeth are hexagons set into its rim, turning slowly round its hub, the orange hexagon set in it like a nut on an axle: work running. */}
       <motion.g
         key={paused ? 'still-4' : 'moving-4'}
         className='origin-[12px_12px]! [transform-box:view-box]!'
-        {...iconMotion('mv-spin', paused)}
+        {...iconMotion('mv-gear', paused)}
       >
         <path
           {...LINE}
-          d='M20 12A8 8 0 0 1 6.3 17.7M4 12A8 8 0 0 1 17.7 6.3M17.4 2.8L17.7 6.3L14.2 6.6M6.6 21.2L6.3 17.7L9.8 17.4'
+          d='M9.92 5.95 L9.92 3.55 L12.00 2.35 L14.08 3.55 L14.08 5.95 A6.4 6.4 0 0 1 16.20 7.17 L18.28 5.97 L20.36 7.17 L20.36 9.57 L18.28 10.77 A6.4 6.4 0 0 1 18.28 13.23 L20.36 14.43 L20.36 16.83 L18.28 18.03 L16.20 16.83 A6.4 6.4 0 0 1 14.08 18.05 L14.08 20.45 L12.00 21.65 L9.92 20.45 L9.92 18.05 A6.4 6.4 0 0 1 7.80 16.83 L5.72 18.03 L3.64 16.83 L3.64 14.43 L5.72 13.23 A6.4 6.4 0 0 1 5.72 10.77 L3.64 9.57 L3.64 7.17 L5.72 5.97 L7.80 7.17 A6.4 6.4 0 0 1 9.92 5.95Z'
         />
       </motion.g>
       <path {...MARK} d='M12.00 9.00 L14.59 10.50 L14.59 13.50 L12.00 15.00 L9.40 13.50 L9.40 10.50Z' />

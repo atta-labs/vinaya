@@ -138,7 +138,10 @@ const moves = {
     animate: { opacity: [0.35, 1, 0.35], scale: [0.85, 1.08, 0.85] },
     transition: { duration: 2.4, times: [0, 0.5, 1], ease: [0.42, 0, 0.58, 1] }
   },
-  'mv-spin': { animate: { rotate: [0, 360] }, transition: { duration: 3, times: [0, 1], ease: 'linear' } },
+  'mv-gear': {
+    animate: { rotate: [0, 0, 120, 120] },
+    transition: { duration: 2.6, times: [0, 0.12, 0.7, 1], ease: [0.75, 0, 0.12, 1] }
+  },
   'mv-drop': {
     animate: { y: [-4, -4, 0, 0, -4], opacity: [0.25, 0.25, 1, 1, 0.25] },
     transition: { duration: 3.2, times: [0, 0.15, 0.4, 0.8, 1], ease: [0.6, 0, 0.3, 1] }
