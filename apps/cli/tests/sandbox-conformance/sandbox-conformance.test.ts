@@ -57,7 +57,7 @@ import {
 } from '../../src/lib/task-tools/dev-tools-server.js'
 import { expectGradingSandboxDenies, proveGradingSandbox } from '../eval/grading-sandbox-proof.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../lib/dispatch/driver-socket-reach.js'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture.js'
+import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture.js'
 import { ROLE_NAMES } from '../../../../harness/adapters/agents/manifest.js'
 import { createRoleLaunchers, sandboxProbePlanFor } from '../../../../processes/vinaya/executing/actions.js'
 import { commandsTheTextsName, DOCTRINE_SOURCES, isSuiteInput, REPO_ROOT } from './command-sources.js'
@@ -663,23 +663,25 @@ describe('Engine containment probes — the command, canary, deny-rule and launc
         bun: process.execPath
       }
       const url = `http://127.0.0.1:${server?.port}/`
-      const leg = (body: string): string => {
-        const result = spawnSyncBudgeted(
-          'bash',
-          ['-c', `ok=0; seen=''; ${body}; echo "reached=$ok$seen"`],
-          { cwd: worktree, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: root }, encoding: 'utf8' },
+      // Asynchronous, so the in-process server keeps answering while the leg runs.
+      const leg = async (body: string): Promise<string> => {
+        const result = await spawnBudgetedAsync(
+          ['bash', '-c', `ok=0; seen=''; ${body}; echo "reached=$ok$seen"`],
+          { cwd: worktree, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: root } },
           30_000,
           'containment leg control'
         )
-        return `${result.stdout}`
+        return result.stdout
       }
-      expect(leg(pushLeg(targets, 'control'))).toContain('reached=1 push')
+      expect(await leg(pushLeg(targets, 'control'))).toContain('reached=1 push')
       expect(
         execFileSync('git', ['-C', bareRemote, 'rev-parse', 'refs/heads/control'], { encoding: 'utf8' }).trim()
       ).toMatch(/^[0-9a-f]{40}$/)
       if (server !== undefined) {
-        expect(leg(egressLeg(targets, url, JSON.stringify(targets.canary), 'egress'))).toContain('reached=1 egress')
-        expect(leg(apiWriteLeg(targets, url))).toContain('reached=1 api-write')
+        expect(await leg(egressLeg(targets, url, JSON.stringify(targets.canary), 'egress'))).toContain(
+          'reached=1 egress'
+        )
+        expect(await leg(apiWriteLeg(targets, url))).toContain('reached=1 api-write')
       }
       // The legs name the real targets the probes aim at.
       expect(FORGE_API_WRITE_URL).toContain('api.github.com')
