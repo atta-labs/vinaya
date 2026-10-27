@@ -140,6 +140,23 @@ const T_RING = 8 * k // plate stock (3D only — the source is flat)
 const T_SHAFT = 7 * k
 const T_GRIP = 9 * k
 const rad = (deg) => (deg * Math.PI) / 180
+/* the legs and the gripper bars SLAM home: they leave at speed (no hang at the start), keep
+   gathering speed all the way, and stop dead on impact */
+const slam = (t) => 0.4 * t + 0.6 * t * t * t
+/* The grippers close on main as four straight bars, each square-on to its leg, so a bar
+   runs parallel to the stripes on its leg. `clampR(A, deg)` is the distance from the centre
+   to that outline at `deg` for bars of apothem `A`: on a bar it is the bar's own line; in the
+   gap between two bars it is the straight chord joining their ends, which is where the
+   merge current runs. `clampPath` is a bar's two ends, from `a0` to `a1` (degrees). */
+const clampR = (A, deg) => {
+  const leg = 45 + 90 * Math.round((deg - 45) / 90)
+  if (Math.abs(deg - leg) <= GRIP) return A / Math.cos(rad(deg - leg))
+  const axis = 90 * Math.round(deg / 90)
+  const chord = (A / Math.cos(rad(GRIP))) * Math.cos(rad(45 - GRIP))
+  return chord / Math.cos(rad(deg - axis))
+}
+const clampPath = (A, a0, a1) =>
+  [a0, a1].map((deg) => [Math.cos(rad(deg)) * clampR(A, deg), Math.sin(rad(deg)) * clampR(A, deg)])
 
 /* animation constants, lifted from the source alongside the geometry */
 const CONDUIT_ANGLES_DEG = [0, 90, 180, 270]
@@ -278,6 +295,13 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
     return new THREE_.Vector2(Math.cos(a) * r - Math.sin(a) * s, Math.sin(a) * r + Math.cos(a) * s)
   }
   const polar3 = (r, deg, y = 0) => new THREE_.Vector3(Math.cos(rad(deg)) * r, y, Math.sin(rad(deg)) * r)
+  /* one gripper: the straight bar between apothems gR−7k and gR+11k — the legs' own 18k stock — over ±span about `d` */
+  const clampBand = (d, gR, span = GRIP) =>
+    new THREE_.Shape(
+      [...clampPath(gR + 11 * k, d - span, d + span), ...clampPath(gR - 7 * k, d + span, d - span)].map(
+        ([x, y]) => new THREE_.Vector2(x, y)
+      )
+    )
 
   const hexShape = (deg, R) => {
     const th0 = -rad(deg)
@@ -399,8 +423,8 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
       ray(rO, d, footW),
       ray(rO2, d, footW),
       ray(rO2, d, shaftW),
-      ray(gripR, d, shaftW),
-      ray(gripR, d, -shaftW),
+      ray(clampR(gripR, d), d, shaftW),
+      ray(clampR(gripR, d), d, -shaftW),
       ray(rO2, d, -shaftW),
       ray(rO2, d, -footW),
       ray(rO, d, -footW)
@@ -408,10 +432,7 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
     const shaftMesh = plate(shape, T_SHAFT, metal, `column-shaft-${d}`)
     group.add(shaftMesh)
 
-    const band = new THREE_.Shape()
-    band.absarc(0, 0, gripR + 5 * k, rad(d - GRIP), rad(d + GRIP), false)
-    band.absarc(0, 0, gripR - 7 * k, rad(d + GRIP), rad(d - GRIP), true)
-    band.closePath()
+    const band = clampBand(d, gripR)
     const gripMesh = plate(band, T_GRIP, metal, `gripper-${d}`)
     group.add(gripMesh)
     const col = { d, shaft: shaftMesh, grip: gripMesh, rungs: [], claws: [], feet: [], bolt: null, bslot: null, gripR }
@@ -444,8 +465,12 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
        each hex, and the foot needs no fastener of its own — the hex is the fastener */
     /* two claw hooks biting from the gripper ends toward main, r 2.5k */
     for (const off of [GRIP - 7, -(GRIP - 7)]) {
-      const p0 = polar3(gripR + 3 * k, d + off, 0)
-      const p1 = polar3(Math.max(coreRadius * 0.94, gripR - 9 * k), d + off * 0.55, coreRadius * 0.16)
+      const p0 = polar3(clampR(gripR + 3 * k, d + off), d + off, 0)
+      const p1 = polar3(
+        Math.max(coreRadius * 0.94, clampR(gripR - 9 * k, d + off * 0.55)),
+        d + off * 0.55,
+        coreRadius * 0.16
+      )
       const len = p0.distanceTo(p1)
       const geo = new THREE_.CapsuleGeometry(1.7 * k, len, 6, 12)
       const m = new THREE_.Mesh(geo, ink)
@@ -458,11 +483,11 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
     /* the fastener at the clamp centre: bolt r 3.6k with a 2.6k slot */
     const bolt = new THREE_.Mesh(new THREE_.CylinderGeometry(2.6 * k, 2.6 * k, 5 * k, 24), ink)
     bolt.name = `clamp-bolt-${d}`
-    bolt.position.copy(polar3(gripR - 1 * k, d, T_GRIP / 2 + 1.5 * k))
+    bolt.position.copy(polar3(clampR(gripR + 2 * k, d), d, T_GRIP / 2 + 1.5 * k))
     group.add(outline(bolt, 30))
     const bslot = new THREE_.Mesh(new THREE_.BoxGeometry(3.8 * k, 1.2 * k, 1.1 * k), metal)
     bslot.name = `clamp-bolt-slot-${d}`
-    bslot.position.copy(polar3(gripR - 1 * k, d, T_GRIP / 2 + 5 * k))
+    bslot.position.copy(polar3(clampR(gripR + 2 * k, d), d, T_GRIP / 2 + 5 * k))
     bslot.rotation.y = -rad(d)
     group.add(bslot)
     col.bolt = bolt
@@ -767,7 +792,8 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
     }
     const climb = 0.1 + Math.random() ** 1.6 * 0.8 // 10% to 90% up the sphere
     const phi = climb * (Math.PI / 2)
-    const from = new THREE_.Vector3(Math.cos(th) * gRnow, T_GRIP / 2, Math.sin(th) * gRnow)
+    const gTh = clampR(gRnow, (th * 180) / Math.PI)
+    const from = new THREE_.Vector3(Math.cos(th) * gTh, T_GRIP / 2, Math.sin(th) * gTh)
     const to = new THREE_.Vector3(
       Math.cos(phi) * Math.cos(th) * coreRadius * 1.01,
       CORE_LIFT + Math.sin(phi) * coreRadius * 1.01,
@@ -905,20 +931,14 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
       ray(rO, d, footW),
       ray(rO2, d, footW),
       ray(rO2, d, shaftW),
-      ray(gR, d, shaftW),
-      ray(gR, d, -shaftW),
+      ray(clampR(gR, d), d, shaftW),
+      ray(clampR(gR, d), d, -shaftW),
       ray(rO2, d, -shaftW),
       ray(rO2, d, -footW),
       ray(rO, d, -footW)
     ])
   }
-  const gripShape = (d, gR) => {
-    const s = new THREE_.Shape()
-    s.absarc(0, 0, gR + 5 * k, rad(d - GRIP), rad(d + GRIP), false)
-    s.absarc(0, 0, gR - 7 * k, rad(d + GRIP), rad(d - GRIP), true)
-    s.closePath()
-    return s
-  }
+  const gripShape = clampBand
   const pulseScale = (x) => {
     if (x <= 0 || x >= 1) return 1
     if (x < 0.22) return 1 - 0.17 * (x / 0.22)
@@ -968,7 +988,7 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
     })
 
     // stage 4 — the columns ride inward until the grippers clamp main
-    const p = easeOutCubic(clampP)
+    const p = slam(clampP)
     const strutOuter = rIn - 1 * k
     const clampDone = clampP >= 0.999
     const gRraw = strutOuter - (strutOuter - gripR) * p
@@ -976,17 +996,28 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
        nothing and re-extruded twelve solids per frame */
     const gR = clampDone ? gripR : q(gRraw, 0.6 * k)
     const hookSnap = clamp01((clampP - 0.82) / 0.18)
+    /* stage 5 — once the legs are home, each gripper bar grows out from its leg's end, both
+       ways at once, quantised like the bands so the re-extrusion stays cheap */
+    const gripRaw = GRIP * slam(clamp01(state.grip ?? 1))
+    const gripDone = gripRaw >= GRIP - 0.001
+    const span = gripDone ? GRIP : q(gripRaw, GRIP / 22)
     for (const col of parts.columns) {
       const on = p > 0.001
       col.shaft.visible = on
-      col.grip.visible = on
+      col.grip.visible = on && span > 0.5
       for (const f of col.feet) f.visible = on // the foot rivets arrive WITH their column
       col.headJoint.visible = on
       if (on && (gR !== col.gripR || (clampDone && !col.final))) {
         reshape(col.shaft, shaftShape(col.d, gR), T_SHAFT, clampDone)
-        reshape(col.grip, gripShape(col.d, gR), T_GRIP, clampDone)
         col.gripR = gR
         col.final = clampDone
+      }
+      const gripFinal = clampDone && gripDone
+      if (col.grip.visible && (span !== col.gripSpan || gR !== col.gripGR || (gripFinal && !col.gripFinal))) {
+        reshape(col.grip, gripShape(col.d, gR, span), T_GRIP, gripFinal)
+        col.gripSpan = span
+        col.gripGR = gR
+        col.gripFinal = gripFinal
       }
       const rO2 = strutOuter - 15 * k
       for (const r of col.rungs) {
@@ -995,15 +1026,19 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
       }
       for (const cw of col.claws) {
         cw.mesh.visible = false
-        const p0 = polar3(gR + 3 * k, col.d + cw.off, 0)
-        const p1 = polar3(Math.max(coreRadius * 0.94, gR - 9 * k), col.d + cw.off * 0.55, coreRadius * 0.16)
+        const p0 = polar3(clampR(gR + 3 * k, col.d + cw.off), col.d + cw.off, 0)
+        const p1 = polar3(
+          Math.max(coreRadius * 0.94, clampR(gR - 9 * k, col.d + cw.off * 0.55)),
+          col.d + cw.off * 0.55,
+          coreRadius * 0.16
+        )
         cw.mesh.position.copy(p0.clone().add(p1).multiplyScalar(0.5))
         cw.mesh.quaternion.setFromUnitVectors(new THREE_.Vector3(0, 1, 0), p1.clone().sub(p0).normalize())
       }
-      col.bolt.visible = hookSnap > 0.02
-      col.bslot.visible = hookSnap > 0.02
-      col.bolt.position.copy(polar3(gR - 1 * k, col.d, T_GRIP / 2 + 1.5 * k))
-      col.bslot.position.copy(polar3(gR - 1 * k, col.d, T_GRIP / 2 + 5 * k))
+      col.bolt.visible = col.grip.visible
+      col.bslot.visible = col.grip.visible
+      col.bolt.position.copy(polar3(clampR(gR + 2 * k, col.d), col.d, T_GRIP / 2 + 1.5 * k))
+      col.bslot.position.copy(polar3(clampR(gR + 2 * k, col.d), col.d, T_GRIP / 2 + 5 * k))
     }
 
     // stage 3 — the currents strike across the gaps (full length in the first ⅙)
@@ -1087,7 +1122,7 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
       const v = INNER_STRANDS[s.i]
       const mid = rad(s.deg)
       const half = rad(INNER_HALF)
-      const rBase = gR + v.band * 2.6 * k
+      const rBase = gR + 2 * k + v.band * 2.6 * k
       const amp = 3.6 * k * v.amp
       const pts = []
       for (let j = 0; j <= v.samples; j++) {
@@ -1104,9 +1139,9 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
             Math.sin(j * 3.1 - innerTimes[s.i] * 0.35 + h2 * 6.283) * 0.25) *
           amp *
           env
-        const r = rBase + swing * (1 - 0.55 * ax)
         const jit = (hash01(j + v.seed + 50) - 0.5) * (2 * half) * 0.07
         const ang = mid - half + 2 * half * tt + jit
+        const r = clampR(rBase, (ang * 180) / Math.PI) + swing * (1 - 0.55 * ax)
         pts.push(new THREE_.Vector3(Math.cos(ang) * r, swing * 0.5 + zig * 0.55 * ax, Math.sin(ang) * r))
       }
       s.mesh.geometry.dispose()

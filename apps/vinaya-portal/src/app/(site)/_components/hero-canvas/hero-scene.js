@@ -42,15 +42,19 @@ const OPEN_SHIFT = 2.05 - (ZOOM_HOLD + ZOOM_DUR + OPEN_GAP)
 const BUILD = [
   ['deploy', 2.05, 0.7],
   ['spark', 3.05, 0.45],
-  ['clamp', 3.85, 0.8],
-  ['mainPulse', 4.6, 0.62],
-  ['merge', 4.73, 0.55]
+  ['clamp', 3.85, 0.4],
+  ['grip', 4.3, 0.25],
+  ['mainPulse', 4.52, 0.62],
+  ['merge', 4.55, 0.12]
 ]
   .filter(([key]) => RING || !RING_BEATS.includes(key))
   .map(([key, start, dur]) => [key, afterRing(start) - OPEN_SHIFT, dur])
-const WAVE_T = afterRing(4.73) - OPEN_SHIFT // fires with `merge`
+/* the legs land and the gripper bars grow out of them; then the current strikes across the gaps at
+   once (`merge` ramps in 0.12 s, so it reads as a strike, not a fade) and the shock wave fires as
+   soon as the current is visible */
+const WAVE_T = afterRing(4.65) - OPEN_SHIFT
 const FLOW_T = WAVE_T + 0.35 // the infinity leaves main just behind the shock wave's front
-const FLASH_T = afterRing(5.35) - OPEN_SHIFT // the build flash trails the latch
+const FLASH_T = afterRing(5.27) - OPEN_SHIFT // the build flash trails the latch
 /* the scene clock (and the field's step) runs INTRO_SPEED times the rate the beats above are written at
    until INTRO_END, the end of the build flash, then at real time, with no jump. Without the ring the
    intro plays at the speed it is written at; with it, 1.5 times faster, as it always has */
