@@ -14,8 +14,11 @@
  * its Log events. Best-effort: never fails the push, and writes to STDERR
  * only, so the hook's own refusal summary stays the tail of STDOUT.
  */
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import {
+  completedTestSelection,
+  TEST_SELECTION_COMPLETE,
   currentBranch,
   currentHead,
   FAILED_TESTS_RECORD,
@@ -31,6 +34,14 @@ import {
 } from './pre-push-failed-tests.js'
 
 function main(): void {
+  if (process.argv[2] === 'run') {
+    const files = process.argv.slice(3)
+    const result = spawnSync('bun', ['test', '--timeout=30000', '--', ...files], { stdio: 'inherit' })
+    if (result.signal === null && (result.status === 0 || result.status === 1))
+      process.stdout.write(TEST_SELECTION_COMPLETE + JSON.stringify({ files, exitCode: result.status }) + '\n')
+    process.exitCode = result.status ?? 1
+    return
+  }
   const repoRoot = process.cwd()
   const outcome = process.argv[2] === 'passed' ? 'passed' : 'failed'
   const logPath = process.argv[3]
@@ -46,13 +57,8 @@ function main(): void {
         log = ''
       }
     }
-    const failed = outcome === 'failed' ? parseFailedTestFiles(log, repoRoot, true) : []
     const head = currentHead(repoRoot)
     const branch = currentBranch(repoRoot)
-    const record = recordFromRun(outcome, failed, head, branch, new Date())
-    if (record) writeJsonUnderGit(repoRoot, FAILED_TESTS_RECORD, record)
-    else removeUnderGit(repoRoot, FAILED_TESTS_RECORD)
-
     let selection: SelectionNote | null = null
     const noteText = mode === 'storage' ? null : readJsonUnderGit(repoRoot, SELECTION_NOTE)
     if (noteText) {
@@ -63,12 +69,23 @@ function main(): void {
         selection = null
       }
     }
+    const selectionCompleted =
+      selection?.selected.length === 0 ||
+      mode === 'storage' ||
+      completedTestSelection(log, repoRoot, selection?.selected)
+    const settledOutcome = outcome === 'passed' && !selectionCompleted ? 'failed' : outcome
+    const failed = settledOutcome === 'failed' ? parseFailedTestFiles(log, repoRoot, true, selection?.selected) : []
+    const record = recordFromRun(settledOutcome, failed, head, branch, new Date())
+    if (record) writeJsonUnderGit(repoRoot, FAILED_TESTS_RECORD, record)
+    else removeUnderGit(repoRoot, FAILED_TESTS_RECORD)
+
     const result: LastPushResult = {
       version: 1,
       head,
       branch,
       mode,
-      outcome,
+      outcome: settledOutcome,
+      selectionCompleted,
       selection,
       failed,
       elapsedSeconds: Number.isFinite(elapsed) ? elapsed : null,

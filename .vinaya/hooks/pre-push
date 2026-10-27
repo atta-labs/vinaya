@@ -96,7 +96,7 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # what a later PR-body Test-plan command line would need to match,
   # verbatim, to reuse this run instead of re-executing it.
   VINAYA_TEST_CMD="bun test --timeout=30000 -- $(printf '%s' "$VINAYA_SELECTED_TESTS" | tr '\n' ' ')"
-  echo "$VINAYA_SELECTED_TESTS" | xargs bun test --timeout=30000 -- > "$VINAYA_TEST_LOG" 2>&1
+  echo "$VINAYA_SELECTED_TESTS" | xargs bun apps/cli/src/lib/pre-push-record-tests.ts run > "$VINAYA_TEST_LOG" 2>&1
   VINAYA_TEST_STATUS=$?
   cat "$VINAYA_TEST_LOG"
   VINAYA_TEST_ELAPSED=$(( $(date +%s) - VINAYA_TEST_STARTED ))

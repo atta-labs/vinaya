@@ -38,6 +38,8 @@ export type FailedTestsRecord = {
    */
   failed: string[] | 'all'
   recordedAt: string
+  /** Only a supervised, fully completed selection permits a narrow rerun. */
+  selectionCompleted?: boolean
 }
 
 /** How the selector chose this push's tests. */
@@ -66,8 +68,56 @@ export type LastPushResult = {
   outcome: 'passed' | 'failed'
   selection: SelectionNote | null
   failed: string[] | 'all'
+  selectionCompleted?: boolean
   elapsedSeconds: number | null
   recordedAt: string
+}
+
+/** Emitted by the supervisor only after Bun exits normally, never after a signal or native crash. */
+export const TEST_SELECTION_COMPLETE = 'vinaya-test-selection-complete '
+
+/** The whole expected selection completed normally, with a terminal Bun summary for every batch. */
+export function completedTestSelection(log: string, cwd: string, expected?: readonly string[]): boolean {
+  const completed = new Set<string>()
+  let batch: string[] = []
+  let markers = 0
+  const absolute = (path: string) => (isAbsolute(path) ? path : join(cwd, path))
+  for (const line of log.split('\n')) {
+    if (!line.startsWith(TEST_SELECTION_COMPLETE)) {
+      batch.push(line)
+      continue
+    }
+    try {
+      const result = JSON.parse(line.slice(TEST_SELECTION_COMPLETE.length)) as { files: string[]; exitCode: number }
+      if (
+        ![0, 1].includes(result.exitCode) ||
+        !Array.isArray(result.files) ||
+        !result.files.every((file) => typeof file === 'string')
+      )
+        return false
+      const text = batch.join('\n')
+      const summary = [...text.matchAll(/^Ran \d+ tests? across (\d+) files?\.(?:.*)$/gm)].at(-1)
+      const headers = new Set([...text.matchAll(/^(\S.*\.test\.[a-zA-Z]+):$/gm)].map((match) => absolute(match[1]!)))
+      const files = new Set(result.files.map(absolute))
+      if (
+        !summary ||
+        Number(summary[1]) !== files.size ||
+        headers.size !== files.size ||
+        [...files].some((file) => !headers.has(file))
+      )
+        return false
+      for (const file of files) completed.add(file)
+      markers++
+      batch = []
+    } catch {
+      return false
+    }
+  }
+  if (markers === 0 || batch.join('\n').trim() !== '') return false
+  return (
+    expected === undefined ||
+    (new Set(expected.map(absolute)).size === completed.size && expected.every((file) => completed.has(absolute(file))))
+  )
 }
 
 /**
@@ -77,11 +127,21 @@ export type LastPushResult = {
  * resolve against `cwd`. Returns `'all'` when `exitedNonZero` but no file
  * could be named, so a crash never turns into an empty re-run.
  */
-export function parseFailedTestFiles(log: string, cwd: string, exitedNonZero: boolean): string[] | 'all' {
+export function parseFailedTestFiles(
+  log: string,
+  cwd: string,
+  exitedNonZero: boolean,
+  selected?: readonly string[]
+): string[] | 'all' {
+  if (exitedNonZero && !completedTestSelection(log, cwd, selected)) return 'all'
   const failed = new Set<string>()
   let current: string | null = null
   for (const raw of log.split('\n')) {
     const line = raw.trimEnd()
+    if (/^\d+ tests? failed:/.test(line)) {
+      current = null
+      continue
+    }
     const header = /^(\S.*\.test\.[a-zA-Z]+):$/.exec(line)
     if (header?.[1]) {
       current = isAbsolute(header[1]) ? header[1] : join(cwd, header[1])
@@ -122,7 +182,7 @@ export function chooseTests(inputs: RerunInputs): SelectionNote {
     fullCount: fullSelection.length,
     selected: fullSelection
   }
-  if (!record || record.failed === 'all') return full
+  if (!record || record.failed === 'all' || record.selectionCompleted !== true) return full
   if (record.branch !== branch || !inputs.recordIsAncestor) return full
   // A refusal was recorded, so this push must run something: a failed file deleted since (which would let the push
   // pass having run nothing it refused for), or a re-run that comes out empty, takes the full selection instead.
@@ -153,7 +213,7 @@ export function recordFromRun(
   now: Date
 ): FailedTestsRecord | null {
   if (outcome === 'passed') return null
-  return { version: 1, head, branch, failed, recordedAt: now.toISOString() }
+  return { version: 1, head, branch, failed, recordedAt: now.toISOString(), selectionCompleted: failed !== 'all' }
 }
 
 /** Reads a JSON record, or `null` when missing, unreadable or of another shape. */

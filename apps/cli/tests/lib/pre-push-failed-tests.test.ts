@@ -7,6 +7,8 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  completedTestSelection,
+  TEST_SELECTION_COMPLETE,
   changedBetween,
   chooseTests,
   type FailedTestsRecord,
@@ -18,7 +20,8 @@ import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const RECORDER = join(import.meta.dir, '..', '..', 'src', 'lib', 'pre-push-record-tests.ts')
 
-const BUN_LOG = `bun test v1.4.2
+const BUN_LOG =
+  `bun test v1.4.2
 
 a.test.ts:
 error: expect(received).toBe(expected)
@@ -29,6 +32,9 @@ sub/c.test.ts:
 (pass) c ok
 (fail) c fails [0.01ms]
 
+b.test.ts:
+(pass) b ok
+
 d.test.ts:
 
 # Unhandled error between tests
@@ -38,9 +44,19 @@ error: boom
  2 pass
  3 fail
 Ran 5 tests across 4 files.
-`
+` +
+  TEST_SELECTION_COMPLETE +
+  JSON.stringify({ files: ['a.test.ts', 'sub/c.test.ts', 'b.test.ts', 'd.test.ts'], exitCode: 1 }) +
+  '\n'
 
 describe('parseFailedTestFiles', () => {
+  it('a named failure followed by an unfinished test run forces the entire selection', () => {
+    const interrupted = 'a.test.ts:\n(fail) a fails\nb.test.ts:\n'
+    const failed = parseFailedTestFiles(interrupted, '/repo', true)
+    expect(failed).toBe('all')
+    expect(chooseTests({ ...base, record: record({ failed }), fullSelection: FULL }).mode).toBe('full')
+  })
+
   it('names every file whose block holds a failure or an unhandled error, resolved against cwd', () => {
     expect(parseFailedTestFiles(BUN_LOG, '/repo', true)).toEqual([
       '/repo/a.test.ts',
@@ -50,7 +66,16 @@ describe('parseFailedTestFiles', () => {
   })
 
   it('keeps absolute headers as they are', () => {
-    expect(parseFailedTestFiles('/abs/x.test.ts:\n(fail) t\n', '/repo', true)).toEqual(['/abs/x.test.ts'])
+    expect(
+      parseFailedTestFiles(
+        '/abs/x.test.ts:\n(fail) t\nRan 1 test across 1 file.\n' +
+          TEST_SELECTION_COMPLETE +
+          JSON.stringify({ files: ['/abs/x.test.ts'], exitCode: 1 }) +
+          '\n',
+        '/repo',
+        true
+      )
+    ).toEqual(['/abs/x.test.ts'])
   })
 
   it("a failed run that names no file is 'all', never an empty re-run", () => {
@@ -64,6 +89,7 @@ describe('parseFailedTestFiles', () => {
 
 const record = (over: Partial<FailedTestsRecord> = {}): FailedTestsRecord => ({
   version: 1,
+  selectionCompleted: true,
   head: 'old',
   branch: 'task/1',
   failed: ['/r/a.test.ts', '/r/gone.test.ts'],
@@ -126,7 +152,14 @@ describe('recordFromRun / parseRecord', () => {
     const now = new Date('2026-10-26T01:00:00Z')
     expect(recordFromRun('passed', [], 'h', 'b', now)).toBeNull()
     const r = recordFromRun('failed', ['/x.test.ts'], 'h', 'b', now)
-    expect(r).toEqual({ version: 1, head: 'h', branch: 'b', failed: ['/x.test.ts'], recordedAt: now.toISOString() })
+    expect(r).toEqual({
+      version: 1,
+      head: 'h',
+      branch: 'b',
+      failed: ['/x.test.ts'],
+      recordedAt: now.toISOString(),
+      selectionCompleted: true
+    })
     expect(parseRecord(JSON.stringify(r))).toEqual(r)
   })
 
@@ -181,6 +214,10 @@ describe('pre-push-record-tests (real git repository)', () => {
     expect(result.outcome).toBe('failed')
     expect(result.elapsedSeconds).toBe(12)
 
+    writeFileSync(
+      join(dir, '.git', 'vinaya', 'pre-push-selection.json'),
+      JSON.stringify({ version: 1, head: written.head, selected: [] })
+    )
     expect(
       spawnSyncBudgeted('bun', [RECORDER, 'passed', '', '0'], { cwd: dir, env: cleanEnv(), encoding: 'utf8' }).status
     ).toBe(0)
@@ -198,5 +235,47 @@ describe('changedBetween (real git repository)', () => {
     git(['rm', '-q', 'a.txt'])
     git(['commit', '-q', '-m', 'delete'])
     expect(changedBetween(dir, from, git(['rev-parse', 'HEAD']))).toEqual([join(dir, 'a.txt')])
+  })
+})
+
+describe('selection supervisor', () => {
+  for (const signal of ['SIGTERM', 'SIGKILL'])
+    it(`a real ${signal} after a named failure forces a full rerun`, () => {
+      const dir = fixtureRepo()
+      const a = join(dir, 'a.test.ts')
+      const b = join(dir, 'b.test.ts')
+      writeFileSync(a, "import { test, expect } from 'bun:test'; test('a fails', () => expect(1).toBe(2));")
+      writeFileSync(
+        b,
+        `import { test } from 'bun:test'; test('b interrupted', () => process.kill(process.pid, '${signal}'));`
+      )
+      const result = spawnSyncBudgeted('bun', [RECORDER, 'run', a, b], { cwd: dir, env: cleanEnv(), encoding: 'utf8' })
+      const log = result.stdout + result.stderr
+      expect(result.status).not.toBe(0)
+      expect(log).toContain('(fail) a fails')
+      expect(completedTestSelection(log, dir, [a, b])).toBe(false)
+      expect(parseFailedTestFiles(log, dir, true, [a, b])).toBe('all')
+    })
+
+  it('a complete ordinary failure can narrow only when every selected file completed', () => {
+    expect(
+      completedTestSelection(BUN_LOG, '/repo', [
+        '/repo/a.test.ts',
+        '/repo/b.test.ts',
+        '/repo/sub/c.test.ts',
+        '/repo/d.test.ts'
+      ])
+    ).toBe(true)
+    expect(
+      completedTestSelection(BUN_LOG, '/repo', [
+        '/repo/a.test.ts',
+        '/repo/b.test.ts',
+        '/repo/sub/c.test.ts',
+        '/repo/d.test.ts',
+        '/repo/missing.test.ts'
+      ])
+    ).toBe(false)
+    expect(parseFailedTestFiles(BUN_LOG, '/repo', true, ['/repo/missing.test.ts'])).toBe('all')
+    expect(chooseTests({ ...base, record: record({ selectionCompleted: false }) }).mode).toBe('full')
   })
 })

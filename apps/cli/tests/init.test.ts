@@ -1422,7 +1422,7 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     expect(prePush).toContain('unset "${_vinaya_git_var%=*}"')
     const selectIdx = prePush.indexOf('pre-push-select-tests.ts')
     const unsetIdx = prePush.indexOf('_vinaya_git_var')
-    const runTestsIdx = prePush.indexOf('xargs bun test')
+    const runTestsIdx = prePush.indexOf('pre-push-record-tests.ts run')
     expect(selectIdx).toBeLessThan(unsetIdx)
     expect(unsetIdx).toBeLessThan(runTestsIdx)
   })
@@ -1476,12 +1476,12 @@ git rev-parse --git-dir 2>&1 || true
     expect(out).not.toContain('core.bare')
   })
 
-  it("both xargs pipelines stop flag parsing with a trailing '--' before the file list, so a tracked file named like a CLI flag is never forwarded as one (round-4 security review, HIGH/MEDIUM)", async () => {
+  it('the generated hook delegates tests to the supervised runner and keeps Biome flag parsing bounded', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
     expect(prePush).toContain('xargs bunx biome check --no-errors-on-unmatched -- ||')
-    expect(prePush).toContain('xargs bun test --timeout=30000 --')
+    expect(prePush).toContain('xargs bun apps/cli/src/lib/pre-push-record-tests.ts run')
   })
 
   it("real subprocess: 'bun test --' really does refuse to treat a selected file named like a flag as one — without it, a tracked file named '--preload=<module>' would load and run that module (round-4 security review, HIGH)", () => {
