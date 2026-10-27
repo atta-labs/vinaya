@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSync } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { parseSwitchFlags } from '../../src/commands/task-switch'
 import { readPauseState, writePauseState } from '../../src/lib/dev-review-loop/pause-resume'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 import {
   CHECKPOINT_FILES,
   liveSwitchDeps,
@@ -153,9 +153,9 @@ describe('the task switch command line', () => {
   })
 
   const usage = (args: string[]) =>
-    spawnSync('bun', [join(import.meta.dir, '../../src/index.ts'), 'task', 'switch', ...args], {
+    spawnSyncBudgeted('bun', [join(import.meta.dir, '../../src/index.ts'), 'task', 'switch', ...args], {
       encoding: 'utf8',
-      env: { ...process.env, VINAYA_RUNTIME_DIR: root }
+      env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: root }
     })
 
   it('exits 2 and names --agent when the agent is missing', () => {
