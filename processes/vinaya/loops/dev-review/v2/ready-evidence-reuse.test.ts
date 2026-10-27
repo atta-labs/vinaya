@@ -12,6 +12,7 @@ import {
 } from '../../../../../apps/cli/src/lib/pr-report-engine'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { readyGateEvidence } from './flow-v2-live'
 import { withReadyTestCommand } from './v2-actions'
 
 // The loop writes the ready push's own test command as the staged body's Test Plan line, so the Evidence write
@@ -73,5 +74,38 @@ describe('the Evidence write reuses the ready push run', () => {
     expect(result.reusedFrom).toBeDefined()
     expect(result.output).toBe('1 pass')
     expect(existsSync(marker)).toBe(false)
+  })
+})
+
+describe('persisted ready-gate evidence', () => {
+  test.each(['no selected files', 'missing fenced plan'])('%s never executes a body command', async (shape) => {
+    const { dir, marker } = worktree()
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: dir })
+    const body =
+      shape === 'missing fenced plan'
+        ? '## Test plan\n- run tests\n'
+        : `## Test plan\n\n\`\`\`\nbun -e 'require("fs").writeFileSync(${JSON.stringify(marker)}, "reran")' → passes\n\`\`\`\n`
+    const resultPath = join(dir, '.git', 'ready-result.json')
+    writeFileSync(
+      resultPath,
+      JSON.stringify({
+        head,
+        gate: {
+          passed: true,
+          output: 'no tests selected',
+          selection: { version: 1, mode: 'full', head, fullCount: 0, selected: [] },
+          failed: [],
+          wallMs: 1
+        }
+      })
+    )
+    const composed = await readyGateEvidence({ body, head, resultPath, worktreePath: dir })
+    expect(composed).toContain(`Head: ${head}`)
+    expect(composed).toContain('No local tests ran.')
+    expect(composed).toContain('persisted ready-gate result')
+    expect(existsSync(marker)).toBe(false)
+    writeFileSync(resultPath, JSON.stringify({ head: 'stale', gate: { passed: true } }))
+    await expect(readyGateEvidence({ body, head, resultPath, worktreePath: dir })).rejects.toThrow('approved head')
   })
 })

@@ -260,10 +260,10 @@ import {
 } from '../executing/actions'
 import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../loops/dev-review/v2/v2-actions'
 import { runCli } from '../../../harness/gates/run-checks'
-import { refreshPrEvidence } from '../executing/refresh-evidence'
 import {
   endStoragePushes,
   liveV2Functions,
+  readyGateEvidence,
   stagedPullRequestStore,
   sweepReadyGateRuns,
   storagePushLogEvent,
@@ -2668,15 +2668,16 @@ async function runLive(
       remoteHead: () => taskInput.remoteHead?.() ?? null,
       openWithDeveloperTool: (title, body) => liveContext.context.openPullRequest(title, body),
       // The loop writes the Evidence block once the pull request is open; the Developer's v2 turn runs no tests.
-      writeEvidence: ({ pr }) => {
+      writeEvidence: async ({ pr, head }) => {
         try {
-          refreshPrEvidence({
-            cliEntry: taskInput.cliEntry,
-            worktreePath: taskInput.worktreePath,
-            prNumber: () => pr,
-            readHead: readWorktreeHead,
-            runCli
+          const body = await readyGateEvidence({
+            body: liveForge.prBody(pr),
+            head,
+            resultPath: store.gateResultPath,
+            worktreePath: taskInput.worktreePath
           })
+          const updated = await liveContext.context.updatePullRequestBody(body)
+          if (!updated.ok) return { ok: false, reason: JSON.stringify(updated.error) }
           return { ok: true }
         } catch (error) {
           return { ok: false, reason: error instanceof Error ? error.message : String(error) }

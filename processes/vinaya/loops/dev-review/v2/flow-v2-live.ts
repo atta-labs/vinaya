@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
 import { type DevToolContext, devToolError } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
@@ -20,6 +20,8 @@ import {
 import { NO_LOCAL_TESTS_MARKER } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { PUSH_MODE_MARKER, storageMarkerText } from '../../../../../apps/cli/src/lib/pre-push-mode-logic'
 import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../apps/cli/src/lib/test-temp'
+import { buildReport, computeGroupA, replaceEvidenceBlock } from '../../../../../apps/cli/src/lib/pr-report-engine'
+import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import type { ReadyGateResult, StagedPullRequest, V2Functions } from './v2-actions'
 
 // The live wiring of review locally, push once (version 2 of the developer-review Flow) for the Engine runner: the
@@ -34,9 +36,11 @@ export const stagedPullRequestPath = (runDir: string): string => join(runDir, 's
 export function stagedPullRequestStore(runDir: string): {
   read: () => StagedPullRequest | null
   write: (staged: StagedPullRequest) => void
+  gateResultPath: string
 } {
   const path = stagedPullRequestPath(runDir)
   return {
+    gateResultPath: join(runDir, 'ready-gate-result.json'),
     read: () => {
       try {
         const value = JSON.parse(readFileSync(path, 'utf8')) as Partial<StagedPullRequest>
@@ -468,15 +472,22 @@ export function liveV2Functions(input: {
   log?: (line: string) => void
 }): V2Functions {
   return {
-    runReadyGate: ({ head, signal }) =>
-      runReadyGateLive({
+    runReadyGate: async ({ head, signal }) => {
+      const gate = await runReadyGateLive({
         worktreePath: input.worktreePath,
         branch: input.branch,
         head,
         remoteHead: input.remoteHead(),
         ...(signal ? { signal } : {}),
         ...(input.log ? { log: input.log } : {})
-      }),
+      })
+      const path = input.store.gateResultPath
+      mkdirSync(dirname(path), { recursive: true })
+      const temporary = `${path}.${process.pid}.tmp`
+      writeFileSync(temporary, JSON.stringify({ head, gate }), { mode: 0o600 })
+      renameSync(temporary, path)
+      return gate
+    },
     stagedPullRequest: input.store.read,
     findOpenPullRequest: input.findOpenPullRequest,
     openPullRequest: async (staged) => {
@@ -488,6 +499,46 @@ export function liveV2Functions(input: {
     endStoragePushes: () => endStoragePushes(input.worktreePath),
     ...(input.writeEvidence ? { writeEvidence: input.writeEvidence } : {})
   }
+}
+
+/** Composes evidence only from the completed gate record; never executes body commands. */
+export async function readyGateEvidence(input: {
+  body: string
+  head: string
+  resultPath: string
+  worktreePath: string
+}): Promise<string> {
+  const record = JSON.parse(readFileSync(input.resultPath, 'utf8')) as { head: string; gate: ReadyGateResult }
+  if (record.head !== input.head || record.gate?.passed !== true)
+    throw new Error('no successful ready-gate result for the approved head')
+  const groupA = await computeGroupA(input.worktreePath)
+  if (groupA.head !== input.head) throw new Error('worktree changed after the ready gate')
+  const gate = record.gate
+  const none = gate.localTests === 'none' || gate.selection?.selected.length === 0
+  const report = await buildReport({
+    cwd: input.worktreePath,
+    body: input.body,
+    groupA,
+    gradedBodySource: 'push',
+    gateRunner: () => ({ failed: false, outcomes: [{ name: 'ready-gate', status: 'pass', errors: [] }] }),
+    groupC: {
+      commands: [
+        {
+          command: none
+            ? 'no local tests'
+            : gate.selection
+              ? readyTestCommand(gate.selection.selected)
+              : 'repository pre-push hook',
+          output: none ? `No local tests ran.\n${gate.output}` : gate.output,
+          exitCode: 0,
+          timedOut: false,
+          overflowed: false,
+          reusedFrom: `persisted ready-gate result at ${input.head}`
+        }
+      ]
+    }
+  })
+  return replaceEvidenceBlock(input.body, report.blockInner)
 }
 
 /** The `storage_push` Log event for one landed storage push. */
