@@ -640,8 +640,7 @@ export function withToolHostBoundaries(
 
 /** Reports a failed turn's transport loss and acknowledges successful turns without replaying them. */
 export function toolHostRedispatch(
-  hosts: Readonly<Record<string, { role: string; host: ReplaceableDevToolsHost }>>,
-  narrate: (line: string) => void
+  hosts: Readonly<Record<string, { role: string; host: ReplaceableDevToolsHost }>>
 ): AgentRedispatch {
   return {
     lost: (step) => {
@@ -649,14 +648,7 @@ export function toolHostRedispatch(
       if (entry === undefined || entry.host.consecutiveLosses() === 0) return null
       return `the ${entry.role} tool host's socket disappeared during the dispatch`
     },
-    succeeded: (step) => hosts[step]?.host.noteDispatchSucceeded?.(),
-    boundary: async (step) => {
-      const entry = hosts[step]
-      if (entry === undefined) return
-      narrate(`re-dispatching the ${step} turn once: its dispatch lost the ${entry.role} tool host`)
-      if (await entry.host.replaceIfSocketMissing())
-        narrate(`the ${entry.role} tool host's socket file was missing; replaced it on the same path`)
-    }
+    succeeded: (step) => hosts[step]?.host.noteDispatchSucceeded?.()
   }
 }
 
@@ -1753,7 +1745,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
               ...(options.allowUnixSockets === true ? [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] : [])
             ]
           }),
-          agentRedispatch: toolHostRedispatch(roleHostsByStep, narrate),
+          agentRedispatch: toolHostRedispatch(roleHostsByStep),
           stepPrompts: withToolHostBoundaries(
             developerFacts
               ? {

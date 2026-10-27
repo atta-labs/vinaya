@@ -118,7 +118,6 @@ export interface ProcessRunOptions {
 /** Transport-loss observation. Failed turns pause rather than automatically replaying tool or file effects. */
 export interface AgentRedispatch {
   lost: (stepId: string) => string | null
-  boundary: (stepId: string) => Promise<void>
   succeeded?: (stepId: string) => void
 }
 

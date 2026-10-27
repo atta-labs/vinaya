@@ -526,7 +526,7 @@ describe('tool hosts', () => {
     }
   })
 
-  test('a socket deleted mid-turn before the bridge connects: one re-dispatch, no repeated effect, then a named stop', async () => {
+  test('a socket deleted before the bridge connects: the host is replaced at the next dispatch boundary, its publication lands once, and two losses in a row stop the role, named', async () => {
     const dir = mkdtempSync('/tmp/rh-')
     scratch.push(dir)
     const socketPath = socketIn(dir, 'h')
@@ -549,7 +549,7 @@ describe('tool hosts', () => {
       rmSync(socketPath)
       await expect(connect(socketPath)).rejects.toThrow()
       expect(host.noteDispatchEnded(first)).toBe(true)
-      // The re-dispatch at the next boundary: the host is replaced, and the turn's one publication lands once.
+      // The next dispatch's boundary replaces the host, and that dispatch's one publication lands once.
       await prompts.develop!('prompt', {})
       expect(narrated.some((line) => line.includes('replaced it on the same path'))).toBe(true)
       const second = capabilities.mint(60_000)

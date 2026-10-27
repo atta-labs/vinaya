@@ -154,7 +154,6 @@ describe('engine runtime', () => {
     const { options } = harness()
     const control = createRunControl()
     let effects = 0
-    let replacements = 0
     options.spawnFn = () => {
       effects++
       return fakeAgentProcess(() => {})
@@ -170,15 +169,9 @@ describe('engine runtime', () => {
         }
       }
     }
-    options.agentRedispatch = {
-      lost: () => 'socket missing',
-      boundary: async () => {
-        replacements++
-      }
-    }
+    options.agentRedispatch = { lost: () => 'socket missing' }
     const outcome = await startProcessRun(options)
     expect(effects).toBe(1)
-    expect(replacements).toBe(0)
     expect(outcome.reason).toBe('paused')
     if (outcome.reason === 'paused') expect(outcome.checkpoint?.sessions.work).toBe('s1')
   })
@@ -190,7 +183,7 @@ describe('engine runtime', () => {
       effects++
       return fakeAgentProcess(() => {}, 1)
     }
-    options.agentRedispatch = { lost: () => 'socket missing', boundary: async () => {} }
+    options.agentRedispatch = { lost: () => 'socket missing' }
     const outcome = await startProcessRun(options)
     expect(effects).toBe(1)
     expect(outcome.reason).toBe('failed')
