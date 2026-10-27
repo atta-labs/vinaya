@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import {
@@ -9,7 +8,14 @@ import {
   describeInactiveControls,
   enforcementControlsActive
 } from '../../src/lib/enforcement-controls.js'
-import { installedHookDir, localGateControl, realLocalGateControl } from '../../src/lib/local-gate-control.js'
+import {
+  hookRoutingRepairLine,
+  installedHookDir,
+  localGateControl,
+  realLocalGateControl,
+  repairLocalGateControl
+} from '../../src/lib/local-gate-control.js'
+import { fixtureDir } from './test-temp-fixture'
 import { checkTaskDispatchReadiness } from '../../src/lib/dev-review-loop/developer-dispatch.js'
 
 const roots: string[] = []
@@ -18,7 +24,7 @@ afterEach(() => {
 })
 
 function tempRepo(): string {
-  const root = mkdtempSync(join(tmpdir(), 'enforcement-controls-'))
+  const root = fixtureDir('enforcement-controls-')
   roots.push(root)
   return root
 }
@@ -69,6 +75,146 @@ describe('local gate control', () => {
     expect(c.active).toBe(false)
     expect(c.detail).toContain('not executable')
     expect(c.remedy).toContain('chmod +x')
+  })
+})
+
+describe('safe task-run hook routing repair', () => {
+  function git(root: string, ...args: string[]): string {
+    return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: 'pipe' }).trim()
+  }
+  function trackedRepo(): string {
+    const root = realpathSync(tempRepo())
+    git(root, 'init', '-q')
+    writeHooks(root)
+    writeFileSync(
+      join(root, 'vinaya.config.json'),
+      JSON.stringify({ managed: { blocks: [{ path: '.vinaya/hooks/pre-commit' }] } })
+    )
+    return root
+  }
+  for (const spelling of ['unset', 'absolute', 'trailing slash', 'dot prefix', 'symlink']) {
+    it(`repairs ${spelling} routing and narrates the mutation once`, () => {
+      const root = trackedRepo()
+      if (spelling === 'symlink') symlinkSync(join(root, '.vinaya/hooks'), join(root, 'hook-link'))
+      const oldValue =
+        spelling === 'unset'
+          ? null
+          : spelling === 'absolute'
+            ? join(root, '.vinaya/hooks')
+            : spelling === 'trailing slash'
+              ? '.vinaya/hooks/'
+              : spelling === 'dot prefix'
+                ? './.vinaya/hooks'
+                : 'hook-link'
+      if (oldValue !== null) git(root, 'config', 'core.hooksPath', oldValue)
+      const before = readFileSync(join(root, '.git/config'), 'utf8')
+      const lines: string[] = []
+      const result = repairLocalGateControl(root, (change) => lines.push(hookRoutingRepairLine(change)))
+      expect(result.control.active).toBe(true)
+      expect(result.repair).toEqual({ oldValue, newValue: '.vinaya/hooks' })
+      expect(git(root, 'config', '--get', 'core.hooksPath')).toBe('.vinaya/hooks')
+      expect(readFileSync(join(root, '.git/config'), 'utf8')).not.toBe(before)
+      expect(lines).toEqual([`Repaired core.hooksPath from ${JSON.stringify(oldValue)} to ".vinaya/hooks"`])
+      const after = readFileSync(join(root, '.git/config'), 'utf8')
+      expect(repairLocalGateControl(root).repair).toBeNull()
+      expect(readFileSync(join(root, '.git/config'), 'utf8')).toBe(after)
+    })
+  }
+  for (const value of [null, '.vinaya/hooks', '.vinaya/hooks/', './.vinaya/hooks', 'absolute', 'other']) {
+    it(`preserves config for foreign raw hooks with routing ${value}`, () => {
+      const root = trackedRepo()
+      const routing = value === 'absolute' ? join(root, '.vinaya/hooks') : value
+      if (routing !== null) git(root, 'config', 'core.hooksPath', routing)
+      const hook = join(root, '.git/hooks/pre-commit')
+      writeFileSync(hook, '#!/bin/sh\necho adopter\n')
+      chmodSync(hook, 0o755)
+      const before = readFileSync(join(root, '.git/config'), 'utf8')
+      const result = repairLocalGateControl(root)
+      expect(result.control.active).toBe(false)
+      expect(result.control.remedy).toBe(localGateControl(root, '.vinaya/hooks', null).remedy)
+      expect(result.repair).toBeNull()
+      expect(readFileSync(join(root, '.git/config'), 'utf8')).toBe(before)
+    })
+  }
+  it('refuses another folder without mutating config', () => {
+    const root = trackedRepo()
+    mkdirSync(join(root, 'other-hooks'))
+    git(root, 'config', 'core.hooksPath', 'other-hooks')
+    const before = readFileSync(join(root, '.git/config'), 'utf8')
+    expect(repairLocalGateControl(root).control).toEqual(realLocalGateControl(root))
+    expect(readFileSync(join(root, '.git/config'), 'utf8')).toBe(before)
+  })
+  for (const spelling of ['empty', 'whitespace', 'absolute trailing space', 'leading space', 'trailing newline']) {
+    it(`preserves ${spelling} routing without a repair`, () => {
+      const root = trackedRepo()
+      const routing =
+        spelling === 'empty'
+          ? ''
+          : spelling === 'whitespace'
+            ? ' \t '
+            : spelling === 'absolute trailing space'
+              ? `${join(root, '.vinaya/hooks')} `
+              : spelling === 'leading space'
+                ? ' .vinaya/hooks'
+                : `${join(root, '.vinaya/hooks')}\n`
+      if (spelling === 'absolute trailing space') mkdirSync(routing)
+      git(root, 'config', 'core.hooksPath', routing)
+      const before = readFileSync(join(root, '.git/config'), 'utf8')
+      const lines: string[] = []
+      const result = repairLocalGateControl(root, (change) => lines.push(hookRoutingRepairLine(change)))
+      expect(result.control.active).toBe(false)
+      expect(result.repair).toBeNull()
+      expect(lines).toEqual([])
+      expect(readFileSync(join(root, '.git/config'), 'utf8')).toBe(before)
+      expect(
+        execFileSync('git', ['-C', root, 'config', '--null', '--get', 'core.hooksPath'], { encoding: 'utf8' })
+      ).toBe(`${routing}\0`)
+    })
+  }
+  it('keeps already-relative routing byte-for-byte unchanged', () => {
+    const root = trackedRepo()
+    git(root, 'config', 'core.hooksPath', '.vinaya/hooks')
+    const before = readFileSync(join(root, '.git/config'), 'utf8')
+    expect(repairLocalGateControl(root)).toEqual({ control: realLocalGateControl(root), repair: null })
+    expect(readFileSync(join(root, '.git/config'), 'utf8')).toBe(before)
+  })
+  for (const location of ['subdirectory', 'linked worktree']) {
+    it(`repairs the main checkout's absolute routing from a ${location}`, () => {
+      const root = trackedRepo()
+      const directory = join(root, 'caller')
+      if (location === 'subdirectory') mkdirSync(directory)
+      else {
+        git(
+          root,
+          '-c',
+          'user.name=Fixture',
+          '-c',
+          'user.email=fixture@example.test',
+          'commit',
+          '--allow-empty',
+          '-m',
+          'fixture'
+        )
+        git(root, 'worktree', 'add', '-q', '-b', 'fixture-linked', directory)
+      }
+      git(root, 'config', 'core.hooksPath', join(root, '.vinaya/hooks'))
+      const result = repairLocalGateControl(directory)
+      expect(result.control.active).toBe(true)
+      expect(result.repair?.oldValue).toBe(join(root, '.vinaya/hooks'))
+      expect(git(directory, 'config', '--get', 'core.hooksPath')).toBe('.vinaya/hooks')
+      expect(git(root, 'config', '--get', 'core.hooksPath')).toBe('.vinaya/hooks')
+    })
+  }
+  it('preserves the refusal and adds the write error when config is locked', () => {
+    const root = trackedRepo()
+    const before = readFileSync(join(root, '.git/config'), 'utf8')
+    writeFileSync(join(root, '.git/config.lock'), '')
+    const result = repairLocalGateControl(root)
+    expect(result.control.active).toBe(false)
+    expect(result.control.detail).toContain('ring 0 is INERT')
+    expect(result.control.detail).toContain('Hook routing repair failed:')
+    expect(result.repair).toBeNull()
+    expect(readFileSync(join(root, '.git/config'), 'utf8')).toBe(before)
   })
 })
 

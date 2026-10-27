@@ -6,9 +6,9 @@
  * detection.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
-import { hookDirFromManifest, resolveHookDir } from './detect.js'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { foreignRawHooks, hookDirFromManifest, resolveHookDir, setCoreHooksPath } from './detect.js'
 import type { EnforcementControl } from './enforcement-controls.js'
 import { type HookDir, TRACKED_HOOK_DIR } from './init-hook-paths.js'
 import { resolveManagedBlockPath } from './ops.js'
@@ -45,6 +45,15 @@ function isDirectory(path: string): boolean {
 
 const normalizeRouting = (value: string): string => value.replace(/\/+$/, '')
 
+function inertRouting(value: string | null): EnforcementControl {
+  return notOkControl(
+    LOCAL_GATE_CONTROL,
+    `ring 0 is INERT in this working copy — hooks are tracked at ${TRACKED_HOOK_DIR} but core.hooksPath is ` +
+      `${value ? `set to '${value}'` : 'not set'} (git config is never cloned).`,
+    `Run \`git config core.hooksPath ${TRACKED_HOOK_DIR}\` once per clone (or \`vinaya upgrade\`) to arm them.`
+  )
+}
+
 /**
  * The local gate: git's routing reaches a directory that exists, and the
  * required hooks exist there and are executable. For a repository whose hooks
@@ -59,12 +68,7 @@ export function localGateControl(repoRoot: string, hookDir: HookDir, value: stri
   let where: string
   if (hookDir === TRACKED_HOOK_DIR) {
     if (value === null || normalizeRouting(value) !== TRACKED_HOOK_DIR) {
-      return notOkControl(
-        LOCAL_GATE_CONTROL,
-        `ring 0 is INERT in this working copy — hooks are tracked at ${TRACKED_HOOK_DIR} but core.hooksPath is ` +
-          `${value ? `set to '${value}'` : 'not set'} (git config is never cloned).`,
-        `Run \`git config core.hooksPath ${TRACKED_HOOK_DIR}\` once per clone (or \`vinaya upgrade\`) to arm them.`
-      )
+      return inertRouting(value)
     }
     dirAbs = join(repoRoot, TRACKED_HOOK_DIR)
     where = TRACKED_HOOK_DIR
@@ -130,11 +134,12 @@ export function installedHookDir(repoRoot: string): HookDir {
 /** `core.hooksPath` read synchronously, `null` when unset — the dispatch-side twin of `readCoreHooksPath`. */
 function readCoreHooksPathSync(repoRoot: string): string | null {
   try {
-    const out = execFileSync('git', ['-C', repoRoot, 'config', '--get', 'core.hooksPath'], {
+    const out = execFileSync('git', ['-C', repoRoot, 'config', '--null', '--get', 'core.hooksPath'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore']
-    }).trim()
-    return out.length > 0 ? out : null
+    })
+    // Strip only Git's delimiter: empty values and whitespace are configured paths.
+    return out.endsWith('\0') ? out.slice(0, -1) : out
   } catch {
     return null
   }
@@ -143,4 +148,56 @@ function readCoreHooksPathSync(repoRoot: string): string | null {
 /** The local gate as the dispatch readiness proves it, from the real repository. */
 export function realLocalGateControl(repoRoot: string): EnforcementControl {
   return localGateControl(repoRoot, installedHookDir(repoRoot), readCoreHooksPathSync(repoRoot))
+}
+
+export type HookRoutingRepair = { oldValue: string | null; newValue: string }
+
+/** Resolve the main checkout before repairing shared routing, even from a linked worktree. */
+export function repairLocalGateControl(
+  directory: string,
+  onRepair: (change: HookRoutingRepair) => void = () => {}
+): { control: EnforcementControl; repair: HookRoutingRepair | null } {
+  let root: string
+  try {
+    root = dirname(
+      execFileSync('git', ['-C', directory, 'rev-parse', '--path-format=absolute', '--git-common-dir'], {
+        encoding: 'utf8',
+        stdio: 'pipe'
+      }).trim()
+    )
+  } catch {
+    return { control: realLocalGateControl(directory), repair: null }
+  }
+  const hookDir = installedHookDir(root)
+  const value = readCoreHooksPathSync(root)
+  const check = () => localGateControl(root, hookDir, readCoreHooksPathSync(root))
+  if (hookDir !== TRACKED_HOOK_DIR) return { control: check(), repair: null }
+  if (foreignRawHooks(root).length > 0) return { control: inertRouting(value), repair: null }
+  if (value === TRACKED_HOOK_DIR) return { control: check(), repair: null }
+  let ownFolder = value === null
+  if (value !== null) {
+    try {
+      ownFolder = realpathSync(resolve(root, value)) === realpathSync(join(root, TRACKED_HOOK_DIR))
+    } catch {
+      ownFolder = false
+    }
+  }
+  if (!ownFolder) return { control: check(), repair: null }
+  try {
+    setCoreHooksPath(root, TRACKED_HOOK_DIR, true)
+  } catch (error) {
+    const control = inertRouting(value)
+    return {
+      control: { ...control, active: false, detail: `${control.detail} Hook routing repair failed: ${String(error)}` },
+      repair: null
+    }
+  }
+  const repair = { oldValue: value, newValue: TRACKED_HOOK_DIR }
+  onRepair(repair)
+  return { control: check(), repair }
+}
+
+/** JSON quoting keeps unusual config values on one narration line. */
+export function hookRoutingRepairLine(change: HookRoutingRepair): string {
+  return `Repaired core.hooksPath from ${JSON.stringify(change.oldValue)} to ${JSON.stringify(change.newValue)}`
 }

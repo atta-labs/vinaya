@@ -60,7 +60,8 @@ import {
   type EnforcementControl,
   enforcementControlsActive
 } from '../enforcement-controls.js'
-import { realLocalGateControl } from '../local-gate-control.js'
+import { hookRoutingRepairLine, repairLocalGateControl } from '../local-gate-control.js'
+import { appendDriverLine, loopLogPathFor } from '../loop-log.js'
 import { ensureRunDir, runPath } from '../run-paths.js'
 import { sh } from './gate-reading.js'
 import { type ForgeComment, isForgeReadOversize, readIssueComments } from '../forge-read.js'
@@ -875,7 +876,13 @@ function gateRunOutput(err: unknown): string {
 export function checkTaskDispatchReadiness(
   branch: string,
   runGate: (script: string, args: readonly string[]) => string = (script, args) => sh('bun', [script, ...args]),
-  localGate: () => EnforcementControl = () => realLocalGateControl(process.cwd()),
+  localGate: () => EnforcementControl = () =>
+    repairLocalGateControl(process.cwd(), (change) => {
+      const identity = parseTaskBranchIdentity(branch)
+      const task = Number(process.env.VINAYA_TASK ?? (identity?.kind === 'issue' ? identity.issueNumber : Number.NaN))
+      if (Number.isSafeInteger(task) && task > 0)
+        appendDriverLine(loopLogPathFor(null, task), hookRoutingRepairLine(change))
+    }).control,
   resolveStep: (step: GateStep) => string | null = (step) => resolveGateStep(step)
 ): DispatchReadinessCheckResult {
   const identity = parseTaskBranchIdentity(branch)
