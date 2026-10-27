@@ -324,7 +324,7 @@ export async function readyPush(
     task,
     results,
     'ready-refused',
-    `both reviewers approved ${head}, but the ready push refused it: ${gate.timedOut ? 'the selected tests ran past the deadline' : 'the selected tests failed'}.\n\n${failingTestLines(gate)}`,
+    `both reviewers approved ${head}, but the ready push refused it: ${gate.timedOut ? 'the selected tests ran past the deadline' : 'the selected tests failed'}.\n\n${failingTestLines(gate)}\n\nThe ready push runs the selected test files on the approved head through the repository's pre-push hook in ready mode, with a 20-minute deadline. Run the named failing files before publishing your fix; when the files are unknown, run the full selection.`,
     {
       readyPushFailures: failures,
       outcome: gate.timedOut ? 'timed-out' : 'refused',

@@ -302,3 +302,14 @@ test('policy ceilings reserve test repair turns only for version 2 and preserve 
     expect(new Set(ceilings)).toEqual(new Set([flow === 'v2' ? 5 : 2]))
   }
 })
+
+test('the repair turn names the failed files and the ready-hook contract', async () => {
+  const observed = await runV2('claude', { failingTests: (attempt) => (attempt === 1 ? ['/repo/b.test.ts'] : []) })
+  expect(observed.outcome).toBe('completed')
+  const prompt = observed.prompts.developer[1] ?? ''
+  expect(prompt).toContain('/repo/b.test.ts')
+  expect(prompt).toContain('selected test files on the approved head')
+  expect(prompt).toContain("repository's pre-push hook in ready mode")
+  expect(prompt).toContain('20-minute deadline')
+  expect(prompt).toContain('Run the named failing files before publishing')
+})
