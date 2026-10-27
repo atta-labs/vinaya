@@ -134,11 +134,12 @@ export function installedHookDir(repoRoot: string): HookDir {
 /** `core.hooksPath` read synchronously, `null` when unset — the dispatch-side twin of `readCoreHooksPath`. */
 function readCoreHooksPathSync(repoRoot: string): string | null {
   try {
-    const out = execFileSync('git', ['-C', repoRoot, 'config', '--get', 'core.hooksPath'], {
+    const out = execFileSync('git', ['-C', repoRoot, 'config', '--null', '--get', 'core.hooksPath'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore']
-    }).trim()
-    return out.length > 0 ? out : null
+    })
+    // Strip only Git's delimiter: empty values and whitespace are configured paths.
+    return out.endsWith('\0') ? out.slice(0, -1) : out
   } catch {
     return null
   }

@@ -144,6 +144,33 @@ describe('safe task-run hook routing repair', () => {
     expect(repairLocalGateControl(root).control).toEqual(realLocalGateControl(root))
     expect(readFileSync(join(root, '.git/config'), 'utf8')).toBe(before)
   })
+  for (const spelling of ['empty', 'whitespace', 'absolute trailing space', 'leading space', 'trailing newline']) {
+    it(`preserves ${spelling} routing without a repair`, () => {
+      const root = trackedRepo()
+      const routing =
+        spelling === 'empty'
+          ? ''
+          : spelling === 'whitespace'
+            ? ' \t '
+            : spelling === 'absolute trailing space'
+              ? `${join(root, '.vinaya/hooks')} `
+              : spelling === 'leading space'
+                ? ' .vinaya/hooks'
+                : `${join(root, '.vinaya/hooks')}\n`
+      if (spelling === 'absolute trailing space') mkdirSync(routing)
+      git(root, 'config', 'core.hooksPath', routing)
+      const before = readFileSync(join(root, '.git/config'), 'utf8')
+      const lines: string[] = []
+      const result = repairLocalGateControl(root, (change) => lines.push(hookRoutingRepairLine(change)))
+      expect(result.control.active).toBe(false)
+      expect(result.repair).toBeNull()
+      expect(lines).toEqual([])
+      expect(readFileSync(join(root, '.git/config'), 'utf8')).toBe(before)
+      expect(
+        execFileSync('git', ['-C', root, 'config', '--null', '--get', 'core.hooksPath'], { encoding: 'utf8' })
+      ).toBe(`${routing}\0`)
+    })
+  }
   it('keeps already-relative routing byte-for-byte unchanged', () => {
     const root = trackedRepo()
     git(root, 'config', 'core.hooksPath', '.vinaya/hooks')
