@@ -391,6 +391,7 @@ export async function runReadyGateLive(input: {
       removeUnderGit(input.worktreePath, FAILED_TESTS_RECORD)
       const minutes = Math.round((input.deadlineMs ?? READY_GATE_DEADLINE_MS) / 60000)
       log(`ready push: timed out after ${minutes} min; the test run was stopped`)
+      log(`ready push failed: all; wall time ${wallMs} ms`)
       return {
         passed: false,
         output: `${stdout}${stderr}\nthe ready push timed out after ${minutes} min and was stopped; the next ready push runs its full selection`,
@@ -405,13 +406,15 @@ export async function runReadyGateLive(input: {
     const record = readLastPushResult(input.worktreePath)
     const fresh = record !== null && record.head === input.head
     const passed = run.status === 0
+    const failed = passed ? [] : fresh ? record.failed : 'all'
+    if (!passed) log(`ready push failed: ${failed === 'all' ? 'all' : failed.join(', ')}; wall time ${wallMs} ms`)
     const noLocalTests = passed && output.includes(NO_LOCAL_TESTS_MARKER)
     if (noLocalTests) log(`ready push: ${NO_LOCAL_TESTS_MARKER} (the repository declares no test runner)`)
     return {
       passed,
       output,
       selection: fresh ? record.selection : null,
-      failed: passed ? [] : fresh ? record.failed : 'all',
+      failed,
       wallMs,
       ...(noLocalTests ? { localTests: 'none' as const } : {})
     }

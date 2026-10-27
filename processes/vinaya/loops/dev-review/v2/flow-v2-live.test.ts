@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DevToolContext } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
-import { gitPath } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import { gitPath, LAST_PUSH_RESULT } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import {
   beginStoragePushes,
   endStoragePushes,
@@ -198,6 +198,43 @@ describe('runReadyGateLive', () => {
     expect(result.passed).toBe(false)
     expect(result.failed).toBe('all')
   })
+
+  for (const recorded of ['fresh', 'stale', 'missing'] as const) {
+    test(`a failed ready push immediately logs only its files and wall time (${recorded})`, async () => {
+      const dir = repo()
+      const head = headOf(dir)
+      if (recorded !== 'missing') {
+        const path = gitPath(dir, LAST_PUSH_RESULT) as string
+        mkdirSync(join(dir, '.git', 'vinaya'), { recursive: true })
+        writeFileSync(
+          path,
+          JSON.stringify({
+            version: 1,
+            head: recorded === 'fresh' ? head : 'old',
+            failed: ['a.test.ts', 'b.test.ts'],
+            selection: null
+          })
+        )
+      }
+      withHook(dir, 'echo private-test-output; exit 1')
+      const lines: string[] = []
+      let tick = 0
+      const result = await runReadyGateLive({
+        worktreePath: dir,
+        branch: 'task/issue-1',
+        head,
+        remoteHead: head,
+        now: () => (tick++ === 0 ? 1000 : 3500),
+        log: (line) => lines.push(line)
+      })
+      expect(result.passed).toBe(false)
+      const failures = lines.filter((line) => line.startsWith('ready push failed:'))
+      expect(failures).toEqual([
+        `ready push failed: ${recorded === 'fresh' ? 'a.test.ts, b.test.ts' : 'all'}; wall time 2500 ms`
+      ])
+      expect(lines.join('\n')).not.toContain('private-test-output')
+    })
+  }
 
   test('a repository with no pre-push hook is the logged no-local-tests state, not a silent pass', async () => {
     const dir = repo()
