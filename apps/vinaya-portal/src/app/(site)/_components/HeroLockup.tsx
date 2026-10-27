@@ -111,7 +111,15 @@ function Letters({ text, delayStep }: { text: string; delayStep: number }) {
  * holds. The bare text needs no such step — its hero size and its landing size are both
  * fitted by the loop, and it never takes layout width.
  */
-export function HeroLockup({ logoUrl, alt = 'Vinaya' }: { logoUrl?: string | null; alt?: string }) {
+export function HeroLockup({
+  logoUrl,
+  logoMarkup,
+  alt = 'Vinaya'
+}: {
+  logoUrl?: string | null
+  logoMarkup?: string | null
+  alt?: string
+}) {
   const setNode = useHeroLockupRegister()
 
   return (
@@ -120,13 +128,22 @@ export function HeroLockup({ logoUrl, alt = 'Vinaya' }: { logoUrl?: string | nul
       data-hero-lockup
       className='inline-flex origin-top-left items-center gap-[0.3rem] leading-none will-change-transform [[data-bare=true]_&]:opacity-0'
     >
-      {logoUrl && (
+      {(logoMarkup || logoUrl) && (
         <span
           ref={(el) => setNode('mark', el)}
           className='w-[2.75rem] shrink-0 overflow-hidden [[data-bare=true]_&]:w-0 [[data-bare=true]_&]:opacity-0'
         >
-          {/* biome-ignore lint/performance/noImgElement: CMS-hosted brand asset, not a next/image-optimizable local file */}
-          <img src={logoUrl} alt={alt} className='h-[2.75rem] w-auto dark:invert' />
+          {logoMarkup ? (
+            <span
+              role='img'
+              aria-label={alt}
+              className='block size-[2.75rem] [&>svg]:size-full'
+              dangerouslySetInnerHTML={{ __html: logoMarkup }}
+            />
+          ) : (
+            // biome-ignore lint/performance/noImgElement: CMS-hosted brand asset, not a next/image-optimizable local file
+            <img src={logoUrl ?? undefined} alt={alt} className='h-[2.75rem] w-auto dark:invert' />
+          )}
         </span>
       )}
       <span className='flex flex-col items-start gap-1 [[data-bare=true]_&]:gap-0'>
@@ -144,7 +161,7 @@ export function HeroLockup({ logoUrl, alt = 'Vinaya' }: { logoUrl?: string | nul
         <span ref={(el) => setNode('desc', el)} className='origin-left grid'>
           <span
             data-lockup-bare
-            className='col-start-1 row-start-1 w-0 origin-left whitespace-nowrap font-mono text-sm font-medium tracking-normal text-muted-foreground opacity-0 transition-opacity duration-500 ease-out [[data-bare=true]_&]:opacity-100'
+            className='col-start-1 row-start-1 w-0 origin-left whitespace-nowrap font-mono text-sm font-normal tracking-normal text-muted-foreground opacity-0 transition-opacity duration-500 ease-out [[data-bare=true]_&]:opacity-100'
           >
             <Letters text='Development harness' delayStep={25} />
           </span>

@@ -12,7 +12,12 @@ export function VinayaHarnessIcon({ className, still = false }: IconProps) {
       <path {...LINE} d='M28 28L45 11' />
       <path {...LINE} d='M28 28L11 45' />
       <path {...LINE} d='M28 28L45 45' />
-      <circle {...LINE} className='fill-background' cx='28' cy='28' r='8' />
+      {/* main, held at the centre as the hero holds it: a pointy-top hexagon, the brand's shape */}
+      <path
+        {...LINE}
+        className='fill-background'
+        d='M28.00 18.80 L35.97 23.40 L35.97 32.60 L28.00 37.20 L20.03 32.60 L20.03 23.40Z'
+      />
       <motion.g
         key={paused ? 'still-1' : 'moving-1'}
         className='origin-center! [transform-box:fill-box]!'
@@ -66,7 +71,7 @@ export function VinayaHarnessIcon({ className, still = false }: IconProps) {
         className='origin-center! [transform-box:fill-box]!'
         {...iconMotion('a-pulse', paused)}
       >
-        <circle {...DOT} cx='28' cy='28' r='3.6' />
+        <path {...DOT} d='M28.00 24.00 L31.46 26.00 L31.46 30.00 L28.00 32.00 L24.54 30.00 L24.54 26.00Z' />
       </motion.g>
     </Glyph>
   )

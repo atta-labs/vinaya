@@ -84,11 +84,16 @@ export function StickyDocHeader({
     // `h-0 overflow-visible`: the bar overlays the page and never takes flow height.
     <div
       aria-hidden={!shown}
-      className={`sticky top-0 z-20 h-0 overflow-visible transition-opacity duration-300 ${
-        shown ? 'opacity-100' : 'pointer-events-none opacity-0'
-      }`}
+      className={`sticky top-0 z-20 h-0 overflow-visible ${shown ? '' : 'pointer-events-none'}`}
     >
-      <div className='h-12 bg-background/70 font-sans text-sm backdrop-blur-md supports-[backdrop-filter]:bg-background/60'>
+      {/* The fade sits on the frosted element itself, never on an ancestor: an ancestor below full opacity cuts the
+          blur off from the page behind it, so the frost would vanish while it fades. `transform-gpu` keeps the frost
+          on its own layer while the pane scrolls beneath it. */}
+      <div
+        className={`h-12 transform-gpu bg-background/70 font-sans text-sm backdrop-blur-md transition-opacity duration-300 supports-[backdrop-filter]:bg-background/60 ${
+          shown ? 'opacity-100' : 'opacity-0'
+        }`}
+      >
         {/* The article's own box (`(guide)/layout.tsx`), so the crumbs start where the text starts. */}
         <div className='mx-auto flex h-full max-w-[54rem] items-center gap-2 px-6 lg:px-12'>
           <span className='max-w-[40%] shrink-0 truncate text-muted-foreground'>{title}</span>

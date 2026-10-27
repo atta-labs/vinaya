@@ -100,6 +100,9 @@ export function attachLockupFlip({ hero, lockup, word, desc, mark, bar }) {
   const bareDesc = bareSpan(desc)
   // The hero's title; on load the lockup's word is set at the title's size (FLIP.HERO_SCALE without one).
   const title = hero?.querySelector('[data-hero-h1a]')?.closest('h1') ?? null
+  // The title's own subtitle, the line right under it: the descriptor takes the same size against the word
+  // as this subtitle has against the title, so the lockup and the hero copy below it read as one pair.
+  const subtitle = title?.nextElementSibling ?? null
   const textRange = document.createRange()
   const textBox = (node) => {
     textRange.selectNodeContents(bareSpan(node) ?? node)
@@ -178,10 +181,12 @@ export function attachLockupFlip({ hero, lockup, word, desc, mark, bar }) {
     /* With a title (the landing hero) the descriptor is FLIP.DESC_OF_WORD of the word's on-screen size, never wider
        than the viewport's gutters; without one it keeps FLIP.DESC_HERO. `descHero` is its counter-scale at q = 0. */
     const descPx = Number.parseFloat(getComputedStyle(bareSpan(desc) ?? desc).fontSize)
+    const subtitlePx = subtitle ? Number.parseFloat(getComputedStyle(subtitle).fontSize) : 0
+    const descOfWord = subtitlePx > 0 && titlePx > 0 ? subtitlePx / titlePx : FLIP.DESC_OF_WORD
     const descHero =
       title && descPx > 0 && wordPx > 0
         ? Math.min(
-            (FLIP.DESC_OF_WORD * wordPx) / descPx,
+            (descOfWord * wordPx) / descPx,
             descW > 0 ? (hr.width - 2 * FLIP.HERO_GUTTER_PX) / (descW * heroScale) : Number.POSITIVE_INFINITY
           )
         : FLIP.DESC_HERO

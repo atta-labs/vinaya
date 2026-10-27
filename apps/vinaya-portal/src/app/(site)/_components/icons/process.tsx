@@ -5,7 +5,7 @@ import { useId } from 'react'
 import { cn } from '@/ui/lib/utils'
 import { AgentFrame, type AgentRole, AgentSign } from './agents'
 import { Glyph, LINE, MARK } from './glyph'
-import { type IconProps, useIconStill } from './icon-motion'
+import { type IconProps, SIGNATURE, useIconStill } from './icon-motion'
 
 const LONG_FLOW: AgentRole[] = [
   'architect',
@@ -32,7 +32,8 @@ function Flow({ short = false }: { short?: boolean }) {
       initial={{ x: 0, opacity: short ? 0 : 1 }}
       animate={{ x: short ? shortX : longX, opacity: short ? [0, 0, 1, 1, 0] : [1, 1, 0, 0, 1] }}
       transition={{
-        x: { duration: 32, repeat: Number.POSITIVE_INFINITY, ease: 'linear', times: short ? shortTimes : longTimes },
+        // Each slide eases in, speeds up and stops short, like every other icon's move.
+        x: { duration: 32, repeat: Number.POSITIVE_INFINITY, ease: SIGNATURE, times: short ? shortTimes : longTimes },
         opacity: {
           duration: 32,
           repeat: Number.POSITIVE_INFINITY,

@@ -45,15 +45,16 @@ export function ThinkingIcon({ className, still = false }: IconProps) {
 export function ExecutingIcon({ className, still = false }: IconProps) {
   const paused = useIconStill(still)
   return (
-    <Glyph className={className} viewBox='3.571 2.371 16.858 19.258'>
+    <Glyph className={className} viewBox='1.917 1.917 20.166 20.166'>
+      {/* A gear whose six teeth are hexagons set into its rim, turning slowly round its hub, the orange hexagon set in it like a nut on an axle: work running. */}
       <motion.g
         key={paused ? 'still-4' : 'moving-4'}
         className='origin-[12px_12px]! [transform-box:view-box]!'
-        {...iconMotion('mv-spin', paused)}
+        {...iconMotion('mv-gear', paused)}
       >
         <path
           {...LINE}
-          d='M20 12A8 8 0 0 1 6.3 17.7M4 12A8 8 0 0 1 17.7 6.3M17.4 2.8L17.7 6.3L14.2 6.6M6.6 21.2L6.3 17.7L9.8 17.4'
+          d='M9.92 5.95 L9.92 3.55 L12.00 2.35 L14.08 3.55 L14.08 5.95 A6.4 6.4 0 0 1 16.20 7.17 L18.28 5.97 L20.36 7.17 L20.36 9.57 L18.28 10.77 A6.4 6.4 0 0 1 18.28 13.23 L20.36 14.43 L20.36 16.83 L18.28 18.03 L16.20 16.83 A6.4 6.4 0 0 1 14.08 18.05 L14.08 20.45 L12.00 21.65 L9.92 20.45 L9.92 18.05 A6.4 6.4 0 0 1 7.80 16.83 L5.72 18.03 L3.64 16.83 L3.64 14.43 L5.72 13.23 A6.4 6.4 0 0 1 5.72 10.77 L3.64 9.57 L3.64 7.17 L5.72 5.97 L7.80 7.17 A6.4 6.4 0 0 1 9.92 5.95Z'
         />
       </motion.g>
       <path {...MARK} d='M12.00 9.00 L14.59 10.50 L14.59 13.50 L12.00 15.00 L9.40 13.50 L9.40 10.50Z' />
@@ -61,22 +62,68 @@ export function ExecutingIcon({ className, still = false }: IconProps) {
   )
 }
 
+/* Retrospecting: a hexagonal lens over the work. Each beat the handle sits at another corner of the lens
+   and the lens reads something else: approved, still thinking, rejected, thinking, concluded, thinking.
+   Still (small, or reduced motion), it holds the first beat: the handle low right, an approval inside. */
+const RETRO_BEATS: { handle: string; sign: 'approve' | 'think' | 'reject' | 'conclude' }[] = [
+  { handle: 'M13.95 16.84L16.25 20.83', sign: 'approve' },
+  { handle: 'M6.05 3.16L3.75 -0.83', sign: 'think' },
+  { handle: 'M17.90 10.00L22.50 10.00', sign: 'reject' },
+  { handle: 'M6.05 16.84L3.75 20.83', sign: 'think' },
+  { handle: 'M13.95 3.16L16.25 -0.83', sign: 'conclude' },
+  { handle: 'M2.10 10.00L-2.50 10.00', sign: 'think' }
+]
+const RETRO_BEAT_S = 2
+
+/* One beat's visibility over the whole cycle: off, on for its own slot (with a short fade at each end), off. */
+function beatMotion(i: number, paused: boolean) {
+  if (paused) return { initial: false as const, animate: { opacity: i === 0 ? 1 : 0 } }
+  const n = RETRO_BEATS.length
+  const a = i / n
+  const b = (i + 1) / n
+  const f = 0.15 / n
+  return {
+    initial: { opacity: 0 },
+    animate: { opacity: [0, 0, 1, 1, 0, 0] },
+    transition: {
+      duration: n * RETRO_BEAT_S,
+      times: [0, a, a + f, b - f, b, 1],
+      ease: 'linear' as const,
+      repeat: Number.POSITIVE_INFINITY
+    }
+  }
+}
+
+function RetroSign({ sign }: { sign: (typeof RETRO_BEATS)[number]['sign'] }) {
+  switch (sign) {
+    case 'approve':
+      return <path {...MARK} d='M7.2 10.2L9.2 12.2L12.9 8.3' />
+    case 'reject':
+      return <path {...MARK} d='M7.7 7.7L12.3 12.3M12.3 7.7L7.7 12.3' />
+    case 'think':
+      return (
+        <>
+          <circle {...DOT} cx='7' cy='10' r='0.95' />
+          <circle {...DOT} cx='10' cy='10' r='0.95' />
+          <circle {...DOT} cx='13' cy='10' r='0.95' />
+        </>
+      )
+    case 'conclude':
+      return <path {...DOT} d='M12.40 10.00 L11.20 12.08 L8.80 12.08 L7.60 10.00 L8.80 7.92 L11.20 7.92Z' />
+  }
+}
+
 export function RetrospectingIcon({ className, still = false }: IconProps) {
   const paused = useIconStill(still)
   return (
-    <Glyph className={className} viewBox='2.371 3.336 19.057 18.092'>
+    <Glyph className={className} viewBox='-3.1 -1.43 26.2 22.86'>
       <path {...LINE} d='M17.20 10.00 L13.60 16.23 L6.40 16.23 L2.80 10.00 L6.40 3.76 L13.60 3.76Z' />
-      <path {...LINE} d='M15.4 15.4L21 21' />
-      <g>
-        <motion.path
-          key={paused ? 'still-5' : 'moving-5'}
-          {...MARK}
-          pathLength='1'
-          d='M7.2 10.2L9.2 12.2L12.9 8.3'
-          {...iconMotion('mv-draw', paused)}
-          strokeDasharray={paused ? undefined : 1}
-        />
-      </g>
+      {RETRO_BEATS.map((beat, i) => (
+        <motion.g key={`${paused ? 'still' : 'moving'}-${beat.handle}`} {...beatMotion(i, paused)}>
+          <path {...LINE} d={beat.handle} />
+          <RetroSign sign={beat.sign} />
+        </motion.g>
+      ))}
     </Glyph>
   )
 }
