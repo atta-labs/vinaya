@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parse } from 'yaml'
 import { loadProcess } from '../../../../../harness/dev-process/loader/load-process'
 import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
 import { withPolicyCeilings } from '../../../bin/run-engine'
+import { heldVerdictPath } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import { publicationEffectKey } from '../../../../../apps/cli/src/lib/dev-review-loop/publication'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { ALL_TESTS, AGENTS, confident, PR, records, TASK, runV2, setUpWorld, tearDownWorld } from './v2-world'
 
@@ -102,7 +104,7 @@ describe('CI red after the pull request opened', () => {
     expect(observed.prompts.developer[1]).toContain(`CI is red on pull request #${PR}`)
     const ci = observed.rawEvents.filter((e) => e.event === 'ci_result_read').map((e) => e.conclusion)
     expect(ci).toEqual(['red', 'green'])
-    expect(observed.published).toHaveLength(1)
+    expect(observed.published).toHaveLength(2)
   })
 })
 
@@ -337,4 +339,41 @@ test('each round duration includes Developer and reviewer time rather than just 
     [1, 92000],
     [2, 92000]
   ])
+})
+
+for (const ci of [['green'], ['red', 'green']] as Array<Array<'green' | 'red'>>) {
+  test(`verdicts precede each approved head's CI read without a final duplicate (${ci.join(',')})`, async () => {
+    const readHeads: string[] = []
+    const observed = await runV2('claude', {
+      ci,
+      after: {
+        'read-ci-once': (world) => {
+          expect(world.verdictHeads).toContain(world.remote)
+          readHeads.push(world.remote)
+        }
+      }
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.world.verdictHeads).toEqual(readHeads)
+    expect(observed.published).toHaveLength(ci.length)
+    expect(new Set(readHeads).size).toBe(ci.length)
+  })
+}
+
+test('publication effects bind to each approved head without changing legacy identities', () => {
+  for (const kind of ['reviewer-verdict', 'security-verdict', 'summary'] as const) {
+    const first = { round: 1, expectedHead: 'head-one', headScopedEffects: true }
+    expect(publicationEffectKey(first, kind)).toBe(publicationEffectKey({ ...first }, kind))
+    expect(publicationEffectKey(first, kind)).not.toBe(
+      publicationEffectKey({ ...first, expectedHead: 'head-two' }, kind)
+    )
+    expect(publicationEffectKey({ round: 1, expectedHead: 'anything' }, kind)).toBe(`1-${kind}`)
+  }
+})
+
+test('a ready-push pause leaves no held approval that resume could publish', async () => {
+  const observed = await runV2('codex', { policy: { maxRounds: 1 }, failingTests: () => ['/repo/b.test.ts'] })
+  expect(observed.outcome).toBe('pause:ready_push_failed')
+  for (const role of ['reviewer', 'security'] as const)
+    expect(existsSync(heldVerdictPath(observed.world.runtimeDir, TASK, 1, role))).toBe(false)
 })

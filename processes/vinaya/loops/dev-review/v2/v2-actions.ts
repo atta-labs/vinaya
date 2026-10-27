@@ -9,11 +9,14 @@ import {
 import { discardHeldVerdicts } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { checkPremiseAtHead } from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import type { SelectionNote } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import { manifestDigest } from '../../../../../apps/cli/src/lib/review-result'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { readUnpushedWorkDetail } from '../../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import {
   BACK,
   carriedLoopState,
+  createActions,
+  dispatchedManifest,
   FORWARD,
   isSentBack,
   latestRecord,
@@ -307,6 +310,7 @@ export async function readyPush(
   }
   const failures = (latestRecord(results)?.readyPushFailures ?? 0) + 1
   if (failures >= READY_PUSH_FAILURE_LIMIT) {
+    ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, task.reviewRound())
     const detail = `the ready push failed ${failures} consecutive times; failing test files: ${gate.failed === 'all' ? 'all' : gate.failed.join(', ')}`
     pauseThrough(task, 'ready-push', { reason: 'ready_push_failed', detail })
     return {
@@ -359,6 +363,12 @@ export async function openPullRequestStep(
   const loop = loopOf(task, results)
   const previous = latestRecord(results)
   const forward = async (pr: number, opened: boolean, events: unknown[]) => {
+    // Publish the held verdicts before evidence edits or CI reads can observe a verdict-less pull request.
+    await createActions(task)['harness.publish']!({
+      ...context,
+      nodeId: 'publish-ready-for-merge',
+      action: 'harness.publish'
+    })
     const evidence = await writeEvidenceFor(fns, pr, head)
     return {
       exitCode: FORWARD,
@@ -367,6 +377,12 @@ export async function openPullRequestStep(
         decision: { type: opened ? 'pr_opened' : 'pr_kept' },
         pr,
         opened,
+        verdictPublication: {
+          pr,
+          head,
+          round: task.reviewRound(),
+          manifest: dispatchedManifest(results) ? manifestDigest(dispatchedManifest(results)!) : null
+        },
         head,
         ...(evidence ? { evidence } : {}),
         events

@@ -81,6 +81,8 @@ export interface World {
   readyRuns: string[][]
   /** Pull requests the open step opened. */
   prsOpened: number
+  /** Approved heads whose verdicts have been published. */
+  verdictHeads: string[]
   /** CI reads made. */
   ciReads: number
   /** Whether a pull request was open each time a reviewer launched. */
@@ -289,6 +291,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     openedBodies: [],
     readySignals: [],
     prsOpened: 0,
+    verdictHeads: [],
     ciReads: 0,
     prOpenAtReview: [],
     remoteAfterTurn: [],
@@ -350,7 +353,10 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     resolveDeveloperDoctrineText: () => Promise.resolve('Execute the frozen brief.'),
     prBody: () => `Closes #${TASK}`,
     pullRequestView: () => ({ number: PR, body: `Closes #${TASK}`, headRefOid: world.remote, state: 'OPEN' }),
-    publishRound: (_runtime, input) => void published.push(input as unknown as Record<string, unknown>)
+    publishRound: (_runtime, input) => {
+      world.verdictHeads.push(input.expectedHead)
+      published.push(input as unknown as Record<string, unknown>)
+    }
   }
   const task = await liveTaskInput({ task: TASK, agent, dryRun: false, flow: 'v2' }, repo, runtimeDir, 'v2-world', {
     fetchLabels: () => [],

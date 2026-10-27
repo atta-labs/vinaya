@@ -404,7 +404,7 @@ export async function runReadyGateLive(input: {
     const run = (await exited) as { status: number | null; signal: NodeJS.Signals | null; error?: Error }
     const output = `${stdout}${stderr}${run.error ? `\n${run.error.message}` : ''}${run.signal ? `\nthe ready push was stopped by ${run.signal}` : ''}`
     const record = readLastPushResult(input.worktreePath)
-    const fresh = record !== null && record.head === input.head
+    const fresh = record !== null && record.head === input.head && (run.status === 0 || record.outcome === 'failed')
     const passed = run.status === 0
     const failed = passed ? [] : fresh ? record.failed : 'all'
     if (!passed) log(`ready push failed: ${failed === 'all' ? 'all' : failed.join(', ')}; wall time ${wallMs} ms`)

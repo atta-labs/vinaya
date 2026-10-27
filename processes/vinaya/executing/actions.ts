@@ -2180,6 +2180,23 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       const expectedHead = readHead(task.worktreePath)
       if (expectedHead === null) throw new Error(`harness.publish could not read the head of ${task.worktreePath}`)
       const results = context?.results ?? {}
+      if (task.flow === 'v2') {
+        const raw = stdoutOf(results['open-pull-request'])
+        const published = raw
+          ? (
+              JSON.parse(raw) as {
+                verdictPublication?: { pr: number; head: string; round: number; manifest: string | null }
+              }
+            ).verdictPublication
+          : undefined
+        if (
+          published?.pr === pr.number &&
+          published.head === expectedHead &&
+          published.round === task.reviewRound() &&
+          published.manifest === (dispatchedManifest(results) ? manifestDigest(dispatchedManifest(results)!) : null)
+        )
+          return ok(JSON.stringify({ events: heldCompletionEvents(results) }))
+      }
       // The findings the rounds set aside are tracked in one Issue for the pull request; a run that
       // set none aside opens nothing.
       const deferredFindings = recordedDeferredFindings(results)
@@ -2193,6 +2210,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       // The publication carries the manifest the round's reviewers were dispatched against, never one rebuilt now.
       const manifest = dispatchedManifest(results)
       publish(task.runtimeDir, {
+        ...(task.flow === 'v2' ? { headScopedEffects: true } : {}),
         ...task.publish({
           prNumber: pr.number,
           expectedHead,

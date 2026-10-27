@@ -149,6 +149,8 @@ export type PublishInput = {
   prNumber: number
   /** The round's judged head — every posted verdict is expected to bind to this, re-verified after each post. */
   expectedHead: string
+  /** Version 2 may publish another approved head without advancing the review round. */
+  headScopedEffects?: boolean
   journal: Journal
   /** Which severities block is repository policy — the SAME resolved value `buildVerdictFromReview` derived this round's held verdicts under. */
   policy: ReviewPolicy
@@ -170,6 +172,14 @@ export type PublishInput = {
    * carries no link.
    */
   deferredIssue?: DeferredFindingsIssueRef
+}
+
+/** Publication identity keeps a later approved head separate while preserving legacy keys by default. */
+export function publicationEffectKey(
+  input: Pick<PublishInput, 'round' | 'expectedHead' | 'headScopedEffects'>,
+  kind: 'reviewer-verdict' | 'security-verdict' | 'summary'
+): string {
+  return `${input.round}${input.headScopedEffects ? `-${input.expectedHead}` : ''}-${kind}`
 }
 
 /** The field names `compareManifest` reports as unbound — `[]` when everything binds. */
@@ -244,7 +254,7 @@ export function publishRound(root: string, input: PublishInput): void {
     )
   }
 
-  postPrCommentOnce(task, round, `${round}-reviewer-verdict`, prNumber, reviewerBody)
+  postPrCommentOnce(task, round, publicationEffectKey(input, 'reviewer-verdict'), prNumber, reviewerBody)
   const postedReviewer = extractCodeReviewVerdict(fetchAllPrCommentBodies(prNumber))
   if (postedReviewer.danglingNote || postedReviewer.headSha !== expectedHead) {
     throw new Error(
@@ -273,7 +283,7 @@ export function publishRound(root: string, input: PublishInput): void {
     )
   }
 
-  postPrCommentOnce(task, round, `${round}-security-verdict`, prNumber, securityBody)
+  postPrCommentOnce(task, round, publicationEffectKey(input, 'security-verdict'), prNumber, securityBody)
   const postedSecurity = extractSecurityReviewVerdict(fetchAllPrCommentBodies(prNumber))
   if (postedSecurity.danglingNote || postedSecurity.headSha !== expectedHead) {
     throw new Error(
@@ -307,5 +317,5 @@ export function publishRound(root: string, input: PublishInput): void {
       "publishRound: the published marker comment re-parses as a real verdict through the gate's own extractors — refusing to post it (a summary mistaken for a verdict decides a merge)."
     )
   }
-  postPrCommentOnce(task, round, `${round}-summary`, prNumber, summary)
+  postPrCommentOnce(task, round, publicationEffectKey(input, 'summary'), prNumber, summary)
 }

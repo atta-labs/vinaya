@@ -199,7 +199,7 @@ describe('runReadyGateLive', () => {
     expect(result.failed).toBe('all')
   })
 
-  for (const recorded of ['fresh', 'stale', 'missing'] as const) {
+  for (const recorded of ['fresh', 'stale', 'missing', 'passed'] as const) {
     test(`a failed ready push immediately logs only its files and wall time (${recorded})`, async () => {
       const dir = repo()
       const head = headOf(dir)
@@ -210,7 +210,8 @@ describe('runReadyGateLive', () => {
           path,
           JSON.stringify({
             version: 1,
-            head: recorded === 'fresh' ? head : 'old',
+            outcome: recorded === 'passed' ? 'passed' : 'failed',
+            head: recorded === 'stale' ? 'old' : head,
             failed: ['a.test.ts', 'b.test.ts'],
             selection: null
           })
