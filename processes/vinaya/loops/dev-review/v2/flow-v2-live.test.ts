@@ -272,6 +272,44 @@ describe('runReadyGateLive', () => {
     expect(existsSync(registry) ? readdirSync(registry) : []).toEqual([])
   })
 
+  test('the repository hook receives only its explicit environment and no planted driver credentials', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    const keys = [
+      'GH_TOKEN',
+      'GITHUB_TOKEN',
+      'OPENAI_API_KEY',
+      'ANTHROPIC_API_KEY',
+      'AWS_SECRET_ACCESS_KEY',
+      'VINAYA_RUNTIME_DIR',
+      'UNDECLARED_TEST_SETTING'
+    ]
+    const previous = keys.map((key) => process.env[key])
+    try {
+      for (const key of keys) process.env[key] = 'planted-driver-secret'
+      withHook(dir, 'env | sort')
+      const result = await runReadyGateLive({
+        worktreePath: dir,
+        branch: 'task/issue-1',
+        head,
+        remoteHead: head,
+        registryDir: join(dir, 'registry')
+      })
+      expect(result.passed).toBe(true)
+      expect(result.output).not.toContain('planted-driver-secret')
+      for (const key of keys) expect(result.output).not.toContain(key + '=')
+      expect(result.output).toContain('PATH=')
+      expect(result.output).toContain('HOME=')
+      expect(result.output).toContain('TMPDIR=')
+      expect(result.output).toContain('VINAYA_PUSH_MODE=ready')
+    } finally {
+      for (const [i, key] of keys.entries()) {
+        if (previous[i] === undefined) delete process.env[key]
+        else process.env[key] = previous[i]
+      }
+    }
+  })
+
   test('the selected tests see their own temp folder, removed when the run ends', async () => {
     const dir = repo()
     const head = headOf(dir)

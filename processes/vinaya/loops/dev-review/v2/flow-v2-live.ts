@@ -302,9 +302,15 @@ export async function runReadyGateLive(input: {
   const runTemp = mkdtempSync(join(tmpdir(), 'vinaya-ready-gate-'))
   const registry = input.registryDir ? { dir: input.registryDir } : {}
   const started = now()
+  const baseline: NodeJS.ProcessEnv = {}
+  for (const key of ['PATH', 'LANG', 'HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'BUN_INSTALL_CACHE_DIR']) {
+    if (process.env[key] !== undefined) baseline[key] = process.env[key]
+  }
   const env: NodeJS.ProcessEnv = {
-    ...gitEnv,
+    ...baseline,
     TMPDIR: runTemp,
+    VINAYA_TEST_TMP: join(runTemp, 'fixtures'),
+    VINAYA_PROCESS_REGISTRY_DIR: join(runTemp, 'processes'),
     VINAYA_PUSH_MODE: 'ready',
     VINAYA_PUSH_BASE: `origin/${input.defaultBranch ?? 'main'}`
   }
