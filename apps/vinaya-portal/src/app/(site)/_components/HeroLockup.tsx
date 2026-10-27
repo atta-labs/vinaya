@@ -161,7 +161,7 @@ export function HeroLockup({
         <span ref={(el) => setNode('desc', el)} className='origin-left grid'>
           <span
             data-lockup-bare
-            className='col-start-1 row-start-1 w-0 origin-left whitespace-nowrap font-mono text-sm font-medium tracking-normal text-muted-foreground opacity-0 transition-opacity duration-500 ease-out [[data-bare=true]_&]:opacity-100'
+            className='col-start-1 row-start-1 w-0 origin-left whitespace-nowrap font-mono text-sm font-normal tracking-normal text-muted-foreground opacity-0 transition-opacity duration-500 ease-out [[data-bare=true]_&]:opacity-100'
           >
             <Letters text='Development harness' delayStep={25} />
           </span>
