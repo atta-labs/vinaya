@@ -25,7 +25,7 @@ import { docsSearchIndex } from './docs/_lib/search-index'
 // ancestor selector outranks the plain utilities, so no order dependence. The docs shell's
 // in-body bar has no `data-bare` ancestor, so it always reads docked.
 const TOPBAR_CHROME_CLASS =
-  'border-transparent bg-background/35 backdrop-blur-md [[data-bare=true]_&]:bg-transparent [[data-bare=true]_&]:shadow-none [[data-bare=true]_&]:backdrop-blur-none'
+  'transform-gpu border-transparent bg-background/35 backdrop-blur-md [[data-bare=true]_&]:bg-transparent [[data-bare=true]_&]:shadow-none [[data-bare=true]_&]:backdrop-blur-none'
 
 export default async function SiteLayout({ children }: { children: ReactNode }) {
   const { branding } = await getPortalCms()
