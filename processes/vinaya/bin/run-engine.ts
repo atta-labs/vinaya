@@ -134,6 +134,7 @@ import {
   restoreExecutionRoundBeforeDispatch,
   type ExecutionRoundRestore,
   resumeModel,
+  taskSwitchCommand,
   revisionMovedLine,
   roleTimeouts,
   rulingPollMs,
@@ -1298,7 +1299,7 @@ export function crossAgentResumeRefusal(
   if (recorded === null)
     return `task ${task}'s checkpoint records no agent, and the Engine continues a run on the agent it started with; start the task fresh: set ${checkpointFile} aside and run the task again.`
   if (recorded !== agent)
-    return `task ${task}'s checkpoint started on ${recorded}, and the Engine continues a run on the agent it started with; asked for ${agent}.`
+    return `task ${task}'s checkpoint started on ${recorded}, and the Engine continues a run on the agent it started with; asked for ${agent}; to continue it on ${agent}, run \`${taskSwitchCommand(task, agent)}\` first.`
   return null
 }
 

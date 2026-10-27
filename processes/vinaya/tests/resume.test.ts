@@ -501,6 +501,7 @@ describe('--resume <pr>', () => {
   test('refuses when the held pause’s agent differs from the requested one', () => {
     const run = claimFor('codex', ({ forge }) => forge.post())
     expect(run.claim).toThrow('paused on claude')
+    expect(run.claim).toThrow('task switch --issue')
     expect(run.forge.claims).toEqual([])
   })
 

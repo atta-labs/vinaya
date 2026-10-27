@@ -56,6 +56,7 @@ tests/lib/log-cache-sqlite.test.ts
 tests/lib/log-readers-integration.test.ts
 tests/lib/task-run.test.ts
 tests/lib/task-status.test.ts
+tests/lib/task-switch.test.ts
 tests/milestone.test.ts
 tests/new-noop-check.test.ts
 tests/no-brief-author.test.ts

@@ -670,7 +670,7 @@ export function claimResume(root: string, request: ResumeRequest, deps: ResumeDe
   const recorded = held.agent as AgentName | undefined
   if (request.agent !== undefined && recorded !== undefined && request.agent !== recorded)
     return refuse(
-      `task ${task} paused on ${recorded}, and the Engine continues a run on the agent it started with; asked for ${request.agent}.`
+      `task ${task} paused on ${recorded}, and the Engine continues a run on the agent it started with; asked for ${request.agent}; to continue it on ${request.agent}, run \`${taskSwitchCommand(task, request.agent)}\` first.`
     )
   const agent = request.agent ?? recorded
   if (agent === undefined) return refuse('this pause does not record an agent; retry once with --agent <claude|codex>.')
@@ -724,6 +724,10 @@ export function claimResume(root: string, request: ResumeRequest, deps: ResumeDe
     throw error
   }
 }
+
+/** The command that sets a task's checkpoint aside so the next run starts on `agent`. */
+export const taskSwitchCommand = (task: number, agent: string): string =>
+  `bun apps/cli/src/index.ts task switch --issue ${task} --agent ${agent}`
 
 /** The model a resume runs with: the one `--model` names, else the one the run's checkpoint recorded, else the vendor's default. */
 export function resumeModel(explicit: string | undefined, recorded: string | undefined): string | undefined {
