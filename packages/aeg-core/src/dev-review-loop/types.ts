@@ -252,6 +252,7 @@ export type Observations =
 export type PauseReason =
   | 'escalation'
   | 'max_rounds'
+  | 'ready_push_failed'
   | 'no_progress'
   | 'confidence'
   | 'reappearance'

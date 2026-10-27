@@ -25,6 +25,7 @@ type Fields = Record<string, unknown>
 /** Why the loop stops or pauses, in words, and whether a person has to act. A reason absent from this table reads as paused, with its code. */
 const REASONS: Record<string, { words: string; person: boolean }> = {
   escalation: { words: 'a role escalated a question', person: true },
+  ready_push_failed: { words: 'the ready push failed three consecutive times', person: true },
   max_rounds: { words: 'the round limit was reached', person: true },
   no_progress: { words: 'the rounds made no progress', person: true },
   confidence: { words: 'the stated confidence collapsed', person: true },

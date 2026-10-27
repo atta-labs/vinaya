@@ -268,7 +268,12 @@ import {
   type ReviewRoundInputs,
   type TaskInput
 } from '../executing/actions'
-import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../loops/dev-review/v2/v2-actions'
+import {
+  createV2Actions,
+  READY_PUSH_FAILURE_LIMIT,
+  V2_ACTION_BINDINGS,
+  V2_DECISIONS
+} from '../loops/dev-review/v2/v2-actions'
 import { runCli } from '../../../harness/gates/run-checks'
 import {
   endStoragePushes,
@@ -740,7 +745,8 @@ export const renderedFlowPath = (runDir: string): string => join(runDir, 'dev-re
 
 /**
  * The process with its Flow rendered for one run: every decision's `max_revisions` set to the review policy's
- * `maxRounds`, written under the run directory, and that file the process's Flow. The checked-in Flow keeps literal
+ * `maxRounds` in version 1, with three additional ready-push repair turns in version 2, written under the run directory.
+ * That file is the process's Flow. The checked-in Flow keeps literal
  * numbers, which the loader requires; the run compiles the rendered one. A cap that is not a positive whole number
  * leaves the process as it is, since no Flow can carry it.
  */
@@ -749,7 +755,8 @@ export function withPolicyCeilings(loaded: LoadedProcess, runDir: string, maxRou
   const flow = parseYaml(readFileSync(loaded.flowPath, 'utf8')) as {
     steps: Array<{ decision?: { max_revisions?: number } }>
   }
-  for (const step of flow.steps) if (step.decision) step.decision.max_revisions = maxRounds
+  const ceiling = maxRounds + (loaded.flowKey === 'v2' ? READY_PUSH_FAILURE_LIMIT : 0)
+  for (const step of flow.steps) if (step.decision) step.decision.max_revisions = ceiling
   mkdirSync(runDir, { recursive: true })
   const flowPath = renderedFlowPath(runDir)
   writeFileSync(flowPath, stringifyYaml(flow))

@@ -953,6 +953,13 @@ export const PAUSE_REASON_PROFILE: Record<
     attemptedRecovery: 'none — an escalation is a decision request, not a retry condition.',
     nextActions: ['Read `detail` for the escalating role’s own reasoning, then rule or redirect the work.']
   },
+  ready_push_failed: {
+    requestedAuthority: 'principal',
+    attemptedRecovery: 'three consecutive ready pushes failed, with a Developer turn between each attempt.',
+    nextActions: [
+      'Read the failing test files in detail, then repair the tests or rule on the failure before resuming.'
+    ]
+  },
   max_rounds: {
     requestedAuthority: 'principal',
     attemptedRecovery: 'none — the round cap was reached; the loop stopped rather than looping forever.',

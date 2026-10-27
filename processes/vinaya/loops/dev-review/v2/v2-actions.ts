@@ -88,6 +88,9 @@ export interface V2Functions {
   now?: () => number
 }
 
+/** Consecutive ready-push failures pause independently of review revisions. */
+export const READY_PUSH_FAILURE_LIMIT = 3
+
 type Results = ActionContext['results']
 
 /** The results the forge gates' CI read sees: this step's own earlier record, and no local gate to skip on. */
@@ -293,9 +296,26 @@ export async function readyPush(
         counters: previous?.counters ?? NO_COUNTERS,
         decision: { type: 'ready' },
         outcome: 'passed',
+        readyPushFailures: 0,
         head,
         selection: gate.selection,
         ...(gate.localTests ? { localTests: gate.localTests } : {}),
+        events
+      })
+    }
+  }
+  const failures = (latestRecord(results)?.readyPushFailures ?? 0) + 1
+  if (failures >= READY_PUSH_FAILURE_LIMIT) {
+    const detail = `the ready push failed ${failures} consecutive times; failing test files: ${gate.failed === 'all' ? 'all' : gate.failed.join(', ')}`
+    pauseThrough(task, 'ready-push', { reason: 'ready_push_failed', detail })
+    return {
+      exitCode: BACK,
+      stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+        readyPushFailures: failures,
+        decision: { type: 'pause', reason: 'ready_push_failed', detail },
+        outcome: 'refused',
+        head,
+        failed: gate.failed,
         events
       })
     }
@@ -306,6 +326,7 @@ export async function readyPush(
     'ready-refused',
     `both reviewers approved ${head}, but the ready push refused it: ${gate.timedOut ? 'the selected tests ran past the deadline' : 'the selected tests failed'}.\n\n${failingTestLines(gate)}`,
     {
+      readyPushFailures: failures,
       outcome: gate.timedOut ? 'timed-out' : 'refused',
       head,
       selection: gate.selection,

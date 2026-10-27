@@ -401,6 +401,8 @@ export const NO_COUNTERS: RoundCounters = { unpushedResumeAttempted: false, gate
 
 /** One deciding step's record, as read back from its result. */
 export interface LoopRecord {
+  /** Consecutive ready-push failures, carried only by version 2 records. */
+  readyPushFailures?: number
   step: string
   seq: number
   state: LoopState
@@ -452,9 +454,17 @@ export function latestRecord(results: Results): LoopRecord | null {
       state = undefined
     }
     if (state === undefined) throw new Error(`${step} recorded a result with no readable loop state`)
+    if (
+      parsed.readyPushFailures !== undefined &&
+      (typeof parsed.readyPushFailures !== 'number' ||
+        !Number.isInteger(parsed.readyPushFailures) ||
+        parsed.readyPushFailures < 0)
+    )
+      throw new Error(`${step} recorded an invalid ready-push failure count`)
     if (latest !== null && parsed.seq <= latest.seq) continue
     latest = {
       step,
+      ...(parsed.readyPushFailures === undefined ? {} : { readyPushFailures: Number(parsed.readyPushFailures) }),
       seq: parsed.seq,
       state,
       counters: { ...NO_COUNTERS, ...(parsed.counters as Partial<RoundCounters> | undefined) },
@@ -496,7 +506,9 @@ export function recordOutput(
     [extra: string]: unknown
   }
 ): string {
+  const failures = latestRecord(results)?.readyPushFailures
   return JSON.stringify({
+    ...(failures === undefined ? {} : { readyPushFailures: failures }),
     ...fields,
     seq: nextSeq(results),
     state: JSON.parse(encodeLoopState(state)),

@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { parse } from 'yaml'
+import { loadProcess } from '../../../../../harness/dev-process/loader/load-process'
+import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { withPolicyCeilings } from '../../../bin/run-engine'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { ALL_TESTS, AGENTS, confident, PR, records, TASK, runV2, setUpWorld, tearDownWorld } from './v2-world'
 
@@ -256,4 +260,45 @@ describe('Log rounds follow review rounds', () => {
     expect(observed.steps.filter((step) => step.node === 'validate-developer-output')).toHaveLength(3)
     expectReviewRounds(observed)
   })
+})
+
+for (const agent of AGENTS) {
+  describe(`ready-push failures have their own budget (${agent})`, () => {
+    test('two refused ready pushes after approval at the review cap still get fresh Developer turns', async () => {
+      const observed = await runV2(agent, {
+        policy: { maxRounds: 2 },
+        reviewer: (role, attempt) => (role === 'code-reviewer' && attempt === 1 ? 'request-changes' : 'approve'),
+        failingTests: (attempt) => (attempt <= 2 ? ['/repo/b.test.ts'] : [])
+      })
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(4)
+      expect(observed.world.readyRuns).toHaveLength(3)
+      expect(observed.trace.pauseReason ?? null).toBeNull()
+    })
+    test('the third consecutive ready-push failure pauses by name with its failing files', async () => {
+      const observed = await runV2(agent, { policy: { maxRounds: 1 }, failingTests: () => ['/repo/b.test.ts'] })
+      expect(observed.outcome).toBe('pause:ready_push_failed')
+      expect(observed.trace.pauseReason).toBe('ready_push_failed')
+      expect(observed.world.readyRuns).toHaveLength(3)
+      expect(observed.spawns.developer).toBe(3)
+      expect(records(observed, 'ready-push').at(-1)?.decision).toMatchObject({
+        type: 'pause',
+        reason: 'ready_push_failed',
+        detail: expect.stringContaining('/repo/b.test.ts')
+      })
+    })
+  })
+}
+
+test('policy ceilings reserve test repair turns only for version 2 and preserve version 1', () => {
+  for (const flow of ['v1', 'v2'] as const) {
+    const loaded = loadProcess(resolve(import.meta.dir, '../../..'), { flow })
+    const rendered = withPolicyCeilings(loaded, fixtureDir('ceilings-'), 2)
+    const parsed = parse(readFileSync(rendered.flowPath, 'utf8')) as {
+      steps: Array<{ decision?: { max_revisions: number } }>
+    }
+    const ceilings = parsed.steps.flatMap((step) => (step.decision ? [step.decision.max_revisions] : []))
+    expect(ceilings.length).toBeGreaterThan(0)
+    expect(new Set(ceilings)).toEqual(new Set([flow === 'v2' ? 5 : 2]))
+  }
 })
