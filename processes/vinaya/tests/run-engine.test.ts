@@ -72,8 +72,10 @@ import {
   targetRepoRoot,
   withDispatchCapabilities,
   withTurnSchema,
-  tolerateReviewerExit
+  tolerateReviewerExit,
+  launcherRoleOf
 } from '../bin/run-engine'
+import { ROLE_NAMES } from '../../../harness/adapters/agents/manifest'
 import { createDispatchCapabilityTable } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
@@ -1535,4 +1537,13 @@ describe('launch usage model attribution', () => {
         requested ? `requested:${requested}` : null
       ])
     })
+})
+
+describe('tool-host bridges reach their own role launcher', () => {
+  test('every tool-host role files its bridge under a manifest role name; the security host under security-reviewer', () => {
+    const hostRoles = ['developer', 'code-reviewer', 'security'] as const
+    for (const role of hostRoles) expect(ROLE_NAMES).toContain(launcherRoleOf(role))
+    expect(launcherRoleOf('security')).toBe('security-reviewer')
+    expect(new Set(hostRoles.map(launcherRoleOf)).size).toBe(hostRoles.length)
+  })
 })

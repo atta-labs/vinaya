@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Database } from 'bun:sqlite'
+import type { RoleName } from '../../../harness/adapters/agents/manifest'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
@@ -645,6 +646,15 @@ export function withToolHostBoundaries(
     }
   }
   return bounded
+}
+
+/**
+ * The role-launcher name a tool host's role is generated under: the launchers are keyed by the manifest's role names,
+ * so the security host's bridge must be filed under `security-reviewer`, or that role's config falls back to the
+ * placeholder bridge command and starts without the loop's tools.
+ */
+export function launcherRoleOf(hostRole: 'developer' | 'code-reviewer' | 'security'): RoleName {
+  return hostRole === 'security' ? 'security-reviewer' : hostRole
 }
 
 /** Reports a failed turn's transport loss and acknowledges successful turns without replaying them. */
@@ -1540,7 +1550,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     ]
     // Each agent step's role host, replaced at that step's dispatch boundary when its socket file is gone.
     const roleHostsByStep: Record<string, { role: string; host: ReplaceableDevToolsHost }> = {}
-    const mcpCommands: Record<string, string> = {}
+    const mcpCommands: Partial<Record<RoleName, string>> = {}
     const hostParts: Partial<
       Record<(typeof roleHosts)[number]['role'], Pick<RoleDispatches, 'capabilities' | 'writeShim' | 'onEnded'>>
     > = {}
@@ -1586,7 +1596,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           )
       }
       hostParts[roleHost.role] = { capabilities, writeShim, onEnded }
-      mcpCommands[roleHost.role === 'security' ? 'security' : roleHost.role] = shimPath
+      mcpCommands[launcherRoleOf(roleHost.role)] = shimPath
     }
     const roles: Record<string, RoleLauncher[string]> = {
       ...createRoleLaunchers({
