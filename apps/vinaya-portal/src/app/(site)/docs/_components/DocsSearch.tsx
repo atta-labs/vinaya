@@ -40,7 +40,13 @@ export function DocsSearch({ groups }: { groups: SearchGroup[] }) {
 
   return (
     <>
-      <Button variant='field' size='sm' onClick={() => setOpen(true)} className='w-40 justify-start gap-2 xl:w-56'>
+      <Button
+        variant='field'
+        size='sm'
+        data-docs-search
+        onClick={() => setOpen(true)}
+        className='w-40 justify-start gap-2 xl:w-56'
+      >
         <SearchIcon className='size-4' aria-hidden />
         <span className='flex-1 text-left'>Search docs</span>
         <kbd className='rounded border border-border px-1.5 font-mono text-xs'>⌘K</kbd>

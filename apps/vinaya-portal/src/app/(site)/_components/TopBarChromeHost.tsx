@@ -7,7 +7,8 @@ import { useHeroLockupRegister } from './hero-lockup-context'
 import { isLandingRoute } from './landing-route'
 
 /**
- * The color scheme toggle, which on landing stays hidden until the lockup has docked
+ * The color scheme toggle and the docs search field (`data-docs-search`), which on landing stay
+ * hidden until the lockup has docked
  * (`data-bare` is `false`). `ColorSchemeToggle` (shared, untouched) carries no data attribute,
  * but its `title` is always `Switch to light mode` / `Switch to dark mode` on both of its render
  * paths, so `[title^=Switch][title$=mode]` finds it in the desktop group and the mobile bar row.
@@ -18,7 +19,7 @@ import { isLandingRoute } from './landing-route'
  * covered in `hero-canvas/hero-core.css`.
  */
 const TOGGLE_DOCK_CLASS =
-  '[&[data-bare=true]_:is(button:has([title^=Switch][title$=mode]),[title^=Switch][title$=mode])]:invisible'
+  '[&[data-bare=true]_:is(button:has([title^=Switch][title$=mode]),[title^=Switch][title$=mode],[data-docs-search])]:invisible'
 
 /**
  * While the lockup is in its hero state (`data-bare` is `true`) it is the big "Vinaya /
@@ -86,9 +87,9 @@ function useForwardScrollToPage(barRef: { current: HTMLElement | null }, pathnam
  * that ever un-sets `'false'`, so this is a no-op there.
  *
  * The bar's nav and menu button are visible from the first render, over the transparent bare
- * bar. Only the color scheme toggle follows `data-bare` (`TOGGLE_DOCK_CLASS`), so on landing it
- * is SSR'd hidden and appears in the same frame the lockup docks; elsewhere `data-bare` is
- * `'false'` and it is visible from first paint.
+ * bar. Only the color scheme toggle and the docs search follow `data-bare` (`TOGGLE_DOCK_CLASS`), so on
+ * landing they are SSR'd hidden and appear in the same frame the lockup docks; elsewhere `data-bare` is
+ * `'false'` and they are visible from first paint.
  *
  * The SSR'd `data-bare` hangs on `isLandingRoute`, not a bare `pathname === '/'`: a background
  * regeneration of the prerendered landing page can render it under Next's internal
