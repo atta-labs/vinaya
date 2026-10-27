@@ -16,13 +16,18 @@ import {
 } from '../../src/lib/dev-review-eval/registry'
 import { engineEvidenceOf, OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
 import {
+  CONTAINMENT_PROBES,
+  CONTAINMENT_ROW_IDS,
   CONTROLLER_BOUNDARY_RESIDUAL,
   CONTROLLER_BOUNDARY_ROW_IDS,
   CODEX_FILE_READ_RESIDUAL,
   CREDENTIAL_PROBES,
   CREDENTIAL_ROW_IDS,
+  NON_SECRET_EGRESS_RESIDUAL,
   OWED_REASONS
 } from '../sandbox-conformance/engine-attack-probes'
+
+type LoadedRow = Parameters<typeof engineEvidenceOf>[0]
 import {
   FAULT_ATTACK_HEADING,
   type FaultAttackEntry,
@@ -407,6 +412,99 @@ describe('the capability and controller-boundary rows record Engine evidence, ow
   })
 })
 
+describe('the filesystem, role and content-containment rows record Engine evidence, owed shrink-only', () => {
+  const owedList = JSON.parse(readFileSync(join(import.meta.dir, 'engine-evidence-owed.json'), 'utf8')) as {
+    owed: string[]
+  }
+  const rows = CONTAINMENT_ROW_IDS.map((id) => {
+    const row = shard.components.find((component) => component.id === id)
+    if (row === undefined) throw new Error(`${id} is not a row of the fault-attack shard`)
+    return { id, row }
+  })
+  /** The most rows still owed. Lower it as a row's probe-run output is pasted; never raise it. */
+  const owedCeiling = 9
+  /** The parallel-login row leaves the owed list only with the output of the `[principal]` run of two parallel Engine runs. */
+  const PRINCIPAL_RUN_ROW = 'fault-attack:32-parallel-runs-invalidating-each-other-s-copied-login'
+
+  const unrecorded = (candidates: readonly { id: string; row: LoadedRow }[]): string[] =>
+    candidates
+      .filter(({ row }) => {
+        const state = engineEvidenceOf(row)
+        return state === undefined || (state.state === 'owed' && state.reason.startsWith('No test that names'))
+      })
+      .map(({ id }) => id)
+
+  it('lists every row and fails while any has no recorded Engine evidence, printing the owed count', () => {
+    const owed = CONTAINMENT_ROW_IDS.filter((id) => owedList.owed.includes(id))
+    process.stdout.write(`containment Engine evidence: ${owed.length} of ${rows.length} rows owed\n`)
+    expect(unrecorded(rows)).toEqual([])
+    expect(owed.length).toBeLessThanOrEqual(owedCeiling)
+  })
+
+  it('names itself when a row has no recorded Engine evidence', () => {
+    const [first, ...rest] = rows
+    if (first === undefined) throw new Error('the list names no row')
+    const bare = {
+      id: first.id,
+      row: {
+        ...first.row,
+        backendEvidence: {
+          ...first.row.backendEvidence,
+          engine: { owed: "No test that names this row's full id proves it on the Engine backend yet." }
+        }
+      }
+    }
+    expect(unrecorded([bare, ...rest])).toEqual([first.id])
+  })
+
+  it('lets a row leave the owed list only once its live probe run is recorded, and the parallel-login row only with the principal run', () => {
+    for (const { id, row } of rows) {
+      const state = engineEvidenceOf(row)
+      const listed = owedList.owed.includes(id)
+      // Listed while its entry is a live-gated test without the pull request that carries the pasted output, or an owed reason.
+      if (state?.state === 'live-run-owed' || state?.state === 'owed')
+        expect({ id, listed }).toEqual({ id, listed: true })
+      if (state?.state === 'evidenced') expect({ id, listed }).toEqual({ id, listed: false })
+    }
+    // The pasted principal run is recorded on the row as its live probe pull request, like any other row's.
+    const parallel = rows.find(({ id }) => id === PRINCIPAL_RUN_ROW)
+    expect(parallel === undefined ? undefined : engineEvidenceOf(parallel.row)?.state).toBe('live-run-owed')
+  })
+
+  it('probes, for every shell-driven row, both adapters, and keeps each Must-pass row’s declared outcome', () => {
+    const mustPass = (id: string) =>
+      rawShard.components.find((raw) => raw.id === id)?.faultAttack.cutover === 'must-pass'
+    for (const probe of CONTAINMENT_PROBES) {
+      expect(Object.keys(probe.byAdapter).sort()).toEqual(['claude', 'codex'])
+      if (mustPass(probe.row)) {
+        // A Must-pass row is denied or refused under both adapters; it admits no residual or owed outcome.
+        expect({ row: probe.row, outcomes: Object.values(probe.byAdapter).filter((o) => o === 'residual') }).toEqual({
+          row: probe.row,
+          outcomes: []
+        })
+      }
+    }
+  })
+
+  it('measures the non-secret egress row and records its mitigation or its residual risk, or fails', () => {
+    const id = 'fault-attack:57-non-secret-data-leaving-through-an-allowed-host-excludes'
+    const row = rows.find((entry) => entry.id === id)?.row
+    const probe = CONTAINMENT_PROBES.find((entry) => entry.row === id)
+    if (row === undefined || probe === undefined) throw new Error('the egress row has no row or probe')
+    const mitigated = Object.values(probe.byAdapter).every((outcome) => outcome === 'deny')
+    const state = engineEvidenceOf(row)
+    const namesResidual = state?.state === 'owed' && state.reason === NON_SECRET_EGRESS_RESIDUAL
+    expect(mitigated || namesResidual).toBe(true)
+    // A row with neither fails: an owed entry that names no residual risk is neither.
+    const neither = { ...row, backendEvidence: { ...row.backendEvidence, engine: { owed: 'No proof yet.' } } }
+    const stateOfNeither = engineEvidenceOf(neither)
+    expect(
+      mitigated || (stateOfNeither?.state === 'owed' && stateOfNeither.reason === NON_SECRET_EGRESS_RESIDUAL)
+    ).toBe(false)
+    expect(rawShard.components.find((raw) => raw.id === id)?.faultAttack.cutover).toBe('pass-or-accepted')
+  })
+})
+
 /** The run-control and governed-effects rows the Engine runner's fault-injection scenarios prove, under both vendors. */
 const ENGINE_FAULT_INJECTION_ROWS = [
   'fault-attack:03-controller-process-death',
@@ -424,8 +522,6 @@ const ENGINE_FAULT_INJECTION_PROOF = 'processes/vinaya/tests/fault-injection.tes
 const ENGINE_FAULT_INJECTION_OWED: readonly string[] = []
 /** The most rows the list above may hold. Lower it with the list; never raise it. */
 const ENGINE_FAULT_INJECTION_OWED_CEILING = 0
-
-type LoadedRow = Parameters<typeof engineEvidenceOf>[0]
 
 /** The rows, of those given, whose Engine evidence is not a recorded proof. */
 const owedEngineRows = (rows: readonly { id: string; row: LoadedRow }[]): string[] =>
