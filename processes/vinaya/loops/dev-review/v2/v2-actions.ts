@@ -25,6 +25,7 @@ import {
   recordedDispatch,
   recordOutput,
   safeRead,
+  startReviewRound,
   type TaskInput,
   worktreeHeadOf
 } from '../../../executing/actions'
@@ -166,7 +167,7 @@ function sendBackAfterApproval(
   ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, task.reviewRound())
   const previous = latestRecord(results)
   const headBefore = safeRead(task.remoteHead) ?? worktreeHeadOf(task)
-  return {
+  return startReviewRound(task, {
     exitCode: BACK,
     stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
       counters: { ...(previous?.counters ?? NO_COUNTERS), stallCheck: null },
@@ -174,7 +175,7 @@ function sendBackAfterApproval(
       decision: { type: 'dispatch_developer' },
       ...extra
     })
-  }
+  })
 }
 
 /**

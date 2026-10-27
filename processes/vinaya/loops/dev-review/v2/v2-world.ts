@@ -46,6 +46,8 @@ interface Launch {
 export const ALL_TESTS = ['/repo/a.test.ts', '/repo/b.test.ts', '/repo/c.test.ts']
 
 export interface Scenario {
+  /** Wall clock used by the version 2 actions. */
+  now?: () => number
   /** The CI conclusions read once per approved head, in turn; the last repeats. Default green. */
   ci?: Array<'green' | 'red'>
   /** The test files that fail at each ready push (1-based attempt); default none. */
@@ -370,6 +372,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
   task.flow = 'v2'
   task.stagedPullRequest = () => world.staged
   task.v2 = {
+    now: scenario.now,
     stagedPullRequest: () => world.staged,
     findOpenPullRequest: () => (world.prOpen ? { number: PR } : null),
     runReadyGate: ({ head, signal }) => {

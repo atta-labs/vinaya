@@ -313,3 +313,28 @@ test('the repair turn names the failed files and the ready-hook contract', async
   expect(prompt).toContain('20-minute deadline')
   expect(prompt).toContain('Run the named failing files before publishing')
 })
+
+test('each round duration includes Developer and reviewer time rather than just local checks', async () => {
+  let now = 1000
+  const observed = await runV2('claude', {
+    now: () => now,
+    reviewer: (role, attempt) => (role === 'code-reviewer' && attempt === 1 ? 'request-changes' : 'approve'),
+    after: {
+      'validate-developer-output': () => {
+        now += 60000
+      },
+      'assess-gate': () => {
+        now += 2000
+      },
+      'validate-reviewer-outputs': () => {
+        now += 30000
+      }
+    }
+  })
+  expect(observed.outcome).toBe('completed')
+  const rounds = observed.rawEvents.filter((event) => event.event === 'round_ended')
+  expect(rounds.map((event) => [event.round, event.wall_ms])).toEqual([
+    [1, 92000],
+    [2, 92000]
+  ])
+})
