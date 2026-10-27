@@ -305,7 +305,10 @@ describe.each(ENGINE_RUNNERS)('%s records token usage', (runner) => {
       for (const [launchRole, [input, output]] of Object.entries(ROLE_TOKENS)) {
         const role = RECORDED_ROLE[launchRole as keyof typeof RECORDED_ROLE]
         expect(world.recordedUsage).toContainEqual({ role, usage: { input, output } })
-        const attempts = run.events.filter((event) => event.kind === 'role_attempt' && event.actor === role)
+        const attempts = run.events.filter(
+          (event) =>
+            event.kind === 'role_attempt' && event.actor === agent && String(event.effect_id).includes(`:${role}:`)
+        )
         expect(attempts.length).toBeGreaterThan(0)
         for (const attempt of attempts) expect(attempt.usage).toEqual({ input, output })
         expect(run.events).toContainEqual(

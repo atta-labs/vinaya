@@ -876,6 +876,13 @@ export function withAgentNarration(
   }
 }
 
+/**
+ * Whether a Log event is one an agent launch writes when it ends (its `role_attempt` and `usage`), rather than one the
+ * loop writes: a launch's attempt names the agent as its actor, the loop's own attempts name a role.
+ */
+export const isAgentLaunchEvent = (event: { kind?: unknown; actor?: unknown }): boolean =>
+  event.kind === 'usage' || (event.kind === 'role_attempt' && (event.actor === 'claude' || event.actor === 'codex'))
+
 /** What one role's agent launch used, as `withDispatchUsage` reports it when the launch ends. */
 export interface LaunchUsage {
   role: HeldVerdictRole | 'developer'
@@ -932,15 +939,18 @@ export function withDispatchUsage(
   }
 }
 
-/** The `role_attempt` and `usage` events one ended launch writes, as the standalone dispatch writes them for its own. */
-export function launchUsageEvents(launch: LaunchUsage, effectId: string, requestedModel: string | null) {
+/**
+ * The `role_attempt` and `usage` events one ended launch writes, as the standalone dispatch writes them for its own:
+ * the launch's attempt names the agent that ran it as its actor, where the loop's own attempts name the role.
+ */
+export function launchUsageEvents(launch: LaunchUsage, agent: Agent, effectId: string, requestedModel: string | null) {
   const model = launch.reading.model ?? requestedModel
   return [
     {
       kind: 'role_attempt',
       event: 'attempted',
       payload: {},
-      actor: launch.role,
+      actor: agent,
       attempt: null,
       effect_id: effectId,
       model,
@@ -1671,7 +1681,12 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       launchSeq += 1
       options.taskInput?.recordUsage?.(launch.role, launch.reading.usage)
       const requested = launch.role === 'developer' ? (args.model ?? args.agent) : args.agent
-      for (const event of launchUsageEvents(launch, `${options.loopId}:${launch.role}:${launchSeq}`, requested))
+      for (const event of launchUsageEvents(
+        launch,
+        args.agent,
+        `${options.loopId}:${launch.role}:${launchSeq}`,
+        requested
+      ))
         sinkLog(event)
     }
     const automaticResumes: AutomaticResumes = { usageLimit: 0 }
