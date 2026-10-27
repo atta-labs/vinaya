@@ -40,6 +40,8 @@ export interface RegisteredProcess extends ProcessIdentity {
   label: string
   /** True when the process leads its own process group: stopping it signals the whole group. */
   processGroup?: boolean
+  /** Members observed while the leader identity was still verified. */
+  members?: ProcessIdentity[]
 }
 
 export interface StopOptions {
@@ -84,6 +86,7 @@ export function containmentLogLine(backend: ContainmentBackend): string {
  * is written, flushed and renamed into place before this resolves, so a crash after it still leaves the record.
  */
 export async function registerProcess(entry: RegisteredProcess, opts: { dir?: string } = {}): Promise<void> {
+  if (entry.processGroup && isSameProcessAlive(entry)) entry = { ...entry, members: observedGroupMembers(entry) }
   const folder = runFolder(opts.dir ?? registryDir(), entry.runToken)
   mkdirSync(folder, { recursive: true })
   const final = join(folder, `${entry.pid}.json`)
@@ -166,18 +169,61 @@ function groupExists(pgid: number): boolean {
   }
 }
 
-/**
- * Whether `entry` (or, for a group, any member of its group) is still ours to signal. A group whose leader is gone
- * is still ours while the group exists and no other process holds the leader's pid: a pid is not reused while a
- * group of that id exists, so the members are the leader's own descendants.
- */
-function stillOurs(entry: RegisteredProcess): boolean {
-  const now = identityOf(entry.pid)
+/** Members observed while the original leader remains alive; never inferred from a bare PGID. */
+function observedGroupMembers(entry: RegisteredProcess): ProcessIdentity[] {
+  if (!isSameProcessAlive(entry)) return entry.members ?? []
+  try {
+    const rows = execFileSync('ps', ['-axo', 'pid=,pgid='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const members = rows
+      .trim()
+      .split('\n')
+      .flatMap((line) => {
+        const [pid, group] = line.trim().split(/\s+/).map(Number)
+        if (group !== entry.pid || pid === undefined || pid === entry.pid) return []
+        const member = identityOf(pid)
+        return member ? [member] : []
+      })
+    return isSameProcessAlive(entry) ? members : (entry.members ?? [])
+  } catch {
+    return entry.members ?? []
+  }
+}
+
+/** A leaderless number is never ownership proof; at least one recorded member must still match. */
+export function registeredProcessOwned(
+  entry: RegisteredProcess,
+  inspect = {
+    identity: identityOf,
+    groupExists,
+    groupOf: (pid: number): number | null => {
+      try {
+        return (
+          Number(
+            execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], {
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'ignore']
+            }).trim()
+          ) || null
+        )
+      } catch {
+        return null
+      }
+    }
+  }
+): boolean {
+  const now = inspect.identity(entry.pid)
   if (now !== null) return now.startTime === entry.startTime
-  return entry.processGroup === true && groupExists(entry.pid)
+  return (
+    entry.processGroup === true &&
+    (entry.members ?? []).some(
+      (member) =>
+        inspect.identity(member.pid)?.startTime === member.startTime && inspect.groupOf(member.pid) === entry.pid
+    )
+  )
 }
 
 function signal(entry: RegisteredProcess, sig: NodeJS.Signals): void {
+  if (!registeredProcessOwned(entry)) return
   try {
     process.kill(entry.processGroup ? -entry.pid : entry.pid, sig)
   } catch {
@@ -193,17 +239,29 @@ export async function stopRegistered(runToken: string, opts: StopOptions): Promi
   const entries = registeredProcesses(runToken, { dir })
   const identity = (entry: RegisteredProcess): ProcessIdentity => ({ pid: entry.pid, startTime: entry.startTime })
   const report: StopReport = { backend: 'registry', terminated: [], killed: [], alreadyGone: [] }
-  const live = entries.filter((entry) => {
-    if (stillOurs(entry)) return true
+  const live: RegisteredProcess[] = []
+  for (const entry of entries) {
+    if (entry.processGroup && isSameProcessAlive(entry)) {
+      entry.members = observedGroupMembers(entry)
+      // Persist the independent identities before TERM can remove the leader.
+      await registerProcess(entry, { dir })
+    }
+    if (registeredProcessOwned(entry)) {
+      live.push(entry)
+      continue
+    }
+    if (entry.processGroup && identityOf(entry.pid) === null && groupExists(entry.pid))
+      throw new Error(
+        `process registry: group ${entry.pid} has no verifiable recorded member; refusing to signal an unowned group`
+      )
     report.alreadyGone.push(identity(entry))
-    return false
-  })
+  }
   for (const entry of live) signal(entry, 'SIGTERM')
   const deadline = Date.now() + Math.max(0, opts.graceMs)
   let remaining = live
   while (remaining.length > 0 && Date.now() < deadline) {
     await sleep(Math.min(50, Math.max(1, deadline - Date.now())))
-    remaining = remaining.filter(stillOurs)
+    remaining = remaining.filter((entry) => registeredProcessOwned(entry))
   }
   for (const entry of live) if (!remaining.includes(entry)) report.terminated.push(identity(entry))
   for (const entry of remaining) {
@@ -214,7 +272,7 @@ export async function stopRegistered(runToken: string, opts: StopOptions): Promi
   const killDeadline = Date.now() + 2000
   while (remaining.length > 0 && Date.now() < killDeadline) {
     await sleep(20)
-    remaining = remaining.filter(stillOurs)
+    remaining = remaining.filter((entry) => registeredProcessOwned(entry))
   }
   rmSync(runFolder(dir, runToken), { recursive: true, force: true })
   return report
