@@ -11,7 +11,7 @@ export interface LogoProps {
   text?: string[]
   /**
    * Sanitized SVG markup of the logo, inlined instead of the `<img>` so its theme
-   * variables (`var(--foreground)`, `var(--primary)`) follow the live theme. Takes
+   * variables (`var(--foreground)`, `var(--ring)`) follow the live theme. Takes
    * precedence over `light`/`dark`; the caller must have sanitized it.
    */
   markup?: string | null
