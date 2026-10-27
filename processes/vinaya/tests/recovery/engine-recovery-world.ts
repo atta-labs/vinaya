@@ -224,7 +224,9 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
       cleanupAllReviewerIsolationArtifacts: () => {},
       localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
       checkTaskDispatchReadiness: () => ({ ready: true, output: 'ready' }),
-      createTaskWorktree: () => {}
+      createTaskWorktree: () => {},
+      // The real probe runs the vendor's sandbox only on Linux, so an unfaked one passes elsewhere and pauses here.
+      probeAgentSandbox: async () => ({ ok: true })
     }
   } as unknown as TaskInput
   const real = createActions(task)
