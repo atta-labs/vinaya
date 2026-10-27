@@ -14,7 +14,7 @@ import { assembleAndRenderBrief } from './brief-assembly.js'
 import type { TaskRunner } from './config.js'
 import type { AgentVendor } from './dispatch.js'
 import { developerBranchFor, findOpenPrForBranch } from './dev-review-loop/developer-dispatch.js'
-import { isDriverPidAlive, readDriverLock } from './dev-review-loop/pause-resume.js'
+import { isDriverPidAlive, readDriverLock, readPauseState, writePauseState } from './dev-review-loop/pause-resume.js'
 import { runtimeDir as thisRepoRuntimeDir } from './dev-review-loop/reviewer-dispatch.js'
 import { appendDriverLine, loopLogPathFor } from './loop-log.js'
 import { engineRunDirectory, readTaskRunner } from './task-run-engine.js'
@@ -36,6 +36,11 @@ export type SwitchTaskDeps = {
   readCheckpointRecord: (checkpointFile: string) => Promise<CheckpointRecord | null>
   /** Whether the task's branch carries commits beyond main or has a pull request. */
   hasPublishedWork: (task: number) => boolean
+  /**
+   * Makes a held pause record name the new agent and model, so `--resume` on the new agent is accepted too; true when a
+   * pause was held and rewritten. Nothing else of the pause changes.
+   */
+  rewritePauseAgent: (task: number, agent: AgentVendor, model: string | undefined) => boolean
   logLine: (task: number, words: string) => void
   now: () => Date
 }
@@ -91,6 +96,7 @@ export async function switchTask(input: SwitchTaskInput, deps: SwitchTaskDeps): 
     // opening a lone file whose log it lost.
     for (const name of [...present].reverse()) renameSync(join(runDir, name), join(folder, name))
   }
+  deps.rewritePauseAgent(task, agent, input.model)
   const fromAgent = record?.agent ?? 'unrecorded'
   const fromModel = record?.model ? record.model : 'vendor default'
   const toModel = input.model ?? 'vendor default'
@@ -161,6 +167,14 @@ export function liveSwitchDeps(runtimeDir: string, published: SwitchTaskDeps['ha
     },
     readCheckpointRecord: readCheckpointRecordFromFile,
     hasPublishedWork: published,
+    rewritePauseAgent: (task, agent, model) => {
+      const held = readPauseState(runtimeDir, task)
+      if (held === null) return false
+      // The recorded model belongs to the old vendor and is never carried over.
+      const { model: _heldModel, ...withoutModel } = held
+      writePauseState(runtimeDir, { ...withoutModel, agent, ...(model ? { model } : {}) })
+      return true
+    },
     logLine: (task, words) => appendDriverLine(loopLogPathFor(null, task, runtimeDir), words),
     now: () => new Date()
   }
