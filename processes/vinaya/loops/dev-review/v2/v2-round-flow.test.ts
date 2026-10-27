@@ -277,6 +277,32 @@ for (const agent of AGENTS) {
       expect(observed.world.readyRuns).toHaveLength(3)
       expect(observed.trace.pauseReason ?? null).toBeNull()
     })
+    test('approved CI repairs never spend the review ceiling before three ready-push failures', async () => {
+      const observed = await runV2(agent, {
+        policy: { maxRounds: 1 },
+        ci: ['red'],
+        failingTests: (attempt) => (attempt >= 5 ? ['/repo/b.test.ts'] : [])
+      })
+      expect(observed.outcome).toBe('pause:ready_push_failed')
+      expect(observed.trace.pauseReason).toBe('ready_push_failed')
+      expect(records(observed, 'read-ci-once')).toHaveLength(4)
+      expect(observed.world.readyRuns).toHaveLength(7)
+      expect(observed.spawns.developer).toBe(7)
+      expect(observed.spawns['code-reviewer']).toBe(7)
+      expect(
+        observed.rawEvents.filter((event) => event.event === 'round_ended').every((event) => event.round === 1)
+      ).toBe(true)
+      expect(records(observed, 'ready-push').at(-1)?.readyPushFailures).toBe(3)
+    })
+    test('requested changes still pause at the configured review ceiling', async () => {
+      const observed = await runV2(agent, {
+        policy: { maxRounds: 1 },
+        reviewer: (role) => (role === 'code-reviewer' ? 'request-changes' : 'approve')
+      })
+      expect(observed.outcome).toBe('pause:max_rounds')
+      expect(observed.spawns.developer).toBe(1)
+      expect(observed.world.readyRuns).toHaveLength(0)
+    })
     test('the third consecutive ready-push failure pauses by name with its failing files', async () => {
       const observed = await runV2(agent, { policy: { maxRounds: 1 }, failingTests: () => ['/repo/b.test.ts'] })
       expect(observed.outcome).toBe('pause:ready_push_failed')
@@ -292,7 +318,24 @@ for (const agent of AGENTS) {
   })
 }
 
-test('policy ceilings reserve test repair turns only for version 2 and preserve version 1', () => {
+test('approved CI repairs remain bounded by the configured active-time budget', async () => {
+  const clock = { elapsedMs: 0, byPhaseMs: {} }
+  const observed = await runV2('claude', {
+    policy: { maxRounds: 1, maxTaskMinutes: 1 },
+    ci: ['red'],
+    clock,
+    after: {
+      'read-ci-once': () => {
+        clock.elapsedMs += 30001
+      }
+    }
+  })
+  expect(observed.outcome).toBe('pause:time_budget')
+  expect(records(observed, 'read-ci-once')).toHaveLength(2)
+  expect(observed.world.readyRuns).toHaveLength(2)
+})
+
+test('version 2 policy budgets are independent of dispatch counts and version 1 ceilings stay unchanged', () => {
   for (const flow of ['v1', 'v2'] as const) {
     const loaded = loadProcess(resolve(import.meta.dir, '../../..'), { flow })
     const rendered = withPolicyCeilings(loaded, fixtureDir('ceilings-'), 2)
@@ -301,7 +344,7 @@ test('policy ceilings reserve test repair turns only for version 2 and preserve 
     }
     const ceilings = parsed.steps.flatMap((step) => (step.decision ? [step.decision.max_revisions] : []))
     expect(ceilings.length).toBeGreaterThan(0)
-    expect(new Set(ceilings)).toEqual(new Set([flow === 'v2' ? 5 : 2]))
+    expect(new Set(ceilings)).toEqual(new Set([flow === 'v2' ? Number.MAX_SAFE_INTEGER : 2]))
   }
 })
 
