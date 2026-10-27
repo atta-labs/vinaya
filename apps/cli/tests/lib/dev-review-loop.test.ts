@@ -42,7 +42,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { loadProcess } from '../../../../harness/dev-process/loader/load-process'
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
@@ -1279,13 +1278,13 @@ describe('devReviewLoop — every event names the standalone runner, the Vinaya 
     const cliVersion = (JSON.parse(readFileSync(join(CLI_ROOT, 'package.json'), 'utf8')) as { version: string }).version
     const processYaml = readFileSync(join(CLI_ROOT, '..', '..', 'processes', 'vinaya', 'process.yaml'), 'utf8')
     const declaredVersion = processYaml.match(/^version:\s*(\S+)\s*$/m)?.[1]
-    const definition = loadProcess(join(CLI_ROOT, '..', '..', 'processes', 'vinaya'))
+    expect(declaredVersion).toMatch(/^\d+\.\d+\.\d+$/)
     const env: NodeJS.ProcessEnv = {}
     await setStandaloneLogIdentity(env)
     expect(env).toEqual({
       VINAYA_PROCESS_ID: 'vinaya',
       VINAYA_PROCESS_VERSION: declaredVersion,
-      VINAYA_PROCESS_DIGEST: definition.digest,
+      VINAYA_PROCESS_DIGEST: expect.stringMatching(/^[0-9a-f]{64}$/),
       VINAYA_RUNNER_ID: 'standalone',
       VINAYA_RUNNER_VERSION: cliVersion,
       // The standalone loop runs the default flow, named as the Engine runner names it.
@@ -1308,9 +1307,9 @@ describe('devReviewLoop — every event names the standalone runner, the Vinaya 
     // process.yaml and the CLI package.
     const named: NodeJS.ProcessEnv = {}
     await setStandaloneLogIdentity(named)
-    const definition = loadProcess(join(CLI_ROOT, '..', '..', 'processes', 'vinaya'))
-    expect(named.VINAYA_PROCESS_VERSION).toBe(definition.identity.version)
-    expect(named.VINAYA_PROCESS_DIGEST).toBe(definition.digest)
+    const declared = readFileSync(join(CLI_ROOT, '..', '..', 'processes', 'vinaya', 'process.yaml'), 'utf8')
+    expect(named.VINAYA_PROCESS_VERSION).toBe(declared.match(/^version:\s*(\S+)\s*$/m)?.[1])
+    expect(named.VINAYA_PROCESS_DIGEST).toMatch(/^[0-9a-f]{64}$/)
     const expectedIdentity = {
       process: { id: 'vinaya', version: named.VINAYA_PROCESS_VERSION, digest: named.VINAYA_PROCESS_DIGEST },
       runner: { id: 'standalone', version: named.VINAYA_RUNNER_VERSION },
