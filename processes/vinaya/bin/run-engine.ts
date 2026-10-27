@@ -265,6 +265,7 @@ import {
   endStoragePushes,
   liveV2Functions,
   stagedPullRequestStore,
+  sweepReadyGateRuns,
   storagePushLogEvent,
   withV2DevTools
 } from '../loops/dev-review/v2/flow-v2-live'
@@ -1154,6 +1155,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
 /** Runs the task's legs. The host is closed and the sink drained on every way out. */
 async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult> {
   continuationFlow(options.runtimeDir, options.args.task, options.process.flowKey)
+  if (options.process.flowKey === 'v2') await sweepReadyGateRuns()
   const out = options.out ?? ((line: string) => process.stdout.write(`${line}\n`))
   const { args } = options
   const lifecycle = options.lifecycle ?? {}

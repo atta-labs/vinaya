@@ -322,7 +322,7 @@ describe('runReadyGateLive', () => {
       registryDir: join(dir, 'registry')
     })
     const tmp = /tmp=(\S+)/.exec(result.output)?.[1] ?? ''
-    expect(tmp).toContain('vinaya-ready-gate-')
+    expect(tmp).toBeTruthy()
     expect(existsSync(tmp)).toBe(false)
   })
 })

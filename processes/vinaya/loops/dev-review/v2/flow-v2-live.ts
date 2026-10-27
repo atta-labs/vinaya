@@ -1,7 +1,5 @@
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
 import { type DevToolContext, devToolError } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
@@ -21,6 +19,7 @@ import {
 } from '../../../../../apps/cli/src/lib/process-registry'
 import { NO_LOCAL_TESTS_MARKER } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { PUSH_MODE_MARKER, storageMarkerText } from '../../../../../apps/cli/src/lib/pre-push-mode-logic'
+import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../apps/cli/src/lib/test-temp'
 import type { ReadyGateResult, StagedPullRequest, V2Functions } from './v2-actions'
 
 // The live wiring of review locally, push once (version 2 of the developer-review Flow) for the Engine runner: the
@@ -298,9 +297,16 @@ export async function runReadyGateLive(input: {
   }
   const backend = selectContainmentBackend()
   log(`ready push: ${containmentLogLine(backend)}`)
-  const runToken = `ready-gate-${randomUUID()}`
-  const runTemp = mkdtempSync(join(tmpdir(), 'vinaya-ready-gate-'))
-  const registry = input.registryDir ? { dir: input.registryDir } : {}
+  await sweepReadyGateRuns()
+  const ownedRun = createTestTempRun('ready-gates')
+  const runToken = ownedRun.marker.owner.runToken
+  const runTemp = ownedRun.dir
+  const registry = { dir: input.registryDir ?? join(runTemp, 'registry') }
+  writeFileSync(
+    join(runTemp, 'registry.json'),
+    JSON.stringify({ token: runToken, ...(input.registryDir ? { external: input.registryDir } : {}) }),
+    { mode: 0o600 }
+  )
   const started = now()
   const baseline: NodeJS.ProcessEnv = {}
   for (const key of ['PATH', 'LANG', 'HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'BUN_INSTALL_CACHE_DIR']) {
@@ -423,8 +429,28 @@ export async function runReadyGateLive(input: {
     throw error
   } finally {
     if (timer) clearTimeout(timer)
-    rmSync(runTemp, { recursive: true, force: true })
+    cleanupReadyGateStorage(ownedRun)
   }
+}
+
+function cleanupReadyGateStorage(run: Parameters<typeof removeTestTempRun>[0]): void {
+  const report = removeTestTempRun(run)
+  if (report.failed.length) throw new Error(`ready gate storage cleanup failed: ${JSON.stringify(report.failed)}`)
+}
+
+/** Reaps abandoned ready gates before removing their owned storage. */
+export async function sweepReadyGateRuns(): Promise<void> {
+  const report = await sweepAbandoned('ready-gates', {
+    stop: (token, opts, directory) => {
+      const metadata = join(directory, 'registry.json')
+      const recorded = existsSync(metadata)
+        ? (JSON.parse(readFileSync(metadata, 'utf8')) as { token: string; external?: string })
+        : null
+      if (recorded !== null && recorded.token !== token) throw new Error('ready gate registry ownership disagrees')
+      return stopRegistered(token, { ...opts, dir: recorded?.external ?? join(directory, 'registry') })
+    }
+  })
+  if (report.failed.length) throw new Error(`ready gate recovery cleanup failed: ${JSON.stringify(report.failed)}`)
 }
 
 /** Version 2's live functions for one task. */

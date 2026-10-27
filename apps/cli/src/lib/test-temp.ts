@@ -291,7 +291,7 @@ export function removeTestTempRun(run: TestTempRun): SweepReport {
 
 export interface SweepDeps {
   /** Stops a gone owner's surviving processes; the process registry's `stopRegistered` by default. */
-  stop: (runToken: string, opts: StopOptions) => Promise<StopReport>
+  stop: (runToken: string, opts: StopOptions, directory: string) => Promise<StopReport>
   graceMs: number
   /** Which entries of the parent directory the sweep judges; every entry by default. */
   select: (name: string) => boolean
@@ -345,7 +345,7 @@ export async function sweepOwnedDirs(parent: string, deps: Partial<SweepDeps> = 
         continue
       }
       try {
-        await stop(marker.owner.runToken, { graceMs })
+        await stop(marker.owner.runToken, { graceMs }, dir)
         const error = removeTree(dir)
         if (error !== null) throw new Error(error)
         rmSync(receipt, { force: true })
@@ -362,7 +362,7 @@ export async function sweepOwnedDirs(parent: string, deps: Partial<SweepDeps> = 
       continue
     }
     try {
-      await stop(marker.owner.runToken, { graceMs })
+      await stop(marker.owner.runToken, { graceMs }, dir)
     } catch (error) {
       report.failed.push({ dir, error: `stopping the owner's processes failed: ${describeError(error)}` })
       continue

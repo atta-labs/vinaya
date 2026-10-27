@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { FAILED_TESTS_RECORD, gitPath } from '../../../../apps/cli/src/lib/pre-push-failed-tests'
 import { identityOf } from '../../../../apps/cli/src/lib/process-registry'
 import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
-import { ReadyGateCancelledError, runReadyGateLive } from '../../loops/dev-review/v2/flow-v2-live'
+import { ReadyGateCancelledError, runReadyGateLive, sweepReadyGateRuns } from '../../loops/dev-review/v2/flow-v2-live'
+import { createTestTempRun, readOwnerMarker, removeTestTempRun } from '../../../../apps/cli/src/lib/test-temp'
 import type { RecoveryRunner } from './runners'
 
 // The ready-gate test run is cancellable and contained. Only version 2 of the Engine flow has a ready gate, so the
@@ -61,6 +62,48 @@ const pidsIn = (path: string): number[] =>
     : []
 
 describe.each(READY_GATE_RUNNERS)('%s', () => {
+  test('recovery reaps a killed driver’s detached gate before deleting its owned storage', async () => {
+    const dir = repo()
+    const pids = join(dir, '.git', 'owned-pids')
+    slowHook(dir, pids)
+    const script = join(dir, '.git', 'driver.ts')
+    const modulePath = new URL('../../loops/dev-review/v2/flow-v2-live.ts', import.meta.url).pathname
+    writeFileSync(
+      script,
+      `import {runReadyGateLive} from ${JSON.stringify(modulePath)}; await runReadyGateLive(${JSON.stringify({ worktreePath: dir, branch: 'task/issue-1', head: headOf(dir) })})`
+    )
+    const live = createTestTempRun('ready-gates')
+    const driver = spawn('bun', [script], { env: process.env, stdio: 'ignore' })
+    let owned = ''
+    let children: number[] = []
+    try {
+      await waitFor(() => existsSync(`${pids}.tmp`) && pidsIn(pids).length === 2)
+      owned = readFileSync(`${pids}.tmp`, 'utf8').trim()
+      children = pidsIn(pids)
+      expect(readOwnerMarker(owned)?.owner.pid).toBe(driver.pid!)
+      const metadata = JSON.parse(readFileSync(join(owned, 'registry.json'), 'utf8'))
+      expect(metadata.token).toBe(readOwnerMarker(owned)?.owner.runToken)
+      const died = new Promise<void>((resolve) => driver.once('exit', () => resolve()))
+      driver.kill('SIGKILL')
+      await died
+      expect(children.some((pid) => identityOf(pid) !== null)).toBe(true)
+      await sweepReadyGateRuns()
+      expect(existsSync(owned)).toBe(false)
+      expect(existsSync(live.dir)).toBe(true)
+      await waitFor(() => children.every((pid) => identityOf(pid) === null), 1000)
+    } finally {
+      driver.kill('SIGKILL')
+      for (const pid of children) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+      }
+      await sweepReadyGateRuns()
+      const cleanup = removeTestTempRun(live)
+      expect(cleanup.failed).toEqual([])
+    }
+  })
+
   test('a cancel during the ready-gate run ends every registered process and removes its directories', async () => {
     const dir = repo()
     const head = headOf(dir)
