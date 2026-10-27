@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { Database } from 'bun:sqlite'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
@@ -435,7 +436,7 @@ export async function resumeEngine(input: ResumeEngineInput): Promise<EngineRunR
     input.deps ?? liveResumeDeps
   )
   const model = resumeModel(input.args.model, recordedCheckpointModel(input.runtimeDir, claim.task))
-  const flow = resumeFlow(input.args.flow, recordedRunFlow(input.runtimeDir, claim.task))
+  const flow = continuationFlow(input.runtimeDir, claim.task, input.args.flow)
   return input.run({
     task: claim.task,
     agent: claim.agent,
@@ -451,6 +452,7 @@ export const runFlowPath = (runtimeDir: string, task: number): string =>
 
 /** Records the flow key a run chose, so its resume continues the same flow. */
 export function recordRunFlow(runtimeDir: string, task: number, flow: string): void {
+  continuationFlow(runtimeDir, task, flow)
   mkdirSync(runDirectory(runtimeDir, task), { recursive: true })
   writeFileSync(runFlowPath(runtimeDir, task), `${JSON.stringify({ schemaVersion: 1, flow })}\n`)
 }
@@ -481,6 +483,36 @@ export function freshRunFlow(
   return {
     note: `run-engine: this task last ran flow ${recorded}; this fresh run takes the process's default flow — pass --flow ${recorded} to continue it.`
   }
+}
+
+/** Flow selection for task continuations. */
+export function continuationFlow(runtimeDir: string, task: number, named?: string): string | undefined {
+  const path = checkpointPath(runDirectory(runtimeDir, task))
+  if (!existsSync(path)) return named
+  const db = new Database(path, { readonly: true })
+  let checkpointFlow: string | undefined
+  let hasCheckpoint = false
+  try {
+    const columns = db.query<{ name: string }, []>('PRAGMA table_info(checkpoints)').all()
+    if (columns.length !== 0) {
+      hasCheckpoint = db.query('SELECT 1 FROM checkpoints LIMIT 1').get() !== null
+      if (columns.some((column) => column.name === 'flow')) {
+        const row = db
+          .query<{ flow: string | null }, []>(
+            "SELECT flow FROM checkpoints WHERE checkpoint_ns = '' ORDER BY checkpoint_id DESC LIMIT 1"
+          )
+          .get()
+        checkpointFlow = row?.flow ?? undefined
+      }
+    }
+  } finally {
+    db.close()
+  }
+  if (!hasCheckpoint) return named
+  const recorded = checkpointFlow ?? recordedRunFlow(runtimeDir, task)
+  if (recorded === undefined)
+    throw new Error('run-engine: checkpoint flow is unrecorded; start a new generation instead of guessing its flow')
+  return resumeFlow(named, recorded)
 }
 
 /** The flow a resume runs: the recorded one; a named one only when it agrees or nothing was recorded. */
@@ -1121,6 +1153,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
 
 /** Runs the task's legs. The host is closed and the sink drained on every way out. */
 async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult> {
+  continuationFlow(options.runtimeDir, options.args.task, options.process.flowKey)
   const out = options.out ?? ((line: string) => process.stdout.write(`${line}\n`))
   const { args } = options
   const lifecycle = options.lifecycle ?? {}
@@ -1482,6 +1515,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         revision,
         model: args.model,
         agent: args.agent,
+        flow: options.process.flowKey,
         // The round is mirrored once the saver's own write has committed; a failed mirror stops the next step.
         ...(mirror
           ? {
@@ -2921,10 +2955,9 @@ export async function main(argv: readonly string[]): Promise<number> {
     return result.exitCode
   }
   const parsed = parseArgs(argv)
-  // A fresh run takes the flow it names, else the process's default; only a resume continues a recorded flow.
-  const fresh = freshRunFlow(parsed.flow, recordedRunFlow(runtimeDir, parsed.task))
-  if (fresh.note) process.stderr.write(`${fresh.note}\n`)
-  const args: EngineArgs = parsed
+  // --task also continues an existing checkpoint; only a new generation may choose another flow.
+  const flow = continuationFlow(runtimeDir, parsed.task, parsed.flow)
+  const args: EngineArgs = { ...parsed, ...(flow ? { flow } : {}) }
   const loaded = loadProcess(processFolder, args.flow ? { flow: args.flow } : {})
   const runDir = runDirectory(runtimeDir, args.task)
   if (args.dryRun) {

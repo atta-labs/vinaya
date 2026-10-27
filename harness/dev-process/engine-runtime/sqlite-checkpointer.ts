@@ -152,6 +152,8 @@ export interface SqliteCheckpointerOptions {
   runtimeVersion?: string
   /** The agent the run was started with, recorded on every checkpoint; unrecorded (null) when absent. */
   agent?: string
+  /** The flow bound to every checkpoint of this generation. */
+  flow?: string
   /**
    * Called after each database write has committed, with what it committed. A throw is a failed required write: the
    * saver keeps it and `assertPersisted` raises it, so the run pauses before its next step without undoing the commit.
@@ -226,6 +228,7 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
   private readonly formatVersion: number
   private readonly runtimeVersion: string
   private readonly agent: string | null
+  private readonly flow: string | null
   private readonly onCommit: ((commit: CheckpointCommit) => void) | undefined
   private commitFailure: CheckpointCommitFollowUpError | null = null
 
@@ -239,6 +242,7 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
     this.formatVersion = options.formatVersion ?? CHECKPOINT_FORMAT_VERSION
     this.runtimeVersion = options.runtimeVersion ?? ENGINE_RUNTIME_VERSION
     this.agent = options.agent ?? null
+    this.flow = options.flow ?? null
     this.onCommit = options.onCommit
     try {
       this.db = new Database(options.path, { create: true })
@@ -269,6 +273,7 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
         format_version INTEGER,
         runtime_version TEXT,
         agent TEXT,
+        flow TEXT,
         PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
       );
       CREATE TABLE IF NOT EXISTS writes (
@@ -293,6 +298,7 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
     if (!columns.has('format_version')) this.db.exec('ALTER TABLE checkpoints ADD COLUMN format_version INTEGER')
     if (!columns.has('runtime_version')) this.db.exec('ALTER TABLE checkpoints ADD COLUMN runtime_version TEXT')
     if (!columns.has('agent')) this.db.exec('ALTER TABLE checkpoints ADD COLUMN agent TEXT')
+    if (!columns.has('flow')) this.db.exec('ALTER TABLE checkpoints ADD COLUMN flow TEXT')
   }
 
   /** Closes the file; the saver is unusable afterwards. */
@@ -525,8 +531,8 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
       .query(
         `INSERT OR REPLACE INTO checkpoints
          (thread_id, checkpoint_ns, checkpoint_id, parent_id, type, checkpoint, metadata, revision, model,
-          format_version, runtime_version, agent)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          format_version, runtime_version, agent, flow)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         threadId,
@@ -540,7 +546,8 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
         this.model,
         this.formatVersion,
         this.runtimeVersion,
-        this.agent
+        this.agent,
+        this.flow
       )
     const results = (checkpoint.channel_values as Record<string, unknown>)[RESULTS_CHANNEL]
     this.committed({

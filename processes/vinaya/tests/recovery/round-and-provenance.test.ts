@@ -1,3 +1,4 @@
+import { continuationFlow, recordRunFlow, runFlowPath } from '../../bin/run-engine'
 import { describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -247,5 +248,19 @@ describe('version 2 resumed Log', () => {
     expect(phases.every((event) => event.round === 3)).toBe(true)
     expect(resumed.round()).toBe(3)
     await expectCleanRun(world)
+  })
+})
+
+describe('checkpoint flow continuity', () => {
+  test('task continuation takes v2 from its checkpoint and cannot overwrite it with v1', async () => {
+    const world = createWorld()
+    await leg('engine-v2', world, { round: 1, at: 'after-round-marker' })
+    recordRunFlow(world.runtimeDir, TASK, 'v2')
+    expect(continuationFlow(world.runtimeDir, TASK)).toBe('v2')
+    expect(() => continuationFlow(world.runtimeDir, TASK, 'v1')).toThrow('never switches')
+    expect(() => recordRunFlow(world.runtimeDir, TASK, 'v1')).toThrow('never switches')
+    await expect(leg('engine-v1', world)).rejects.toThrow('never switches')
+    writeFileSync(runFlowPath(world.runtimeDir, TASK), JSON.stringify({ schemaVersion: 1, flow: 'v1' }))
+    expect(continuationFlow(world.runtimeDir, TASK)).toBe('v2')
   })
 })
