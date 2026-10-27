@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { getLogoMarkup } from '@/lib/brand-logo'
 import { getPortalCms } from '@/lib/portal-cms'
 import { Footer } from '@/ui/footer'
 import { NextLink } from '@/ui/lib/next-link'
@@ -12,6 +13,7 @@ import { SiteContentPad } from './_components/SiteContentPad'
 import { SITE_LINKS } from './_components/site-nav'
 import { TopBarChromeHost } from './_components/TopBarChromeHost'
 import { DocsSearch } from './docs/_components/DocsSearch'
+import './roadmap/marks-motion.css'
 import { docsSearchIndex } from './docs/_lib/search-index'
 
 // Vinaya's own topbar chrome, all of it carried here so the shared ChromeFrame stays
@@ -30,13 +32,20 @@ const TOPBAR_CHROME_CLASS =
 export default async function SiteLayout({ children }: { children: ReactNode }) {
   const { branding } = await getPortalCms()
   const logoUrl = branding?.logoSolidDark?.url ?? branding?.logoSolidLight?.url ?? null
+  const logoMarkup = await getLogoMarkup(branding)
 
   // The docs shell's chrome (see `DocsShell`), built here beside the site-wide bar it replaces on docs routes. The
   // wordmark is the plain static `Logo` — the footer's lockup, not `HeroLockup`, whose nodes belong to the landing
   // hero's FLIP loop.
   const docsWordmark = (
     <NextLink href='/' variant='unstyled' className='flex items-center gap-2'>
-      <Logo dark={logoUrl ?? undefined} alt='Vinaya' size='h-10' text={['Development', 'Harness']} />
+      <Logo
+        dark={logoUrl ?? undefined}
+        markup={logoMarkup}
+        alt='Vinaya'
+        size='h-10'
+        text={['Development', 'Harness']}
+      />
     </NextLink>
   )
   // The docs bar is the landing page's own bar, logo included and links placed the same way.
@@ -71,7 +80,7 @@ export default async function SiteLayout({ children }: { children: ReactNode }) 
             // `lg:min-w-[10.75rem]` keeps the lockup's full width while it sits bare in the
             // hero, so the left-aligned links never jump when it flips into the bar.
             <NextLink href='/' variant='unstyled' className='flex items-center gap-2 lg:min-w-[10.75rem]'>
-              <HeroLockup logoUrl={logoUrl} />
+              <HeroLockup logoUrl={logoUrl} logoMarkup={logoMarkup} />
             </NextLink>
           }
           chromeClassName={TOPBAR_CHROME_CLASS}
@@ -91,7 +100,13 @@ export default async function SiteLayout({ children }: { children: ReactNode }) 
                   product='vinaya'
                   logo={
                     <NextLink href='/' variant='unstyled' className='flex items-center gap-2'>
-                      <Logo dark={logoUrl ?? undefined} alt='Vinaya' size='h-10' text={['Development', 'Harness']} />
+                      <Logo
+                        dark={logoUrl ?? undefined}
+                        markup={logoMarkup}
+                        alt='Vinaya'
+                        size='h-10'
+                        text={['Development', 'Harness']}
+                      />
                     </NextLink>
                   }
                   links={[

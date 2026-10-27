@@ -9,15 +9,28 @@ export interface LogoProps {
   className?: string
   /** Optional text labels to display next to logo. 1-2 strings. */
   text?: string[]
+  /**
+   * Sanitized SVG markup of the logo, inlined instead of the `<img>` so its theme
+   * variables (`var(--foreground)`, `var(--primary)`) follow the live theme. Takes
+   * precedence over `light`/`dark`; the caller must have sanitized it.
+   */
+  markup?: string | null
 }
 
-export function Logo({ light, dark, alt = '', size = 'h-6', className, text }: LogoProps) {
+export function Logo({ light, dark, alt = '', size = 'h-6', className, text, markup }: LogoProps) {
   const url = light ?? dark
-  if (!url) return null
+  if (!url && !markup) return null
 
   const hasText = text && text.length > 0
 
-  const logoPart = (
+  const logoPart = markup ? (
+    <span
+      role='img'
+      aria-label={alt}
+      className={cn(size, 'inline-block aspect-square [&>svg]:size-full', className)}
+      dangerouslySetInnerHTML={{ __html: markup }}
+    />
+  ) : (
     // biome-ignore lint/performance/noImgElement: shared agnostic library can't use next/image
     <img src={url} alt={alt} className={cn(size, 'w-auto dark:invert', className)} />
   )
