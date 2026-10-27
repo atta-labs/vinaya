@@ -10,10 +10,23 @@ import { loadProcess } from '../../../harness/dev-process/loader/load-process'
 import { resolveRoleDoctrineText } from '../../../apps/cli/src/roles/plan'
 import { cleanupAllReviewerIsolationArtifacts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
 import { ENGINE_SCENARIO_DRIVERS } from '../../../apps/cli/tests/conformance/dev-review-engine-loop-adapter'
-import { runEngine, liveTaskInput, type Agent, type EngineRunOptions } from '../bin/run-engine'
+import {
+  runEngine,
+  liveTaskInput,
+  checkpointPath,
+  runDirectory,
+  type Agent,
+  type EngineRunOptions
+} from '../bin/run-engine'
 import { createActions, type TaskInput } from '../executing/actions'
 import { developerPrompt, type DeveloperPromptFacts } from '../executing/developer-prompt'
 import { createVinayaLogProducers } from '../executing/log-events'
+import {
+  readEffectiveResumedState,
+  readExecutionRound
+} from '../../../harness/dev-process/engine-runtime/checkpoint-round'
+import { runIdentityOfTask } from '../bin/run-lifecycle'
+import { clearDriverLock } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { recordedHandoff } from './handoff-fakes'
 import { confidentTurn, heldReviews, PASSING_FORGE_GATES, vendorLines } from './round-fakes'
 
@@ -67,6 +80,7 @@ const briefWith = (live: readonly string[]): string =>
   `# Frozen brief\n\n## 9. Test Plan\n\n\`\`\`\nbun test a.test.ts → 0 fail\n\`\`\`\n\n${live.map((line) => `- **[live]** ${line}`).join('\n')}\n`
 
 interface Scenario {
+  restartAfterWithdrawal?: boolean
   /** The `[live]` Test Plan lines of the frozen brief. */
   live?: readonly string[]
   /** The exit codes the live runs return in turn; the last repeats. */
@@ -109,6 +123,8 @@ function stubChild(agent: Agent): SpawnedProcessLike {
 
 /** Everything one run of the Flow did that a test reads back. */
 interface Observed {
+  checkpointRound: number | null
+  resumedRounds: number[]
   outcome: string
   /** `publish`, `dispose`, `live:<command>`, `scan` and the Log events, in the order they happened. */
   timeline: string[]
@@ -210,6 +226,10 @@ async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed>
       }
     } as unknown as TaskInput
     const real = createActions(task)
+    const control = createRunControl()
+    let interrupted = false
+    let restarting = false
+    const resumedRounds: number[] = []
     const results: Observed['results'] = {}
     const completionSteps = new Set([
       'vinaya.classify-developer-output',
@@ -245,6 +265,15 @@ async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed>
               : async () => ({ exitCode: 0, stdout: '' })
           const result = await action(context)
           results[context.nodeId] = { exitCode: result.exitCode, stdout: result.stdout ?? '' }
+          if (
+            scenario.restartAfterWithdrawal &&
+            !interrupted &&
+            context.nodeId === 'run-live-checks' &&
+            result.exitCode === 1
+          ) {
+            interrupted = true
+            control.halt('driver stopped immediately after live withdrawal')
+          }
           return result
         }
       ])
@@ -257,6 +286,7 @@ async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed>
       repoRoot: wt,
       runtimeDir,
       loopId: 'completion',
+      heldPullRequestConflicts: async () => false,
       taskInput: task,
       handoffDeps: handoff.deps,
       actions,
@@ -270,20 +300,35 @@ async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed>
       },
       startHost: async () => ({ close: async () => {} }),
       devToolsContext: {} as never,
-      control: createRunControl(),
+      control,
       out: () => {},
       spawnFn: (_command, args, spawnOptions) => {
         const dir =
           agent === 'claude'
             ? dirname(args[args.indexOf('--settings') + 1] ?? '')
             : (spawnOptions?.env?.CODEX_HOME ?? '')
+        if (restarting && basename(dir) === 'developer') resumedRounds.push(round)
         spawns.push(basename(dir))
         timeline.push(`spawn:${basename(dir)}`)
         return stubChild(agent)
       }
     }
-    const result = await runEngine(options)
+    let result = await runEngine(options)
+    let checkpointRound: number | null = null
+    if (scenario.restartAfterWithdrawal) {
+      const state = await readEffectiveResumedState(
+        checkpointPath(runDirectory(runtimeDir, 9)),
+        runIdentityOfTask(9).threadId
+      )
+      checkpointRound = readExecutionRound(state)?.round ?? null
+      round = 1
+      restarting = true
+      clearDriverLock(runtimeDir, 9)
+      result = await runEngine({ ...options, control: createRunControl() })
+    }
     return {
+      checkpointRound,
+      resumedRounds,
       outcome: (JSON.parse(readFileSync(result.tracePath, 'utf8')) as { outcome: string }).outcome,
       timeline,
       journalResults: events.filter((e) => e.event === 'journal_finalized').map((e) => String(e.result)),
@@ -339,6 +384,17 @@ describe.each(AGENTS)('the live-check step (%s)', (agent) => {
     const rounds = observed.timeline.filter((entry) => entry.startsWith('dev_review_loop:round_ended'))
     expect(rounds).toHaveLength(2)
     expect(observed.journalResults).toEqual(['merged_ready'])
+  })
+
+  test('restart immediately after live withdrawal restores the next review round before dispatch', async () => {
+    const observed = await runFlow(agent, {
+      live: ['bun test live.test.ts'],
+      liveExits: [1, 0],
+      restartAfterWithdrawal: true
+    })
+    expect(observed.checkpointRound).toBe(2)
+    expect(observed.resumedRounds).toEqual([2])
+    expect(observed.outcome).toBe('completed')
   })
 
   test('a failing line at the round cap pauses through the handoff, closing the journal stopped', async () => {

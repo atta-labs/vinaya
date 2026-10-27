@@ -1,6 +1,6 @@
 id: vinaya
 name: Vinaya
-version: 0.2.0
+version: 0.2.1
 # A run chooses its flow by key (`task run --flow <key>`); a run that names none gets default_flow.
 flows:
   v1: executing/dev-review.flow.yaml

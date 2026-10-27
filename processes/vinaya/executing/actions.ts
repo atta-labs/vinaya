@@ -2082,7 +2082,11 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         // The round advances exactly as it does for a reviewer's blocking finding.
         task.seedRound?.(round + 1)
       }
-      return { exitCode: 1, stdout }
+      return {
+        exitCode: 1,
+        stdout,
+        stderr: encodeExecutionRound({ round: task.reviewRound(), advancedBy: 'run-live-checks' })
+      }
     }
   },
   'vinaya.classify-live-result': {
