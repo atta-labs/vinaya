@@ -56,7 +56,7 @@ function sampleProcess() {
   return { folder, loaded: loadProcess(folder) }
 }
 
-function fakeAgentProcess(onKill: () => void): SpawnedProcessLike {
+function fakeAgentProcess(onKill: () => void, exitCode = 0): SpawnedProcessLike {
   const closeListeners: Array<(code: number | null) => void> = []
   let stdoutListener: ((chunk: string) => void) | undefined
   return {
@@ -65,7 +65,7 @@ function fakeAgentProcess(onKill: () => void): SpawnedProcessLike {
       end: () => {
         setTimeout(() => {
           stdoutListener?.('{"type":"result","session_id":"s1"}\n')
-          for (const listener of closeListeners) listener(0)
+          for (const listener of closeListeners) listener(exitCode)
         }, 0)
       }
     },
@@ -148,6 +148,53 @@ describe('engine runtime', () => {
     expect(outcome.reason).toBe('completed')
     expect(spawned).toEqual(['worker-agent', 'worker-agent'])
     expect(calls).toEqual({ prepare: 1, check: 2, finish: 1 })
+  })
+
+  test('a completed turn keeps its session and tool effects when the socket pathname disappears', async () => {
+    const { options } = harness()
+    const control = createRunControl()
+    let effects = 0
+    let replacements = 0
+    options.spawnFn = () => {
+      effects++
+      return fakeAgentProcess(() => {})
+    }
+    options.control = control
+    options.bindings = {
+      ...options.bindings,
+      actions: {
+        ...options.bindings.actions,
+        'sample.check': () => {
+          control.halt('observe completed session')
+          return { exitCode: 0 }
+        }
+      }
+    }
+    options.agentRedispatch = {
+      lost: () => 'socket missing',
+      boundary: async () => {
+        replacements++
+      }
+    }
+    const outcome = await startProcessRun(options)
+    expect(effects).toBe(1)
+    expect(replacements).toBe(0)
+    expect(outcome.reason).toBe('paused')
+    if (outcome.reason === 'paused') expect(outcome.checkpoint?.sessions.work).toBe('s1')
+  })
+
+  test('a failed turn with a lost tool transport is named and never replayed', async () => {
+    const { options } = harness()
+    let effects = 0
+    options.spawnFn = () => {
+      effects++
+      return fakeAgentProcess(() => {}, 1)
+    }
+    options.agentRedispatch = { lost: () => 'socket missing', boundary: async () => {} }
+    const outcome = await startProcessRun(options)
+    expect(effects).toBe(1)
+    expect(outcome.reason).toBe('failed')
+    if (outcome.reason === 'failed') expect(outcome.error).toContain('tool-host-transport-failure')
   })
 
   test('a halt pauses the run and a resume on the same checkpointer does not replay finished steps', async () => {

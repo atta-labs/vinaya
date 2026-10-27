@@ -332,13 +332,14 @@ export type ReplaceableDevToolsHost = {
    */
   replaceIfSocketMissing: () => Promise<boolean>
   /**
-   * Records that the dispatch holding `capability` ended. It lost its tools when the socket was gone by then and it
-   * may have served earlier calls: those do not prove a later bridge can reconnect. A missing socket requires
-   * a bounded retry; completed effects remain acknowledged in their durable records.
+   * Records a missing socket when the dispatch ends. The runtime keeps successful turns and pauses failed
+   * ones without replay; pathname absence alone does not prove a completed turn lost its connection.
    */
   noteDispatchEnded: (capability: string) => boolean
   /** How many of this role's dispatches in a row lost their tools. */
   consecutiveLosses: () => number
+  /** A completed turn remains valid even when its open socket was unlinked. */
+  noteDispatchSucceeded?: () => void
 }
 
 type ClosableHost = Pick<DevToolsHost, 'close'>
@@ -371,6 +372,9 @@ export async function startReplaceableDevToolsHost(
       const lost = listening && !socketExists(opts.socketPath)
       losses = lost ? losses + 1 : 0
       return lost
+    },
+    noteDispatchSucceeded: () => {
+      losses = 0
     },
     consecutiveLosses: () => losses
   }

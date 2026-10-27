@@ -187,7 +187,7 @@ const stubHome = scratchDir('recovery-codex-home-')
 writeFileSync(join(stubHome, 'auth.json'), '{}\n')
 process.env.CODEX_HOME = stubHome
 
-function stubAgent(lines: string[]): SpawnedProcessLike {
+function stubAgent(lines: string[], exitCode = 0): SpawnedProcessLike {
   const closeListeners: Array<(code: number | null) => void> = []
   let stdout: ((chunk: string) => void) | undefined
   return {
@@ -197,7 +197,7 @@ function stubAgent(lines: string[]): SpawnedProcessLike {
       end: () => {
         setTimeout(() => {
           for (const line of lines) stdout?.(`${line}\n`)
-          for (const listener of closeListeners) listener(0)
+          for (const listener of closeListeners) listener(exitCode)
         }, 0)
       }
     },
@@ -217,7 +217,12 @@ function stubRun(
   agent: Agent,
   runtimeDir: string,
   provenance?: () => AgentCheckpointProvenance | null,
-  hosts?: { startHost: EngineRunOptions['startHost']; hostKey: string; onSpawn: (args: readonly string[]) => void }
+  hosts?: {
+    startHost: EngineRunOptions['startHost']
+    hostKey: string
+    onSpawn: (args: readonly string[]) => void
+    exitCode?: number
+  }
 ) {
   const spawns: string[] = []
   const actionRuns: string[] = []
@@ -259,7 +264,7 @@ function stubRun(
     spawnFn: (_command, args) => {
       spawns.push(args.join(' ').includes('/generated/developer/') ? 'develop' : 'agent')
       hosts?.onSpawn(args)
-      return stubAgent(['{"type":"result"}'])
+      return stubAgent(['{"type":"result"}'], hosts?.exitCode)
     },
     ...(provenance ? { readAgentProvenance: provenance } : {})
   }
@@ -572,43 +577,27 @@ describe('tool hosts', () => {
     }
   })
 
-  for (const lostTimes of [1, 2]) {
-    test(
-      lostTimes === 1
-        ? 'a turn lost to a mid-turn socket deletion is re-dispatched once, the same turn, on the replaced host'
-        : 'a re-dispatch lost again pauses with a named reason',
-      async () => {
-        const runtimeDir = scratchDir('recovery-redispatch-')
-        const hostKey = `rd${lostTimes}${process.pid}`
-        const socketPath = devToolsSocketPath(`${hostKey}-developer`)
-        const narrated: string[] = []
-        let developSpawns = 0
-        const run = stubRun('claude', runtimeDir, () => provenanceFor('claude'), {
-          hostKey,
-          startHost: startDevToolsHost,
-          // The socket is removed while each lost dispatch runs, before its bridge could connect.
-          onSpawn: (args) => {
-            if (!args.join(' ').includes('/generated/developer/')) return
-            developSpawns += 1
-            if (developSpawns <= lostTimes) rmSync(socketPath, { force: true })
-          }
-        })
-        run.options.out = (line: string) => narrated.push(line)
-        await runEngine(run.options)
-        const prompts = run.spawns.filter((spawn) => spawn === 'develop')
-        if (lostTimes === 1) {
-          // One turn, dispatched twice: the lost dispatch and its one re-dispatch, then the run went on.
-          expect(prompts).toHaveLength(2)
-          expect(run.actionRuns.filter((step) => step === 'validate-developer-output')).toHaveLength(1)
-          expect(readPauseState(runtimeDir, 7)?.detail ?? '').not.toContain('lost both times')
-        } else {
-          expect(prompts).toHaveLength(2)
-          expect(run.actionRuns).not.toContain('validate-developer-output')
-          expect(run.handoff.calls).toContain('pause-state:infrastructure')
-          expect(readPauseState(runtimeDir, 7)?.detail).toContain("the developer tool host's socket was removed")
-          expect(readPauseState(runtimeDir, 7)?.detail).toContain('lost both times')
+  for (const exitCode of [0, 1]) {
+    test(`an unlinked socket with agent exit ${exitCode} never replays the turn`, async () => {
+      const runtimeDir = scratchDir('recovery-no-replay-')
+      const hostKey = `nr${exitCode}${process.pid}`
+      const socketPath = devToolsSocketPath(`${hostKey}-developer`)
+      const run = stubRun('claude', runtimeDir, () => provenanceFor('claude'), {
+        hostKey,
+        startHost: startDevToolsHost,
+        exitCode,
+        onSpawn: (args) => {
+          if (args.join(' ').includes('/generated/developer/')) rmSync(socketPath, { force: true })
         }
+      })
+      await runEngine(run.options)
+      expect(run.spawns.filter((role) => role === 'develop')).toHaveLength(1)
+      if (exitCode === 0) expect(run.actionRuns).toContain('validate-developer-output')
+      else {
+        expect(run.actionRuns).not.toContain('validate-developer-output')
+        expect(readPauseState(runtimeDir, 7)?.detail).toContain('tool-host-transport-failure')
+        expect(readPauseState(runtimeDir, 7)?.detail).toContain('automatic replay is unsafe')
       }
-    )
+    })
   }
 })

@@ -597,10 +597,7 @@ export function withToolHostBoundaries(
   return bounded
 }
 
-/**
- * The same-turn re-dispatch of a turn whose dispatch lost its role's tool host: the socket was removed before the
- * dispatch's bridge could connect. The host is replaced on the same path before the turn is dispatched again.
- */
+/** Reports a failed turn's transport loss and acknowledges successful turns without replaying them. */
 export function toolHostRedispatch(
   hosts: Readonly<Record<string, { role: string; host: ReplaceableDevToolsHost }>>,
   narrate: (line: string) => void
@@ -609,8 +606,9 @@ export function toolHostRedispatch(
     lost: (step) => {
       const entry = hosts[step]
       if (entry === undefined || entry.host.consecutiveLosses() === 0) return null
-      return `the ${entry.role} tool host's socket was removed before the dispatch could reach it`
+      return `the ${entry.role} tool host's socket disappeared during the dispatch`
     },
+    succeeded: (step) => hosts[step]?.host.noteDispatchSucceeded?.(),
     boundary: async (step) => {
       const entry = hosts[step]
       if (entry === undefined) return
@@ -1395,7 +1393,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       const onEnded = (capability: string): void => {
         if (host.noteDispatchEnded(capability))
           narrate(
-            `the ${roleHost.role} tool host's socket was removed before its dispatch reached it; the host is replaced before the next dispatch`
+            `the ${roleHost.role} tool host's socket disappeared during its dispatch; a successful turn is kept, and a failed turn pauses without automatic replay`
           )
       }
       hostParts[roleHost.role] = { capabilities, writeShim, onEnded }

@@ -111,18 +111,15 @@ export interface ProcessRunOptions {
    * the checkpointer's own `assertPersisted` when it has one; a throw fails the step before it does anything.
    */
   persistenceBarrier?: () => Promise<void>
-  /** Re-dispatches an agent turn once when its dispatch lost what it needed to run (its tool host, say). */
+  /** Observes transport loss; a potentially effectful failed turn is never replayed automatically. */
   agentRedispatch?: AgentRedispatch
 }
 
-/**
- * The one same-turn re-dispatch of an agent step: after a dispatch ends, `lost` says why it lost what it needed, or
- * null when it did not. A lost turn is dispatched again exactly once, with the same prompt and session, after
- * `boundary` repaired the loss; a re-dispatch that is lost too fails the step with both reasons.
- */
+/** Transport-loss observation. Failed turns pause rather than automatically replaying tool or file effects. */
 export interface AgentRedispatch {
   lost: (stepId: string) => string | null
   boundary: (stepId: string) => Promise<void>
+  succeeded?: (stepId: string) => void
 }
 
 export type StepPrompt = (
@@ -225,17 +222,20 @@ function nodeExecutor(
     const prompt = complete
       ? await complete(rendered, state.results, resumeSessionId === undefined ? {} : { resumeSessionId })
       : rendered
-    let result = await executeAgentSpawnNode({ node, prompt, resumeSessionId, config, spawnFn, signal })
-    const lost = redispatch?.lost(node.id) ?? null
-    if (redispatch && lost !== null) {
-      // The same turn again: the lost dispatch's output is discarded, never reported, and its effects are the
-      // records' to reconcile.
-      await redispatch.boundary(node.id)
+    let result: Awaited<ReturnType<typeof executeAgentSpawnNode>>
+    try {
       result = await executeAgentSpawnNode({ node, prompt, resumeSessionId, config, spawnFn, signal })
-      const again = redispatch.lost(node.id)
-      if (again !== null)
-        throw new Error(`step "${node.id}" was dispatched twice and lost both times: ${lost}; then ${again}`)
+    } catch (error) {
+      const lost = redispatch?.lost(node.id) ?? null
+      if (lost !== null)
+        throw new Error(
+          `tool-host-transport-failure: step "${node.id}" failed while ${lost}; automatic replay is unsafe after possible tool or file effects; inspect the session before resuming`,
+          { cause: error }
+        )
+      throw error
     }
+    // Successful output and its session remain authoritative even if an already-open socket was unlinked.
+    redispatch?.succeeded?.(node.id)
     // The executor's own node executor reports what the agent printed as streaming events; this one
     // replaces it, so it reports the same records the same way.
     for (const reported of result.events) {
