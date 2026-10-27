@@ -12,7 +12,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { parse } from 'yaml'
 import { DOC_OWNERS_PATH, LABELS, parseRegistry, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { AGENT_VENDORS, type AgentVendor } from '../src/lib/agent-vendors.js'
@@ -1630,6 +1630,12 @@ git rev-parse --git-dir 2>&1 || true
     expect(snippet).toContain('vinaya pre-push: refused')
 
     const fixtureDir = mkdtempSync(join(tmpdir(), 'vinaya-o6-summary-'))
+    const supervisor = join(fixtureDir, 'apps/cli/src/lib/pre-push-record-tests.ts')
+    mkdirSync(dirname(supervisor), { recursive: true })
+    writeFileSync(
+      supervisor,
+      `import ${JSON.stringify(new URL('../src/lib/pre-push-record-tests.ts', import.meta.url).pathname)}\n`
+    )
     writeFileSync(
       join(fixtureDir, 'a-fixture-failure.test.ts'),
       'import { expect, test } from "bun:test"\ntest("this fixture always breaks", () => { expect(1).toBe(2) })\n'

@@ -236,7 +236,7 @@ describe('Log rounds follow review rounds', () => {
     expectReviewRounds(observed)
   })
 
-  test('same-turn tool-host re-dispatch keeps the review round after a validation retry', async () => {
+  test('successful tool-host loss keeps the review round without replay after a validation retry', async () => {
     const observed = await runV2('claude', {
       developer: (attempt, world) =>
         attempt === 1
@@ -252,7 +252,7 @@ describe('Log rounds follow review rounds', () => {
       loseDeveloperToolsAt: 3,
       reviewer: (role, attempt) => (role === 'code-reviewer' && attempt === 1 ? 'request-changes' : 'approve')
     })
-    expect(observed.spawns.developer).toBe(4)
+    expect(observed.spawns.developer).toBe(3)
     expect(observed.steps.filter((step) => step.node === 'validate-developer-output')).toHaveLength(3)
     expectReviewRounds(observed)
   })
