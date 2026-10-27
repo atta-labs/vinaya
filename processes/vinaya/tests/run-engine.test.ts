@@ -1519,3 +1519,16 @@ describe('launch usage attribution', () => {
     expect(claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 3).attempt).toBe(1)
   })
 })
+describe('launch usage model attribution', () => {
+  for (const requested of [undefined, 'requested-review-model'])
+    test(`all roles preserve the requested model or explicit unknown (${requested ?? 'unknown'})`, async () => {
+      const run = stubRun()
+      run.options.args.model = requested
+      await runEngine(run.options)
+      const attempts = run.emitted.filter(
+        (event: any) => event.kind === 'role_attempt' && event.actor === 'claude'
+      ) as Array<{ model: string | null }>
+      expect(attempts).toHaveLength(3)
+      expect(attempts.map((event) => event.model)).toEqual([requested ?? null, requested ?? null, requested ?? null])
+    })
+})

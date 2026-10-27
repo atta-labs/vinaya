@@ -1736,7 +1736,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     const onLaunchUsage = (launch: LaunchUsage): void => {
       launchSeq += 1
       options.taskInput?.recordUsage?.(launch.role, launch.reading.usage)
-      const requested = launch.role === 'developer' ? (args.model ?? args.agent) : args.agent
+      const requested = args.model ?? null
       for (const event of launchUsageEvents(
         launch,
         args.agent,
