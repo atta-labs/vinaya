@@ -384,6 +384,36 @@ test('each round duration includes Developer and reviewer time rather than just 
   ])
 })
 
+test('a restarted driver measures the round from its checkpointed start', async () => {
+  let now = 1000
+  const observed = await runV2('claude', {
+    now: () => now,
+    restartAfter: {
+      step: 'dispatch-reviewers',
+      beforeResume: () => {
+        now += 120000
+      }
+    },
+    after: {
+      'validate-developer-output': () => {
+        now += 60000
+      },
+      'assess-gate': () => {
+        now += 2000
+      },
+      'validate-reviewer-outputs': () => {
+        now += 30000
+      }
+    }
+  })
+  expect(observed.driverLegs).toBe(2)
+  expect(observed.outcome).toBe('completed')
+  expect(observed.spawns.developer).toBe(1)
+  expect(
+    observed.rawEvents.filter((event) => event.event === 'round_ended').map((event) => [event.round, event.wall_ms])
+  ).toEqual([[1, 212000]])
+})
+
 for (const ci of [['green'], ['red', 'green']] as Array<Array<'green' | 'red'>>) {
   test(`verdicts precede each approved head's CI read without a final duplicate (${ci.join(',')})`, async () => {
     const readHeads: string[] = []

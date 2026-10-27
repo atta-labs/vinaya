@@ -8,13 +8,20 @@ import {
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { DEFAULT_REVIEW_POLICY, objectivesVersion, type ReviewPolicy } from '@attalabs/aeg-core'
-import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
+import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../../harness/dev-process/loader/load-process'
 import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, useRuntimeDir } from '../../../tests/round-fakes'
 import type { ActionRegistry } from '../../../../../harness/dev-process/engine-runtime/run-process'
 import { pauseMarker, writePauseState } from '../../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { cleanupAllReviewerIsolationArtifacts } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
-import { liveTaskInput, runEngine, type Agent, type EngineForge, type RunTrace } from '../../../bin/run-engine'
+import {
+  liveTaskInput,
+  runEngine,
+  type Agent,
+  type EngineForge,
+  type EngineRunOptions,
+  type RunTrace
+} from '../../../bin/run-engine'
 import { createActions } from '../../../executing/actions'
 import { createV2Actions, type StagedPullRequest } from './v2-actions'
 import type { DeveloperPromptFacts } from '../../../executing/developer-prompt'
@@ -72,6 +79,8 @@ export interface Scenario {
   priorRetries?: number
   /** A run that finds the pull request already open, at this review round. */
   attachAtRound?: number
+  /** End one driver after this checkpointed step, then construct a fresh task input and resume it. */
+  restartAfter?: { step: string; beforeResume: () => void }
 }
 
 export interface World {
@@ -127,6 +136,7 @@ export interface Observed {
   published: Array<Record<string, unknown>>
   gateRuns: number
   outcome: string
+  driverLegs: number
 }
 
 export const confident = (confidence: number | undefined, addressed: string[] = []) => ({
@@ -358,71 +368,75 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       published.push(input as unknown as Record<string, unknown>)
     }
   }
-  const task = await liveTaskInput({ task: TASK, agent, dryRun: false, flow: 'v2' }, repo, runtimeDir, 'v2-world', {
-    fetchLabels: () => [],
-    fetchTitle: () => 'A test task',
-    policy: () => policy,
-    forge,
-    repository: 'attalabs/round-decisions'
-  })
-  task.cliEntry = gateCli
-  task.bound = {
-    ...task.bound,
-    localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
-    probeAgentSandbox: async () => ({ ok: true })
-  }
-  if (scenario.clock) task.clock = scenario.clock
-  // Version 2: the staged pull request, the ready push (selecting with the pre-push hook's own re-run rule) and
-  // the opening, all fake; the local checks run the stand-in check command through the real step.
   let record: FailedTestsRecord | null = null
-  task.flow = 'v2'
-  task.stagedPullRequest = () => world.staged
-  task.v2 = {
-    now: scenario.now,
-    stagedPullRequest: () => world.staged,
-    findOpenPullRequest: () => (world.prOpen ? { number: PR } : null),
-    runReadyGate: ({ head, signal }) => {
-      world.readySignals.push(signal !== undefined)
-      const note = chooseTests({
-        record,
-        head,
-        branch: BRANCH,
-        recordIsAncestor: true,
-        fullSelection: ALL_TESTS,
-        affectedSince: record === null ? [] : (scenario.affectedSince ?? []),
-        exists: () => true
-      })
-      world.readyRuns.push(note.selected)
-      if (scenario.readyTimesOut?.(world.readyRuns.length)) {
-        // A stopped run leaves no complete failure record: the next ready push runs its full selection.
-        record = null
-        return { passed: false, output: 'timed out', selection: null, failed: 'all', wallMs: 5, timedOut: true }
-      }
-      const failing = scenario.failingTests?.(world.readyRuns.length) ?? []
-      const failed = note.selected.filter((file) => failing.includes(file))
-      record = recordFromRun(failed.length > 0 ? 'failed' : 'passed', failed, head, BRANCH, new Date(0))
-      return {
-        passed: failed.length === 0,
-        output: failed.map((file) => `  ${file}: fails`).join('\n'),
-        selection: note,
-        failed,
-        wallMs: 5
-      }
-    },
-    openPullRequest: (staged) => {
-      world.openedBodies.push(staged.body)
-      world.prOpen = true
-      world.prsOpened += 1
-      return { ok: true, pr: PR }
-    },
-    endStoragePushes: () => {
-      world.storageEnded += 1
-    },
-    writeEvidence: ({ pr, head }) => {
-      world.evidenceWrites.push({ pr, head })
-      return { ok: true }
+  const makeTask = async () => {
+    const fresh = await liveTaskInput({ task: TASK, agent, dryRun: false, flow: 'v2' }, repo, runtimeDir, 'v2-world', {
+      fetchLabels: () => [],
+      fetchTitle: () => 'A test task',
+      policy: () => policy,
+      forge,
+      repository: 'attalabs/round-decisions'
+    })
+    fresh.cliEntry = gateCli
+    fresh.bound = {
+      ...fresh.bound,
+      localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
+      probeAgentSandbox: async () => ({ ok: true })
     }
+    if (scenario.clock) fresh.clock = scenario.clock
+    // Version 2: the staged pull request, the ready push (selecting with the pre-push hook's own re-run rule) and
+    // the opening, all fake; the local checks run the stand-in check command through the real step.
+    fresh.flow = 'v2'
+    fresh.stagedPullRequest = () => world.staged
+    fresh.v2 = {
+      now: scenario.now,
+      stagedPullRequest: () => world.staged,
+      findOpenPullRequest: () => (world.prOpen ? { number: PR } : null),
+      runReadyGate: ({ head, signal }) => {
+        world.readySignals.push(signal !== undefined)
+        const note = chooseTests({
+          record,
+          head,
+          branch: BRANCH,
+          recordIsAncestor: true,
+          fullSelection: ALL_TESTS,
+          affectedSince: record === null ? [] : (scenario.affectedSince ?? []),
+          exists: () => true
+        })
+        world.readyRuns.push(note.selected)
+        if (scenario.readyTimesOut?.(world.readyRuns.length)) {
+          // A stopped run leaves no complete failure record: the next ready push runs its full selection.
+          record = null
+          return { passed: false, output: 'timed out', selection: null, failed: 'all', wallMs: 5, timedOut: true }
+        }
+        const failing = scenario.failingTests?.(world.readyRuns.length) ?? []
+        const failed = note.selected.filter((file) => failing.includes(file))
+        record = recordFromRun(failed.length > 0 ? 'failed' : 'passed', failed, head, BRANCH, new Date(0))
+        return {
+          passed: failed.length === 0,
+          output: failed.map((file) => `  ${file}: fails`).join('\n'),
+          selection: note,
+          failed,
+          wallMs: 5
+        }
+      },
+      openPullRequest: (staged) => {
+        world.openedBodies.push(staged.body)
+        world.prOpen = true
+        world.prsOpened += 1
+        return { ok: true, pr: PR }
+      },
+      endStoragePushes: () => {
+        world.storageEnded += 1
+      },
+      writeEvidence: ({ pr, head }) => {
+        world.evidenceWrites.push({ pr, head })
+        return { ok: true }
+      }
+    }
+    return fresh
   }
+  let task = await makeTask()
   if (scenario.attachAtRound !== undefined) {
     world.prOpen = true
     task.seedRound?.(scenario.attachAtRound)
@@ -441,17 +455,24 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       infrastructureRetries: scenario.priorRetries
     })
   const steps: Observed['steps'] = []
-  const actions: ActionRegistry = Object.fromEntries(
-    Object.entries({ ...createActions(task), ...createV2Actions(task) }).map(([name, action]) => [
-      name,
-      async (context: Parameters<typeof action>[0]) => {
-        const result = await action(context)
-        steps.push({ node: context.nodeId, exitCode: result.exitCode, stdout: result.stdout ?? '' })
-        scenario.after?.[context.nodeId]?.(world)
-        return result
-      }
-    ])
-  )
+  let control = createRunControl()
+  let interrupted = false
+  const actions = (): ActionRegistry =>
+    Object.fromEntries(
+      Object.entries({ ...createActions(task), ...createV2Actions(task) }).map(([name, action]) => [
+        name,
+        async (context: Parameters<typeof action>[0]) => {
+          const result = await action(context)
+          steps.push({ node: context.nodeId, exitCode: result.exitCode, stdout: result.stdout ?? '' })
+          scenario.after?.[context.nodeId]?.(world)
+          if (!interrupted && scenario.restartAfter?.step === context.nodeId) {
+            interrupted = true
+            control.halt('the driver stopped mid-round')
+          }
+          return result
+        }
+      ])
+    )
   const handoffDeps: HandoffDeps = {
     ...liveHandoffDeps(() => {}),
     postPauseComment: (_task, _round, _head, _pr, reason) => {
@@ -485,7 +506,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     heldReview: null
   })
   const sockets = new Map<string, string>()
-  const result = await runEngine({
+  const engineOptions = (): EngineRunOptions => ({
     args: { task: TASK, agent, dryRun: false, flow: 'v2' },
     process: PROCESS,
     repoRoot: repo,
@@ -493,7 +514,8 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     loopId: 'round-decisions',
     taskInput: task,
     handoffDeps,
-    actions,
+    actions: actions(),
+    control,
     sink: { log: (event) => void rawEvents.push(event as Record<string, unknown>), drain: async () => {} },
     ...(scenario.loseDeveloperToolsAt === undefined ? {} : { hostKey: `world-${basename(root)}` }),
     startHost: async ({ socketPath, role }) => {
@@ -543,6 +565,16 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       })
     }
   })
+  let driverLegs = 1
+  let result = await runEngine(engineOptions())
+  if (scenario.restartAfter) {
+    if (!interrupted || result.exitCode !== 2) throw new Error('the first driver did not stop at its checkpoint')
+    scenario.restartAfter.beforeResume()
+    task = await makeTask()
+    control = createRunControl()
+    driverLegs += 1
+    result = await runEngine(engineOptions())
+  }
   const trace = JSON.parse(readFileSync(result.tracePath, 'utf8')) as RunTrace
   const gateRuns = existsSync(join(root, 'gate-runs')) ? Number(readFileSync(join(root, 'gate-runs'), 'utf8')) : 0
   return {
@@ -558,7 +590,8 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     markers,
     published,
     gateRuns,
-    outcome: trace.outcome === 'paused' ? `pause:${trace.pauseReason}` : trace.outcome
+    outcome: trace.outcome === 'paused' ? `pause:${trace.pauseReason}` : trace.outcome,
+    driverLegs
   }
 }
 
