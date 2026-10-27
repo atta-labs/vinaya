@@ -231,6 +231,13 @@ export interface TaskInput {
    * pull request does not exist when the task starts, and the head moves with every revision.
    */
   publish: (at: PublishTarget) => PublishInput
+  /**
+   * The input and output tokens of the role's latest agent launch, read from that launch's own output; null when it
+   * reported none. Absent, every role reads as having reported none.
+   */
+  usageOf?: (role: HeldVerdictRole | 'developer') => { input: number; output: number } | null
+  /** Records the tokens a role's agent launch reported when it ended, for `usageOf` to read. */
+  recordUsage?: (role: HeldVerdictRole | 'developer', usage: { input: number; output: number } | null) => void
   /** One reviewer's accepted result as the round's verdict observation and the comment held for publication; throws `ReviewerResultRejected` for a result no rule accepts. */
   buildVerdict: (
     role: HeldVerdictRole,
@@ -1333,7 +1340,7 @@ function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exi
             miss.role === 'reviewer' ? 'code-reviewer' : miss.role
           ] ?? null,
         outcome: miss.rejected !== null ? 'incomplete' : 'infrastructure_failed',
-        usage: null,
+        usage: task.usageOf?.(miss.role) ?? null,
         duration_ms: 0
       })
     events.push(

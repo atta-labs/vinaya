@@ -264,3 +264,61 @@ describe('checkpoint flow continuity', () => {
     expect(continuationFlow(world.runtimeDir, TASK)).toBe('v2')
   })
 })
+
+// Every role launch's tokens, read from the agent's own output as the standalone dispatch reads them: recorded on the
+// task input for the verdict's Tokens line, and written to the Log as a `role_attempt` and a `usage` event.
+const USAGE_OUTPUT = {
+  claude: (input: number, output: number) => [
+    JSON.stringify({ type: 'system', subtype: 'init', session_id: `s-${input}`, model: 'claude-opus-test' }),
+    JSON.stringify({
+      type: 'result',
+      usage: { input_tokens: input, output_tokens: output, cache_read_input_tokens: 5, cache_creation_input_tokens: 1 }
+    })
+  ],
+  codex: (input: number, output: number) => [
+    JSON.stringify({ type: 'thread.started', thread_id: `t-${input}` }),
+    JSON.stringify({
+      type: 'turn.completed',
+      usage: { input_tokens: input, output_tokens: output, cached_input_tokens: 6 }
+    })
+  ]
+} as const
+const ROLE_TOKENS = { developer: [101, 11], 'code-reviewer': [202, 22], 'security-reviewer': [303, 33] } as const
+const RECORDED_ROLE = { developer: 'developer', 'code-reviewer': 'reviewer', 'security-reviewer': 'security' } as const
+
+describe.each(ENGINE_RUNNERS)('%s records token usage', (runner) => {
+  for (const agent of ['claude', 'codex'] as const) {
+    test(`every ${agent} Developer, Reviewer and Security launch reports its tokens`, async () => {
+      // A stub Codex login of this test's own: another file's teardown may already have removed the shared one.
+      const codexHome = mkdtempSync(join(tmpdir(), 'usage-codex-home-'))
+      scratch.push(codexHome)
+      writeFileSync(join(codexHome, 'auth.json'), '{}\n')
+      process.env.CODEX_HOME = codexHome
+      const world = createWorld({
+        agent,
+        agentOutput: Object.fromEntries(
+          Object.entries(ROLE_TOKENS).map(([role, [input, output]]) => [role, [...USAGE_OUTPUT[agent](input, output)]])
+        )
+      })
+      const run = await leg(runner, world)
+      expect(run.result.exitCode).toBe(0)
+      for (const [launchRole, [input, output]] of Object.entries(ROLE_TOKENS)) {
+        const role = RECORDED_ROLE[launchRole as keyof typeof RECORDED_ROLE]
+        expect(world.recordedUsage).toContainEqual({ role, usage: { input, output } })
+        const attempts = run.events.filter((event) => event.kind === 'role_attempt' && event.actor === role)
+        expect(attempts.length).toBeGreaterThan(0)
+        for (const attempt of attempts) expect(attempt.usage).toEqual({ input, output })
+        expect(run.events).toContainEqual(
+          expect.objectContaining({
+            kind: 'usage',
+            event: 'observed',
+            source: agent,
+            semantics: 'cumulative',
+            units: { input, output, cache: 6 },
+            unknown_reason: null
+          })
+        )
+      }
+    })
+  }
+})
