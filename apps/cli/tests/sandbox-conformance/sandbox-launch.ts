@@ -50,6 +50,7 @@ import {
   claudeRunsCommandUnsandboxed,
   type ConfinementRequest,
   resolveBunInstallCacheDir,
+  pinCodexProtectedEntries,
   resolveClaudeConfinement,
   resolveCodexConfinement,
   resolveGitCommonDir,
@@ -321,10 +322,10 @@ function codexSession(): SandboxSession {
   // real Codex dispatch already closes (`dispatch.ts`'s own
   // `codexBunCacheDir`) — this harness rebuilds its own writable-roots list
   // rather than sharing that one, so it needs the same grant named here too.
-  const bunCacheDir = resolveBunInstallCacheDir()
+  const bunCacheDir = pinCodexProtectedEntries(resolveBunInstallCacheDir())
   const sandboxArgs = addCodexWritableDirs(
     ['sandbox', '--config', `sandbox_mode=${sandboxMode}`],
-    [scratchDir, bunCacheDir, ...(gitCommonDir ? [gitCommonDir] : [])],
+    [scratchDir, bunCacheDir, ...(gitCommonDir ? [pinCodexProtectedEntries(gitCommonDir)] : [])],
     true
   )
   // Round 5 Principal ruling: TMPDIR/TMP/TEMP now come from the SAME

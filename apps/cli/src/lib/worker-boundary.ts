@@ -1003,6 +1003,38 @@ export function resolveBunInstallCacheDir(): string {
   }
 }
 
+/**
+ * The entries Codex's Linux sandbox (bubblewrap) keeps read-only under every
+ * writable root. When one is missing, Codex creates an empty mount point for
+ * it inside the root before launch and removes it again on exit. A root that
+ * several Codex sandboxes share at once (the Bun install cache, a
+ * repository's git common dir) therefore races: one sandbox removes the mount
+ * point while another is still remounting it read-only, and bubblewrap aborts
+ * the second launch with "Can't remount readonly ... No such file or
+ * directory".
+ */
+export const CODEX_PROTECTED_ROOT_ENTRIES = ['.git', '.codex', '.agents', '.aws'] as const
+
+/**
+ * Give a shared Codex writable root a stable entry for every name Codex
+ * protects, so no Codex sandbox ever creates or removes a mount point there.
+ * An existing entry (a real `.git` directory or file) is left untouched.
+ * Best-effort: a root that cannot be written is left as it is, and the launch
+ * keeps Codex's own behavior. Returns `dir` for inline use.
+ */
+export function pinCodexProtectedEntries(dir: string): string {
+  for (const name of CODEX_PROTECTED_ROOT_ENTRIES) {
+    const entry = join(dir, name)
+    if (existsSync(entry)) continue
+    try {
+      mkdirSync(entry)
+    } catch {
+      // Unwritable, or another launch created it first.
+    }
+  }
+  return dir
+}
+
 // --- O1/O2/O5: the provider-neutral confinement interface -------------------
 
 /**

@@ -131,6 +131,7 @@ import {
   resolveClaudeConfinement,
   resolveCodexConfinement,
   resolveGitCommonDir,
+  pinCodexProtectedEntries,
   reuseStagedCodexHome,
   stageCodexPolicyHome,
   type ClaudeSandboxSettings,
@@ -4554,13 +4555,16 @@ export async function dispatchRole(
   // absent (no worktree to confine to) or `git` cannot resolve one —
   // contributes nothing extra to the grant, the same best-effort posture
   // every other optional grant in this module already takes.
-  const codexGitCommonDir = codexRequireIsolation && opts.cwd !== undefined ? resolveGitCommonDir(opts.cwd) : null
+  // Both this root and the Bun cache below are shared by every Codex launch
+  // on the host, so each gets stable entries for the names Codex protects.
+  const gitCommonDir = codexRequireIsolation && opts.cwd !== undefined ? resolveGitCommonDir(opts.cwd) : null
+  const codexGitCommonDir = gitCommonDir !== null ? pinCodexProtectedEntries(gitCommonDir) : null
   // Round 4 Principal ruling: `bun install` writes its package cache under
   // the operator's real home (`resolveBunInstallCacheDir`, `worker-
   // boundary.ts`) — the same gap `codexGitCommonDir` above closes for git's
   // own metadata, now closed for bun's cache too, only when this dispatch
   // actually enforces Codex's own sandbox.
-  const codexBunCacheDir = codexRequireIsolation ? resolveBunInstallCacheDir() : null
+  const codexBunCacheDir = codexRequireIsolation ? pinCodexProtectedEntries(resolveBunInstallCacheDir()) : null
   // The configuration directories this task's Surface opened, resolved
   // against the worktree once, here in the driver, before either agent is
   // launched: symlink-checked, a missing `/**` directory created. The same

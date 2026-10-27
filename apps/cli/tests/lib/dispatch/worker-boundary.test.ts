@@ -49,6 +49,8 @@ import {
   CODEX_OWN_CONFIG_SUBPATHS,
   buildCodexSandboxConfigToml,
   resolveBunInstallCacheDir,
+  pinCodexProtectedEntries,
+  CODEX_PROTECTED_ROOT_ENTRIES,
   resolveCodexConfinement,
   checkLinuxCodexSandboxTools,
   LINUX_CODEX_SANDBOX_TOOLS,
@@ -490,6 +492,22 @@ describe('resolveBunInstallCacheDir — round 4 Principal ruling: the bun instal
   it('never returns null — every writable-root caller needs a path to add, not an absence to skip', () => {
     expect(typeof resolveBunInstallCacheDir()).toBe('string')
     expect(resolveBunInstallCacheDir().length).toBeGreaterThan(0)
+  })
+})
+
+describe('pinCodexProtectedEntries — a shared Codex writable root never churns mount points', () => {
+  it('creates every entry Codex protects, so concurrent Codex sandboxes never create or remove one there', () => {
+    const root = tempDir('vinaya-pin-codex-')
+    expect(pinCodexProtectedEntries(root)).toBe(root)
+    for (const name of CODEX_PROTECTED_ROOT_ENTRIES) expect(lstatSync(join(root, name)).isDirectory()).toBe(true)
+    expect([...CODEX_PROTECTED_ROOT_ENTRIES]).toEqual(['.git', '.codex', '.agents', '.aws'])
+  })
+
+  it('leaves an existing entry untouched — a worktree-style `.git` file stays a file', () => {
+    const root = tempDir('vinaya-pin-codex-')
+    writeFileSync(join(root, '.git'), 'gitdir: /elsewhere\n')
+    pinCodexProtectedEntries(root)
+    expect(readFileSync(join(root, '.git'), 'utf8')).toBe('gitdir: /elsewhere\n')
   })
 })
 
