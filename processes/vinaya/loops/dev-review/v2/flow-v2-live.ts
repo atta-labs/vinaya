@@ -285,8 +285,10 @@ export async function runReadyGateLive(input: {
         : status.stdout.trim() !== ''
           ? `the worktree holds uncommitted changes:\n${status.stdout.trim()}`
           : null
-  if (drift !== null)
+  if (drift !== null) {
+    log(`ready push failed: all; refused before the hook ran: ${drift.split('\n')[0]}`)
     return { passed: false, output: `ready push refused: ${drift}`, selection: null, failed: 'all', wallMs: 0 }
+  }
   const hook = await prePushHookPath(input.worktreePath, input.signal)
   if (hook === null) {
     log(`ready push: ${NO_LOCAL_TESTS_MARKER} (the repository has no pre-push hook)`)
@@ -391,6 +393,7 @@ export async function runReadyGateLive(input: {
       removeUnderGit(input.worktreePath, FAILED_TESTS_RECORD)
       const minutes = Math.round((input.deadlineMs ?? READY_GATE_DEADLINE_MS) / 60000)
       log(`ready push: timed out after ${minutes} min; the test run was stopped`)
+      log(`ready push failed: all; wall time ${wallMs} ms`)
       return {
         passed: false,
         output: `${stdout}${stderr}\nthe ready push timed out after ${minutes} min and was stopped; the next ready push runs its full selection`,
@@ -403,15 +406,17 @@ export async function runReadyGateLive(input: {
     const run = (await exited) as { status: number | null; signal: NodeJS.Signals | null; error?: Error }
     const output = `${stdout}${stderr}${run.error ? `\n${run.error.message}` : ''}${run.signal ? `\nthe ready push was stopped by ${run.signal}` : ''}`
     const record = readLastPushResult(input.worktreePath)
-    const fresh = record !== null && record.head === input.head
+    const fresh = record !== null && record.head === input.head && (run.status === 0 || record.outcome === 'failed')
     const passed = run.status === 0
+    const failed = passed ? [] : fresh ? record.failed : 'all'
+    if (!passed) log(`ready push failed: ${failed === 'all' ? 'all' : failed.join(', ')}; wall time ${wallMs} ms`)
     const noLocalTests = passed && output.includes(NO_LOCAL_TESTS_MARKER)
     if (noLocalTests) log(`ready push: ${NO_LOCAL_TESTS_MARKER} (the repository declares no test runner)`)
     return {
       passed,
       output,
       selection: fresh ? record.selection : null,
-      failed: passed ? [] : fresh ? record.failed : 'all',
+      failed,
       wallMs,
       ...(noLocalTests ? { localTests: 'none' as const } : {})
     }

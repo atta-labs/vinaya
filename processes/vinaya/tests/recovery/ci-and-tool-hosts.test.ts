@@ -279,6 +279,7 @@ describe('engine resume', () => {
     const crossed = crossAgentResumeRefusal(provenanceFor('codex'), 7, 'claude', '/run/checkpoints.sqlite')
     expect(crossed).toContain('the Engine continues a run on the agent it started with')
     expect(crossed).toContain('codex')
+    expect(crossed).toContain('bun apps/cli/src/index.ts task switch --issue 7 --agent claude')
     const legacy = crossAgentResumeRefusal(provenanceFor(null), 7, 'claude', '/run/checkpoints.sqlite')
     expect(legacy).toContain('the Engine continues a run on the agent it started with')
     expect(legacy).toContain('start the task fresh')

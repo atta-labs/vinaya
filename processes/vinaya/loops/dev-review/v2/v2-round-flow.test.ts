@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { parse } from 'yaml'
+import { loadProcess } from '../../../../../harness/dev-process/loader/load-process'
+import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { decodeLoopState, type latestRecord, recordOutput } from '../../../executing/actions'
+import { V2_APPROVED_REPAIR_ALLOWANCE, exhaustedPause, withPolicyCeilings } from '../../../bin/run-engine'
+import { heldVerdictPath } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import { publicationEffectKey } from '../../../../../apps/cli/src/lib/dev-review-loop/publication'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { ALL_TESTS, AGENTS, confident, PR, records, TASK, runV2, setUpWorld, tearDownWorld } from './v2-world'
 
@@ -98,7 +105,7 @@ describe('CI red after the pull request opened', () => {
     expect(observed.prompts.developer[1]).toContain(`CI is red on pull request #${PR}`)
     const ci = observed.rawEvents.filter((e) => e.event === 'ci_result_read').map((e) => e.conclusion)
     expect(ci).toEqual(['red', 'green'])
-    expect(observed.published).toHaveLength(1)
+    expect(observed.published).toHaveLength(2)
   })
 })
 
@@ -256,4 +263,212 @@ describe('Log rounds follow review rounds', () => {
     expect(observed.steps.filter((step) => step.node === 'validate-developer-output')).toHaveLength(3)
     expectReviewRounds(observed)
   })
+})
+
+for (const agent of AGENTS) {
+  describe(`ready-push failures have their own budget (${agent})`, () => {
+    test('two refused ready pushes after approval at the review cap still get fresh Developer turns', async () => {
+      const observed = await runV2(agent, {
+        policy: { maxRounds: 2 },
+        reviewer: (role, attempt) => (role === 'code-reviewer' && attempt === 1 ? 'request-changes' : 'approve'),
+        failingTests: (attempt) => (attempt <= 2 ? ['/repo/b.test.ts'] : [])
+      })
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(4)
+      expect(observed.world.readyRuns).toHaveLength(3)
+      expect(observed.trace.pauseReason ?? null).toBeNull()
+    })
+    test('approved CI repairs never spend the review ceiling before three ready-push failures', async () => {
+      const observed = await runV2(agent, {
+        policy: { maxRounds: 1 },
+        ci: ['red'],
+        failingTests: (attempt) => (attempt >= 5 ? ['/repo/b.test.ts'] : [])
+      })
+      expect(observed.outcome).toBe('pause:ready_push_failed')
+      expect(observed.trace.pauseReason).toBe('ready_push_failed')
+      expect(records(observed, 'read-ci-once')).toHaveLength(4)
+      expect(observed.world.readyRuns).toHaveLength(7)
+      expect(observed.spawns.developer).toBe(7)
+      expect(observed.spawns['code-reviewer']).toBe(7)
+      expect(
+        observed.rawEvents.filter((event) => event.event === 'round_ended').every((event) => event.round === 1)
+      ).toBe(true)
+      expect(records(observed, 'ready-push').at(-1)?.readyPushFailures).toBe(3)
+    })
+    test('requested changes still pause at the configured review ceiling', async () => {
+      const observed = await runV2(agent, {
+        policy: { maxRounds: 1 },
+        reviewer: (role) => (role === 'code-reviewer' ? 'request-changes' : 'approve')
+      })
+      expect(observed.outcome).toBe('pause:max_rounds')
+      expect(observed.spawns.developer).toBe(1)
+      expect(observed.world.readyRuns).toHaveLength(0)
+    })
+    test('the third consecutive ready-push failure pauses by name with its failing files', async () => {
+      const observed = await runV2(agent, { policy: { maxRounds: 1 }, failingTests: () => ['/repo/b.test.ts'] })
+      expect(observed.outcome).toBe('pause:ready_push_failed')
+      expect(observed.trace.pauseReason).toBe('ready_push_failed')
+      expect(observed.world.readyRuns).toHaveLength(3)
+      expect(observed.spawns.developer).toBe(3)
+      expect(records(observed, 'ready-push').at(-1)?.decision).toMatchObject({
+        type: 'pause',
+        reason: 'ready_push_failed',
+        detail: expect.stringContaining('/repo/b.test.ts')
+      })
+    })
+  })
+}
+
+test('approved repairs whose CI never turns green pause by name, never as max_rounds', async () => {
+  const observed = await runV2('claude', { policy: { maxRounds: 1, maxTaskMinutes: 0 }, ci: ['red'] })
+  expect(observed.outcome).toBe('exhausted')
+  expect(exhaustedPause('v2').reason).toBe('approved_repairs_spent')
+  expect(exhaustedPause('v1').reason).toBe('max_rounds')
+  expect(observed.rawEvents.filter((event) => event.event === 'round_ended').every((event) => event.round === 1)).toBe(
+    true
+  )
+}, 60_000)
+
+test('approved CI repairs remain bounded by the configured active-time budget', async () => {
+  const clock = { elapsedMs: 0, byPhaseMs: {} }
+  const observed = await runV2('claude', {
+    policy: { maxRounds: 1, maxTaskMinutes: 1 },
+    ci: ['red'],
+    clock,
+    after: {
+      'read-ci-once': () => {
+        clock.elapsedMs += 30001
+      }
+    }
+  })
+  expect(observed.outcome).toBe('pause:time_budget')
+  expect(records(observed, 'read-ci-once')).toHaveLength(2)
+  expect(observed.world.readyRuns).toHaveLength(2)
+})
+
+test('version 2 policy budgets are independent of dispatch counts and version 1 ceilings stay unchanged', () => {
+  for (const flow of ['v1', 'v2'] as const) {
+    const loaded = loadProcess(resolve(import.meta.dir, '../../..'), { flow })
+    const rendered = withPolicyCeilings(loaded, fixtureDir('ceilings-'), 2)
+    const parsed = parse(readFileSync(rendered.flowPath, 'utf8')) as {
+      steps: Array<{ decision?: { max_revisions: number } }>
+    }
+    const ceilings = parsed.steps.flatMap((step) => (step.decision ? [step.decision.max_revisions] : []))
+    expect(ceilings.length).toBeGreaterThan(0)
+    expect(new Set(ceilings)).toEqual(new Set([flow === 'v2' ? 2 + V2_APPROVED_REPAIR_ALLOWANCE : 2]))
+  }
+})
+
+test('the repair turn names the failed files and the ready-hook contract', async () => {
+  const observed = await runV2('claude', { failingTests: (attempt) => (attempt === 1 ? ['/repo/b.test.ts'] : []) })
+  expect(observed.outcome).toBe('completed')
+  const prompt = observed.prompts.developer[1] ?? ''
+  expect(prompt).toContain('/repo/b.test.ts')
+  expect(prompt).toContain('selected test files on the approved head')
+  expect(prompt).toContain("repository's pre-push hook in ready mode")
+  expect(prompt).toContain('20-minute deadline')
+  expect(prompt).toContain('Run the named failing files before publishing')
+})
+
+test('each round duration includes Developer and reviewer time rather than just local checks', async () => {
+  let now = 1000
+  const observed = await runV2('claude', {
+    now: () => now,
+    reviewer: (role, attempt) => (role === 'code-reviewer' && attempt === 1 ? 'request-changes' : 'approve'),
+    after: {
+      'validate-developer-output': () => {
+        now += 60000
+      },
+      'assess-gate': () => {
+        now += 2000
+      },
+      'validate-reviewer-outputs': () => {
+        now += 30000
+      }
+    }
+  })
+  expect(observed.outcome).toBe('completed')
+  const rounds = observed.rawEvents.filter((event) => event.event === 'round_ended')
+  expect(rounds.map((event) => [event.round, event.wall_ms])).toEqual([
+    [1, 92000],
+    [2, 92000]
+  ])
+})
+
+test('a restarted driver measures the round from its checkpointed start', async () => {
+  let now = 1000
+  const observed = await runV2('claude', {
+    now: () => now,
+    restartAfter: {
+      step: 'dispatch-reviewers',
+      beforeResume: () => {
+        now += 120000
+      }
+    },
+    after: {
+      'validate-developer-output': () => {
+        now += 60000
+      },
+      'assess-gate': () => {
+        now += 2000
+      },
+      'validate-reviewer-outputs': () => {
+        now += 30000
+      }
+    }
+  })
+  expect(observed.driverLegs).toBe(2)
+  expect(observed.outcome).toBe('completed')
+  expect(observed.spawns.developer).toBe(1)
+  expect(
+    observed.rawEvents.filter((event) => event.event === 'round_ended').map((event) => [event.round, event.wall_ms])
+  ).toEqual([[1, 212000]])
+})
+
+for (const ci of [['green'], ['red', 'green']] as Array<Array<'green' | 'red'>>) {
+  test(`verdicts precede each approved head's CI read without a final duplicate (${ci.join(',')})`, async () => {
+    const readHeads: string[] = []
+    const observed = await runV2('claude', {
+      ci,
+      after: {
+        'read-ci-once': (world) => {
+          expect(world.verdictHeads).toContain(world.remote)
+          readHeads.push(world.remote)
+        }
+      }
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.world.verdictHeads).toEqual(readHeads)
+    expect(observed.published).toHaveLength(ci.length)
+    expect(new Set(readHeads).size).toBe(ci.length)
+  })
+}
+
+test('publication effects bind to each approved head without changing legacy identities', () => {
+  for (const kind of ['reviewer-verdict', 'security-verdict', 'summary'] as const) {
+    const first = { round: 1, expectedHead: 'head-one', headScopedEffects: true }
+    expect(publicationEffectKey(first, kind)).toBe(publicationEffectKey({ ...first }, kind))
+    expect(publicationEffectKey(first, kind)).not.toBe(
+      publicationEffectKey({ ...first, expectedHead: 'head-two' }, kind)
+    )
+    expect(publicationEffectKey({ round: 1, expectedHead: 'anything' }, kind)).toBe(`1-${kind}`)
+  }
+})
+
+test('the first record after a ready-push pause, written on resume, starts a fresh failure count', async () => {
+  const observed = await runV2('codex', { policy: { maxRounds: 1 }, failingTests: () => ['/repo/b.test.ts'] })
+  const paused = records(observed, 'ready-push').at(-1) as Record<string, unknown>
+  expect(paused.readyPushFailures).toBe(3)
+  const results = { 'ready-push': { stdout: JSON.stringify(paused) } } as unknown as Parameters<typeof latestRecord>[0]
+  const resumed = JSON.parse(recordOutput(results, decodeLoopState(JSON.stringify(paused.state)), {})) as {
+    readyPushFailures?: number
+  }
+  expect(resumed.readyPushFailures).toBe(0)
+})
+
+test('a ready-push pause leaves no held approval that resume could publish', async () => {
+  const observed = await runV2('codex', { policy: { maxRounds: 1 }, failingTests: () => ['/repo/b.test.ts'] })
+  expect(observed.outcome).toBe('pause:ready_push_failed')
+  for (const role of ['reviewer', 'security'] as const)
+    expect(existsSync(heldVerdictPath(observed.world.runtimeDir, TASK, 1, role))).toBe(false)
 })

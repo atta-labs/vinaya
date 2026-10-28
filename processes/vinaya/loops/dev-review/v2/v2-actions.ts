@@ -9,11 +9,14 @@ import {
 import { discardHeldVerdicts } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { checkPremiseAtHead } from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import type { SelectionNote } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import { manifestDigest } from '../../../../../apps/cli/src/lib/review-result'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { readUnpushedWorkDetail } from '../../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import {
   BACK,
   carriedLoopState,
+  createActions,
+  dispatchedManifest,
   FORWARD,
   isSentBack,
   latestRecord,
@@ -25,6 +28,7 @@ import {
   recordedDispatch,
   recordOutput,
   safeRead,
+  startReviewRound,
   type TaskInput,
   worktreeHeadOf
 } from '../../../executing/actions'
@@ -87,6 +91,9 @@ export interface V2Functions {
   /** Milliseconds since an arbitrary origin, for the time a step spends. */
   now?: () => number
 }
+
+/** Consecutive ready-push failures pause independently of review revisions. */
+export const READY_PUSH_FAILURE_LIMIT = 3
 
 type Results = ActionContext['results']
 
@@ -163,7 +170,7 @@ function sendBackAfterApproval(
   ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, task.reviewRound())
   const previous = latestRecord(results)
   const headBefore = safeRead(task.remoteHead) ?? worktreeHeadOf(task)
-  return {
+  return startReviewRound(task, {
     exitCode: BACK,
     stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
       counters: { ...(previous?.counters ?? NO_COUNTERS), stallCheck: null },
@@ -171,7 +178,7 @@ function sendBackAfterApproval(
       decision: { type: 'dispatch_developer' },
       ...extra
     })
-  }
+  })
 }
 
 /**
@@ -293,9 +300,27 @@ export async function readyPush(
         counters: previous?.counters ?? NO_COUNTERS,
         decision: { type: 'ready' },
         outcome: 'passed',
+        readyPushFailures: 0,
         head,
         selection: gate.selection,
         ...(gate.localTests ? { localTests: gate.localTests } : {}),
+        events
+      })
+    }
+  }
+  const failures = (latestRecord(results)?.readyPushFailures ?? 0) + 1
+  if (failures >= READY_PUSH_FAILURE_LIMIT) {
+    ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, task.reviewRound())
+    const detail = `the ready push failed ${failures} consecutive times; failing test files: ${gate.failed === 'all' ? 'all' : gate.failed.join(', ')}`
+    pauseThrough(task, 'ready-push', { reason: 'ready_push_failed', detail })
+    return {
+      exitCode: BACK,
+      stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+        readyPushFailures: failures,
+        decision: { type: 'pause', reason: 'ready_push_failed', detail },
+        outcome: 'refused',
+        head,
+        failed: gate.failed,
         events
       })
     }
@@ -304,8 +329,9 @@ export async function readyPush(
     task,
     results,
     'ready-refused',
-    `both reviewers approved ${head}, but the ready push refused it: ${gate.timedOut ? 'the selected tests ran past the deadline' : 'the selected tests failed'}.\n\n${failingTestLines(gate)}`,
+    `both reviewers approved ${head}, but the ready push refused it: ${gate.timedOut ? 'the selected tests ran past the deadline' : 'the selected tests failed'}.\n\n${failingTestLines(gate)}\n\nThe ready push runs the selected test files on the approved head through the repository's pre-push hook in ready mode, with a 20-minute deadline. Run the named failing files before publishing your fix; when the files are unknown, run the full selection.`,
     {
+      readyPushFailures: failures,
       outcome: gate.timedOut ? 'timed-out' : 'refused',
       head,
       selection: gate.selection,
@@ -337,6 +363,12 @@ export async function openPullRequestStep(
   const loop = loopOf(task, results)
   const previous = latestRecord(results)
   const forward = async (pr: number, opened: boolean, events: unknown[]) => {
+    // Publish the held verdicts before evidence edits or CI reads can observe a verdict-less pull request.
+    await createActions(task)['harness.publish']!({
+      ...context,
+      nodeId: 'publish-ready-for-merge',
+      action: 'harness.publish'
+    })
     const evidence = await writeEvidenceFor(fns, pr, head)
     return {
       exitCode: FORWARD,
@@ -345,6 +377,12 @@ export async function openPullRequestStep(
         decision: { type: opened ? 'pr_opened' : 'pr_kept' },
         pr,
         opened,
+        verdictPublication: {
+          pr,
+          head,
+          round: task.reviewRound(),
+          manifest: dispatchedManifest(results) ? manifestDigest(dispatchedManifest(results)!) : null
+        },
         head,
         ...(evidence ? { evidence } : {}),
         events
