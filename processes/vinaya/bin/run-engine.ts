@@ -2928,10 +2928,15 @@ async function runLive(
             worktreePath: taskInput.worktreePath
           })
           const updated = await liveContext.context.updatePullRequestBody(body)
-          if (!updated.ok) return { ok: false, reason: JSON.stringify(updated.error) }
+          if (!updated.ok)
+            return {
+              ok: false,
+              reason: JSON.stringify(updated.error),
+              retryable: updated.error.errorClass === 'internal'
+            }
           return { ok: true }
         } catch (error) {
-          return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+          return { ok: false, reason: error instanceof Error ? error.message : String(error), retryable: true }
         }
       },
       log: (line) => process.stderr.write(`${new Date().toISOString()}  ${line}\n`)

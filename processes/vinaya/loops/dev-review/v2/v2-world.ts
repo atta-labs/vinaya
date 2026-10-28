@@ -24,7 +24,7 @@ import {
   type RunTrace
 } from '../../../bin/run-engine'
 import { createActions } from '../../../executing/actions'
-import { createV2Actions, type StagedPullRequest } from './v2-actions'
+import { createV2Actions, type StagedPullRequest, type V2Functions } from './v2-actions'
 import type { DeveloperPromptFacts } from '../../../executing/developer-prompt'
 import { liveHandoffDeps, type HandoffDeps } from '../../../executing/handoff'
 
@@ -54,6 +54,7 @@ interface Launch {
 export const ALL_TESTS = ['/repo/a.test.ts', '/repo/b.test.ts', '/repo/c.test.ts']
 
 export interface Scenario {
+  evidenceResult?: (attempt: number) => Awaited<ReturnType<NonNullable<V2Functions['writeEvidence']>>>
   /** Wall clock used by the version 2 actions. */
   now?: () => number
   /** The CI conclusions read once per approved head, in turn; the last repeats. Default green. */
@@ -116,6 +117,8 @@ export interface World {
   storageEnded: number
   /** The pull request and head of each Evidence block the loop wrote. */
   evidenceWrites: Array<{ pr: number; head: string }>
+  evidenceLogs: string[]
+  evidenceWaits: number[]
   /** The body each opening was given. */
   openedBodies: string[]
   /** Whether each ready push was handed the run's abort signal. */
@@ -326,6 +329,8 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     staged: null,
     readyRuns: [],
     evidenceWrites: [],
+    evidenceLogs: [],
+    evidenceWaits: [],
     openedBodies: [],
     readySignals: [],
     prsOpened: 0,
@@ -512,9 +517,15 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       endStoragePushes: () => {
         world.storageEnded += 1
       },
+      log: (line) => {
+        world.evidenceLogs.push(line)
+      },
+      sleep: async (ms) => {
+        world.evidenceWaits.push(ms)
+      },
       writeEvidence: ({ pr, head }) => {
         world.evidenceWrites.push({ pr, head })
-        return { ok: true }
+        return scenario.evidenceResult?.(world.evidenceWrites.length) ?? { ok: true }
       }
     }
     return fresh
