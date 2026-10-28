@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
@@ -22,6 +22,7 @@ import { PUSH_MODE_MARKER, storageMarkerText } from '../../../../../apps/cli/src
 import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../apps/cli/src/lib/test-temp'
 import { buildReport, computeGroupA, replaceEvidenceBlock } from '../../../../../apps/cli/src/lib/pr-report-engine'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
+import { defaultReadDefaultBranchTip } from '../../../../../apps/cli/src/lib/dev-review-loop'
 import type { ReadyGateResult, StagedPullRequest, V2Functions } from './v2-actions'
 
 // The live wiring of review locally, push once (version 2 of the developer-review Flow) for the Engine runner: the
@@ -475,6 +476,8 @@ export function liveV2Functions(input: {
   writeEvidence?: V2Functions['writeEvidence']
   /** A line for the driver's log: the containment backend, the no-local-tests state, a timeout. */
   log?: (line: string) => void
+  /** The repository's URL the default branch's tip is read and fetched from, or null when the run names none. */
+  remoteUrl?: string | null
 }): V2Functions {
   return {
     runReadyGate: async ({ head, signal }) => {
@@ -502,8 +505,29 @@ export function liveV2Functions(input: {
       return { ok: false, reason: error?.message ?? error?.code ?? JSON.stringify(opened.error) }
     },
     endStoragePushes: () => endStoragePushes(input.worktreePath),
+    readMainTip: () => readFetchedMainTip(input.worktreePath, input.remoteUrl ?? null),
     ...(input.writeEvidence ? { writeEvidence: input.writeEvidence } : {})
   }
+}
+
+/**
+ * The default branch's tip as the remote reports it, made present in the task worktree's object store: fetched from
+ * the driver-built `remoteUrl`, never through the worktree's own `origin`, and used only under the hash the remote
+ * reported. Null when the tip cannot be read or fetched.
+ */
+export function readFetchedMainTip(worktreePath: string, remoteUrl: string | null): string | null {
+  if (remoteUrl === null) return null
+  const tip = defaultReadDefaultBranchTip(remoteUrl)
+  if (tip === null) return null
+  const present = () =>
+    spawnSync('git', ['cat-file', '-e', `${tip}^{commit}`], { cwd: worktreePath, stdio: 'ignore' }).status === 0
+  if (present()) return tip
+  spawnSync('git', ['fetch', '-q', remoteUrl, 'refs/heads/main'], {
+    cwd: worktreePath,
+    stdio: 'ignore',
+    timeout: 120_000
+  })
+  return present() ? tip : null
 }
 
 /** Composes evidence only from the completed gate record; never executes body commands. */

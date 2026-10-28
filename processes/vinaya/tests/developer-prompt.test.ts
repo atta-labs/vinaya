@@ -280,6 +280,47 @@ describe("the Engine Developer's prompt after a forge gate sent it back", () => 
   })
 })
 
+describe('a conflict re-entry in a fresh run generation', () => {
+  const files = ['src/a.ts', 'src/b.ts', 'docs/c.md']
+  const tip = 'd'.repeat(40)
+  const reentry = {
+    'reconcile-external-state': sentBack({ kind: 'conflict', headBefore: 'h1', files, mainTip: tip }, 1)
+  }
+
+  test('the first turn, with no develop result and no session, is the whole first-turn prompt led by the conflict', () => {
+    const prompt = developerPrompt('x', { ...FACTS, flow: 'v2' }, reentry)
+    const conflict = renderConflictPrompt(files, publishingInstructionLine(), tip)
+    expect(prompt).toContain(conflict)
+    for (const file of files) expect(prompt).toContain(`- ${file}`)
+    expect(prompt).toContain(`git merge --no-commit ${tip}`)
+    // A fresh session has none of the brief yet: it gets it, after the conflict it answers.
+    expect(prompt).toContain('# Frozen brief')
+    expect(prompt.indexOf(conflict)).toBeLessThan(prompt.indexOf('# Frozen brief'))
+    expect(prompt.indexOf(conflict)).toBeLessThan(prompt.indexOf(renderDeveloperDoctrineBlock(FACTS.doctrine!)))
+  })
+
+  test('a continued session gets the delta conflict prompt, naming the fetched tip and why the last repair was refused', () => {
+    const results = {
+      develop: mech(0),
+      'prove-conflict-repair': sentBack(
+        { kind: 'conflict', headBefore: 'h2', files, mainTip: tip, detail: 'The merge is not proven: single parent.' },
+        4
+      )
+    }
+    const prompt = developerPrompt('x', FACTS, results, { resumeSessionId: SESSION })
+    expect(prompt).toContain('The merge is not proven: single parent.')
+    expect(prompt).toContain(renderConflictPrompt(files, publishingInstructionLine(), tip))
+    expect(prompt).not.toContain('# Frozen brief')
+  })
+
+  test('a conflict with no recorded tip merges origin/main, as before', () => {
+    const results = { develop: mech(0), 'check-mergeability': sentBack({ kind: 'conflict', files }) }
+    expect(developerPrompt('x', FACTS, results, { resumeSessionId: SESSION })).toContain(
+      'git merge --no-commit origin/main'
+    )
+  })
+})
+
 describe('the Developer runs no tests and no evidence refresh in version 2 only', () => {
   test('a version 2 turn is told to run no tests and not to call refresh_evidence; a version 1 turn is not', () => {
     const v2 = developerPrompt('', { ...FACTS, flow: 'v2' }, {})

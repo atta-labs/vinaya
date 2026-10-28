@@ -346,6 +346,9 @@ export const STATE_STEPS = [
   'assess-round',
   'run-live-checks',
   'check-publish-mergeability',
+  // Version 2: a conflict found on re-entry, and the proof of the Developer's merge before any reviewer.
+  'reconcile-external-state',
+  'prove-conflict-repair',
   // Version 2's steps after an approval.
   'ready-push',
   'open-pull-request',
@@ -375,6 +378,8 @@ export interface SendBack {
   headBefore?: string | null
   /** The files a conflicting head conflicts in, for the conflict turn's prompt. */
   files?: string[]
+  /** The default branch's tip the controller fetched for a conflict's repair: the Developer's merge must include it. */
+  mainTip?: string | null
   /** The typed failures of a rejected turn result, for its one correction turn. */
   failures?: string[]
   /** The finding ids the rejected turn could cite, kept for its correction turn. */
@@ -448,7 +453,7 @@ export function latestRecord(results: Results): LoopRecord | null {
     } catch {
       continue
     }
-    if (typeof parsed.seq !== 'number') continue
+    if (parsed === null || typeof parsed !== 'object' || typeof parsed.seq !== 'number') continue
     let state: LoopState | undefined
     try {
       if (parsed.state !== undefined) state = decodeLoopState(JSON.stringify(parsed.state))
@@ -935,9 +940,43 @@ export const EXIT_NO_OPEN_PR = 0
 /** The reconcile step's exit code when a pull request is already open for the branch. */
 export const EXIT_OPEN_PR = 1
 
-/** The start decision's predicate: the Developer is due only when the reconcile step found no open pull request. */
+/** The reconcile step's exit code when the open pull request conflicts with the default branch (version 2). */
+export const EXIT_CONFLICT_REENTRY = 2
+
+/**
+ * The start decision's predicate: the Developer is due when the reconcile step found no open pull request, or found
+ * one in conflict with the default branch and recorded the conflict the Developer's first turn answers.
+ */
 export function isDevelopmentDue(examined: StepNodeResult): boolean {
-  return examined.exitCode === EXIT_NO_OPEN_PR
+  return examined.exitCode === EXIT_NO_OPEN_PR || examined.exitCode === EXIT_CONFLICT_REENTRY
+}
+
+/** The decision a conflict repair's proof records once it holds. */
+export const CONFLICT_REPAIR_PROVEN = 'conflict_repair_proven'
+
+/**
+ * The conflict a repair is still owed for: the newest conflict send-back (its own, or the one a correction turn
+ * corrects) recorded after the newest proven repair; null when none is owed. A turn that answered something else
+ * since (an unpushed-work resume, a correction) leaves the conflict owed, so its proof still runs.
+ */
+export function owedConflictRepair(results: Results): SendBack | null {
+  let owed: { seq: number; sendBack: SendBack } | null = null
+  let proven = 0
+  for (const step of STATE_STEPS) {
+    const stdout = stdoutOf(results[step])
+    if (stdout === null) continue
+    let parsed: { seq?: unknown; sendBack?: SendBack | null; decision?: { type?: unknown } } | null
+    try {
+      parsed = JSON.parse(stdout) as typeof parsed
+    } catch {
+      continue
+    }
+    if (parsed === null || typeof parsed !== 'object' || typeof parsed.seq !== 'number') continue
+    if (parsed.decision?.type === CONFLICT_REPAIR_PROVEN) proven = Math.max(proven, parsed.seq)
+    const sendBack = parsed.sendBack?.kind === 'correction' ? parsed.sendBack.corrects : parsed.sendBack
+    if (sendBack?.kind === 'conflict' && (owed === null || parsed.seq > owed.seq)) owed = { seq: parsed.seq, sendBack }
+  }
+  return owed !== null && owed.seq > proven ? owed.sendBack : null
 }
 
 /** The assessment step's recorded exit result asks for a revision when it did not exit zero. */
@@ -1674,11 +1713,13 @@ async function checkPublishMergeability(
   ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, task.reviewRound())
   const previous = latestRecord(results)
   const head = safeRead(task.remoteHead) ?? judgedHeadOf(task)
+  // Version 2 proves the repair against the default branch's tip fetched here, before any reviewer sees it.
+  const mainTip = task.v2?.readMainTip ? safeRead(task.v2.readMainTip) : undefined
   return {
     exitCode: BACK,
     stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
       counters: { ...(previous?.counters ?? NO_COUNTERS), stallCheck: null },
-      sendBack: { kind: 'conflict', headBefore: head, files },
+      sendBack: { kind: 'conflict', headBefore: head, files, ...(mainTip === undefined ? {} : { mainTip }) },
       decision: { type: 'dispatch_developer' },
       mergeable,
       files

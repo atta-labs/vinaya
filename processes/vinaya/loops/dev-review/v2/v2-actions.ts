@@ -19,25 +19,42 @@ import type { SelectionNote } from '../../../../../apps/cli/src/lib/pre-push-fai
 import { manifestDigest } from '../../../../../apps/cli/src/lib/review-result'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { readUnpushedWorkDetail } from '../../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
+import { spawnSync } from 'node:child_process'
+import { assessRound, type DevReviewLoopEventInput, type PauseReason } from '@attalabs/aeg-core'
+import {
+  fetchConflictingFiles,
+  fetchMergeableState,
+  parseMergeTreeConflictFiles,
+  pollMergeableState
+} from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { findOpenPrForBranch } from '../../../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import {
   BACK,
   carriedLoopState,
+  CONFLICT_REPAIR_PROVEN,
   createActions,
   dispatchedManifest,
+  EXIT_CONFLICT_REENTRY,
+  EXIT_NO_OPEN_PR,
+  EXIT_OPEN_PR,
   FORWARD,
+  gatePollOf,
   isSentBack,
   latestRecord,
   NO_COUNTERS,
   ok,
+  owedConflictRepair,
   pauseThrough,
   readAssessment,
   readForgeCi,
   recordedDispatch,
   recordOutput,
   safeRead,
+  type SendBack,
   startReviewRound,
   type TaskInput,
-  worktreeHeadOf
+  worktreeHeadOf,
+  worktreeStats
 } from '../../../executing/actions'
 
 // Review locally, push once: the actions only version 2 of the developer-review Flow binds. The Developer pushes
@@ -99,6 +116,11 @@ export interface V2Functions {
   readCheckExcerpt?: (jobId: number, max: number) => string | null
   /** Milliseconds since an arbitrary origin, for the time a step spends. */
   now?: () => number
+  /**
+   * The default branch's tip, fetched by the controller into the task worktree's object store, or null when it cannot
+   * be read. A conflict's repair is proven against it, so a tip that cannot be read proves no repair.
+   */
+  readMainTip?: () => string | null
 }
 
 /** Consecutive ready-push failures pause independently of review revisions. */
@@ -606,6 +628,245 @@ export function classifyCiResult(context: ActionContext): { exitCode: number; st
   return ok(isSentBack(read) ? 'developer' : 'publish')
 }
 
+/**
+ * Version 2's reconcile step: the task branch's open pull request, and — when one is open — its mergeability, read
+ * before anything else runs. A conflicting one records the conflict send-back (the conflicting files, and the default
+ * branch's tip the controller fetched for the repair) and routes to the Developer, so even a fresh run's first turn is
+ * the conflict turn, before any local check or reviewer. The record is checkpointed with the step: a restart neither
+ * repeats nor skips it.
+ */
+export async function reconcileExternalState(
+  task: TaskInput,
+  context: ActionContext
+): Promise<{ exitCode: number; stdout: string }> {
+  const open = (task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)
+  if (open === null) return { exitCode: EXIT_NO_OPEN_PR, stdout: JSON.stringify(open) }
+  const mergeable = await pollMergeableState(open.number, {
+    ...gatePollOf(task),
+    fetchMergeableState: task.bound?.fetchMergeableState ?? fetchMergeableState
+  })
+  if (mergeable !== 'CONFLICTING') return { exitCode: EXIT_OPEN_PR, stdout: JSON.stringify(open) }
+  const { results } = context
+  const files = (task.bound?.fetchConflictingFiles ?? fetchConflictingFiles)('main', task.branch)
+  const mainTip = safeRead(v2Of(task).readMainTip)
+  const sendBack: SendBack = {
+    kind: 'conflict',
+    headBefore: safeRead(task.remoteHead) ?? worktreeHeadOf(task),
+    files,
+    mainTip
+  }
+  return {
+    exitCode: EXIT_CONFLICT_REENTRY,
+    stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+      // The runner reads the open pull request's number from this step's result, as it does when no conflict is found.
+      number: open.number,
+      decision: { type: 'dispatch_developer' },
+      sendBack,
+      mergeable,
+      files
+    })
+  }
+}
+
+/** Why a conflict repair is not proven: a stable code the repeat bound compares, the reason, and the files it names. */
+export interface ConflictRepairFailure {
+  code:
+    | 'unreadable-head'
+    | 'unpublished'
+    | 'unchanged-head'
+    | 'single-parent'
+    | 'main-tip-missing'
+    | 'unresolved-index'
+    | 'main-unreadable'
+    | 'not-clean'
+    | 'not-mergeable'
+  reason: string
+  files: string[]
+}
+
+const gitIn = (cwd: string, args: readonly string[]) =>
+  spawnSync('git', [...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+
+const isAncestor = (cwd: string, ancestor: string, descendant: string): boolean =>
+  gitIn(cwd, ['merge-base', '--is-ancestor', ancestor, descendant]).status === 0
+
+/**
+ * The local half of a conflict repair's proof, read from the task worktree with plain git: the published head moved
+ * and is a merge commit; one of its merged parents is the default branch's tip fetched for the repair (or a later
+ * commit of the default branch that contains it); the index holds no unresolved entry; and the head merges cleanly
+ * with the default branch's tip fetched now. Null when every part holds.
+ */
+export function conflictRepairFailure(input: {
+  worktreePath: string
+  head: string | null
+  remote: string | null
+  headBefore: string | null
+  /** The tip recorded with the conflict; null when none was recorded, and the fresh tip stands for it. */
+  mainTip: string | null
+  freshTip: string | null
+}): ConflictRepairFailure | null {
+  const { worktreePath: cwd, head, remote, headBefore, freshTip } = input
+  if (head === null) return { code: 'unreadable-head', reason: 'the task worktree head could not be read', files: [] }
+  if (remote !== head)
+    return {
+      code: 'unpublished',
+      reason: `the merge is not published: the remote branch is at ${remote ?? 'nothing'}, the worktree at ${head}`,
+      files: []
+    }
+  if (head === headBefore)
+    return { code: 'unchanged-head', reason: `the head ${head} did not move, so no merge was published`, files: [] }
+  const parents = (gitIn(cwd, ['rev-list', '--parents', '-n', '1', head]).stdout ?? '').trim().split(/\s+/).slice(1)
+  if (parents.length < 2)
+    return {
+      code: 'single-parent',
+      reason: `the head ${head} is a single-parent commit, not a merge of the default branch`,
+      files: []
+    }
+  const tip = input.mainTip ?? freshTip
+  const merged = parents.slice(1)
+  if (
+    tip === null ||
+    !merged.some(
+      (parent) =>
+        parent === tip || (freshTip !== null && isAncestor(cwd, tip, parent) && isAncestor(cwd, parent, freshTip))
+    )
+  )
+    return {
+      code: 'main-tip-missing',
+      reason: `the merge ${head}'s parents (${parents.join(', ')}) do not include the default branch's tip ${tip ?? '(unreadable)'}`,
+      files: []
+    }
+  const unresolved = gitIn(cwd, ['ls-files', '-u'])
+  const unresolvedFiles = [
+    ...new Set(
+      (unresolved.stdout ?? '')
+        .split('\n')
+        .map((line) => line.split('\t')[1]?.trim() ?? '')
+        .filter(Boolean)
+    )
+  ].sort()
+  if (unresolved.status !== 0 || unresolvedFiles.length > 0)
+    return {
+      code: 'unresolved-index',
+      reason:
+        unresolved.status !== 0
+          ? 'the worktree index could not be read'
+          : `unresolved index entries remain: ${unresolvedFiles.join(', ')}`,
+      files: unresolvedFiles
+    }
+  if (freshTip === null)
+    return { code: 'main-unreadable', reason: 'the default branch tip could not be fetched', files: [] }
+  const check = gitIn(cwd, ['merge-tree', '--write-tree', freshTip, head])
+  if (check.status !== 0)
+    return {
+      code: 'not-clean',
+      reason: `the head ${head} does not merge cleanly with the default branch at ${freshTip}`,
+      files: parseMergeTreeConflictFiles(check.stdout ?? '')
+    }
+  return null
+}
+
+/**
+ * Proves a conflict's repair before any reviewer is dispatched (version 2): the local proof
+ * (`conflictRepairFailure`), then the open pull request's forge mergeability, which must read MERGEABLE. A step with
+ * no conflict owed passes and records nothing. An unproven repair goes back to the Developer as a conflict with what
+ * failed, never to the local checks or the reviewers; the same failure twice in a row pauses `repeat_failure`, as an
+ * unresolved conflict does.
+ */
+export async function proveConflictRepair(
+  task: TaskInput,
+  context: ActionContext
+): Promise<{ exitCode: number; stdout: string }> {
+  const { results } = context
+  const owed = owedConflictRepair(results)
+  if (owed === null) return ok(JSON.stringify({ proof: 'not-owed' }))
+  const fns = v2Of(task)
+  const previous = latestRecord(results)
+  let state = carriedLoopState(results, task.loopState)
+  const counters = previous?.counters ?? NO_COUNTERS
+  const round = task.reviewRound()
+  const head = worktreeHeadOf(task)
+  const remote = safeRead(task.remoteHead)
+  const freshTip = safeRead(fns.readMainTip)
+  let failure = conflictRepairFailure({
+    worktreePath: task.worktreePath,
+    head,
+    remote,
+    headBefore: owed.headBefore ?? null,
+    mainTip: owed.mainTip ?? null,
+    freshTip
+  })
+  let mergeable: string | null = null
+  if (failure === null) {
+    const open = safeRead(fns.findOpenPullRequest)
+    if (open !== null) {
+      mergeable = await pollMergeableState(open.number, {
+        ...gatePollOf(task),
+        fetchMergeableState: task.bound?.fetchMergeableState ?? fetchMergeableState
+      })
+      if (mergeable !== 'MERGEABLE')
+        failure = {
+          code: 'not-mergeable',
+          reason: `the pull request's mergeability is ${mergeable}, not MERGEABLE`,
+          files:
+            mergeable === 'CONFLICTING'
+              ? (task.bound?.fetchConflictingFiles ?? fetchConflictingFiles)('main', task.branch)
+              : []
+        }
+    }
+  }
+  const fields = { head, mainTip: freshTip, mergeable, answered: previous?.answered ?? null }
+  if (failure === null)
+    return {
+      exitCode: FORWARD,
+      stdout: recordOutput(results, state, {
+        ...fields,
+        counters: { ...counters, stallCheck: null },
+        decision: { type: CONFLICT_REPAIR_PROVEN }
+      })
+    }
+  const sendBack: SendBack = {
+    kind: 'conflict',
+    headBefore: remote ?? head,
+    files: failure.files.length > 0 ? failure.files : (owed.files ?? []),
+    mainTip: freshTip ?? owed.mainTip ?? null,
+    detail: `The merge is not proven, so no reviewer is dispatched: ${failure.reason}.`
+  }
+  const stats = worktreeStats(task.worktreePath, 0)
+  const assessed = assessRound(
+    state,
+    { kind: 'mechanical_failure', round, failure: `conflict repair not proven (${failure.code})`, stats },
+    task.clock
+  )
+  state = assessed.state
+  const events: DevReviewLoopEventInput[] = [...assessed.events]
+  const record = (decision: { type: string; reason?: string; detail?: string }, nextCounters = counters) => ({
+    exitCode: BACK,
+    stdout: recordOutput(results, state, {
+      ...fields,
+      failure: failure.code,
+      counters: { ...nextCounters, stallCheck: null },
+      sendBack,
+      events,
+      decision
+    })
+  })
+  if (assessed.decision.type === 'pause') {
+    const reason: PauseReason = assessed.decision.reason
+    const detail = `${assessed.decision.detail ?? reason}: ${failure.reason}`
+    pauseThrough(task, 'prove-conflict-repair', { reason, detail })
+    return record({ type: 'pause', reason, detail }, NO_COUNTERS)
+  }
+  return record({ type: 'dispatch_developer' })
+}
+
+/** Records how the proof routed; the decision on this step reads that step's own exit result. */
+export function classifyConflictRepair(context: ActionContext): { exitCode: number; stdout: string } {
+  const proved = context.results['prove-conflict-repair']
+  if (!proved) throw new Error('classify-conflict-repair ran before the proof recorded a result')
+  return ok(isSentBack(proved) ? 'developer' : 'gates')
+}
+
 type V2Binding = {
   adapts: readonly ((...args: never[]) => unknown)[]
   build: (
@@ -615,6 +876,15 @@ type V2Binding = {
 
 /** Version 2's action bindings, beside the shared ones (`ACTION_BINDINGS`) every flow binds. */
 export const V2_ACTION_BINDINGS: Readonly<Record<string, V2Binding>> = {
+  'vinaya.v2-reconcile-external-state': {
+    adapts: [findOpenPrForBranch, pollMergeableState, fetchConflictingFiles],
+    build: (task) => (context) => reconcileExternalState(task, context)
+  },
+  'vinaya.v2-prove-conflict-repair': {
+    adapts: [pollMergeableState, fetchConflictingFiles, assessRound],
+    build: (task) => (context) => proveConflictRepair(task, context)
+  },
+  'vinaya.v2-classify-conflict-repair': { adapts: [], build: () => classifyConflictRepair },
   'vinaya.v2-local-checks': { adapts: [runCli], build: (task) => (context) => runLocalChecks(task, context) },
   'vinaya.v2-check-premise': { adapts: [checkPremiseAtHead], build: (task) => () => checkPremiseStaged(task) },
   'vinaya.v2-ready-push': { adapts: [], build: (task) => (context) => readyPush(task, context) },
@@ -627,6 +897,7 @@ export const V2_ACTION_BINDINGS: Readonly<Record<string, V2Binding>> = {
 
 /** Version 2's deciding steps, each read from the step it examines. */
 export const V2_DECISIONS = {
+  'classify-conflict-repair': isSentBack,
   'classify-ready-push': isSentBack,
   'classify-pr-opened': isSentBack,
   'classify-ci-result': isSentBack

@@ -111,6 +111,24 @@ may skip repository hooks but never bypasses the Broker). `dispatch_developer`
 encodes **AMB-04** (a resume may select a different qualifying developer
 model than the paused attempt used, recorded rather than assumed).
 
+A conflict with the default branch is a controller-owned decision on both
+sides of the developer's turn, and both halves are checkpointed with the step
+that decides them. Under the version 2 Flow, `reconcile_external_state` reads
+an open pull request's forge mergeability and, when it conflicts, records the
+conflict (its files and the default branch's tip the controller fetched) as
+its own result, so T02 then T04 dispatch the developer with that conflict
+even in a fresh run generation, before any gate or reviewer; a restart
+resumes from the recorded decision rather than re-deriving it. T10
+(`validate_developer_output` → `run_mechanical_gates`) is then guarded, while
+a conflict is owed, by the controller's proof of the developer's merge — a
+published merge commit whose parents include that tip, no unresolved index
+entry, a clean merge with the default branch fetched again, and a
+`MERGEABLE` pull request — and an unproven repair is sent back to
+`dispatch_developer` like a malformed output. The proof is recorded once it
+holds, so a restart never proves or dispatches it twice. The guard reads git
+and the forge, never the model's own report (`apps/cli/specs/loop.md`,
+"Version 2: a conflict re-entry starts with the Developer").
+
 The rulings share one principle the Principal stated directly:
 **infrastructure is never a stop for a human.** It is a bounded retry with
 backoff that resumes by itself; only an escalation, a Principal-owned item

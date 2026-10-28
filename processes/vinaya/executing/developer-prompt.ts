@@ -262,6 +262,17 @@ function answerPromptText(
 const join = (parts: readonly (string | null)[]) =>
   parts.filter((part): part is string => part !== null && part.length > 0).join('\n\n')
 
+/**
+ * A conflict turn's instruction: the conflicting files the driver found, the default branch's tip it fetched for the
+ * repair as the commit to merge (`origin/main` when none was recorded), and why an earlier repair was not proven.
+ */
+export function conflictPromptText(sendBack: SendBack | null): string {
+  return join([
+    sendBack?.detail ?? null,
+    renderConflictPrompt(sendBack?.files ?? [], publishingInstructionLine(), sendBack?.mainTip ?? 'origin/main')
+  ])
+}
+
 /** The loop's later-round prompt text: what to fix, the finding ids to cite, and how to publish the fix. */
 function revisionPromptText(
   kind: DeveloperTurnKind,
@@ -273,7 +284,7 @@ function revisionPromptText(
   const forgeCiRed = gateOutput.find((gate) => gate.reference === 'read-forge-ci')
   return [
     kind === 'conflict'
-      ? renderConflictPrompt(latestSendBack(results)?.files ?? [], publishingInstructionLine())
+      ? conflictPromptText(latestSendBack(results))
       : kind === 'gate-red' && forgeCiRed !== undefined
         ? forgeCiRed.summary
         : kind === 'gate-red'
@@ -327,9 +338,13 @@ export function developerPrompt(
     stopConditions: ['Honor every stop condition in the frozen brief.']
   })
   const kind = developerTurnKind(results, facts.headSha)
-  if (kind === 'first')
+  // A conflict turn with no session to continue (a fresh run re-entering a conflicting pull request) is that
+  // session's first turn: the whole first-turn prompt, led by the conflict it answers.
+  const freshConflict = kind === 'conflict' && results.develop === undefined && context.resumeSessionId === undefined
+  if (kind === 'first' || freshConflict)
     return join([
       facts.sources.block,
+      freshConflict ? conflictPromptText(latestSendBack(results)) : null,
       facts.doctrine ? renderDeveloperDoctrineBlock(facts.doctrine) : null,
       `When your work is ready, ${publishingInstructionLine()}`,
       facts.flow === 'v2' ? FLOW_V2_NOTE : null,
