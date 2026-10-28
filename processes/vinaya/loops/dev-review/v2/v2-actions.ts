@@ -7,7 +7,14 @@ import {
   readyPushEvent
 } from '../../../../../apps/cli/src/lib/flow-v2-events'
 import { discardHeldVerdicts } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
-import { checkPremiseAtHead } from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { checkPremiseAtHead, fetchFailingCheckRuns } from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import {
+  MAX_FAILURE_EXCERPT_CHARS,
+  MAX_FAILURE_EXCERPT_TOTAL_CHARS,
+  readFailedCheckExcerpt,
+  renderFailureExcerpt,
+  sanitizeForgeText
+} from '../../../../../apps/cli/src/lib/task-tools/pr-facts'
 import type { SelectionNote } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import { manifestDigest } from '../../../../../apps/cli/src/lib/review-result'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
@@ -88,6 +95,8 @@ export interface V2Functions {
   }) => Promise<{ ok: true } | { ok: false; reason: string }> | { ok: true } | { ok: false; reason: string }
   /** The local checks of a round: `vinaya check --all --local` with the staged body as the pull-request body. */
   runLocalChecks?: (env: Record<string, string>) => { passed: boolean; output: string }
+  /** One failed job's failure-naming log lines, at most `max` characters: null when its log cannot be read. Live: the full-log reader. */
+  readCheckExcerpt?: (jobId: number, max: number) => string | null
   /** Milliseconds since an arbitrary origin, for the time a step spends. */
   now?: () => number
 }
@@ -551,9 +560,43 @@ export async function readCiOnce(
     task,
     results,
     'ci-red',
-    `CI is red on pull request #${open.number} at ${head}. Failing check-run(s): ${ci.failingChecks.length > 0 ? ci.failingChecks.join(', ') : '(unknown)'}. Fix the failing check(s), commit, and publish the fix with publish_changes on this SAME branch — the pull request is open, so this push runs the selected tests.`,
+    `CI is red on pull request #${open.number} at ${head}. Failing check-run(s): ${ci.failingChecks.length > 0 ? ci.failingChecks.join(', ') : '(unknown)'}. Fix the failing check(s), commit, and publish the fix with publish_changes on this SAME branch — the pull request is open, so this push runs the selected tests.${failureExcerptsOnHead(task, fns, head)}`,
     { ...ci, events }
   )
+}
+
+/**
+ * The failure lines of each failed job on `head`, rendered for the send-back prompt under the check's name. A job's log
+ * is read only for a check that failed (a failed workflow run is no job, so it has none), each excerpt is bounded and
+ * the total is too; a log that cannot be read keeps its check's name and says so.
+ */
+function failureExcerptsOnHead(task: TaskInput, fns: V2Functions, head: string): string {
+  const read = fns.readCheckExcerpt ?? ((jobId: number, max: number) => readFailedCheckExcerpt(jobId, max))
+  let runs: { name: string; id: number; detail?: string }[]
+  try {
+    runs = (task.bound?.fetchFailingCheckRuns ?? fetchFailingCheckRuns)(head)
+  } catch {
+    return ''
+  }
+  const parts: string[] = []
+  let remaining = MAX_FAILURE_EXCERPT_TOTAL_CHARS
+  for (const run of runs) {
+    if (run.detail !== undefined) continue
+    const check = sanitizeForgeText(run.name, 200)
+    if (remaining <= 0) {
+      parts.push(`Failure lines of \`${check}\` (run ${run.id}): omitted, the other checks' excerpts fill the prompt.`)
+      continue
+    }
+    let excerpt: string | null
+    try {
+      excerpt = read(run.id, Math.min(MAX_FAILURE_EXCERPT_CHARS, remaining))
+    } catch {
+      excerpt = null
+    }
+    remaining -= excerpt?.length ?? 0
+    parts.push(renderFailureExcerpt(check, run.id, excerpt))
+  }
+  return parts.length === 0 ? '' : `\n\n${parts.join('\n\n')}`
 }
 
 /** Records how the CI read routed; the decision on this step reads that step's own exit result. */
