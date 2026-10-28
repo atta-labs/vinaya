@@ -88,6 +88,7 @@ const complete = () => ({
     weekly: 'whole loop',
     release: 'all live suites'
   },
+  wholeLoopSandboxRepository: 'example-owner/whole-loop-sandbox',
   developmentRuns: STEP_ONE_SUITES.flatMap((suite) =>
     STEP_ONE_ADAPTERS.map((adapter) => measured(suite, 'development', adapter))
   ),
@@ -102,7 +103,8 @@ const complete = () => ({
         ...(suite === 'whole-loop.l6' ? { maximumSpendUsd: 12.5, maximumWallTimeMs: 4567 } : {})
       }) as Record<string, unknown>
   ),
-  practiceRuns: BACKEND_COMPARISON_SUITES.map(
+  // The whole-loop practice run is still owed, so the record holds every other one.
+  practiceRuns: BACKEND_COMPARISON_SUITES.filter((suite) => suite !== 'whole-loop.l6').map(
     (suite) => ({ ...measured(suite, 'development', 'codex', 1), evidence: 'never' }) as Record<string, unknown>
   ),
   standaloneHeldOutBaseline: BACKEND_COMPARISON_SUITES.map(
@@ -136,8 +138,8 @@ const complete = () => ({
   owed: {
     wholeLoopStepOne: {
       status: 'owed',
-      reason: 'no disposable sandbox repository yet'
-    },
+      reason: 'no whole-loop practice run recorded yet'
+    } as { status: string; reason: string } | undefined,
     operatorCapabilitySelectionStepOne: {
       status: 'owed',
       project: 'Operator on one host',
@@ -221,11 +223,43 @@ describe('milestone-two freeze record', () => {
     })
 
     const whole = complete()
-    whole.owed.wholeLoopStepOne.status = 'complete'
+    whole.owed.wholeLoopStepOne!.status = 'complete'
     expect(validate(whole)).toMatchObject({
       ok: false,
       refusal: { path: 'owed.wholeLoopStepOne' }
     })
+  })
+
+  it('names the disposable sandbox repository, never this one', () => {
+    const unnamed = complete() as Record<string, unknown>
+    delete unnamed.wholeLoopSandboxRepository
+    expect(validate(unnamed)).toMatchObject({ ok: false, refusal: { path: 'wholeLoopSandboxRepository' } })
+    for (const repository of ['', 'no-owner', 'atta-labs/vinaya', 'Atta-Labs/Vinaya', 42]) {
+      const value = complete() as Record<string, unknown>
+      value.wholeLoopSandboxRepository = repository
+      expect(validate(value)).toMatchObject({ ok: false, refusal: { path: 'wholeLoopSandboxRepository' } })
+    }
+  })
+
+  it('owes the whole-loop practice run until the record holds one, and no longer once it does', () => {
+    const practice = { ...measured('whole-loop.l6', 'development', 'claude-code', 1), evidence: 'never' }
+
+    const owedAndHeld = complete()
+    owedAndHeld.practiceRuns.push(practice)
+    expect(validate(owedAndHeld)).toMatchObject({ ok: false, refusal: { path: 'owed.wholeLoopStepOne' } })
+
+    const recorded = complete()
+    recorded.practiceRuns.push(practice)
+    delete recorded.owed.wholeLoopStepOne
+    expect(validate(recorded).ok).toBe(true)
+
+    const neither = complete()
+    delete neither.owed.wholeLoopStepOne
+    expect(validate(neither)).toMatchObject({ ok: false, refusal: { path: 'owed.wholeLoopStepOne' } })
+
+    const oldReason = complete()
+    oldReason.owed.wholeLoopStepOne!.reason = 'no disposable sandbox repository yet'
+    expect(validate(oldReason)).toMatchObject({ ok: false, refusal: { path: 'owed.wholeLoopStepOne' } })
   })
 
   it('requires whole-loop acceptance spend and wall-time budgets', () => {
@@ -753,6 +787,14 @@ describe('the committed freeze record', () => {
 
   it('is accepted by the validator against the pinned held-out digests', () =>
     expect(validateFreezeRecord(record, heldOutDigestsBySuite()).ok).toBe(true))
+
+  it('names the whole-loop sandbox repository and still owes the whole-loop practice run', () => {
+    expect(record.wholeLoopSandboxRepository).toBe('atta-labs/vinaya-whole-loop-sandbox')
+    expect((record.owed as Record<string, unknown>).wholeLoopStepOne).toEqual({
+      status: 'owed',
+      reason: 'no whole-loop practice run recorded yet'
+    })
+  })
 
   it('holds practice runs only, and no comparison parameters or scored result', () => {
     expect('comparisonParameters' in record).toBe(false)

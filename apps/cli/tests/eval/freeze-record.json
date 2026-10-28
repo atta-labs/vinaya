@@ -37,6 +37,7 @@
     "weekly": "none",
     "release": "layer G suites before every release and before every backend comparison"
   },
+  "wholeLoopSandboxRepository": "atta-labs/vinaya-whole-loop-sandbox",
   "developmentRuns": [],
   "backendComparisonFloors": [
     {
@@ -241,7 +242,7 @@
   "owed": {
     "wholeLoopStepOne": {
       "status": "owed",
-      "reason": "no disposable sandbox repository yet"
+      "reason": "no whole-loop practice run recorded yet"
     },
     "operatorCapabilitySelectionStepOne": {
       "status": "owed",

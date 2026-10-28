@@ -91,6 +91,13 @@ const REVIEWER_COMPARISON_SUITES: readonly string[] = [
 /** The whole-loop suite, whose floor also bounds spend and wall time per task. */
 const WHOLE_LOOP_SUITE = 'whole-loop.l6'
 
+/** The repository whose own Issues, pull requests and branches a whole-loop trial never writes to. */
+export const PROTECTED_REPOSITORY = 'atta-labs/vinaya'
+/** An `owner/name` forge repository. */
+export const REPOSITORY_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/
+/** Why the whole-loop practice run is owed while the record holds none. */
+export const WHOLE_LOOP_OWED_REASON = 'no whole-loop practice run recorded yet'
+
 /**
  * One backend-comparison floor per layer-`G` suite, valued by the Principal
  * from product risk. The reviewer suites add a maximum adjudicated
@@ -154,6 +161,8 @@ export interface FreezeRecord {
     wallTimeMs: number
   }
   cadence: { nightly: string; weekly: string; release: string }
+  /** The disposable private sandbox repository every whole-loop trial runs against, as `owner/name`; never this repository. */
+  wholeLoopSandboxRepository: string
   developmentRuns: MeasuredResult[]
   backendComparisonFloors: BackendComparisonFloor[]
   practiceRuns: PracticeRunResult[]
@@ -173,9 +182,10 @@ export interface FreezeRecord {
     }
   }
   owed: {
-    wholeLoopStepOne: {
+    /** Present exactly while `practiceRuns` holds no whole-loop practice run. */
+    wholeLoopStepOne?: {
       status: 'owed'
-      reason: 'no disposable sandbox repository yet'
+      reason: typeof WHOLE_LOOP_OWED_REASON
     }
     operatorCapabilitySelectionStepOne: {
       status: 'owed'
@@ -347,6 +357,7 @@ export function validateFreezeRecord(input: unknown, heldOutDigests: HeldOutDige
       'trialsPerTask',
       'liveRunBudget',
       'cadence',
+      'wholeLoopSandboxRepository',
       'developmentRuns',
       'backendComparisonFloors',
       'practiceRuns',
@@ -423,6 +434,14 @@ export function validateFreezeRecord(input: unknown, heldOutDigests: HeldOutDige
   for (const key of ['nightly', 'weekly', 'release'])
     if (typeof input.cadence[key] !== 'string' || input.cadence[key] === '')
       return fail(`cadence.${key}`, 'value is required')
+  const sandbox = input.wholeLoopSandboxRepository
+  if (typeof sandbox !== 'string' || !REPOSITORY_NAME.test(sandbox))
+    return fail('wholeLoopSandboxRepository', 'the disposable sandbox repository is required, as owner/name')
+  if (sandbox.toLowerCase() === PROTECTED_REPOSITORY)
+    return fail(
+      'wholeLoopSandboxRepository',
+      `must name a disposable sandbox repository, never ${PROTECTED_REPOSITORY}`
+    )
 
   // The step-one suites run standalone only; a backend-comparison suite's
   // paired development pilot holds one standalone and one Engine result per
@@ -608,14 +627,24 @@ export function validateFreezeRecord(input: unknown, heldOutDigests: HeldOutDige
   }
 
   if (!object(input.owed)) return fail('owed', 'object is required')
-  const owedShape = exact(input.owed, ['wholeLoopStepOne', 'operatorCapabilitySelectionStepOne'], 'owed')
+  // The whole-loop practice run is owed until the record holds one, and owed no longer once it does.
+  const practised = (input.practiceRuns as Record<string, unknown>[]).some((run) => run.suite === WHOLE_LOOP_SUITE)
+  if (practised && 'wholeLoopStepOne' in input.owed)
+    return fail('owed.wholeLoopStepOne', 'the record holds a whole-loop practice run, so it no longer owes one')
+  const owedShape = exact(
+    input.owed,
+    [...(practised ? [] : ['wholeLoopStepOne']), 'operatorCapabilitySelectionStepOne'],
+    'owed'
+  )
   if (owedShape !== null) return owedShape
-  const whole = input.owed.wholeLoopStepOne
-  if (!object(whole)) return fail('owed.wholeLoopStepOne', 'object is required')
-  const wholeShape = exact(whole, ['status', 'reason'], 'owed.wholeLoopStepOne')
-  if (wholeShape !== null) return wholeShape
-  if (whole.status !== 'owed' || whole.reason !== 'no disposable sandbox repository yet')
-    return fail('owed.wholeLoopStepOne', 'must be owed because no disposable sandbox repository exists yet')
+  if (!practised) {
+    const whole = input.owed.wholeLoopStepOne
+    if (!object(whole)) return fail('owed.wholeLoopStepOne', 'object is required')
+    const wholeShape = exact(whole, ['status', 'reason'], 'owed.wholeLoopStepOne')
+    if (wholeShape !== null) return wholeShape
+    if (whole.status !== 'owed' || whole.reason !== WHOLE_LOOP_OWED_REASON)
+      return fail('owed.wholeLoopStepOne', `must be owed because ${WHOLE_LOOP_OWED_REASON}`)
+  }
   const operator = input.owed.operatorCapabilitySelectionStepOne
   if (!object(operator)) return fail('owed.operatorCapabilitySelectionStepOne', 'object is required')
   const operatorShape = exact(operator, ['status', 'project', 'reason'], 'owed.operatorCapabilitySelectionStepOne')

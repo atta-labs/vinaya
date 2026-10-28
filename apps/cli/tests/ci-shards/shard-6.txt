@@ -46,6 +46,7 @@ tests/eval/registry-cutover-gates.test.ts
 tests/eval/reviewer-quality-suite.test.ts
 tests/eval/step-one.test.ts
 tests/eval/freeze-record.test.ts
+tests/eval/whole-loop.test.ts
 tests/lib/task-tools/role-grants.test.ts
 tests/conformance/role-grants-bridge.test.ts
 tests/lib/dispatch.test.ts
