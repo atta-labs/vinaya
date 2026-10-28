@@ -856,6 +856,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       if (world.rebaseResult.ok) world.worktreeHead = world.rebaseResult.head
       return world.rebaseResult
     },
+    mergeDefaultTip: () => ({ ok: true, merged: false, head: world.worktreeHead }),
     restoreWorktreeHead: (_worktreePath, head) => {
       world.restores.push(head)
       world.worktreeHead = head

@@ -38,6 +38,7 @@ import { resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { buildRolePlan } from '../../roles/plan.js'
 import {
   configPath,
+  resolveLocalPacingOverride,
   loadConfigChecked,
   loadTrustAnchorConfig,
   loadTrustAnchorConfigOrThrow,
@@ -170,7 +171,15 @@ const POLICY_READ_ATTEMPTS = 2
  * `load` is injectable for tests only; production callers pass nothing.
  */
 export function reviewPolicyForLoop(load: () => VinayaConfig | null = loadTrustAnchorConfigOrThrow): ReviewPolicy {
-  return resolveReviewPolicy(readTrustAnchorConfigWithRetry(load))
+  const policy = resolveReviewPolicy(readTrustAnchorConfigWithRetry(load))
+  const local = resolveLocalPacingOverride()
+  if (!local) return policy
+  // Only the two pacing fields move; the thresholds stay on the default branch's policy.
+  return {
+    ...policy,
+    maxRounds: local.maxRounds ?? policy.maxRounds,
+    maxTaskMinutes: local.maxTaskMinutes ?? policy.maxTaskMinutes
+  }
 }
 
 /**

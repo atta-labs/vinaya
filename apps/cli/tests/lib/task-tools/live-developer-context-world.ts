@@ -89,6 +89,11 @@ export function fakeDeps(world: World): LiveDeveloperContextLoopDeps {
     rebaseOntoDefaultTip: () => {
       throw new Error('no rebase expected')
     },
+    mergeDefaultTip: (_worktreePath: string, _tip: string) => ({
+      ok: true as const,
+      merged: false as const,
+      head: world.head
+    }),
     pushTaskBranch: (input: PushInput) => {
       world.pushes.push(input)
       const result = world.push?.(input) ?? world.pushResults.shift() ?? { ok: true as const }

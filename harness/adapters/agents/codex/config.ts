@@ -90,6 +90,10 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     '',
     '[sandbox_workspace_write]',
     `writable_roots = [${writable}]`,
+    // workspace-write also opens /tmp and $TMPDIR by default; the role's own scratch is a named root above,
+    // so closing both leaves no write outside the grants (a sibling worktree or a bare remote under /tmp).
+    'exclude_slash_tmp = true',
+    'exclude_tmpdir_env_var = true',
     'network_access = true',
     '',
     '[shell_environment_policy.filters]',

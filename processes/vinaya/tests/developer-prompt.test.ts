@@ -11,7 +11,7 @@ import { renderDeveloperDoctrineBlock } from '../../../apps/cli/src/lib/dev-revi
 import { renderConflictPrompt } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { turnResultInstruction } from '../../../apps/cli/src/lib/dev-review-loop/turn-result'
 import { encodeLoopState } from '../executing/actions'
-import { type DeveloperPromptFacts, developerPrompt } from '../executing/developer-prompt'
+import { type DeveloperPromptFacts, developerPrompt, withDefaultMergeConflict } from '../executing/developer-prompt'
 
 const FACTS: DeveloperPromptFacts = {
   brief: '# Frozen brief\nDo the one thing.\n\n**Revision:** abc',
@@ -287,5 +287,17 @@ describe('the Developer runs no tests and no evidence refresh in version 2 only'
     const v1 = developerPrompt('', FACTS, {})
     expect(v1).not.toContain('Run no tests')
     expect(v1).not.toContain('do not call `refresh_evidence`')
+  })
+})
+
+describe('withDefaultMergeConflict', () => {
+  test('leads the prompt with the conflict text naming the files the aborted merge conflicted in', () => {
+    const out = withDefaultMergeConflict('THE PROMPT', ['a.ts', 'b.ts'])
+    expect(out.startsWith(renderConflictPrompt(['a.ts', 'b.ts'], publishingInstructionLine()))).toBe(true)
+    expect(out.endsWith('THE PROMPT')).toBe(true)
+  })
+
+  test('leaves the prompt alone when the merge did not conflict', () => {
+    expect(withDefaultMergeConflict('THE PROMPT', null)).toBe('THE PROMPT')
   })
 })
