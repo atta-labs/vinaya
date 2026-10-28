@@ -1,5 +1,5 @@
 {
-  "kind": "development-standalone-step-one",
+  "kind": "harbor-job",
   "split": "development",
   "backend": "standalone",
   "purpose": "practice",
