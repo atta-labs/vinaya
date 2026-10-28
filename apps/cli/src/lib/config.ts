@@ -1,9 +1,9 @@
 import { execFile, execFileSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
@@ -1206,6 +1206,119 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
     maxRounds,
     maxTaskMinutes
   }
+}
+
+/** The one file name a local run may use to override pacing settings; gitignored, never committed. */
+export const LOCAL_OVERRIDE_FILENAME = 'vinaya.config.local.json'
+
+/** The only keys the local file may set. Anything else in it is ignored with a warning. */
+export const LOCAL_OVERRIDABLE_KEYS = ['reviewPolicy.maxRounds', 'reviewPolicy.maxTaskMinutes'] as const
+
+export type LocalPacingOverride = {
+  /** Absolute path of the local file that was read. */
+  path: string
+  maxRounds?: number
+  maxTaskMinutes?: number
+  /** Dotted paths present in the file that are outside the allowlist. */
+  ignoredKeys: string[]
+}
+
+const emittedLocalOverrideWarnings = new Set<string>()
+
+function flattenKeys(value: unknown, prefix: string, out: string[]): void {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const [k, v] of Object.entries(value)) flattenKeys(v, prefix ? `${prefix}.${k}` : k, out)
+  } else if (prefix) {
+    out.push(prefix)
+  }
+}
+
+function gitAbsoluteDir(cwd: string): string | null {
+  try {
+    const raw = execFileSync('git', ['rev-parse', '--absolute-git-dir'], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: GIT_IDENTITY_TIMEOUT_MS
+    }).trim()
+    return raw ? realpathSync(raw) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The one reader of `vinaya.config.local.json`. Returns the allowlisted pacing
+ * values a local run overrides, or `null` when no local file is honoured:
+ * a process with `VINAYA_ROLE` set, a CI job (`GITHUB_ACTIONS`), a cwd inside a
+ * linked task worktree, a repository with no primary working tree (bare or a
+ * separate git dir), a missing file, or a symlinked file. The file is looked up
+ * at the primary checkout's root (the dirname of `gitCommonDir`), never by
+ * walking up from the cwd. Values are validated with `resolveReviewPolicy`'s
+ * own rules and a bad value throws. Keys outside `LOCAL_OVERRIDABLE_KEYS` are
+ * ignored with one warning naming them.
+ */
+export function resolveLocalPacingOverride(cwd: string = process.cwd()): LocalPacingOverride | null {
+  if (process.env.VINAYA_ROLE) return null
+  if (process.env.GITHUB_ACTIONS) return null
+  const common = gitCommonDir(cwd)
+  if (!common || basename(common) !== '.git') return null
+  const root = dirname(common)
+  // A linked worktree has its own git dir, distinct from the shared common dir.
+  if (gitAbsoluteDir(cwd) !== common) return null
+  const path = join(root, LOCAL_OVERRIDE_FILENAME)
+  let stat: ReturnType<typeof lstatSync>
+  try {
+    stat = lstatSync(path)
+  } catch {
+    return null
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) return null
+
+  let raw: unknown
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf-8'))
+  } catch (err) {
+    throw new Error(`${LOCAL_OVERRIDE_FILENAME}: invalid JSON — ${(err as Error).message}`)
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(
+      `${LOCAL_OVERRIDE_FILENAME}: must be a JSON object — fix the file, this never falls back to a default.`
+    )
+  }
+  const keys: string[] = []
+  flattenKeys(raw, '', keys)
+  const ignoredKeys = keys.filter((k) => !(LOCAL_OVERRIDABLE_KEYS as readonly string[]).includes(k))
+  if (ignoredKeys.length > 0) {
+    const message = `${path} may only set ${LOCAL_OVERRIDABLE_KEYS.join(', ')} — ignoring ${ignoredKeys.join(', ')}`
+    if (!emittedLocalOverrideWarnings.has(message)) {
+      emittedLocalOverrideWarnings.add(message)
+      console.error(`⚠ ${message}`)
+    }
+  }
+  const policy = (raw as { reviewPolicy?: { maxRounds?: unknown; maxTaskMinutes?: unknown } }).reviewPolicy
+  const result: LocalPacingOverride = { path, ignoredKeys }
+  if (policy && typeof policy === 'object' && !Array.isArray(policy)) {
+    if (policy.maxRounds !== undefined) {
+      const v = policy.maxRounds
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) {
+        throw new Error(
+          `${LOCAL_OVERRIDE_FILENAME}: reviewPolicy.maxRounds "${String(v)}" is not a positive integer — fix the file, this never falls back to a default.`
+        )
+      }
+      result.maxRounds = v
+    }
+    if (policy.maxTaskMinutes !== undefined) {
+      const v = policy.maxTaskMinutes
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) {
+        throw new Error(
+          `${LOCAL_OVERRIDE_FILENAME}: reviewPolicy.maxTaskMinutes "${String(v)}" is not a non-negative integer (0 turns the budget off) — fix the file, this never falls back to a default.`
+        )
+      }
+      result.maxTaskMinutes = v
+    }
+  }
+  return result
 }
 
 /**

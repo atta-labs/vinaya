@@ -702,6 +702,16 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "reviewPolicy": { "maxTaskMinutes": 240 } }`
   },
   {
+    key: 'vinaya.config.local.json',
+    type: 'file (optional, gitignored, primary checkout root)',
+    semantics: [
+      'A local, uncommitted file that overrides `reviewPolicy.maxRounds` and `reviewPolicy.maxTaskMinutes` for runs on this machine, with no commit. Every other key in it is ignored with one warning naming the ignored keys; a bad value refuses rather than falling back.',
+      "Read in exactly one place, the loop's review-policy resolver, from the primary checkout's root (never the working directory). The review thresholds and the merge gate stay on the default branch's policy.",
+      'Never honoured by a process with `VINAYA_ROLE` set, a CI job, a process inside a task worktree, or when the file is a symlink. `vinaya doctor` reports when one is in effect and which values it overrides.'
+    ],
+    example: `{ "reviewPolicy": { "maxRounds": 5 } }`
+  },
+  {
     key: 'securityScan',
     type: 'object (optional)',
     semantics: [
