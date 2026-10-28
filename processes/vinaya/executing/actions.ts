@@ -401,6 +401,10 @@ export const NO_COUNTERS: RoundCounters = { unpushedResumeAttempted: false, gate
 
 /** One deciding step's record, as read back from its result. */
 export interface LoopRecord {
+  /** Consecutive ready-push failures, carried only by version 2 records. */
+  readyPushFailures?: number
+  /** Whether this record paused the run. */
+  paused: boolean
   step: string
   seq: number
   state: LoopState
@@ -452,14 +456,23 @@ export function latestRecord(results: Results): LoopRecord | null {
       state = undefined
     }
     if (state === undefined) throw new Error(`${step} recorded a result with no readable loop state`)
+    if (
+      parsed.readyPushFailures !== undefined &&
+      (typeof parsed.readyPushFailures !== 'number' ||
+        !Number.isInteger(parsed.readyPushFailures) ||
+        parsed.readyPushFailures < 0)
+    )
+      throw new Error(`${step} recorded an invalid ready-push failure count`)
     if (latest !== null && parsed.seq <= latest.seq) continue
     latest = {
       step,
+      ...(parsed.readyPushFailures === undefined ? {} : { readyPushFailures: Number(parsed.readyPushFailures) }),
       seq: parsed.seq,
       state,
       counters: { ...NO_COUNTERS, ...(parsed.counters as Partial<RoundCounters> | undefined) },
       sendBack: (parsed.sendBack as SendBack | undefined) ?? null,
-      answered: (parsed.answered as SendBackKind | undefined) ?? null
+      answered: (parsed.answered as SendBackKind | undefined) ?? null,
+      paused: (parsed.decision as { type?: unknown } | undefined)?.type === 'pause'
     }
   }
   return latest
@@ -496,7 +509,11 @@ export function recordOutput(
     [extra: string]: unknown
   }
 ): string {
+  // Only a resume writes a record after a pause, and the ruling it carries starts a fresh ready-push count.
+  const latest = latestRecord(results)
+  const failures = latest?.paused ? 0 : latest?.readyPushFailures
   return JSON.stringify({
+    ...(failures === undefined ? {} : { readyPushFailures: failures }),
     ...fields,
     seq: nextSeq(results),
     state: JSON.parse(encodeLoopState(state)),
@@ -1102,6 +1119,31 @@ function validateDeveloperOutput(task: TaskInput, context: ActionContext): { exi
   return out(FORWARD, { counters: { ...counters, stallCheck: { headBefore, refusal } } })
 }
 
+/** Records a version 2 round's start in the step result, so checkpoint resume preserves its wall clock. */
+export function startReviewRound<T extends { exitCode: number; stderr?: string }>(task: TaskInput, result: T): T {
+  if (task.flow !== 'v2') return result
+  return {
+    ...result,
+    stderr: JSON.stringify({
+      ...(result.stderr ? JSON.parse(result.stderr) : {}),
+      roundTiming: { round: task.reviewRound(), startedAt: (task.v2?.now ?? Date.now)() }
+    })
+  }
+}
+
+/** The elapsed wall time of this round, including the Developer and both reviewers. */
+function roundWallMs(task: TaskInput, results: Results, fallback: number): number {
+  if (task.flow !== 'v2') return fallback
+  let startedAt: number | undefined
+  for (const result of Object.values(results)) {
+    if (result.kind !== 'mechanical' || !result.stderr?.startsWith('{')) continue
+    const timing = (JSON.parse(result.stderr) as { roundTiming?: { round: number; startedAt: number } }).roundTiming
+    if (timing?.round === task.reviewRound() && Number.isFinite(timing.startedAt))
+      startedAt = Math.max(startedAt ?? timing.startedAt, timing.startedAt)
+  }
+  return startedAt === undefined ? fallback : Math.max(0, (task.v2?.now ?? Date.now)() - startedAt)
+}
+
 /** The gate step's result, observed by the assessment: a red gate is a gate observation like a green one. */
 function assessGate(task: TaskInput, context: ActionContext): { exitCode: number; stdout: string } {
   const { results } = context
@@ -1123,7 +1165,10 @@ function assessGate(task: TaskInput, context: ActionContext): { exitCode: number
     : ciRed && ci.failingChecks.length > 0
       ? ci.failingChecks.join('; ')
       : undefined
-  const stats = worktreeStats(task.worktreePath, gate.kind === 'mechanical' ? gate.durationMs : 0)
+  const stats = worktreeStats(
+    task.worktreePath,
+    roundWallMs(task, results, gate.kind === 'mechanical' ? gate.durationMs : 0)
+  )
   const events: DevReviewLoopEventInput[] = []
   const headNow = () => safeRead(task.remoteHead) ?? stats.head
   const out = (
@@ -1428,7 +1473,17 @@ function inputsChangedDetail(
 /** The round's verdicts, observed by the assessment, which decides the round. */
 function assessVerdictsAction(task: TaskInput, context: ActionContext): { exitCode: number; stdout: string } {
   const { results } = context
-  const state0 = carriedLoopState(results, task.loopState)
+  const recorded = carriedLoopState(results, task.loopState)
+  const state0 =
+    task.flow === 'v2' && recorded.pending
+      ? {
+          ...recorded,
+          pending: {
+            ...recorded.pending,
+            stats: { ...recorded.pending.stats, wallMs: roundWallMs(task, results, recorded.pending.stats.wallMs) }
+          }
+        }
+      : recorded
   const round = task.reviewRound()
   const verdicts = recordedVerdicts(results)
   const assessment = assessRound(state0, { kind: 'verdicts', round, verdicts }, task.clock)
@@ -1887,7 +1942,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
     }
   },
   // The branch point itself is the Flow's decision on the reconcile step's result; this step records that it ran.
-  'vinaya.choose-start': { adapts: [], build: () => () => ok() },
+  'vinaya.choose-start': { adapts: [], build: (task) => () => startReviewRound(task, ok()) },
   'vinaya.prepare-sources': {
     adapts: [fetchSourceRevision, prepareSources],
     build: (task) => async () => {
@@ -2033,7 +2088,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       if (decision === 'pause') return recorded(JSON.stringify(handoffFindings(task.reviewRound())))
       // The findings are numbered in the round they answer; reading the verdicts is what moves the round on.
       const findings = handoffFindings(task.reviewRound(), ...task.verdicts(context.results))
-      return recorded(JSON.stringify(findings))
+      return startReviewRound(task, recorded(JSON.stringify(findings)))
     }
   },
   'vinaya.run-live-checks': {
@@ -2130,6 +2185,23 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       const expectedHead = readHead(task.worktreePath)
       if (expectedHead === null) throw new Error(`harness.publish could not read the head of ${task.worktreePath}`)
       const results = context?.results ?? {}
+      if (task.flow === 'v2') {
+        const raw = stdoutOf(results['open-pull-request'])
+        const published = raw
+          ? (
+              JSON.parse(raw) as {
+                verdictPublication?: { pr: number; head: string; round: number; manifest: string | null }
+              }
+            ).verdictPublication
+          : undefined
+        if (
+          published?.pr === pr.number &&
+          published.head === expectedHead &&
+          published.round === task.reviewRound() &&
+          published.manifest === (dispatchedManifest(results) ? manifestDigest(dispatchedManifest(results)!) : null)
+        )
+          return ok(JSON.stringify({ events: heldCompletionEvents(results) }))
+      }
       // The findings the rounds set aside are tracked in one Issue for the pull request; a run that
       // set none aside opens nothing.
       const deferredFindings = recordedDeferredFindings(results)
@@ -2143,6 +2215,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       // The publication carries the manifest the round's reviewers were dispatched against, never one rebuilt now.
       const manifest = dispatchedManifest(results)
       publish(task.runtimeDir, {
+        ...(task.flow === 'v2' ? { headScopedEffects: true } : {}),
         ...task.publish({
           prNumber: pr.number,
           expectedHead,

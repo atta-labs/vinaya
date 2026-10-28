@@ -25,6 +25,8 @@ import {
   confidenceFromSummaryComments,
   deriveLoopState,
   lastRoundVerdictLines,
+  newestPublication,
+  pauseSuperseded,
   NEXT_ACTION_BY_PAUSE_DISPOSITION,
   NEXT_ACTION_BY_STATE_KIND,
   nextActionFor,
@@ -215,7 +217,13 @@ function mergedPrComments(startIso: string, reviewMinutes: number) {
  * `EffectRecordSchema`, the layout `readEffect` reads (never the old flat
  * `control/effect-<key>.json` this task retired).
  */
-function writeEffectRecord(root: string, task: number, key: string, status: 'started' | 'verified'): void {
+function writeEffectRecord(
+  root: string,
+  task: number,
+  key: string,
+  status: 'started' | 'verified',
+  recordedAt = '2026-09-15T00:00:00.000Z'
+): void {
   const dir = join(controlDir(root, task), 'effect')
   mkdirSync(dir, { recursive: true })
   writeFileSync(
@@ -231,7 +239,7 @@ function writeEffectRecord(root: string, task: number, key: string, status: 'sta
       payloadDigest: 'digest',
       status,
       ...(status === 'verified' ? { url: 'https://example.test/comment' } : {}),
-      recordedAt: '2026-09-15T00:00:00.000Z'
+      recordedAt
     }),
     'utf8'
   )
@@ -722,6 +730,31 @@ describe('deriveLoopState', () => {
     const root = tempDir()
     writePublishedRound(root, TASK, 1)
     expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 1 })
+  })
+
+  it("reports published from version 2's head-scoped verdict effects", () => {
+    const root = tempDir()
+    writeLoopStateRound(root, TASK, 1)
+    writeEffectRecord(root, TASK, '1-24b23a91-reviewer-verdict', 'verified')
+    writeEffectRecord(root, TASK, '1-24b23a91-security-verdict', 'verified')
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 1 })
+  })
+
+  it('does not pair head-scoped verdicts of two different heads', () => {
+    const root = tempDir()
+    writeLoopStateRound(root, TASK, 1)
+    writeEffectRecord(root, TASK, '1-aaaa1111-reviewer-verdict', 'verified')
+    writeEffectRecord(root, TASK, '1-bbbb2222-security-verdict', 'verified')
+    expect(newestPublication(root, TASK)).toBeNull()
+  })
+
+  it('keeps a pause recorded after its own round published, and drops one recorded before', () => {
+    const publication = { round: 1, recordedAt: '2026-10-28T01:00:00.000Z' }
+    expect(pauseSuperseded({ round: 1, pausedAt: '2026-10-28T02:00:00.000Z' }, publication)).toBe(false)
+    expect(pauseSuperseded({ round: 1, pausedAt: '2026-10-28T00:00:00.000Z' }, publication)).toBe(true)
+    expect(pauseSuperseded({ round: 0, pausedAt: '2026-10-28T02:00:00.000Z' }, publication)).toBe(true)
+    expect(pauseSuperseded({ round: 2, pausedAt: '2026-10-28T00:00:00.000Z' }, publication)).toBe(false)
+    expect(pauseSuperseded({ round: 1, pausedAt: '2026-10-28T02:00:00.000Z' }, null)).toBe(false)
   })
 
   it("does not report published when only one of the round's two effects verified", () => {

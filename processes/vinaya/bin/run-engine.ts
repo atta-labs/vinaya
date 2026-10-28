@@ -101,6 +101,7 @@ import {
   realSourceProviderDeps
 } from '../../../apps/cli/src/lib/source-provider'
 import { briefHash as briefHashOf, extractSourceRevision, policyDigest as policyDigestOf } from '@attalabs/aeg-core'
+import type { PauseReason } from '@attalabs/aeg-core'
 import {
   reviewerDevToolContext,
   type DevToolContext,
@@ -738,18 +739,34 @@ export async function dryRunLines(options: {
 /** Where a run's own Flow is written: the checked-in one with the run's policy ceilings, under its run directory. */
 export const renderedFlowPath = (runDir: string): string => join(runDir, 'dev-review.flow.yaml')
 
+/** The pause a spent Flow ceiling records. Version 2's assessment enforces the round cap itself, so a spent ceiling there means the approved repair turns ran out. */
+export function exhaustedPause(flowKey: LoadedProcess['flowKey']): { reason: PauseReason; detail: string } {
+  return flowKey === 'v2'
+    ? {
+        reason: 'approved_repairs_spent',
+        detail: `${V2_APPROVED_REPAIR_ALLOWANCE} approved repair turns ran without a green CI: a ruling grants a fresh run`
+      }
+    : { reason: 'max_rounds', detail: 'the round cap is reached: a ruling grants a fresh run' }
+}
+
 /**
  * The process with its Flow rendered for one run: every decision's `max_revisions` set to the review policy's
- * `maxRounds`, written under the run directory, and that file the process's Flow. The checked-in Flow keeps literal
+ * `maxRounds` in version 1. Version 2 enforces review rounds and ready-push failures in its checkpointed actions,
+ * independently of agent dispatches; the Engine's step counter only adds a finite allowance of approved repair turns.
+ * That file is the process's Flow. The checked-in Flow keeps literal
  * numbers, which the loader requires; the run compiles the rendered one. A cap that is not a positive whole number
  * leaves the process as it is, since no Flow can carry it.
  */
+/** Version 2's allowance of repair turns after approval on top of the review rounds, so the Engine still bounds a run whose CI never turns green. */
+export const V2_APPROVED_REPAIR_ALLOWANCE = 10
+
 export function withPolicyCeilings(loaded: LoadedProcess, runDir: string, maxRounds: number): LoadedProcess {
   if (!Number.isInteger(maxRounds) || maxRounds < 1) return loaded
   const flow = parseYaml(readFileSync(loaded.flowPath, 'utf8')) as {
     steps: Array<{ decision?: { max_revisions?: number } }>
   }
-  for (const step of flow.steps) if (step.decision) step.decision.max_revisions = maxRounds
+  const ceiling = loaded.flowKey === 'v2' ? maxRounds + V2_APPROVED_REPAIR_ALLOWANCE : maxRounds
+  for (const step of flow.steps) if (step.decision) step.decision.max_revisions = ceiling
   mkdirSync(runDir, { recursive: true })
   const flowPath = renderedFlowPath(runDir)
   writeFileSync(flowPath, stringifyYaml(flow))
@@ -2066,8 +2083,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       // The Flow spent a decision's revision budget (the review policy's round cap): a pause like any other, made
       // durable by the handoff, so its comment asks for the ruling the watch below then picks up.
       const exhausted = legOutcome?.reason === 'exhausted' && signalled === null
-      if (exhausted)
-        handoff.pause({ reason: 'max_rounds', detail: 'the round cap is reached: a ruling grants a fresh run' })
+      if (exhausted) handoff.pause(exhaustedPause(options.process.flowKey))
       // A refused checkpoint is repaired outside the run, so nothing the watch could read continues it.
       if (
         !lifecycle.watch ||
