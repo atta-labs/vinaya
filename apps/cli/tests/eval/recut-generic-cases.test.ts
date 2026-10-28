@@ -13,6 +13,7 @@ import {
   DERIVED_FILES,
   DEVELOPER_CAPABILITIES,
   deriveDeveloperCase,
+  deriveLoopCase,
   deriveReviewerCase,
   deriveSourceCitationCase,
   generatedDeveloperStatement,
@@ -20,7 +21,12 @@ import {
   generatedSourceCitationStatement,
   GENERIC_SUITE_IDS,
   LAYER_P_ONLY_DEFECT_KINDS,
+  LOOP_CAPABILITIES,
+  loadRevisionFacts,
+  loopVariants,
   main,
+  RecutRefused,
+  REVIEWER_CAPABILITIES,
   recutDevelopment,
   recutHeldOut,
   repositoryGit,
@@ -124,6 +130,51 @@ describe('the developer mapping', () => {
   })
 })
 
+describe('the whole-loop mapping', () => {
+  it("keeps the developer case's base, statement, scope, documents, tests and solution, and grants the loop's capabilities", () => {
+    for (const p of developerCases) {
+      const statement = statements[p.id] as string
+      const { case: change } = deriveDeveloperCase(repositoryGit, p, statement)
+      const { case: loop } = deriveLoopCase(repositoryGit, p, statement)
+      expect(loop.kind).toBe('loop')
+      expect(loop.taskStatement).toBe(statement)
+      expect({ ...loop, kind: change.kind, grantedCapabilities: change.grantedCapabilities }).toEqual(change)
+      expect({ id: p.id, valid: validateNeutralCase(loop).ok }).toEqual({ id: p.id, valid: true })
+    }
+  })
+
+  it('grants what the developer, both reviewers and the publication need', () => {
+    for (const capability of [...DEVELOPER_CAPABILITIES, ...REVIEWER_CAPABILITIES]) {
+      expect(LOOP_CAPABILITIES).toContain(capability)
+    }
+    expect(LOOP_CAPABILITIES).toContain('publish_change')
+    expect(LOOP_CAPABILITIES).toContain('open_change_request')
+    expect(new Set(LOOP_CAPABILITIES).size).toBe(LOOP_CAPABILITIES.length)
+  })
+
+  it('copies a held-out case its generated developer statement unchanged', () => {
+    const p = developerCases[0] as (typeof developerCases)[number]
+    const statement = generatedDeveloperStatement(p)
+    expect(deriveLoopCase(repositoryGit, p, statement).case.taskStatement).toBe(
+      deriveDeveloperCase(repositoryGit, p, statement).case.taskStatement
+    )
+  })
+
+  it('marks each live variant by its rule, and refuses a case whose review rounds were never read', () => {
+    const facts = loadRevisionFacts()
+    const cases = [
+      { id: 'pr-1002', deliveredDocuments: [{}] },
+      { id: 'pr-1312', deliveredDocuments: [] },
+      { id: 'pr-1299', deliveredDocuments: [] }
+    ]
+    expect(loopVariants(cases, facts)).toEqual({
+      'source-requiring': ['pr-1002'],
+      'reviewer-requested-revision': ['pr-1002', 'pr-1299']
+    })
+    expect(() => loopVariants([{ id: 'never-read', deliveredDocuments: [] }], facts)).toThrow(RecutRefused)
+  })
+})
+
 describe('the reviewer mapping', () => {
   it('keeps every case whose defect kind only the Vinaya process states layer P only', () => {
     for (const c of reviewerCases) {
@@ -211,7 +262,14 @@ describe('the source-citation mapping', () => {
 
 describe('re-running the re-cut', () => {
   it('reproduces every development file byte for byte', () => {
-    for (const file of recutDevelopment().files) {
+    const recut = recutDevelopment()
+    expect(recut.files.map((f) => f.path)).toEqual([
+      DERIVED_FILES.developer.development,
+      DERIVED_FILES.reviewer.development,
+      DERIVED_FILES.sourceCitation.development,
+      DERIVED_FILES.wholeLoop.development
+    ])
+    for (const file of recut.files) {
       expect({ file: file.path, sha256: sha256(file.text) }).toEqual({
         file: file.path,
         sha256: sha256(readFileSync(file.path))
@@ -224,7 +282,8 @@ describe('re-running the re-cut', () => {
     expect(recut.files.map((f) => f.path)).toEqual([
       DERIVED_FILES.developer.heldOut,
       DERIVED_FILES.reviewer.heldOut,
-      DERIVED_FILES.sourceCitation.heldOut
+      DERIVED_FILES.sourceCitation.heldOut,
+      DERIVED_FILES.wholeLoop.heldOut
     ])
     for (const file of recut.files) {
       expect({ file: file.path, sha256: sha256(file.text) }).toEqual({
@@ -240,7 +299,11 @@ describe('re-running the re-cut', () => {
     // The source-citation file holds one answer case per pinned held-out index entry, listed by id alone.
     const ids = recut.summary.heldOutIds?.[GENERIC_SUITE_IDS.sourceCitation]
     expect(ids).toEqual(citationFile.splits.heldOut.index.map((entry) => entry.id))
-    expect(recut.summary.files.at(-1)?.cases).toEqual({ [GENERIC_SUITE_IDS.sourceCitation]: ids?.length ?? 0 })
+    expect(recut.summary.files.at(-2)?.cases).toEqual({ [GENERIC_SUITE_IDS.sourceCitation]: ids?.length ?? 0 })
+    // The whole-loop file holds one loop case per developer held-out index entry, cut under the developer approval.
+    const loopIds = recut.summary.heldOutIds?.[GENERIC_SUITE_IDS.wholeLoop]
+    expect(loopIds).toEqual(developerFile.splits.heldOut.index.map((entry) => entry.id))
+    expect(recut.summary.files.at(-1)?.cases).toEqual({ [GENERIC_SUITE_IDS.wholeLoop]: loopIds?.length ?? 0 })
   })
 
   it('opens no source-citation held-out file for a wrong approval, and the run writes and prints no case content', () => {

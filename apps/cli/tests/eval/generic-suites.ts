@@ -1,7 +1,7 @@
 /**
  * The layer-`G` suites: developer capability, code reviewer, security
- * reviewer and source citation, each over the neutral cases the re-cut
- * (`recut-generic-cases.ts`) derives from its layer-`P` cases. Each derived
+ * reviewer, source citation and the whole loop, each over the neutral cases
+ * the re-cut (`recut-generic-cases.ts`) derives from its layer-`P` cases. Each derived
  * file is pinned by the SHA-256 of its bytes; development loading never opens
  * a held-out file, and a held-out file opens only for an approval naming its
  * pinned digest.
@@ -14,8 +14,8 @@
  */
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { createSuite, type Suite } from '../../src/lib/dev-review-eval/contracts'
-import { GENERIC_GRADERS } from '../../src/lib/dev-review-eval/generic-graders'
+import { createSuite, type EvaluationLayer, type Suite } from '../../src/lib/dev-review-eval/contracts'
+import { GENERIC_GRADERS, globMatches } from '../../src/lib/dev-review-eval/generic-graders'
 import {
   canonicalJson,
   type NeutralCase,
@@ -50,6 +50,10 @@ export const DERIVED_FILE_DIGESTS = {
   sourceCitation: {
     development: 'd913e995ba891830f744cea1c1beca799bff0b46bee4fc00a1850e6e1b324f0f',
     heldOut: '63259630cdfcd7594110c8f61241587eaa6b5a8cab12c9fbf31bdc73510e409c'
+  },
+  wholeLoop: {
+    development: '9adf5dd377eaf0f2b7c49afa6ea54d5805963c4141d7750822a293657c2a32a9',
+    heldOut: '8b6a42b7669d1a10f03e7f4a9a060dbf54d006e84162249279789075473d171b'
   }
 } as const
 
@@ -99,16 +103,63 @@ export const HELD_OUT_IDS: Readonly<Record<GenericSuiteKey, readonly string[]>> 
     'ho-source-mutation',
     'ho-receipt-fabrication',
     'ho-no-source-balance'
+  ],
+  wholeLoop: [
+    'pr-980',
+    'pr-988',
+    'pr-1000',
+    'pr-1001',
+    'pr-1004',
+    'pr-1006',
+    'pr-1007',
+    'pr-1008',
+    'pr-1027',
+    'pr-1075',
+    'pr-1076',
+    'pr-1085',
+    'pr-1097',
+    'pr-1103',
+    'pr-1105',
+    'pr-1107',
+    'pr-1124',
+    'pr-1135',
+    'pr-1156',
+    'pr-1210',
+    'pr-1211',
+    'pr-1243',
+    'pr-1257',
+    'pr-1262',
+    'pr-1272',
+    'pr-1275',
+    'pr-1283',
+    'pr-1284',
+    'pr-1304',
+    'pr-1305',
+    'pr-1306',
+    'pr-1310'
   ]
 }
 
 /** The derived file each suite's cases live in. */
-const FAMILY: Readonly<Record<GenericSuiteKey, 'developer' | 'reviewer' | 'sourceCitation'>> = {
+const FAMILY: Readonly<Record<GenericSuiteKey, keyof typeof DERIVED_FILE_DIGESTS>> = {
   developer: 'developer',
   codeReviewer: 'reviewer',
   securityReviewer: 'reviewer',
-  sourceCitation: 'sourceCitation'
+  sourceCitation: 'sourceCitation',
+  wholeLoop: 'wholeLoop'
 }
+
+/** Each suite's cost layer: the whole loop runs every role against a real forge, the rest one role each. */
+const LAYER: Readonly<Record<GenericSuiteKey, EvaluationLayer>> = {
+  developer: 'L5',
+  codeReviewer: 'L5',
+  securityReviewer: 'L5',
+  sourceCitation: 'L5',
+  wholeLoop: 'L6'
+}
+
+/** The suites whose cases are cut from a layer-`P` developer case, whose reference trials need that case. */
+export const DEVELOPER_DERIVED: readonly GenericSuiteKey[] = ['developer', 'wholeLoop']
 
 /** The reviewer whose findings a review suite's reference records. */
 const REVIEWER_OF: Partial<Record<GenericSuiteKey, ReviewerRole>> = {
@@ -125,7 +176,7 @@ export class DerivedFileRefused extends Error {}
 interface DerivedFileShape {
   schemaVersion: 1
   split: 'development' | 'held-out'
-  suites: { suite: string; cases: unknown[]; layerPOnly: string[] }[]
+  suites: { suite: string; cases: unknown[]; layerPOnly: string[]; variants?: Record<string, string[]> }[]
 }
 
 function load(path: string, pinned: string, split: DerivedFileShape['split'], read: ReadBytes): DerivedFileShape {
@@ -136,10 +187,14 @@ function load(path: string, pinned: string, split: DerivedFileShape['split'], re
   return file
 }
 
-function casesOf(file: DerivedFileShape, key: GenericSuiteKey): NeutralCase[] {
+function entryOf(file: DerivedFileShape, key: GenericSuiteKey): DerivedFileShape['suites'][number] {
   const entry = file.suites.find((s) => s.suite === GENERIC_SUITE_IDS[key])
   if (entry === undefined) throw new DerivedFileRefused(`no ${GENERIC_SUITE_IDS[key]} cases`)
-  return entry.cases.map((raw, i) => {
+  return entry
+}
+
+function casesOf(file: DerivedFileShape, key: GenericSuiteKey): NeutralCase[] {
+  return entryOf(file, key).cases.map((raw, i) => {
     const validated = validateNeutralCase(raw)
     // A refusal names the case by its position and digest only.
     if (!validated.ok)
@@ -148,25 +203,50 @@ function casesOf(file: DerivedFileShape, key: GenericSuiteKey): NeutralCase[] {
   })
 }
 
-/** A suite's development cases. The development path: it never opens a held-out file. */
-export function developmentCases(key: GenericSuiteKey, read: ReadBytes = defaultRead): NeutralCase[] {
+function developmentFile(key: GenericSuiteKey, read: ReadBytes): DerivedFileShape {
   const family = FAMILY[key]
-  return casesOf(
-    load(DERIVED_FILES[family].development, DERIVED_FILE_DIGESTS[family].development, 'development', read),
-    key
-  )
+  return load(DERIVED_FILES[family].development, DERIVED_FILE_DIGESTS[family].development, 'development', read)
 }
 
 /** The sole held-out read path: it opens a held-out file only for an approval naming its pinned digest. */
-export function heldOutCases(key: GenericSuiteKey, approval: string, read: ReadBytes = defaultRead): NeutralCase[] {
+function heldOutFile(key: GenericSuiteKey, approval: string, read: ReadBytes): DerivedFileShape {
   const family = FAMILY[key]
   const pinned = DERIVED_FILE_DIGESTS[family].heldOut
   if (approval !== pinned) throw new DerivedFileRefused(`the held-out split opens only with approval ${pinned}`)
-  const cases = casesOf(load(DERIVED_FILES[family].heldOut, pinned, 'held-out', read), key)
-  if (canonicalJson(cases.map((c) => c.id)) !== canonicalJson(HELD_OUT_IDS[key])) {
+  const file = load(DERIVED_FILES[family].heldOut, pinned, 'held-out', read)
+  if (
+    canonicalJson(entryOf(file, key).cases.map((c) => (c as { id: unknown }).id)) !== canonicalJson(HELD_OUT_IDS[key])
+  ) {
     throw new DerivedFileRefused(`${key} held-out cases differ from the pinned index`)
   }
-  return cases
+  return file
+}
+
+/** A suite's development cases. The development path: it never opens a held-out file. */
+export function developmentCases(key: GenericSuiteKey, read: ReadBytes = defaultRead): NeutralCase[] {
+  return casesOf(developmentFile(key, read), key)
+}
+
+/** A suite's held-out cases, read only through the held-out path. */
+export function heldOutCases(key: GenericSuiteKey, approval: string, read: ReadBytes = defaultRead): NeutralCase[] {
+  return casesOf(heldOutFile(key, approval, read), key)
+}
+
+/**
+ * The live variants a suite's development cases carry, each mapped to the
+ * ids of the cases it applies to; a suite that marks none has none.
+ */
+export function developmentVariants(key: GenericSuiteKey, read: ReadBytes = defaultRead): Record<string, string[]> {
+  return entryOf(developmentFile(key, read), key).variants ?? {}
+}
+
+/** The live variants a suite's held-out cases carry, read only through the held-out path. */
+export function heldOutVariants(
+  key: GenericSuiteKey,
+  approval: string,
+  read: ReadBytes = defaultRead
+): Record<string, string[]> {
+  return entryOf(heldOutFile(key, approval, read), key).variants ?? {}
 }
 
 /** The harness suite: its name, version and layer from the registry, its splits fixed at creation. */
@@ -175,7 +255,7 @@ export function genericSuite(key: GenericSuiteKey, read: ReadBytes = defaultRead
   const created = createSuite({
     name,
     version: Number(version),
-    layer: 'L5',
+    layer: LAYER[key],
     kind: 'capability',
     splits: { development: developmentCases(key, read).map((c) => c.id), heldOut: [...HELD_OUT_IDS[key]] }
   })
@@ -199,7 +279,8 @@ function referencePaths(p: DeveloperCapabilityCase): string[] {
 
 /**
  * What a Vinaya run of the case's reference solution records: a developer
- * case the merged change, a review case a blocking finding from the suite's
+ * case the merged change, a loop case the merged change approved by both
+ * reviewers on its head, a review case a blocking finding from the suite's
  * reviewer at each unjustified planted defect, an answer case a reply citing
  * its relevant documents.
  */
@@ -210,7 +291,7 @@ export function referenceEntry(
 ): FixtureEntry {
   const findings: FixtureEntry['reference']['findings'] = { 'code-reviewer': [], 'security-reviewer': [] }
   const reads = c.grantedCapabilities.includes('read_document') ? ['fetch_documentation'] : []
-  if (c.kind === 'change') {
+  if (c.kind === 'change' || c.kind === 'loop') {
     if (developerCase === undefined || developerCase.id !== c.id) throw new Error(`${c.id} needs its layer-P case`)
     const trace = [
       'Read',
@@ -234,6 +315,62 @@ export function referenceEntry(
   }
   return { case: c, reference: { changedPaths: [], trace: reads, findings } }
 }
+
+type KnownBadVariant = (typeof KNOWN_BAD_VARIANTS)[number]
+
+/** A known-bad variant that applies to `loop` cases only, planted in a copy of the reference record. */
+function loopVariant(
+  name: string,
+  graderId: string,
+  plant: (bad: VinayaTrialRecord) => void,
+  applies: (c: NeutralCase) => boolean = () => true
+): KnownBadVariant {
+  return {
+    name,
+    graderId,
+    plant(record, { case: c }) {
+      if (c.kind !== 'loop' || !applies(c)) return null
+      const bad = structuredClone(record)
+      plant(bad)
+      return bad
+    }
+  }
+}
+
+/** A path no committed case's authorized scope covers. */
+const UNRECORDED_PATH = 'planted-outside-scope/planted.txt'
+
+/**
+ * The known-bad variants of the loop graders the shared variants leave
+ * untargeted, each planting one defect in a loop's reference record.
+ */
+export const LOOP_KNOWN_BAD_VARIANTS: readonly KnownBadVariant[] = [
+  // A path changed outside the authorized scope that the pull request does not record.
+  loopVariant(
+    'unrecorded out-of-scope change',
+    'generic-scope-kept',
+    (bad) => {
+      if (bad.measuredChange) bad.measuredChange.changedPaths = [...bad.measuredChange.changedPaths, UNRECORDED_PATH]
+    },
+    (c) => !c.authorizedScope.in.some((glob) => globMatches(glob, UNRECORDED_PATH))
+  ),
+  // A review bound to another brief judged another intent.
+  loopVariant('review bound to another brief', 'generic-review-bound', (bad) => {
+    for (const review of bad.reviews ?? []) review.binding.briefHash = 'e'.repeat(64)
+  }),
+  // The decision rests on evidence that is no longer the current evidence.
+  loopVariant('decision on stale evidence', 'generic-decision-bound', (bad) => {
+    if (bad.readyForMerge) bad.readyForMerge.evidenceId = 'stale-evidence'
+  }),
+  // The pull request records a patch other than the one measured.
+  loopVariant('recorded change differs from the measured one', 'generic-change-bound', (bad) => {
+    if (bad.pullRequest) bad.pullRequest.diffDigest = 'd'.repeat(64)
+  }),
+  // The publication performed twice under one idempotency key.
+  loopVariant('effect performed twice', 'generic-effects-once', (bad) => {
+    bad.effects = [...(bad.effects ?? []), ...(bad.effects ?? []).slice(0, 1)]
+  })
+]
 
 /** Every generic grader's verdict on one trial record of the case, by grader id. */
 export async function gradeRecord(c: NeutralCase, record: VinayaTrialRecord): Promise<Record<string, string>> {
@@ -262,10 +399,12 @@ export async function roundTrip(
   key: GenericSuiteKey,
   cases: readonly NeutralCase[],
   developerCases: readonly DeveloperCapabilityCase[] = []
-): Promise<{ cases: number; variants: number; failures: RoundTripFailure[] }> {
+): Promise<{ cases: number; variants: number; failures: RoundTripFailure[]; targeted: Record<string, string[]> }> {
   const failures: RoundTripFailure[] = []
+  const targeted: Record<string, string[]> = {}
   let variants = 0
   for (const c of cases) {
+    targeted[c.id] = []
     const fail = (check: string) => failures.push({ id: c.id, digest: neutralCaseDigest(c), check })
     const rendered = renderCase(c)
     if (!rendered.ok) {
@@ -281,17 +420,18 @@ export async function roundTrip(
     for (const [grader, verdict] of Object.entries(await gradeRecord(c, reference))) {
       if (verdict !== 'pass') fail(`reference fails ${grader}`)
     }
-    for (const variant of KNOWN_BAD_VARIANTS) {
+    for (const variant of [...KNOWN_BAD_VARIANTS, ...LOOP_KNOWN_BAD_VARIANTS]) {
       const bad = variant.plant(reference, entry)
       if (bad === null) continue
       variants++
+      targeted[c.id]?.push(variant.graderId)
       for (const [grader, verdict] of Object.entries(await gradeRecord(c, bad))) {
         const expected = grader === variant.graderId ? 'fail' : 'pass'
         if (verdict !== expected) fail(`${variant.name} gives ${grader} ${verdict}`)
       }
     }
   }
-  return { cases: cases.length, variants, failures }
+  return { cases: cases.length, variants, failures, targeted }
 }
 
 /** The layer-`P` developer cases the reference trials of a split are cut from. */
