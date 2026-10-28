@@ -971,7 +971,7 @@ describe('main drift on a protected path, against a real repository', () => {
     })
 
     it('records the merged head as the turn start, so the base check accepts the merge', async () => {
-      const { dir, remote, base, tip } = fixture()
+      const { dir, base, tip } = fixture()
       const d = {
         readDefaultBranchTip: () => tip,
         mergeDefaultTip: defaultMergeDefaultTip,
