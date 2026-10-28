@@ -24,13 +24,16 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { SpawnFn } from '@atta/executor-agent-spawn'
 import { generateClaudeSettings } from '../../../../../harness/adapters/agents/claude-code/settings'
 import { generateCodexConfig } from '../../../../../harness/adapters/agents/codex/config'
 import { loadRoleGrants, withModel } from '../../../../../harness/adapters/agents/manifest'
 import type { GeneratedAgentConfig } from '../../../../../harness/adapters/agents/policy'
 import { grantVariables } from '../../../../../harness/adapters/agents/variables'
-import { createRoleLauncher, startProcessRun } from '../../../../../harness/dev-process/engine-runtime/run-process'
+import {
+  createRoleLauncher,
+  type ProcessRunOptions,
+  startProcessRun
+} from '../../../../../harness/dev-process/engine-runtime/run-process'
 import { SqliteCheckpointer } from '../../../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
 import type { LoadedProcess } from '../../../../../harness/dev-process/loader/load-process'
 import type { DispatchHandle } from '../dispatch'
@@ -39,6 +42,13 @@ import { DEV_TOOLS_MCP_SERVER_NAME } from '../task-tools/dev-tools-names'
 import type { BridgeInvocation } from '../task-tools/dev-tools-registration'
 import { containerClaudeLogin } from '../worker-boundary'
 import { git } from './staging'
+
+/**
+ * The spawn the Engine's executor launches an agent with, as the runtime
+ * takes it. Read through the runtime's own options: the CLI's source imports
+ * no packed Atta module, not even for a type.
+ */
+export type SpawnFn = NonNullable<ProcessRunOptions['spawnFn']>
 
 /** The process folder whose role grants an Engine role step launches from. */
 export const ENGINE_ROLE_GRANTS_ROOT = join(import.meta.dir, '../../../../../processes/vinaya/executing')
