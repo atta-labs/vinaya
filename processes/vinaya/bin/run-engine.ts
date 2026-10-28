@@ -2191,8 +2191,24 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
 
 // --- the live wiring: forge, git and Log reached only from `main` -------------
 
-function sh(command: string, args: string[], cwd?: string): string {
-  return execFileSync(command, args, { encoding: 'utf8', cwd, stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+function sh(command: string, args: string[], cwd?: string, maxBuffer?: number): string {
+  return execFileSync(command, args, {
+    encoding: 'utf8',
+    cwd,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...(maxBuffer === undefined ? {} : { maxBuffer })
+  }).trim()
+}
+
+/** The output bound of the reviewer diff read: the standalone loop's bound for its own diff reads. */
+export const REVIEW_DIFF_MAX_BUFFER = 64 * 1024 * 1024
+
+/**
+ * The diff of `head` against `base` the reviewers judge, read whole up to `REVIEW_DIFF_MAX_BUFFER`. Node's default
+ * 1 MiB bound throws on any larger change, which would hand the reviewers a placeholder instead of the change.
+ */
+export function readReviewDiff(base: string, head: string, cwd: string): string {
+  return sh('git', ['diff', `${base}...${head}`], cwd, REVIEW_DIFF_MAX_BUFFER)
 }
 
 function refusal<T>(check: string, output: string): DevToolResult<T> {
@@ -2489,7 +2505,7 @@ export async function liveTaskInput(
       // Version 2 opens no pull request before approval: the reviewers read the body the Developer staged.
       return args.flow === 'v2' ? (stagedPullRequestStore(runDirectory(runtimeDir, args.task)).read()?.body ?? '') : ''
     },
-    diff: (base, head) => sh('git', ['diff', `${base}...${head}`], worktreePath),
+    diff: (base, head) => readReviewDiff(base, head, worktreePath),
     ...lookups.reviewSources
   })
   const reviewerDirectories: Record<HeldVerdictRole, string | null> = { reviewer: null, security: null }

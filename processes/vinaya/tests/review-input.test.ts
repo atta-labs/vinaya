@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
 import type { ReviewerPromptFacts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { writeHeldVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import { readReviewDiff } from '../bin/run-engine'
 import { createVinayaReviewInputStager, renderVinayaReviewerPrompt, reviewerRulings } from '../executing/review-input'
 
 function repoWithCommit(): { worktree: string; head: string } {
@@ -195,7 +196,8 @@ describe('the Vinaya review input', () => {
       baseOf: boom('base'),
       brief: boom('brief'),
       prBody: boom('body'),
-      diff: () => 'never'
+      diff: () => 'never',
+      warn: () => {}
     })
     const paths = stager.stage(1)?.paths
     expect(readFileSync(paths?.brief as string, 'utf8')).toBe(
@@ -205,8 +207,76 @@ describe('the Vinaya review input', () => {
       '(the pull request body could not be fetched this round: body down)'
     )
     expect(readFileSync(paths?.diff as string, 'utf8')).toBe(
-      '(the diff of the judged head against its base could not be computed this round)'
+      '(the diff of the judged head against its base could not be computed this round: base down)'
     )
+  })
+
+  test('a failing diff read stages a placeholder naming its reason and logs that reason', () => {
+    const { worktree, head } = repoWithCommit()
+    const root = fixtureDir('review-input-root-')
+    const logged: string[] = []
+    const stager = createVinayaReviewInputStager({
+      root,
+      task: 9,
+      worktreePath: worktree,
+      judgedHead: () => head,
+      readHead: () => head,
+      baseOf: () => 'base-sha',
+      brief: () => 'the brief',
+      prBody: () => 'the body',
+      diff: () => {
+        throw new Error('spawnSync git ENOBUFS')
+      },
+      warn: (line) => logged.push(line)
+    })
+    const paths = stager.stage(1)?.paths
+    expect(readFileSync(paths?.diff as string, 'utf8')).toBe(
+      '(the diff of the judged head against its base could not be computed this round: spawnSync git ENOBUFS)'
+    )
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toContain('spawnSync git ENOBUFS')
+    expect(logged[0]).toContain(head)
+  })
+
+  test('a diff larger than one mebibyte reaches the staged reviewer input whole', () => {
+    const { worktree, head: base } = repoWithCommit()
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: worktree, encoding: 'utf8' }).trim()
+    // About 2 MiB of added lines: past Node's default 1 MiB output bound, well under the review diff's own.
+    const line = `${'x'.repeat(99)}\n`
+    writeFileSync(join(worktree, 'large.txt'), line.repeat(20_000))
+    git('add', '-A')
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'large')
+    const head = git('rev-parse', 'HEAD')
+    const expected = execFileSync('git', ['diff', `${base}...${head}`], {
+      cwd: worktree,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024
+    }).trim()
+    expect(Buffer.byteLength(expected)).toBeGreaterThan(1024 * 1024)
+    // The default bound cannot read this diff: the fixture is large enough to have failed before.
+    expect(() => execFileSync('git', ['diff', `${base}...${head}`], { cwd: worktree, encoding: 'utf8' })).toThrow()
+    const root = fixtureDir('review-input-root-')
+    const logged: string[] = []
+    const stager = createVinayaReviewInputStager({
+      root,
+      task: 9,
+      worktreePath: worktree,
+      judgedHead: () => head,
+      readHead: () => head,
+      baseOf: () => base,
+      brief: () => 'the brief',
+      prBody: () => 'the body',
+      diff: (b, h) => readReviewDiff(b, h, worktree),
+      warn: (entry) => logged.push(entry)
+    })
+    const staged = stager.stage(1)
+    expect(readFileSync(staged?.paths?.diff as string, 'utf8')).toBe(expected)
+    expect(logged).toEqual([])
+    // Each reviewer's attempt copy carries the same whole diff.
+    for (const role of ['reviewer', 'security'] as const) {
+      const attempt = stager.stageAttempt(1, role, 1)
+      expect(readFileSync(attempt?.paths?.diff as string, 'utf8')).toBe(expected)
+    }
   })
 
   test('the prompt carries the staged input paths, and none without a staging', () => {
