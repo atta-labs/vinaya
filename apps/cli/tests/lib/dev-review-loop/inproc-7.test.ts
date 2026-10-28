@@ -363,12 +363,11 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     // logs.)
     const resumedIdx = lines.findIndex((l) => l.event === 'resumed')
     expect(resumedIdx).toBeGreaterThanOrEqual(0)
-    const resumedRunLines = lines.slice(resumedIdx)
+    // A handoff's `raised`/`resolved` events carry the handoff's own lineage and can flush after the resumed run's
+    // lines, depending on timing, so they are not this process's history.
+    const resumedRunLines = lines.slice(resumedIdx).filter((l) => l.kind !== 'handoff')
     const lineageRuns = new Set(resumedRunLines.map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run))
-    const byRun = resumedRunLines.map(
-      (l) => `${(l.meta as { lineage: { run: string | null } }).lineage.run} ${l.kind}/${l.event}`
-    )
-    expect({ runs: lineageRuns.size, lines: byRun }).toEqual({ runs: 1, lines: byRun })
+    expect(lineageRuns.size).toBe(1)
     expect([...lineageRuns][0]).not.toBeNull()
   })
 })
