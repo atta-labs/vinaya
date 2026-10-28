@@ -1404,9 +1404,17 @@ for (const agent of AGENTS) {
             expect(verdict?.succeeded).toBe(false)
             for (const [path, before] of untouched) expect(readFileSync(path, 'utf8')).toBe(before)
             if (refusedCall) {
-              // The call must reach the tool host: an unreached socket would pass with no audit event written.
-              expect((verdict as { reached?: boolean }).reached).toBe(true)
-              expect((verdict as { check?: string | null }).check).toBe(probe.refusedBy ?? null)
+              // Inside the closed sandbox the tool host is unreachable: not reaching it is the denial, and no
+              // refusal is written for a call that never arrived.
+              expect((verdict as { reached?: boolean }).reached).toBe(false)
+              expect(refusals.slice(refusalsBefore)).toEqual([])
+              // The same call from outside the sandbox, against the same host, proves the host refuses it by the
+              // named check and writes one audit event for the role.
+              const control = await (session as SandboxSession).runOutside(probe.command(targets), {})
+              const controlVerdict = controllerProbeVerdict(control.output)
+              expect(controlVerdict?.succeeded).toBe(false)
+              expect(controlVerdict?.reached).toBe(true)
+              expect(controlVerdict?.check).toBe(probe.refusedBy ?? null)
               expect(refusals.slice(refusalsBefore).map((event) => event.role as string)).toEqual([
                 probe.auditedRole as string
               ])
@@ -1433,10 +1441,18 @@ for (const agent of AGENTS) {
             )
             expect(verdict).not.toBeNull()
             expect(verdict?.succeeded).toBe(false)
-            // The host answered with the typed refusal the fixture issues (its class and `never` retry class are
-            // asserted by the check above that reads the fixture), never a success and never an unreached socket.
-            expect(verdict?.reached).toBe(true)
-            expect(verdict?.check).toBe('probe-fixture')
+            // Inside the closed sandbox the host is unreachable, which is the denial.
+            expect(verdict?.reached).toBe(false)
+            // The same call from outside the sandbox: the host answers with the typed refusal the fixture issues
+            // (its class and `never` retry class are asserted by the check above that reads the fixture).
+            const control = await s.runOutside(
+              `${JSON.stringify(targets.bun)} ${JSON.stringify(targets.probeScript)} ${JSON.stringify(targets.ownSocket)} publish_changes '{"header":"Fix(x): refused"}' ${JSON.stringify(targets.ownCapability)}`,
+              {}
+            )
+            const controlVerdict = controllerProbeVerdict(control.output)
+            expect(controlVerdict?.succeeded).toBe(false)
+            expect(controlVerdict?.reached).toBe(true)
+            expect(controlVerdict?.check).toBe('probe-fixture')
           } finally {
             await controller.close()
           }

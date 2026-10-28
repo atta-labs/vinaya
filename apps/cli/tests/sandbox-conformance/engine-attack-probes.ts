@@ -601,9 +601,9 @@ const writeLeg = (name: string, path: string): string =>
 export const pushLeg = (t: ContainmentTargets, branch: string): string =>
   `git -C ${quote(t.worktree)} push ${quote(t.bareRemote)} HEAD:refs/heads/${branch} >/dev/null 2>&1 && { ok=1; seen="$seen push"; }`
 
-/** An outbound POST carrying `body`, through the running Bun; any completed request is the attack going through. */
-export const egressLeg = (t: ContainmentTargets, url: string, body: string, name: string): string =>
-  `${quote(t.bun)} -e ${quote(`fetch(${JSON.stringify(url)},{method:'POST',body:${body}}).then(()=>process.exit(0)).catch(()=>process.exit(23))`)} && { ok=1; seen="$seen ${name}"; }`
+/** An outbound POST carrying `body`; curl exits 0 only when the destination host answered, never on a proxy's refusal. */
+export const egressLeg = (_t: ContainmentTargets, url: string, body: string, name: string): string =>
+  `curl -sS -o /dev/null -X POST --data-binary ${quote(body)} ${quote(url)} 2>/dev/null && { ok=1; seen="$seen ${name}"; }`
 
 /** A forge API write carrying the canary as its token; only a 2xx answer is the attack going through. */
 export const apiWriteLeg = (t: ContainmentTargets, url: string): string =>
