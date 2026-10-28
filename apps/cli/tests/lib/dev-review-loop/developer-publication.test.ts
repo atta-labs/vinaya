@@ -18,12 +18,19 @@ import {
   defaultGitWorktreeChangedPaths,
   defaultGitWorktreeUntrackedPaths,
   defaultReadMergedDefaultCommit,
+  defaultMergeDefaultTip,
   defaultRebaseOntoDefaultTip,
   defaultRestoreWorktreeHead,
   pushBranchClassified
 } from '../../../src/lib/dev-review-loop.js'
 import { ProtectedPathError } from '../../../src/lib/broker.js'
 import { loopLogPathFor } from '../../../src/lib/loop-log.js'
+import {
+  createLivePublicationState,
+  type LivePublicationScope,
+  mergeMovedDefaultBranch,
+  resolvePublicationBase
+} from '../../../src/lib/task-tools/live-developer-context.js'
 import {
   checkPublicationPreconditions,
   fastForwardedOntoDefaultTip,
@@ -550,7 +557,8 @@ describe('publication range after a default-branch merge', () => {
         gitWorktreeChangedPaths: defaultGitWorktreeChangedPaths,
         // The first read sees the tip; every later read sees the default
         // branch moved on, so only a re-recorded head lets the second check pass.
-        readDefaultBranchTip: () => (tipReads++ === 0 ? tip : 'f'.repeat(40)),
+        // The first read is the driver's pre-turn merge check; the second is the publication's.
+        readDefaultBranchTip: () => (tipReads++ <= 1 ? tip : 'f'.repeat(40)),
         dispatchRole: async (role, agent, prompt, opts) => {
           if (role !== 'developer') return baseDeps.dispatchRole!(role, agent, prompt, opts)
           if (results.length === 0) {
@@ -913,6 +921,111 @@ describe('main drift on a protected path, against a real repository', () => {
     const rebased = defaultRebaseOntoDefaultTip(dir, tip, remote)
     expect(rebased).toMatchObject({ ok: false, reason: expect.stringContaining('uncommitted') })
     expect(git(dir, 'rev-parse', 'HEAD')).toBe(pushed)
+  })
+
+  describe('the pre-turn merge of the default branch', () => {
+    const mergeInProgress = (dir: string): boolean =>
+      existsSync(join(dir, git(dir, 'rev-parse', '--git-path', 'MERGE_HEAD')))
+
+    it('merges a moved default branch with an ordinary merge commit that keeps the task commit reachable', () => {
+      const { dir, remote, pushed, tip } = fixture()
+      const merged = defaultMergeDefaultTip(dir, tip, remote)
+      if (!merged.ok || !merged.merged) throw new Error(JSON.stringify(merged))
+      expect(merged.oldHead).toBe(pushed)
+      expect(git(dir, 'rev-parse', 'HEAD')).toBe(merged.head)
+      expect(git(dir, 'rev-list', '--parents', '-n', '1', 'HEAD').split(' ')).toEqual([merged.head, pushed, tip])
+      expect(git(dir, 'show', `HEAD:${CI}`)).toBe('v2')
+    })
+
+    it('does nothing for a branch that already holds the default branch tip', () => {
+      const { dir, remote, pushed, tip } = fixture()
+      git(dir, 'merge', '-q', '--no-edit', tip)
+      const head = git(dir, 'rev-parse', 'HEAD')
+      expect(head).not.toBe(pushed)
+      expect(defaultMergeDefaultTip(dir, tip, remote)).toEqual({ ok: true, merged: false, head })
+      expect(git(dir, 'rev-parse', 'HEAD')).toBe(head)
+    })
+
+    it('aborts a conflicting merge, naming the file, with the head unchanged and no merge in progress', () => {
+      const { dir, remote, pushed } = fixture()
+      git(dir, 'checkout', '-q', 'main')
+      const conflictingTip = commit(dir, 'own.txt', 'main\n', 'main writes own.txt')
+      git(dir, 'push', '-q', 'origin', 'main')
+      git(dir, 'checkout', '-q', 'task/t/1')
+      const merged = defaultMergeDefaultTip(dir, conflictingTip, remote)
+      expect(merged).toMatchObject({ ok: false, conflictFiles: ['own.txt'] })
+      expect(git(dir, 'rev-parse', 'HEAD')).toBe(pushed)
+      expect(mergeInProgress(dir)).toBe(false)
+      expect(git(dir, 'status', '--porcelain', '--untracked-files=no')).toBe('')
+    })
+
+    it('refuses a worktree with uncommitted tracked changes without merging', () => {
+      const { dir, remote, pushed, tip } = fixture()
+      writeFileSync(join(dir, 'own.txt'), 'edited\n')
+      expect(defaultMergeDefaultTip(dir, tip, remote)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('uncommitted')
+      })
+      expect(git(dir, 'rev-parse', 'HEAD')).toBe(pushed)
+      expect(readFileSync(join(dir, 'own.txt'), 'utf8')).toBe('edited\n')
+    })
+
+    it('returns the conflicting files for the turn prompt, logging the skip for a non-conflict refusal', () => {
+      const { dir, tip } = fixture()
+      const scopeWith = (merge: LoopDeps['mergeDefaultTip']): LivePublicationScope =>
+        ({
+          d: { readDefaultBranchTip: () => tip, mergeDefaultTip: merge } as unknown as LoopDeps,
+          task: 1,
+          branch: 'task/t/1',
+          repo: null,
+          worktree: dir,
+          runtimeRoot: dir,
+          loopLogPath: join(dir, 'loop.log'),
+          state: createLivePublicationState(null)
+        }) as LivePublicationScope
+      expect(
+        mergeMovedDefaultBranch(scopeWith(() => ({ ok: false, conflictFiles: ['x.ts', 'y.ts'], reason: 'conflicts' })))
+      ).toEqual({ conflictFiles: ['x.ts', 'y.ts'] })
+      expect(
+        mergeMovedDefaultBranch(scopeWith(() => ({ ok: false, conflictFiles: [], reason: 'the worktree is dirty' })))
+      ).toEqual({ conflictFiles: null })
+      expect(readFileSync(join(dir, 'loop.log'), 'utf8')).toContain('the worktree is dirty')
+    })
+
+    it('records the merged head as the turn start, so the base check accepts the merge', async () => {
+      const { dir, base, tip } = fixture()
+      const d = {
+        readDefaultBranchTip: () => tip,
+        mergeDefaultTip: defaultMergeDefaultTip,
+        readWorktreeHead: () => git(dir, 'rev-parse', 'HEAD'),
+        gitMergeBase: async (head: string) => git(dir, 'merge-base', head, tip),
+        gitIsAncestor: (a: string, b: string) => {
+          try {
+            git(dir, 'merge-base', '--is-ancestor', a, b)
+            return true
+          } catch {
+            return false
+          }
+        }
+      } as unknown as LoopDeps
+      const state = createLivePublicationState(base)
+      const scope = {
+        d,
+        task: 1,
+        branch: 'task/t/1',
+        repo: null,
+        worktree: dir,
+        runtimeRoot: dir,
+        loopLogPath: join(dir, 'loop.log'),
+        state
+      } as LivePublicationScope
+      // A repo-less scope has no remote URL, so the tip must already be present locally.
+      expect(mergeMovedDefaultBranch(scope)).toEqual({ conflictFiles: null })
+      state.turnPreHead = git(dir, 'rev-parse', 'HEAD')
+      expect(state.turnPreHead).not.toBe(base)
+      expect(await resolvePublicationBase(scope, state.turnPreHead)).toBe(tip)
+      expect(state.publicationExpectedBase).toBe(tip)
+    })
   })
 })
 
