@@ -11,7 +11,12 @@ import { renderDeveloperDoctrineBlock } from '../../../apps/cli/src/lib/dev-revi
 import { renderConflictPrompt } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { turnResultInstruction } from '../../../apps/cli/src/lib/dev-review-loop/turn-result'
 import { encodeLoopState } from '../executing/actions'
-import { type DeveloperPromptFacts, developerPrompt, withDefaultMergeConflict } from '../executing/developer-prompt'
+import {
+  conflictMergeText,
+  type DeveloperPromptFacts,
+  developerPrompt,
+  withDefaultMergeConflict
+} from '../executing/developer-prompt'
 
 const FACTS: DeveloperPromptFacts = {
   brief: '# Frozen brief\nDo the one thing.\n\n**Revision:** abc',
@@ -289,7 +294,8 @@ describe('a conflict re-entry in a fresh run generation', () => {
 
   test('the first turn, with no develop result and no session, is the whole first-turn prompt led by the conflict', () => {
     const prompt = developerPrompt('x', { ...FACTS, flow: 'v2' }, reentry)
-    const conflict = renderConflictPrompt(files, publishingInstructionLine(), tip)
+    const conflict = conflictMergeText(files, tip)
+    expect(conflict).not.toContain('origin/main')
     expect(prompt).toContain(conflict)
     for (const file of files) expect(prompt).toContain(`- ${file}`)
     expect(prompt).toContain(`git merge --no-commit ${tip}`)
@@ -309,7 +315,8 @@ describe('a conflict re-entry in a fresh run generation', () => {
     }
     const prompt = developerPrompt('x', FACTS, results, { resumeSessionId: SESSION })
     expect(prompt).toContain('The merge is not proven: single parent.')
-    expect(prompt).toContain(renderConflictPrompt(files, publishingInstructionLine(), tip))
+    expect(prompt).toContain(conflictMergeText(files, tip))
+    expect(prompt).toContain(`git merge --no-commit ${tip}`)
     expect(prompt).not.toContain('# Frozen brief')
   })
 

@@ -263,14 +263,19 @@ const join = (parts: readonly (string | null)[]) =>
   parts.filter((part): part is string => part !== null && part.length > 0).join('\n\n')
 
 /**
+ * The loop's conflict prompt (`renderConflictPrompt`), merging `tip` when the driver fetched one for the repair (the
+ * merge the proof then accepts), else `origin/main` as the loop words it.
+ */
+export function conflictMergeText(files: readonly string[], tip: string | null): string {
+  return renderConflictPrompt(files, publishingInstructionLine(), tip ?? 'origin/main')
+}
+
+/**
  * A conflict turn's instruction: the conflicting files the driver found, the default branch's tip it fetched for the
  * repair as the commit to merge (`origin/main` when none was recorded), and why an earlier repair was not proven.
  */
 export function conflictPromptText(sendBack: SendBack | null): string {
-  return join([
-    sendBack?.detail ?? null,
-    renderConflictPrompt(sendBack?.files ?? [], publishingInstructionLine(), sendBack?.mainTip ?? 'origin/main')
-  ])
+  return join([sendBack?.detail ?? null, conflictMergeText(sendBack?.files ?? [], sendBack?.mainTip ?? null)])
 }
 
 /** The loop's later-round prompt text: what to fix, the finding ids to cite, and how to publish the fix. */
