@@ -56,6 +56,8 @@ export interface VinayaReviewInputDeps {
   buildCandidate?: typeof buildVerifiedReviewerCandidate
   /** Replaces the input writer, for a test. */
   writeInputs?: typeof writeReviewerCandidateInputs
+  /** Where a failed diff read is reported; defaults to the driver log (stderr). */
+  warn?: (line: string) => void
 }
 
 /**
@@ -94,8 +96,13 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
         let diff: string
         try {
           diff = deps.diff(deps.baseOf(head), head)
-        } catch {
-          diff = '(the diff of the judged head against its base could not be computed this round)'
+        } catch (error) {
+          // The reason reaches both the reviewers and the driver log, so a failed read is diagnosable from either.
+          const reason = error instanceof Error ? error.message : String(error)
+          diff = `(the diff of the judged head against its base could not be computed this round: ${reason})`
+          ;(deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
+            `round ${round}: the reviewer diff of ${head} against its base could not be computed (${reason}); the reviewers get a placeholder naming it`
+          )
         }
         const written = write(dir, {
           brief: orPlaceholder(deps.brief, "the task's frozen brief"),
