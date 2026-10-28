@@ -109,6 +109,27 @@ describe('CI red after the pull request opened', () => {
   })
 })
 
+describe('CI red with failed jobs on the head', () => {
+  test('the Developer prompt carries each failed job’s failure lines, and names a job whose log was unreadable', async () => {
+    const observed = await runV2('claude', {
+      ci: ['red', 'green'],
+      failingRuns: [
+        { name: 'test-shard-1', id: 501 },
+        { name: 'test-shard-2', id: 502 },
+        { name: 'workflow CI', id: 503, detail: 'workflow CI run 503 ended failure with no failing job' }
+      ],
+      jobExcerpts: { 501: '(fail) loop > sends back on red CI\nExpected: 1\nReceived: 2', 502: null }
+    })
+    expect(observed.outcome).toBe('completed')
+    const prompt = observed.prompts.developer[1] ?? ''
+    expect(prompt).toContain('(fail) loop > sends back on red CI')
+    expect(prompt).toContain('Received: 2')
+    expect(prompt).toContain('Failure lines of `test-shard-1` (run 501)')
+    expect(prompt).toContain('Failure lines of `test-shard-2` (run 502): the job log could not be read.')
+    expect(prompt).not.toContain('(run 503)')
+  })
+})
+
 describe('the ready push tests exactly the approved commit', () => {
   test('a head moved after approval is refused without running the tests, and goes back through review', async () => {
     let moved = false

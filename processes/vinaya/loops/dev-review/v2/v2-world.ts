@@ -57,6 +57,10 @@ export interface Scenario {
   now?: () => number
   /** The CI conclusions read once per approved head, in turn; the last repeats. Default green. */
   ci?: Array<'green' | 'red'>
+  /** The failed check runs a red CI read names; default none. */
+  failingRuns?: Array<{ name: string; id: number; detail?: string }>
+  /** A failed job's failure lines by run id; null stands for an unreadable log. Default none read. */
+  jobExcerpts?: Record<number, string | null>
   /** The test files that fail at each ready push (1-based attempt); default none. */
   failingTests?: (readyAttempt: number) => string[]
   /** Whether the ready push at this attempt (1-based) runs past its deadline; default never. */
@@ -349,6 +353,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       return conclusion
     },
     ...QUIET_FORGE_GATES,
+    fetchFailingCheckRuns: () => (scenario.failingRuns ?? []).map((run) => ({ ...run, startedAt: null })),
     fetchIssueRulingsAfterBrief: () => [],
     fetchRulings: () => [],
     fetchLoopHistory: () => ({
@@ -390,6 +395,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     fresh.stagedPullRequest = () => world.staged
     fresh.v2 = {
       now: scenario.now,
+      readCheckExcerpt: (jobId) => scenario.jobExcerpts?.[jobId] ?? null,
       stagedPullRequest: () => world.staged,
       findOpenPullRequest: () => (world.prOpen ? { number: PR } : null),
       runReadyGate: ({ head, signal }) => {
