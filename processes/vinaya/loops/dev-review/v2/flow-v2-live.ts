@@ -474,7 +474,7 @@ export function liveV2Functions(input: {
   openWithDeveloperTool: (title: string, body: string) => ReturnType<DevToolContext['openPullRequest']>
   /** Writes the open pull request's Evidence block for the head the ready push passed. */
   writeEvidence?: V2Functions['writeEvidence']
-  /** A line for the driver's log: the containment backend, the no-local-tests state, a timeout. */
+  /** A line for the driver's log: the containment backend, the no-local-tests state, a timeout, an Evidence failure. */
   log?: (line: string) => void
   /** The repository's URL the default branch's tip is read and fetched from, or null when the run names none. */
   remoteUrl?: string | null
@@ -506,6 +506,7 @@ export function liveV2Functions(input: {
     },
     endStoragePushes: () => endStoragePushes(input.worktreePath),
     readMainTip: () => readFetchedMainTip(input.worktreePath, input.remoteUrl ?? null),
+    ...(input.log ? { log: input.log } : {}),
     ...(input.writeEvidence ? { writeEvidence: input.writeEvidence } : {})
   }
 }

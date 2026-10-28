@@ -109,7 +109,14 @@ export interface V2Functions {
   writeEvidence?: (input: {
     pr: number
     head: string
-  }) => Promise<{ ok: true } | { ok: false; reason: string }> | { ok: true } | { ok: false; reason: string }
+  }) =>
+    | Promise<{ ok: true } | { ok: false; reason: string; retryable: boolean }>
+    | { ok: true }
+    | { ok: false; reason: string; retryable: boolean }
+  /** Injectable delay before the single Evidence retry. */
+  sleep?: (ms: number) => Promise<void>
+  /** One line for the driver log. */
+  log?: (line: string) => void
   /** The local checks of a round: `vinaya check --all --local` with the staged body as the pull-request body. */
   runLocalChecks?: (env: Record<string, string>) => { passed: boolean; output: string }
   /** One failed job's failure-naming log lines, at most `max` characters: null when its log cannot be read. Live: the full-log reader. */
@@ -456,17 +463,32 @@ export async function openPullRequestStep(
 
 /**
  * The Evidence block for the head the ready push passed, written by the loop once the pull request is open. A write
- * that fails is recorded, not routed: the pull request's evidence check reads the block, and CI's one read sends the
+ * that fails transiently is retried once after a short wait; every failed attempt is logged. A final failure is
+ * recorded, not routed: the pull request's evidence check reads the block, and CI's one read sends the
  * Developer back if it is red.
  */
 async function writeEvidenceFor(fns: V2Functions, pr: number, head: string): Promise<string | null> {
   if (!fns.writeEvidence) return null
-  try {
-    const written = await fns.writeEvidence({ pr, head })
-    return written.ok ? 'written' : `not written: ${written.reason}`
-  } catch (error) {
-    return `not written: ${error instanceof Error ? error.message : String(error)}`
+  const write = fns.writeEvidence
+  const attempt = async () => {
+    try {
+      return await write({ pr, head })
+    } catch (error) {
+      return { ok: false as const, reason: error instanceof Error ? error.message : String(error), retryable: true }
+    }
   }
+  const logFailure = (reason: string) =>
+    fns.log?.(`Evidence write for pull request #${pr} failed: ${reason.replace(/[\r\n]+/g, ' ')}`)
+  let written = await attempt()
+  if (!written.ok) {
+    logFailure(written.reason)
+    if (written.retryable) {
+      await (fns.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(1000)
+      written = await attempt()
+      if (!written.ok) logFailure(written.reason)
+    }
+  }
+  return written.ok ? 'written' : `not written: ${written.reason}`
 }
 
 /** The test command the passed ready push ran (its selection, as the hook runs it), or null when it ran none. */
