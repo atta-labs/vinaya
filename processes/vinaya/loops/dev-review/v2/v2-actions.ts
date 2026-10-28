@@ -680,6 +680,7 @@ export interface ConflictRepairFailure {
     | 'main-unreadable'
     | 'not-clean'
     | 'not-mergeable'
+    | 'pr-unreadable'
   reason: string
   files: string[]
 }
@@ -798,8 +799,15 @@ export async function proveConflictRepair(
   })
   let mergeable: string | null = null
   if (failure === null) {
+    // A conflict is only ever owed on an open pull request, so a lookup that finds none failed: never proven.
     const open = safeRead(fns.findOpenPullRequest)
-    if (open !== null) {
+    if (open === null)
+      failure = {
+        code: 'pr-unreadable',
+        reason: `the open pull request for ${task.branch} could not be read, so its mergeability is unknown`,
+        files: []
+      }
+    else {
       mergeable = await pollMergeableState(open.number, {
         ...gatePollOf(task),
         fetchMergeableState: task.bound?.fetchMergeableState ?? fetchMergeableState

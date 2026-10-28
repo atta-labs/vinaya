@@ -618,6 +618,28 @@ for (const agent of AGENTS) {
       expect(observed.published).toEqual([])
     })
 
+    test('a failed open-pull-request lookup during the proof fails closed: unproven, no reviewer', async () => {
+      let merged = ''
+      const observed = await runV2(
+        agent,
+        conflictReentry(
+          (attempt, world) => ({
+            output: confident(90),
+            act: () => {
+              if (attempt === 1) merged = world.mergeMain(true)
+            }
+          }),
+          { pullRequestLookupFails: () => merged !== '' }
+        )
+      )
+      expect(proofOutcomes(observed)[0]).toBe('pr-unreadable')
+      expect(proofOutcomes(observed)).not.toContain('proven')
+      expect(observed.prompts.developer[1]).toContain('could not be read, so its mergeability is unknown')
+      expect(observed.spawns['code-reviewer']).toBe(0)
+      expect(observed.spawns['security-reviewer']).toBe(0)
+      expect(observed.published).toEqual([])
+    })
+
     test('main moving while the reviewers run lets both finish; the conflict is handled after their verdicts', async () => {
       let merged = ''
       const observed = await runV2(agent, {
@@ -653,44 +675,46 @@ for (const agent of AGENTS) {
   })
 }
 
-describe('conflict state survives a checkpoint restart', () => {
-  const mergeOnce: Scenario['developer'] = (attempt, world) =>
-    attempt === 1
-      ? {
-          output: confident(90),
-          act: () => {
-            world.mergeMain(true)
-          }
+const mergeOnce: Scenario['developer'] = (attempt, world) =>
+  attempt === 1
+    ? {
+        output: confident(90),
+        act: () => {
+          world.mergeMain(true)
         }
-      : undefined
+      }
+    : undefined
 
-  test('a restart after the conflict is recorded runs one conflict turn, not two and not none', async () => {
-    const observed = await runV2(
-      'codex',
-      conflictReentry(mergeOnce, { restartAfter: { step: 'reconcile-external-state', beforeResume: () => {} } })
-    )
-    expect(observed.driverLegs).toBe(2)
-    expect(observed.outcome).toBe('completed')
-    expect(observed.spawns.developer).toBe(1)
-    expect(observed.prompts.developer[0]).toContain('- sample.ts')
-    expect(observed.spawns['code-reviewer']).toBe(1)
-    expect(observed.published).toHaveLength(1)
-  })
+for (const agent of AGENTS) {
+  describe(`conflict state survives a checkpoint restart (${agent})`, () => {
+    test('a restart after the conflict is recorded runs one conflict turn, not two and not none', async () => {
+      const observed = await runV2(
+        agent,
+        conflictReentry(mergeOnce, { restartAfter: { step: 'reconcile-external-state', beforeResume: () => {} } })
+      )
+      expect(observed.driverLegs).toBe(2)
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(1)
+      expect(observed.prompts.developer[0]).toContain('- sample.ts')
+      expect(observed.spawns['code-reviewer']).toBe(1)
+      expect(observed.published).toHaveLength(1)
+    })
 
-  test('a restart after the merge is proven keeps the proof: no second conflict turn, review or verdict post', async () => {
-    const observed = await runV2(
-      'claude',
-      conflictReentry(mergeOnce, { restartAfter: { step: 'prove-conflict-repair', beforeResume: () => {} } })
-    )
-    expect(observed.driverLegs).toBe(2)
-    expect(observed.outcome).toBe('completed')
-    expect(observed.spawns.developer).toBe(1)
-    expect(proofOutcomes(observed)).toEqual(['proven'])
-    expect(observed.spawns['code-reviewer']).toBe(1)
-    expect(observed.spawns['security-reviewer']).toBe(1)
-    expect(observed.published).toHaveLength(1)
+    test('a restart after the merge is proven keeps the proof: no second conflict turn, review or verdict post', async () => {
+      const observed = await runV2(
+        agent,
+        conflictReentry(mergeOnce, { restartAfter: { step: 'prove-conflict-repair', beforeResume: () => {} } })
+      )
+      expect(observed.driverLegs).toBe(2)
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(1)
+      expect(proofOutcomes(observed)).toEqual(['proven'])
+      expect(observed.spawns['code-reviewer']).toBe(1)
+      expect(observed.spawns['security-reviewer']).toBe(1)
+      expect(observed.published).toHaveLength(1)
+    })
   })
-})
+}
 
 // The proof's local half on real git histories: each way a repair can fall short, and the merges that hold.
 describe('conflictRepairFailure on real git histories', () => {

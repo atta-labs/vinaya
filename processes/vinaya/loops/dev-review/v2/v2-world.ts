@@ -93,6 +93,8 @@ export interface Scenario {
    * the default branch (`git merge-tree`); default that answer.
    */
   mergeable?: (fromGit: 'MERGEABLE' | 'CONFLICTING', world: World) => 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
+  /** Whether the version 2 open-pull-request lookup fails (answers none) at this moment; default never. */
+  pullRequestLookupFails?: (world: World) => boolean
 }
 
 export interface World {
@@ -472,7 +474,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       readMainTip: () => world.mainTip(),
       readCheckExcerpt: (jobId) => scenario.jobExcerpts?.[jobId] ?? null,
       stagedPullRequest: () => world.staged,
-      findOpenPullRequest: () => (world.prOpen ? { number: PR } : null),
+      findOpenPullRequest: () => (world.prOpen && !scenario.pullRequestLookupFails?.(world) ? { number: PR } : null),
       runReadyGate: ({ head, signal }) => {
         world.readySignals.push(signal !== undefined)
         const note = chooseTests({
