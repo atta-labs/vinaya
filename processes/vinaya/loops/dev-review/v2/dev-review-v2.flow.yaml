@@ -52,11 +52,17 @@ steps:
   # A proven repair is judged against the approvals the conflict was recorded with, by the pull request's own patch
   # (zero-context, from each head's own merge base with the default branch). Unchanged, the approvals carry: the ready
   # push and CI run on the repaired head with no review, scan or live check. Changed, the reviewers judge only the
-  # interdiff against those approvals; with no approvals to carry, a fresh review.
+  # interdiff against those approvals; with no approvals to carry, a fresh review. As with the Developer, the carried
+  # step is listed before the decision that routes to it, and the ready push follows it.
+  - id: carry-approvals
+    type: mechanical
+    action: vinaya.v2-carry-approvals
+    depends_on: [classify-approval-carry]
   - id: classify-approval-carry
     type: mechanical
     action: vinaya.v2-classify-approval-carry
-    decision: { examine: prove-conflict-repair, if_true: ready-push, if_false: run-mechanical-gates, max_revisions: 3 }
+    depends_on: [classify-conflict-repair]
+    decision: { examine: prove-conflict-repair, if_true: carry-approvals, if_false: run-mechanical-gates, max_revisions: 3 }
   # A local round: the local checks (`check --all --local`, judging the staged body), the premise against the staged
   # body, then the shared gate assessment. No mergeability poll and no CI wait: no pull request is open.
   - { id: run-mechanical-gates, type: mechanical, action: vinaya.v2-local-checks }
@@ -101,7 +107,8 @@ steps:
     decision: { examine: run-live-checks, if_true: develop, if_false: ready-push, max_revisions: 3 }
   # Both reviewers approved: the ready push runs the selected tests on the approved head (only what a refused one
   # failed plus what the fix affects, when it follows a refusal). Refused goes back to the Developer with the tests.
-  - { id: ready-push, type: mechanical, action: vinaya.v2-ready-push }
+  # Reached from the live check's decision, or straight from carried approvals.
+  - { id: ready-push, type: mechanical, action: vinaya.v2-ready-push, depends_on: [carry-approvals] }
   - id: classify-ready-push
     type: mechanical
     action: vinaya.v2-classify-ready-push

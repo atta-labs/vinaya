@@ -971,6 +971,13 @@ export function classifyApprovalCarry(context: ActionContext): { exitCode: numbe
   return ok(isApprovalCarried(proved) ? 'ready-push' : 'gates')
 }
 
+/** The step carried approvals pass through on their way to the ready push: it records which head they carry to. */
+export function carryApprovals(context: ActionContext): { exitCode: number; stdout: string } {
+  const carried = carriedApprovals(context.results)
+  if (carried === null) throw new Error('carry-approvals ran with no carried approvals recorded by the proof')
+  return ok(JSON.stringify({ judgedHead: carried.judgedHead, head: carried.head }))
+}
+
 /** Records how the proof routed; the decision on this step reads that step's own exit result. */
 export function classifyConflictRepair(context: ActionContext): { exitCode: number; stdout: string } {
   const proved = context.results['prove-conflict-repair']
@@ -997,6 +1004,7 @@ export const V2_ACTION_BINDINGS: Readonly<Record<string, V2Binding>> = {
   },
   'vinaya.v2-classify-conflict-repair': { adapts: [], build: () => classifyConflictRepair },
   'vinaya.v2-classify-approval-carry': { adapts: [], build: () => classifyApprovalCarry },
+  'vinaya.v2-carry-approvals': { adapts: [], build: () => carryApprovals },
   'vinaya.v2-local-checks': { adapts: [runCli], build: (task) => (context) => runLocalChecks(task, context) },
   'vinaya.v2-check-premise': { adapts: [checkPremiseAtHead], build: (task) => () => checkPremiseStaged(task) },
   'vinaya.v2-ready-push': { adapts: [], build: (task) => (context) => readyPush(task, context) },
