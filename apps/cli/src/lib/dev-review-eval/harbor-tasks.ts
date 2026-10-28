@@ -53,6 +53,7 @@ import {
 } from '../../../tests/eval/reviewer-quality-suite'
 import {
   loadCaseFile as loadCitationCaseFile,
+  loadHeldOutCases as loadCitationHeldOut,
   type SourceCitationCase
 } from '../../../tests/eval/source-citation-suite'
 import type { ReviewerRole } from '../review-result'
@@ -663,7 +664,8 @@ export interface ConvertedSuite {
 const HELD_OUT_FAMILY: Partial<Record<GenericSuiteKey, string>> = {
   developer: DERIVED_FILE_DIGESTS.developer.heldOut,
   codeReviewer: DERIVED_FILE_DIGESTS.reviewer.heldOut,
-  securityReviewer: DERIVED_FILE_DIGESTS.reviewer.heldOut
+  securityReviewer: DERIVED_FILE_DIGESTS.reviewer.heldOut,
+  sourceCitation: DERIVED_FILE_DIGESTS.sourceCitation.heldOut
 }
 
 function statementsOf(): Record<string, string> {
@@ -685,7 +687,10 @@ function counterparts(split: 'development' | 'held-out', keys: readonly GenericS
     const file = loadReviewerDevelopment(role)
     reviewer.push(...(split === 'development' ? file.cases : loadReviewerHeldOut(role, file.split.heldOutDigest)))
   }
-  if (keys.includes('sourceCitation') && split === 'development') citation = loadCitationCaseFile().cases
+  if (keys.includes('sourceCitation')) {
+    const file = loadCitationCaseFile()
+    citation = split === 'development' ? file.cases : loadCitationHeldOut(file, file.splits.heldOut.digest)
+  }
   return { developer, reviewer, citation }
 }
 

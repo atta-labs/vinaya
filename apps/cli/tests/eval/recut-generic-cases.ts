@@ -24,7 +24,7 @@
  * counts, ids and digests, never case content.
  *
  *     bun apps/cli/tests/eval/recut-generic-cases.ts development
- *     bun apps/cli/tests/eval/recut-generic-cases.ts held-out --approve-developer <sha256> --approve-reviewer <sha256>
+ *     bun apps/cli/tests/eval/recut-generic-cases.ts held-out --approve-developer <sha256> --approve-reviewer <sha256> --approve-source-citation <sha256>
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -51,7 +51,9 @@ import {
 } from './reviewer-quality-suite'
 import {
   loadCaseFile as loadSourceCitationCaseFile,
+  loadHeldOutCases as loadSourceCitationHeldOut,
   CASES_PATH as SOURCE_CITATION_CASES_PATH,
+  HELD_OUT_PATH as SOURCE_CITATION_HELD_OUT_PATH,
   type SourceCitationCase
 } from './source-citation-suite'
 import { stripVinayaEnv } from '../lib/process-fixture'
@@ -84,7 +86,10 @@ export const DERIVED_FILES = {
     development: join(import.meta.dir, 'reviewer-quality-generic-cases.json'),
     heldOut: join(import.meta.dir, 'reviewer-quality-generic-held-out.json')
   },
-  sourceCitation: { development: join(import.meta.dir, 'source-citation-generic-cases.json') }
+  sourceCitation: {
+    development: join(import.meta.dir, 'source-citation-generic-cases.json'),
+    heldOut: join(import.meta.dir, 'source-citation-generic-held-out.json')
+  }
 } as const
 
 /** The defect kinds only the Vinaya process can state: a change beyond its Surface, an objective left unmet. */
@@ -331,6 +336,16 @@ export function generatedReviewerStatement(c: ReviewCase): string {
   )
 }
 
+/** A held-out source-citation case's statement, from how many documents it delivers. */
+export function generatedSourceCitationStatement(c: SourceCitationCase): string {
+  const delivered = c.sources.length
+  const core =
+    delivered === 0
+      ? 'Answer the request. No document is delivered with this task, so cite none.'
+      : `Answer the request from the ${plural(delivered, 'document')} delivered with this task, and cite each delivered document your answer relies on. Cite no document that was not delivered.`
+  return firstAllowed(core, 'Answer the request, citing only documents delivered with this task.')
+}
+
 // ── The derived files ───────────────────────────────────────────────────────
 
 /** A derived file: its path and its exact bytes. */
@@ -500,7 +515,10 @@ export function recutDevelopment(git: Git = repositoryGit): Recut {
  * and digests leave the run. Each approval is the pinned digest of its
  * layer-`P` held-out file.
  */
-export function recutHeldOut(approvals: { developer: string; reviewer: string }, git: Git = repositoryGit): Recut {
+export function recutHeldOut(
+  approvals: { developer: string; reviewer: string; sourceCitation: string },
+  git: Git = repositoryGit
+): Recut {
   const developerFile = loadDeveloperCaseFile()
   const developerHeld = loadDeveloperHeldOut(developerFile, approvals.developer)
   let undeliverable = 0
@@ -539,13 +557,25 @@ export function recutHeldOut(approvals: { developer: string; reviewer: string },
     reviewerSuitesHeld,
     0
   )
+  const citationFile = loadSourceCitationCaseFile()
+  const citationCases = loadSourceCitationHeldOut(citationFile, approvals.sourceCitation).map((c) =>
+    deriveSourceCitationCase(citationFile.repositoryCommit, c, generatedSourceCitationStatement(c))
+  )
+  const citation = derivedFile(
+    DERIVED_FILES.sourceCitation.heldOut,
+    'held-out',
+    [SOURCE_CITATION_HELD_OUT_PATH],
+    [{ suite: GENERIC_SUITE_IDS.sourceCitation, cases: citationCases, layerPOnly: [] }],
+    0
+  )
   return {
-    files: [developer.file, reviewers.file],
+    files: [developer.file, reviewers.file, citation.file],
     summary: {
-      files: [developer.summary, reviewers.summary],
+      files: [developer.summary, reviewers.summary, citation.summary],
       heldOutIds: {
         [GENERIC_SUITE_IDS.developer]: developerCases.map((c) => c.id),
-        ...Object.fromEntries(reviewerSuitesHeld.map((s) => [s.suite, s.cases.map((c) => c.id)]))
+        ...Object.fromEntries(reviewerSuitesHeld.map((s) => [s.suite, s.cases.map((c) => c.id)])),
+        [GENERIC_SUITE_IDS.sourceCitation]: citationCases.map((c) => c.id)
       }
     }
   }
@@ -561,7 +591,7 @@ export function main(argv: readonly string[]): number {
   const mode = argv[0]
   if (mode !== 'development' && mode !== 'held-out') {
     process.stderr.write(
-      'usage: recut-generic-cases.ts development | held-out --approve-developer <sha256> --approve-reviewer <sha256>\n'
+      'usage: recut-generic-cases.ts development | held-out --approve-developer <sha256> --approve-reviewer <sha256> --approve-source-citation <sha256>\n'
     )
     return 2
   }
@@ -569,7 +599,11 @@ export function main(argv: readonly string[]): number {
     const recut =
       mode === 'development'
         ? recutDevelopment()
-        : recutHeldOut({ developer: flag(argv, 'approve-developer'), reviewer: flag(argv, 'approve-reviewer') })
+        : recutHeldOut({
+            developer: flag(argv, 'approve-developer'),
+            reviewer: flag(argv, 'approve-reviewer'),
+            sourceCitation: flag(argv, 'approve-source-citation')
+          })
     for (const file of recut.files) writeFileSync(file.path, file.text)
     process.stdout.write(`${JSON.stringify(recut.summary, null, 2)}\n`)
     return 0

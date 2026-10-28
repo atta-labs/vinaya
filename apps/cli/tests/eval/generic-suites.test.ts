@@ -26,9 +26,13 @@ import { DERIVED_FILES, GENERIC_SUITE_IDS } from './recut-generic-cases'
 
 const sha256 = (bytes: string | Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 const KEYS = Object.keys(GENERIC_SUITE_IDS) as GenericSuiteKey[]
-const HELD_OUT_KEYS: GenericSuiteKey[] = ['developer', 'codeReviewer', 'securityReviewer']
+const HELD_OUT_KEYS: GenericSuiteKey[] = ['developer', 'codeReviewer', 'securityReviewer', 'sourceCitation']
 const heldOutApproval = (key: GenericSuiteKey) =>
-  key === 'developer' ? DERIVED_FILE_DIGESTS.developer.heldOut : DERIVED_FILE_DIGESTS.reviewer.heldOut
+  key === 'developer'
+    ? DERIVED_FILE_DIGESTS.developer.heldOut
+    : key === 'sourceCitation'
+      ? DERIVED_FILE_DIGESTS.sourceCitation.heldOut
+      : DERIVED_FILE_DIGESTS.reviewer.heldOut
 
 /** A reader that refuses every held-out file, so a development path that reaches one fails. */
 const developmentOnly = (path: string) => {
@@ -43,7 +47,8 @@ describe('the derived files', () => {
       [DERIVED_FILES.developer.heldOut, DERIVED_FILE_DIGESTS.developer.heldOut],
       [DERIVED_FILES.reviewer.development, DERIVED_FILE_DIGESTS.reviewer.development],
       [DERIVED_FILES.reviewer.heldOut, DERIVED_FILE_DIGESTS.reviewer.heldOut],
-      [DERIVED_FILES.sourceCitation.development, DERIVED_FILE_DIGESTS.sourceCitation.development]
+      [DERIVED_FILES.sourceCitation.development, DERIVED_FILE_DIGESTS.sourceCitation.development],
+      [DERIVED_FILES.sourceCitation.heldOut, DERIVED_FILE_DIGESTS.sourceCitation.heldOut]
     ]
     for (const [path, pinned] of files)
       expect({ path, sha256: sha256(readFileSync(path)) }).toEqual({ path, sha256: pinned })

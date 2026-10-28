@@ -47,10 +47,13 @@ export const DERIVED_FILE_DIGESTS = {
     development: 'a2161462e9012c5c77eee21c6d2ece09c3d34d89464b763ec3f58fd334a1e355',
     heldOut: '9f7c980ade34b6ccf4d6541b47c3805f8cd327608d41b0f070dab26158331cf7'
   },
-  sourceCitation: { development: 'd913e995ba891830f744cea1c1beca799bff0b46bee4fc00a1850e6e1b324f0f' }
+  sourceCitation: {
+    development: 'd913e995ba891830f744cea1c1beca799bff0b46bee4fc00a1850e6e1b324f0f',
+    heldOut: '63259630cdfcd7594110c8f61241587eaa6b5a8cab12c9fbf31bdc73510e409c'
+  }
 } as const
 
-/** Each suite's held-out case ids, the public index of its held-out file; source citation has no held-out split here. */
+/** Each suite's held-out case ids, the public index of its held-out file. */
 export const HELD_OUT_IDS: Readonly<Record<GenericSuiteKey, readonly string[]>> = {
   developer: [
     'pr-980',
@@ -88,7 +91,15 @@ export const HELD_OUT_IDS: Readonly<Record<GenericSuiteKey, readonly string[]>> 
   ],
   codeReviewer: ['code-held-clean'],
   securityReviewer: ['security-held-clean'],
-  sourceCitation: []
+  sourceCitation: [
+    'ho-correct-citation',
+    'ho-missing-citation',
+    'ho-undelivered-source',
+    'ho-irrelevant-source',
+    'ho-source-mutation',
+    'ho-receipt-fabrication',
+    'ho-no-source-balance'
+  ]
 }
 
 /** The derived file each suite's cases live in. */
@@ -149,7 +160,6 @@ export function developmentCases(key: GenericSuiteKey, read: ReadBytes = default
 /** The sole held-out read path: it opens a held-out file only for an approval naming its pinned digest. */
 export function heldOutCases(key: GenericSuiteKey, approval: string, read: ReadBytes = defaultRead): NeutralCase[] {
   const family = FAMILY[key]
-  if (family === 'sourceCitation') throw new DerivedFileRefused('source citation has no held-out split here')
   const pinned = DERIVED_FILE_DIGESTS[family].heldOut
   if (approval !== pinned) throw new DerivedFileRefused(`the held-out split opens only with approval ${pinned}`)
   const cases = casesOf(load(DERIVED_FILES[family].heldOut, pinned, 'held-out', read), key)
