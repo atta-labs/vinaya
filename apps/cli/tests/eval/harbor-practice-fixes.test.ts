@@ -262,6 +262,161 @@ const HARBOR_STUBS = [
   "sys.modules['harbor.models.agent.context'].AgentContext = object"
 ]
 
+describe('the Harbor Codex subscription login', () => {
+  it('feeds login only on stdin, cleans its bootstrap file, and runs with the tester Codex home alone', () => {
+    const work = tempDir('harbor-codex-login-')
+    const bin = join(work, 'bin')
+    mkdirSync(bin)
+    const audit = join(work, 'login.json')
+    writeFileSync(
+      join(bin, 'codex'),
+      [
+        '#!/usr/bin/env python3',
+        'import json, os, sys',
+        'from pathlib import Path',
+        `Path(${JSON.stringify(audit)}).write_text(json.dumps({"argv": sys.argv[1:], "stdin": sys.stdin.read(), "env": dict(os.environ)}))`,
+        'Path(os.environ["CODEX_HOME"], "auth.json").write_text("staged session")',
+        ''
+      ].join('\n'),
+      { mode: 0o755 }
+    )
+    const printed = run(
+      'python3',
+      [
+        '-c',
+        [
+          ...HARBOR_STUBS,
+          'import asyncio, json, os, shutil, subprocess',
+          'from pathlib import Path, PurePosixPath',
+          'sys.path.insert(0, sys.argv[1])',
+          'import vinaya_harbor_agent as module',
+          'work = Path(sys.argv[2])',
+          'module.CODEX_HOME = PurePosixPath(str(work / "home" / ".codex"))',
+          'module.install_command = lambda: "true"',
+          'agent = object.__new__(module.VinayaAgent)',
+          'agent._adapter = "codex"',
+          'agent._archive = work / "archive.tar"',
+          'agent._archive.write_text("archive")',
+          'agent.model_name = "codex-test-model"',
+          'agent.environment_logs_dir = PurePosixPath("/logs/agent")',
+          'calls, uploads = [], []',
+          'class Environment:',
+          '    async def upload_file(self, source, target):',
+          '        if target == str(module.ARCHIVE_IN_CONTAINER): return',
+          '        target = target.replace("/tmp/vinaya-codex-login-", str(work / "login-"))',
+          '        uploads.append({"path": target, "mode": source.stat().st_mode & 0o777})',
+          '        shutil.copyfile(source, target)',
+          'async def root(environment, command, env=None, timeout_sec=None):',
+          '    calls.append({"kind": "root", "command": command, "env": env})',
+          '    command = command.replace("/tmp/vinaya-codex-login-", str(work / "login-"))',
+          '    if command.startswith("chown "): return',
+          '    result = subprocess.run(["sh", "-c", command], env={"PATH": os.environ["PATH"]}, capture_output=True)',
+          '    if result.returncode: raise RuntimeError("container command failed")',
+          'async def run_agent(environment, command, env=None):',
+          '    calls.append({"kind": "agent", "command": command, "env": env})',
+          'agent.exec_as_root = root',
+          'agent.exec_as_agent = run_agent',
+          'async def trial():',
+          '    environment = Environment()',
+          '    await agent.install(environment)',
+          '    await agent.run("instruction", environment, None)',
+          'asyncio.run(trial())',
+          'print(json.dumps({"calls": calls, "uploads": uploads, "home": str(module.CODEX_HOME)}))'
+        ].join('\n'),
+        join(REPOSITORY_ROOT, 'apps/cli/src/lib/dev-review-eval'),
+        work
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ''}`,
+          PYTHONDONTWRITEBYTECODE: '1',
+          CODEX_ACCESS_TOKEN: 'fake-subscription-token',
+          OPENAI_API_KEY: 'never-forward',
+          ANTHROPIC_API_KEY: 'never-forward',
+          OTHER_API_KEY: 'never-forward'
+        }
+      }
+    )
+    expect(printed.stderr).toBe('')
+    expect(printed.status).toBe(0)
+    const result = JSON.parse(printed.stdout) as {
+      calls: { kind: string; command: string; env: Record<string, string> | null }[]
+      uploads: { path: string; mode: number }[]
+      home: string
+    }
+    const login = JSON.parse(readFileSync(audit, 'utf8')) as {
+      argv: string[]
+      stdin: string
+      env: Record<string, string>
+    }
+    expect(login.argv).toEqual(['login', '--with-access-token'])
+    expect(login.stdin).toBe('fake-subscription-token')
+    expect(login.env.CODEX_HOME).toBe(result.home)
+    expect(login.env.CODEX_ACCESS_TOKEN).toBeUndefined()
+    expect(Object.keys(login.env).some((key) => key.endsWith('API_KEY'))).toBe(false)
+    expect(result.uploads).toHaveLength(1)
+    for (const upload of result.uploads) {
+      expect(upload.mode).toBe(0o600)
+      expect(run('test', ['-e', upload.path]).status).not.toBe(0)
+    }
+    expect(result.calls.some((call) => call.command === `chown -R tester:tester ${result.home}`)).toBe(true)
+    const agentCall = result.calls.find((call) => call.kind === 'agent')
+    expect(agentCall?.command).toContain('--backend standalone --adapter codex --model codex-test-model')
+    expect(agentCall?.env).toEqual({ HOME: TASK_USER_HOME, CODEX_HOME: result.home })
+    for (const call of result.calls) {
+      expect(call.command).not.toContain('fake-subscription-token')
+      expect(call.env ?? {}).not.toHaveProperty('CODEX_ACCESS_TOKEN')
+      expect(Object.keys(call.env ?? {}).some((key) => key.endsWith('API_KEY'))).toBe(false)
+    }
+  })
+
+  it('refuses a missing Codex login before container access and rejects login or API-key agent-env flags', () => {
+    const work = tempDir('harbor-codex-refused-')
+    const printed = run(
+      'python3',
+      [
+        '-c',
+        [
+          ...HARBOR_STUBS,
+          'class Base:',
+          '    def __init__(self, logs_dir, **kwargs): self.extra_env = kwargs.get("extra_env", {})',
+          'sys.modules["harbor.agents.installed.base"].BaseInstalledAgent = Base',
+          'import asyncio, json, os',
+          'from pathlib import Path',
+          'sys.path.insert(0, sys.argv[1])',
+          'import vinaya_harbor_agent as module',
+          'work = Path(sys.argv[2])',
+          'archive = work / "archive.tar"',
+          'archive.write_text("archive")',
+          'os.environ.pop("CODEX_ACCESS_TOKEN", None)',
+          'agent = module.VinayaAgent(work, archive=str(archive), adapter="codex")',
+          'errors = []',
+          'try: asyncio.run(agent.install(None))',
+          'except RuntimeError as error: errors.append(str(error))',
+          'for adapter in ("claude-code", "codex"):',
+          '    for name in (*module.LOGIN_ENV, "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OTHER_API_KEY"):',
+          '        try: module.VinayaAgent(work, archive=str(archive), adapter=adapter, extra_env={name: "secret"})',
+          '        except ValueError: pass',
+          '        else: raise AssertionError("accepted credential agent-env flag")',
+          'print(json.dumps(errors))'
+        ].join('\n'),
+        join(REPOSITORY_ROOT, 'apps/cli/src/lib/dev-review-eval'),
+        work
+      ],
+      {
+        env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', OPENAI_API_KEY: 'not-a-login' }
+      }
+    )
+    expect(printed.stderr).toBe('')
+    expect(printed.status).toBe(0)
+    const errors = JSON.parse(printed.stdout) as string[]
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('no Codex subscription login')
+    expect(errors[0]).toContain('CODEX_ACCESS_TOKEN')
+  })
+})
+
 describe('the Vinaya CLI installed at image build', () => {
   const citation = loadCitationCaseFile().cases.find((entry) => entry.id === 'dev-correct-citation')
   const answer = developmentCases('sourceCitation').find((entry) => entry.id === 'dev-correct-citation')
@@ -280,6 +435,12 @@ describe('the Vinaya CLI installed at image build', () => {
     expect(install).toContain(`(cd ${VINAYA_HOME} && ${CHANGE_CASE_INSTALL})`)
     expect(install).toContain(`> ${ARCHIVE_DIGEST_PATH}`)
     expect(VINAYA_HOME).toBe('/opt/vinaya')
+    const probe = dockerfile.split('\n').find((line) => line.includes('checkLinuxCodexSandboxTools')) as string
+    expect(probe).toContain(`RUN cd ${VINAYA_HOME} && bun -e `)
+    expect(probe).toContain('from "./apps/cli/src/lib/worker-boundary.ts"')
+    expect(probe).toContain('const tools = checkLinuxCodexSandboxTools()')
+    expect(probe).toContain('if (!tools.available) throw new Error(')
+    expect(dockerfile.indexOf(probe)).toBeGreaterThan(dockerfile.indexOf(install))
   })
 
   it('builds a task converted without the archive with no Vinaya CLI', () => {
