@@ -56,6 +56,7 @@ import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import { PRODUCTION_VINAYA_PROCESS_STEPS, type VinayaProcessSteps } from '../../src/lib/dev-review-eval/step-one'
 import { renderCase, VINAYA_RENDERER_VERSION } from '../../src/lib/dev-review-eval/vinaya-renderer'
 import { stripVinayaEnv } from '../lib/process-fixture'
+import { DERIVED_FILE_DIGESTS, HELD_OUT_IDS } from './generic-suites'
 import { DEV_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/dev-tools-names'
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
 import { developmentCases } from './generic-suites'
@@ -374,6 +375,25 @@ describe('the converter', () => {
     expect(code).toBe(2)
     expect(opened.filter((path) => /held-out/.test(path))).toEqual([])
     expect(readdirSync(out)).toEqual([])
+  })
+
+  it('converts the source-citation held-out cases under the pinned approval, listing them by id alone', async () => {
+    const out = tempDir('harbor-tasks-citation-held-out-')
+    const printed: string[] = []
+    const warned: string[] = []
+    const suites = await convertHarborTasks({
+      out,
+      heldOutApprovals: [DERIVED_FILE_DIGESTS.sourceCitation.heldOut],
+      print: (line) => printed.push(line),
+      warn: (line) => warned.push(line)
+    })
+    expect(suites.map((s) => [s.suite, s.split, s.converted])).toEqual([
+      [suiteName('sourceCitation'), 'held-out', [...HELD_OUT_IDS.sourceCitation]]
+    ])
+    expect(readdirSync(join(out, suiteName('sourceCitation'))).sort()).toEqual([...HELD_OUT_IDS.sourceCitation].sort())
+    expect(warned).toEqual([])
+    expect(printed.join('\n')).toContain(`ids: ${HELD_OUT_IDS.sourceCitation.join(', ')}`)
+    expect(printed.join('\n')).not.toContain('"taskStatement"')
   })
 
   it('writes a Vinaya archive holding no case, hidden-test or held-out file', () => {

@@ -17,6 +17,8 @@ import {
   deriveSourceCitationCase,
   generatedDeveloperStatement,
   generatedReviewerStatement,
+  generatedSourceCitationStatement,
+  GENERIC_SUITE_IDS,
   LAYER_P_ONLY_DEFECT_KINDS,
   main,
   recutDevelopment,
@@ -27,7 +29,11 @@ import {
   surfaceEntryPaths
 } from './recut-generic-cases'
 import { loadDevelopment as loadReviewerDevelopment, type ReviewCase } from './reviewer-quality-suite'
-import { loadCaseFile as loadSourceCitationCaseFile } from './source-citation-suite'
+import {
+  HeldOutRefused,
+  loadCaseFile as loadSourceCitationCaseFile,
+  type SourceCitationCase
+} from './source-citation-suite'
 
 const sha256 = (bytes: string | Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 const developerFile = loadDeveloperCaseFile()
@@ -37,6 +43,11 @@ const reviewerCases = [
   ...loadReviewerDevelopment('security-reviewer').cases
 ]
 const citationFile = loadSourceCitationCaseFile()
+const approvals = {
+  developer: developerFile.splits.heldOut.digest,
+  reviewer: loadReviewerDevelopment('code-reviewer').split.heldOutDigest,
+  sourceCitation: citationFile.splits.heldOut.digest
+}
 const statements = JSON.parse(readFileSync(STATEMENTS_PATH, 'utf8')) as Record<string, string>
 const caseById = <T extends { id: string }>(cases: readonly T[], id: string) => cases.find((c) => c.id === id) as T
 
@@ -209,9 +220,12 @@ describe('re-running the re-cut', () => {
   })
 
   it('reproduces every held-out file byte for byte, compared by digest only', () => {
-    const reviewerHeldOutDigest = loadReviewerDevelopment('code-reviewer').split.heldOutDigest
-    const recut = recutHeldOut({ developer: developerFile.splits.heldOut.digest, reviewer: reviewerHeldOutDigest })
-    expect(recut.files.map((f) => f.path)).toEqual([DERIVED_FILES.developer.heldOut, DERIVED_FILES.reviewer.heldOut])
+    const recut = recutHeldOut(approvals)
+    expect(recut.files.map((f) => f.path)).toEqual([
+      DERIVED_FILES.developer.heldOut,
+      DERIVED_FILES.reviewer.heldOut,
+      DERIVED_FILES.sourceCitation.heldOut
+    ])
     for (const file of recut.files) {
       expect({ file: file.path, sha256: sha256(file.text) }).toEqual({
         file: file.path,
@@ -223,6 +237,48 @@ describe('re-running the re-cut', () => {
     for (const entry of recut.summary.files) {
       expect(Object.keys(entry).sort()).toEqual(['cases', 'file', 'layerPOnly', 'sha256', 'undeliverableSources'])
     }
+    // The source-citation file holds one answer case per pinned held-out index entry, listed by id alone.
+    const ids = recut.summary.heldOutIds?.[GENERIC_SUITE_IDS.sourceCitation]
+    expect(ids).toEqual(citationFile.splits.heldOut.index.map((entry) => entry.id))
+    expect(recut.summary.files.at(-1)?.cases).toEqual({ [GENERIC_SUITE_IDS.sourceCitation]: ids?.length ?? 0 })
+  })
+
+  it('opens no source-citation held-out file for a wrong approval, and the run writes and prints no case content', () => {
+    const wrong = { ...approvals, sourceCitation: 'f'.repeat(64) }
+    expect(() => recutHeldOut(wrong)).toThrow(HeldOutRefused)
+    const printed: string[] = []
+    const write = process.stdout.write
+    const err = process.stderr.write
+    const capture = ((chunk: string) => printed.push(String(chunk)) > 0) as unknown as typeof process.stdout.write
+    process.stdout.write = capture
+    process.stderr.write = capture
+    try {
+      expect(
+        main([
+          'held-out',
+          '--approve-developer',
+          approvals.developer,
+          '--approve-reviewer',
+          approvals.reviewer,
+          '--approve-source-citation',
+          'f'.repeat(64)
+        ])
+      ).toBe(1)
+    } finally {
+      process.stdout.write = write
+      process.stderr.write = err
+    }
+    expect(printed.join('')).not.toContain('"taskStatement"')
+  })
+
+  it('generates a held-out source-citation statement from a fixture case, free of process terms', () => {
+    const fixture = {
+      ...citationFile.cases[0],
+      sources: [...(citationFile.cases[0]?.sources ?? []), ...(citationFile.cases[0]?.sources ?? [])].slice(0, 2)
+    } as SourceCitationCase
+    expect(generatedSourceCitationStatement(fixture)).toContain('2 documents')
+    expect(findBannedTerms(generatedSourceCitationStatement(fixture))).toEqual([])
+    expect(findBannedTerms(generatedSourceCitationStatement({ ...fixture, sources: [] }))).toEqual([])
   })
 
   it('refuses a held-out run without the pinned approvals, before opening any held-out file', () => {
@@ -234,6 +290,9 @@ describe('re-running the re-cut', () => {
     process.stderr.write = capture
     try {
       expect(main(['held-out', '--approve-developer', 'f'.repeat(64), '--approve-reviewer', 'f'.repeat(64)])).toBe(1)
+      expect(
+        main(['held-out', '--approve-developer', approvals.developer, '--approve-reviewer', approvals.reviewer])
+      ).toBe(1)
       expect(main(['held-out'])).toBe(1)
       expect(main(['other'])).toBe(2)
     } finally {
