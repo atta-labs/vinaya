@@ -652,9 +652,9 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'reviewPolicy',
     type: 'object (optional)',
     semantics: [
-      "Which severities block is repository policy, not a hardcoded literal: one threshold per review role's own ordered severity scale — code review over `BLOCKER > MAJOR > MINOR`, security review over `CRITICAL > HIGH > MEDIUM > LOW`. A finding at or above the threshold prevents approval everywhere a verdict is derived, accepted, or judged. Also carries the dev-review-loop's own two bounds on a task: its round cap (`maxRounds`) and its wall-clock budget (`maxTaskMinutes`), both below.",
+      "Which severities block is repository policy, not a hardcoded literal: one threshold per review role's own ordered severity scale — code review over `BLOCKER > MAJOR > MINOR`, security review over `CRITICAL > HIGH > MEDIUM > LOW`. A finding at or above the threshold prevents approval everywhere a verdict is derived, accepted, or judged. Also carries the dev-review-loop's own bounds on a task: its round cap (`maxRounds`), its wall-clock budget (`maxTaskMinutes`) and its ready push's test-run limit (`readyPushTimeoutMinutes`), each below.",
       'A finding whose own location is the PR body, a comment, or a role file is capped to `MINOR` before it counts toward either threshold, unconditionally — never configurable, never a source or test file. Prose alone never blocks a merge.',
-      "Omitted entirely, or any field omitted, defaults to today's behavior (`BLOCKER` / `HIGH` / 3 rounds / 180 minutes). An unknown severity name, a `maxRounds` that isn't a positive integer, or a `maxTaskMinutes` that isn't a non-negative integer, refuses at config load — it never silently falls back, unlike the rest of this config's fields.",
+      "Omitted entirely, or any field omitted, defaults to today's behavior (`BLOCKER` / `HIGH` / 3 rounds / 180 minutes / 20 minutes). An unknown severity name, a `maxRounds` or `readyPushTimeoutMinutes` that isn't a positive integer, or a `maxTaskMinutes` that isn't a non-negative integer, refuses at config load — it never silently falls back, unlike the rest of this config's fields.",
       "Read only via the default branch's configuration (the same trust class as `principals`), never the pull request's own checkout, so a change cannot lower its own threshold."
     ],
     example: `{
@@ -702,10 +702,20 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "reviewPolicy": { "maxTaskMinutes": 240 } }`
   },
   {
+    key: 'reviewPolicy.readyPushTimeoutMinutes',
+    type: 'number (optional, positive integer, minutes)',
+    semantics: [
+      "How long the version-2 ready push's test run may take, in minutes, before it is stopped. Defaults to 20 when omitted. A large core change can select over a hundred test files, which one machine runs serially while CI shards the same work, so a repository or a machine that needs longer raises it.",
+      'Read from the default branch like `maxRounds`, so a change cannot raise its own limit. A run stopped at the limit is never sent back to the Developer as a test failure: the loop pauses for a person, naming the limit in minutes and the number of selected test files, and the approved code is left unchanged.',
+      'Like the other limits, it is left out of the policy digest verdicts bind to: it bounds how long the loop runs, never whether a finding blocks. A value that is not a positive integer refuses config load rather than falling back.'
+    ],
+    example: `{ "reviewPolicy": { "readyPushTimeoutMinutes": 60 } }`
+  },
+  {
     key: 'vinaya.config.local.json',
     type: 'file (optional, gitignored, primary checkout root)',
     semantics: [
-      'A local, uncommitted file that overrides `reviewPolicy.maxRounds` and `reviewPolicy.maxTaskMinutes` for runs on this machine, with no commit. Every other key in it is ignored with one warning naming the ignored keys; a bad value refuses rather than falling back.',
+      'A local, uncommitted file that overrides `reviewPolicy.maxRounds`, `reviewPolicy.maxTaskMinutes` and `reviewPolicy.readyPushTimeoutMinutes` for runs on this machine, with no commit. Every other key in it is ignored with one warning naming the ignored keys; a bad value refuses rather than falling back.',
       "Read in exactly one place, the loop's review-policy resolver, from the primary checkout's root (never the working directory). The review thresholds and the merge gate stay on the default branch's policy.",
       'Never honoured by a process with `VINAYA_ROLE` set, a CI job, a process inside a task worktree, or when the file is a symlink. `vinaya doctor` reports when one is in effect and which values it overrides.'
     ],

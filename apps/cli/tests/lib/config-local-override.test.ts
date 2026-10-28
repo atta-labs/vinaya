@@ -40,16 +40,31 @@ afterEach(() => {
 })
 
 describe('resolveLocalPacingOverride', () => {
-  it('allowlist holds exactly the two pacing keys', () => {
-    expect([...LOCAL_OVERRIDABLE_KEYS]).toEqual(['reviewPolicy.maxRounds', 'reviewPolicy.maxTaskMinutes'])
+  it('allowlist holds exactly the three pacing keys', () => {
+    expect([...LOCAL_OVERRIDABLE_KEYS]).toEqual([
+      'reviewPolicy.maxRounds',
+      'reviewPolicy.maxTaskMinutes',
+      'reviewPolicy.readyPushTimeoutMinutes'
+    ])
   })
 
   it('applies an allowlisted override from the primary checkout', () => {
-    writeLocal({ reviewPolicy: { maxRounds: 5, maxTaskMinutes: 0 } })
+    writeLocal({ reviewPolicy: { maxRounds: 5, maxTaskMinutes: 0, readyPushTimeoutMinutes: 60 } })
     const local = resolveLocalPacingOverride(root)
     expect(local?.maxRounds).toBe(5)
     expect(local?.maxTaskMinutes).toBe(0)
+    expect(local?.readyPushTimeoutMinutes).toBe(60)
     expect(local?.ignoredKeys).toEqual([])
+  })
+
+  it('a local readyPushTimeoutMinutes is ignored for a role process and in CI', () => {
+    writeLocal({ reviewPolicy: { readyPushTimeoutMinutes: 60 } })
+    expect(resolveLocalPacingOverride(root)?.readyPushTimeoutMinutes).toBe(60)
+    process.env.VINAYA_ROLE = 'developer'
+    expect(resolveLocalPacingOverride(root)).toBeNull()
+    delete process.env.VINAYA_ROLE
+    process.env.GITHUB_ACTIONS = 'true'
+    expect(resolveLocalPacingOverride(root)).toBeNull()
   })
 
   it('ignores unlisted keys with one warning naming them', () => {
@@ -118,6 +133,10 @@ describe('resolveLocalPacingOverride', () => {
     expect(() => resolveLocalPacingOverride(root)).toThrow(/maxTaskMinutes/)
     writeLocal({ reviewPolicy: { maxRounds: '5' } })
     expect(() => resolveLocalPacingOverride(root)).toThrow(/maxRounds/)
+    for (const bad of [0, -3, 2.5, '30']) {
+      writeLocal({ reviewPolicy: { readyPushTimeoutMinutes: bad } })
+      expect(() => resolveLocalPacingOverride(root)).toThrow(/reviewPolicy\.readyPushTimeoutMinutes/)
+    }
   })
 })
 
@@ -137,6 +156,26 @@ describe('reviewPolicyForLoop with a local file', () => {
       expect(policyDigest(policy)).toBe(policyDigest({ ...base }))
     } finally {
       err.mockRestore()
+      process.chdir(cwd)
+    }
+  })
+
+  it('the local readyPushTimeoutMinutes wins over the default branch value for a local run', () => {
+    const cwd = process.cwd()
+    writeLocal({ reviewPolicy: { readyPushTimeoutMinutes: 75 } })
+    process.chdir(root)
+    try {
+      const withBranchValue = reviewPolicyForLoop(
+        () => ({ reviewPolicy: { readyPushTimeoutMinutes: 30 } }) as VinayaConfig
+      )
+      expect(withBranchValue.readyPushTimeoutMinutes).toBe(75)
+      expect(reviewPolicyForLoop(() => defaultBranchConfig()).readyPushTimeoutMinutes).toBe(75)
+      process.env.GITHUB_ACTIONS = 'true'
+      expect(
+        reviewPolicyForLoop(() => ({ reviewPolicy: { readyPushTimeoutMinutes: 30 } }) as VinayaConfig)
+          .readyPushTimeoutMinutes
+      ).toBe(30)
+    } finally {
       process.chdir(cwd)
     }
   })

@@ -20,7 +20,12 @@ import { manifestDigest } from '../../../../../apps/cli/src/lib/review-result'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { readUnpushedWorkDetail } from '../../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import { spawnSync } from 'node:child_process'
-import { assessRound, type DevReviewLoopEventInput, type PauseReason } from '@attalabs/aeg-core'
+import {
+  assessRound,
+  DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
+  type DevReviewLoopEventInput,
+  type PauseReason
+} from '@attalabs/aeg-core'
 import {
   fetchConflictingFiles,
   fetchMergeableState,
@@ -75,6 +80,10 @@ export interface ReadyGateResult {
   wallMs: number
   /** True when the run passed its deadline and was stopped: a recorded refusal, never a hang. */
   timedOut?: boolean
+  /** The limit the run was stopped at, in minutes (set with `timedOut`). */
+  limitMinutes?: number
+  /** How many test files the run had selected when it was stopped, when the selector's note says. */
+  selectedCount?: number
   /** `none` when the repository runs no local tests (no pre-push hook, or no declared test runner). */
   localTests?: 'none'
 }
@@ -259,8 +268,6 @@ const loopOf = (task: TaskInput, results: Results) => ({
 
 /** The failing tests of a refused ready push, one per line, for the Developer's prompt. */
 function failingTestLines(gate: ReadyGateResult): string {
-  if (gate.timedOut)
-    return `the test run passed its deadline and was stopped. Its output (tail):\n\n${gate.output.slice(-4000)}`
   if (gate.failed === 'all')
     return `the test run failed without naming a test file. Its output (tail):\n\n${gate.output.slice(-4000)}`
   const tail = gate.output
@@ -346,6 +353,26 @@ export async function readyPush(
       })
     }
   }
+  if (gate.timedOut) {
+    // A run stopped at its limit proved nothing about the code: the approved commit stays as it is, no Developer turn
+    // is spent on it, and a person decides whether to raise the limit or run the tests elsewhere.
+    const limit = gate.limitMinutes ?? DEFAULT_READY_PUSH_TIMEOUT_MINUTES
+    const files =
+      gate.selectedCount !== undefined ? `${gate.selectedCount} selected test files` : 'its selected test files'
+    const detail = `the ready push stopped ${files} at its ${limit}-minute limit (reviewPolicy.readyPushTimeoutMinutes); the approved code was not changed. Raise the limit, or run the tests another way, then resume.`
+    pauseThrough(task, 'ready-push', { reason: 'ready_push_failed', detail })
+    return {
+      exitCode: BACK,
+      stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+        readyPushFailures: latestRecord(results)?.readyPushFailures ?? 0,
+        decision: { type: 'pause', reason: 'ready_push_failed', detail },
+        outcome: 'timed-out',
+        head,
+        failed: gate.failed,
+        events
+      })
+    }
+  }
   const failures = (latestRecord(results)?.readyPushFailures ?? 0) + 1
   if (failures >= READY_PUSH_FAILURE_LIMIT) {
     ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, task.reviewRound())
@@ -367,10 +394,10 @@ export async function readyPush(
     task,
     results,
     'ready-refused',
-    `both reviewers approved ${head}, but the ready push refused it: ${gate.timedOut ? 'the selected tests ran past the deadline' : 'the selected tests failed'}.\n\n${failingTestLines(gate)}\n\nThe ready push runs the selected test files on the approved head through the repository's pre-push hook in ready mode, with a 20-minute deadline. Run the named failing files before publishing your fix; when the files are unknown, run the full selection.`,
+    `both reviewers approved ${head}, but the ready push refused it: the selected tests failed.\n\n${failingTestLines(gate)}\n\nThe ready push runs the selected test files on the approved head through the repository's pre-push hook in ready mode. Run the named failing files before publishing your fix; when the files are unknown, run the full selection.`,
     {
       readyPushFailures: failures,
-      outcome: gate.timedOut ? 'timed-out' : 'refused',
+      outcome: 'refused',
       head,
       selection: gate.selection,
       failed: gate.failed,

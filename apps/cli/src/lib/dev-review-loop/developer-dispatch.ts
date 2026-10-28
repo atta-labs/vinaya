@@ -174,11 +174,12 @@ export function reviewPolicyForLoop(load: () => VinayaConfig | null = loadTrustA
   const policy = resolveReviewPolicy(readTrustAnchorConfigWithRetry(load))
   const local = resolveLocalPacingOverride()
   if (!local) return policy
-  // Only the two pacing fields move; the thresholds stay on the default branch's policy.
+  // Only the pacing fields move; the thresholds stay on the default branch's policy.
   return {
     ...policy,
     maxRounds: local.maxRounds ?? policy.maxRounds,
-    maxTaskMinutes: local.maxTaskMinutes ?? policy.maxTaskMinutes
+    maxTaskMinutes: local.maxTaskMinutes ?? policy.maxTaskMinutes,
+    readyPushTimeoutMinutes: local.readyPushTimeoutMinutes ?? policy.readyPushTimeoutMinutes
   }
 }
 

@@ -120,13 +120,15 @@ describe('config', () => {
       codeReviewThreshold: 'MAJOR',
       securityThreshold: 'HIGH',
       maxRounds: 3,
-      maxTaskMinutes: 180
+      maxTaskMinutes: 180,
+      readyPushTimeoutMinutes: 20
     })
     expect(resolveReviewPolicy({ reviewPolicy: { securityThreshold: 'MEDIUM' } })).toEqual({
       codeReviewThreshold: 'BLOCKER',
       securityThreshold: 'MEDIUM',
       maxRounds: 3,
-      maxTaskMinutes: 180
+      maxTaskMinutes: 180,
+      readyPushTimeoutMinutes: 20
     })
   })
 
@@ -135,7 +137,8 @@ describe('config', () => {
       codeReviewThreshold: 'MAJOR',
       securityThreshold: 'HIGH',
       maxRounds: 3,
-      maxTaskMinutes: 180
+      maxTaskMinutes: 180,
+      readyPushTimeoutMinutes: 20
     })
   })
 
@@ -160,7 +163,8 @@ describe('config', () => {
       codeReviewThreshold: 'BLOCKER',
       securityThreshold: 'HIGH',
       maxRounds: 5,
-      maxTaskMinutes: 180
+      maxTaskMinutes: 180,
+      readyPushTimeoutMinutes: 20
     })
     expect(resolveReviewPolicy({})).toEqual(expect.objectContaining({ maxRounds: 3 }))
   })
@@ -170,7 +174,8 @@ describe('config', () => {
       codeReviewThreshold: 'BLOCKER',
       securityThreshold: 'HIGH',
       maxRounds: 3,
-      maxTaskMinutes: 45
+      maxTaskMinutes: 45,
+      readyPushTimeoutMinutes: 20
     })
     expect(resolveReviewPolicy({})).toEqual(expect.objectContaining({ maxTaskMinutes: 180 }))
     // `0` is the one value that turns a bound OFF rather than tightening it,
@@ -185,6 +190,27 @@ describe('config', () => {
       /maxTaskMinutes "-1" is not a non-negative integer/
     )
     expect(() => resolveReviewPolicy({ reviewPolicy: { maxTaskMinutes: 12.5 } })).toThrow(/maxTaskMinutes/)
+  })
+
+  it('resolveReviewPolicy defaults readyPushTimeoutMinutes to 20 and resolves a configured value', () => {
+    expect(resolveReviewPolicy(null).readyPushTimeoutMinutes).toBe(20)
+    expect(resolveReviewPolicy({}).readyPushTimeoutMinutes).toBe(20)
+    expect(resolveReviewPolicy({ reviewPolicy: { maxRounds: 4 } }).readyPushTimeoutMinutes).toBe(20)
+    expect(resolveReviewPolicy({ reviewPolicy: { readyPushTimeoutMinutes: 90 } })).toEqual({
+      codeReviewThreshold: 'BLOCKER',
+      securityThreshold: 'HIGH',
+      maxRounds: 3,
+      maxTaskMinutes: 180,
+      readyPushTimeoutMinutes: 90
+    })
+  })
+
+  it('resolveReviewPolicy REFUSES a readyPushTimeoutMinutes that is not a positive integer, naming the key', () => {
+    for (const bad of [0, -5, 12.5, Number.NaN]) {
+      expect(() => resolveReviewPolicy({ reviewPolicy: { readyPushTimeoutMinutes: bad } })).toThrow(
+        /reviewPolicy\.readyPushTimeoutMinutes ".*" is not a positive integer/
+      )
+    }
   })
 
   it('resolveReviewPolicy (#543 O4) REFUSES a non-positive-integer maxRounds, never falls back', () => {
