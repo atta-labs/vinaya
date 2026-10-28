@@ -435,6 +435,12 @@ describe('the Vinaya CLI installed at image build', () => {
     expect(install).toContain(`(cd ${VINAYA_HOME} && ${CHANGE_CASE_INSTALL})`)
     expect(install).toContain(`> ${ARCHIVE_DIGEST_PATH}`)
     expect(VINAYA_HOME).toBe('/opt/vinaya')
+    const probe = dockerfile.split('\n').find((line) => line.includes('checkLinuxCodexSandboxTools')) as string
+    expect(probe).toContain(`RUN cd ${VINAYA_HOME} && bun -e `)
+    expect(probe).toContain('from "./apps/cli/src/lib/worker-boundary.ts"')
+    expect(probe).toContain('const tools = checkLinuxCodexSandboxTools()')
+    expect(probe).toContain('if (!tools.available) throw new Error(')
+    expect(dockerfile.indexOf(probe)).toBeGreaterThan(dockerfile.indexOf(install))
   })
 
   it('builds a task converted without the archive with no Vinaya CLI', () => {

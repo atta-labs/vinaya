@@ -233,6 +233,8 @@ describe('the converter', () => {
       expect(image).toContain('ln -s /opt/codex/bin/codex /opt/claude/bin/codex')
       expect(image).toContain(`test "$(claude --version)" = "${CLAUDE_CODE_PACKAGE.split('@').at(-1)} (Claude Code)"`)
       expect(image).toContain(`test "$(codex --version)" = "codex-cli ${GRADING_CODEX_PACKAGE.split('@').at(-1)}"`)
+      expect(image).toContain('apt-get install --yes --no-install-recommends bubblewrap')
+      expect(image).toContain('command -v bwrap && bwrap --version')
     }
     expect(await harborTasksCommand(['--out', out, '--adapter', 'unsupported'])).toBe(2)
   })

@@ -892,6 +892,14 @@ Claude at `/opt/claude/bin/codex`. Neither vendor executable shares a `PATH`
 directory with Bun or Node. Image build asserts the exact installed versions:
 `2.1.300 (Claude Code)` and `codex-cli 0.160.0`.
 
+Images also install Debian's `bubblewrap` package and check `bwrap` on `PATH`
+and its version at build time. Unattended Codex dispatch requires this Linux
+sandbox dependency even in container mode. With the Vinaya archive installed,
+the build runs the production `checkLinuxCodexSandboxTools` probe from
+`worker-boundary.ts` against the image's actual `PATH`, refusing missing tools
+before a trial can start. This checks executable availability; the container
+runtime must also permit the namespaces needed by Codex's sandbox.
+
 `apps/cli/src/lib/dev-review-eval/vinaya_harbor_agent.py` is a Harbor installed agent, a subclass of `BaseInstalledAgent` named `vinaya`:
 
 ```text

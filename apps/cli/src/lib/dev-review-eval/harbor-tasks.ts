@@ -415,6 +415,14 @@ export function codexInstallStep(): string {
 export const GH_INSTALL_STEP =
   'apt-get update && apt-get install --yes --no-install-recommends gh && rm -rf /var/lib/apt/lists/* && gh --version'
 
+/** Linux unattended Codex dispatch requires bubblewrap even inside a Harbor container. */
+export const CODEX_SANDBOX_INSTALL_STEP =
+  'apt-get update && apt-get install --yes --no-install-recommends bubblewrap && rm -rf /var/lib/apt/lists/* && command -v bwrap && bwrap --version'
+
+/** Run the production dispatch tool probe against the image's actual PATH at build time. */
+const CODEX_SANDBOX_BUILD_CHECK =
+  'import { checkLinuxCodexSandboxTools } from "./apps/cli/src/lib/worker-boundary.ts"; const tools = checkLinuxCodexSandboxTools(); if (!tools.available) throw new Error(`Codex sandbox tools missing: ${tools.missing.join(", ")}`)'
+
 /**
  * The last root step of every image: the directories the role, the verifier
  * and the oracle write — the case repository, the case file's directory and
@@ -444,6 +452,7 @@ function dockerfile(
     `FROM ${NODE_IMAGE}`,
     'COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun',
     `RUN ${GH_INSTALL_STEP}`,
+    `RUN ${CODEX_SANDBOX_INSTALL_STEP}`,
     `RUN ${claudeInstallStep()}`,
     `RUN ${codexInstallStep()}`,
     `ENV PATH=${CLAUDE_BIN_DIRECTORY}:$PATH`,
@@ -452,7 +461,13 @@ function dockerfile(
     `RUN test "$(codex --version)" = "codex-cli ${GRADING_CODEX_PACKAGE.split('@').at(-1)}"`,
     'ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
     `RUN useradd -m -u ${TASK_USER_ID} ${TASK_USER}`,
-    ...(withArchive ? [`COPY ${ARCHIVE_FILE} /harbor/${ARCHIVE_FILE}`, `RUN ${vinayaInstallStep()}`] : []),
+    ...(withArchive
+      ? [
+          `COPY ${ARCHIVE_FILE} /harbor/${ARCHIVE_FILE}`,
+          `RUN ${vinayaInstallStep()}`,
+          `RUN cd ${VINAYA_HOME} && bun -e ${shellQuote(CODEX_SANDBOX_BUILD_CHECK)}`
+        ]
+      : []),
     'COPY prepare-repository.sh /harbor/prepare-repository.sh',
     `RUN ${install}sh /harbor/prepare-repository.sh ${[url, '/app', c.baseRevision, ...(head === null ? [] : [head])].map(shellQuote).join(' ')}`,
     'COPY case.json /case/case.json'
