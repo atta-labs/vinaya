@@ -45,6 +45,7 @@ import { runStudio } from './commands/studio.js'
 import { syncCommand } from './commands/sync.js'
 import { taskBriefCommand, taskDispatchCommand } from './commands/task.js'
 import { taskRunCommand } from './commands/task-run.js'
+import { taskSwitchCommand } from './commands/task-switch.js'
 import { taskStatusCommand } from './commands/task-status.js'
 import { taskSweepCommand } from './commands/task-sweep.js'
 import {
@@ -283,13 +284,15 @@ try {
         await taskBriefCommand(rest)
       } else if (subcommand === 'run') {
         await taskRunCommand(rest)
+      } else if (subcommand === 'switch') {
+        await taskSwitchCommand(rest)
       } else if (subcommand === 'status') {
         await taskStatusCommand(rest)
       } else if (subcommand === 'sweep') {
         await taskSweepCommand(rest)
       } else {
         console.error(
-          `Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch', 'brief', 'run', 'status', or 'sweep')`
+          `Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch', 'brief', 'run', 'switch', 'status', or 'sweep')`
         )
         process.exit(2)
       }

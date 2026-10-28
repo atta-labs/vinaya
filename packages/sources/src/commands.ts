@@ -241,6 +241,22 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'task switch',
+    needs: ['forge'],
+    description:
+      "Change a task's agent or model by setting its Engine checkpoint aside, so the next `task run` is accepted",
+    flags: [
+      { flag: '--issue <n>', description: 'Address the task by its Issue number instead of `<tranche> <n>`' },
+      { flag: '--agent <claude|codex>', description: 'Vendor the next `task run` of the task continues on' },
+      { flag: '--model <model>', description: 'Model the next `task run` is meant to use; absent, the vendor default' }
+    ],
+    details: [
+      "Refuses, changing nothing, while a driver for the task is alive, naming its pid. Otherwise moves the task's Engine checkpoint (`checkpoints.sqlite` with its `-wal` and `-shm` files) into a timestamped `switched-*` folder of the task's run directory and never deletes it; the branch, its commits and its pull request are untouched, so the next `task run` with the new agent continues the same branch on a fresh checkpoint.",
+      "Writes one driver-log line naming the from and to agent, the from and to model and the folder the checkpoint went to. On the standalone runner it changes nothing on disk and says that runner already continues a task on a new `--agent` by itself. `task run` and `run-engine --resume` still refuse an agent other than the checkpoint's, and their refusal names this command."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'task status',
     needs: ['forge'],
     description:
