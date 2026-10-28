@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { parse } from 'yaml'
 import { loadProcess } from '../../../../../harness/dev-process/loader/load-process'
 import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
-import { V2_APPROVED_REPAIR_ALLOWANCE, withPolicyCeilings } from '../../../bin/run-engine'
+import { V2_APPROVED_REPAIR_ALLOWANCE, exhaustedPause, withPolicyCeilings } from '../../../bin/run-engine'
 import { heldVerdictPath } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { publicationEffectKey } from '../../../../../apps/cli/src/lib/dev-review-loop/publication'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
@@ -317,6 +317,16 @@ for (const agent of AGENTS) {
     })
   })
 }
+
+test('approved repairs whose CI never turns green pause by name, never as max_rounds', async () => {
+  const observed = await runV2('claude', { policy: { maxRounds: 1, maxTaskMinutes: 0 }, ci: ['red'] })
+  expect(observed.outcome).toBe('exhausted')
+  expect(exhaustedPause('v2').reason).toBe('approved_repairs_spent')
+  expect(exhaustedPause('v1').reason).toBe('max_rounds')
+  expect(observed.rawEvents.filter((event) => event.event === 'round_ended').every((event) => event.round === 1)).toBe(
+    true
+  )
+}, 60_000)
 
 test('approved CI repairs remain bounded by the configured active-time budget', async () => {
   const clock = { elapsedMs: 0, byPhaseMs: {} }

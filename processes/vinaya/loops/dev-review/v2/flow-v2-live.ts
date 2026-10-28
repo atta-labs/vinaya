@@ -285,8 +285,10 @@ export async function runReadyGateLive(input: {
         : status.stdout.trim() !== ''
           ? `the worktree holds uncommitted changes:\n${status.stdout.trim()}`
           : null
-  if (drift !== null)
+  if (drift !== null) {
+    log(`ready push failed: all; refused before the hook ran: ${drift.split('\n')[0]}`)
     return { passed: false, output: `ready push refused: ${drift}`, selection: null, failed: 'all', wallMs: 0 }
+  }
   const hook = await prePushHookPath(input.worktreePath, input.signal)
   if (hook === null) {
     log(`ready push: ${NO_LOCAL_TESTS_MARKER} (the repository has no pre-push hook)`)

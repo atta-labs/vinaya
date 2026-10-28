@@ -253,6 +253,7 @@ export type PauseReason =
   | 'escalation'
   | 'max_rounds'
   | 'ready_push_failed'
+  | 'approved_repairs_spent'
   | 'no_progress'
   | 'confidence'
   | 'reappearance'

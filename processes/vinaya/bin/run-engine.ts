@@ -101,6 +101,7 @@ import {
   realSourceProviderDeps
 } from '../../../apps/cli/src/lib/source-provider'
 import { briefHash as briefHashOf, extractSourceRevision, policyDigest as policyDigestOf } from '@attalabs/aeg-core'
+import type { PauseReason } from '@attalabs/aeg-core'
 import {
   reviewerDevToolContext,
   type DevToolContext,
@@ -746,6 +747,16 @@ export const renderedFlowPath = (runDir: string): string => join(runDir, 'dev-re
  * numbers, which the loader requires; the run compiles the rendered one. A cap that is not a positive whole number
  * leaves the process as it is, since no Flow can carry it.
  */
+/** The pause a spent Flow ceiling records. Version 2's assessment enforces the round cap itself, so a spent ceiling there means the approved repair turns ran out. */
+export function exhaustedPause(flowKey: LoadedProcess['flowKey']): { reason: PauseReason; detail: string } {
+  return flowKey === 'v2'
+    ? {
+        reason: 'approved_repairs_spent',
+        detail: `${V2_APPROVED_REPAIR_ALLOWANCE} approved repair turns ran without a green CI: a ruling grants a fresh run`
+      }
+    : { reason: 'max_rounds', detail: 'the round cap is reached: a ruling grants a fresh run' }
+}
+
 /** Version 2's allowance of repair turns after approval on top of the review rounds, so the Engine still bounds a run whose CI never turns green. */
 export const V2_APPROVED_REPAIR_ALLOWANCE = 10
 
@@ -2072,8 +2083,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       // The Flow spent a decision's revision budget (the review policy's round cap): a pause like any other, made
       // durable by the handoff, so its comment asks for the ruling the watch below then picks up.
       const exhausted = legOutcome?.reason === 'exhausted' && signalled === null
-      if (exhausted)
-        handoff.pause({ reason: 'max_rounds', detail: 'the round cap is reached: a ruling grants a fresh run' })
+      if (exhausted) handoff.pause(exhaustedPause(options.process.flowKey))
       // A refused checkpoint is repaired outside the run, so nothing the watch could read continues it.
       if (
         !lifecycle.watch ||
