@@ -675,12 +675,17 @@ practice report:
 
 ```text
 PYTHONPATH=apps/cli/src/lib/dev-review-eval harbor run --path <harbor-task-directory>/developer-capability-neutral.l5 --include-task-name <case-id> --agent vinaya_harbor_agent:VinayaAgent --ak archive=<file.tar> --model <exact-model-id> --n-attempts 1 --job-name <job-name> --jobs-dir <jobs-directory>
-bun apps/cli/src/lib/dev-review-eval/harbor-results.ts <job-directory> --suite developer-capability-neutral.l5@1 --subscription-auth --bootstrap percentile --seed 1 --resamples 100 --confidence 0.95 --task-root <directory-holding-the-converted-tasks> [--out <file>]
+bun apps/cli/src/lib/dev-review-eval/harbor-results.ts <job-directory> --suite developer-capability-neutral.l5@1 --subscription-auth --result-kind practice --split development --backend standalone --adapter claude-code --trials-per-task 1 --bootstrap percentile --seed 1 --resamples 100 --confidence 0.95 --task-root <directory-holding-the-converted-tasks> [--out <file>]
 ```
 
 Repeat the Harbor job once per layer-`G` role suite and subscription adapter,
 as required by the evaluation program's practice-run order; each reader
-invocation accepts exactly one suite's job. `--suite` is the suite id the
+invocation accepts exactly one suite's job. The same reader turns a job of
+`--n-attempts` equal to the freeze record's trials per task into a scored
+result: `--result-kind scored`, with the split, backend and adapter the job
+was run as and `--trials-per-task` equal to the freeze record's
+(`[--freeze-record <file>]` names another record than the committed one).
+`--suite` is the suite id the
 task's `task.toml` carries in its `metadata.suite`, version included (here
 `developer-capability-neutral.l5@1`). Relative task paths are resolved from
 `--task-root`, the directory holding the converted tasks, or else from the
@@ -705,8 +710,15 @@ committed as `apps/cli/tests/eval/freeze-record.json`. It requires
 product-risk provenance for every Principal floor, explicit seeded bootstrap
 inputs, trials, budget and cadence. Development results and the two
 fixed-floor held-out suite results are measured-only: each list may be empty or
-partial, holds at most one result per suite and adapter, and every result in it
-is fully validated. Every result requires its suite, split, backend, adapter,
+partial, and every result in it is fully validated. A fixed-floor held-out list
+holds at most one result per suite and adapter. Development results hold the
+step-one suites, standalone only, and the backend-comparison suites, whose
+paired development pilot holds one standalone and one Engine result per
+adapter: at most one result per suite, adapter and backend, an Engine result
+of a step-one suite is refused, and a pilot pair whose two runs differ in
+trials per task or in their set of task ids is refused. Every development
+result runs the record's trials per task, so both runs of a pilot pair do.
+Every result requires its suite, split, backend, adapter,
 task tallies, interval, time, quota and estimated-cost measurements, and its
 usage's uncached input, output, cache read (`cacheReadTokens`) and cache
 creation (`cacheCreationTokens`) tokens, each a non-negative count. The
@@ -731,6 +743,19 @@ renderer, so its version may be empty. The record also holds:
 - `practiceRuns` — development results of exactly one trial per task, each
   with its usage and cost and marked `evidence: "never"`: they measure what a
   run costs and decide nothing. A result with more trials is refused.
+- `standaloneHeldOutBaseline` — the standalone layer-`G` held-out baseline:
+  at most one result per backend-comparison suite and adapter, split
+  `held-out`, backend `standalone`, at the record's trials per task, each
+  carrying `heldOutDigest`, the SHA-256 of the held-out case file it was run
+  on. `validateFreezeRecord` takes each suite's pinned held-out digest as its
+  second input, a map from suite name to digest; the committed record is
+  checked against `heldOutDigestsBySuite()` in
+  `apps/cli/tests/eval/generic-suites.ts`, which maps every layer-`G` suite
+  whose derived file has a held-out split to that file's pinned digest. An
+  entry with a missing or different digest, another backend or split, or a
+  duplicate suite and adapter is refused, and so is an entry for a suite the
+  map does not name. The baseline may be observed before the comparison
+  parameters are recorded.
 - `comparisonParameters` — the non-inferiority margin, trials per task and
   minimum task count, with the UTC time they were recorded (`recordedAt`).
   They come only from the paired development pilot, so a record may omit them;
@@ -815,16 +840,26 @@ The binary grader first passes the structured output and the controller's role, 
 
 A live layer-`G` role trial runs as a trial of Harbor `0.24.0`, the evaluation framework installed with `uv tool install harbor`, with the `vinaya` agent: Harbor builds the case's container, the agent runs the Vinaya role for the case inside it, and Harbor's verifier grades the result with the generic graders. Every case of the four layer-`G` role suites — `developer-capability-neutral.l5`, `code-reviewer-quality-neutral.l5`, `security-reviewer-quality-neutral.l5` and `source-delivery-neutral.l5` — runs this way.
 
-Practice runs of these layer-`G` role suites are read from completed Harbor
-jobs, not run by the host step-one command. Run
+Practice runs and scored results of these layer-`G` role suites are read
+from completed Harbor jobs, not run by the host step-one command. Run
 `apps/cli/src/lib/dev-review-eval/harbor-results.ts` with the job directory,
-`--suite`, the required `--subscription-auth` declaration, `--bootstrap`,
+`--suite`, the required `--subscription-auth` declaration, what the job is
+read as — `--result-kind` (`practice` or `scored`), `--split` (`development`
+or `held-out`), `--backend` (`standalone` or `engine`), `--adapter`
+(`claude-code` or `codex`) and `--trials-per-task` — then `--bootstrap`,
 `--seed`, `--resamples`, `--confidence`, optionally `--task-root` for the
 working directory Harbor used to resolve relative local-task paths, and
-optionally `--out`. The reader
-accepts one Harbor `0.24.0` job of the `vinaya` agent, one trial per task and
-one suite per job. It refuses another Harbor version or agent, duplicate task
-trials, mixed suites, and a task without the converter's `task.toml`.
+optionally `--out`. None of the five is inferred from the job or its folder
+name, and a read missing any of them is refused; the printed result carries
+each as given. A practice read takes `--trials-per-task 1` and the
+development split. A scored read takes `--trials-per-task` equal to the
+`trialsPerTask` of the freeze record, `apps/cli/tests/eval/freeze-record.json`
+unless `--freeze-record` names another, and is refused otherwise. The reader
+accepts one Harbor `0.24.0` job of the `vinaya` agent and one suite per job,
+whose lock and completed trials both hold exactly the declared trials of
+every task; any other count refuses the job with `wrong_trial_count`, naming
+the expected and actual counts. It also refuses another Harbor version or
+agent, mixed suites, and a task without the converter's `task.toml`.
 
 The reader accepts the job shape Harbor `0.24.0` writes for the `vinaya`
 agent. The job config names the agent as Harbor was given it,
@@ -836,10 +871,12 @@ config's own, and their `import_path` only when the job config carries one.
 The name `vinaya` appears only as the `agent_info` name of each trial's
 `result.json`, which the reader compares with `vinaya`, the agent its report
 names. Each trial lock's task `digest` must equal the job lock's task `digest`
-for that task. The result's `task_checksum` is not compared: Harbor `0.24.0`
+for that task, and every lock entry of one task names the same task path and
+`digest`. The result's `task_checksum` is not compared: Harbor `0.24.0`
 writes it as a different hash of the task from the lock `digest`. A mismatch
-in any compared field refuses the job with `invalid_input`. Its
-step-one result has purpose `practice` and evidence `never`; it records the
+in any compared field refuses the job with `invalid_input`. Its result has
+the declared purpose, split, backend, adapter and trials per task, and a
+practice run is marked evidence `never`; it records the
 exact model id, subscription authentication, the suite's renderer version,
 per-task outcomes, bootstrap estimate, and the usage and wall time synced from
 each trial. A trial whose task's `task.toml` carries a quarantine (below) is
@@ -962,4 +999,4 @@ Held-out cases convert only through `heldOutCases`, with `--held-out-approval` n
 
 `apps/cli/tests/eval/harbor-practice-fixes.test.ts`, also with no Docker and no model, proves what the first practice trials of the `vinaya` agent needed: the committed traces of three real trials, one per case kind (`fixtures/harbor-jobs/vinaya-trial-traces.json`, tool names alone), read through step one's trace reader, grade on their neutral capabilities alone and reward `1` — the `review` trace's shell commands included, since a reviewer reads the change with shell commands and a layer-`G` review case grants `read_file` and `run_commands`; each with a `WebFetch` call added fails with `capability read_web was not granted`, the `review` trace with an `Edit` added fails with `capability write_file was not granted`, and each applicable known-bad variant fails. It also proves that the layer-`P` Claude reader still returns `StructuredOutput`; that every git-sourced reviewer patch rebuilt with `GIT_DIR` on a depth-1, blob-less clone of a local mirror matches its pinned digest; that a task converted with the archive installs `/opt/vinaya` dependencies at build while the agent's install command holds no `bun install` and refuses a missing or different archive digest; that the `change` trial prompt ends with the loop's own publishing instruction, defined once in the loop; that a container `change` trial records a pull request only when its Developer opened one, bound to its commit; that a task converted with the archive gives `tester` `/opt/vinaya` after its install, and that the agent's run command, built by its own Python, names only paths `tester` owns with `HOME` at `/home/tester`; and, with real `bun`, that two test files and a `.txt` file in `testFiles` — the first file leaving a marker its own process would find in the second — run as two runners and both pass, where one runner fails the second.
 
-`apps/cli/tests/eval/harbor-results.test.ts` proves that a copy of the `vinaya` job fixture whose `failure` task carries a quarantine reports it under `quarantined` with its tally, a mean over the other two tasks and the same usage, and that a stale or partial quarantine refuses the job; `generic-graders.test.ts` proves that a skipped pass-to-pass test passes the hidden-tests grader while a skipped fail-to-pass test, and a failing or unrun pass-to-pass test, fail it.
+`apps/cli/tests/eval/harbor-results.test.ts` proves that a copy of the `vinaya` job fixture whose `failure` task carries a quarantine reports it under `quarantined` with its tally, a mean over the other two tasks and the same usage, and that a stale or partial quarantine refuses the job; that one copy of that job with the freeze record's trials of each task, read four times as scored results of different splits, backends and adapters, prints each result with the values it was given; and that a practice read of that copy, a scored read of the one-trial job or of a job with fewer trials of one task, and a scored read whose trials per task differ from the freeze record's are each refused with the expected and actual counts; `generic-graders.test.ts` proves that a skipped pass-to-pass test passes the hidden-tests grader while a skipped fail-to-pass test, and a failing or unrun pass-to-pass test, fail it.

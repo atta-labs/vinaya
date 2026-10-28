@@ -1,19 +1,36 @@
-/** Reads one completed Harbor 0.24.0 job into a step-one practice result. */
+/**
+ * Reads one completed Harbor 0.24.0 job into one freeze-record result: a
+ * practice run or a scored result, of the split, backend and adapter named.
+ */
 import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { type Quarantine, validateQuarantine } from './contracts'
 import { type BootstrapMethod, separateQuarantined, suiteMean } from './estimators'
 import { canonicalJson } from './neutral-case'
-import type { StepOneAdapter, StepOneResult, StepOneRunSuite, StepOneTrialResult, StepOneUsage } from './step-one'
+import {
+  STEP_ONE_ADAPTERS,
+  type StepOneAdapter,
+  type StepOneResult,
+  type StepOneRunSuite,
+  type StepOneTrialResult,
+  type StepOneUsage
+} from './step-one'
 
 export const HARBOR_RESULTS_VERSION = '0.24.0'
+
+/** The committed freeze record, whose `trialsPerTask` a scored read must equal. */
+export const FREEZE_RECORD_PATH = resolve(import.meta.dir, '../../../tests/eval/freeze-record.json')
+
+/** What a read job becomes: a one-trial practice run, or a scored result at the freeze record's trials per task. */
+export const HARBOR_RESULT_KINDS = ['practice', 'scored'] as const
+export type HarborResultKind = (typeof HARBOR_RESULT_KINDS)[number]
 
 export type HarborResultRefusalCode =
   | 'invalid_input'
   | 'unsupported_harbor_version'
   | 'unsupported_agent'
-  | 'multiple_trials_per_task'
+  | 'wrong_trial_count'
   | 'mixed_suites'
   | 'missing_task_metadata'
 
@@ -27,7 +44,7 @@ export class HarborResultsRefused extends Error {
   }
 }
 
-/** One task's trials in a Harbor practice run. */
+/** One task's trials in a Harbor job. */
 export interface HarborTaskTally {
   taskId: string
   successes: number
@@ -35,23 +52,32 @@ export interface HarborTaskTally {
   unavailable: string[]
 }
 
-export interface HarborPracticeRun extends StepOneResult {
-  purpose: 'practice'
-  trialsPerTask: 1
-  runs: Array<
-    StepOneResult['runs'][number] & {
-      agent: 'vinaya'
-      model: string
-      auth: 'subscription'
-      evidence: 'never'
-      /**
-       * The quarantined tasks, each with its quarantine and its tally: shown,
-       * and counted apart from `tasks`, `taskCount`, `mean` and `interval`;
-       * their usage is still counted.
-       */
-      quarantined: { quarantine: Quarantine; tally: HarborTaskTally }[]
-    }
-  >
+type StepOneRun = StepOneResult['runs'][number]
+
+/** The one run a Harbor job reads into, carrying the split, backend, adapter and trials per task it was read as. */
+export type HarborRun = Omit<StepOneRun, 'split' | 'backend'> & {
+  split: 'development' | 'held-out'
+  backend: 'standalone' | 'engine'
+  agent: 'vinaya'
+  model: string
+  auth: 'subscription'
+  /** Present on a practice run only: it measures cost and is never evidence. */
+  evidence?: 'never'
+  /**
+   * The quarantined tasks, each with its quarantine and its tally: shown,
+   * and counted apart from `tasks`, `taskCount`, `mean` and `interval`;
+   * their usage is still counted.
+   */
+  quarantined: { quarantine: Quarantine; tally: HarborTaskTally }[]
+}
+
+export interface HarborJobResult {
+  kind: 'harbor-job'
+  split: 'development' | 'held-out'
+  backend: 'standalone' | 'engine'
+  purpose: HarborResultKind
+  trialsPerTask: number
+  runs: [HarborRun]
 }
 
 /** The SHA-256 of the canonical JSON of a quarantine's other four fields, which binds its adjudication. */
@@ -80,8 +106,48 @@ export interface HarborResultsOptions {
   /** Directory Harbor resolved relative local-task paths from; defaults to this process's working directory. */
   taskRoot?: string
   suite: StepOneRunSuite
+  /** What the job is read as; nothing below is inferred from the job itself. */
+  resultKind: HarborResultKind
+  split: 'development' | 'held-out'
+  backend: 'standalone' | 'engine'
+  adapter: StepOneAdapter
+  /** The trials each task must have: `1` for a practice run, the freeze record's trials per task for a scored one. */
+  trialsPerTask: number
+  /** The freeze record's `trialsPerTask`, which a scored read's `trialsPerTask` must equal; a scored read needs it. */
+  freezeTrialsPerTask?: number
   subscriptionAuth: true
   bootstrap: { method: BootstrapMethod; seed: number; resamples: number; confidence: number }
+}
+
+/** The declared inputs, or a refusal before the job is opened. */
+function checkDeclared(options: HarborResultsOptions): void {
+  if (!(HARBOR_RESULT_KINDS as readonly unknown[]).includes(options.resultKind))
+    throw new HarborResultsRefused('invalid_input', `result kind must be one of ${HARBOR_RESULT_KINDS.join(', ')}`)
+  if (options.split !== 'development' && options.split !== 'held-out')
+    throw new HarborResultsRefused('invalid_input', 'split must be development or held-out')
+  if (options.backend !== 'standalone' && options.backend !== 'engine')
+    throw new HarborResultsRefused('invalid_input', 'backend must be standalone or engine')
+  if (!(STEP_ONE_ADAPTERS as readonly unknown[]).includes(options.adapter))
+    throw new HarborResultsRefused('invalid_input', `adapter must be one of ${STEP_ONE_ADAPTERS.join(', ')}`)
+  if (!Number.isInteger(options.trialsPerTask) || options.trialsPerTask < 1)
+    throw new HarborResultsRefused('invalid_input', 'trials per task must be a positive integer')
+  if (options.resultKind === 'practice') {
+    if (options.trialsPerTask !== 1)
+      throw new HarborResultsRefused(
+        'wrong_trial_count',
+        `a practice run carries exactly 1 trial per task, not ${options.trialsPerTask}`
+      )
+    if (options.split !== 'development')
+      throw new HarborResultsRefused('invalid_input', 'a practice run reads the development split only')
+    return
+  }
+  if (!Number.isInteger(options.freezeTrialsPerTask) || (options.freezeTrialsPerTask as number) < 1)
+    throw new HarborResultsRefused('invalid_input', "the freeze record's trials per task must be a positive integer")
+  if (options.trialsPerTask !== options.freezeTrialsPerTask)
+    throw new HarborResultsRefused(
+      'wrong_trial_count',
+      `a scored result carries the freeze record's ${options.freezeTrialsPerTask} trials per task, not ${options.trialsPerTask}`
+    )
 }
 
 type Json = Record<string, any>
@@ -181,13 +247,27 @@ function unavailable(result: Json, reward: unknown): string | undefined {
   return typeof reward === 'number' ? undefined : 'trial has no verifier reward'
 }
 
-/** Read and validate one Harbor job. A refusal is typed and no partial report is returned. */
-export function readHarborPracticeRun(options: HarborResultsOptions): {
-  result: HarborPracticeRun
-  trials: Readonly<Record<string, StepOneTrialResult>>
+/**
+ * Read and validate one Harbor job as the result kind, split, backend,
+ * adapter and trials per task the options declare. A refusal is typed and no
+ * partial report is returned.
+ */
+export function readHarborJob(options: HarborResultsOptions): {
+  result: HarborJobResult
+  /** Each task's trial results, in trial-directory order. */
+  trials: Readonly<Record<string, StepOneTrialResult[]>>
 } {
   if (options.subscriptionAuth !== true)
     throw new HarborResultsRefused('invalid_input', 'subscription authentication must be declared')
+  checkDeclared(options)
+  const expected = options.trialsPerTask
+  const checkCount = (taskId: string, actual: number, subject: string) => {
+    if (actual !== expected)
+      throw new HarborResultsRefused(
+        'wrong_trial_count',
+        `${subject} has ${actual} trials of task ${taskId}; a ${options.resultKind} read expects exactly ${expected}`
+      )
+  }
   const lock = json(join(options.jobDirectory, 'lock.json'))
   if (lock.harbor?.version !== HARBOR_RESULTS_VERSION)
     throw new HarborResultsRefused(
@@ -197,28 +277,42 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
   const identity = agentIdentity(json(join(options.jobDirectory, 'config.json')))
   const lockedTrials = Array.isArray(lock.trials) ? lock.trials : []
   if (lockedTrials.length === 0) throw new HarborResultsRefused('invalid_input', 'the job lock has no trials')
+  // The lock names a task once per trial; every trial of one task locks the same task path and digest.
   const lockedByTask = new Map<string, Json>()
+  const lockedCounts = new Map<string, number>()
   for (const trial of lockedTrials) {
     const taskId = text(trial.task?.name)
-    if (taskId === undefined || lockedByTask.has(taskId))
-      throw new HarborResultsRefused('multiple_trials_per_task', 'the job lock must name each task exactly once')
-    lockedByTask.set(taskId, trial)
+    if (taskId === undefined) throw new HarborResultsRefused('invalid_input', 'the job lock names a trial with no task')
+    const first = lockedByTask.get(taskId)
+    if (first === undefined) lockedByTask.set(taskId, trial)
+    else if (text(trial.task?.path) !== text(first.task?.path) || text(trial.task?.digest) !== text(first.task?.digest))
+      throw new HarborResultsRefused('invalid_input', `the job lock gives ${taskId} more than one task path or digest`)
+    lockedCounts.set(taskId, (lockedCounts.get(taskId) ?? 0) + 1)
   }
+  for (const [taskId, count] of lockedCounts) checkCount(taskId, count, 'the job lock')
   // A trial directory is a direct child with Harbor's terminal result file.
   const directories = readdirSync(options.jobDirectory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(options.jobDirectory, entry.name, 'result.json')))
     .map((entry) => join(options.jobDirectory, entry.name))
     .sort()
   if (directories.length === 0) throw new HarborResultsRefused('invalid_input', 'the job has no completed trial')
-  const discoveredTaskIds = directories.map((directory) => text(json(join(directory, 'result.json')).task_name))
-  if (new Set(discoveredTaskIds).size !== discoveredTaskIds.length)
-    throw new HarborResultsRefused('multiple_trials_per_task', 'the job has more than one trial for one task')
-  const seen = new Set<string>()
+  const completedCounts = new Map<string, number>()
+  for (const directory of directories) {
+    const taskId = text(json(join(directory, 'result.json')).task_name)
+    if (taskId === undefined) throw new HarborResultsRefused('invalid_input', `${directory} has no task name`)
+    completedCounts.set(taskId, (completedCounts.get(taskId) ?? 0) + 1)
+  }
+  if (
+    completedCounts.size !== lockedByTask.size ||
+    [...lockedByTask.keys()].some((taskId) => !completedCounts.has(taskId))
+  )
+    throw new HarborResultsRefused('invalid_input', 'completed trials do not match the job lock')
+  for (const [taskId, count] of completedCounts) checkCount(taskId, count, 'the job')
   const suites = new Set<string>()
   const renderers = new Set<string>()
-  const tallies: HarborTaskTally[] = []
+  const talliesByTask = new Map<string, HarborTaskTally>()
   const quarantines: Quarantine[] = []
-  const trials: Record<string, StepOneTrialResult> = {}
+  const trials: Record<string, StepOneTrialResult[]> = {}
   const usage: StepOneUsage = {
     wallTimeMs: 0,
     inputTokens: 0,
@@ -235,11 +329,7 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
       ? json(join(directory, 'config.json'))
       : (result.config ?? {})
     const trialLock = existsSync(join(directory, 'lock.json')) ? json(join(directory, 'lock.json')) : {}
-    const taskId = text(result.task_name)
-    if (taskId === undefined) throw new HarborResultsRefused('invalid_input', `${directory} has no task name`)
-    if (seen.has(taskId))
-      throw new HarborResultsRefused('multiple_trials_per_task', `job has more than one trial for ${taskId}`)
-    seen.add(taskId)
+    const taskId = text(result.task_name) as string
     const locked = lockedByTask.get(taskId)
     if (locked === undefined)
       throw new HarborResultsRefused('invalid_input', `${directory} names a task absent from the job lock`)
@@ -262,7 +352,7 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     same(trialLock.task?.digest, text(locked.task?.digest) ?? '', `${directory} trial lock task digest`)
     const task = taskPath(options.taskRoot, lockedPath)
     const taskMetadata = metadata(join(task, 'task.toml'), taskId)
-    if (taskMetadata.quarantine !== null) quarantines.push(taskMetadata.quarantine)
+    if (taskMetadata.quarantine !== null && !talliesByTask.has(taskId)) quarantines.push(taskMetadata.quarantine)
     suites.add(taskMetadata.suite)
     renderers.add(taskMetadata.rendererVersion)
     const reward = result.verifier_result?.rewards?.reward
@@ -289,8 +379,12 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
       rendererVersion: taskMetadata.rendererVersion,
       usage: measuredUsage
     }
-    trials[taskId] = trial
-    tallies.push({ taskId, successes: trial.success ? 1 : 0, trials: 1, unavailable: reason ? [reason] : [] })
+    trials[taskId] = [...(trials[taskId] ?? []), trial]
+    const tally = talliesByTask.get(taskId) ?? { taskId, successes: 0, trials: 0, unavailable: [] }
+    tally.successes += trial.success ? 1 : 0
+    tally.trials += 1
+    if (reason !== undefined) tally.unavailable.push(reason)
+    talliesByTask.set(taskId, tally)
     usage.wallTimeMs += measuredUsage.wallTimeMs
     usage.inputTokens += measuredUsage.inputTokens
     usage.outputTokens += measuredUsage.outputTokens
@@ -300,8 +394,7 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     if (measuredUsage.subscriptionQuota === null) quotaUnavailableTrials++
     else usage.subscriptionQuota = (usage.subscriptionQuota ?? 0) + measuredUsage.subscriptionQuota
   }
-  if (seen.size !== lockedByTask.size || [...lockedByTask.keys()].some((taskId) => !seen.has(taskId)))
-    throw new HarborResultsRefused('invalid_input', 'completed trials do not match the job lock')
+  const tallies = [...talliesByTask.values()]
   if (suites.size !== 1) throw new HarborResultsRefused('mixed_suites', `job contains ${[...suites].sort().join(', ')}`)
   if (!suites.has(options.suite))
     throw new HarborResultsRefused('mixed_suites', `job suite is ${[...suites][0]}, not ${options.suite}`)
@@ -318,34 +411,37 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
   }))
   const estimate = suiteMean(estimated, options.bootstrap)
   if (!estimate.ok) throw new HarborResultsRefused('invalid_input', estimate.refusal.detail)
-  const run: HarborPracticeRun['runs'][number] = {
+  const run: HarborRun = {
     suite: options.suite,
-    split: 'development',
-    backend: 'standalone',
-    adapter: 'claude-code' as StepOneAdapter,
+    split: options.split,
+    backend: options.backend,
+    adapter: options.adapter,
     layer: 'G',
     rendererVersion: [...renderers][0] as string,
     agent: 'vinaya',
     model: identity.model,
     auth: 'subscription',
-    evidence: 'never',
+    ...(options.resultKind === 'practice' ? { evidence: 'never' as const } : {}),
     taskCount: estimated.length,
-    trialsPerTask: 1,
+    trialsPerTask: expected,
     tasks: estimated,
     quarantined,
     mean: estimate.value.mean,
     interval: estimate.value.interval,
-    usage: { ...usage, subscriptionQuota: quotaUnavailableTrials === tallies.length ? null : usage.subscriptionQuota },
+    usage: {
+      ...usage,
+      subscriptionQuota: quotaUnavailableTrials === directories.length ? null : usage.subscriptionQuota
+    },
     quotaUnavailableTrials
   }
   return {
     trials,
     result: {
-      kind: 'development-standalone-step-one',
-      split: 'development',
-      backend: 'standalone',
-      purpose: 'practice',
-      trialsPerTask: 1,
+      kind: 'harbor-job',
+      split: options.split,
+      backend: options.backend,
+      purpose: options.resultKind,
+      trialsPerTask: expected,
       runs: [run]
     }
   }
@@ -356,10 +452,24 @@ function value(argv: readonly string[], name: string): string | undefined {
   return at < 0 ? undefined : argv[at + 1]
 }
 
+/** The `trialsPerTask` of the freeze record at `path`. */
+function freezeTrialsPerTask(path: string): number {
+  if (!existsSync(path)) throw new HarborResultsRefused('invalid_input', `no freeze record at ${path}`)
+  const trials = json(path).trialsPerTask
+  if (!Number.isInteger(trials) || trials < 1)
+    throw new HarborResultsRefused('invalid_input', `${path} carries no positive integer trialsPerTask`)
+  return trials
+}
+
 export function harborResultsMain(argv: readonly string[]): number {
   try {
     const jobDirectory = argv[0]
     const suite = value(argv, 'suite') as StepOneRunSuite | undefined
+    const resultKind = value(argv, 'result-kind') as HarborResultKind | undefined
+    const split = value(argv, 'split') as HarborResultsOptions['split'] | undefined
+    const backend = value(argv, 'backend') as HarborResultsOptions['backend'] | undefined
+    const adapter = value(argv, 'adapter') as StepOneAdapter | undefined
+    const trials = value(argv, 'trials-per-task')
     const method = value(argv, 'bootstrap') as BootstrapMethod | undefined
     const seed = Number(value(argv, 'seed'))
     const resamples = Number(value(argv, 'resamples'))
@@ -369,10 +479,24 @@ export function harborResultsMain(argv: readonly string[]): number {
         'invalid_input',
         'job directory, suite, subscription auth and bootstrap flags are required'
       )
-    const report = readHarborPracticeRun({
+    // What the job is read as is declared, never inferred from the job or its folder name.
+    if (!resultKind || !split || !backend || !adapter || trials === undefined)
+      throw new HarborResultsRefused(
+        'invalid_input',
+        '--result-kind, --split, --backend, --adapter and --trials-per-task are required'
+      )
+    const report = readHarborJob({
       jobDirectory,
       taskRoot: value(argv, 'task-root'),
       suite,
+      resultKind,
+      split,
+      backend,
+      adapter,
+      trialsPerTask: Number(trials),
+      ...(resultKind === 'scored'
+        ? { freezeTrialsPerTask: freezeTrialsPerTask(value(argv, 'freeze-record') ?? FREEZE_RECORD_PATH) }
+        : {}),
       subscriptionAuth: true,
       bootstrap: { method, seed, resamples, confidence }
     }).result

@@ -62,6 +62,20 @@ export interface PracticeRunResult extends MeasuredResult {
   evidence: 'never'
 }
 
+/**
+ * A standalone held-out result of a backend-comparison suite: the baseline
+ * the Engine held-out result is paired against, pinned to the SHA-256 of the
+ * held-out case file it was run on.
+ */
+export interface StandaloneHeldOutResult extends MeasuredResult {
+  split: 'held-out'
+  backend: 'standalone'
+  heldOutDigest: string
+}
+
+/** Each backend-comparison suite's pinned held-out case-file digest, by suite name without its version. */
+export type HeldOutDigests = Readonly<Record<string, string>>
+
 /** An Engine held-out result, with the time it was recorded. */
 export interface EngineHeldOutResult extends MeasuredResult {
   split: 'held-out'
@@ -143,6 +157,7 @@ export interface FreezeRecord {
   developmentRuns: MeasuredResult[]
   backendComparisonFloors: BackendComparisonFloor[]
   practiceRuns: PracticeRunResult[]
+  standaloneHeldOutBaseline: StandaloneHeldOutResult[]
   comparisonParameters?: ComparisonParameters
   engineHeldOut: EngineHeldOutResult[]
   heldOut: {
@@ -313,8 +328,12 @@ function measuredResult(
   return null
 }
 
-/** Validates the complete record before any authoritative held-out run. */
-export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
+/**
+ * Validates the complete record before any authoritative held-out run.
+ * `heldOutDigests` names each backend-comparison suite's pinned held-out
+ * case-file digest, which its standalone baseline entries must carry.
+ */
+export function validateFreezeRecord(input: unknown, heldOutDigests: HeldOutDigests): FreezeRecordValidation {
   if (!object(input)) return fail('', 'record is required')
   // The comparison parameters are the one optional root value: they are
   // recorded only from the paired development pilot.
@@ -331,6 +350,7 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
       'developmentRuns',
       'backendComparisonFloors',
       'practiceRuns',
+      'standaloneHeldOutBaseline',
       ...(hasParameters ? ['comparisonParameters'] : []),
       'engineHeldOut',
       'heldOut',
@@ -404,21 +424,40 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
     if (typeof input.cadence[key] !== 'string' || input.cadence[key] === '')
       return fail(`cadence.${key}`, 'value is required')
 
+  // The step-one suites run standalone only; a backend-comparison suite's
+  // paired development pilot holds one standalone and one Engine result per
+  // adapter, on the same tasks at the same trials per task.
   if (!Array.isArray(input.developmentRuns)) return fail('developmentRuns', 'array is required')
-  const seenDevelopment: string[] = []
+  const development = new Map<string, { index: number; value: MeasuredResult }>()
   for (const [index, result] of input.developmentRuns.entries()) {
-    const invalid = measuredResult(result, `developmentRuns[${index}]`, {
-      suites: STEP_ONE_SUITES,
+    const path = `developmentRuns[${index}]`
+    const invalid = measuredResult(result, path, {
+      suites: [...STEP_ONE_SUITES, ...BACKEND_COMPARISON_SUITES],
       split: 'development',
-      backends: ['standalone'],
+      backends: ['standalone', 'engine'],
       trials
     })
     if (invalid !== null) return invalid
     const value = result as MeasuredResult
-    const key = `${value.suite}:${value.adapter}`
-    if (seenDevelopment.includes(key))
-      return fail(`developmentRuns[${index}]`, 'at most one result per suite and adapter is permitted')
-    seenDevelopment.push(key)
+    if (value.backend === 'engine' && !BACKEND_COMPARISON_SUITES.includes(value.suite as LiveSuite))
+      return fail(`${path}.backend`, 'only a backend-comparison suite has an Engine development result')
+    const key = `${value.suite}:${value.adapter}:${value.backend}`
+    if (development.has(key)) return fail(path, 'at most one result per suite, adapter and backend is permitted')
+    development.set(key, { index, value })
+  }
+  for (const { index, value: engine } of development.values()) {
+    if (engine.backend !== 'engine') continue
+    const standalone = development.get(`${engine.suite}:${engine.adapter}:standalone`)?.value
+    if (standalone === undefined) continue
+    const path = `developmentRuns[${index}]`
+    if (engine.trialsPerTask !== standalone.trialsPerTask)
+      return fail(
+        `${path}.trialsPerTask`,
+        `a pilot pair runs both backends at the same trials per task: Engine ${engine.trialsPerTask}, standalone ${standalone.trialsPerTask}`
+      )
+    const standaloneTasks = new Set(standalone.tasks.map((task) => task.taskId))
+    if (engine.tasks.length !== standaloneTasks.size || engine.tasks.some((task) => !standaloneTasks.has(task.taskId)))
+      return fail(`${path}.tasks`, 'a pilot pair runs both backends on the same tasks')
   }
 
   if (!Array.isArray(input.backendComparisonFloors)) return fail('backendComparisonFloors', 'array is required')
@@ -471,6 +510,29 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
     if (invalid !== null) return invalid
     if ((result as Record<string, unknown>).evidence !== 'never')
       return fail(`${path}.evidence`, 'a practice run measures cost and is never evidence')
+  }
+
+  if (!Array.isArray(input.standaloneHeldOutBaseline)) return fail('standaloneHeldOutBaseline', 'array is required')
+  const baselined: string[] = []
+  for (const [index, result] of input.standaloneHeldOutBaseline.entries()) {
+    const path = `standaloneHeldOutBaseline[${index}]`
+    const invalid = measuredResult(result, path, {
+      suites: BACKEND_COMPARISON_SUITES,
+      split: 'held-out',
+      backends: ['standalone'],
+      trials,
+      extraKeys: ['heldOutDigest']
+    })
+    if (invalid !== null) return invalid
+    const value = result as StandaloneHeldOutResult
+    const pinned = Object.hasOwn(heldOutDigests, value.suite) ? heldOutDigests[value.suite] : undefined
+    if (pinned === undefined) return fail(`${path}.suite`, `no pinned held-out digest names suite ${value.suite}`)
+    if (value.heldOutDigest !== pinned)
+      return fail(`${path}.heldOutDigest`, `must equal the pinned held-out digest of ${value.suite}, ${pinned}`)
+    const key = `${value.suite}:${value.adapter}`
+    if (baselined.includes(key))
+      return fail(path, 'at most one standalone held-out baseline per suite and adapter is permitted')
+    baselined.push(key)
   }
 
   const parameters = input.comparisonParameters

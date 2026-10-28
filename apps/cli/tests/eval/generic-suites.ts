@@ -149,6 +149,21 @@ const FAMILY: Readonly<Record<GenericSuiteKey, keyof typeof DERIVED_FILE_DIGESTS
   wholeLoop: 'wholeLoop'
 }
 
+/**
+ * Each suite's pinned held-out digest, by its name without the `@` version:
+ * every suite whose derived file has a held-out split. The freeze record's
+ * standalone held-out baseline is checked against it.
+ */
+export function heldOutDigestsBySuite(): Record<string, string> {
+  const digests: Record<string, string> = {}
+  for (const key of Object.keys(GENERIC_SUITE_IDS) as GenericSuiteKey[]) {
+    const pinned: { heldOut?: string } = DERIVED_FILE_DIGESTS[FAMILY[key]]
+    if (pinned.heldOut === undefined) continue
+    digests[GENERIC_SUITE_IDS[key].split('@')[0] as string] = pinned.heldOut
+  }
+  return digests
+}
+
 /** Each suite's cost layer: the whole loop runs every role against a real forge, the rest one role each. */
 const LAYER: Readonly<Record<GenericSuiteKey, EvaluationLayer>> = {
   developer: 'L5',
