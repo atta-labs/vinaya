@@ -758,15 +758,18 @@ export function mergeMovedDefaultBranch(scope: LivePublicationScope): { conflict
       if (merge.merged)
         appendDriverLine(
           loopLogPath,
-          `Merged main ${tip} into ${branch} before the Developer turn (${merge.oldHead} → ${merge.head})`,
+          `Merged the default branch ${tip} into ${branch} before the Developer turn (${merge.oldHead} → ${merge.head})`,
           'done'
         )
       return none
     }
-    if (merge.conflictFiles.length === 0) return none
+    if (merge.conflictFiles.length === 0) {
+      appendDriverLine(loopLogPath, `Did not merge the default branch ${tip} into ${branch}: ${merge.reason}`, 'done')
+      return none
+    }
     appendDriverLine(
       loopLogPath,
-      `Merging main ${tip} into ${branch} conflicts in ${merge.conflictFiles.join(', ')}; the merge was aborted and the Developer is sent the files`,
+      `Merging the default branch ${tip} into ${branch} conflicts in ${merge.conflictFiles.join(', ')}; the merge was aborted and the Developer is sent the files`,
       'done'
     )
     return { conflictFiles: merge.conflictFiles }

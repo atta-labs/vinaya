@@ -970,6 +970,28 @@ describe('main drift on a protected path, against a real repository', () => {
       expect(readFileSync(join(dir, 'own.txt'), 'utf8')).toBe('edited\n')
     })
 
+    it('returns the conflicting files for the turn prompt, logging the skip for a non-conflict refusal', () => {
+      const { dir, tip } = fixture()
+      const scopeWith = (merge: LoopDeps['mergeDefaultTip']): LivePublicationScope =>
+        ({
+          d: { readDefaultBranchTip: () => tip, mergeDefaultTip: merge } as unknown as LoopDeps,
+          task: 1,
+          branch: 'task/t/1',
+          repo: null,
+          worktree: dir,
+          runtimeRoot: dir,
+          loopLogPath: join(dir, 'loop.log'),
+          state: createLivePublicationState(null)
+        }) as LivePublicationScope
+      expect(
+        mergeMovedDefaultBranch(scopeWith(() => ({ ok: false, conflictFiles: ['x.ts', 'y.ts'], reason: 'conflicts' })))
+      ).toEqual({ conflictFiles: ['x.ts', 'y.ts'] })
+      expect(
+        mergeMovedDefaultBranch(scopeWith(() => ({ ok: false, conflictFiles: [], reason: 'the worktree is dirty' })))
+      ).toEqual({ conflictFiles: null })
+      expect(readFileSync(join(dir, 'loop.log'), 'utf8')).toContain('the worktree is dirty')
+    })
+
     it('records the merged head as the turn start, so the base check accepts the merge', async () => {
       const { dir, base, tip } = fixture()
       const d = {
