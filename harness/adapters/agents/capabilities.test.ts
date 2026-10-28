@@ -153,9 +153,15 @@ describe('the developer before and after the capability contract', () => {
       ''
     ].join('\n')
     expect(codex.files['config.toml']).toContain(credentialEnv)
-    expect((codex.files['config.toml'] as string).replace(credentialEnv, '').replace('required = true\n', '')).toBe(
-      before.codex.files['config.toml'] as string
-    )
+    // Intended: workspace-write no longer opens /tmp or $TMPDIR beside the named writable roots.
+    const tmpClosed = 'exclude_slash_tmp = true\nexclude_tmpdir_env_var = true\n'
+    expect(codex.files['config.toml']).toContain(tmpClosed)
+    expect(
+      (codex.files['config.toml'] as string)
+        .replace(credentialEnv, '')
+        .replace('required = true\n', '')
+        .replace(tmpClosed, '')
+    ).toBe(before.codex.files['config.toml'] as string)
     expect(codex.files['rules/role.rules']).toBe(before.codex.files['rules/role.rules'] as string)
     // The hook's code learned flag-anywhere rules; the policy it embeds is unchanged.
     expect(embeddedPolicy(codex)).toBe(embeddedPolicy(before.codex))
