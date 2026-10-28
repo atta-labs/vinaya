@@ -739,14 +739,6 @@ export async function dryRunLines(options: {
 /** Where a run's own Flow is written: the checked-in one with the run's policy ceilings, under its run directory. */
 export const renderedFlowPath = (runDir: string): string => join(runDir, 'dev-review.flow.yaml')
 
-/**
- * The process with its Flow rendered for one run: every decision's `max_revisions` set to the review policy's
- * `maxRounds` in version 1. Version 2 enforces review rounds and ready-push failures in its checkpointed actions,
- * independently of agent dispatches; the Engine's step counter only adds a finite allowance of approved repair turns.
- * That file is the process's Flow. The checked-in Flow keeps literal
- * numbers, which the loader requires; the run compiles the rendered one. A cap that is not a positive whole number
- * leaves the process as it is, since no Flow can carry it.
- */
 /** The pause a spent Flow ceiling records. Version 2's assessment enforces the round cap itself, so a spent ceiling there means the approved repair turns ran out. */
 export function exhaustedPause(flowKey: LoadedProcess['flowKey']): { reason: PauseReason; detail: string } {
   return flowKey === 'v2'
@@ -757,6 +749,14 @@ export function exhaustedPause(flowKey: LoadedProcess['flowKey']): { reason: Pau
     : { reason: 'max_rounds', detail: 'the round cap is reached: a ruling grants a fresh run' }
 }
 
+/**
+ * The process with its Flow rendered for one run: every decision's `max_revisions` set to the review policy's
+ * `maxRounds` in version 1. Version 2 enforces review rounds and ready-push failures in its checkpointed actions,
+ * independently of agent dispatches; the Engine's step counter only adds a finite allowance of approved repair turns.
+ * That file is the process's Flow. The checked-in Flow keeps literal
+ * numbers, which the loader requires; the run compiles the rendered one. A cap that is not a positive whole number
+ * leaves the process as it is, since no Flow can carry it.
+ */
 /** Version 2's allowance of repair turns after approval on top of the review rounds, so the Engine still bounds a run whose CI never turns green. */
 export const V2_APPROVED_REPAIR_ALLOWANCE = 10
 

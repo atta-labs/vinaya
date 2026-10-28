@@ -403,6 +403,8 @@ export const NO_COUNTERS: RoundCounters = { unpushedResumeAttempted: false, gate
 export interface LoopRecord {
   /** Consecutive ready-push failures, carried only by version 2 records. */
   readyPushFailures?: number
+  /** Whether this record paused the run. */
+  paused: boolean
   step: string
   seq: number
   state: LoopState
@@ -469,7 +471,8 @@ export function latestRecord(results: Results): LoopRecord | null {
       state,
       counters: { ...NO_COUNTERS, ...(parsed.counters as Partial<RoundCounters> | undefined) },
       sendBack: (parsed.sendBack as SendBack | undefined) ?? null,
-      answered: (parsed.answered as SendBackKind | undefined) ?? null
+      answered: (parsed.answered as SendBackKind | undefined) ?? null,
+      paused: (parsed.decision as { type?: unknown } | undefined)?.type === 'pause'
     }
   }
   return latest
@@ -506,7 +509,9 @@ export function recordOutput(
     [extra: string]: unknown
   }
 ): string {
-  const failures = latestRecord(results)?.readyPushFailures
+  // Only a resume writes a record after a pause, and the ruling it carries starts a fresh ready-push count.
+  const latest = latestRecord(results)
+  const failures = latest?.paused ? 0 : latest?.readyPushFailures
   return JSON.stringify({
     ...(failures === undefined ? {} : { readyPushFailures: failures }),
     ...fields,

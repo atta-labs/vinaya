@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { parse } from 'yaml'
 import { loadProcess } from '../../../../../harness/dev-process/loader/load-process'
 import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { decodeLoopState, type latestRecord, recordOutput } from '../../../executing/actions'
 import { V2_APPROVED_REPAIR_ALLOWANCE, exhaustedPause, withPolicyCeilings } from '../../../bin/run-engine'
 import { heldVerdictPath } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { publicationEffectKey } from '../../../../../apps/cli/src/lib/dev-review-loop/publication'
@@ -452,6 +453,17 @@ test('publication effects bind to each approved head without changing legacy ide
     )
     expect(publicationEffectKey({ round: 1, expectedHead: 'anything' }, kind)).toBe(`1-${kind}`)
   }
+})
+
+test('the first record after a ready-push pause, written on resume, starts a fresh failure count', async () => {
+  const observed = await runV2('codex', { policy: { maxRounds: 1 }, failingTests: () => ['/repo/b.test.ts'] })
+  const paused = records(observed, 'ready-push').at(-1) as Record<string, unknown>
+  expect(paused.readyPushFailures).toBe(3)
+  const results = { 'ready-push': { stdout: JSON.stringify(paused) } } as unknown as Parameters<typeof latestRecord>[0]
+  const resumed = JSON.parse(recordOutput(results, decodeLoopState(JSON.stringify(paused.state)), {})) as {
+    readyPushFailures?: number
+  }
+  expect(resumed.readyPushFailures).toBe(0)
 })
 
 test('a ready-push pause leaves no held approval that resume could publish', async () => {

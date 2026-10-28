@@ -153,7 +153,8 @@ import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
 import {
   deriveLoopState,
-  newestPublishedRound,
+  newestPublication,
+  pauseSuperseded,
   readStartClaim,
   type TaskAddress,
   type TaskLoopState
@@ -733,8 +734,7 @@ export function defaultPauseDisposition(issue: number, root: string = runtimeDir
     // `paused` at all. Without it, reading the record directly (which the
     // gate must, see below) would refuse a task that paused, resumed and
     // published rounds ago.
-    const published = newestPublishedRound(root, issue)
-    if (published !== null && held.round <= published) return 'none'
+    if (pauseSuperseded(held, newestPublication(root, issue))) return 'none'
 
     const csDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
     const escalationId = held.escalationId ?? escalationIdFor(issue, held.round, held.head)

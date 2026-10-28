@@ -43,7 +43,9 @@ import {
 import {
   deriveLoopState,
   lastRoundVerdictLines,
+  newestPublication,
   newestPublishedRound,
+  pauseSuperseded,
   readStartClaim,
   resumeCommandFor,
   type RoundVerdictLines,
@@ -210,8 +212,7 @@ export function readEscalationPacket(root: string, task: number): TaskEscalation
   const pause: PauseState | null = readPauseState(root, task)
   if (!pause) return null
 
-  const published = newestPublishedRound(root, task)
-  const freshness: Freshness = published !== null && pause.round <= published ? 'stale' : 'fresh'
+  const freshness: Freshness = pauseSuperseded(pause, newestPublication(root, task)) ? 'stale' : 'fresh'
 
   const verdictLines: RoundVerdictLines | null = lastRoundVerdictLines(root, task)
   const profile = PAUSE_REASON_PROFILE[pause.reason]

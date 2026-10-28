@@ -31,7 +31,7 @@ import {
   isPrincipal,
   isPublishedSummaryComment,
   parseSummaryConfidenceRows,
-  readEffect,
+  readEffects,
   readLoopState,
   resolveNewestFrozenBrief,
   taskPhaseLabel,
@@ -387,27 +387,52 @@ function readPauseState(root: string, task: number): PauseState | null {
  * `round` — the driver writes it at every transition, `publish` included
  * (`persistCurrentLoopState('publish')` runs right after `publishRound`), so
  * it is never below a round that actually published — and each round is read
- * through `readEffect`, never enumerated off disk. No `loop_state` record
+ * through `readEffects`. No `loop_state` record
  * means no run ever persisted state for this task, so nothing has published.
  */
 export function newestPublishedRound(root: string, task: number): number | null {
+  return newestPublication(root, task)?.round ?? null
+}
+
+/** A round's verified publication and when it landed. */
+export type Publication = { round: number; recordedAt: string }
+
+/**
+ * The newest verified publication. Version 2 keys each approved head's verdicts `<round>-<head>-<kind>`, since it
+ * may publish more than one head in a round; both key shapes are read, and a round's reviewer and security verdicts
+ * must share one head to count.
+ */
+export function newestPublication(root: string, task: number): Publication | null {
   const deps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
   const loopState = readLoopState(deps, task)
   if (loopState.status !== 'ok') return null
-  let newest: number | null = null
-  for (let round = 1; round <= loopState.value.round; round++) {
-    const reviewer = readEffect(deps, task, `${round}-reviewer-verdict`)
-    const security = readEffect(deps, task, `${round}-security-verdict`)
-    if (
-      reviewer.status === 'ok' &&
-      reviewer.value.status === 'verified' &&
-      security.status === 'ok' &&
-      security.value.status === 'verified'
-    ) {
-      newest = round
-    }
+  const verified = new Map<string, string>()
+  for (const record of readEffects(deps, task))
+    if (record.status === 'ok' && record.value.status === 'verified')
+      verified.set(record.value.key, record.value.recordedAt)
+  let newest: Publication | null = null
+  for (const [key, reviewerAt] of verified) {
+    const match = /^(\d+)(-[0-9a-f]+)?-reviewer-verdict$/.exec(key)
+    if (!match) continue
+    const round = Number(match[1])
+    const securityAt = verified.get(`${match[1]}${match[2] ?? ''}-security-verdict`)
+    if (securityAt === undefined || round > loopState.value.round) continue
+    const recordedAt = reviewerAt > securityAt ? reviewerAt : securityAt
+    if (newest === null || round > newest.round || (round === newest.round && recordedAt > newest.recordedAt))
+      newest = { round, recordedAt }
   }
   return newest
+}
+
+/**
+ * A pause is history once a publication follows it: a later round published, or its own round published after it
+ * paused. Version 2 publishes before reading CI, so a pause later in that same round still holds.
+ */
+export function pauseSuperseded(pause: { round: number; pausedAt: string }, publication: Publication | null): boolean {
+  if (publication === null) return false
+  return (
+    pause.round < publication.round || (pause.round === publication.round && pause.pausedAt <= publication.recordedAt)
+  )
 }
 
 // --- a start that was accepted, before its driver is confirmed --------------
@@ -691,12 +716,12 @@ export function deriveLoopState(
     }
   }
 
-  const published = newestPublishedRound(root, task)
+  const publication = newestPublication(root, task)
   const pause = readPauseState(root, task)
-  if (pause && (published === null || pause.round > published)) {
+  if (pause && !pauseSuperseded(pause, publication)) {
     return { kind: 'paused', reason: pause.reason, detail: pause.detail, round: pause.round }
   }
-  if (published !== null) return { kind: 'published', round: published }
+  if (publication !== null) return { kind: 'published', round: publication.round }
   // The last-resort reading: on the one path that otherwise ends in
   // `no_driver`, a fresh start claim is the only record that says anything about
   // this task at all.
