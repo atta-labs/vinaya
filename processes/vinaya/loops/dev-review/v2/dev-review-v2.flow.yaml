@@ -16,10 +16,12 @@ agents:
   - role: security-reviewer
 steps:
   - { id: prepare-run, type: mechanical, action: vinaya.prepare-run }
-  - { id: reconcile-external-state, type: mechanical, action: vinaya.reconcile-external-state }
+  # An open pull request's mergeability is read here, first: a conflicting one records the conflict (its files and the
+  # default branch's tip fetched for the repair) for the Developer's first turn.
+  - { id: reconcile-external-state, type: mechanical, action: vinaya.v2-reconcile-external-state }
   - { id: prepare-sources, type: mechanical, action: vinaya.prepare-sources }
   # As in version 1, the Developer is listed before the decision that routes to it: true (no pull request is open
-  # yet) develops, false (one is, from an earlier approval) attaches at the local checks.
+  # yet, or the open one conflicts) develops, false (one is open and mergeable) attaches at the local checks.
   - id: develop
     type: agent
     role: developer
@@ -38,7 +40,15 @@ steps:
   - id: classify-developer-output
     type: mechanical
     action: vinaya.classify-developer-output
-    decision: { examine: validate-developer-output, if_true: develop, if_false: run-mechanical-gates, max_revisions: 3 }
+    decision: { examine: validate-developer-output, if_true: develop, if_false: prove-conflict-repair, max_revisions: 3 }
+  # A turn that answered a conflict is proven before anything judges it: a merge commit whose parents include the
+  # default branch's fetched tip, no unresolved index entry, a clean merge with the default branch fetched now, and a
+  # MERGEABLE pull request. Unproven goes back to the Developer; with no conflict owed the step passes.
+  - { id: prove-conflict-repair, type: mechanical, action: vinaya.v2-prove-conflict-repair }
+  - id: classify-conflict-repair
+    type: mechanical
+    action: vinaya.v2-classify-conflict-repair
+    decision: { examine: prove-conflict-repair, if_true: develop, if_false: run-mechanical-gates, max_revisions: 3 }
   # A local round: the local checks (`check --all --local`, judging the staged body), the premise against the staged
   # body, then the shared gate assessment. No mergeability poll and no CI wait: no pull request is open.
   - { id: run-mechanical-gates, type: mechanical, action: vinaya.v2-local-checks }

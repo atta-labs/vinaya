@@ -553,12 +553,16 @@ export function fetchConflictingFiles(baseBranch: string, headBranch: string): s
   }
 }
 
-/** O4/O6: the loop's own conflict prompt — names the conflicting file(s) so the developer does not have to re-derive mergeability itself. `publishingInstruction` is the publishing-instruction clause every Developer prompt ends with. */
-export function renderConflictPrompt(files: readonly string[], publishingInstruction: string): string {
+/** O4/O6: the loop's own conflict prompt — names the conflicting file(s) so the developer does not have to re-derive mergeability itself. `publishingInstruction` is the publishing-instruction clause every Developer prompt ends with; `target` is the commit to merge, `origin/main` unless the driver fetched a tip for the repair. */
+export function renderConflictPrompt(
+  files: readonly string[],
+  publishingInstruction: string,
+  target = 'origin/main'
+): string {
   const fileList = files.length > 0 ? files.map((f) => `- ${f}`).join('\n') : '(no specific file could be determined)'
   return [
     'This branch is behind the base in a way that conflicts — it cannot merge as-is.',
-    `Start a merge without committing it: run \`git merge --no-commit origin/main\` from this worktree, resolve the conflicting file(s) below, then ${publishingInstruction} The publish_changes tool makes the merge commit, so do not run git commit or rebase yourself. Conflicting file(s):`,
+    `Start a merge without committing it: run \`git merge --no-commit ${target}\` from this worktree, resolve the conflicting file(s) below, then ${publishingInstruction} The publish_changes tool makes the merge commit, so do not run git commit or rebase yourself. Conflicting file(s):`,
     fileList
   ].join('\n\n')
 }

@@ -14,6 +14,7 @@ import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, useRuntimeDir } fro
 import type { ActionRegistry } from '../../../../../harness/dev-process/engine-runtime/run-process'
 import { pauseMarker, writePauseState } from '../../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { cleanupAllReviewerIsolationArtifacts } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
+import { parseMergeTreeConflictFiles } from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import {
   liveTaskInput,
   runEngine,
@@ -85,6 +86,15 @@ export interface Scenario {
   attachAtRound?: number
   /** End one driver after this checkpointed step, then construct a fresh task input and resume it. */
   restartAfter?: { step: string; beforeResume: () => void }
+  /** Runs once the world is built, before the driver starts: commits on the task branch, a moved default branch. */
+  setUp?: (world: World) => void
+  /**
+   * The forge's mergeability of the open pull request, given the answer real git gives for the remote head against
+   * the default branch (`git merge-tree`); default that answer.
+   */
+  mergeable?: (fromGit: 'MERGEABLE' | 'CONFLICTING', world: World) => 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
+  /** Whether the version 2 open-pull-request lookup fails (answers none) at this moment; default never. */
+  pullRequestLookupFails?: (world: World) => boolean
 }
 
 export interface World {
@@ -122,6 +132,19 @@ export interface World {
   git: (...args: string[]) => string
   /** Commits a change in the worktree and, when `push` is set, moves the remote head to it. */
   commit: (push: boolean) => string
+  /** The default branch's tip (`origin/main`). */
+  mainTip: () => string
+  /** Commits a change to the default branch that conflicts with the task branch's, and moves `origin/main` to it. */
+  moveMain: () => string
+  /**
+   * Merges the default branch's tip (or `target`) into the worktree with `git merge --no-commit`, resolves the
+   * conflict, commits the merge and, when `push` is set, moves the remote head to it as the turn's push.
+   */
+  mergeMain: (push: boolean, target?: string) => string
+  /** The local check runs made before each Developer launch, in turn. */
+  gateRunsAtDeveloper: number[]
+  /** The mergeability reads the fake forge answered, in turn. */
+  mergeableReads: string[]
 }
 
 export interface Observed {
@@ -291,6 +314,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
   const worktree = join(repo, '.worktrees', BRANCH)
   git('worktree', 'add', '-q', '-b', BRANCH, worktree)
   let commits = 0
+  let mainMoves = 0
   const world: World = {
     repo,
     worktree,
@@ -310,6 +334,8 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     prOpenAtReview: [],
     remoteAfterTurn: [],
     storageEnded: 0,
+    gateRunsAtDeveloper: [],
+    mergeableReads: [],
     git: (...args) => git('-C', worktree, ...args),
     commit: (push) => {
       commits += 1
@@ -318,6 +344,47 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       const head = git('-C', worktree, 'rev-parse', 'HEAD')
       if (push) world.remote = head
       return head
+    },
+    mainTip: () => git('rev-parse', 'refs/remotes/origin/main'),
+    moveMain: () => {
+      mainMoves += 1
+      writeFileSync(join(repo, 'sample.ts'), `export const value = 'main ${mainMoves}'\n`)
+      git('commit', '-q', '-am', `main moves ${mainMoves}`)
+      git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+      return git('rev-parse', 'HEAD')
+    },
+    mergeMain: (push, target) => {
+      // A conflicting merge exits non-zero and leaves the conflict in the index for the resolution below.
+      try {
+        git('-C', worktree, 'merge', '--no-commit', '--no-ff', target ?? world.mainTip())
+      } catch {}
+      commits += 1
+      writeFileSync(join(worktree, 'sample.ts'), `export const value = ${commits + 1}\n`)
+      git('-C', worktree, 'add', 'sample.ts')
+      git('-C', worktree, 'commit', '-q', '--no-edit')
+      const head = git('-C', worktree, 'rev-parse', 'HEAD')
+      if (push) {
+        world.remote = head
+        world.remoteAfterTurn.push(head)
+      }
+      return head
+    }
+  }
+  /** Real git's answer for the remote head against the default branch, as the forge would compute it. */
+  const mergeableFromGit = (): 'MERGEABLE' | 'CONFLICTING' => {
+    try {
+      git('merge-tree', '--write-tree', 'refs/remotes/origin/main', world.remote)
+      return 'MERGEABLE'
+    } catch {
+      return 'CONFLICTING'
+    }
+  }
+  const conflictingFromGit = (): string[] => {
+    try {
+      git('merge-tree', '--write-tree', 'refs/remotes/origin/main', world.remote)
+      return []
+    } catch (error) {
+      return parseMergeTreeConflictFiles(String((error as { stdout?: unknown }).stdout ?? ''))
     }
   }
   // The stand-in check command the real gate step runs, with the next result in turn.
@@ -353,6 +420,13 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       return conclusion
     },
     ...QUIET_FORGE_GATES,
+    // The forge's mergeability and conflicting files, as real git computes them for the remote head.
+    fetchMergeableState: () => {
+      const read = scenario.mergeable?.(mergeableFromGit(), world) ?? mergeableFromGit()
+      world.mergeableReads.push(read)
+      return read
+    },
+    fetchConflictingFiles: () => conflictingFromGit(),
     fetchFailingCheckRuns: () => (scenario.failingRuns ?? []).map((run) => ({ ...run, startedAt: null })),
     fetchIssueRulingsAfterBrief: () => [],
     fetchRulings: () => [],
@@ -389,15 +463,18 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       probeAgentSandbox: async () => ({ ok: true })
     }
     if (scenario.clock) fresh.clock = scenario.clock
+    // A mergeability the forge never resolves spends its poll budget at once.
+    fresh.gatePoll = { gatePollMaxAttempts: 2, gatePollIntervalMs: 0, sleep: async () => {} }
     // Version 2: the staged pull request, the ready push (selecting with the pre-push hook's own re-run rule) and
     // the opening, all fake; the local checks run the stand-in check command through the real step.
     fresh.flow = 'v2'
     fresh.stagedPullRequest = () => world.staged
     fresh.v2 = {
       now: scenario.now,
+      readMainTip: () => world.mainTip(),
       readCheckExcerpt: (jobId) => scenario.jobExcerpts?.[jobId] ?? null,
       stagedPullRequest: () => world.staged,
-      findOpenPullRequest: () => (world.prOpen ? { number: PR } : null),
+      findOpenPullRequest: () => (world.prOpen && !scenario.pullRequestLookupFails?.(world) ? { number: PR } : null),
       runReadyGate: ({ head, signal }) => {
         world.readySignals.push(signal !== undefined)
         const note = chooseTests({
@@ -443,6 +520,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     return fresh
   }
   let task = await makeTask()
+  scenario.setUp?.(world)
   if (scenario.attachAtRound !== undefined) {
     world.prOpen = true
     task.seedRound?.(scenario.attachAtRound)
@@ -550,6 +628,9 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       return stubChild(agent, sessionId, (prompt) => {
         prompts[role].push(prompt)
         if (role === 'developer') {
+          world.gateRunsAtDeveloper.push(
+            existsSync(join(root, 'gate-runs')) ? Number(readFileSync(join(root, 'gate-runs'), 'utf8')) : 0
+          )
           const launch = scenario.developer?.(attempt, world)
           return (
             launch ?? {

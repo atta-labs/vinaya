@@ -11,7 +11,12 @@ import { renderDeveloperDoctrineBlock } from '../../../apps/cli/src/lib/dev-revi
 import { renderConflictPrompt } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { turnResultInstruction } from '../../../apps/cli/src/lib/dev-review-loop/turn-result'
 import { encodeLoopState } from '../executing/actions'
-import { type DeveloperPromptFacts, developerPrompt, withDefaultMergeConflict } from '../executing/developer-prompt'
+import {
+  conflictMergeText,
+  type DeveloperPromptFacts,
+  developerPrompt,
+  withDefaultMergeConflict
+} from '../executing/developer-prompt'
 
 const FACTS: DeveloperPromptFacts = {
   brief: '# Frozen brief\nDo the one thing.\n\n**Revision:** abc',
@@ -277,6 +282,49 @@ describe("the Engine Developer's prompt after a forge gate sent it back", () => 
     )
     expect(prompt).not.toContain('The checks (`vinaya check --all`) are red')
     expect(prompt).not.toContain('# Frozen brief')
+  })
+})
+
+describe('a conflict re-entry in a fresh run generation', () => {
+  const files = ['src/a.ts', 'src/b.ts', 'docs/c.md']
+  const tip = 'd'.repeat(40)
+  const reentry = {
+    'reconcile-external-state': sentBack({ kind: 'conflict', headBefore: 'h1', files, mainTip: tip }, 1)
+  }
+
+  test('the first turn, with no develop result and no session, is the whole first-turn prompt led by the conflict', () => {
+    const prompt = developerPrompt('x', { ...FACTS, flow: 'v2' }, reentry)
+    const conflict = conflictMergeText(files, tip)
+    expect(conflict).not.toContain('origin/main')
+    expect(prompt).toContain(conflict)
+    for (const file of files) expect(prompt).toContain(`- ${file}`)
+    expect(prompt).toContain(`git merge --no-commit ${tip}`)
+    // A fresh session has none of the brief yet: it gets it, after the conflict it answers.
+    expect(prompt).toContain('# Frozen brief')
+    expect(prompt.indexOf(conflict)).toBeLessThan(prompt.indexOf('# Frozen brief'))
+    expect(prompt.indexOf(conflict)).toBeLessThan(prompt.indexOf(renderDeveloperDoctrineBlock(FACTS.doctrine!)))
+  })
+
+  test('a continued session gets the delta conflict prompt, naming the fetched tip and why the last repair was refused', () => {
+    const results = {
+      develop: mech(0),
+      'prove-conflict-repair': sentBack(
+        { kind: 'conflict', headBefore: 'h2', files, mainTip: tip, detail: 'The merge is not proven: single parent.' },
+        4
+      )
+    }
+    const prompt = developerPrompt('x', FACTS, results, { resumeSessionId: SESSION })
+    expect(prompt).toContain('The merge is not proven: single parent.')
+    expect(prompt).toContain(conflictMergeText(files, tip))
+    expect(prompt).toContain(`git merge --no-commit ${tip}`)
+    expect(prompt).not.toContain('# Frozen brief')
+  })
+
+  test('a conflict with no recorded tip merges origin/main, as before', () => {
+    const results = { develop: mech(0), 'check-mergeability': sentBack({ kind: 'conflict', files }) }
+    expect(developerPrompt('x', FACTS, results, { resumeSessionId: SESSION })).toContain(
+      'git merge --no-commit origin/main'
+    )
   })
 })
 

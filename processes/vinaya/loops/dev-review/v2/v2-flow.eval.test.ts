@@ -22,9 +22,53 @@ interface EvalCase {
   }
   /** Version 1's pre-push test runs and CI runs for the same task: one each per pushed round. */
   v1: { prePushTestRuns: number; ciRuns: number }
+  /** A run that re-enters a pull request already open: its reviewers judge that pull request's head. */
+  attached?: boolean
 }
 
 const CASES: EvalCase[] = [
+  {
+    // A published pull request in conflict with main, re-entered: the conflict turn first, one proven merge, one review.
+    id: 'conflict-reentry-merge-proven',
+    attached: true,
+    scenario: {
+      attachAtRound: 1,
+      setUp: (world) => {
+        world.commit(true)
+        world.moveMain()
+      },
+      developer: (attempt, world) =>
+        attempt === 1
+          ? {
+              output: {
+                turnResult: {
+                  schemaVersion: 1,
+                  status: 'completed',
+                  summary: 'Merged main.',
+                  confidence: 90,
+                  confidenceExplanation: 'Stub result.',
+                  addressedFindingIds: [],
+                  sourceUses: [],
+                  reportedChecks: null
+                }
+              },
+              act: () => {
+                world.mergeMain(true)
+              }
+            }
+          : undefined
+    },
+    expect: {
+      outcome: 'completed',
+      developerTurns: 1,
+      reviewRounds: 1,
+      readyRuns: [ALL_TESTS],
+      prsOpened: 0,
+      ciReadsByFlow: 1,
+      rerunEvents: 0
+    },
+    v1: { prePushTestRuns: 1, ciRuns: 1 }
+  },
   {
     id: 'approve-in-round-1',
     scenario: {},
@@ -110,8 +154,9 @@ describe('review locally, push once — evals', () => {
         rerunEvents: named('failed_tests_rerun').length
       }
       expect(got).toEqual(c.expect)
-      // The reviewers always judged a local commit: no pull request (and so no CI) before the first approval.
-      expect(observed.world.prOpenAtReview[0]).toBe(false)
+      // The reviewers judged a local commit, with no pull request (and so no CI) before the first approval, unless
+      // the run re-entered one already open.
+      expect(observed.world.prOpenAtReview[0]).toBe(c.attached === true)
       // Every Developer turn was backed up by a storage push.
       expect(observed.world.remoteAfterTurn).toHaveLength(got.developerTurns)
       // The Log measures it: a ready_push per ready run, a pr_opened per opening, a ci_result_read per CI read,

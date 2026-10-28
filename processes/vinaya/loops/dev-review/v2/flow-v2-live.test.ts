@@ -9,6 +9,7 @@ import {
   beginStoragePushes,
   endStoragePushes,
   NO_LOCAL_TESTS_MARKER,
+  readFetchedMainTip,
   runReadyGateLive,
   stagedPullRequestStore,
   withV2DevTools
@@ -362,5 +363,41 @@ describe('runReadyGateLive', () => {
     const tmp = /tmp=(\S+)/.exec(result.output)?.[1] ?? ''
     expect(tmp).toBeTruthy()
     expect(existsSync(tmp)).toBe(false)
+  })
+})
+
+// The default branch's tip a conflict repair is proven against: read from the driver-built URL and fetched from it,
+// never through the worktree's own `origin`, and null when it cannot be read.
+describe('readFetchedMainTip', () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  const setUp = () => {
+    const remote = fixtureDir('main-tip-remote-')
+    git(remote, 'init', '-q', '-b', 'main')
+    git(remote, 'commit', '-q', '--allow-empty', '-m', 'base')
+    const worktree = fixtureDir('main-tip-worktree-')
+    git(worktree, 'clone', '-q', remote, '.')
+    // A tip the worktree has never seen, and a worktree `origin` that points somewhere else entirely.
+    git(remote, 'commit', '-q', '--allow-empty', '-m', 'main moves')
+    const tip = git(remote, 'rev-parse', 'HEAD')
+    git(worktree, 'remote', 'set-url', 'origin', join(fixtureDir('main-tip-elsewhere-'), 'missing.git'))
+    return { remote, worktree, tip }
+  }
+
+  test('fetches the tip from the URL into the worktree object store, not through its origin', () => {
+    const { remote, worktree, tip } = setUp()
+    expect(() => git(worktree, 'cat-file', '-e', `${tip}^{commit}`)).toThrow()
+    expect(readFetchedMainTip(worktree, `file://${remote}`)).toBe(tip)
+    expect(git(worktree, 'cat-file', '-t', tip)).toBe('commit')
+  })
+
+  test('is null when the run names no URL, or the URL cannot be read', () => {
+    const { worktree } = setUp()
+    expect(readFetchedMainTip(worktree, null)).toBeNull()
+    expect(readFetchedMainTip(worktree, `file://${join(worktree, 'no-such-repo')}`)).toBeNull()
   })
 })

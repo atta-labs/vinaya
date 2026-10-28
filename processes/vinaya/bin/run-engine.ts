@@ -252,7 +252,12 @@ import {
   type VinayaStagedReviewInput
 } from '../executing/review-input'
 import { resolveRoleDoctrineText } from '../../../apps/cli/src/roles/plan'
-import { developerPrompt, type DeveloperPromptFacts, withDefaultMergeConflict } from '../executing/developer-prompt'
+import {
+  developerPrompt,
+  type DeveloperPromptFacts,
+  developerTurnKind,
+  withDefaultMergeConflict
+} from '../executing/developer-prompt'
 import {
   ACTION_BINDINGS,
   AGENT_EXIT_EVENT,
@@ -1954,9 +1959,10 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
                     // Each Developer turn records the head it starts from and its launch, as the standalone loop does
                     // at each dispatch. `develop` is an agent step, so the action wrapper below never sees it.
                     const begun = await options.beginDeveloperTurn?.()
+                    // A conflict turn already leads with its recorded conflict: the pre-turn merge adds no second one.
                     return withDefaultMergeConflict(
                       developerPrompt(rendered, await developerFacts(), results, context),
-                      begun?.conflictFiles ?? null
+                      developerTurnKind(results) === 'conflict' ? null : (begun?.conflictFiles ?? null)
                     )
                   },
                   ...(options.taskInput?.reviewerPrompt
@@ -2909,6 +2915,8 @@ async function runLive(
       store,
       findOpenPullRequest,
       remoteHead: () => taskInput.remoteHead?.() ?? null,
+      // A conflict's repair is proven against the default branch's tip the driver fetches from here.
+      remoteUrl: repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null,
       openWithDeveloperTool: (title, body) => liveContext.context.openPullRequest(title, body),
       // The loop writes the Evidence block once the pull request is open; the Developer's v2 turn runs no tests.
       writeEvidence: async ({ pr, head }) => {

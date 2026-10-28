@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parse } from 'yaml'
@@ -9,7 +10,19 @@ import { V2_APPROVED_REPAIR_ALLOWANCE, exhaustedPause, withPolicyCeilings } from
 import { heldVerdictPath } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { publicationEffectKey } from '../../../../../apps/cli/src/lib/dev-review-loop/publication'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
-import { ALL_TESTS, AGENTS, confident, PR, records, TASK, runV2, setUpWorld, tearDownWorld } from './v2-world'
+import { conflictRepairFailure } from './v2-actions'
+import {
+  ALL_TESTS,
+  AGENTS,
+  confident,
+  PR,
+  records,
+  TASK,
+  runV2,
+  type Scenario,
+  setUpWorld,
+  tearDownWorld
+} from './v2-world'
 
 // Version 2 of the developer-review Flow (review locally, push once), end to end on the real runner, Flow and
 // actions with fakes for the forge, the ready push and the agents: approve in round 1; revise then approve; a ready
@@ -492,4 +505,325 @@ test('a ready-push pause leaves no held approval that resume could publish', asy
   expect(observed.outcome).toBe('pause:ready_push_failed')
   for (const role of ['reviewer', 'security'] as const)
     expect(existsSync(heldVerdictPath(observed.world.runtimeDir, TASK, 1, role))).toBe(false)
+})
+
+// A published pull request that falls into conflict with the default branch, re-entered by a fresh run: the
+// Developer's conflict turn comes first, and no reviewer judges the repair until the controller proves the merge.
+const conflictReentry = (developer: Scenario['developer'], extra: Scenario = {}): Scenario => ({
+  attachAtRound: 1,
+  setUp: (world) => {
+    world.commit(true)
+    world.moveMain()
+  },
+  developer,
+  ...extra
+})
+const proofOutcomes = (observed: Awaited<ReturnType<typeof runV2>>) =>
+  records(observed, 'prove-conflict-repair')
+    .filter((record) => record.proof !== 'not-owed')
+    .map((record) => (record.decision?.type === 'conflict_repair_proven' ? 'proven' : String(record.failure)))
+
+for (const agent of AGENTS) {
+  describe(`a conflict re-entry (${agent})`, () => {
+    test('the first Developer turn is the conflict turn, with the paths and the fetched tip, before any check or reviewer', async () => {
+      let tip = ''
+      let merged = ''
+      const observed = await runV2(
+        agent,
+        conflictReentry((attempt, world) =>
+          attempt === 1
+            ? {
+                output: confident(90),
+                act: () => {
+                  tip = world.mainTip()
+                  merged = world.mergeMain(true)
+                }
+              }
+            : undefined
+        )
+      )
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(1)
+      const [first] = observed.prompts.developer
+      expect(first).toContain('- sample.ts')
+      expect(first).toContain(`git merge --no-commit ${tip}`)
+      // A fresh run's conflict turn starts the session, so it carries the brief as well.
+      expect(first).toContain('# Frozen brief')
+      expect(observed.world.gateRunsAtDeveloper).toEqual([0])
+      const [reconciled] = records(observed, 'reconcile-external-state')
+      expect(reconciled?.sendBack).toMatchObject({ kind: 'conflict', files: ['sample.ts'], mainTip: tip })
+      expect(proofOutcomes(observed)).toEqual(['proven'])
+      // The reviewers judged the proven merge, on the same pull request.
+      expect(observed.spawns['code-reviewer']).toBe(1)
+      expect(observed.prompts['code-reviewer'][0]).toContain(merged)
+      expect(observed.world.prsOpened).toBe(0)
+      expect(observed.world.verdictHeads).toEqual([merged])
+    })
+
+    test('a single-parent commit is sent back unproven and never reaches a reviewer', async () => {
+      let wording = ''
+      const observed = await runV2(
+        agent,
+        conflictReentry((attempt, world) => ({
+          output: confident(90),
+          act: () => {
+            if (attempt === 1) wording = world.commit(true)
+            else world.mergeMain(true)
+          }
+        }))
+      )
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(2)
+      expect(proofOutcomes(observed)).toEqual(['single-parent', 'proven'])
+      expect(observed.prompts.developer[1]).toContain('single-parent commit, not a merge of the default branch')
+      expect(observed.prompts.developer[1]).toContain('- sample.ts')
+      expect(observed.spawns['code-reviewer']).toBe(1)
+      for (const prompt of [...observed.prompts['code-reviewer'], ...observed.prompts['security-reviewer']])
+        expect(prompt).not.toContain(wording)
+      expect(observed.world.gateRunsAtDeveloper).toEqual([0, 0])
+    })
+
+    test('an unchanged head is sent back, and the same unproven repair twice pauses with no reviewer run', async () => {
+      const observed = await runV2(
+        agent,
+        conflictReentry(() => ({ output: confident(90) }))
+      )
+      expect(observed.outcome).toBe('pause:repeat_failure')
+      expect(proofOutcomes(observed)).toEqual(['unchanged-head', 'unchanged-head'])
+      expect(observed.spawns.developer).toBe(2)
+      expect(observed.spawns['code-reviewer']).toBe(0)
+      expect(observed.spawns['security-reviewer']).toBe(0)
+      expect(observed.gateRuns).toBe(0)
+      expect(observed.published).toEqual([])
+    })
+
+    test('a mergeability other than MERGEABLE holds the proven merge back from the reviewers', async () => {
+      let merged = ''
+      const observed = await runV2(
+        agent,
+        conflictReentry(
+          (attempt, world) => ({
+            output: confident(90),
+            act: () => {
+              if (attempt === 1) merged = world.mergeMain(true)
+            }
+          }),
+          { mergeable: (fromGit, world) => (merged !== '' && world.remote === merged ? 'UNKNOWN' : fromGit) }
+        )
+      )
+      expect(proofOutcomes(observed)[0]).toBe('not-mergeable')
+      expect(observed.prompts.developer[1]).toContain('mergeability is CONFLICTING, not MERGEABLE')
+      expect(observed.outcome).toBe('pause:repeat_failure')
+      expect(observed.spawns['code-reviewer']).toBe(0)
+      expect(observed.published).toEqual([])
+    })
+
+    test('a failed open-pull-request lookup during the proof fails closed: unproven, no reviewer', async () => {
+      let merged = ''
+      const observed = await runV2(
+        agent,
+        conflictReentry(
+          (attempt, world) => ({
+            output: confident(90),
+            act: () => {
+              if (attempt === 1) merged = world.mergeMain(true)
+            }
+          }),
+          { pullRequestLookupFails: () => merged !== '' }
+        )
+      )
+      expect(proofOutcomes(observed)[0]).toBe('pr-unreadable')
+      expect(proofOutcomes(observed)).not.toContain('proven')
+      expect(observed.prompts.developer[1]).toContain('could not be read, so its mergeability is unknown')
+      expect(observed.spawns['code-reviewer']).toBe(0)
+      expect(observed.spawns['security-reviewer']).toBe(0)
+      expect(observed.published).toEqual([])
+    })
+
+    test('main moving while the reviewers run lets both finish; the conflict is handled after their verdicts', async () => {
+      let merged = ''
+      const observed = await runV2(agent, {
+        attachAtRound: 1,
+        setUp: (world) => void world.commit(true),
+        reviewer: (role, attempt, world) => {
+          if (role === 'code-reviewer' && attempt === 1) world.moveMain()
+          return 'approve'
+        },
+        developer: (attempt, world) =>
+          attempt === 1
+            ? {
+                output: confident(90),
+                act: () => {
+                  merged = world.mergeMain(true)
+                }
+              }
+            : undefined
+      })
+      expect(observed.outcome).toBe('completed')
+      // One launch per reviewer per round: the first round's reviewers were neither cancelled nor replaced.
+      expect(observed.spawns['code-reviewer']).toBe(2)
+      expect(observed.spawns['security-reviewer']).toBe(2)
+      expect(observed.spawns.developer).toBe(1)
+      const nodes = observed.steps.map((step) => step.node)
+      const conflictAt = observed.steps.findIndex(
+        (step) => step.node === 'check-publish-mergeability' && step.exitCode === 1
+      )
+      expect(conflictAt).toBeGreaterThan(nodes.indexOf('validate-reviewer-outputs'))
+      expect(proofOutcomes(observed)).toEqual(['proven'])
+      expect(observed.world.verdictHeads.at(-1)).toBe(merged)
+    })
+  })
+}
+
+const mergeOnce: Scenario['developer'] = (attempt, world) =>
+  attempt === 1
+    ? {
+        output: confident(90),
+        act: () => {
+          world.mergeMain(true)
+        }
+      }
+    : undefined
+
+for (const agent of AGENTS) {
+  describe(`conflict state survives a checkpoint restart (${agent})`, () => {
+    test('a restart after the conflict is recorded runs one conflict turn, not two and not none', async () => {
+      const observed = await runV2(
+        agent,
+        conflictReentry(mergeOnce, { restartAfter: { step: 'reconcile-external-state', beforeResume: () => {} } })
+      )
+      expect(observed.driverLegs).toBe(2)
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(1)
+      expect(observed.prompts.developer[0]).toContain('- sample.ts')
+      expect(observed.spawns['code-reviewer']).toBe(1)
+      expect(observed.published).toHaveLength(1)
+    })
+
+    test('a restart after the merge is proven keeps the proof: no second conflict turn, review or verdict post', async () => {
+      const observed = await runV2(
+        agent,
+        conflictReentry(mergeOnce, { restartAfter: { step: 'prove-conflict-repair', beforeResume: () => {} } })
+      )
+      expect(observed.driverLegs).toBe(2)
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(1)
+      expect(proofOutcomes(observed)).toEqual(['proven'])
+      expect(observed.spawns['code-reviewer']).toBe(1)
+      expect(observed.spawns['security-reviewer']).toBe(1)
+      expect(observed.published).toHaveLength(1)
+    })
+  })
+}
+
+// The proof's local half on real git histories: each way a repair can fall short, and the merges that hold.
+describe('conflictRepairFailure on real git histories', () => {
+  const setUpRepo = () => {
+    const dir = fixtureDir('conflict-proof-')
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], {
+        cwd: dir,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      }).trim()
+    const tryGit = (...args: string[]) => {
+      try {
+        git(...args)
+      } catch {}
+    }
+    const write = (content: string) => writeFileSync(join(dir, 'a.ts'), content)
+    git('init', '-q', '-b', 'main')
+    write('base\n')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'base')
+    git('checkout', '-q', '-b', 'task')
+    write('task\n')
+    git('commit', '-q', '-am', 'task')
+    const before = git('rev-parse', 'HEAD')
+    git('checkout', '-q', 'main')
+    write('main\n')
+    git('commit', '-q', '-am', 'main')
+    const tip = git('rev-parse', 'HEAD')
+    git('checkout', '-q', 'task')
+    return { dir, git, tryGit, write, before, tip }
+  }
+  type Repo = ReturnType<typeof setUpRepo>
+  const resolveMerge = (repo: Repo, target: string) => {
+    repo.tryGit('merge', '--no-commit', '--no-ff', target)
+    repo.write('resolved\n')
+    repo.git('add', 'a.ts')
+    repo.git('commit', '-q', '--no-edit')
+    return repo.git('rev-parse', 'HEAD')
+  }
+  const moveMain = (repo: Repo, file: string, content: string) => {
+    repo.git('checkout', '-q', 'main')
+    writeFileSync(join(repo.dir, file), content)
+    repo.git('add', file)
+    repo.git('commit', '-q', '-m', `main ${content.trim()}`)
+    const moved = repo.git('rev-parse', 'HEAD')
+    repo.git('checkout', '-q', 'task')
+    return moved
+  }
+  const proof = (repo: Repo, head: string, overrides: { remote?: string; freshTip?: string } = {}) =>
+    conflictRepairFailure({
+      worktreePath: repo.dir,
+      head,
+      remote: overrides.remote ?? head,
+      headBefore: repo.before,
+      mainTip: repo.tip,
+      freshTip: overrides.freshTip ?? repo.tip
+    })
+
+  test('a resolved merge of the fetched tip that merges cleanly with main is proven', () => {
+    const repo = setUpRepo()
+    expect(proof(repo, resolveMerge(repo, repo.tip))).toBeNull()
+  })
+
+  test('an unchanged head, and a merge not on the remote, are not proven', () => {
+    const repo = setUpRepo()
+    expect(proof(repo, repo.before)?.code).toBe('unchanged-head')
+    expect(proof(repo, resolveMerge(repo, repo.tip), { remote: repo.before })?.code).toBe('unpublished')
+  })
+
+  test('a single-parent commit is not a merge', () => {
+    const repo = setUpRepo()
+    repo.write('reworded\n')
+    repo.git('commit', '-q', '-am', 'reword')
+    expect(proof(repo, repo.git('rev-parse', 'HEAD'))?.code).toBe('single-parent')
+  })
+
+  test('a merge whose parents leave out the fetched main tip is not proven', () => {
+    const repo = setUpRepo()
+    repo.git('checkout', '-q', '-b', 'side', repo.before)
+    repo.write('side\n')
+    repo.git('commit', '-q', '-am', 'side')
+    const side = repo.git('rev-parse', 'HEAD')
+    repo.git('checkout', '-q', 'task')
+    expect(proof(repo, resolveMerge(repo, side))?.code).toBe('main-tip-missing')
+  })
+
+  test('unresolved index entries are not proven, naming the files', () => {
+    const repo = setUpRepo()
+    const head = resolveMerge(repo, repo.tip)
+    const again = moveMain(repo, 'a.ts', 'main again\n')
+    repo.tryGit('merge', '--no-commit', '--no-ff', again)
+    const failure = proof(repo, head)
+    expect(failure?.code).toBe('unresolved-index')
+    expect(failure?.files).toEqual(['a.ts'])
+  })
+
+  test('a merge that conflicts with main fetched again is not proven, naming the files', () => {
+    const repo = setUpRepo()
+    const head = resolveMerge(repo, repo.tip)
+    const fresh = moveMain(repo, 'a.ts', 'main again\n')
+    const failure = proof(repo, head, { freshTip: fresh })
+    expect(failure?.code).toBe('not-clean')
+    expect(failure?.files).toEqual(['a.ts'])
+  })
+
+  test('a merge of a later main commit that contains the fetched tip is proven', () => {
+    const repo = setUpRepo()
+    const later = moveMain(repo, 'b.ts', 'more\n')
+    expect(proof(repo, resolveMerge(repo, later), { freshTip: later })).toBeNull()
+  })
 })
