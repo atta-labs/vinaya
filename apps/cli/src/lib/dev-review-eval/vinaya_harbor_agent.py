@@ -5,7 +5,8 @@ Harbor (version 0.24.0) runs it on a task folder the converter
 
     PYTHONPATH=apps/cli/src/lib/dev-review-eval harbor run \\
         --path <out>/<suite> --agent vinaya_harbor_agent:VinayaAgent \\
-        --ak archive=<vinaya.tar> --model <exact model id>
+        --ak archive=<vinaya.tar> [--ak adapter=claude-code|codex] \\
+        [--ak backend=standalone|engine] --model <exact model id>
 
 The task image already holds the Vinaya CLI at /opt/vinaya with its workspace
 dependencies, installed at image build from the archive the converter wrote
@@ -17,8 +18,9 @@ home at /home/tester. `install` uploads this agent's archive and refuses
 unless its SHA-256 equals the digest the image recorded, so the run uses the
 CLI it was given. With adapter=codex it also stages the subscription login
 through stdin in the container's tester-owned Codex home. `run` runs
-`harbor-trial.ts` on the task's case in container mode, which dispatches the
-Vinaya role and writes the agent part of the Vinaya trial record and the run's
+`harbor-trial.ts` on the task's case in container mode, on the requested
+backend (`standalone` by default, or `engine`), which runs the Vinaya role and
+writes the agent part of the Vinaya trial record and the run's
 usage to the agent log directory, where the task's verifier and this agent read
 them.
 
@@ -57,6 +59,8 @@ TRIAL_ENTRY = "apps/cli/src/lib/dev-review-eval/harbor-trial.ts"
 RECORD_FILE = "vinaya-trial-record.json"
 USAGE_FILE = "vinaya-usage.json"
 TRANSCRIPT_FILE = "vinaya-trial.txt"
+# The backends `harbor-trial.ts` runs a role step on; see HARBOR_TRIAL_BACKENDS there.
+BACKENDS = ("standalone", "engine")
 
 # The only variables forwarded to the run for its login.
 SUBSCRIPTION_ENV = ("CLAUDE_FORCE_OAUTH", "CLAUDE_CODE_OAUTH_TOKEN")
@@ -100,16 +104,20 @@ class VinayaAgent(BaseInstalledAgent):
     """Runs one Vinaya role on the task's case through `harbor-trial.ts`."""
 
     _adapter = "claude-code"
+    _backend = "standalone"
     _codex_login_staged = False
 
     def __init__(
         self, logs_dir: Path, *args: Any, archive: str | None = None,
-        adapter: str = "claude-code", **kwargs: Any
+        adapter: str = "claude-code", backend: str = "standalone", **kwargs: Any
     ):
         super().__init__(logs_dir, *args, **kwargs)
         if adapter not in ("claude-code", "codex"):
             raise ValueError(f"adapter {adapter} is not one of claude-code, codex")
+        if backend not in BACKENDS:
+            raise ValueError(f"backend {backend} is not one of {', '.join(BACKENDS)}")
         self._adapter = adapter
+        self._backend = backend
         if not archive:
             raise ValueError("the vinaya agent needs the Vinaya CLI archive: --ak archive=<path to vinaya.tar>")
         self._archive = Path(archive).expanduser().resolve()
@@ -201,7 +209,7 @@ class VinayaAgent(BaseInstalledAgent):
                 shlex.quote(f"{logs}/{RECORD_FILE}"),
                 "--usage",
                 shlex.quote(f"{logs}/{USAGE_FILE}"),
-                f"--backend standalone --adapter {self._adapter}",
+                f"--backend {self._backend} --adapter {self._adapter}",
                 "--model",
                 shlex.quote(self.model_name),
                 f"2>&1 | tee {shlex.quote(f'{logs}/{TRANSCRIPT_FILE}')}",
