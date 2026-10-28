@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { parse } from 'yaml'
 import { loadProcess } from '../../../../../harness/dev-process/loader/load-process'
 import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
-import { withPolicyCeilings } from '../../../bin/run-engine'
+import { V2_APPROVED_REPAIR_ALLOWANCE, withPolicyCeilings } from '../../../bin/run-engine'
 import { heldVerdictPath } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { publicationEffectKey } from '../../../../../apps/cli/src/lib/dev-review-loop/publication'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
@@ -344,7 +344,7 @@ test('version 2 policy budgets are independent of dispatch counts and version 1 
     }
     const ceilings = parsed.steps.flatMap((step) => (step.decision ? [step.decision.max_revisions] : []))
     expect(ceilings.length).toBeGreaterThan(0)
-    expect(new Set(ceilings)).toEqual(new Set([flow === 'v2' ? Number.MAX_SAFE_INTEGER : 2]))
+    expect(new Set(ceilings)).toEqual(new Set([flow === 'v2' ? 2 + V2_APPROVED_REPAIR_ALLOWANCE : 2]))
   }
 })
 

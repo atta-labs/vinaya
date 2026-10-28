@@ -741,17 +741,20 @@ export const renderedFlowPath = (runDir: string): string => join(runDir, 'dev-re
 /**
  * The process with its Flow rendered for one run: every decision's `max_revisions` set to the review policy's
  * `maxRounds` in version 1. Version 2 enforces review rounds and ready-push failures in its checkpointed actions,
- * independently of agent dispatches; the Engine's step counter must not impose a second review budget.
+ * independently of agent dispatches; the Engine's step counter only adds a finite allowance of approved repair turns.
  * That file is the process's Flow. The checked-in Flow keeps literal
  * numbers, which the loader requires; the run compiles the rendered one. A cap that is not a positive whole number
  * leaves the process as it is, since no Flow can carry it.
  */
+/** Version 2's allowance of repair turns after approval on top of the review rounds, so the Engine still bounds a run whose CI never turns green. */
+export const V2_APPROVED_REPAIR_ALLOWANCE = 10
+
 export function withPolicyCeilings(loaded: LoadedProcess, runDir: string, maxRounds: number): LoadedProcess {
   if (!Number.isInteger(maxRounds) || maxRounds < 1) return loaded
   const flow = parseYaml(readFileSync(loaded.flowPath, 'utf8')) as {
     steps: Array<{ decision?: { max_revisions?: number } }>
   }
-  const ceiling = loaded.flowKey === 'v2' ? Number.MAX_SAFE_INTEGER : maxRounds
+  const ceiling = loaded.flowKey === 'v2' ? maxRounds + V2_APPROVED_REPAIR_ALLOWANCE : maxRounds
   for (const step of flow.steps) if (step.decision) step.decision.max_revisions = ceiling
   mkdirSync(runDir, { recursive: true })
   const flowPath = renderedFlowPath(runDir)
