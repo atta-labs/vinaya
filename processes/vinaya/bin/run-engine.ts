@@ -204,6 +204,7 @@ import {
   type LiveDeveloperContextLoopDeps,
   type LivePublicationScope,
   type LivePublicationState,
+  mergeMovedDefaultBranch,
   resolvePublicationBase
 } from '../../../apps/cli/src/lib/task-tools/live-developer-context'
 import {
@@ -251,7 +252,7 @@ import {
   type VinayaStagedReviewInput
 } from '../executing/review-input'
 import { resolveRoleDoctrineText } from '../../../apps/cli/src/roles/plan'
-import { developerPrompt, type DeveloperPromptFacts } from '../executing/developer-prompt'
+import { developerPrompt, type DeveloperPromptFacts, withDefaultMergeConflict } from '../executing/developer-prompt'
 import {
   ACTION_BINDINGS,
   AGENT_EXIT_EVENT,
@@ -1234,7 +1235,7 @@ export interface EngineRunOptions {
   /** The Developer's prompt facts, read each time its step starts; absent leaves the prompt as the Flow renders it. */
   developerFacts?: () => Promise<DeveloperPromptFacts>
   /** Told when the Developer step starts, so the live context records the head and base that turn publishes against. */
-  beginDeveloperTurn?: () => Promise<void>
+  beginDeveloperTurn?: () => Promise<void | { conflictFiles: string[] | null }>
   /** Called when a newer ruling resumes the halted run, so the next Developer turn carries the rulings' text. */
   onRulingResume?: () => void
   /**
@@ -1952,8 +1953,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
                   develop: async (rendered, results, context) => {
                     // Each Developer turn records the head it starts from and its launch, as the standalone loop does
                     // at each dispatch. `develop` is an agent step, so the action wrapper below never sees it.
-                    await options.beginDeveloperTurn?.()
-                    return developerPrompt(rendered, await developerFacts(), results, context)
+                    const begun = await options.beginDeveloperTurn?.()
+                    return withDefaultMergeConflict(
+                      developerPrompt(rendered, await developerFacts(), results, context),
+                      begun?.conflictFiles ?? null
+                    )
                   },
                   ...(options.taskInput?.reviewerPrompt
                     ? {
@@ -2226,7 +2230,7 @@ export function engineLiveDevToolsContext(input: {
   completeLaunch?: typeof completeRunnerDeveloperLaunch
 }): {
   context: DevToolContext
-  beginTurn: () => Promise<void>
+  beginTurn: () => Promise<{ conflictFiles: string[] | null }>
   /** Closes this turn's launch record, completed, with the Developer's vendor session bound. */
   completeTurn: (resumeId: string | null) => void
   state: LivePublicationState
@@ -2281,7 +2285,7 @@ export function engineLiveDevToolsContext(input: {
     })
     launchRunId = null
   }
-  const beginTurn = async (): Promise<void> => {
+  const beginTurn = async (): Promise<{ conflictFiles: string[] | null }> => {
     // The Broker authenticates this turn's pushes against a Developer launch record; the Engine's executor
     // spawns the agent itself, so the runner writes that record here.
     launchRunId = (input.recordLaunch ?? recordRunnerDeveloperLaunch)({
@@ -2291,10 +2295,14 @@ export function engineLiveDevToolsContext(input: {
       round: input.round()
     })
     turn = buildTurnContext()
+    // The default branch is merged in before the head is read, so the base check sees the merge as the turn's
+    // starting point; a conflicting merge is aborted and its files lead the turn's prompt.
+    const merge = mergeMovedDefaultBranch(scope)
     state.turnPreHead = deps.readWorktreeHead(input.worktreePath)
     state.turnPublicationRefusal = null
     state.turnPublicationAttempted = false
     await resolvePublicationBase(scope, state.turnPreHead)
+    return merge
   }
   const context: DevToolContext = {
     publishChanges: (header) => turn.publishChanges(header),

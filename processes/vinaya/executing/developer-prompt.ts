@@ -362,3 +362,10 @@ export function developerPrompt(
     turnResultInstruction(facts.round)
   ])
 }
+
+/** A turn's prompt led by the files the driver's pre-turn merge of the default branch conflicted in (it aborted that merge); the prompt itself when there are none. */
+export function withDefaultMergeConflict(prompt: string, conflictFiles: readonly string[] | null): string {
+  return conflictFiles === null
+    ? prompt
+    : join([renderConflictPrompt(conflictFiles, publishingInstructionLine()), prompt])
+}

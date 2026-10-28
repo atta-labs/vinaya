@@ -331,6 +331,7 @@ import {
   PushHookRefusal,
   firstErrorLine,
   type LivePublicationScope,
+  mergeMovedDefaultBranch as sharedMergeMovedDefaultBranch,
   publishDeveloperTurn as sharedPublishDeveloperTurn,
   readPublicationBase as sharedReadPublicationBase,
   resolvePublicationBase as sharedResolvePublicationBase,
@@ -885,6 +886,8 @@ export type LoopDeps = {
    * holding a merge commit, is refused without rebasing.
    */
   rebaseOntoDefaultTip: (worktreePath: string, tip: string, remoteUrl: string | null) => RebaseOntoTipResult
+  /** Merges the default branch's `tip` into the worktree's branch before a Developer turn (`defaultMergeDefaultTip`); a conflict is aborted. */
+  mergeDefaultTip: (worktreePath: string, tip: string, remoteUrl: string | null) => MergeDefaultTipResult
   /**
    * Moves the worktree's branch back to `head` after the driver's own rebase
    * whose push did not land (`git reset --keep <head>`, which refuses rather
@@ -1459,6 +1462,75 @@ function rebaseInProgress(worktreePath: string): boolean {
     const path = gitOk(worktreePath, ['rev-parse', '--git-path', name])
     return path !== null && existsSync(resolve(worktreePath, path))
   })
+}
+
+/** What the driver's pre-turn merge of the default branch did: nothing to do, a merge commit, or a refusal (a conflict it aborted, or a worktree it left alone). */
+export type MergeDefaultTipResult =
+  | { ok: true; merged: false; head: string }
+  | { ok: true; merged: true; oldHead: string; head: string }
+  | { ok: false; conflictFiles: string[]; reason: string }
+
+/** Whether the worktree is stopped inside a merge. */
+function mergeInProgress(worktreePath: string): boolean {
+  const path = gitOk(worktreePath, ['rev-parse', '--git-path', 'MERGE_HEAD'])
+  return path !== null && existsSync(resolve(worktreePath, path))
+}
+
+/**
+ * Merges the default branch's `tip` into the worktree's branch with an ordinary
+ * `git merge --no-edit`, when the tip is not already an ancestor of the head.
+ * Never rebases, resets or stashes: a worktree with uncommitted tracked changes
+ * is refused untouched, and a merge that stops is aborted with `git merge
+ * --abort`, so the head is where it was and no merge is in progress, before the
+ * conflicting files are returned.
+ */
+export function defaultMergeDefaultTip(
+  worktreePath: string,
+  tip: string,
+  remoteUrl: string | null
+): MergeDefaultTipResult {
+  const refuse = (reason: string, conflictFiles: string[] = []): MergeDefaultTipResult => ({
+    ok: false,
+    conflictFiles,
+    reason
+  })
+  const oldHead = gitOk(worktreePath, ['rev-parse', 'HEAD'])
+  if (!oldHead) return refuse('the worktree head could not be read')
+  if (!ensureDefaultTipObject(worktreePath, tip, remoteUrl))
+    return refuse(`the default branch tip ${tip} could not be fetched`)
+  if (gitOk(worktreePath, ['merge-base', '--is-ancestor', tip, oldHead]) !== null)
+    return { ok: true, merged: false, head: oldHead }
+  const dirty = gitOk(worktreePath, ['status', '--porcelain', '--untracked-files=no'])
+  if (dirty === null) return refuse('the worktree status could not be read')
+  if (dirty.length > 0) return refuse('the worktree has uncommitted tracked changes')
+  const merged = spawnSync('git', ['-C', worktreePath, 'merge', '--no-edit', '--no-ff', '--no-autostash', tip], {
+    encoding: 'utf8',
+    env: { ...process.env, GIT_EDITOR: 'true' },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  if (!merged.error && merged.status === 0 && !mergeInProgress(worktreePath)) {
+    const head = gitOk(worktreePath, ['rev-parse', 'HEAD'])
+    if (head) return { ok: true, merged: true, oldHead, head }
+  }
+  const conflictFiles = (gitOk(worktreePath, ['diff', '--name-only', '--diff-filter=U']) ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (mergeInProgress(worktreePath)) gitOk(worktreePath, ['merge', '--abort'])
+  const after = gitOk(worktreePath, ['rev-parse', 'HEAD'])
+  if (after !== oldHead || mergeInProgress(worktreePath)) {
+    return refuse(
+      `the merge of ${tip} stopped and could not be undone: the head is at ${after ?? 'an unreadable commit'}, not ${oldHead}`,
+      conflictFiles
+    )
+  }
+  const output = `${merged.stdout ?? ''}\n${merged.stderr ?? ''}`
+  return refuse(
+    conflictFiles.length > 0
+      ? `the merge of ${tip} conflicts`
+      : `the merge of ${tip} failed: ${firstErrorLine(output, merged.error?.message ?? `exit ${merged.status ?? 'unknown'}`)}`,
+    conflictFiles
+  )
 }
 
 /**
@@ -2583,6 +2655,7 @@ export function defaultDeps(): LoopDeps {
     readMergedDefaultCommit: defaultReadMergedDefaultCommit,
     classifyAgainstDefaultTip: defaultClassifyAgainstDefaultTip,
     rebaseOntoDefaultTip: defaultRebaseOntoDefaultTip,
+    mergeDefaultTip: defaultMergeDefaultTip,
     restoreWorktreeHead: defaultRestoreWorktreeHead,
     pushTaskBranchWithLease: defaultPushTaskBranchWithLease,
     gitWorktreeDiffText: defaultGitWorktreeDiffText,
@@ -4419,6 +4492,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ]
             .filter((part): part is string => part !== null && part.length > 0)
             .join('\n\n')
+      let dispatchPrompt = fullPrompt
       // O1/O3: confine the Developer to
       // its own worktree — this driver's own round-1 `createTaskWorktree`
       // call (above, in the branch-creation branch) or the from-remote creation
@@ -4433,6 +4507,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // the Developer left its work uncommitted (the head did not move). A
       // fresh round-1 turn whose worktree the Developer's own Step 0 is still
       // creating records `null`, and the head check is then inactive.
+      // The default branch is merged in BEFORE the head is read, so the base
+      // check sees the merge as part of the turn's starting point; a conflict
+      // is aborted and its files lead this turn's prompt instead.
+      const defaultMerge = devWorktreeDir ? sharedMergeMovedDefaultBranch(liveContextScope()) : { conflictFiles: null }
+      if (defaultMerge.conflictFiles !== null) {
+        dispatchPrompt = [
+          renderConflictPrompt(defaultMerge.conflictFiles, publishingInstructionLine()),
+          fullPrompt
+        ].join('\n\n')
+      }
       publicationState.turnPreHead = devWorktreeDir ? d.readWorktreeHead(devWorktreeDir) : null
       publicationState.turnPublicationRefusal = null
       publicationState.turnPublicationAttempted = false
@@ -4494,8 +4578,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         context: attributeDriverToolCalls(buildDeveloperDevToolContext(roundNum))
       })
       const attemptDispatch = (): Promise<DispatchHandle> =>
-        withPromptFile(fullPrompt, (promptFile) =>
-          d.dispatchRole('developer', dispatchAgent, fullPrompt, {
+        withPromptFile(dispatchPrompt, (promptFile) =>
+          d.dispatchRole('developer', dispatchAgent, dispatchPrompt, {
             task: task,
             round: roundNum,
             turnResultKnownFindingIds,

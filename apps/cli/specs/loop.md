@@ -181,6 +181,22 @@ protected path the task changed is refused as before, an
 unreadable tip or classification keeps every path counted, and the
 `surface-scope` check likewise drops a changed path whose content equals its
 base.
+Before each Developer turn — on the standalone loop and on the Engine's
+`develop` step alike — the driver brings a moved default branch into the task
+branch, before it reads the turn's pre-head and base (`mergeMovedDefaultBranch`,
+then `resolvePublicationBase`). When the tip the remote reports is not an
+ancestor of the worktree head and the worktree has no uncommitted tracked
+change, the driver runs an ordinary `git merge --no-edit --no-ff <tip>` in the
+task worktree (`defaultMergeDefaultTip`) and logs the branch, the tip, and the
+old and new heads. The merged head is then the turn's pre-head, and the base
+descends from the recorded one, so the publication base check accepts it and no
+Developer merges the default branch itself. A merge that conflicts is aborted
+with `git merge --abort`, the branch stays as it was, and the turn's prompt
+leads with the conflict re-entry's text naming the conflicting files
+(`renderConflictPrompt`). A branch already holding the tip, a dirty worktree and
+an unreadable tip merge nothing. The driver never merges during a turn, and
+never rebases, resets, stashes or force-pushes for this merge.
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:export function defaultMergeDefaultTip( -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:export function defaultClassifyAgainstDefaultTip( -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:export function defaultRebaseOntoDefaultTip( -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:`--force-with-lease=refs/heads/${branch}:${lease}` -->

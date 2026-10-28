@@ -78,6 +78,7 @@ export type LiveDeveloperContextLoopDeps = Pick<
   | 'commitWorktree'
   | 'classifyAgainstDefaultTip'
   | 'rebaseOntoDefaultTip'
+  | 'mergeDefaultTip'
   | 'pushTaskBranch'
   | 'pushTaskBranchWithLease'
   | 'restoreWorktreeHead'
@@ -732,6 +733,46 @@ export async function resolvePublicationBase(
     state.publicationExpectedBase = base
   }
   return base
+}
+
+/**
+ * Merges the default branch into the task branch before a Developer turn, so
+ * the turn starts on current code and the publication base read right after it
+ * (`resolvePublicationBase`) already descends from the recorded one. Runs only
+ * between turns, never during one. A tip that is already an ancestor, an
+ * unreadable tip, a missing worktree or a dirty one change nothing; a clean
+ * merge is logged with the old and new head; a conflict is aborted by the merge
+ * step, leaving the branch as it was, and its files come back for the turn's
+ * prompt. Never throws, rebases, resets or pushes.
+ */
+export function mergeMovedDefaultBranch(scope: LivePublicationScope): { conflictFiles: string[] | null } {
+  const { d, repo, worktree, branch, loopLogPath } = scope
+  const none = { conflictFiles: null }
+  try {
+    if (!existsSync(worktree)) return none
+    const remoteUrl = repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null
+    const tip = d.readDefaultBranchTip(remoteUrl)
+    if (tip === null) return none
+    const merge = d.mergeDefaultTip(worktree, tip, remoteUrl)
+    if (merge.ok) {
+      if (merge.merged)
+        appendDriverLine(
+          loopLogPath,
+          `Merged main ${tip} into ${branch} before the Developer turn (${merge.oldHead} → ${merge.head})`,
+          'done'
+        )
+      return none
+    }
+    if (merge.conflictFiles.length === 0) return none
+    appendDriverLine(
+      loopLogPath,
+      `Merging main ${tip} into ${branch} conflicts in ${merge.conflictFiles.join(', ')}; the merge was aborted and the Developer is sent the files`,
+      'done'
+    )
+    return { conflictFiles: merge.conflictFiles }
+  } catch {
+    return none
+  }
 }
 
 /**
