@@ -1381,6 +1381,7 @@ export function defaultReadDefaultBranchTip(remoteUrl: string | null): string | 
     remote = execFileSync('git', ['ls-remote', remoteUrl, 'refs/heads/main'], {
       cwd: tmpdir(),
       encoding: 'utf8',
+      timeout: 30_000,
       stdio: ['ignore', 'pipe', 'pipe']
     }).trim()
   } catch {
