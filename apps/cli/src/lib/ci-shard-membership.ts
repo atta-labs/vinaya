@@ -9,7 +9,7 @@
  */
 
 /** Number of `shard-N.txt` files under `CI_SHARD_DIR_REL`. */
-export const CI_SHARD_COUNT = 3
+export const CI_SHARD_COUNT = 6
 
 /** `tests/ci-shards/`, relative to `apps/cli/`. */
 export const CI_SHARD_DIR_REL = 'tests/ci-shards'
