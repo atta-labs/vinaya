@@ -23,6 +23,7 @@ import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../.
 import { buildReport, computeGroupA, replaceEvidenceBlock } from '../../../../../apps/cli/src/lib/pr-report-engine'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { defaultReadDefaultBranchTip } from '../../../../../apps/cli/src/lib/dev-review-loop'
+import { readPostedReviewVerdicts } from '../../../../../apps/cli/src/lib/review-gate-input'
 import type { ReadyGateResult, StagedPullRequest, V2Functions } from './v2-actions'
 
 // The live wiring of review locally, push once (version 2 of the developer-review Flow) for the Engine runner: the
@@ -506,6 +507,8 @@ export function liveV2Functions(input: {
     },
     endStoragePushes: () => endStoragePushes(input.worktreePath),
     readMainTip: () => readFetchedMainTip(input.worktreePath, input.remoteUrl ?? null),
+    // The approvals a conflict re-entry starts from: the Principal-authored verdicts the gate itself reads.
+    readPostedVerdicts: (pr) => readPostedReviewVerdicts(pr),
     ...(input.log ? { log: input.log } : {}),
     ...(input.writeEvidence ? { writeEvidence: input.writeEvidence } : {})
   }

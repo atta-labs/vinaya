@@ -48,7 +48,15 @@ steps:
   - id: classify-conflict-repair
     type: mechanical
     action: vinaya.v2-classify-conflict-repair
-    decision: { examine: prove-conflict-repair, if_true: develop, if_false: run-mechanical-gates, max_revisions: 3 }
+    decision: { examine: prove-conflict-repair, if_true: develop, if_false: classify-approval-carry, max_revisions: 3 }
+  # A proven repair is judged against the approvals the conflict was recorded with, by the pull request's own patch
+  # (zero-context, from each head's own merge base with the default branch). Unchanged, the approvals carry: the ready
+  # push and CI run on the repaired head with no review, scan or live check. Changed, the reviewers judge only the
+  # interdiff against those approvals; with no approvals to carry, a fresh review.
+  - id: classify-approval-carry
+    type: mechanical
+    action: vinaya.v2-classify-approval-carry
+    decision: { examine: prove-conflict-repair, if_true: ready-push, if_false: run-mechanical-gates, max_revisions: 3 }
   # A local round: the local checks (`check --all --local`, judging the staged body), the premise against the staged
   # body, then the shared gate assessment. No mergeability poll and no CI wait: no pull request is open.
   - { id: run-mechanical-gates, type: mechanical, action: vinaya.v2-local-checks }

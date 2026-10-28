@@ -74,7 +74,7 @@
  */
 
 import { isPrincipal, isWaiverLabelActorVerified, WAIVER_LABEL_REVIEW } from './waiver-label'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
+import { extractCodeReviewVerdict, extractSecurityReviewVerdict, type VerdictExtraction } from './verdict-extraction'
 import {
   consequentialFindings,
   DEFAULT_REVIEW_POLICY,
@@ -88,6 +88,7 @@ import {
 } from './review-policy'
 import {
   compareManifest,
+  isBoundToHead,
   policyDigest as computePolicyDigest,
   type EchoedManifest,
   type ReviewInputManifest
@@ -538,6 +539,106 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     reason: `${problems.join('; ')}. A principal can apply an actor-verified \`${WAIVER_LABEL_REVIEW}\` label to skip this requirement, or post the missing/clean verdict comment(s).${ignoredNote}${deferredNote}`,
     waived: false
   }
+}
+
+/** The newest verdict comment of each review role, as posted; `null` for a role with none. */
+export type PostedVerdictBodies = { reviewer: string | null; security: string | null }
+
+/**
+ * The newest principal-authored verdict comment of each role — the same
+ * comment `checkReviewGate` reads each role's verdict from (the newest
+ * candidate, clear or not), kept whole so the reviewers of a changed repair
+ * can read the approvals and findings it carried.
+ */
+export function newestVerdictBodies(
+  comments: readonly ReviewGateComment[],
+  principalAllowlist: readonly string[]
+): PostedVerdictBodies {
+  const verified = comments.filter((c) => isPrincipal(c.author, principalAllowlist as string[])).map((c) => c.body)
+  const newest = (extract: (bodies: string[]) => VerdictExtraction): string | null => {
+    for (let i = verified.length - 1; i >= 0; i--) {
+      const body = verified[i] as string
+      if (extract([body]).danglingNote?.startsWith('no ') !== true) return body
+    }
+    return null
+  }
+  return { reviewer: newest(extractCodeReviewVerdict), security: newest(extractSecurityReviewVerdict) }
+}
+
+/**
+ * Whether a pull request's posted approvals cover a repaired head: `carry` when
+ * both still bind it (the same `compareManifest` the gate reads, with every
+ * non-head field — brief, objectives, ruling, pause binding, manifest version,
+ * policy — unchanged, and the pull request's own patch at the judged head and
+ * at the repaired head carrying one patch identity); `interdiff` when every
+ * non-head field still binds but the own patch changed, so only the change
+ * between the two own patches needs judging; `none` otherwise, with why —
+ * no approval pair, one that is not clean under policy, two verdicts that
+ * judged different heads, a moved non-head field, or own patches git could
+ * not compare (a missing object, an ambiguous merge base).
+ *
+ * Pure: the caller supplies `patchIdOf`, read from frozen git objects. The CI
+ * gate never reads this decision — it recomputes the same binding itself.
+ */
+export type ApprovalCarryDecision =
+  | { kind: 'carry'; judgedHead: string }
+  | { kind: 'interdiff'; judgedHead: string }
+  | { kind: 'none'; reason: string }
+
+export function decideApprovalCarry(input: {
+  verdicts: PostedVerdictBodies
+  current: ReviewInputManifest
+  policy: ReviewPolicy
+  patchIdOf: (sha: string) => string | null
+}): ApprovalCarryDecision {
+  const { verdicts, current, policy } = input
+  if (verdicts.reviewer === null || verdicts.security === null)
+    return { kind: 'none', reason: 'no code-review and security-review verdict pair is posted' }
+  const codeReview = extractCodeReviewVerdict([verdicts.reviewer])
+  const security = extractSecurityReviewVerdict([verdicts.security])
+  if (codeReview.value !== 'APPROVE' || security.value !== 'PASS')
+    return {
+      kind: 'none',
+      reason: `the newest verdicts are ${codeReview.value} and ${security.value}, not APPROVE and PASS`
+    }
+  try {
+    const code = evaluateCodeReview(consequentialFindings(codeReview.findingSeverities), policy)
+    const sec = evaluateSecurityReview(consequentialFindings(security.findingSeverities), policy)
+    if (code.outcome !== 'clean' || sec.outcome !== 'clean')
+      return { kind: 'none', reason: 'an approval carries a finding at or above the review policy threshold' }
+  } catch (err) {
+    return {
+      kind: 'none',
+      reason: `a verdict's findings do not evaluate: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+  const judgedHead = codeReview.headSha
+  if (judgedHead === null || security.headSha === null || !isBoundToHead(security, judgedHead))
+    return { kind: 'none', reason: 'the two verdicts do not name one judged head' }
+  if (isBoundToHead(codeReview, current.headSha))
+    return { kind: 'none', reason: `the verdicts already judged ${current.headSha}` }
+  const echoed = (v: VerdictExtraction): EchoedManifest => ({
+    manifestVersion: v.manifestVersion,
+    headSha: v.headSha,
+    baseSha: v.baseSha,
+    briefHash: v.briefHash,
+    objectivesVersion: v.objectivesVersion,
+    rulingOrdinal: v.rulingOrdinal,
+    ...(v.pauseBoundRuling === undefined ? {} : { pauseBoundRuling: v.pauseBoundRuling }),
+    policyDigest: v.policyDigest
+  })
+  const bindings = [codeReview, security].map((v) => compareManifest(echoed(v), current, input.patchIdOf))
+  const moved = (
+    ['briefHash', 'objectivesVersion', 'rulingOrdinal', 'pauseBoundRuling', 'manifestVersion', 'policyDigest'] as const
+  ).filter((field) => bindings.some((binding) => !binding[field]))
+  if (moved.length > 0)
+    return { kind: 'none', reason: `the review inputs moved since the approvals: ${moved.join(', ')}` }
+  const judged = input.patchIdOf(judgedHead)
+  const repaired = input.patchIdOf(current.headSha)
+  if (judged === null || repaired === null)
+    return { kind: 'none', reason: 'the own patches at the judged and the repaired head could not be compared' }
+  if (judged === repaired && bindings.every((binding) => binding.bound)) return { kind: 'carry', judgedHead }
+  return { kind: 'interdiff', judgedHead }
 }
 
 /** A ruling binding as the gate's failure text names it: `<ruling>|<pause>|<digest>`, `(none)`, or `(absent)` when no slot was echoed at all. */

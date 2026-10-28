@@ -353,3 +353,45 @@ describe('pauseBoundRulingFromResolution — the slot comes from the consumed re
     expect(pauseBoundRulingFromResolution({ ...resolution, decision: 'cancel' }, read)).toBeNull()
   })
 })
+
+describe('compareManifest — a repaired head carried by its own patch', () => {
+  const JUDGED = 'b'.repeat(40)
+  const REPAIRED = 'c'.repeat(40)
+  const MOVED_BASE = 'e'.repeat(40)
+  const fields = { manifestVersion: 2 as const, pauseBoundRuling: null, objectivesVersion: 'v1' }
+  const current = manifest({ ...fields, headSha: REPAIRED, baseSha: MOVED_BASE })
+  const echoed = (overrides: Partial<EchoedManifest> = {}): EchoedManifest => ({
+    ...manifestAsEchoed(manifest({ ...fields, headSha: JUDGED })),
+    ...overrides
+  })
+  const samePatch = (sha: string) => (sha === JUDGED || sha === REPAIRED ? 'own-patch' : null)
+  const changedPatch = (sha: string) => (sha === JUDGED ? 'own-patch' : sha === REPAIRED ? 'other-patch' : null)
+
+  it('binds an equivalent repaired patch across the moved base', () => {
+    const result = compareManifest(echoed(), current, samePatch)
+    expect(result.head).toBe(true)
+    expect(result.base).toBe(true)
+    expect(result.bound).toBe(true)
+  })
+
+  it('refuses a changed own patch, and a patch git could not read', () => {
+    expect(compareManifest(echoed(), current, changedPatch).bound).toBe(false)
+    expect(compareManifest(echoed(), current, () => null).bound).toBe(false)
+  })
+
+  it('a patch match never stands in for a stale non-head field', () => {
+    const stale: Partial<EchoedManifest>[] = [
+      { briefHash: 'stale' },
+      { objectivesVersion: 'stale' },
+      { rulingOrdinal: 3 },
+      { policyDigest: 'stale' },
+      { manifestVersion: 1 },
+      { pauseBoundRuling: { rulingId: '1-1', pauseId: 'p', contentDigest: 'a'.repeat(64) } }
+    ]
+    for (const field of stale) {
+      const result = compareManifest(echoed(field), current, samePatch)
+      expect(result.head).toBe(true)
+      expect(result.bound).toBe(false)
+    }
+  })
+})

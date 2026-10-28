@@ -44,6 +44,7 @@ import {
   isPrincipal,
   isWaiverLabelActorVerified,
   newestPrincipalRulingOrdinal,
+  newestVerdictBodies,
   objectivesOf,
   objectivesVersion,
   parseDeveloperRoundMarker,
@@ -51,6 +52,7 @@ import {
   pauseBoundRulingDigest,
   principalRulingTextById,
   type PauseBoundRuling,
+  type PostedVerdictBodies,
   resolveNewestFrozenBrief,
   resolveObjectivesSource,
   WAIVER_LABEL_REVIEW,
@@ -66,7 +68,7 @@ import {
   resolveTrustedPrincipals
 } from './config.js'
 import { incompleteForgeSnapshot, snapshotComments, snapshotIssue, snapshotPullRequest } from './forge-snapshot.js'
-import { patchIdAt } from './patch-id.js'
+import { fetchFromOrigin, ownPatchIdAt } from './patch-id.js'
 
 export type PrView = {
   number: number
@@ -544,9 +546,12 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
       principalAllowlist,
       headSha,
       // A verdict judged a PATCH; the head sha is only its address. A merge
-      // from `main` or a rebase that leaves the patch untouched must not void
-      // a review that already read exactly those changes.
-      patchIdOf: (sha: string) => patchIdAt(pr.baseRefName, sha),
+      // from `main` or a rebase that leaves the pull request's own changed
+      // lines untouched must not void a review that already read exactly
+      // those changes. Recomputed here from the git objects themselves — the
+      // base tip frozen above and each verdict's judged head, fetched from
+      // origin — never from anything the driver recorded or posted.
+      patchIdOf: (sha: string) => ownPatchIdAt(baseSha, sha, { fetch: fetchFromOrigin }),
       // The base identity the verdict is bound to — the PR's base branch tip,
       // resolved the same fail-safe way as the head. A base-only change under
       // an unchanged candidate invalidates; an equivalent rebase (patchIdOf
@@ -563,6 +568,28 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
       briefHash: resolvedBriefHash.value
     }
   }
+}
+
+/**
+ * The newest posted verdict comment of each review role on PR `prNumber`,
+ * counted only when a Principal on the default branch's trusted list authored
+ * it — the comments the gate itself reads (`newestVerdictBodies`). `null` when
+ * the pull request or the trusted list cannot be read: no approval is carried
+ * on a read that failed.
+ */
+export function readPostedReviewVerdicts(prNumber: number): PostedVerdictBodies | null {
+  const pr = fetchPr(prNumber)
+  if (pr === null) return null
+  let principals: string[]
+  try {
+    principals = resolveTrustedPrincipals()
+  } catch {
+    return null
+  }
+  return newestVerdictBodies(
+    pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
+    principals
+  )
 }
 
 /**

@@ -96,6 +96,8 @@ export interface Scenario {
   mergeable?: (fromGit: 'MERGEABLE' | 'CONFLICTING', world: World) => 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
   /** Whether the version 2 open-pull-request lookup fails (answers none) at this moment; default never. */
   pullRequestLookupFails?: (world: World) => boolean
+  /** The verdict comments the forge holds on the pull request, newest of each role; default none. */
+  postedVerdicts?: (world: World) => { reviewer: string | null; security: string | null } | null
 }
 
 export interface World {
@@ -144,6 +146,20 @@ export interface World {
    * conflict, commits the merge and, when `push` is set, moves the remote head to it as the turn's push.
    */
   mergeMain: (push: boolean, target?: string) => string
+  /** Writes `files` in the worktree, commits them and, when `push` is set, moves the remote head to the commit. */
+  commitFiles: (files: Record<string, string>, push: boolean) => string
+  /** Commits `files` to the default branch and moves `origin/main` to it. */
+  moveMainWith: (files: Record<string, string>) => string
+  /**
+   * Merges the default branch's tip with `git merge --no-commit`, resolves every file in `files` to its content,
+   * commits the merge and, when `push` is set, moves the remote head to it as the turn's push.
+   */
+  mergeMainWith: (files: Record<string, string>, push: boolean) => string
+  /**
+   * Both reviewers' approvals of the worktree head as the forge holds them once posted: rendered against the review
+   * inputs of that head as they stand now, with `overrides` replacing any line's value.
+   */
+  approvalsOfHead: (overrides?: { rulingOrdinal?: number; head?: string }) => { reviewer: string; security: string }
   /** The local check runs made before each Developer launch, in turn. */
   gateRunsAtDeveloper: number[]
   /** The mergeability reads the fake forge answered, in turn. */
@@ -358,6 +374,66 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       git('update-ref', 'refs/remotes/origin/main', 'HEAD')
       return git('rev-parse', 'HEAD')
     },
+    commitFiles: (files, push) => {
+      for (const [file, content] of Object.entries(files)) writeFileSync(join(worktree, file), content)
+      git('-C', worktree, 'add', '-A')
+      git('-C', worktree, 'commit', '-q', '-m', `files ${Object.keys(files).join(', ')}`)
+      const head = git('-C', worktree, 'rev-parse', 'HEAD')
+      if (push) world.remote = head
+      return head
+    },
+    moveMainWith: (files) => {
+      mainMoves += 1
+      for (const [file, content] of Object.entries(files)) writeFileSync(join(repo, file), content)
+      git('add', '-A')
+      git('commit', '-q', '-m', `main moves ${mainMoves}`)
+      git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+      return git('rev-parse', 'HEAD')
+    },
+    mergeMainWith: (files, push) => {
+      // A conflicting merge exits non-zero and leaves the conflict in the index for the resolution below.
+      try {
+        git('-C', worktree, 'merge', '--no-commit', '--no-ff', world.mainTip())
+      } catch {}
+      for (const [file, content] of Object.entries(files)) {
+        writeFileSync(join(worktree, file), content)
+        git('-C', worktree, 'add', file)
+      }
+      git('-C', worktree, 'commit', '-q', '--no-edit')
+      const head = git('-C', worktree, 'rev-parse', 'HEAD')
+      if (push) {
+        world.remote = head
+        world.remoteAfterTurn.push(head)
+      }
+      return head
+    },
+    approvalsOfHead: (overrides = {}) => {
+      const manifest = task.currentManifest?.()
+      if (!manifest) throw new Error('the review inputs of the worktree head could not be read')
+      const lines = (verdict: string) =>
+        [
+          `VERDICT: ${verdict}`,
+          '',
+          `Judged head: ${overrides.head ?? manifest.headSha}`,
+          '',
+          `Objectives version: ${manifest.objectivesVersion}`,
+          '',
+          `Ruling ordinal: ${overrides.rulingOrdinal ?? manifest.rulingOrdinal}`,
+          '',
+          `Brief hash: ${manifest.briefHash ?? '(none)'}`,
+          '',
+          `Policy digest: ${manifest.policyDigest}`,
+          '',
+          `Judged base: ${manifest.baseSha ?? '(none)'}`,
+          '',
+          'Manifest version: 2',
+          '',
+          'Pause-bound ruling: (none)',
+          '',
+          'FINDINGS: none.'
+        ].join('\n')
+      return { reviewer: lines('APPROVE'), security: lines('PASS') }
+    },
     mergeMain: (push, target) => {
       // A conflicting merge exits non-zero and leaves the conflict in the index for the resolution below.
       try {
@@ -477,6 +553,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     fresh.v2 = {
       now: scenario.now,
       readMainTip: () => world.mainTip(),
+      readPostedVerdicts: () => scenario.postedVerdicts?.(world) ?? null,
       readCheckExcerpt: (jobId) => scenario.jobExcerpts?.[jobId] ?? null,
       stagedPullRequest: () => world.staged,
       findOpenPullRequest: () => (world.prOpen && !scenario.pullRequestLookupFails?.(world) ? { number: PR } : null),

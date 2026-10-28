@@ -10,6 +10,7 @@ import {
   endStoragePushes,
   NO_LOCAL_TESTS_MARKER,
   readFetchedMainTip,
+  readyGateEvidence,
   runReadyGateLive,
   stagedPullRequestStore,
   withV2DevTools
@@ -399,5 +400,24 @@ describe('readFetchedMainTip', () => {
     const { worktree } = setUp()
     expect(readFetchedMainTip(worktree, null)).toBeNull()
     expect(readFetchedMainTip(worktree, `file://${join(worktree, 'no-such-repo')}`)).toBeNull()
+  })
+})
+
+describe('readyGateEvidence for a repaired head', () => {
+  test('a ready push that passed on the pre-merge head never stands in for the merge', async () => {
+    const dir = fixtureDir('ready-evidence-repaired-')
+    const resultPath = join(dir, 'ready-gate.json')
+    const judged = 'a'.repeat(40)
+    const merged = 'b'.repeat(40)
+    writeFileSync(
+      resultPath,
+      JSON.stringify({
+        head: judged,
+        gate: { passed: true, output: 'ok', selection: null, failed: [], wallMs: 1 }
+      })
+    )
+    await expect(readyGateEvidence({ body: 'Closes #1', head: merged, resultPath, worktreePath: dir })).rejects.toThrow(
+      'no successful ready-gate result for the approved head'
+    )
   })
 })

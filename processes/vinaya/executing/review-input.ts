@@ -24,11 +24,62 @@ export interface VinayaStagedReviewInput {
   paths: ReviewerCandidateInputPaths | null
 }
 
+/**
+ * A proven conflict repair whose own patch changed: what its reviewers judge instead of the whole pull request —
+ * the interdiff between the own patch the approvals judged and the repaired one, and those approvals as posted.
+ */
+export interface RepairReview {
+  /** The head the approvals judged. */
+  judgedHead: string
+  /** The repaired head the reviewers judge. */
+  head: string
+  /** The change between the two own patches; no line only the default branch brought in appears in it. */
+  interdiff: string
+  /** The newest posted code-review and security-review verdicts, approvals and findings as they stand. */
+  approvals: { reviewer: string; security: string }
+}
+
 /** Stages the review input for a round, once; null when the judged head could not be staged. */
 export interface VinayaReviewInputStager {
-  stage: (round: number) => VinayaStagedReviewInput | null
+  /** `repair` stages a changed repair's interdiff and approvals in place of the diff and prior findings. */
+  stage: (round: number, repair?: RepairReview | null) => VinayaStagedReviewInput | null
   /** A fresh copy for one role attempt, including that attempt's own input paths. */
-  stageAttempt: (round: number, role: 'reviewer' | 'security', attempt: number) => VinayaStagedReviewInput | null
+  stageAttempt: (
+    round: number,
+    role: 'reviewer' | 'security',
+    attempt: number,
+    repair?: RepairReview | null
+  ) => VinayaStagedReviewInput | null
+}
+
+/** The staged diff of a changed repair: the interdiff, introduced. */
+export function repairReviewDiff(repair: RepairReview): string {
+  return [
+    `# The change a conflict repair made to this pull request's own patch`,
+    '',
+    `Both reviewers approved ${repair.judgedHead}. Merging the default branch into it produced ${repair.head}, and that merge changed the pull request's own lines. Below is the change between the pull request's own patch at ${repair.judgedHead} and at ${repair.head}: each own patch is the zero-context diff from its own merge base with the default branch, with line positions left out, so no line the default branch alone brought in appears here.`,
+    '',
+    repair.interdiff,
+    ''
+  ].join('\n')
+}
+
+/** The staged prior findings of a changed repair: the approvals it is judged against, and how to judge it. */
+export function repairReviewBaseline(repair: RepairReview): string {
+  return [
+    '# The approvals this repair is judged against',
+    '',
+    `Judge the interdiff in the staged diff file, not the whole pull request. Keep every objective result below that the interdiff does not touch, as recorded; judge again each objective the interdiff affects, reading the repaired candidate; and return your verdict for ${repair.head}.`,
+    '',
+    '## The code review, as posted',
+    '',
+    repair.approvals.reviewer,
+    '',
+    '## The security review, as posted',
+    '',
+    repair.approvals.security,
+    ''
+  ].join('\n')
 }
 
 /** What staging one round's reviewer candidate reads; each is called only when a round is first staged. */
@@ -79,15 +130,24 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
       return `(${what} could not be fetched this round: ${error instanceof Error ? error.message : String(error)})`
     }
   }
-  let staged: { round: number; head: string; input: VinayaStagedReviewInput | null } | null = null
+  let staged: { round: number; head: string; repair: string; input: VinayaStagedReviewInput | null } | null = null
   const attempts = new Map<string, VinayaStagedReviewInput | null>()
   // A cached copy is reused only while it is still on disk: a fresh run in the same process (a conflict re-entry)
   // clears stale reviewer copies at its start, and the head it judges may have moved since.
   const present = (input: VinayaStagedReviewInput | null): boolean => input === null || existsSync(input.dir)
   return {
-    stage(round) {
+    stage(round, repairFor) {
       const head = deps.judgedHead()
-      if (staged !== null && staged.round === round && staged.head === head && present(staged.input))
+      // A repair review stands only for the repaired head it was decided about.
+      const repair = repairFor && repairFor.head === head ? repairFor : null
+      const repairKey = repair === null ? '' : `${repair.judgedHead}:${repair.interdiff}`
+      if (
+        staged !== null &&
+        staged.round === round &&
+        staged.head === head &&
+        staged.repair === repairKey &&
+        present(staged.input)
+      )
         return staged.input
       // The head is read before and after the copy; a worktree that moved mid-copy yields no candidate.
       const dir = build(deps.root, deps.task, round, deps.worktreePath, head, deps.readHead)
@@ -95,7 +155,8 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
       if (dir !== null) {
         let diff: string
         try {
-          diff = deps.diff(deps.baseOf(head), head)
+          // A changed repair is judged by its interdiff, never by a diff that carries the default branch's own work.
+          diff = repair !== null ? repairReviewDiff(repair) : deps.diff(deps.baseOf(head), head)
         } catch (error) {
           // The reason reaches both the reviewers and the driver log, so a failed read is diagnosable from either.
           const reason = error instanceof Error ? error.message : String(error)
@@ -108,16 +169,16 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
           brief: orPlaceholder(deps.brief, "the task's frozen brief"),
           prBody: orPlaceholder(deps.prBody, 'the pull request body'),
           diff,
-          priorFindings: priorFindings(round)
+          priorFindings: repair !== null ? repairReviewBaseline(repair) : priorFindings(round)
         })
         input = { dir, paths: written ? reviewerCandidateInputPaths(dir) : null }
       }
-      staged = { round, head, input }
+      staged = { round, head, repair: repairKey, input }
       return input
     },
-    stageAttempt(round, role, attempt) {
-      const candidate = this.stage(round)
-      const key = `${round}:${role}:${attempt}:${candidate?.dir ?? ''}`
+    stageAttempt(round, role, attempt, repair) {
+      const candidate = this.stage(round, repair)
+      const key = `${round}:${role}:${attempt}:${candidate?.dir ?? ''}:${staged?.repair ?? ''}`
       const cached = attempts.get(key)
       if (cached !== undefined && present(cached)) return cached
       const dir = candidate ? buildReviewerScratch(deps.root, deps.task, round, role, attempt, candidate.dir) : null
@@ -161,7 +222,10 @@ export function renderVinayaReviewerPrompt(
   role: 'reviewer' | 'security',
   facts: ReviewerPromptFacts,
   staged: VinayaStagedReviewInput | null,
-  roleDoctrine: string | null = null
+  roleDoctrine: string | null = null,
+  repair: RepairReview | null = null
 ): string {
-  return renderReviewerDispatchPrompt(role, facts, roleDoctrine, staged?.paths ?? null)
+  const prompt = renderReviewerDispatchPrompt(role, facts, roleDoctrine, staged?.paths ?? null)
+  if (repair === null || staged?.paths == null) return prompt
+  return `${prompt}\n\n## This round reviews a conflict repair\n\nBoth reviewers approved ${repair.judgedHead}; a merge of the default branch into it, ${repair.head}, changed the pull request's own patch. The staged diff file (${staged.paths.diff}) holds only that change — the interdiff between the two own patches, with nothing the default branch alone brought in — and the staged prior-findings file (${staged.paths.priorFindings}) holds both approvals and their findings as posted. Judge the interdiff against them, not the whole pull request: keep each objective result the interdiff does not touch, judge again each one it affects, and return a verdict for ${repair.head}.\n`
 }
