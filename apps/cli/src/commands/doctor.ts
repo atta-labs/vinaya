@@ -53,6 +53,7 @@ import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
   type BriefSection,
   GLOBAL_CONFIG_PATH,
+  resolveLocalPacingOverride,
   globalChecksIgnoredWarning,
   isDefaultedAgentVendorPath,
   type ManagedManifest,
@@ -977,6 +978,27 @@ function diagnoseGlobalConfigChecks(): Finding[] {
 // — declaring capability by host identity is the exact false positive the
 // probe exists to remove.
 // ---------------------------------------------------------------------------
+/** Reports a local pacing override in effect, through the same resolver the loop uses. */
+export function diagnoseLocalOverride(cwd: string = process.cwd()): Finding[] {
+  try {
+    const local = resolveLocalPacingOverride(cwd)
+    if (!local) return []
+    const values = [
+      local.maxRounds !== undefined ? `reviewPolicy.maxRounds=${local.maxRounds}` : null,
+      local.maxTaskMinutes !== undefined ? `reviewPolicy.maxTaskMinutes=${local.maxTaskMinutes}` : null
+    ].filter((v): v is string => v !== null)
+    const ignored = local.ignoredKeys.length > 0 ? `; ignoring ${local.ignoredKeys.join(', ')}` : ''
+    return [
+      info(
+        'local-override',
+        `${local.path} is in effect for local runs, overriding ${values.join(', ') || 'nothing'}${ignored}.`
+      )
+    ]
+  } catch (err) {
+    return [warn('local-override', (err as Error).message)]
+  }
+}
+
 function diagnoseTokenMetering(deps: DoctorDeps): Finding[] {
   const capability = deps.meteringCapability()
   if (capability.capable) return []
@@ -1738,6 +1760,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   findings.push(...diagnoseEnvDeclarations(repo.repoRoot, configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseCheckClassification(configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseGlobalConfigChecks())
+  findings.push(...diagnoseLocalOverride())
   findings.push(...diagnoseTokenMetering(deps))
   findings.push(...diagnoseGhReachable())
   findings.push(...(await diagnoseEnvironment(deps, hasDrift)))
@@ -1766,5 +1789,5 @@ export async function doctorCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  doctor: { date: '2026-09-05', callsToday: 22, retiresVia: 'sharedCommandShell' }
+  doctor: { date: '2026-09-05', callsToday: 23, retiresVia: 'sharedCommandShell' }
 }

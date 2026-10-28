@@ -52,3 +52,6 @@ yarn-error.log*
 # posted via `pr create --body-file`. Never tracked.
 /pr-body.md
 /pr-body-*.md
+
+# Local pacing overrides for this machine (maxRounds, maxTaskMinutes); never committed.
+/vinaya.config.local.json
