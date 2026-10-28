@@ -79,6 +79,10 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     `shell_tool = ${shellEnabled}`,
     `multi_agent = ${multiAgentEnabled}`,
     'hooks = true',
+    // The ChatGPT account's connectors (GitHub among them) are no tool of the role: its only MCP server is the loop's own.
+    'apps = false',
+    'plugins = false',
+    'remote_plugin = false',
     '',
     '[tools]',
     `web_search = ${grants.tools.codex.web_search === 'allow'}`,

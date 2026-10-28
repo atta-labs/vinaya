@@ -67,8 +67,8 @@ Every field below has exactly one named obligation for the Developer (right colu
 | **A fenced command with its executed output pasted beneath it (the only other form a behavioural fact about code may take in a brief)** | Re-run before the Part that depends on it; output pasted in that round's PR comment | The Developer re-runs the command and compares its own output against what the brief pasted. A mismatch is a brief defect, not a fact to transcribe — the Developer stops, `severity: strategy`, and never writes the brief's sentence into doctrine or code. |
 | **Documentation-update list** (rendered from `Docs to keep coherent`, mechanically derived against `.vinaya/doc-owners`) | Self-check before opening PR + Reviewer doc check | The Developer updates every doc named in the list before claiming done. The list is a DoD obligation, not a recommendation — a named doc not updated is a BLOCKER at review. `verify-docs --pr` gates structural presence; the Reviewer gates content correctness. |
 | **Task Done checklist** (the Developer's own tier checklist, not a rendered section) | Self-check before opening PR | The Developer runs every item before opening the PR. An unchecked item means the PR is not ready. |
-| **`## Test plan`** tagged `[agent]` / `[principal]` | Runs `[agent]` items; leaves `[principal]` for Principal | The Developer runs every `[agent]` item and posts evidence. Does not tick `[principal]` boxes. |
-| **`## Stop conditions`** | Halt triggers | The Developer stops and posts a blocker comment on the Issue when any condition is met. Never improvises past a stop condition. |
+| **`## Test plan`** tagged `[agent]` / `[principal]` | Runs `[agent]` items; leaves `[principal]` for Principal | The Developer runs every `[agent]` item; the controller records the output as evidence. Does not tick `[principal]` boxes. |
+| **`## Stop conditions`** | Halt triggers | The Developer stops when any condition is met and reports the blocker in its turn result (the loop posts it). Never improvises past a stop condition. |
 | **Constraints** (rendered from `Traps to avoid` plus the standing autonomy clause) | Hard rules during execution | The Developer treats these as absolute — not "guidelines." A violated constraint is a PR that must not merge. |
 
 **Reading the table:** left is the producer obligation (the Issue's own gates refuse a task Issue missing a rationale field or judgment section at creation time; the dispatch act's render refuses a brief with a gap it cannot derive), right is the consumer obligation (Developer role doc and executor protocol enforce it). The role doc must not contradict this table.
@@ -126,8 +126,8 @@ The dispatch act's enforcement is the same forge-derived check the Developer run
 - Execute step 0 first, always. Never branch from `HEAD` of the current local checkout.
 - Verify all dependencies are merged before the first line of code.
 - Stay within the surface map. A file outside it is no stop: the driver records it in the pull request body's beyond-Surface block, and the reviewers judge it like any change.
-- Run every `[agent]` Test Plan item and post the actual command output as evidence. Do not paraphrase verification results.
-- Stop on any stop condition — post a blocker comment, do not improvise.
+- Run every `[agent]` Test Plan item and let the controller record the actual command output as evidence. Do not paraphrase verification results.
+- Stop on any stop condition — report the blocker in your turn result (the loop posts it), do not improvise.
 - Report tokens in the PR body at turn-end, per `aeg-root/roles/developer/reference.md` — never append your own row to a ledger file.
 
 ---

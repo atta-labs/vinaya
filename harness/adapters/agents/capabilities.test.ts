@@ -153,12 +153,16 @@ describe('the developer before and after the capability contract', () => {
       ''
     ].join('\n')
     expect(codex.files['config.toml']).toContain(credentialEnv)
+    // Intended: the config now also turns off the account connectors, so the loop's server is the only one.
+    const connectorOff = 'apps = false\nplugins = false\nremote_plugin = false\n'
+    expect(codex.files['config.toml']).toContain(connectorOff)
     // Intended: workspace-write no longer opens /tmp or $TMPDIR beside the named writable roots.
     const tmpClosed = 'exclude_slash_tmp = true\nexclude_tmpdir_env_var = true\n'
     expect(codex.files['config.toml']).toContain(tmpClosed)
     expect(
       (codex.files['config.toml'] as string)
         .replace(credentialEnv, '')
+        .replace(connectorOff, '')
         .replace('required = true\n', '')
         .replace(tmpClosed, '')
     ).toBe(before.codex.files['config.toml'] as string)

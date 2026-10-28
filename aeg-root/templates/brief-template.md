@@ -125,7 +125,7 @@ STOP and report if: pre-flight fails; [the Planner's stop-and-escalate condition
 - [forbidden patterns for this task — deferred features, off-limits paths]
 - Never write status anywhere; never add execution metadata to the tranche file.
 
-> **Autonomy:** Do not stop to ask clarifying questions. For any ambiguity not covered by a Section 10 stop condition, choose the most reasonable option consistent with this brief, record the choice in the PR body at open, or in a PR comment after open, and continue. Halt only for the explicit Section 10 stop conditions — and when you halt, record the blocker in a PR comment or an Issue comment rather than waiting interactively for input.
+> **Autonomy:** Do not stop to ask clarifying questions. For any ambiguity not covered by a Section 10 stop condition, choose the most reasonable option consistent with this brief, record the choice in the PR body at open, and continue. Halt only for the explicit Section 10 stop conditions — and when you halt, report the blocker in your turn result (the loop posts it); post no PR or Issue comment yourself, and do not wait interactively for input.
 
 ## 12. Deliverable
 
