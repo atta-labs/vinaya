@@ -9,13 +9,14 @@ Harbor (version 0.24.0) runs it on a task folder the converter
 
 The task image already holds the Vinaya CLI at /opt/vinaya with its workspace
 dependencies, installed at image build from the archive the converter wrote
-with its `--archive` flag, and the digest of that archive; Claude Code, Bun and
+with its `--archive` flag, and the digest of that archive; Claude Code, Codex, Bun and
 Node are in the image too, `claude` linked in /opt/claude/bin. The image ends
 as its non-root user `tester`, which owns /opt/vinaya, /app, /case and /logs:
 the run, which Harbor executes as the image's user, works as `tester` with its
 home at /home/tester. `install` uploads this agent's archive and refuses
 unless its SHA-256 equals the digest the image recorded, so the run uses the
-CLI it was given; it runs no network step. `run` runs
+CLI it was given. With adapter=codex it also stages the subscription login
+through stdin in the container's tester-owned Codex home. `run` runs
 `harbor-trial.ts` on the task's case in container mode, which dispatches the
 Vinaya role and writes the agent part of the Vinaya trial record and the run's
 usage to the agent log directory, where the task's verifier and this agent read
@@ -24,7 +25,9 @@ them.
 The Claude login is the subscription token alone: `CLAUDE_CODE_OAUTH_TOKEN` and
 `CLAUDE_FORCE_OAUTH`, read from the environment of the `harbor run` process,
 never from an agent-env flag, whose values Harbor writes into the job's
-configuration. No API key is read or forwarded.
+configuration. Codex reads CODEX_ACCESS_TOKEN from that same process environment
+only during install, never from an agent-env flag. The run receives CODEX_HOME
+alone, with no access-token variable. No API key is read or forwarded.
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import tempfile
+import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -47,6 +52,7 @@ CASE_FILE = PurePosixPath("/case/case.json")
 CASE_TREE = PurePosixPath("/app")
 # The home of the image's non-root user, which the run works as; see harbor-tasks.ts.
 AGENT_HOME = PurePosixPath("/home/tester")
+CODEX_HOME = AGENT_HOME / ".codex"
 TRIAL_ENTRY = "apps/cli/src/lib/dev-review-eval/harbor-trial.ts"
 RECORD_FILE = "vinaya-trial-record.json"
 USAGE_FILE = "vinaya-usage.json"
@@ -54,6 +60,18 @@ TRANSCRIPT_FILE = "vinaya-trial.txt"
 
 # The only variables forwarded to the run for its login.
 SUBSCRIPTION_ENV = ("CLAUDE_FORCE_OAUTH", "CLAUDE_CODE_OAUTH_TOKEN")
+LOGIN_ENV = (*SUBSCRIPTION_ENV, "CODEX_ACCESS_TOKEN")
+
+
+def codex_login_command(token_path: PurePosixPath, codex_home: PurePosixPath) -> str:
+    """Only stdin carries the token to Codex; never argv, env or captured output."""
+    home = shlex.quote(codex_home.as_posix())
+    token = shlex.quote(token_path.as_posix())
+    return (
+        f"umask 077 && mkdir -p {home} && chmod 600 {token} && "
+        f"env -i PATH=\"$PATH\" HOME={shlex.quote(AGENT_HOME.as_posix())} CODEX_HOME={home} "
+        f"codex login --with-access-token < {token} > /dev/null 2>&1"
+    )
 
 
 def install_command(
@@ -81,14 +99,26 @@ def install_command(
 class VinayaAgent(BaseInstalledAgent):
     """Runs one Vinaya role on the task's case through `harbor-trial.ts`."""
 
-    def __init__(self, logs_dir: Path, *args: Any, archive: str | None = None, **kwargs: Any):
+    _adapter = "claude-code"
+    _codex_login_staged = False
+
+    def __init__(
+        self, logs_dir: Path, *args: Any, archive: str | None = None,
+        adapter: str = "claude-code", **kwargs: Any
+    ):
         super().__init__(logs_dir, *args, **kwargs)
+        if adapter not in ("claude-code", "codex"):
+            raise ValueError(f"adapter {adapter} is not one of claude-code, codex")
+        self._adapter = adapter
         if not archive:
             raise ValueError("the vinaya agent needs the Vinaya CLI archive: --ak archive=<path to vinaya.tar>")
         self._archive = Path(archive).expanduser().resolve()
         if not self._archive.is_file():
             raise FileNotFoundError(f"the Vinaya CLI archive is not a file: {self._archive}")
-        for name in SUBSCRIPTION_ENV:
+        for name in self.extra_env:
+            if name.endswith("API_KEY"):
+                raise ValueError("API-key variables are not supported: subscription login only")
+        for name in LOGIN_ENV:
             if name in self.extra_env:
                 raise ValueError(
                     f"{name} is read from the environment of the harbor run process; "
@@ -100,8 +130,43 @@ class VinayaAgent(BaseInstalledAgent):
         return "vinaya"
 
     async def install(self, environment: BaseEnvironment) -> None:
+        # Refuse before touching the container when the operator has no login.
+        token = self._codex_access_token() if self._adapter == "codex" else None
         await environment.upload_file(self._archive, ARCHIVE_IN_CONTAINER.as_posix())
         await self.exec_as_root(environment, command=install_command())
+        if token is not None:
+            # Harbor's exec API has no stdin argument. Upload into a root-only
+            # directory, redirect the file to login's stdin, then remove it.
+            remote_dir = PurePosixPath(f"/tmp/vinaya-codex-login-{uuid.uuid4().hex}")
+            remote_token = remote_dir / "token"
+            directory = shlex.quote(remote_dir.as_posix())
+            await self.exec_as_root(environment, command=f"umask 077 && mkdir -m 700 {directory}")
+            try:
+                with tempfile.TemporaryDirectory(prefix="vinaya-codex-login-") as local_dir:
+                    local_token = Path(local_dir) / "token"
+                    local_token.touch(mode=0o600)
+                    local_token.write_text(token)
+                    await environment.upload_file(local_token, remote_token.as_posix())
+                await self.exec_as_root(
+                    environment, command=codex_login_command(remote_token, CODEX_HOME), timeout_sec=45
+                )
+                await self.exec_as_root(
+                    environment,
+                    command=f"chown -R tester:tester {shlex.quote(CODEX_HOME.as_posix())}",
+                )
+            finally:
+                await self.exec_as_root(environment, command=f"rm -rf {directory}")
+            self._codex_login_staged = True
+
+    def _codex_access_token(self) -> str:
+        token = os.environ.get("CODEX_ACCESS_TOKEN", "").strip()
+        if not token:
+            raise RuntimeError(
+                "no Codex subscription login: CODEX_ACCESS_TOKEN is not set in the environment "
+                "of the harbor run process; sign in with `codex login` on the host and export "
+                "its subscription access token using resolveCodexAccessToken"
+            )
+        return token
 
     def _subscription_env(self) -> dict[str, str]:
         """The run's login, from the environment of the harbor run process only."""
@@ -136,17 +201,22 @@ class VinayaAgent(BaseInstalledAgent):
                 shlex.quote(f"{logs}/{RECORD_FILE}"),
                 "--usage",
                 shlex.quote(f"{logs}/{USAGE_FILE}"),
-                "--backend standalone --adapter claude-code",
+                f"--backend standalone --adapter {self._adapter}",
                 "--model",
                 shlex.quote(self.model_name),
                 f"2>&1 | tee {shlex.quote(f'{logs}/{TRANSCRIPT_FILE}')}",
             ]
         )
-        env = {
-            **self._subscription_env(),
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-            "HOME": AGENT_HOME.as_posix(),
-        }
+        if self._adapter == "codex":
+            if not self._codex_login_staged:
+                raise RuntimeError("no Codex subscription login staged: the install step must log in first")
+            env = {"CODEX_HOME": CODEX_HOME.as_posix(), "HOME": AGENT_HOME.as_posix()}
+        else:
+            env = {
+                **self._subscription_env(),
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                "HOME": AGENT_HOME.as_posix(),
+            }
         await self.exec_as_agent(environment, command=f"mkdir -p {shlex.quote(logs)} && {command}", env=env)
 
     def populate_context_post_run(self, context: AgentContext) -> None:

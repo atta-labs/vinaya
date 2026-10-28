@@ -55,8 +55,8 @@ export interface HarborCaseFile {
 /** The only backend a Harbor trial runs on now. */
 export const HARBOR_TRIAL_BACKENDS = ['standalone'] as const
 
-/** The only adapter a Harbor trial runs: Claude Code, logged in from the subscription token. */
-export const HARBOR_TRIAL_ADAPTERS = ['claude-code'] as const satisfies readonly StepOneAdapter[]
+/** The subscription-authenticated adapters a Harbor trial runs. */
+export const HARBOR_TRIAL_ADAPTERS = ['claude-code', 'codex'] as const satisfies readonly StepOneAdapter[]
 
 export interface HarborTrialOptions {
   casePath: string
@@ -179,7 +179,7 @@ const flag = (argv: readonly string[], name: string): string | undefined => {
 }
 
 export const HARBOR_TRIAL_USAGE =
-  'usage: harbor-trial.ts --case <case.json> --tree <dir> --record <file> --usage <file> --backend standalone --adapter claude-code --model <exact model id> [--timeout-sec <n>]'
+  'usage: harbor-trial.ts --case <case.json> --tree <dir> --record <file> --usage <file> --backend standalone --adapter claude-code|codex --model <exact model id> [--timeout-sec <n>]'
 
 /** The command entry: exit 0 when the run recorded its trial, 1 when it is unavailable, 2 on a refused option. */
 export async function harborTrialCommand(

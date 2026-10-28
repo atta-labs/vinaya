@@ -857,12 +857,12 @@ Harbor `vinaya` agent invokes.
 `apps/cli/src/lib/dev-review-eval/harbor-tasks.ts`, run with Bun, reads every development case of the four suites through `developmentCases` and writes one Harbor task folder per case at `<out>/<suite>/<case id>/`, so each suite folder is one Harbor dataset. A case the Vinaya renderer refuses is listed on standard error with its refusal and gets no folder.
 
 ```text
-bun apps/cli/src/lib/dev-review-eval/harbor-tasks.ts --out <dir> [--archive <file.tar>] [--held-out-approval <sha256>]... [--repository-url <url>]
+bun apps/cli/src/lib/dev-review-eval/harbor-tasks.ts --out <dir> [--archive <file.tar>] [--adapter claude-code|codex] [--held-out-approval <sha256>]... [--repository-url <url>]
 ```
 
 A folder holds:
 
-- `task.toml` — Harbor `0.24.0`, the suite and the Vinaya renderer version under `[metadata]`, with, for a quarantined case, its quarantine's `quarantine_cause`, `quarantine_reason`, `quarantine_reason_version` and `quarantine_adjudication_digest`, and a network policy per phase: the agent phase is an allowlist of `api.anthropic.com` alone, the host Claude Code's subscription inference calls, with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` so it makes no telemetry or update call; the verifier phase, which runs in the agent's container, has no network; the image build, which installs every dependency, and the agent's install step, which runs no network step, run on the public network. No allowlist names `github.com` or `codeload.github.com`.
+- `task.toml` — Harbor `0.24.0`, the suite and the Vinaya renderer version under `[metadata]`, with, for a quarantined case, its quarantine's `quarantine_cause`, `quarantine_reason`, `quarantine_reason_version` and `quarantine_adjudication_digest`, and a network policy per phase. Conversion defaults to `--adapter claude-code`: the agent phase allows `api.anthropic.com` alone, with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` so Claude makes no telemetry or update call. Conversion with `--adapter codex` allows `api.openai.com` and `chatgpt.com` instead, the Codex subscription hosts. The verifier phase, which runs in the agent's container, has no network. Image build and agent install run on the public network; only the Codex install path stages a login. No allowlist names `github.com` or `codeload.github.com`.
 - `instruction.md` — the case's statement from `generic-task-statements.json`.
 - `environment/Dockerfile` — Bun `1.4.2` and Node 22 in `/usr/local/bin`; `gh` from the Debian package; Claude Code installed with `npm install --global`, its `/usr/local/bin/claude` removed and `claude` linked at `/opt/claude/bin/claude` to the installed package's `bin/claude.exe`, with `/opt/claude/bin` first on `PATH`, a directory holding neither `bun` nor `node`, so a test that drops every `PATH` directory holding `claude`, `codex` or `gemini` still finds both; and the non-root user `tester` (uid `1001`, home `/home/tester`). Then the case repository at `/app`, built by `environment/prepare-repository.sh`: a partial clone of the case's real base commit with its full commit history and no blob fetched up front, so a test that reads the base's history finds it, a non-cone sparse checkout that leaves out every `apps/cli/tests/eval/*.json` and every `*held-out*.json` (a cone pattern cannot leave out a file pattern), so those files' contents are in neither the working tree nor the object store, then, for a `change` case only, `bun install --frozen-lockfile` in `/app` while the remote still exists, then the remote removed so no blob can be fetched later. A `change` case installs because its verifier has no network and runs the hidden tests with vitest from `/app/node_modules`; a `review` or `answer` case runs no hidden test and its role runs no repository code, so its image installs no workspace dependencies in `/app`. A task converted with `--archive` also holds the Vinaya CLI archive as `environment/vinaya.tar`; the image unpacks it at `/opt/vinaya`, runs `bun install --frozen-lockfile` there while the build still has the public network, records the archive's SHA-256 in `/harbor/vinaya-archive.sha256` and removes the archive. A task converted without it builds with no Vinaya CLI and still runs Harbor's oracle and `nop` agents. `HEAD` stays the real base commit, which the change-bound grader compares with the case's base revision; a rebuilt repository would have another id. A `review` case then commits the change under review as `HEAD` (`environment/commit-review.sh`): its head commit, fetched by the clone, or, for a seeded change whose head commit no repository holds, the case's inline patch applied with `git apply --unidiff-zero` and committed with the seeded identity, which reproduces the head commit's id. Last, as root, `/app`, `/case`, `/logs` (with `/logs/agent` and `/logs/verifier`) and, with `--archive`, `/opt/vinaya` are made `tester`'s, `/app` is trusted by git for any user, `HOME` is `/home/tester`, and the image ends with `USER tester`, after the clone and the review commit: the role, the verifier and the oracle run as `tester`.
 - `environment/case.json` — the neutral case and only what the run needs from the layer-`P` case of the same id: a `change` case's pull request number, a `review` case's patch, an `answer` case's documents. It holds no hidden test and no reference outcome; those are written only under `tests/` and `solution/`, which the role never sees.
@@ -874,6 +874,7 @@ A folder holds:
 Task folders are written only under `--out` and never committed: they derive byte for byte from committed files — a re-run with the same inputs writes an identical tree, with sorted JSON keys, no timestamps and fixed file modes — a committed copy would duplicate every hidden test and could drift from its source, and a held-out folder must never reach a public tree.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-tasks.ts contains:export const AGENT_ALLOWED_HOSTS = ['api.anthropic.com'] as const -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-tasks.ts contains:export const CODEX_ALLOWED_HOSTS = ['api.openai.com', 'chatgpt.com'] as const -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-tasks.ts contains:export const CLAUDE_BIN_DIRECTORY = '/opt/claude/bin' -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-tasks.ts contains:git fetch --quiet --filter=blob:none origin "$base" -->
 
@@ -885,13 +886,53 @@ Task folders are written only under `--out` and never committed: they derive byt
 
 ### The `vinaya` agent
 
+Every image also installs Codex using `GRADING_CODEX_PACKAGE` from `step-one.ts`
+(`@openai/codex@0.160.0`), under `/opt/codex`, and links its executable beside
+Claude at `/opt/claude/bin/codex`. Neither vendor executable shares a `PATH`
+directory with Bun or Node. Image build asserts the exact installed versions:
+`2.1.300 (Claude Code)` and `codex-cli 0.160.0`.
+
+Images also install Debian's `bubblewrap` package and check `bwrap` on `PATH`
+and its version at build time. Unattended Codex dispatch requires this Linux
+sandbox dependency even in container mode. With the Vinaya archive installed,
+the build runs the production `checkLinuxCodexSandboxTools` probe from
+`worker-boundary.ts` against the image's actual `PATH`, refusing missing tools
+before a trial can start. This checks executable availability; the container
+runtime must also permit the namespaces needed by Codex's sandbox.
+
 `apps/cli/src/lib/dev-review-eval/vinaya_harbor_agent.py` is a Harbor installed agent, a subclass of `BaseInstalledAgent` named `vinaya`:
 
 ```text
-PYTHONPATH=apps/cli/src/lib/dev-review-eval harbor run --path <out>/<suite> --agent vinaya_harbor_agent:VinayaAgent --ak archive=<file.tar> --model <exact model id>
+PYTHONPATH=apps/cli/src/lib/dev-review-eval harbor run --path <out>/<suite> --agent vinaya_harbor_agent:VinayaAgent --ak archive=<file.tar> --ak adapter=claude-code --model <exact model id>
 ```
 
-Its install step uploads the archive and refuses unless the archive's SHA-256 equals the digest the image recorded for the archive it installed at `/opt/vinaya`, then runs `claude --version`; it runs no `bun install` and no other network step, so a slow registry fetch can never stall Harbor's timed agent setup. On an image converted without `--archive` it refuses, naming the flag. Claude Code and the Vinaya CLI's dependencies are already in the image. Its run step runs as the image's user, `tester`, with `HOME` set to `/home/tester`, and names only paths `tester` owns — `/opt/vinaya`, `/case/case.json`, `/app` and `/logs/agent`; it runs `apps/cli/src/lib/dev-review-eval/harbor-trial.ts` on `/case/case.json` in container mode, with the backend `standalone` (the only value accepted now), the adapter `claude-code` and the exact model id it is given, since an alias is not resolved. It forwards only `CLAUDE_FORCE_OAUTH` and `CLAUDE_CODE_OAUTH_TOKEN`, the subscription login, read from the environment of the `harbor run` process and refused from an agent-env flag, whose values Harbor writes into the job's configuration; no API key is read or forwarded. After the run it sets Harbor's input, cache and output tokens and cost from the run's usage file: the input count is the uncached input, and the cache count is the sum of the usage's cache read and cache creation tokens. The dispatch reads a Claude Code session's usage from the last bytes of its stream, where its terminal `result` line sits, so a long session's tokens are recorded. The agent is the repository's only Python file: Biome neither lints nor formats it, and its check is `python3 -m py_compile`.
+Its install step uploads the archive and refuses unless the archive's SHA-256 equals the digest the image recorded for the archive it installed at `/opt/vinaya`, then runs `claude --version`. On an image converted without `--archive` it refuses, naming the flag. Both CLIs and the Vinaya CLI's dependencies are already in the image; install runs no package fetch. The default Claude install path runs no network step. Its run step runs as the image's user, `tester`, with `HOME` set to `/home/tester`, and names paths `tester` owns — `/opt/vinaya`, `/case/case.json`, `/app` and `/logs/agent`; it runs `apps/cli/src/lib/dev-review-eval/harbor-trial.ts` on `/case/case.json` in container mode, with backend `standalone`, the requested adapter (`claude-code` by default, or `codex`) and the exact model id it is given, since an alias is not resolved. Claude forwards only `CLAUDE_FORCE_OAUTH` and `CLAUDE_CODE_OAUTH_TOKEN`, the subscription login, read from the environment of the `harbor run` process. Login variables are refused from an agent-env flag, whose values Harbor writes into the job's configuration; API-key agent-env variables are also refused, and no API key is read or forwarded. After the run it sets Harbor's input, cache and output tokens and cost from the run's usage file: the input count is the uncached input, and the cache count is the sum of the usage's cache read and cache creation tokens. The dispatch reads a Claude Code session's usage from the last bytes of its stream, where its terminal `result` line sits, so a long session's tokens are recorded. The agent is the repository's only Python file: Biome neither lints nor formats it, and its check is `python3 -m py_compile`.
+
+For Codex, convert with `--adapter codex` and run Harbor with `--ak adapter=codex`
+against that output. The operator sets `CODEX_ACCESS_TOKEN` in the `harbor run`
+process's environment from their host subscription login, using
+`resolveCodexAccessToken` in `worker-boundary.ts`: an existing token variable
+first, otherwise `tokens.access_token` from `auth.json` under `CODEX_HOME`
+(default `~/.codex`), then the host credential store. The Python agent reads
+only that environment variable, never the host login file or credential store.
+A missing or blank token refuses install before any container access, naming
+the missing Codex subscription login. For example, from the repository root
+after `codex login` on the host:
+
+```sh
+export CODEX_ACCESS_TOKEN="$(bun -e 'import { homedir } from "node:os"; import { resolveCodexAccessToken } from "./apps/cli/src/lib/worker-boundary.ts"; const token = resolveCodexAccessToken(process.env, homedir()); if (!token) process.exit(1); process.stdout.write(token)')"
+```
+
+The root install hook uploads the token through a private temporary file into
+a root-only temporary directory in the container. Harbor's exec API has no
+stdin parameter; shell input redirection feeds that file only to
+`codex login --with-access-token`, with a clean login environment and output
+suppressed. The token never appears in a command line or a container environment.
+The hook removes both temporary copies, including on login failure, and makes
+the staged `/home/tester/.codex` owned and writable by `tester`. The trial gets
+`CODEX_HOME` and `HOME`, with no `CODEX_ACCESS_TOKEN`: setting the token alongside
+the staged home breaks Codex's bearer authentication. An unstaged login also
+refuses the run. Neither adapter reads or forwards API-key variables.
 
 `harbor-trial.ts` renders the case with `renderCase` and runs the case kind's live path in container mode, in `/app`: a `change` case's Developer through `dispatchRole` with the driver-run tool host and its fake forge, a `review` case's reviewer through `dispatchRole`, an `answer` case through `readOnlyDeveloperTurn`. It reads the case file once and removes it before the role starts, since the neutral case carries fields only grading reads, and writes the agent part of the Vinaya trial record to `/logs/agent/vinaya-trial-record.json` and the run's `StepOneUsage` to `/logs/agent/vinaya-usage.json`.
 

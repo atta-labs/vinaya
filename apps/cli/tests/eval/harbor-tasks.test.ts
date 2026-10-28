@@ -37,6 +37,8 @@ import {
   AGENT_ALLOWED_HOSTS,
   CHANGE_CASE_INSTALL,
   CLAUDE_BIN_DIRECTORY,
+  CLAUDE_CODE_PACKAGE,
+  CODEX_ALLOWED_HOSTS,
   type ConvertedSuite,
   convertHarborTasks,
   HARBOR_QUARANTINE_PATH,
@@ -53,7 +55,11 @@ import {
 } from '../../src/lib/dev-review-eval/harbor-tasks'
 import { type HarborCaseFile, runHarborTrial } from '../../src/lib/dev-review-eval/harbor-trial'
 import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
-import { PRODUCTION_VINAYA_PROCESS_STEPS, type VinayaProcessSteps } from '../../src/lib/dev-review-eval/step-one'
+import {
+  GRADING_CODEX_PACKAGE,
+  PRODUCTION_VINAYA_PROCESS_STEPS,
+  type VinayaProcessSteps
+} from '../../src/lib/dev-review-eval/step-one'
 import { renderCase, VINAYA_RENDERER_VERSION } from '../../src/lib/dev-review-eval/vinaya-renderer'
 import { stripVinayaEnv } from '../lib/process-fixture'
 import { DERIVED_FILE_DIGESTS, HELD_OUT_IDS } from './generic-suites'
@@ -207,6 +213,30 @@ describe('the converter', () => {
         for (const host of section?.allowed_hosts ?? []) expect(host).not.toMatch(/github\.com|codeload/)
       }
     }
+  })
+
+  it('converts Codex tasks with only the subscription hosts, installing and checking both pinned CLIs', async () => {
+    const out = tempDir('harbor-tasks-codex-')
+    await convertHarborTasks({ out, adapter: 'codex', print: () => {}, warn: () => {} })
+    for (const { suite, caseFile } of folders()) {
+      const dir = join(out, suite, caseFile.case.id)
+      const toml = Bun.TOML.parse(readFileSync(join(dir, 'task.toml'), 'utf8')) as {
+        agent: { allowed_hosts: string[] }
+        verifier: { network_mode: string }
+      }
+      expect(toml.agent.allowed_hosts).toEqual(['api.openai.com', 'chatgpt.com'])
+      expect(toml.agent.allowed_hosts).toEqual([...CODEX_ALLOWED_HOSTS])
+      expect(toml.verifier.network_mode).toBe('no-network')
+      const image = readFileSync(join(dir, 'environment/Dockerfile'), 'utf8')
+      expect(image).toContain(`npm install --global ${CLAUDE_CODE_PACKAGE}`)
+      expect(image).toContain(`npm install --global --prefix /opt/codex ${GRADING_CODEX_PACKAGE}`)
+      expect(image).toContain('ln -s /opt/codex/bin/codex /opt/claude/bin/codex')
+      expect(image).toContain(`test "$(claude --version)" = "${CLAUDE_CODE_PACKAGE.split('@').at(-1)} (Claude Code)"`)
+      expect(image).toContain(`test "$(codex --version)" = "codex-cli ${GRADING_CODEX_PACKAGE.split('@').at(-1)}"`)
+      expect(image).toContain('apt-get install --yes --no-install-recommends bubblewrap')
+      expect(image).toContain('command -v bwrap && bwrap --version')
+    }
+    expect(await harborTasksCommand(['--out', out, '--adapter', 'unsupported'])).toBe(2)
   })
 
   it('installs in /app with a frozen lockfile, in a change case only, after the sparse checkout and before the remote is removed', () => {
@@ -653,7 +683,7 @@ describe('the case repository built from a local mirror', () => {
     }, 60_000)
   }
 
-  it('refuses a backend other than standalone and an adapter other than Claude Code before reading the case', async () => {
+  it('refuses an unsupported backend or adapter before reading the case', async () => {
     const options = {
       casePath: join(tempDir('harbor-tasks-refused-'), 'absent.json'),
       tree: '/app',
@@ -665,7 +695,47 @@ describe('the case repository built from a local mirror', () => {
       timeoutMs: 1000
     }
     expect(await runHarborTrial({ ...options, backend: 'engine' })).toMatchObject({ ok: false, refused: true })
-    expect(await runHarborTrial({ ...options, adapter: 'codex' })).toMatchObject({ ok: false, refused: true })
+    expect(await runHarborTrial({ ...options, adapter: 'unsupported' })).toMatchObject({ ok: false, refused: true })
+  })
+
+  it('runs a Codex reviewer trial through the same container process contract', async () => {
+    const { dir, caseFile } = oneOf('code-reviewer-quality-neutral.l5', 'review')
+    const work = tempDir('harbor-codex-trial-')
+    const tree = join(work, 'app')
+    run('cp', ['-R', cloneOf(dir), tree])
+    const casePath = join(work, 'case.json')
+    copyFileSync(join(dir, 'environment/case.json'), casePath)
+    const dispatched: { cwd?: string; containerMode?: boolean }[] = []
+    const steps = fakeSteps('review', dispatched)
+    const agents: string[] = []
+    const outcome = await runHarborTrial(
+      {
+        casePath,
+        tree,
+        recordPath: join(work, 'record.json'),
+        usagePath: join(work, 'usage.json'),
+        backend: 'standalone',
+        adapter: 'codex',
+        model: 'codex-test-model',
+        timeoutMs: 1000
+      },
+      {
+        ...steps,
+        dispatch: async (role, agent, prompt, opts) => {
+          agents.push(agent)
+          return steps.dispatch(role, agent, prompt, opts)
+        }
+      }
+    )
+    expect(outcome).toEqual({ ok: true })
+    expect(agents).toEqual(['codex'])
+    expect(dispatched).toEqual([{ cwd: tree, containerMode: true }])
+    expect(existsSync(casePath)).toBe(false)
+    const rendered = renderCase(caseFile.case)
+    if (!rendered.ok) throw new Error('the case does not render')
+    expect(readJson<NonNullable<ReturnType<typeof splitRecord>['agent']>>(join(work, 'record.json')).input).toEqual(
+      rendered.input
+    )
   })
 })
 

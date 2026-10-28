@@ -60,9 +60,9 @@ import type { ReviewerRole } from '../review-result'
 import type { Quarantine } from './contracts'
 import type { GradingSpec, OracleSpec } from './harbor-grade'
 import { checkedQuarantine, HarborResultsRefused, QUARANTINE_METADATA } from './harbor-results'
-import type { HarborCaseFile, HarborCounterpart } from './harbor-trial'
+import { HARBOR_TRIAL_ADAPTERS, type HarborCaseFile, type HarborCounterpart } from './harbor-trial'
 import type { NeutralCase } from './neutral-case'
-import type { StepOneRunSuite } from './step-one'
+import { GRADING_CODEX_PACKAGE, type StepOneRunSuite } from './step-one'
 import { renderCase, VINAYA_RENDERER_VERSION } from './vinaya-renderer'
 
 /** The Harbor release the task folders are written for. */
@@ -86,11 +86,19 @@ export const TASK_USER_ID = 1001
 export const TASK_USER_HOME = `/home/${TASK_USER}`
 
 /**
- * The only host the agent phase reaches: the Anthropic API that Claude Code's
+ * The only host a Claude Code agent phase reaches: the Anthropic API its
  * subscription inference calls. The token is given, so no login host is
  * needed, and Claude Code's other traffic is switched off.
  */
 export const AGENT_ALLOWED_HOSTS = ['api.anthropic.com'] as const
+export const CODEX_ALLOWED_HOSTS = ['api.openai.com', 'chatgpt.com'] as const
+export type HarborAdapter = (typeof HARBOR_TRIAL_ADAPTERS)[number]
+
+function checkedAdapter(adapter: string): HarborAdapter {
+  if (!(HARBOR_TRIAL_ADAPTERS as readonly string[]).includes(adapter))
+    throw new HarborTasksRefused(`adapter ${adapter} is not one of ${HARBOR_TRIAL_ADAPTERS.join(', ')}`)
+  return adapter as HarborAdapter
+}
 
 /** The repository root, which the converter reads cases, blobs and the archive from. */
 export const REPOSITORY_ROOT = join(import.meta.dir, '../../../../..')
@@ -395,9 +403,25 @@ export function claudeInstallStep(): string {
   ].join(' && ')
 }
 
+/** Installs the grading-pinned Codex CLI beside Claude, away from Bun and Node. */
+export function codexInstallStep(): string {
+  return [
+    `npm install --global --prefix /opt/codex ${GRADING_CODEX_PACKAGE}`,
+    `ln -s /opt/codex/bin/codex ${CLAUDE_BIN_DIRECTORY}/codex`
+  ].join(' && ')
+}
+
 /** The image-build step that installs `gh` from the Debian package. */
 export const GH_INSTALL_STEP =
   'apt-get update && apt-get install --yes --no-install-recommends gh && rm -rf /var/lib/apt/lists/* && gh --version'
+
+/** Linux unattended Codex dispatch requires bubblewrap even inside a Harbor container. */
+export const CODEX_SANDBOX_INSTALL_STEP =
+  'apt-get update && apt-get install --yes --no-install-recommends bubblewrap && rm -rf /var/lib/apt/lists/* && command -v bwrap && bwrap --version'
+
+/** Run the production dispatch tool probe against the image's actual PATH at build time. */
+const CODEX_SANDBOX_BUILD_CHECK =
+  'import { checkLinuxCodexSandboxTools } from "./apps/cli/src/lib/worker-boundary.ts"; const tools = checkLinuxCodexSandboxTools(); if (!tools.available) throw new Error(`Codex sandbox tools missing: ${tools.missing.join(", ")}`)'
 
 /**
  * The last root step of every image: the directories the role, the verifier
@@ -428,12 +452,22 @@ function dockerfile(
     `FROM ${NODE_IMAGE}`,
     'COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun',
     `RUN ${GH_INSTALL_STEP}`,
+    `RUN ${CODEX_SANDBOX_INSTALL_STEP}`,
     `RUN ${claudeInstallStep()}`,
+    `RUN ${codexInstallStep()}`,
     `ENV PATH=${CLAUDE_BIN_DIRECTORY}:$PATH`,
     'RUN claude --version && bun --version && node --version',
+    `RUN test "$(claude --version)" = "${CLAUDE_CODE_PACKAGE.split('@').at(-1)} (Claude Code)"`,
+    `RUN test "$(codex --version)" = "codex-cli ${GRADING_CODEX_PACKAGE.split('@').at(-1)}"`,
     'ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
     `RUN useradd -m -u ${TASK_USER_ID} ${TASK_USER}`,
-    ...(withArchive ? [`COPY ${ARCHIVE_FILE} /harbor/${ARCHIVE_FILE}`, `RUN ${vinayaInstallStep()}`] : []),
+    ...(withArchive
+      ? [
+          `COPY ${ARCHIVE_FILE} /harbor/${ARCHIVE_FILE}`,
+          `RUN ${vinayaInstallStep()}`,
+          `RUN cd ${VINAYA_HOME} && bun -e ${shellQuote(CODEX_SANDBOX_BUILD_CHECK)}`
+        ]
+      : []),
     'COPY prepare-repository.sh /harbor/prepare-repository.sh',
     `RUN ${install}sh /harbor/prepare-repository.sh ${[url, '/app', c.baseRevision, ...(head === null ? [] : [head])].map(shellQuote).join(' ')}`,
     'COPY case.json /case/case.json'
@@ -455,7 +489,7 @@ function dockerfile(
   return `${lines.join('\n')}\n`
 }
 
-function taskToml(suite: string, c: NeutralCase, quarantine: Quarantine | null): string {
+function taskToml(suite: string, c: NeutralCase, quarantine: Quarantine | null, adapter: HarborAdapter): string {
   return [
     'schema_version = "1.4"',
     '',
@@ -484,7 +518,7 @@ function taskToml(suite: string, c: NeutralCase, quarantine: Quarantine | null):
     '[agent]',
     'timeout_sec = 3600.0',
     'network_mode = "allowlist"',
-    `allowed_hosts = [${AGENT_ALLOWED_HOSTS.map(tomlString).join(', ')}]`,
+    `allowed_hosts = [${(adapter === 'codex' ? CODEX_ALLOWED_HOSTS : AGENT_ALLOWED_HOSTS).map(tomlString).join(', ')}]`,
     '',
     '[environment]',
     'build_timeout_sec = 1800.0',
@@ -529,7 +563,8 @@ export function taskFiles(
   sources: CaseSources,
   script: string,
   url: RepositoryUrl,
-  archive: Uint8Array | null = null
+  archive: Uint8Array | null = null,
+  adapter: HarborAdapter = 'claude-code'
 ): Map<string, TaskFile> {
   const c = sources.case
   const suite = GENERIC_SUITE_IDS[sources.key]
@@ -547,7 +582,7 @@ export function taskFiles(
   if (reviewHead !== null && c.kind === 'review' && reviewHead !== c.changeUnderReview.head)
     throw new HarborTasksRefused(`${c.id}: the layer-P change under review is not the neutral case's`)
 
-  add('task.toml', taskToml(suite, c, sources.quarantine ?? null))
+  add('task.toml', taskToml(suite, c, sources.quarantine ?? null, checkedAdapter(adapter)))
   add('instruction.md', `${sources.statement}\n`)
   add('environment/Dockerfile', dockerfile(c, url(c.repository), reviewHead, `Seeded change ${c.id}`, archive !== null))
   if (archive !== null) add(`environment/${ARCHIVE_FILE}`, archive)
@@ -639,6 +674,7 @@ export function loadHarborQuarantine(path: string = HARBOR_QUARANTINE_PATH): Map
 
 export interface ConvertOptions {
   out: string
+  adapter?: HarborAdapter
   /** Held-out approvals; with none the development split is converted. */
   heldOutApprovals?: readonly string[]
   archive?: string
@@ -702,6 +738,7 @@ function counterparts(split: 'development' | 'held-out', keys: readonly GenericS
  * standard error; a held-out case is listed by id alone.
  */
 export async function convertHarborTasks(options: ConvertOptions): Promise<ConvertedSuite[]> {
+  const adapter = checkedAdapter(options.adapter ?? 'claude-code')
   const print = options.print ?? ((line: string) => process.stdout.write(`${line}\n`))
   const warn = options.warn ?? ((line: string) => process.stderr.write(`${line}\n`))
   const approvals = options.heldOutApprovals ?? []
@@ -763,7 +800,7 @@ export async function convertHarborTasks(options: ConvertOptions): Promise<Conve
         quarantine: quarantines.get(suite)?.find((q) => q.taskId === c.id)
       }
       if (sources.statement === '') throw new HarborTasksRefused(`${c.id} has no task statement`)
-      writeTaskFolder(join(options.out, suite, c.id), taskFiles(sources, script, url, archive))
+      writeTaskFolder(join(options.out, suite, c.id), taskFiles(sources, script, url, archive, adapter))
       result.converted.push(c.id)
     }
     print(`${suite} (${split}): ${result.converted.length} of ${result.cases} converted`)
@@ -778,7 +815,7 @@ const flagValues = (argv: readonly string[], name: string): string[] =>
   argv.flatMap((arg, i) => (arg === `--${name}` && argv[i + 1] !== undefined ? [argv[i + 1] as string] : []))
 
 export const HARBOR_TASKS_USAGE =
-  'usage: harbor-tasks.ts --out <dir> [--archive <file.tar>] [--held-out-approval <sha256>]... [--repository-url <url>]'
+  'usage: harbor-tasks.ts --out <dir> [--archive <file.tar>] [--adapter claude-code|codex] [--held-out-approval <sha256>]... [--repository-url <url>]'
 
 /** The command entry: exit 0 when every case converted or was listed as refused, 2 on a refusal, 1 on an error. */
 export async function harborTasksCommand(argv: readonly string[], read?: ReadBytes): Promise<number> {
@@ -792,6 +829,7 @@ export async function harborTasksCommand(argv: readonly string[], read?: ReadByt
   try {
     await convertHarborTasks({
       out,
+      adapter: checkedAdapter(flagValues(argv, 'adapter')[0] ?? 'claude-code'),
       heldOutApprovals: flagValues(argv, 'held-out-approval'),
       ...(archive === undefined ? {} : { archive }),
       ...(repositoryUrl === undefined ? {} : { repositoryUrl: () => repositoryUrl }),
