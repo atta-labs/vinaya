@@ -1,5 +1,5 @@
-// task-run-v1 20, O3: `ci.yml` shards the apps/cli test suite across three
-// jobs by an explicit, measured-balanced file list (`ci-shards/shard-{1,2,3}
+// task-run-v1 20, O3: `ci.yml` shards the apps/cli test suite across six
+// jobs by an explicit, measured-balanced file list (`ci-shards/shard-{1..6}
 // .txt`, one path per line, relative to `apps/cli/`) rather than a directory
 // split (Trap: sharding by directory concentrates the suite's few genuinely
 // slow files — `dispatch.test.ts`, `quickstart.test.ts`, `demo.test.ts` — in
@@ -160,7 +160,7 @@ describe('ci-shard-coverage — hook-specific membership', () => {
     expect(result.stderr).toContain('apps/cli/tests/widget.test.ts')
     expect(result.stderr).toContain('apps/cli/tests/ci-shards/shard-1.txt')
     expect(result.stderr).toContain('apps/cli/tests/ci-shards/shard-2.txt')
-    expect(result.stderr).toContain('apps/cli/tests/ci-shards/shard-3.txt')
+    for (const n of [3, 4, 5, 6]) expect(result.stderr).toContain(`apps/cli/tests/ci-shards/shard-${n}.txt`)
   })
 
   it('passes when the new CLI test file and its shard line are staged together', () => {

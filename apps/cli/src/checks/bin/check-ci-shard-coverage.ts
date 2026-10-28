@@ -2,7 +2,7 @@
 
 /**
  * Core check: ci-shard-coverage. Every newly added CLI test must appear in
- * apps/cli/tests/ci-shards/shard-{1,2,3}.txt.
+ * apps/cli/tests/ci-shards/shard-{1..6}.txt.
  *
  * Pre-commit reads added files and shard lists from the index, only when
  * VINAYA_COMMIT_HOOK=1 and GIT_INDEX_FILE are both set. Pre-push and CI read
