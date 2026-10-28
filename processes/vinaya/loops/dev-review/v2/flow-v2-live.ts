@@ -538,7 +538,8 @@ export async function readyGateEvidence(input: {
           exitCode: 0,
           timedOut: false,
           overflowed: false,
-          reusedFrom: `persisted ready-gate result at ${input.head}`
+          // The head sits in a code span: the note renders as prose, where the body gate refuses a bare digit.
+          reusedFrom: `persisted ready-gate result at \`${input.head}\``
         }
       ]
     }
