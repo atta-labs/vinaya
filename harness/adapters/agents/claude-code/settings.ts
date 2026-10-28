@@ -175,7 +175,8 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
       RESUME_SESSION_PLACEHOLDER,
       ...launch.slice(2)
     ],
-    env: scratchCacheEnv(writableRoots, paths.variables),
+    // The claude.ai account connectors are no tool of the role: its only MCP server is the loop's own.
+    env: { ENABLE_CLAUDEAI_MCP_SERVERS: 'false', ...scratchCacheEnv(writableRoots, paths.variables) },
     files: {
       'role-settings.json': JSON.stringify(settings, null, 2) + '\n',
       'role-mcp.json': JSON.stringify(mcp, null, 2) + '\n',

@@ -572,6 +572,40 @@ describe('role-grant vendor parity', () => {
     expect(codex.launch[codex.launch.indexOf('--output-schema') + 1]).toBe(outputSchemaPath)
   })
 
+  test('Codex turns off every account connector, and removing any switch is caught', () => {
+    const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
+    const paths = {
+      generatedDir: '/tmp/generated/developer',
+      outputSchemaPath: '/s.json',
+      outputSchema: {},
+      variables: {}
+    }
+    const toml = generatedFile(generateCodexConfig(grants, paths), 'config.toml')
+    const featuresOf = (text: string) => (Bun.TOML.parse(text) as { features: Record<string, unknown> }).features
+    for (const key of ['apps', 'plugins', 'remote_plugin']) {
+      expect(featuresOf(toml)[key]).toBe(false)
+      // With the line removed Codex keeps its default (on), so the pin no longer holds.
+      expect(toml).toContain(`${key} = false\n`)
+      expect(featuresOf(toml.replace(`${key} = false\n`, ''))[key]).not.toBe(false)
+    }
+    expect(Object.keys((Bun.TOML.parse(toml) as { mcp_servers: object }).mcp_servers)).toEqual(['vinaya_dev_tools'])
+  })
+
+  test('Claude takes only the loop’s MCP config and switches its account connectors off', () => {
+    const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
+    const paths = {
+      generatedDir: '/tmp/generated/developer',
+      outputSchemaPath: '/s.json',
+      outputSchema: {},
+      variables: {}
+    }
+    const claude = generateClaudeSettings(grants, paths)
+    expect(claude.launch.indexOf('--strict-mcp-config')).toBeGreaterThan(-1)
+    expect(claude.launch.indexOf('--strict-mcp-config')).toBeLessThan(claude.launch.indexOf('--mcp-config'))
+    expect(Object.keys(JSON.parse(generatedFile(claude, 'role-mcp.json')).mcpServers)).toEqual(['vinaya_dev_tools'])
+    expect(claude.env.ENABLE_CLAUDEAI_MCP_SERVERS).toBe('false')
+  })
+
   test('accounts for all eight known gaps', () => {
     expect(GAP_TABLE.map((gap) => gap.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
     expect(GAP_TABLE.every((gap) => gap.status === 'closed' || gap.status === 'stated')).toBe(true)

@@ -153,9 +153,15 @@ describe('the developer before and after the capability contract', () => {
       ''
     ].join('\n')
     expect(codex.files['config.toml']).toContain(credentialEnv)
-    expect((codex.files['config.toml'] as string).replace(credentialEnv, '').replace('required = true\n', '')).toBe(
-      before.codex.files['config.toml'] as string
-    )
+    // Intended: the config now also turns off the account connectors, so the loop's server is the only one.
+    const connectorOff = 'apps = false\nplugins = false\nremote_plugin = false\n'
+    expect(codex.files['config.toml']).toContain(connectorOff)
+    expect(
+      (codex.files['config.toml'] as string)
+        .replace(credentialEnv, '')
+        .replace(connectorOff, '')
+        .replace('required = true\n', '')
+    ).toBe(before.codex.files['config.toml'] as string)
     expect(codex.files['rules/role.rules']).toBe(before.codex.files['rules/role.rules'] as string)
     // The hook's code learned flag-anywhere rules; the policy it embeds is unchanged.
     expect(embeddedPolicy(codex)).toBe(embeddedPolicy(before.codex))

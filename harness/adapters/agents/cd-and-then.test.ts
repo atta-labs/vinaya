@@ -71,12 +71,15 @@ describe('a role that writes its scratch directory keeps npm cache there', () =>
     variables: { WORKTREE: '/wt', SCRATCH: '/scratch', BUN_INSTALL_CACHE: '/bun', GIT_COMMON_DIR: '/git' }
   }
   test('both vendors launch the Developer with npm_config_cache in its scratch directory', () => {
-    expect(generateClaudeSettings(grants, paths).env).toEqual({ npm_config_cache: '/scratch/npm-cache' })
+    expect(generateClaudeSettings(grants, paths).env).toEqual({
+      ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
+      npm_config_cache: '/scratch/npm-cache'
+    })
     expect(generateCodexConfig(grants, paths).env.npm_config_cache).toBe('/scratch/npm-cache')
   })
   test('a reviewer, which writes nowhere, gets no cache setting', () => {
     const reviewer = loadRoleGrants(join(processRoot, 'code-reviewer/grants.yaml'))
-    expect(generateClaudeSettings(reviewer, paths).env).toEqual({})
+    expect(generateClaudeSettings(reviewer, paths).env).toEqual({ ENABLE_CLAUDEAI_MCP_SERVERS: 'false' })
     expect(generateCodexConfig(reviewer, paths).env.npm_config_cache).toBeUndefined()
   })
 })
