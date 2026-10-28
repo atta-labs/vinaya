@@ -1,7 +1,8 @@
 /**
  * The layer-`G` re-cut: derives the neutral cases of the developer
- * capability, code reviewer, security reviewer and source-citation suites
- * from their committed layer-`P` cases, field by field. Nothing is written
+ * capability, code reviewer, security reviewer, source-citation and
+ * whole-loop suites from their committed layer-`P` cases, field by field.
+ * Nothing is written
  * by hand: re-running the script on unchanged inputs reproduces every derived
  * file byte for byte.
  *
@@ -17,6 +18,10 @@
  *    case whose defect kind only the Vinaya process can state stays layer `P`.
  *  - A source-citation case becomes an `answer` case: no change, every
  *    source a delivered document pinned by the SHA-256 of its content.
+ *  - A developer case also becomes a whole-loop `loop` case: its `change`
+ *    case's fields and task statement unchanged, granting what the
+ *    developer, both reviewers and the publication need. The suite's entry
+ *    marks, beside its cases, the ones each live variant applies to.
  *
  * A development case's task statement is the one `generic-task-statements.json`
  * holds for its id. A held-out case's is generated here from the case's own
@@ -73,7 +78,8 @@ export const GENERIC_SUITE_IDS = {
   developer: 'developer-capability-neutral.l5@1',
   codeReviewer: 'code-reviewer-quality-neutral.l5@1',
   securityReviewer: 'security-reviewer-quality-neutral.l5@1',
-  sourceCitation: 'source-delivery-neutral.l5@1'
+  sourceCitation: 'source-delivery-neutral.l5@1',
+  wholeLoop: 'whole-loop.l6@1'
 } as const
 
 /** Each derived file, by the split it holds. */
@@ -89,8 +95,15 @@ export const DERIVED_FILES = {
   sourceCitation: {
     development: join(import.meta.dir, 'source-citation-generic-cases.json'),
     heldOut: join(import.meta.dir, 'source-citation-generic-held-out.json')
+  },
+  wholeLoop: {
+    development: join(import.meta.dir, 'whole-loop-generic-cases.json'),
+    heldOut: join(import.meta.dir, 'whole-loop-generic-held-out.json')
   }
 } as const
+
+/** Which past tasks drew a reviewer-requested revision, as read from their review rounds. */
+export const REVISION_FACTS_PATH = join(import.meta.dir, 'whole-loop-revision-facts.json')
 
 /** The defect kinds only the Vinaya process can state: a change beyond its Surface, an objective left unmet. */
 export const LAYER_P_ONLY_DEFECT_KINDS: readonly DefectKind[] = ['beyond-surface', 'objective-unmet']
@@ -111,6 +124,9 @@ export const DEVELOPER_CAPABILITIES: readonly string[] = [
 
 /** A reviewer reads the change, with its files and with shell commands, and never writes it. */
 export const REVIEWER_CAPABILITIES: readonly string[] = ['read_file', 'run_commands']
+
+/** A loop runs the developer, both reviewers and the publication, so it grants each one's capabilities. */
+export const LOOP_CAPABILITIES: readonly string[] = [...new Set([...DEVELOPER_CAPABILITIES, ...REVIEWER_CAPABILITIES])]
 
 /**
  * The fixed author and committer of a seeded change's head commit, so the
@@ -242,6 +258,58 @@ export function deriveDeveloperCase(git: Git, c: DeveloperCapabilityCase, taskSt
       referenceSolution: { patchDigest: c.referenceSolution.digest }
     },
     undeliverable
+  }
+}
+
+/**
+ * The whole-loop case of a developer case: its `change` case taken through
+ * review to a decision, every field kept and the loop's capabilities granted.
+ */
+export function deriveLoopCase(git: Git, c: DeveloperCapabilityCase, taskStatement: string) {
+  const { case: change, undeliverable } = deriveDeveloperCase(git, c, taskStatement)
+  return { case: { ...change, kind: 'loop', grantedCapabilities: [...LOOP_CAPABILITIES] }, undeliverable }
+}
+
+/** The live variants of the whole-loop suite, each marked beside the cases it applies to. */
+export const LOOP_VARIANTS = ['source-requiring', 'reviewer-requested-revision'] as const
+export type LoopVariant = (typeof LOOP_VARIANTS)[number]
+
+export interface RevisionFacts {
+  schemaVersion: 1
+  readAt: string
+  source: string
+  /** Every case id whose review rounds were read. */
+  read: string[]
+  /** The rounds of each case whose review asked for a revision. */
+  revisionRounds: Record<string, number[]>
+}
+
+export function loadRevisionFacts(read = (path: string) => readFileSync(path, 'utf8')): RevisionFacts {
+  const facts = JSON.parse(read(REVISION_FACTS_PATH)) as RevisionFacts
+  if (facts.schemaVersion !== 1) throw new RecutRefused('the revision facts file has an unknown schema version')
+  return facts
+}
+
+/**
+ * The ids of the cases each live variant applies to, sorted: a case requires
+ * sources when it delivers a document, and drew a reviewer-requested revision
+ * when at least one of its review rounds asked for one. A case whose rounds
+ * were never read refuses the re-cut, so no case goes unmarked by omission.
+ */
+export function loopVariants(
+  cases: readonly { id: string; deliveredDocuments: readonly unknown[] }[],
+  facts: RevisionFacts
+): Record<LoopVariant, string[]> {
+  const unread = cases.filter((c) => !facts.read.includes(c.id)).map((c) => c.id)
+  if (unread.length > 0) throw new RecutRefused(`no revision facts for ${unread.join(', ')}`)
+  const marked = (applies: (c: (typeof cases)[number]) => boolean) =>
+    cases
+      .filter(applies)
+      .map((c) => c.id)
+      .sort()
+  return {
+    'source-requiring': marked((c) => c.deliveredDocuments.length > 0),
+    'reviewer-requested-revision': marked((c) => (facts.revisionRounds[c.id] ?? []).length > 0)
   }
 }
 
@@ -400,7 +468,7 @@ function derivedFile(
   path: string,
   split: 'development' | 'held-out',
   derivedFrom: string[],
-  suites: { suite: string; cases: { id: string }[]; layerPOnly: string[] }[],
+  suites: { suite: string; cases: { id: string }[]; layerPOnly: string[]; variants?: Record<string, string[]> }[],
   undeliverableSources: number
 ): { file: DerivedFile; summary: FileSummary } {
   for (const { cases } of suites) checkRenderable(cases)
@@ -503,9 +571,24 @@ export function recutDevelopment(git: Git = repositoryGit): Recut {
     ],
     0
   )
+  const loopCases = developerFile.cases.map((c) => deriveLoopCase(git, c, statementFor(c.id)).case)
+  const wholeLoop = derivedFile(
+    DERIVED_FILES.wholeLoop.development,
+    'development',
+    [DEVELOPER_CASES_PATH, STATEMENTS_PATH, REVISION_FACTS_PATH],
+    [
+      {
+        suite: GENERIC_SUITE_IDS.wholeLoop,
+        cases: loopCases,
+        layerPOnly: [],
+        variants: loopVariants(loopCases, loadRevisionFacts())
+      }
+    ],
+    undeliverable
+  )
   return {
-    files: [developer.file, reviewers.file, citation.file],
-    summary: { files: [developer.summary, reviewers.summary, citation.summary] }
+    files: [developer.file, reviewers.file, citation.file, wholeLoop.file],
+    summary: { files: [developer.summary, reviewers.summary, citation.summary, wholeLoop.summary] }
   }
 }
 
@@ -513,7 +596,8 @@ export function recutDevelopment(git: Git = repositoryGit): Recut {
  * Derives the held-out files, inside the sealed run: each case is read by
  * field and its statement generated from its own fields, and only counts, ids
  * and digests leave the run. Each approval is the pinned digest of its
- * layer-`P` held-out file.
+ * layer-`P` held-out file; the whole-loop held-out cases are cut from the
+ * developer held-out cases, under the developer approval.
  */
 export function recutHeldOut(
   approvals: { developer: string; reviewer: string; sourceCitation: string },
@@ -568,14 +652,30 @@ export function recutHeldOut(
     [{ suite: GENERIC_SUITE_IDS.sourceCitation, cases: citationCases, layerPOnly: [] }],
     0
   )
+  const loopCases = developerHeld.map((c) => deriveLoopCase(git, c, generatedDeveloperStatement(c)).case)
+  const wholeLoop = derivedFile(
+    DERIVED_FILES.wholeLoop.heldOut,
+    'held-out',
+    [join(import.meta.dir, developerFile.splits.heldOut.file), REVISION_FACTS_PATH],
+    [
+      {
+        suite: GENERIC_SUITE_IDS.wholeLoop,
+        cases: loopCases,
+        layerPOnly: [],
+        variants: loopVariants(loopCases, loadRevisionFacts())
+      }
+    ],
+    undeliverable
+  )
   return {
-    files: [developer.file, reviewers.file, citation.file],
+    files: [developer.file, reviewers.file, citation.file, wholeLoop.file],
     summary: {
-      files: [developer.summary, reviewers.summary, citation.summary],
+      files: [developer.summary, reviewers.summary, citation.summary, wholeLoop.summary],
       heldOutIds: {
         [GENERIC_SUITE_IDS.developer]: developerCases.map((c) => c.id),
         ...Object.fromEntries(reviewerSuitesHeld.map((s) => [s.suite, s.cases.map((c) => c.id)])),
-        [GENERIC_SUITE_IDS.sourceCitation]: citationCases.map((c) => c.id)
+        [GENERIC_SUITE_IDS.sourceCitation]: citationCases.map((c) => c.id),
+        [GENERIC_SUITE_IDS.wholeLoop]: loopCases.map((c) => c.id)
       }
     }
   }
