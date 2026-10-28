@@ -63,7 +63,7 @@ SUBSCRIPTION_ENV = ("CLAUDE_FORCE_OAUTH", "CLAUDE_CODE_OAUTH_TOKEN")
 LOGIN_ENV = (*SUBSCRIPTION_ENV, "CODEX_ACCESS_TOKEN")
 
 
-def codex_login_command(token_path: PurePosixPath, codex_home: PurePosixPath = CODEX_HOME) -> str:
+def codex_login_command(token_path: PurePosixPath, codex_home: PurePosixPath) -> str:
     """Only stdin carries the token to Codex; never argv, env or captured output."""
     home = shlex.quote(codex_home.as_posix())
     token = shlex.quote(token_path.as_posix())
@@ -148,7 +148,7 @@ class VinayaAgent(BaseInstalledAgent):
                     local_token.write_text(token)
                     await environment.upload_file(local_token, remote_token.as_posix())
                 await self.exec_as_root(
-                    environment, command=codex_login_command(remote_token), timeout_sec=45
+                    environment, command=codex_login_command(remote_token, CODEX_HOME), timeout_sec=45
                 )
                 await self.exec_as_root(
                     environment,
