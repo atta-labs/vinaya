@@ -19,18 +19,14 @@
  * `ps | grep`. This command answers from the outbox and the forge instead.
  *
  * Argv parsing and rendering only — `lib/task-status.js`'s
- * `gatherTaskStatusList`/`gatherSingleTaskStatus`, plus `loop-log.js`'s
- * `loopLogPathFor`/`followLoopLog` for `--follow`, are the entire reader.
+ * `gatherTaskStatusList`/`gatherSingleTaskStatus`, plus
+ * `followTaskLog` (`lib/follow-view.js`) for `--follow`, are the entire reader.
  */
 
-import { execFileSync } from 'node:child_process'
-import { homedir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
-import { colourEnabled } from '../lib/dispatch.js'
 import { printJson } from '../lib/envelope.js'
-import { createFollowView, lineSplitter, readStageHistory } from '../lib/follow-view.js'
-import { followLoopLog, loopLogPathFor, loopsRoot } from '../lib/loop-log.js'
+import { followTaskLog } from '../lib/follow-view.js'
 import { gatherSingleTaskStatus, gatherTaskStatusList } from '../lib/task-status.js'
 
 type ParsedArgs = { json: boolean; follow: boolean; quiet: boolean; issue: string | undefined; positional: string[] }
@@ -135,45 +131,11 @@ export function quietLogWriter(write: (text: string) => void): (chunk: Buffer) =
   }
 }
 
-/** The repository's checkout and every worktree of it, in both the absolute and the home-redacted form the log may hold: the paths the view shows relative. */
-function followRoots(): string[] {
-  try {
-    const listed = execFileSync('git', ['worktree', 'list', '--porcelain'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
-    const roots = listed
-      .split('\n')
-      .filter((line) => line.startsWith('worktree '))
-      .map((line) => line.slice('worktree '.length))
-    const home = homedir()
-    return roots.flatMap((root) => (root.startsWith(`${home}/`) ? [root, `~${root.slice(home.length)}`] : [root]))
-  } catch {
-    return []
-  }
-}
-
-/** Follows the task's driver log through the follow view: the file's lines as one readable line per actor, with stage banners and the poll tick's still-in-stage lines. */
+/** Follows the task's driver log through the follow view (`followTaskLog`): one readable line per actor, with stage banners and the poll tick's still-in-stage lines. */
 async function runFollow(parsed: ParsedArgs): Promise<void> {
   const issue = resolveFollowIssue(parsed)
   const repo = await resolveRepo().catch(() => null)
-  const root = loopsRoot()
-  const path = loopLogPathFor(repo, issue, root)
-  const view = createFollowView({
-    colour: colourEnabled(process.stdout),
-    details: !parsed.quiet,
-    roots: followRoots(),
-    history: readStageHistory(root, issue)
-  })
-  const print = (lines: string[]): void => {
-    if (lines.length > 0) process.stdout.write(`${lines.join('\n')}\n`)
-  }
-  const split = lineSplitter()
-  await followLoopLog(path, {
-    writeBacklog: (chunk) => print(view.backlog(split(chunk), new Date())),
-    write: (chunk) => print(view.push(split(chunk), new Date())),
-    tick: () => print(view.tick(new Date()))
-  })
+  await followTaskLog(repo, issue, { quiet: parsed.quiet })
 }
 
 export async function taskStatusCommand(args: string[]): Promise<void> {
@@ -201,5 +163,5 @@ export async function taskStatusCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'task status': { date: '2026-09-12', callsToday: 5, retiresVia: 'taskStatus' }
+  'task status': { date: '2026-09-12', callsToday: 4, retiresVia: 'taskStatus' }
 }

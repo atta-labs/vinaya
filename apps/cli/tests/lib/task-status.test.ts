@@ -2771,10 +2771,10 @@ console.log('ROWS:' + JSON.stringify(view.rows.map((r) => (${reader.row ?? '{ is
   it("reports an Engine run's round, stage and minutes in stage from its driver log's newest stage-change line", () => {
     const { child } = spawnReader('{ issue: 704 }', ['daniboomerang'], {
       before: `import { recordTaskRunner } from './src/lib/task-run-engine.ts'
-import { appendLoopLogLine, loopLogPathFor, loopsRoot } from './src/lib/loop-log.ts'
+import { appendLoopLogLine, loopLogPathFor } from './src/lib/loop-log.ts'
 import { formatStageLine } from './src/lib/follow-view.ts'
-recordTaskRunner(704, 'atta-engine', loopsRoot())
-const log = loopLogPathFor(null, 704, loopsRoot())
+recordTaskRunner(704, 'atta-engine')
+const log = loopLogPathFor(null, 704)
 const ago = (minutes) => new Date(Date.now() - minutes * 60_000)
 appendLoopLogLine(log, formatStageLine({ round: 1, stage: 'develop' }, ago(40)))
 appendLoopLogLine(log, formatStageLine({ round: 2, stage: 'review' }, ago(7)))

@@ -20,12 +20,14 @@
  * is shown with its time and the loop's colour, its words as written.
  */
 
+import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Role } from '@attalabs/aeg-core'
 import { type AgentLineMark, formatAgentLine, parseLineMeta } from './agent-line.js'
-import { ANSI_RESET, LOOP_ANSI, ROLE_ANSI } from './dispatch.js'
-import { loopLogPathFor } from './loop-log.js'
+import { ANSI_RESET, colourEnabled, LOOP_ANSI, ROLE_ANSI } from './dispatch.js'
+import { type LoopLogRepo, followLoopLog, loopLogPathFor, loopsRoot } from './loop-log.js'
 
 // --- stages -----------------------------------------------------------------
 
@@ -528,4 +530,46 @@ export function lineSplitter(): (chunk: Buffer) => string[] {
     pending = lines.pop() ?? ''
     return lines
   }
+}
+
+/** The repository's checkout and every worktree of it, in both the absolute and the home-redacted form the log may hold: the paths the view shows relative. */
+function followRoots(): string[] {
+  try {
+    const listed = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+    const roots = listed
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .map((line) => line.slice('worktree '.length))
+    const home = homedir()
+    return roots.flatMap((root) => (root.startsWith(`${home}/`) ? [root, `~${root.slice(home.length)}`] : [root]))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * `vinaya task status --follow`: tails the task's driver log through the follow view onto standard output, coloured
+ * behind dispatch's TTY and `NO_COLOR` gate, its details hidden under `quiet`, with this machine's stage history and
+ * the follow loop's poll tick driving the still-in-stage lines. Runs until the process ends.
+ */
+export async function followTaskLog(repo: LoopLogRepo, issue: number, options: { quiet: boolean }): Promise<void> {
+  const root = loopsRoot()
+  const view = createFollowView({
+    colour: colourEnabled(process.stdout),
+    details: !options.quiet,
+    roots: followRoots(),
+    history: readStageHistory(root, issue)
+  })
+  const print = (lines: string[]): void => {
+    if (lines.length > 0) process.stdout.write(`${lines.join('\n')}\n`)
+  }
+  const split = lineSplitter()
+  await followLoopLog(loopLogPathFor(repo, issue, root), {
+    writeBacklog: (chunk) => print(view.backlog(split(chunk), new Date())),
+    write: (chunk) => print(view.push(split(chunk), new Date())),
+    tick: () => print(view.tick(new Date()))
+  })
 }
