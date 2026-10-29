@@ -9,8 +9,7 @@ import { decodeLoopState, type latestRecord, recordOutput } from '../../../execu
 import { V2_APPROVED_REPAIR_ALLOWANCE, exhaustedPause, withPolicyCeilings } from '../../../bin/run-engine'
 import { heldVerdictPath } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { publicationEffectKey } from '../../../../../apps/cli/src/lib/dev-review-loop/publication'
-import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
-import { conflictRepairFailure } from './v2-actions'
+import { conflictRepairFailure, readyTestPlanCommand } from './v2-actions'
 import {
   ALL_TESTS,
   AGENTS,
@@ -304,7 +303,7 @@ describe('the opened body carries the ready push command as its Test Plan line',
       }
     })
     expect(observed.world.openedBodies).toHaveLength(1)
-    expect(observed.world.openedBodies[0]).toContain(readyTestCommand(ALL_TESTS))
+    expect(observed.world.openedBodies[0]).toContain(readyTestPlanCommand(ALL_TESTS, observed.world.worktree))
     expect(observed.world.openedBodies[0]).not.toContain('other.test.ts')
   })
 })

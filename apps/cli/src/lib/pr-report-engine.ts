@@ -1010,7 +1010,7 @@ export function agentCommandText(line: string): string {
  */
 const AGENT_COMMAND_OUTPUT_MAX_CHARS = 600
 
-function truncateAgentOutput(output: string): string {
+export function truncateAgentOutput(output: string): string {
   if (output.length <= AGENT_COMMAND_OUTPUT_MAX_CHARS) return output
   const cut = output.length - AGENT_COMMAND_OUTPUT_MAX_CHARS
   return `[... ${cut} earlier characters truncated ...]\n${output.slice(-AGENT_COMMAND_OUTPUT_MAX_CHARS)}`

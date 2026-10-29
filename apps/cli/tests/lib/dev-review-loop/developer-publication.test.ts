@@ -21,6 +21,7 @@ import {
   defaultMergeDefaultTip,
   defaultRebaseOntoDefaultTip,
   defaultRestoreWorktreeHead,
+  defaultUpdatePrBody,
   pushBranchClassified
 } from '../../../src/lib/dev-review-loop.js'
 import { ProtectedPathError } from '../../../src/lib/broker.js'
@@ -1231,5 +1232,39 @@ describe('main drift on a protected path, through the driver', () => {
     expect(outcome).toEqual({ ok: true })
     expect(touched).toEqual([[CI, OWN]])
     expect(world.rebases).toEqual([])
+  })
+})
+
+describe('the pull-request body write', () => {
+  const capture = () => {
+    const calls: { command: string; args: string[]; sent: unknown }[] = []
+    const run = (command: string, args: string[]) => {
+      const file = args[args.indexOf('--input') + 1] as string
+      calls.push({ command, args, sent: JSON.parse(readFileSync(file, 'utf8')) })
+    }
+    return { calls, run }
+  }
+  const BODY = 'Closes #1\n\n## Summary\n\nA body with `--flags` and "quotes".\n'
+
+  it('replaces the body through the REST endpoint for the repository the caller names, the body in a JSON file', async () => {
+    const { calls, run } = capture()
+    await defaultUpdatePrBody({ prNumber: 42, body: BODY, repo: { owner: 'acme', repo: 'widgets' } }, run)
+    expect(calls).toHaveLength(1)
+    const [call] = calls
+    const file = call?.args[5] as string
+    expect(call?.command).toBe('gh')
+    expect(call?.args).toEqual(['api', '--method', 'PATCH', 'repos/acme/widgets/pulls/42', '--input', file, '--silent'])
+    expect(call?.sent).toEqual({ body: BODY })
+    expect(call?.args.some((arg) => arg.includes(BODY) || arg.startsWith('body='))).toBe(false)
+    expect(call?.args).not.toContain('edit')
+    // The file is gone once the write returns.
+    expect(existsSync(file)).toBe(false)
+  })
+
+  it('with no repository, leaves the path to gh to fill from the working directory', async () => {
+    const { calls, run } = capture()
+    await defaultUpdatePrBody({ prNumber: 7, body: BODY, repo: null }, run)
+    expect(calls[0]?.args.slice(0, 4)).toEqual(['api', '--method', 'PATCH', 'repos/{owner}/{repo}/pulls/7'])
+    expect(calls[0]?.sent).toEqual({ body: BODY })
   })
 })

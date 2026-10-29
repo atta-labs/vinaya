@@ -980,7 +980,7 @@ export type LoopDeps = {
   fetchDocumentationDeps?: FetchDocumentationDeps
   /** The source provider's git object reader for repository sources; absent, `git` in the task worktree. Injected so a test needs no repository. */
   readSourceObject?: SourceProviderDeps['readObject']
-  /** O2/O3: replace the open PR's body — the `update_pull_request_body` tool's forge side effect (`gh pr edit`). Injected so the harness fakes it. */
+  /** O2/O3: replace the open PR's body — the `update_pull_request_body` tool's forge side effect (`gh api --method PATCH`). Injected so the harness fakes it. */
   updatePrBody: (input: {
     prNumber: number
     body: string
@@ -2080,20 +2080,37 @@ async function defaultStartDevTools(input: {
   return { bridge: driverDevBridgeInvocation(host.socketPath), close: () => host.close() }
 }
 
-/** O2/O3: `gh pr edit --body-file` to replace the open PR's body (the `update_pull_request_body` tool's forge write). */
-export async function defaultUpdatePrBody(input: {
-  prNumber: number
-  body: string
-  repo: { owner: string; repo: string } | null
-}): Promise<void> {
+/**
+ * Replaces the open PR's body (the `update_pull_request_body` tool's forge write, and the driver's own body writes)
+ * through the REST endpoint that updates a pull request, `PATCH repos/<owner>/<repo>/pulls/<n>`. The body travels as
+ * `{"body": ...}` in a JSON file passed with `--input`, never on the command line. With no `repo`, the path keeps
+ * gh's `{owner}`/`{repo}` placeholders, which gh fills from the working directory's repository. `run` is injected so
+ * a test sees the exact command.
+ */
+export async function defaultUpdatePrBody(
+  input: {
+    prNumber: number
+    body: string
+    repo: { owner: string; repo: string } | null
+  },
+  run: (command: string, args: string[]) => void = (command, args) => {
+    execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  }
+): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-dev-tools-body-'))
-  const bodyFile = join(dir, 'body.md')
-  writeFileSync(bodyFile, input.body, 'utf8')
+  const bodyFile = join(dir, 'body.json')
+  writeFileSync(bodyFile, JSON.stringify({ body: input.body }), 'utf8')
+  const repoPath = input.repo ? `${input.repo.owner}/${input.repo.repo}` : '{owner}/{repo}'
   try {
-    execFileSync('gh', ['pr', 'edit', String(input.prNumber), '--body-file', bodyFile], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
+    run('gh', [
+      'api',
+      '--method',
+      'PATCH',
+      `repos/${repoPath}/pulls/${input.prNumber}`,
+      '--input',
+      bodyFile,
+      '--silent'
+    ])
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
