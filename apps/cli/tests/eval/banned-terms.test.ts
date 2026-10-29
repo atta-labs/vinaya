@@ -65,6 +65,29 @@ describe('banned-terms checker', () => {
     ])
   })
 
+  it("skips the code spans of a closing Interface block, and still reports every term in the statement's prose", () => {
+    const block = ' Interface: flag `--surface-only`; field `Report.reviewer: string`; string `the brief is ready`.'
+    expect(findBannedTerms(`${NEUTRAL}${block}`)).toEqual([])
+    expect(checkTaskStatement(`${NEUTRAL}${block}`).ok).toBe(true)
+    // The same words in the prose are reported, at the index the statement holds them.
+    const prose = 'Keep the surface flag working for the reviewer.'
+    expect(findBannedTerms(`${prose}${block}`)).toEqual([
+      { term: 'Surface', match: 'surface', index: prose.indexOf('surface') },
+      { term: 'reviewer', match: 'reviewer', index: prose.indexOf('reviewer') }
+    ])
+    // Only a well-formed block that ends the statement is skipped: a marker in the middle, an unknown kind or a
+    // missing full stop leaves every span checked.
+    expect(findBannedTerms(`${NEUTRAL}${block} Then stop.`).map((hit) => hit.term)).toContain('Surface')
+    expect(findBannedTerms(`${NEUTRAL} Interface: name \`--surface-only\`.`).map((hit) => hit.term)).toEqual([
+      'Surface'
+    ])
+    expect(findBannedTerms(`${NEUTRAL} Interface: flag \`--surface-only\``).map((hit) => hit.term)).toEqual(['Surface'])
+    // A span before the last marker is prose.
+    expect(findBannedTerms(`Use \`--surface\`.${' Interface: env `PATH`.'}`).map((hit) => hit.term)).toEqual([
+      'Surface'
+    ])
+  })
+
   it('names each term once', () => {
     const terms = BANNED_TERMS.map((t) => t.term)
     expect(new Set(terms).size).toBe(terms.length)

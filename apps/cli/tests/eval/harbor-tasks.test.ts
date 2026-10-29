@@ -193,6 +193,18 @@ describe('the converter', () => {
     }
   })
 
+  it("writes each case's task statement, its Interface block included, as its instruction", () => {
+    const developer = folders().filter(({ suite }) => suite === suiteName('developer'))
+    expect(developer.length).toBeGreaterThan(0)
+    expect(developer.some(({ caseFile }) => caseFile.case.taskStatement.includes(' Interface: '))).toBe(true)
+    for (const { dir, caseFile } of folders()) {
+      expect({ id: caseFile.case.id, instruction: readFileSync(join(dir, 'instruction.md'), 'utf8') }).toEqual({
+        id: caseFile.case.id,
+        instruction: `${caseFile.case.taskStatement}\n`
+      })
+    }
+  })
+
   it('writes a byte-identical tree, file modes included, on a second run', () => {
     const files = walk(first).sort()
     expect(walk(second).sort()).toEqual(files)

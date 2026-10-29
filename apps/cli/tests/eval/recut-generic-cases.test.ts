@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'bun:test'
 import { findBannedTerms } from '../../src/lib/dev-review-eval/banned-terms'
 import { validateNeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
-import { loadCaseFile as loadDeveloperCaseFile } from './developer-capability-suite'
+import { type DeveloperCapabilityCase, loadCaseFile as loadDeveloperCaseFile } from './developer-capability-suite'
 import {
   DERIVED_FILES,
   DEVELOPER_CAPABILITIES,
@@ -20,6 +20,9 @@ import {
   generatedReviewerStatement,
   generatedSourceCitationStatement,
   GENERIC_SUITE_IDS,
+  type Git,
+  interfaceBlock,
+  interfaceItems,
   LAYER_P_ONLY_DEFECT_KINDS,
   LOOP_CAPABILITIES,
   loadRevisionFacts,
@@ -32,7 +35,8 @@ import {
   repositoryGit,
   seededHead,
   STATEMENTS_PATH,
-  surfaceEntryPaths
+  surfaceEntryPaths,
+  withInterface
 } from './recut-generic-cases'
 import { loadDevelopment as loadReviewerDevelopment, type ReviewCase } from './reviewer-quality-suite'
 import {
@@ -73,7 +77,224 @@ describe('the development task statements', () => {
     const derived = recutDevelopment().files.flatMap(
       (f) => (JSON.parse(f.text) as { suites: { cases: { id: string; taskStatement: string }[] }[] }).suites
     )
-    for (const c of derived.flatMap((s) => s.cases)) expect(c.taskStatement).toBe(statements[c.id] as string)
+    // A developer case and its loop case end the statement with the case's Interface block; any other is verbatim.
+    const developerIds = new Set(developerCases.map((c) => c.id))
+    const blocks = new Map(developerCases.map((c) => [c.id, interfaceBlock(interfaceItems(repositoryGit, c))]))
+    for (const c of derived.flatMap((s) => s.cases)) {
+      const block = developerIds.has(c.id) ? (blocks.get(c.id) as string) : ''
+      expect({ id: c.id, statement: c.taskStatement }).toEqual({
+        id: c.id,
+        statement: `${statements[c.id] as string}${block}`
+      })
+      expect({ id: c.id, lineBreak: /[\r\n]/.test(c.taskStatement) }).toEqual({ id: c.id, lineBreak: false })
+    }
+  })
+})
+
+/** A git that serves a fixture case's blobs and base tree, and searches the base tree as `git grep -F -o -h` does. */
+function fixtureGit(blobs: Record<string, string>, baseTree: Record<string, string>): Git {
+  return (args, options = {}) => {
+    if (args[0] === 'cat-file' && args[1] === 'blob') {
+      const source = blobs[args[2] as string]
+      if (source === undefined) throw new RecutRefused('git cat-file failed')
+      return Buffer.from(source)
+    }
+    if (args[0] === 'ls-tree')
+      return Buffer.from(
+        Object.entries(baseTree)
+          .map(([path, blob]) => `100644 blob ${blob}\t${path}\0`)
+          .join('')
+      )
+    if (args[0] === 'grep') {
+      const patterns = args.flatMap((arg, i) => (args[i - 1] === '-e' ? [arg] : []))
+      const skipped = args.filter((arg) => arg.startsWith(':(exclude)')).map((arg) => arg.slice(':(exclude)'.length))
+      const searched = Object.entries(baseTree)
+        .filter(([path]) => !skipped.includes(path))
+        .map(([, blob]) => blobs[blob] as string)
+      const found = patterns.filter((p) => searched.some((source) => source.includes(p)))
+      if (found.length === 0) {
+        if (options.quietExit === 1) return new Uint8Array()
+        throw new RecutRefused('git grep failed')
+      }
+      return Buffer.from(found.map((p) => `${p}\n`).join(''))
+    }
+    throw new Error(`the fixture serves no git ${args[0]}`)
+  }
+}
+
+const FIXTURE_TEST = `import { expect, it } from 'bun:test'
+import describeWidget from './describe'
+import { helper } from './new-helper'
+import { makeWidget, oldThing, start } from './widget'
+
+it('builds a widget the case names', () => {
+  process.env.WIDGET_COLOR = 'red'
+  process.env.WIDGET_THEME = 'dark'
+  const deps = { load: makeWidget, render: () => '' }
+  expect(describeWidget(makeWidget('y'))).toBeDefined()
+  const widget = makeWidget('x')
+  expect(widget.mode).toBe('fast')
+  expect(widget.label.length).toBe(1)
+  expect(oldThing('ab')).toBe(2)
+  expect(start(['--widget-size'])).toContain('widget is ready')
+  expect(start([])).not.toBe('1024')
+  expect(helper()).toBeDefined()
+  events.on('widget-ready', () => {})
+})
+`
+
+const FIXTURE_WIDGET_BASE = `export function oldThing(a: string): number {
+  return a.length
+}
+
+export interface WidgetDeps {
+  load: (
+    name: string
+  ) => Widget
+}
+`
+
+const FIXTURE_WIDGET = `import { EventEmitter } from 'node:events'
+
+export function oldThing(a: string): number {
+  return a.length
+}
+
+export interface Widget {
+  mode: 'fast' | 'slow'
+  label: string
+}
+
+export interface WidgetDeps {
+  load: (
+    name: string
+  ) => Widget
+}
+
+export interface WidgetOptions {
+  render: (input: {
+    name: string
+    size: number
+  }) => string
+}
+
+export function makeWidget(name: string, size = 10): Widget {
+  const secret = computeInternals(name, size)
+  return { mode: secret > 3 ? 'fast' : 'slow', label: name }
+}
+
+function computeInternals(name: string, size: number): number {
+  return name.length * size
+}
+
+export function unimportedHelper(): void {}
+
+export const events = new EventEmitter()
+
+export function start(argv: string[]): string {
+  if (process.env.WIDGET_COLOR === undefined) return 'no color'
+  const { WIDGET_THEME } = process.env
+  if (argv.includes('--widget-size')) events.emit('widget-ready')
+  return 'widget is ready: 1024'
+}
+`
+
+const fixtureCase = {
+  id: 'fixture-widget',
+  baseCommit: 'b'.repeat(40),
+  referenceCommit: 'r'.repeat(40),
+  hiddenTests: { files: [{ path: 'src/widget.test.ts', blob: 'test-blob' }], deleted: [] },
+  referenceSolution: {
+    commit: 'r'.repeat(40),
+    files: [
+      { path: 'src/widget.ts', blob: 'widget-blob' },
+      { path: 'src/new-helper.ts', blob: 'helper-blob' },
+      { path: 'src/describe.ts', blob: 'describe-blob' }
+    ],
+    deleted: [],
+    digest: 'f'.repeat(64)
+  },
+  failToPass: { 'src/widget.test.ts': ['builds a widget the case names'] }
+} as unknown as DeveloperCapabilityCase
+
+const fixture = fixtureGit(
+  {
+    'test-blob': FIXTURE_TEST,
+    'widget-blob': FIXTURE_WIDGET,
+    'helper-blob': "export function helper(): string {\n  return 'helped'\n}\n",
+    'describe-blob': 'export default function describeWidget(w: Widget): string {\n  return w.label\n}\n',
+    'base-widget-blob': FIXTURE_WIDGET_BASE,
+    'base-readme-blob': 'The default mode is fast.\n',
+    'base-test-blob': "it('says widget is ready', () => {})\n"
+  },
+  {
+    'src/widget.ts': 'base-widget-blob',
+    'README.md': 'base-readme-blob',
+    'src/widget.test.ts': 'base-test-blob'
+  }
+)
+
+describe('the Interface block', () => {
+  it('names what the fail-to-pass tests import and assert from the reference change, less what the base holds', () => {
+    const items = interfaceItems(fixture, fixtureCase)
+    expect(items).toEqual([
+      // A default import names the module's default export.
+      { kind: 'export', text: 'src/describe.ts: default function describeWidget(w: Widget): string' },
+      { kind: 'export', text: 'src/new-helper.ts: function helper(): string' },
+      { kind: 'export', text: 'src/widget.ts: function makeWidget(name: string, size?): Widget' },
+      { kind: 'export', text: 'src/widget.ts: function start(argv: string[]): string' },
+      { kind: 'file', text: 'src/describe.ts' },
+      { kind: 'file', text: 'src/new-helper.ts' },
+      { kind: 'env', text: 'WIDGET_COLOR' },
+      // Read by destructuring `process.env`.
+      { kind: 'env', text: 'WIDGET_THEME' },
+      { kind: 'flag', text: '--widget-size' },
+      { kind: 'event', text: 'widget-ready' },
+      { kind: 'field', text: 'Widget.label: string' },
+      { kind: 'field', text: "Widget.mode: 'fast' | 'slow'" },
+      // A type written across lines is named on one line, its member separators kept; `WidgetDeps.load`, which
+      // the base declares identically across lines, is left out.
+      { kind: 'field', text: 'WidgetOptions.render: (input: { name: string; size: number; }) => string' },
+      // Held at the base only by the fail-to-pass test's own base copy, which the base check skips.
+      { kind: 'string', text: 'widget is ready' }
+    ])
+    const statement = withInterface('Make the widget.', items)
+    expect(statement.startsWith('Make the widget. Interface: export `src/describe.ts: ')).toBe(true)
+    expect(statement.endsWith('; string `widget is ready`.')).toBe(true)
+    expect(findBannedTerms(statement)).toEqual([])
+    // No function body, unimported helper, test name, numeric expected value or export the base already has.
+    for (const left of ['computeInternals', 'secret', 'unimportedHelper', 'builds a widget', '1024', 'oldThing'])
+      expect({ left, named: statement.includes(left) }).toEqual({ left, named: false })
+    // A string the base already holds is left out: the README names the mode `fast`.
+    expect(items.some((item) => item.kind === 'string' && item.text === 'fast')).toBe(false)
+    expect(items.some((item) => item.text.startsWith('WidgetDeps.'))).toBe(false)
+  })
+
+  it('refuses the re-cut when the base search fails for any reason but finding nothing', () => {
+    const failing: Git = (args, options) => {
+      if (args[0] === 'grep') throw new RecutRefused('git grep failed')
+      return fixture(args, options)
+    }
+    expect(() => interfaceItems(failing, fixtureCase)).toThrow(RecutRefused)
+  })
+
+  it('keeps a statement with no item byte for byte, and writes the block on its single line', () => {
+    expect(withInterface('Make the change.', [])).toBe('Make the change.')
+    expect(
+      interfaceBlock([
+        { kind: 'env', text: 'A' },
+        { kind: 'flag', text: '--b' }
+      ])
+    ).toBe(' Interface: env `A`; flag `--b`.')
+  })
+
+  it('names the error the pr-1091 tests import from the module they import it from', () => {
+    const derived = JSON.parse(readFileSync(DERIVED_FILES.developer.development, 'utf8')) as {
+      suites: { cases: { id: string; taskStatement: string }[] }[]
+    }
+    const statement = derived.suites[0]?.cases.find((c) => c.id === 'pr-1091')?.taskStatement ?? ''
+    expect(statement.startsWith(statements['pr-1091'] as string)).toBe(true)
+    expect(statement).toContain('export `apps/cli/src/lib/task-sweep.ts: class IssueNotFoundError')
   })
 })
 
@@ -275,6 +496,18 @@ describe('re-running the re-cut', () => {
         sha256: sha256(readFileSync(file.path))
       })
     }
+    expect(Object.keys(recut.summary)).toEqual(['files'])
+    expect(JSON.stringify(recut.summary)).not.toMatch(/Interface:|`/)
+  })
+
+  it('reads no held-out case, and derives no Interface block for one, before the developer approval opens them', () => {
+    const calls: string[] = []
+    const spy: Git = (args, options) => {
+      calls.push(args[0] as string)
+      return repositoryGit(args, options)
+    }
+    expect(() => recutHeldOut({ ...approvals, developer: 'f'.repeat(64) }, spy)).toThrow()
+    expect(calls).toEqual([])
   })
 
   it('reproduces every held-out file byte for byte, compared by digest only', () => {
@@ -291,8 +524,9 @@ describe('re-running the re-cut', () => {
         sha256: sha256(readFileSync(file.path))
       })
     }
-    // Its summary carries counts, ids and digests only.
+    // Its summary carries counts, ids and digests only: no Interface block, nor any part of one.
     expect(Object.keys(recut.summary).sort()).toEqual(['files', 'heldOutIds'])
+    expect(JSON.stringify(recut.summary)).not.toMatch(/Interface:|`/)
     for (const entry of recut.summary.files) {
       expect(Object.keys(entry).sort()).toEqual(['cases', 'file', 'layerPOnly', 'sha256', 'undeliverableSources'])
     }
