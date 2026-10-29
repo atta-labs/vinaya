@@ -2472,12 +2472,13 @@ export function sandboxProbePlanFor(
 /** Prepare the next launch from the same send-back and handoff its validation reads. */
 export function withDeveloperContext(task: TaskInput, action: ProcessAction): ProcessAction {
   return (context) => {
-    const answered = latestRecord(context.results)?.sendBack
+    const results = context.results ?? {}
+    const answered = latestRecord(results)?.sendBack
     const knownFindingIds =
       answered?.kind === 'correction'
         ? (answered.knownFindingIds ?? [])
         : answered?.kind === 'review'
-          ? handedOverIds(context.results)
+          ? handedOverIds(results)
           : []
     task.developerContext = { ...task.developerContext, knownFindingIds }
     return action(context)
