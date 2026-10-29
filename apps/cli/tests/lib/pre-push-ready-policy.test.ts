@@ -3,12 +3,11 @@
  * hook's own deferral step executed as real shell.
  */
 import { describe, expect, it } from 'bun:test'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { VinayaConfigSchema } from '../../src/lib/config.js'
 import {
   deferralMarkerText,
   isReadyCiCommand,
@@ -22,7 +21,7 @@ import {
   readTrustedReadyTestsPolicy,
   resolveReadyTestsDeferral
 } from '../../src/lib/pre-push-ready-policy.js'
-import { stripVinayaEnv } from './process-fixture.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
@@ -82,7 +81,9 @@ describe('the trusted opt-in', () => {
   })
 
   it("this repository's own default-branch configuration does not opt in yet: activation waits for the required check", () => {
-    const config = VinayaConfigSchema.parse(JSON.parse(readFileSync(join(REPO_ROOT, 'vinaya.config.json'), 'utf8')))
+    const config = JSON.parse(readFileSync(join(REPO_ROOT, 'vinaya.config.json'), 'utf8')) as Parameters<
+      typeof readyTestsPolicyOf
+    >[0]
     expect(readyTestsPolicyOf(config)).toEqual({ mode: 'local' })
   })
 })
@@ -181,7 +182,7 @@ describe('the policy entrypoint, run as the hook runs it', () => {
     return dir
   }
   const run = (dir: string, env: Record<string, string>) =>
-    spawnSync('bun', [SCRIPT], { cwd: dir, encoding: 'utf8', env: { ...stripVinayaEnv(), ...env }, timeout: 60_000 })
+    spawnSyncBudgeted('bun', [SCRIPT], { cwd: dir, encoding: 'utf8', env: { ...stripVinayaEnv(), ...env } })
 
   it('with no marker it answers local, asks the forge nothing, and clears a record an earlier push left', () => {
     const dir = repo()
@@ -255,7 +256,7 @@ describe('the generated hook’s deferral step, executed', () => {
         ].join('\n')
       )
       chmodSync(join(bin, 'bun'), 0o755)
-      const result = spawnSync('sh', ['-c', step], {
+      const result = spawnSyncBudgeted('sh', ['-c', step], {
         cwd: dir,
         encoding: 'utf8',
         env: { PATH: `${bin}:/usr/bin:/bin` }

@@ -4,7 +4,7 @@
  * any failed, cancelled or skipped mandatory job while the root-config probe alone may be skipped.
  */
 import { describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -26,7 +26,7 @@ function aggregate(results: Record<string, string>): { status: number | null; ou
     if (!(job in results)) throw new Error(`no result given for ${job}`)
     return results[job] as string
   })
-  const run = spawnSync('sh', ['-c', script], { encoding: 'utf8' })
+  const run = spawnSyncBudgeted('sh', ['-c', script], { encoding: 'utf8', env: stripVinayaEnv() })
   return { status: run.status, out: `${run.stdout}${run.stderr}` }
 }
 

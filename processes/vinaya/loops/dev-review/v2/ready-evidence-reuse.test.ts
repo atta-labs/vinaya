@@ -20,7 +20,7 @@ import { resolveAnchoredRegion, ScanContext } from '../../../../../apps/cli/src/
 import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
 import { readyGateEvidence, runExplicitCommandsLive } from './flow-v2-live'
 import { prReportCommand } from '../../../../../apps/cli/src/commands/pr-report'
-import { resetRuntimeDirCache } from '../../../../../apps/cli/src/lib/run-paths'
+import { useRuntimeDir } from '../../../tests/round-fakes'
 import { explicitTestPlanCommands, readyTestPlanCommand, withReadyTestCommand } from './v2-actions'
 
 // The loop writes the ready push's own test command as the staged body's Test Plan line, so the Evidence write
@@ -390,12 +390,11 @@ describe('`vinaya pr report` on a deferred head reuses the receipts the driver r
         check: POLICY.check,
         recordedAt: new Date().toISOString()
       })
-      process.env.VINAYA_RUNTIME_DIR = fixtureDir('deferred-report-runtime-')
+      useRuntimeDir(fixtureDir('deferred-report-runtime-'))
       process.env.GITHUB_ACTIONS = 'true'
       process.env.VINAYA_CI_CONFIG_PROBE_REF = 'origin/main'
       delete process.env.GH_TOKEN
       delete process.env.GITHUB_TOKEN
-      resetRuntimeDirCache()
       const explicit = `cd . && printf x >> ${JSON.stringify(counter)}`
       const body = [
         '## Test plan',
@@ -455,7 +454,7 @@ describe('`vinaya pr report` on a deferred head reuses the receipts the driver r
         if (value === undefined) delete process.env[key]
         else process.env[key] = value
       }
-      resetRuntimeDirCache()
+      useRuntimeDir(null)
     }
   })
 
