@@ -1,36 +1,48 @@
 // `vinaya commit-msg` — the `commit-msg` hook's invocation target.
 //
-// A git `commit-msg` hook receives the commit-message file's path as `$1`
-// and, when git knows the commit's origin, a source keyword as `$2`
-// (`message`, `template`, `merge`, `squash`, `commit` — see githooks(5)).
-// This validates the message file's FIRST LINE against this repo's
-// `Type(scope): Description` convention — never a staged diff, which is what
-// `pre-commit`/`pre-push` validate instead.
+// A git `commit-msg` hook receives exactly one parameter: the commit-message
+// file's path (githooks(5)). The source keyword (`message`, `merge`, …) belongs
+// to `prepare-commit-msg`, so a second argument, if a hook script forwards one,
+// is never read here. This validates the message file's FIRST LINE against
+// this repo's `Type(scope): Description` convention — never a staged diff,
+// which is what `pre-commit`/`pre-push` validate instead.
 //
 // The type vocabulary is `@attalabs/aeg-core`'s `COMMIT_TYPE_STYLE`/
 // `COMMIT_TYPES` — the same list `checkForgeTitle` enforces on PR/Issue
 // titles. One list, every call site (including this file's own error text);
 // never a second copy here.
 //
-// Source `merge` is skipped outright: a merge commit's message is written by
-// git itself (`Merge branch '…'`, `Merge pull request #N from …`), not by
-// the person running the command, so holding it to an authored-message
-// convention would refuse a message nobody typed. `git merge`/`git pull`
-// pass `$2=merge` for exactly this case (githooks(5)); every other source
-// keyword names an authored message and is validated normally.
+// A merge commit is skipped outright: its message is written by git itself
+// (`Merge branch '…'`, `Merge commit '…' into …`), not by the person running
+// the command. Git recognises it by the merge in progress — `MERGE_HEAD`
+// exists while the hook runs — so that is what is checked, resolved with
+// `git rev-parse --git-path` because `.git` is a file in a linked worktree.
 
-import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import { COMMIT_TYPE_STYLE, COMMIT_TYPES } from '@attalabs/aeg-core'
 
+function mergeInProgress(): boolean {
+  try {
+    const marker = execFileSync('git', ['rev-parse', '--git-path', 'MERGE_HEAD'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+    return marker !== '' && existsSync(marker)
+  } catch {
+    return false
+  }
+}
+
 export function commitMsgCommand(args: string[]): void {
-  const [messageFile, source] = args
+  const [messageFile] = args
   if (!messageFile) {
-    process.stderr.write('Usage: vinaya commit-msg <message-file> [source]\n')
+    process.stderr.write('Usage: vinaya commit-msg <message-file>\n')
     process.exitCode = 2
     return
   }
 
-  if (source === 'merge') return
+  if (mergeInProgress()) return
 
   const firstLine = readFileSync(messageFile, 'utf-8').split('\n', 1)[0] ?? ''
 
