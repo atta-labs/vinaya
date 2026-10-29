@@ -16,10 +16,18 @@ import { join } from 'node:path'
 import { beginProgressSession, PROGRESS_MARKER, type startProgressObserver } from '../../src/lib/push-progress'
 import { withV2DevTools, stagedPullRequestStore } from '../../../../processes/vinaya/loops/dev-review/v2/flow-v2-live'
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
-const CLI = join(import.meta.dir, '..', '..')
-const HELPER = join(CLI, 'src', 'lib', 'pre-push-progress-dir.ts')
-const FAKE_HOOK = join(import.meta.dir, '..', 'fixtures', 'push-progress', 'fake-pre-push-hook.sh')
+/**
+ * A file this test runs or copies, never a tree it reads: the only directories it lists are its own registry and
+ * fixtures under the temporary folder.
+ */
+function ownFile(...parts: string[]): string {
+  return join(import.meta.dir, ...parts)
+}
+const HELPER = ownFile('..', '..', 'src', 'lib', 'pre-push-progress-dir.ts')
+const PROGRESS_MODULE = ownFile('..', '..', 'src', 'lib', 'push-progress.ts')
+const FAKE_HOOK = ownFile('..', 'fixtures', 'push-progress', 'fake-pre-push-hook.sh')
 const TASK = 9
 
 let base: string
@@ -51,6 +59,12 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true })
 })
 
+/** A child's environment: no ambient `VINAYA_*` key, only the ones this test set itself. */
+const childEnv = (): NodeJS.ProcessEnv => {
+  const env = stripVinayaEnv()
+  for (const key of saved.keys()) if (process.env[key] !== undefined) env[key] = process.env[key]
+  return env
+}
 const runDir = () => join(base, 'runtime', 'engine-runs', String(TASK))
 /** The task's driver log under the same runtime directory: where the driver's own wiring points the observer. */
 const logPath = () => join(base, 'runtime', 'tasks-execution', String(TASK), 'output', 'driver.log')
@@ -125,6 +139,7 @@ function devTools(work: string, open: boolean): DevToolContext {
   const base = {
     publishChanges: async () => {
       const pushed = spawnSync('git', ['-C', work, 'push', 'origin', 'HEAD:refs/heads/task/issue-9'], {
+        env: childEnv(),
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe']
       })
@@ -185,8 +200,9 @@ describe('progress changes nothing the hook does', () => {
   function runHook(work: string) {
     rmSync(process.env.VINAYA_FAKE_RECORD as string, { force: true })
     rmSync(process.env.VINAYA_FAKE_RECEIPT as string, { force: true })
-    const run = spawnSync('sh', [join(work, '.git', 'hooks', 'pre-push'), 'origin', 'origin'], {
+    const run = spawnSyncBudgeted('sh', [join(work, '.git', 'hooks', 'pre-push'), 'origin', 'origin'], {
       cwd: work,
+      env: childEnv(),
       encoding: 'utf8',
       input: ''
     })
@@ -252,11 +268,14 @@ describe('observer failures never reach the push', () => {
     it(`an observer ${name} failure leaves the hook and its result unchanged`, async () => {
       const work = repository()
       testScript(0)
-      const baseline = spawnSync('sh', [join(work, '.git', 'hooks', 'pre-push')], {
-        cwd: work,
-        encoding: 'utf8',
-        input: ''
-      })
+      const hookRun = () =>
+        spawnSyncBudgeted('sh', [join(work, '.git', 'hooks', 'pre-push')], {
+          cwd: work,
+          env: childEnv(),
+          encoding: 'utf8',
+          input: ''
+        })
+      const baseline = hookRun()
       const session = await beginProgressSession({
         runDir: runDir(),
         task: TASK,
@@ -264,7 +283,7 @@ describe('observer failures never reach the push', () => {
         logPath: logPath(),
         observer: options()
       })
-      const run = spawnSync('sh', [join(work, '.git', 'hooks', 'pre-push')], { cwd: work, encoding: 'utf8', input: '' })
+      const run = hookRun()
       const stopping = Date.now()
       await session.end()
       expect(Date.now() - stopping).toBeLessThan(10_000)
@@ -286,14 +305,17 @@ describe('driver death and cancellation', () => {
     writeFileSync(
       script,
       [
-        `import { beginProgressSession } from ${JSON.stringify(join(CLI, 'src', 'lib', 'push-progress.ts'))}`,
+        `import { beginProgressSession } from ${JSON.stringify(PROGRESS_MODULE)}`,
         `await beginProgressSession({ runDir: ${JSON.stringify(runDir())}, task: ${TASK}, worktreePath: ${JSON.stringify(work)}, logPath: ${JSON.stringify(logPath())} })`,
         "process.stdout.write('started\\n')",
         'setInterval(() => {}, 1000)'
       ].join('\n')
     )
-    const driver = spawn('bun', [script], { stdio: ['ignore', 'pipe', 'inherit'], env: process.env })
+    const driver = spawn('bun', [script], { stdio: ['ignore', 'pipe', 'inherit'], env: childEnv() })
+    // A driver that never reports in is killed rather than left to hang the test.
+    const driverBudget = setTimeout(() => driver.kill('SIGKILL'), 20_000)
     await new Promise<void>((resolve) => driver.stdout?.on('data', () => resolve()))
+    clearTimeout(driverBudget)
     const observers = liveObservers()
     expect(observers).toHaveLength(1)
     driver.kill('SIGKILL')
@@ -307,6 +329,7 @@ describe('driver death and cancellation', () => {
     const session = await beginProgressSession({ runDir: runDir(), task: TASK, worktreePath: work, logPath: logPath() })
     const hook = spawn('sh', ['-c', `bun ${HELPER} follow ${capture} tests-1 1 & echo $!; sleep 30`], {
       cwd: work,
+      env: childEnv(),
       stdio: ['ignore', 'pipe', 'ignore']
     })
     const copier = Number(await new Promise<string>((resolve) => hook.stdout?.once('data', (d) => resolve(String(d)))))

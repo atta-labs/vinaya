@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beginProgressSession, progressObserverEntry } from '../../src/lib/push-progress'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
 // The hook's progress helper and the driver's progress observer, run from a packed install: the tarball `bun pm
 // pack` makes from the built package (its `files` allowlist ships `dist`, never `src`), unpacked as an installed
@@ -33,19 +34,20 @@ const setEnv = (key: string, value: string) => {
 
 beforeAll(() => {
   base = mkdtempSync(join(tmpdir(), 'packed-push-progress-'))
-  execFileSync('bun', ['scripts/build.ts'], { cwd: CLI, stdio: 'ignore' })
+  const env = stripVinayaEnv()
+  spawnSyncBudgeted('bun', ['scripts/build.ts'], { cwd: CLI, env, encoding: 'utf8' }, 60_000)
   const out = join(base, 'pack')
   mkdirSync(out)
-  const tarball = execFileSync('bun', ['pm', 'pack', '--ignore-scripts', '--quiet', '--destination', out], {
-    cwd: CLI,
-    encoding: 'utf8'
-  })
-    .trim()
-    .split('\n')
-    .at(-1) as string
+  const packed = spawnSyncBudgeted(
+    'bun',
+    ['pm', 'pack', '--ignore-scripts', '--quiet', '--destination', out],
+    { cwd: CLI, env, encoding: 'utf8' },
+    60_000
+  )
+  const tarball = packed.stdout.trim().split('\n').at(-1) as string
   const extract = join(base, 'extract')
   mkdirSync(extract)
-  execFileSync('tar', ['-xzf', tarball, '-C', extract])
+  spawnSyncBudgeted('tar', ['-xzf', tarball, '-C', extract], { env, encoding: 'utf8' })
   const modules = join(base, 'install', 'node_modules')
   mkdirSync(join(modules, '@attalabs'), { recursive: true })
   installed = join(modules, '@attalabs', 'vinaya')
@@ -96,13 +98,22 @@ describe('progress from a packed install', () => {
     })
     expect(session.dir).not.toBeNull()
     const helper = join(installed, manifest.bin['vinaya-push-progress'] as string)
-    const env = { ...process.env }
+    // No ambient `VINAYA_*` or git key: only the runtime directory and registry this test hands down.
+    const env: NodeJS.ProcessEnv = {
+      ...stripVinayaEnv(),
+      VINAYA_RUNTIME_DIR: join(base, 'runtime'),
+      VINAYA_PROCESS_REGISTRY_DIR: join(base, 'registry')
+    }
     for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
-    const on = spawnSync('node', [helper, 'dir'], { cwd: work, env, encoding: 'utf8' })
+    const on = spawnSyncBudgeted('node', [helper, 'dir'], { cwd: work, env, encoding: 'utf8' })
     expect(on.stdout).toBe('on\n')
     expect(on.status).toBe(0)
     const started = String(Math.floor(Date.now() / 1000))
-    const record = spawnSync('node', [helper, 'check', 'lint', 'pass', started], { cwd: work, env, encoding: 'utf8' })
+    const record = spawnSyncBudgeted('node', [helper, 'check', 'lint', 'pass', started], {
+      cwd: work,
+      env,
+      encoding: 'utf8'
+    })
     expect({ status: record.status, stdout: record.stdout, stderr: record.stderr }).toEqual({
       status: 0,
       stdout: '',
