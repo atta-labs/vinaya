@@ -162,19 +162,44 @@ describe('the strict required-CI read', () => {
     // Eligible only once its upstream completed: an upstream that finished late restarts the count.
     const upstream = job('Build, lint & typecheck', { completed_at: iso(QUEUE_BOUND_MS) })
     expect(judge(run(), [upstream, queued(0)], T0 + QUEUE_BOUND_MS + 1000).state).toBe('pending')
-    // No queue bound while another job of the attempt still runs.
-    const runningJob = job('Test (shared packages)', {
-      status: 'in_progress',
-      conclusion: null,
-      started_at: iso(QUEUE_BOUND_MS)
+    // No queue bound while its dependency, the build, has not completed.
+    const building = job('Build, lint & typecheck', { status: 'in_progress', conclusion: null, completed_at: null })
+    expect(judge(run(), [building, queued(0)], T0 + QUEUE_BOUND_MS + 5000).state).toBe('pending')
+    // A sibling job still running does not hold back a job whose dependency completed.
+    const sibling = job('Test (shared packages)', { status: 'in_progress', conclusion: null, started_at: iso(1000) })
+    const built = job('Build, lint & typecheck', { completed_at: iso(0) })
+    expect(judge(run(), [built, sibling, queued(0)], T0 + QUEUE_BOUND_MS + 5000)).toMatchObject({
+      state: 'stalled',
+      bound: 'queue',
+      job: 'Test (apps/cli, shard 4)'
     })
-    expect(judge(run(), [runningJob, queued(0)], T0 + QUEUE_BOUND_MS + 5000).state).toBe('pending')
+    // The required check waits on every mandatory job; an optional job neither holds it nor is bounded.
+    const check = job(CHECK, { status: 'queued', conclusion: null, runner_id: null, created_at: iso(0) })
+    expect(judge(run(), [built, sibling, check], T0 + QUEUE_BOUND_MS + 5000).state).toBe('pending')
+    const optional = job('Sandbox conformance (macOS)', { status: 'queued', conclusion: null, runner_id: null })
+    expect(judge(run(), [built, optional], T0 + QUEUE_BOUND_MS + 5000).state).toBe('pending')
   })
 
-  test('a running job stalls past the execution ceiling, never read as a code failure', () => {
+  test('a running mandatory test job stalls past the execution ceiling, never read as a code failure', () => {
     const running = job('Test (apps/cli, shard 5)', { status: 'in_progress', conclusion: null, started_at: iso(0) })
     expect(judge(run(), [running], T0 + EXECUTION_CEILING_MS - 1).state).toBe('pending')
     expect(judge(run(), [running], T0 + EXECUTION_CEILING_MS)).toMatchObject({ state: 'stalled', bound: 'execution' })
+    // The ceiling bounds the mandatory test jobs only: a long build or an optional job is not stalled by it.
+    for (const name of ['Build, lint & typecheck', 'Sandbox conformance (macOS)'])
+      expect(
+        judge(
+          run(),
+          [job(name, { status: 'in_progress', conclusion: null, started_at: iso(0) })],
+          T0 + EXECUTION_CEILING_MS
+        ).state
+      ).toBe('pending')
+  })
+
+  test('a newer run of the workflow for the head outranks an older run that was rerun', () => {
+    const olderRerun = run({ id: 100, run_attempt: 2, created_at: iso(0), run_started_at: iso(900_000) })
+    const newer = run({ id: 200, run_attempt: 1, created_at: iso(600_000), run_started_at: iso(600_000) })
+    expect(latestWorkflowRun([olderRerun, newer], WORKFLOW, HEAD)?.id).toBe(200)
+    expect(latestWorkflowRun([newer, olderRerun], WORKFLOW, HEAD)?.id).toBe(200)
   })
 
   test('jobs that cannot be read are unreadable, never green', () => {
@@ -200,6 +225,25 @@ describe('the recovery classification of a failing job', () => {
       expect(failure.diagnostic).toContain(step)
     }
   )
+
+  test('a frozen-lockfile install refusing a stale lockfile is the change’s code failure; other install failures stay setup', () => {
+    const install = job('Test (shared packages)', {
+      conclusion: 'failure',
+      steps: [testStep('failure', 'Install dependencies')]
+    })
+    expect(classifyFailedJob(install, { stepLog: 'error: lockfile had changes, but lockfile is frozen' }).kind).toBe(
+      'code'
+    )
+    expect(classifyFailedJob(install, { stepLog: 'error: GET https://registry.npmjs.org/x - 503' }).kind).toBe(
+      'infrastructure'
+    )
+    const reads: number[] = []
+    classifyFailedJobLive(install, (_jobId, step) => {
+      reads.push(step)
+      return null
+    })
+    expect(reads).toEqual([6])
+  })
 
   test('a provider API-budget exhaustion reported by the budget step is infrastructure, even on a test step', () => {
     const failing = job('j', { conclusion: 'failure', steps: [testStep('failure')] })

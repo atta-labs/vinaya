@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   agentCommandText,
@@ -18,7 +18,9 @@ import { checkBareDigits } from '../../../../../apps/cli/src/checks/body-bare-di
 import { compareEvidenceBlock } from '../../../../../apps/cli/src/checks/evidence-fresh-logic'
 import { resolveAnchoredRegion, ScanContext } from '../../../../../apps/cli/src/checks/scan-context'
 import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
-import { readyGateEvidence } from './flow-v2-live'
+import { readyGateEvidence, runExplicitCommandsLive } from './flow-v2-live'
+import { prReportCommand } from '../../../../../apps/cli/src/commands/pr-report'
+import { resetRuntimeDirCache } from '../../../../../apps/cli/src/lib/run-paths'
 import { explicitTestPlanCommands, readyTestPlanCommand, withReadyTestCommand } from './v2-actions'
 
 // The loop writes the ready push's own test command as the staged body's Test Plan line, so the Evidence write
@@ -335,5 +337,173 @@ describe('the Evidence of a head whose ready push deferred its tests to required
       })
     ).rejects.toThrow('could not be read')
     expect(existsSync(marker)).toBe(false)
+  })
+})
+
+// The real driver/report path on a deferred head: the driver records the explicit command's receipt at the
+// publication boundary (`runExplicitCommandsLive`, into the repository's own test-run cache), then the real
+// `vinaya pr report` command — reading the default branch's policy through the trust anchor, the hook's
+// deferred-tests record and that cache by itself — renders the selected suite pending and reuses the receipt, twice,
+// running nothing.
+describe('`vinaya pr report` on a deferred head reuses the receipts the driver recorded', () => {
+  class ReportExit extends Error {
+    constructor(public code: number | undefined) {
+      super(`process.exit(${code})`)
+    }
+  }
+  const POLICY = { mode: 'ci' as const, workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' }
+  const ENV_KEYS = [
+    'VINAYA_RUNTIME_DIR',
+    'GITHUB_ACTIONS',
+    'VINAYA_CI_CONFIG_PROBE_REF',
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'PR_BODY',
+    'BRANCH'
+  ]
+
+  test('pending for the selected suite, the driver receipt for the explicit command, exit zero, nothing re-run', async () => {
+    const dir = fixtureDir('deferred-report-')
+    const counter = join(fixtureDir('deferred-report-counter-'), 'runs')
+    const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]))
+    const originalCwd = process.cwd()
+    const originalExit = process.exit
+    try {
+      const env = { ...process.env }
+      for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, env, stdio: 'ignore' })
+      git('init', '-q', '-b', 'task/issue-1')
+      // The default branch opts in: the trust anchor this report reads is `origin/main`'s committed config.
+      writeFileSync(join(dir, 'vinaya.config.json'), JSON.stringify({ prePush: { readyTests: POLICY } }))
+      git('add', '.')
+      git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'base')
+      git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+      // What the hook records when it deferred this head's selected tests.
+      writeJsonUnderGit(dir, READY_TESTS_DEFERRED_RECORD, {
+        version: 1,
+        kind: 'ready',
+        head,
+        branch: 'task/issue-1',
+        runId: 'run-1',
+        workflow: POLICY.workflow,
+        check: POLICY.check,
+        recordedAt: new Date().toISOString()
+      })
+      process.env.VINAYA_RUNTIME_DIR = fixtureDir('deferred-report-runtime-')
+      process.env.GITHUB_ACTIONS = 'true'
+      process.env.VINAYA_CI_CONFIG_PROBE_REF = 'origin/main'
+      delete process.env.GH_TOKEN
+      delete process.env.GITHUB_TOKEN
+      resetRuntimeDirCache()
+      const explicit = `cd . && printf x >> ${JSON.stringify(counter)}`
+      const body = [
+        '## Test plan',
+        '',
+        '```',
+        `${readyCiPlanCommand(POLICY)} → passes in required CI`,
+        `${explicit} → exits 0`,
+        '```',
+        ''
+      ].join('\n')
+      // The driver at the publication boundary: the command really runs once and its receipt is recorded.
+      const driven = await runExplicitCommandsLive({
+        worktreePath: dir,
+        head,
+        branch: 'task/issue-1',
+        body,
+        commands: explicitTestPlanCommands(body),
+        deadlineAt: Date.now() + 60_000
+      })
+      expect(driven.outcome).toBe('passed')
+      expect(readFileSync(counter, 'utf8')).toBe('x')
+      const bodyPath = join(fixtureDir('deferred-report-body-'), 'body.md')
+      const report = async () => {
+        writeFileSync(bodyPath, body)
+        process.chdir(dir)
+        process.exit = ((code?: number) => {
+          throw new ReportExit(code)
+        }) as never
+        let code: number | undefined
+        try {
+          await prReportCommand(['--write', bodyPath], {
+            gateRunner: () => ({ failed: false, outcomes: [{ name: 'g', status: 'pass', errors: [] }] })
+          })
+        } catch (err) {
+          if (!(err instanceof ReportExit)) throw err
+          code = err.code
+        } finally {
+          process.exit = originalExit
+          process.chdir(originalCwd)
+        }
+        return { code, written: readFileSync(bodyPath, 'utf8') }
+      }
+      for (const _refresh of [1, 2]) {
+        const { code, written } = await report()
+        expect(code).toBe(0)
+        expect(written).toContain('[pending in required CI]')
+        expect(written).toContain(`#### C2: \`${explicit}\``)
+        expect(written).toContain('_Reused from ')
+        expect(written).not.toMatch(/\[exit /)
+      }
+      // The explicit command ran only the once the driver ran it; nothing ran the selected suite.
+      expect(readFileSync(counter, 'utf8')).toBe('x')
+    } finally {
+      process.exit = originalExit
+      process.chdir(originalCwd)
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      resetRuntimeDirCache()
+    }
+  })
+
+  test('the driver’s Evidence refuses a deferred-tests record left by another run', async () => {
+    const dir = fixtureDir('deferred-report-run-')
+    const env = { ...process.env }
+    for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, env, stdio: 'ignore' })
+    git('init', '-q', '-b', 'task/issue-1')
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'base')
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+    writeJsonUnderGit(dir, READY_TESTS_DEFERRED_RECORD, {
+      version: 1,
+      kind: 'ready',
+      head,
+      branch: 'task/issue-1',
+      runId: 'another-run',
+      workflow: POLICY.workflow,
+      check: POLICY.check,
+      recordedAt: new Date().toISOString()
+    })
+    const resultPath = join(dir, '.git', 'ready-result.json')
+    writeFileSync(
+      resultPath,
+      JSON.stringify({
+        head,
+        gate: {
+          passed: true,
+          output: '',
+          selection: null,
+          failed: [],
+          wallMs: 1,
+          localTests: 'deferred',
+          requiredCi: { ...POLICY, runId: 'run-1' }
+        }
+      })
+    )
+    const body = `## Test plan\n\n\`\`\`\n${readyCiPlanCommand(POLICY)} → passes in required CI\n\`\`\`\n`
+    await expect(
+      readyGateEvidence({
+        body,
+        head,
+        resultPath,
+        worktreePath: dir,
+        cache: memoryCache(),
+        deferral: { readPolicy: () => POLICY }
+      })
+    ).rejects.toThrow('no deferred-tests record names head')
   })
 })

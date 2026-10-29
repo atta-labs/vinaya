@@ -616,33 +616,51 @@ describe('the ready push deferring its selected tests to required CI', () => {
 
   test('a nested fixture printing the no-local-tests marker inside a real test run never makes it the no-runner state', async () => {
     const dir = repo()
-    const head = headOf(dir)
-    // The hook ran a nonempty selection (its record says so) while a test's own fixture printed the marker line.
-    const record = JSON.stringify({
-      version: 1,
-      head,
-      branch: 'task/issue-1',
-      mode: 'ready',
-      outcome: 'passed',
-      selection: { version: 1, mode: 'full', head, fullCount: 1, selected: ['a.test.ts'] },
-      failed: [],
-      elapsedSeconds: 1,
-      recordedAt: new Date().toISOString()
+    // A real test file whose own fixture prints the marker line, committed so the worktree is the approved commit.
+    const markerLine = `${NO_LOCAL_TESTS_MARKER} (no test runner declared)`
+    writeFileSync(
+      join(dir, 'nested.test.ts'),
+      `import { test } from 'bun:test'\ntest('prints the marker', () => console.log(${JSON.stringify(markerLine)}))\n`
+    )
+    execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' })
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'nested'], {
+      cwd: dir,
+      stdio: 'ignore'
     })
+    const head = headOf(dir)
+    const recorder = join(
+      import.meta.dir,
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      'apps',
+      'cli',
+      'src',
+      'lib',
+      'pre-push-record-tests.ts'
+    )
+    const selected = join(dir, 'nested.test.ts')
+    const note = JSON.stringify({ version: 1, mode: 'full', head, fullCount: 1, selected: [selected] })
+    // The hook's own test step: the selector's note, the real supervised `bun test` run and the real recorder.
     withHook(
       dir,
       [
-        `mkdir -p "$(dirname "$(git rev-parse --git-path ${LAST_PUSH_RESULT})")"`,
-        `printf '%s' '${record}' > "$(git rev-parse --git-path ${LAST_PUSH_RESULT})"`,
-        `echo "${NO_LOCAL_TESTS_MARKER} (no test runner declared)"`,
-        'echo "vinaya pre-push: selected 1 file(s), 1s — all green"',
+        `mkdir -p "$(dirname "$(git rev-parse --git-path ${SELECTION_NOTE})")"`,
+        `printf '%s' '${note}' > "$(git rev-parse --git-path ${SELECTION_NOTE})"`,
+        'log="$TMPDIR/nested-test.log"',
+        `bun ${JSON.stringify(recorder)} run ${JSON.stringify(selected)} > "$log" 2>&1 || exit 1`,
+        'cat "$log"',
+        `bun ${JSON.stringify(recorder)} passed "$log" 1 1>&2`,
         'exit 0'
       ].join('\n')
     )
     const result = await runReadyGateLive({ worktreePath: dir, branch: 'task/issue-1', head, remoteHead: head })
     expect(result.passed).toBe(true)
+    expect(result.output.split('\n')).toContain(markerLine)
     expect(result.localTests).toBeUndefined()
-    expect(result.selection?.selected).toEqual(['a.test.ts'])
+    expect(result.selection?.selected).toEqual([selected])
   })
 
   test('the deferral marker names this driver, the run, the branch and the head, and expires', () => {

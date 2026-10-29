@@ -56,6 +56,7 @@ import {
 } from '../../../../../apps/cli/src/lib/pr-report-engine'
 import { defaultReadDefaultBranchTip } from '../../../../../apps/cli/src/lib/dev-review-loop'
 import { readPostedReviewVerdicts } from '../../../../../apps/cli/src/lib/review-gate-input'
+import { detectVendoredVinaya } from '../../../../../apps/cli/src/lib/self-host'
 import {
   type ExplicitCommandsResult,
   type ReadyGateResult,
@@ -586,6 +587,8 @@ export async function runReadyGateLive(input: {
   log(`ready push: ${containmentLogLine(backend)}`)
   const { ownedRun, runToken, runTemp, registry } = await openSupervisedRun(input.registryDir)
   const started = now()
+  // Wall-clock start, compared with the time the hook stamps on its last-push record.
+  const startedAt = Date.now()
   const runId = input.runId ?? 'ready-push'
   const baseline: NodeJS.ProcessEnv = {}
   for (const key of ['PATH', 'LANG', 'HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'BUN_INSTALL_CACHE_DIR']) {
@@ -651,7 +654,7 @@ export async function runReadyGateLive(input: {
         failed: [],
         wallMs,
         localTests: 'deferred',
-        requiredCi: { workflow: deferred.workflow, check: deferred.check }
+        requiredCi: { workflow: deferred.workflow, check: deferred.check, runId: deferred.runId }
       }
     }
     const record = readLastPushResult(input.worktreePath)
@@ -659,13 +662,20 @@ export async function runReadyGateLive(input: {
     const fresh = forHead && (run.status === 0 || record.outcome === 'failed')
     const failed = passed ? [] : fresh ? record.failed : 'all'
     if (!passed) log(`ready push failed: ${failed === 'all' ? 'all' : failed.join(', ')}; wall time ${wallMs} ms`)
-    // No runner is decided by structured facts first: a hook that ran a selection wrote its last-push record for
-    // this head, so that record rules the state out whatever the output says — a marker line a nested test's own
-    // fixture printed during a real run never stands for it. Only with no such record, and no declared test runner
-    // in the repository, does the hook's own marker line (a line of its own, never a substring) name the state.
+    // No runner is decided by structured facts first. A last-push record this hook run wrote for this head (bound to
+    // the head and to this run by its time) rules the state out whatever the output says. A repository that vendors
+    // the CLI runs the self-hosted hook, which always selects tests and never declares a runner, so it is never in
+    // this state — even when its best-effort record write failed while a nested fixture printed the marker. Only an
+    // adopter's hook with no such record and no declared runner names the state, with its own marker line (a line of
+    // its own, never a substring): that is the adopter hook's contract (`pre-push-test-runner.ts`).
+    const recordedThisRun = forHead && Date.parse(record.recordedAt) >= startedAt - 1000
     const markerLine = output.split('\n').some((line) => line.startsWith(NO_LOCAL_TESTS_MARKER))
     const noLocalTests =
-      passed && !forHead && markerLine && !isExecutable(join(input.worktreePath, ADOPTER_TEST_RUNNER))
+      passed &&
+      !recordedThisRun &&
+      markerLine &&
+      detectVendoredVinaya(input.worktreePath) === null &&
+      !isExecutable(join(input.worktreePath, ADOPTER_TEST_RUNNER))
     if (noLocalTests) log(`ready push: ${NO_LOCAL_TESTS_MARKER} (the repository declares no test runner)`)
     return {
       passed,
@@ -923,20 +933,20 @@ export async function readyGateEvidence(input: {
   const gate = record.gate
   if (gate.localTests === 'deferred') {
     // Deferred: the required-CI line reports pending and every other command reuses the receipt the driver recorded
-    // at the publication boundary; the report engine refuses rather than execute anything.
+    // at the publication boundary; the report engine refuses rather than execute anything. The deferred-tests record
+    // must be this run's own: the one the ready push recorded for this head.
+    const runId = gate.requiredCi?.runId
+    const deferral: DeferredGroupCDeps = {
+      ...(runId ? { readRecord: (at: string, head: string) => readDeferredTestsRecord(at, { head, runId }) } : {}),
+      ...input.deferral
+    }
     const report = await buildReport({
       cwd: input.worktreePath,
       body: input.body,
       groupA,
       gradedBodySource: 'push',
       gateRunner: () => ({ failed: false, outcomes: [{ name: 'ready-gate', status: 'pass', errors: [] }] }),
-      groupC: await computeGroupC(
-        input.body,
-        input.worktreePath,
-        {},
-        input.cache ?? defaultTestRunCache(),
-        input.deferral
-      )
+      groupC: await computeGroupC(input.body, input.worktreePath, {}, input.cache ?? defaultTestRunCache(), deferral)
     })
     return replaceEvidenceBlock(input.body, report.blockInner)
   }

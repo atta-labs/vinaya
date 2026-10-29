@@ -114,7 +114,7 @@ export interface ReadyGateResult {
    */
   localTests?: 'none' | 'deferred'
   /** The required check a deferred push owes (set with `localTests: 'deferred'`). */
-  requiredCi?: { workflow: string; check: string }
+  requiredCi?: { workflow: string; check: string; runId?: string }
 }
 
 /** One explicit Test Plan command the driver ran (or reused a receipt for) at the publication boundary. */

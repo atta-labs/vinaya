@@ -126,9 +126,24 @@ const SANDBOX_STEP = /^Run the suite under both sandboxes$/
 
 const at = (value: string | null | undefined): number => (value ? Date.parse(value) : Number.NaN)
 
+/** The aggregate's build job, every mandatory test and sandbox job's dependency. */
+const BUILD_JOB = /^Build, lint & typecheck$/
+
+/** The mandatory test jobs the execution ceiling bounds (one per shard or package set). */
+const MANDATORY_TEST_JOB = /^Test \(/
+
+/** The jobs the required check needs: the build, the test jobs, Linux sandbox conformance, and the check itself. */
+const isMandatoryJob = (name: string, check: string): boolean =>
+  name === check || BUILD_JOB.test(name) || MANDATORY_TEST_JOB.test(name) || name === 'Sandbox conformance (Linux)'
+
+/** The install step, and the diagnostic that names its failure a code defect: a lockfile the change left stale. */
+const INSTALL_STEP = /^Install dependencies$/
+const STALE_LOCKFILE = /lockfile had changes, but lockfile is frozen/
+
 /**
- * Pure: the newest run of `workflow` for `head` — the latest attempt the runs list reports (a rerun keeps its run id
- * and raises its attempt), newest start first, then the highest id.
+ * Pure: the newest run of `workflow` for `head`. The newest run wins first — the latest created, then the highest
+ * id — so an older run that was rerun never outranks a newer run of the same workflow for the head; within one run
+ * id (a rerun keeps its id and raises its attempt) the latest attempt wins.
  */
 export function latestWorkflowRun(
   runs: readonly CiWorkflowRun[],
@@ -137,7 +152,7 @@ export function latestWorkflowRun(
 ): CiWorkflowRun | null {
   const own = runs.filter((run) => run.path === workflow && run.head_sha === head)
   if (own.length === 0) return null
-  const rank = (run: CiWorkflowRun) => [run.run_attempt ?? 1, at(run.run_started_at ?? run.created_at), run.id]
+  const rank = (run: CiWorkflowRun) => [at(run.created_at), run.id, run.run_attempt ?? 1]
   return own.reduce((best, run) => {
     const a = rank(run)
     const b = rank(best)
@@ -162,6 +177,9 @@ export function classifyFailedJob(
     : undefined
   if (budget) return { ...base, kind: 'infrastructure', diagnostic: budget.trim() }
   if (failedStep === null) return { ...base, kind: 'unknown' }
+  // A frozen-lockfile install refusing a stale lockfile is the change's own defect, not the runner's.
+  if (INSTALL_STEP.test(failedStep.name) && logs.stepLog && STALE_LOCKFILE.test(logs.stepLog))
+    return { ...base, kind: 'code' }
   if (SETUP_STEP.some((pattern) => pattern.test(failedStep.name)))
     return { ...base, kind: 'infrastructure', diagnostic: `the setup step "${failedStep.name}" failed` }
   if (SANDBOX_STEP.test(failedStep.name) && logs.stepLog) {
@@ -178,9 +196,10 @@ export function classifyFailedJob(
  * Pure: the strict required-CI read from the configured workflow's latest run attempt for `head` and that attempt's
  * jobs. Green only when the attempt's job named `check` completed `success` and no job of the attempt failed. A
  * completed failing job reads red at once, while others still run (the required check's own job is classified only
- * when it is the attempt's one failure). A queued job with no runner reads `stalled` once it waited `QUEUE_BOUND_MS`
- * from when it became eligible — its creation or the last job of the attempt to complete, whichever is later — while
- * no job of the attempt runs; a running job reads `stalled` past `EXECUTION_CEILING_MS`. Everything else is pending:
+ * when it is the attempt's one failure). A mandatory job queued with no runner reads `stalled` once it waited
+ * `QUEUE_BOUND_MS` from when it became eligible — its creation or its dependencies' completion, whichever is later,
+ * never while a dependency has not completed; a running mandatory test job reads `stalled` past
+ * `EXECUTION_CEILING_MS`. Everything else is pending:
  * no run, a queued or running attempt, or a required check that completed skipped, neutral or anything but success.
  */
 export function judgeRequiredCi(input: {
@@ -235,7 +254,8 @@ export function judgeRequiredCi(input: {
       ]
     }
   const running = jobs.filter((job) => job.status === 'in_progress')
-  for (const job of running) {
+  // The execution ceiling bounds the running mandatory test jobs only, never the build or an optional job.
+  for (const job of running.filter((candidate) => MANDATORY_TEST_JOB.test(candidate.name))) {
     const started = at(job.started_at)
     if (Number.isFinite(started) && input.now - started >= EXECUTION_CEILING_MS)
       return {
@@ -247,11 +267,24 @@ export function judgeRequiredCi(input: {
         detail: `the job ${job.name} has run for over ${EXECUTION_CEILING_MS / 60000} minutes on ${head}`
       }
   }
-  if (running.length === 0) {
-    const lastCompleted = Math.max(-1, ...jobs.map((job) => at(job.completed_at)).filter(Number.isFinite))
+  {
+    // A mandatory job is eligible once its dependencies completed: the test and sandbox jobs need the build, the
+    // required check needs every other job of the attempt. Its queue timer starts at the later of its creation and
+    // the last of those dependencies to complete, and never while one of them has not completed.
+    const build = jobs.find((job) => BUILD_JOB.test(job.name))
     for (const job of jobs) {
-      if (job.status !== 'queued' || job.runner_id !== null) continue
-      const eligible = Math.max(at(job.created_at), lastCompleted)
+      if (job.status !== 'queued' || job.runner_id !== null || !isMandatoryJob(job.name, input.check)) continue
+      const dependencies =
+        job.name === input.check
+          ? jobs.filter((other) => other !== job && isMandatoryJob(other.name, input.check))
+          : BUILD_JOB.test(job.name) || build === undefined
+            ? []
+            : [build]
+      if (dependencies.some((dependency) => dependency.status !== 'completed')) continue
+      const eligible = Math.max(
+        at(job.created_at),
+        ...dependencies.map((d) => at(d.completed_at)).filter(Number.isFinite)
+      )
       if (Number.isFinite(eligible) && input.now - eligible >= QUEUE_BOUND_MS)
         return {
           state: 'stalled',
@@ -290,7 +323,10 @@ export function classifyFailedJobLive(job: CiJob, readLog: typeof readStepLog = 
   const failedStep = (job.steps ?? []).find((step) => step.conclusion !== null && FAILED.has(step.conclusion))
   const budgetStep = (job.steps ?? []).find((step) => step.name === BUDGET_STEP && step.conclusion === 'success')
   return classifyFailedJob(job, {
-    stepLog: failedStep && SANDBOX_STEP.test(failedStep.name) ? readLog(job.id, failedStep.number) : null,
+    stepLog:
+      failedStep && (SANDBOX_STEP.test(failedStep.name) || INSTALL_STEP.test(failedStep.name))
+        ? readLog(job.id, failedStep.number)
+        : null,
     budgetLog: budgetStep ? readLog(job.id, budgetStep.number) : null
   })
 }
