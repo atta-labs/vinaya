@@ -1483,7 +1483,7 @@ git rev-parse --git-dir 2>&1 || true
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
-    expect(prePush).toContain('xargs bunx biome check --no-errors-on-unmatched -- ||')
+    expect(prePush).toContain('xargs bunx biome check --no-errors-on-unmatched --; then')
     expect(prePush).toContain('xargs bun apps/cli/src/lib/pre-push-record-tests.ts run')
   })
 
