@@ -88,6 +88,7 @@ import {
   type PauseState
 } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import {
+  fetchPrState,
   type MergeableState,
   type PrOpenState,
   type PublishedPullRequestRead,
@@ -208,17 +209,26 @@ export function currentRunGeneration(reader: ProvenanceReader, task: number): nu
 export interface PublishedWatch {
   fetchPrState: (prNumber: number) => PrOpenState
   fetchMergeableState: (prNumber: number) => MergeableState
+  /**
+   * The pull request's head's CI conclusion under the every-run-completed rule, with no early red; absent for a Flow
+   * whose reconcile step reacts to conflicts only, which the watch then never ends on red.
+   */
+  fetchHeadCiConclusion?: (prNumber: number) => 'green' | 'red' | 'pending'
   pollMs: number
   sleep: (ms: number, stop: AbortSignal) => Promise<void>
 }
 
-/** How the watch of a published pull request ended: merged, closed, conflicting with the default branch, or stopped. */
-export type PublishedWatchResult = 'merged' | 'closed' | 'conflicting' | 'stopped'
+/**
+ * How the watch of a published pull request ended: merged, closed, conflicting with the default branch, red on its
+ * head, or stopped.
+ */
+export type PublishedWatchResult = 'merged' | 'closed' | 'conflicting' | 'red' | 'stopped'
 
 /**
- * After a run that published: reads the pull request until it is merged or closed, or until the forge reports it
- * conflicting with the default branch (`readPublishedPullRequest`, the standalone watcher's read). `UNKNOWN` is read
- * again on the next poll, never taken as conflicting or clean, and a read that fails is tried again; neither ends it.
+ * After a run that published: reads the pull request until it is merged or closed, until the forge reports it
+ * conflicting with the default branch, or until its head's CI reads red once every run on it completed
+ * (`readPublishedPullRequest`, the standalone watcher's read, given the CI read). `UNKNOWN` and pending CI are read
+ * again on the next poll, never taken as conflicting, red or clean, and a read that fails is tried again; none ends it.
  */
 export async function watchPublishedPullRequest(
   prNumber: number,
@@ -414,6 +424,8 @@ export interface ResumeDeps {
   fetchNewestIssueRulingOrdinal: (issue: number) => number
   fetchNewestRulingAuthor: (pr: number) => string | null
   fetchNewestIssueRulingAuthor: (issue: number) => string | null
+  /** The pull request's own state: the halted watch ends once a pause's pull request is merged or closed. */
+  fetchPrState: (pr: number) => PrOpenState
   /** The live driver holding the task's lock, or null. */
   liveDriver: (root: string, task: number) => LockHolder | null
   /** The infrastructure retries the control store holds for the task; `null` when it cannot be read. */
@@ -438,6 +450,7 @@ export const liveResumeDeps: ResumeDeps = {
   fetchNewestIssueRulingOrdinal,
   fetchNewestRulingAuthor,
   fetchNewestIssueRulingAuthor,
+  fetchPrState,
   liveDriver: (root, task) => {
     const lock = readDriverLock(root, task)
     return lock && isDriverPidAlive(lock.pid) ? lock : null
@@ -500,6 +513,8 @@ export type WatchResult =
   | { kind: 'consumed' }
   /** The resolution was refused; `message` says why. */
   | { kind: 'refused'; message: string }
+  /** The pause's pull request was merged or closed: the run ends, and no resolution is claimed. */
+  | { kind: 'ended'; state: 'merged' | 'closed' }
   /** The watch was stopped, or the run holds no pause that a ruling continues. */
   | { kind: 'stopped' }
 
@@ -523,7 +538,9 @@ const authenticatedFromOrdinal = (held: PauseState, task: number, ordinal: numbe
 }
 
 /**
- * After a halt: waits for a ruling newer than the one the pause was raised under, or for a cancel. On a ruling it
+ * After a halt: waits for a ruling newer than the one the pause was raised under, for a cancel, or for the pause's
+ * pull request to be merged or closed — which ends the watch with no resolution claimed, since no ruling decided
+ * anything and no run continues. On a ruling it
  * claims the pause's resolution once with `resolveEscalation` — a loss to another claimant ends the watch without a
  * second resume — and returns so the caller continues the run from its checkpoint. A read that fails is tried again
  * on the next poll; it never ends the watch.
@@ -591,6 +608,13 @@ export async function watchForRuling(
     const resolution = tolerate(() => deps.readResolution(task, escalationId), null)
     if (resolution?.decision === 'cancel') return { kind: 'cancelled' }
     if (resolution !== null) return { kind: 'consumed' }
+    // The pause's pull request, read again each tick so a pause bound to one since it was raised is watched too.
+    const pr = tolerate(() => deps.readPauseState(root, task)?.prNumber ?? held.prNumber, held.prNumber)
+    if (pr !== null) {
+      const state = tolerate(() => deps.fetchPrState(pr), 'OPEN' as PrOpenState)
+      if (state === 'MERGED') return { kind: 'ended', state: 'merged' }
+      if (state === 'CLOSED') return { kind: 'ended', state: 'closed' }
+    }
     const newest = tolerate(() => rulingOrdinalOf(deps, held, task), null)
     if (newest !== null) {
       baseline ??= newest

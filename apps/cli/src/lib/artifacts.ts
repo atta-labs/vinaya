@@ -27,6 +27,7 @@ import { buildAgentsSkillsOps, discoverRoleNames } from './agents-skills-emitter
 import { claudeMcpJsonFile } from './task-tools/adapters.js'
 import {
   BODY_CHECKS_WORKFLOW_PATH,
+  CHECKS_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   REVIEW_WORKFLOW_PATH
 } from './managed-workflow-paths.js'
@@ -101,8 +102,7 @@ export const DOCTRINE_POINTER_PATHS: readonly string[] = [
   CLAUDE_POINTER_PATH,
   GEMINI_SETTINGS_PATH
 ]
-export const CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-checks.yml'
-export { BODY_CHECKS_WORKFLOW_PATH, REVIEW_VERDICT_WORKFLOW_PATH, REVIEW_WORKFLOW_PATH }
+export { BODY_CHECKS_WORKFLOW_PATH, CHECKS_WORKFLOW_PATH, REVIEW_VERDICT_WORKFLOW_PATH, REVIEW_WORKFLOW_PATH }
 export const ARCHIVIST_WORKFLOW_PATH = '.github/workflows/vinaya-archivist.yml'
 export const TASK_LOG_COLLECTOR_WORKFLOW_PATH = '.github/workflows/vinaya-task-log-collector.yml'
 // Empty scaffold folders — `vinaya new noop-check` writes into

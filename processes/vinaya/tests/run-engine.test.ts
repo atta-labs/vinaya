@@ -49,7 +49,11 @@ import {
   type TaskInput
 } from '../executing/actions'
 import { heldVerdictPath, writeHeldVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
-import { MAX_AUTOMATIC_CONFLICT_REENTRIES } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import {
+  ciRedReentryBoundDetail,
+  MAX_AUTOMATIC_CONFLICT_REENTRIES
+} from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { readPauseState } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
 import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
 import { currentRunGeneration, runIdentityOfTask } from '../bin/run-lifecycle'
@@ -594,7 +598,12 @@ async function spawnedWith(extra: Partial<EngineRunOptions>) {
 }
 
 describe('a published pull request that falls into conflict with the default branch', () => {
-  type Read = { state: 'OPEN' | 'MERGED' | 'CLOSED'; mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' }
+  type Read = {
+    state: 'OPEN' | 'MERGED' | 'CLOSED'
+    mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
+    /** The head's CI under the every-run-completed rule; default pending. */
+    ci?: 'green' | 'red' | 'pending'
+  }
   /** A stub run whose first run opens PR #70; each later run attaches to it, and its first mergeability read is the conflict the re-entry answers. */
   function publishedRun(reads: Read[]) {
     const run = stubRun()
@@ -630,6 +639,7 @@ describe('a published pull request that falls into conflict with the default bra
           return current().state
         },
         fetchMergeableState: () => current().mergeable,
+        fetchHeadCiConclusion: () => current().ci ?? 'pending',
         pollMs: 0,
         sleep: async () => {}
       }
@@ -697,6 +707,52 @@ describe('a published pull request that falls into conflict with the default bra
       'comment:pr:repeat_failure'
     ])
     expect(readTrace(result.tracePath).pauseReason).toBe('repeat_failure')
+  })
+
+  test('a red head once every run completed starts a fresh run at the Developer, then the merge ends the runner', async () => {
+    const run = publishedRun([
+      { state: 'OPEN', mergeable: 'MERGEABLE', ci: 'pending' },
+      { state: 'OPEN', mergeable: 'MERGEABLE', ci: 'red' },
+      { state: 'MERGED', mergeable: 'MERGEABLE', ci: 'green' }
+    ])
+    const result = await runEngine(run.options)
+    expect(result.exitCode).toBe(0)
+    expect(spawned(run.calls, 'develop')).toBe(2)
+    expect(spawned(run.calls, 'code-review')).toBe(2)
+    // The completed checkpoint was never resumed: the red re-entry ran under the next run identity.
+    expect(run.generation()).toBe(2)
+    // A red re-entry is no conflict: no conflict re-entry is logged for it.
+    expect(reentries(run.emitted)).toEqual([])
+    const driverLog = readFileSync(loopLogPathFor(null, 7, run.runtimeDir), 'utf8')
+    expect(driverLog).toContain(
+      `PR #70 read red CI on its head once every run completed after it was published: starting a fresh run (${runIdentityOfTask(7, 2).runId})`
+    )
+    expect(driverLog).toContain(`(re-entry 1 of ${MAX_AUTOMATIC_CONFLICT_REENTRIES})`)
+    expect(driverLog).toContain('PR #70 was merged; ending')
+  })
+
+  test('red and conflict re-entries share one bound: past it the runner pauses for a person', async () => {
+    const run = publishedRun([
+      { state: 'OPEN', mergeable: 'CONFLICTING' },
+      { state: 'OPEN', mergeable: 'MERGEABLE', ci: 'red' }
+    ])
+    const result = await runEngine(run.options)
+    expect(result.exitCode).toBe(2)
+    // One conflict re-entry, then red ones, MAX_AUTOMATIC_CONFLICT_REENTRIES in all.
+    expect(reentries(run.emitted).map((event) => event.attempt)).toEqual([1])
+    expect(spawned(run.calls, 'develop')).toBe(MAX_AUTOMATIC_CONFLICT_REENTRIES + 1)
+    expect(run.handoff.calls).toEqual([
+      'escalation:repeat_failure',
+      'pause-state:repeat_failure',
+      'comment:pr:repeat_failure'
+    ])
+    expect(readPauseState(run.runtimeDir, 7)?.detail).toBe(
+      ciRedReentryBoundDetail(70, MAX_AUTOMATIC_CONFLICT_REENTRIES)
+    )
+    const driverLog = readFileSync(loopLogPathFor(null, 7, run.runtimeDir), 'utf8')
+    expect(driverLog).toContain(
+      `PR #70 read red CI on its head once every run completed again, and its ${MAX_AUTOMATIC_CONFLICT_REENTRIES} automatic re-entries are spent; pausing for a person`
+    )
   })
 })
 

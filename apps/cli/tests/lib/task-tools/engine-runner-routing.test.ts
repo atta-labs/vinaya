@@ -127,7 +127,8 @@ async function startWatchingEngine(
         fetchNewestRulingOrdinal: () => 0,
         fetchNewestIssueRulingOrdinal: () => 0,
         fetchNewestRulingAuthor: () => null,
-        fetchNewestIssueRulingAuthor: () => null
+        fetchNewestIssueRulingAuthor: () => null,
+        fetchPrState: () => 'OPEN'
       }
       const watched = await watchForRuling(${JSON.stringify(runtimeDir)}, ${task}, { deps, pollMs: 20, sleep: abortableSleep }, new AbortController().signal)
       await reaper.reap(200)

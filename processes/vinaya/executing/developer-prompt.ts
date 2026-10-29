@@ -343,13 +343,18 @@ export function developerPrompt(
     stopConditions: ['Honor every stop condition in the frozen brief.']
   })
   const kind = developerTurnKind(results, facts.headSha)
-  // A conflict turn with no session to continue (a fresh run re-entering a conflicting pull request) is that
-  // session's first turn: the whole first-turn prompt, led by the conflict it answers.
-  const freshConflict = kind === 'conflict' && results.develop === undefined && context.resumeSessionId === undefined
-  if (kind === 'first' || freshConflict)
+  // A conflict or red-CI turn with no session to continue (a fresh run re-entering a published pull request) is that
+  // session's first turn: the whole first-turn prompt, led by the conflict or the failing checks it answers.
+  const freshReentry =
+    (kind === 'conflict' || kind === 'ci-red') && results.develop === undefined && context.resumeSessionId === undefined
+  if (kind === 'first' || freshReentry)
     return join([
       facts.sources.block,
-      freshConflict ? conflictPromptText(latestSendBack(results)) : null,
+      !freshReentry
+        ? null
+        : kind === 'conflict'
+          ? conflictPromptText(latestSendBack(results))
+          : (latestSendBack(results)?.detail ?? null),
       facts.doctrine ? renderDeveloperDoctrineBlock(facts.doctrine) : null,
       `When your work is ready, ${publishingInstructionLine()}`,
       facts.flow === 'v2' ? FLOW_V2_NOTE : null,

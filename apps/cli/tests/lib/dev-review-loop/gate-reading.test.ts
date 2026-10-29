@@ -33,9 +33,13 @@ import { fileURLToPath } from 'node:url'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture'
 import {
   checkPremiseAtHead,
+  judgeCiConclusion,
   pollMergeableState,
+  readPublishedPullRequest,
   renderConflictPrompt,
-  type MergeableState
+  type MergeableState,
+  type RestCheckRun,
+  type RestWorkflowRun
 } from '../../../src/lib/dev-review-loop/gate-reading'
 
 const GATE_READING = join(
@@ -506,5 +510,170 @@ describe('the gate reads both runners share, each value passed explicitly', () =
       ].join('\n\n')
     )
     expect(renderConflictPrompt([], 'x')).toEndWith('(no specific file could be determined)')
+  })
+})
+
+describe('early red: a completed failure outside the edited-event workflows reads red before every run completes', () => {
+  // Check suites: 70 is a CI run (`ci.yml`), 80 the review workflow (`evidence-fresh` is one of its jobs), 90 the
+  // checks workflow — the last two run on a pull-request `edited` event.
+  const CI_SUITE = 70
+  const REVIEW_SUITE = 80
+  const CHECKS_SUITE = 90
+  const check = (over: Partial<RestCheckRun>): RestCheckRun => ({
+    id: 1,
+    name: 'lint',
+    status: 'completed',
+    conclusion: 'success',
+    started_at: '2026-10-08T10:00:00Z',
+    check_suite_id: CI_SUITE,
+    ...over
+  })
+  const workflow = (over: Partial<RestWorkflowRun>): RestWorkflowRun => ({
+    id: 100,
+    name: 'CI',
+    path: '.github/workflows/ci.yml',
+    workflow_id: 7,
+    check_suite_id: CI_SUITE,
+    status: 'in_progress',
+    conclusion: null,
+    created_at: '2026-10-08T10:00:00Z',
+    run_started_at: '2026-10-08T10:00:00Z',
+    ...over
+  })
+  const ciInProgress = workflow({})
+  const reviewRun = workflow({
+    id: 200,
+    name: 'Vinaya Review Gate PR #1 @ abc',
+    path: '.github/workflows/vinaya-review.yml',
+    workflow_id: 8,
+    check_suite_id: REVIEW_SUITE,
+    status: 'completed',
+    conclusion: 'failure'
+  })
+  const checksRun = workflow({
+    id: 300,
+    name: 'Vinaya Checks',
+    path: '.github/workflows/vinaya-checks.yml',
+    workflow_id: 9,
+    check_suite_id: CHECKS_SUITE,
+    status: 'completed',
+    conclusion: 'failure'
+  })
+  const early = (checks: RestCheckRun[], workflows: RestWorkflowRun[]) =>
+    judgeCiConclusion(checks, workflows, { earlyRed: true })
+  const settled = (checks: RestCheckRun[], workflows: RestWorkflowRun[]) =>
+    judgeCiConclusion(checks, workflows, { earlyRed: false })
+
+  it('a completed failing CI job reads red while another job is still queued and its workflow run is in progress', () => {
+    const checks = [
+      check({ id: 1, name: 'test-cli (1)', conclusion: 'failure' }),
+      check({ id: 2, name: 'test-cli (2)', status: 'queued', conclusion: null })
+    ]
+    expect(early(checks, [ciInProgress])).toBe('red')
+    // The every-run-completed rule still waits for the queued job.
+    expect(settled(checks, [ciInProgress])).toBe('pending')
+  })
+
+  it('completed runs that all passed beside one still in progress stay pending', () => {
+    const checks = [check({ id: 1 }), check({ id: 2, name: 'typecheck', status: 'in_progress', conclusion: null })]
+    expect(early(checks, [ciInProgress])).toBe('pending')
+  })
+
+  it('a still-queued run is never read as failed', () => {
+    expect(early([check({ status: 'queued', conclusion: null })], [ciInProgress])).toBe('pending')
+  })
+
+  it('a completed red `evidence-fresh` beside an in-progress CI run reads pending', () => {
+    const checks = [
+      check({ id: 1, name: 'evidence-fresh', conclusion: 'failure', check_suite_id: REVIEW_SUITE }),
+      check({ id: 2, name: 'test-cli (1)', status: 'in_progress', conclusion: null })
+    ]
+    expect(early(checks, [ciInProgress, reviewRun])).toBe('pending')
+  })
+
+  it("a failing job of the checks workflow reads red only once every run completed, under today's rule", () => {
+    const failing = check({
+      id: 1,
+      name: 'vinaya check --all --diff-only',
+      conclusion: 'failure',
+      check_suite_id: CHECKS_SUITE
+    })
+    const running = check({ id: 2, name: 'test-cli (1)', status: 'in_progress', conclusion: null })
+    expect(early([failing, running], [ciInProgress, checksRun])).toBe('pending')
+    const done = [failing, check({ id: 2, name: 'test-cli (1)' })]
+    const ciDone = workflow({ status: 'completed', conclusion: 'success' })
+    expect(early(done, [ciDone, checksRun])).toBe('red')
+    expect(settled(done, [ciDone, checksRun])).toBe('red')
+  })
+
+  it('a cancelled job is left to the every-run-completed rule', () => {
+    const checks = [
+      check({ id: 1, conclusion: 'cancelled' }),
+      check({ id: 2, name: 'build', status: 'in_progress', conclusion: null })
+    ]
+    expect(early(checks, [ciInProgress])).toBe('pending')
+  })
+
+  it('fetchCiConclusion reads the early red through the forge listings, and never from a superseded failure', () => {
+    const run = (over: Record<string, unknown>) => ({
+      status: 'completed',
+      conclusion: 'failure',
+      started_at: '2026-10-08T10:00:00Z',
+      check_suite_id: CI_SUITE,
+      ...over
+    })
+    const dir = tempDir('vinaya-gh-early-red-')
+    writeFakeGh(
+      dir,
+      fakeGhReading({
+        checkRuns: [
+          run({ id: 1, name: 'test-cli (1)' }),
+          run({ id: 2, name: 'test-cli (2)', status: 'queued', conclusion: null }),
+          run({ id: 3, name: 'evidence-fresh', check_suite_id: REVIEW_SUITE })
+        ],
+        workflowRuns: [ciInProgress, reviewRun]
+      })
+    )
+    const { conclusion, runs } = readCi(dir)
+    expect(conclusion).toBe('red')
+    expect(runs).toMatchObject([
+      { name: 'test-cli (1)', id: 1 },
+      { name: 'evidence-fresh', id: 3 }
+    ])
+
+    // A re-run of the same check that passed supersedes the failure: the newest run per name decides.
+    const superseded = tempDir('vinaya-gh-early-red-superseded-')
+    writeFakeGh(
+      superseded,
+      fakeGhReading({
+        checkRuns: [
+          run({ id: 1, name: 'test-cli (1)' }),
+          run({ id: 4, name: 'test-cli (1)', conclusion: 'success', started_at: '2026-10-08T10:05:00Z' }),
+          run({ id: 2, name: 'test-cli (2)', status: 'queued', conclusion: null })
+        ],
+        workflowRuns: [ciInProgress]
+      })
+    )
+    expect(readCi(superseded).conclusion).toBe('pending')
+  })
+})
+
+describe('the published pull request watch tick', () => {
+  const deps = (over: {
+    state?: 'OPEN' | 'MERGED' | 'CLOSED'
+    mergeable?: MergeableState
+    ci?: 'green' | 'red' | 'pending'
+  }) => ({
+    fetchPrState: () => over.state ?? 'OPEN',
+    fetchMergeableState: () => over.mergeable ?? 'MERGEABLE',
+    ...(over.ci !== undefined ? { fetchHeadCiConclusion: () => over.ci as 'green' | 'red' | 'pending' } : {})
+  })
+
+  it('reads red only for a watcher that reads CI, after merged, closed and conflicting', () => {
+    expect(readPublishedPullRequest(1, deps({ ci: 'red' }))).toBe('red')
+    expect(readPublishedPullRequest(1, deps({ ci: 'pending' }))).toBe('watching')
+    expect(readPublishedPullRequest(1, deps({}))).toBe('watching')
+    expect(readPublishedPullRequest(1, deps({ ci: 'red', mergeable: 'CONFLICTING' }))).toBe('conflicting')
+    expect(readPublishedPullRequest(1, deps({ ci: 'red', state: 'MERGED' }))).toBe('merged')
   })
 })

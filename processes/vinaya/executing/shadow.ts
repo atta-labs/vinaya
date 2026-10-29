@@ -45,6 +45,7 @@ export const BOUND_FUNCTION_CLASSES = {
   localGateControl: 'read',
   probeAgentSandbox: 'run-local',
   fetchCiConclusion: 'read',
+  fetchSettledCiConclusion: 'read',
   fetchFailingCheckRuns: 'read',
   fetchFailedCheckWorkflowRunIds: 'read',
   rerunFailedWorkflowJobs: 'effect',

@@ -7,7 +7,12 @@ import {
   readyPushEvent
 } from '../../../../../apps/cli/src/lib/flow-v2-events'
 import { discardHeldVerdicts } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
-import { checkPremiseAtHead, fetchFailingCheckRuns } from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import {
+  checkPremiseAtHead,
+  describeFailingCheckRun,
+  fetchFailingCheckRuns,
+  fetchSettledCiConclusion
+} from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import {
   MAX_FAILURE_EXCERPT_CHARS,
   MAX_FAILURE_EXCERPT_TOTAL_CHARS,
@@ -46,6 +51,7 @@ import {
   CONFLICT_REPAIR_PROVEN,
   createActions,
   dispatchedManifest,
+  EXIT_CI_RED_REENTRY,
   EXIT_CONFLICT_REENTRY,
   EXIT_NO_OPEN_PR,
   EXIT_OPEN_PR,
@@ -714,8 +720,9 @@ export function classifyCiResult(context: ActionContext): { exitCode: number; st
  * Version 2's reconcile step: the task branch's open pull request, and — when one is open — its mergeability, read
  * before anything else runs. A conflicting one records the conflict send-back (the conflicting files, and the default
  * branch's tip the controller fetched for the repair) and routes to the Developer, so even a fresh run's first turn is
- * the conflict turn, before any local check or reviewer. The record is checkpointed with the step: a restart neither
- * repeats nor skips it.
+ * the conflict turn, before any local check or reviewer. One that does not conflict but whose head's CI is red records
+ * the failing checks instead (`reconcileCiRed`) and routes to the Developer the same way. The record is checkpointed
+ * with the step: a restart neither repeats nor skips it.
  */
 export async function reconcileExternalState(
   task: TaskInput,
@@ -727,7 +734,8 @@ export async function reconcileExternalState(
     ...gatePollOf(task),
     fetchMergeableState: task.bound?.fetchMergeableState ?? fetchMergeableState
   })
-  if (mergeable !== 'CONFLICTING') return { exitCode: EXIT_OPEN_PR, stdout: JSON.stringify(open) }
+  if (mergeable !== 'CONFLICTING')
+    return reconcileCiRed(task, context, open) ?? { exitCode: EXIT_OPEN_PR, stdout: JSON.stringify(open) }
   const { results } = context
   const files = (task.bound?.fetchConflictingFiles ?? fetchConflictingFiles)('main', task.branch)
   const fns = v2Of(task)
@@ -751,6 +759,46 @@ export async function reconcileExternalState(
       sendBack,
       mergeable,
       files
+    })
+  }
+}
+
+/**
+ * The reconcile step's CI half, for an open pull request that does not conflict: one read of its remote head's CI
+ * under the every-run-completed rule (`fetchSettledCiConclusion`), never waited on. Red records the CI send-back —
+ * each failing check by name and run, and the failure lines of each failed job — and routes to the Developer, so a
+ * fresh run re-entering a pull request whose CI turned red after publication starts with the turn that fixes it.
+ * Null when the head cannot be read or CI is not red: the run attaches as before.
+ */
+function reconcileCiRed(
+  task: TaskInput,
+  context: ActionContext,
+  open: { number: number }
+): { exitCode: number; stdout: string } | null {
+  const head = safeRead(task.remoteHead)
+  if (head === null) return null
+  const conclusion = safeRead(() => (task.bound?.fetchSettledCiConclusion ?? fetchSettledCiConclusion)(head))
+  if (conclusion !== 'red') return null
+  const fns = v2Of(task)
+  const failingChecks =
+    safeRead(() => (task.bound?.fetchFailingCheckRuns ?? fetchFailingCheckRuns)(head).map(describeFailingCheckRun)) ??
+    []
+  const { results } = context
+  const sendBack: SendBack = {
+    kind: 'ci-red',
+    headBefore: head,
+    detail: `CI turned red on pull request #${open.number} at ${head} after it was published. Failing check-run(s): ${failingChecks.length > 0 ? failingChecks.join(', ') : '(unknown)'}. Fix the failing check(s), commit, and publish the fix with publish_changes on this SAME branch — the pull request is open, so this push runs the selected tests.${failureExcerptsOnHead(task, fns, head)}`
+  }
+  return {
+    exitCode: EXIT_CI_RED_REENTRY,
+    stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+      // The runner reads the open pull request's number from this step's result, as it does when CI is not red.
+      number: open.number,
+      decision: { type: 'dispatch_developer' },
+      sendBack,
+      head,
+      conclusion,
+      failingChecks
     })
   }
 }
@@ -1035,7 +1083,13 @@ type V2Binding = {
 /** Version 2's action bindings, beside the shared ones (`ACTION_BINDINGS`) every flow binds. */
 export const V2_ACTION_BINDINGS: Readonly<Record<string, V2Binding>> = {
   'vinaya.v2-reconcile-external-state': {
-    adapts: [findOpenPrForBranch, pollMergeableState, fetchConflictingFiles],
+    adapts: [
+      findOpenPrForBranch,
+      pollMergeableState,
+      fetchConflictingFiles,
+      fetchSettledCiConclusion,
+      fetchFailingCheckRuns
+    ],
     build: (task) => (context) => reconcileExternalState(task, context)
   },
   'vinaya.v2-prove-conflict-repair': {

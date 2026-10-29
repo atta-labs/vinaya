@@ -83,10 +83,11 @@ export const PASSING_FORGE_GATES: ActionRegistry = {
   'vinaya.classify-publish-mergeability': () => ({ exitCode: 0 })
 }
 
-/** The forge reads and writes the forge-gate steps make, answering a mergeable head with nothing failed. */
+/** The forge reads and writes the forge-gate steps make, answering a mergeable, green head with nothing failed. */
 export const QUIET_FORGE_GATES: Pick<
   EngineForge,
   | 'fetchMergeableState'
+  | 'fetchSettledCiConclusion'
   | 'fetchConflictingFiles'
   | 'fetchFailingCheckRuns'
   | 'fetchFailedCheckWorkflowRunIds'
@@ -94,6 +95,7 @@ export const QUIET_FORGE_GATES: Pick<
   | 'postMarkedComment'
 > = {
   fetchMergeableState: () => 'MERGEABLE',
+  fetchSettledCiConclusion: () => 'green',
   fetchConflictingFiles: () => [],
   fetchFailingCheckRuns: () => [],
   fetchFailedCheckWorkflowRunIds: () => [],

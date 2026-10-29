@@ -64,6 +64,7 @@ import {
 import { createVinayaLogProducers, handoffHaltReason, STEP_FAILED } from '../executing/log-events'
 import { createHandoff, liveHandoffDeps, type Handoff, type HandoffDeps } from '../executing/handoff'
 import {
+  ciRedReentryBoundDetail,
   conflictReentryBoundDetail,
   fetchCiConclusion,
   fetchConflictingFiles,
@@ -71,6 +72,7 @@ import {
   fetchFailingCheckRuns,
   fetchMergeableState,
   fetchPrState,
+  fetchSettledCiConclusion,
   MAX_AUTOMATIC_CONFLICT_REENTRIES,
   readWorktreeHead,
   rerunFailedWorkflowJobs,
@@ -1452,6 +1454,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   let signalled: 'SIGINT' | 'SIGTERM' | null = null
   /** Set when the ruling watch found the pause resolved as a cancel: the run ends and leaves no lock. */
   let cancelledByWatch = false
+  /** Set when the ruling watch found the pause's pull request merged or closed: the run ends and leaves no lock. */
+  let endedByWatch = false
   let described = 'starting'
   let stopHeartbeat: () => void = () => {}
   const recordExit = createDriverExitRecorder({
@@ -2052,40 +2056,50 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         if (published === null) break
         narrate(`watching PR #${published} after its publication, until it is merged or closed`)
         const read = await watchPublishedPullRequest(published, lifecycle.publishedWatch, stopWatching.signal, narrate)
-        if (read !== 'conflicting') {
+        if (read !== 'conflicting' && read !== 'red') {
           narrate(read === 'stopped' ? 'the watch was stopped; ending' : `PR #${published} was ${read}; ending`)
           break
         }
+        const happened =
+          read === 'conflicting'
+            ? 'fell into conflict with the default branch'
+            : 'read red CI on its head once every run completed'
+        // A red head and a conflict share one re-entry bound.
         if (conflictReentries >= MAX_AUTOMATIC_CONFLICT_REENTRIES) {
           // The bound is spent: a person decides, through the ordinary pause and its comment.
           narrate(
-            `PR #${published} fell into conflict with the default branch again, and its ${MAX_AUTOMATIC_CONFLICT_REENTRIES} automatic re-entries are spent; pausing for a person`
+            `PR #${published} ${happened} again, and its ${MAX_AUTOMATIC_CONFLICT_REENTRIES} automatic re-entries are spent; pausing for a person`
           )
           handoff = makeHandoff()
           if (taskForHandoff) taskForHandoff.handoff = handoff
           handoff.pause({
             reason: 'repeat_failure',
-            detail: conflictReentryBoundDetail(published, MAX_AUTOMATIC_CONFLICT_REENTRIES)
+            detail: (read === 'conflicting' ? conflictReentryBoundDetail : ciRedReentryBoundDetail)(
+              published,
+              MAX_AUTOMATIC_CONFLICT_REENTRIES
+            )
           })
           legOutcome = { reason: 'paused', haltReason: handoffHaltReason('repeat_failure') }
           break
         }
         conflictReentries += 1
-        log(
-          conflictReentryEvent({
-            loopId: options.loopId,
-            task: args.task,
-            prNumber: published,
-            attempt: conflictReentries,
-            bound: MAX_AUTOMATIC_CONFLICT_REENTRIES
-          })
-        )
+        if (read === 'conflicting')
+          log(
+            conflictReentryEvent({
+              loopId: options.loopId,
+              task: args.task,
+              prNumber: published,
+              attempt: conflictReentries,
+              bound: MAX_AUTOMATIC_CONFLICT_REENTRIES
+            })
+          )
         // A completed checkpoint has nothing left to run: the re-entry is a fresh run of the next generation, which
-        // attaches to the open pull request and sends the Developer back with the conflicting files.
+        // attaches to the open pull request, and whose reconcile step sends the Developer back with the conflicting
+        // files or the failing checks.
         generation += 1
         identity = runIdentityOfTask(args.task, generation)
         narrate(
-          `PR #${published} fell into conflict with the default branch after it was published: starting a fresh run (${identity.runId}) to send it back to the Developer (re-entry ${conflictReentries} of ${MAX_AUTOMATIC_CONFLICT_REENTRIES})`
+          `PR #${published} ${happened} after it was published: starting a fresh run (${identity.runId}) to send it back to the Developer (re-entry ${conflictReentries} of ${MAX_AUTOMATIC_CONFLICT_REENTRIES})`
         )
         control = createRunControl()
         reapOnHalt()
@@ -2124,6 +2138,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         // The Operator's cancel consumed the resolution and fenced the effects; the run only ends.
         cancelledByWatch = true
         narrate('the pause was cancelled; ending')
+      } else if (watched.kind === 'ended') {
+        // A person merged or closed the pull request while the run was halted: nothing is left to continue, no
+        // resolution is claimed, and the driver lock is released.
+        endedByWatch = true
+        narrate(`the pull request was ${watched.state} while the run was halted; ending`)
       } else if (watched.kind === 'consumed') narrate('another process claimed the resolution and owns the run; ending')
       else if (watched.kind === 'refused') narrate(`the resolution was refused: ${watched.message}`)
       if (watched.kind !== 'ruled' && watched.kind !== 'recovered') break
@@ -2168,6 +2187,9 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     let lockOutcome: ReturnType<typeof releaseDriverLock> | 'cleared'
     if (cancelledByWatch) {
       legOutcome = { reason: 'cancelled' } as unknown as LegOutcome
+      clearDriverLock(options.runtimeDir, args.task)
+      lockOutcome = 'cleared'
+    } else if (endedByWatch) {
       clearDriverLock(options.runtimeDir, args.task)
       lockOutcome = 'cleared'
     } else {
@@ -2352,6 +2374,7 @@ export interface EngineForge {
   fetchNewestIssueRulingOrdinal: typeof fetchNewestIssueRulingOrdinal
   fetchSourceRevision: typeof fetchSourceRevision
   fetchCiConclusion: typeof fetchCiConclusion
+  fetchSettledCiConclusion: typeof fetchSettledCiConclusion
   fetchIssueRulingsAfterBrief: typeof fetchIssueRulingsAfterBrief
   fetchRulings: typeof fetchRulings
   fetchLoopHistory: typeof fetchLoopHistory
@@ -2379,6 +2402,7 @@ export const liveForge: EngineForge = {
   fetchNewestIssueRulingOrdinal,
   fetchSourceRevision,
   fetchCiConclusion,
+  fetchSettledCiConclusion,
   fetchIssueRulingsAfterBrief,
   fetchRulings,
   fetchLoopHistory,
@@ -2589,6 +2613,7 @@ export async function liveTaskInput(
       publishRound: forge.publishRound,
       fetchPrBody: forge.prBody,
       fetchCiConclusion: forge.fetchCiConclusion,
+      fetchSettledCiConclusion: forge.fetchSettledCiConclusion,
       fetchFailingCheckRuns: forge.fetchFailingCheckRuns,
       fetchFailedCheckWorkflowRunIds: forge.fetchFailedCheckWorkflowRunIds,
       rerunFailedWorkflowJobs: forge.rerunFailedWorkflowJobs,
@@ -3027,7 +3052,17 @@ async function runLive(
         repository: repo ? `${repo.owner}/${repo.repo}` : 'unknown'
       },
       watch: { deps: liveResumeDeps, pollMs: rulingPollMs(), sleep: abortableSleep },
-      publishedWatch: { fetchPrState, fetchMergeableState, pollMs: rulingPollMs(), sleep: abortableSleep }
+      publishedWatch: {
+        fetchPrState,
+        fetchMergeableState,
+        // Only version 2's reconcile step sends a red head back to the Developer; the pull request's head is its task
+        // branch's head on the remote.
+        ...(loaded.flowKey === 'v2'
+          ? { fetchHeadCiConclusion: () => fetchSettledCiConclusion(resolveHead(taskInput.branch)) }
+          : {}),
+        pollMs: rulingPollMs(),
+        sleep: abortableSleep
+      }
     },
     devToolsContext,
     onRulingResume: () => {
