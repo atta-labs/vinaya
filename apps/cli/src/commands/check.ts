@@ -13,6 +13,7 @@ import {
 import { CHECK_EXCLUDE_ENV, defaultParallelism, runChecks } from '../checks/runner'
 import { type ConfigLoadResult, configPath, loadConfigChecked } from '../lib/config'
 import { printJson } from '../lib/envelope'
+import { appendProgressRecord, checkProgressRecord, resolveProgressDirLive } from '../lib/push-progress'
 import { type ProseRulesPlan, proseRulesPlanSection } from '../lib/prose-rules-plan'
 import { buildRolePlan, type RolePlan } from '../roles/plan'
 import type { RoleResolutionState } from '../roles/resolver'
@@ -409,6 +410,11 @@ export async function checkCommand(args: string[]): Promise<void> {
     .map((s) => s.trim())
     .filter(Boolean)
 
+  // A hook's run behind a live driver writes one progress record per finished check. Resolved here, before any check
+  // starts: the resolution spawns `git` and `ps`, which must never run while async check children are running.
+  const progressDir =
+    specsToRun.length > 0 && process.env.VINAYA_HOST === 'hook' ? resolveProgressDirLive(process.cwd()) : null
+  const progressFile = `checks-${process.pid}.ndjson`
   const outcomes =
     specsToRun.length > 0
       ? await runChecks(specsToRun, {
@@ -418,7 +424,13 @@ export async function checkCommand(args: string[]): Promise<void> {
           defaultTimeoutMs: 30_000,
           localOnly,
           skipFull,
-          excludeChecks
+          excludeChecks,
+          ...(progressDir !== null
+            ? {
+                onCheckComplete: (outcome: CheckOutcome) =>
+                  appendProgressRecord(progressDir, progressFile, checkProgressRecord(outcome))
+              }
+            : {})
         })
       : []
 

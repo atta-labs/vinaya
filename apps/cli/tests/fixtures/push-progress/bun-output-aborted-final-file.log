@@ -1,0 +1,8 @@
+bun test v1.4.2 (744846f84)
+
+tests/first.test.ts:
+(pass) first one [4.00ms]
+(fail) first breaks [6.00ms]
+
+tests/aborted.test.ts:
+(pass) aborted one [1.00ms]

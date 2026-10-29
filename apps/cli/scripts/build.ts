@@ -122,7 +122,10 @@ const libBinNames = [
   'pre-push-changed-files.ts',
   'pre-push-cache-test-run.ts',
   'pre-push-record-tests.ts',
-  'pre-push-mode.ts'
+  'pre-push-mode.ts',
+  // The hook's progress helper and the driver's progress observer: a published install reaches both here.
+  'pre-push-progress-dir.ts',
+  'push-progress-observer.ts'
 ]
 const libOutdir = join(pkgRoot, 'dist', 'lib')
 await build(

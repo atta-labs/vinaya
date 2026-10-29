@@ -64,6 +64,22 @@ export type RunOptions = {
    * own capturing function instead of exercising the real outbox on disk.
    */
   log?: (e: LogEventInput) => void
+  /**
+   * Told as each check finishes, for every outcome (pass, skip, fail, error, timeout) — a push's live progress.
+   * Best-effort and strictly additional: it runs inside a try/catch after the outcome is already recorded, so it
+   * changes no check's scheduling, concurrency or result, nor the run's exit, and a throwing observer is ignored.
+   */
+  onCheckComplete?: (outcome: CheckOutcome) => void
+}
+
+/** Tells `observe` about one finished check; anything it throws is swallowed. */
+function notifyComplete(observe: RunOptions['onCheckComplete'], outcome: CheckOutcome): void {
+  if (!observe) return
+  try {
+    observe(outcome)
+  } catch {
+    // Progress never changes the run it narrates.
+  }
 }
 
 /** A sane cpu-derived default — callers may override via `--parallel`. */
@@ -794,6 +810,7 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
         durationMs: 0,
         ...(skip.reason ? { skipReason: skip.reason } : {})
       }
+      notifyComplete(opts.onCheckComplete, results[i] as CheckOutcome)
     } else {
       toRun.push(i)
     }
@@ -812,6 +829,7 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
         fingerprints[idx] as string,
         logFn
       )
+      notifyComplete(opts.onCheckComplete, results[idx] as CheckOutcome)
     }
   }
 

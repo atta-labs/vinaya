@@ -10,7 +10,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
 import { type DevToolContext, devToolError } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { storagePushEvent } from '../../../../../apps/cli/src/lib/flow-v2-events'
@@ -40,6 +40,16 @@ import {
   type ReadyTestsPolicy
 } from '../../../../../apps/cli/src/lib/pre-push-ready-policy'
 import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../apps/cli/src/lib/test-temp'
+import { appendLoopLogLine, loopLogPathFor } from '../../../../../apps/cli/src/lib/loop-log'
+import {
+  appendProgressBytes,
+  appendProgressRecord,
+  beginProgressSession,
+  type CommandProgressOutcome,
+  ENGINE_RUNS_DIRNAME,
+  isBunTestCommand,
+  type ProgressRecord
+} from '../../../../../apps/cli/src/lib/push-progress'
 import {
   agentCommandEnv,
   buildReport,
@@ -80,9 +90,12 @@ export function stagedPullRequestStore(runDir: string): {
   read: () => StagedPullRequest | null
   write: (staged: StagedPullRequest) => void
   gateResultPath: string
+  /** The run directory the store lives in: the reserved progress directory sits beneath it. */
+  runDir: string
 } {
   const path = stagedPullRequestPath(runDir)
   return {
+    runDir,
     gateResultPath: join(runDir, 'ready-gate-result.json'),
     read: () => {
       try {
@@ -97,6 +110,53 @@ export function stagedPullRequestStore(runDir: string): {
     write: (staged) => {
       mkdirSync(dirname(path), { recursive: true })
       writeFileSync(path, `${JSON.stringify(staged)}\n`, { mode: 0o600 })
+    }
+  }
+}
+
+/**
+ * Where a run's live progress goes: its run directory (`<runtimeDir>/engine-runs/<task>`, holding the reserved
+ * progress directory), its task, and the task's driver log the progress observer appends to.
+ */
+export type ProgressContext = { runDir: string; task: number; logPath: string }
+
+/** The progress context of an Engine run directory, or null when `runDir` is not one. */
+export function progressContextOf(runDir: string): ProgressContext | null {
+  const task = Number(basename(runDir))
+  if (!Number.isInteger(task) || task <= 0 || basename(dirname(runDir)) !== ENGINE_RUNS_DIRNAME) return null
+  return { runDir, task, logPath: loopLogPathFor(null, task, dirname(dirname(runDir))) }
+}
+
+/** Appends one progress line, timestamped like every other loop line, to the driver log. Never throws. */
+export function progressLineWriter(context: ProgressContext): (line: string) => void {
+  return (line) => appendLoopLogLine(context.logPath, `${new Date().toISOString()}  ${line}`)
+}
+
+/**
+ * Runs `work` inside one progress session: the progress directory and the worktree's mark, then the observer, all
+ * best-effort. Whatever `work` does — returns, throws or is cancelled — the observer is stopped and the mark removed
+ * afterwards; neither the start nor the stop can throw into `work` or change what it returns.
+ */
+async function withProgress<T>(
+  context: ProgressContext | null | undefined,
+  worktreePath: string,
+  work: (dir: string | null) => Promise<T>
+): Promise<T> {
+  let session: { dir: string | null; end: () => Promise<void> } | null = null
+  if (context) {
+    try {
+      session = await beginProgressSession({ ...context, worktreePath })
+    } catch {
+      session = null
+    }
+  }
+  try {
+    return await work(session?.dir ?? null)
+  } finally {
+    try {
+      await session?.end()
+    } catch {
+      // Progress cleanup never changes the push it narrated.
     }
   }
 }
@@ -190,6 +250,8 @@ export function withV2DevTools(
     readyTestsPolicy?: () => ReadyTestsPolicy
     /** The read-only loop-baseline guard an opted-in repair push passes before any expensive hook work. */
     checkBaseline?: () => { ok: true } | { ok: false; reason: string }
+    /** Where each push's live progress goes; the store's run directory when absent, none when null. */
+    progress?: ProgressContext | null
   }
 ): DevToolContext {
   const openPr = (): { number: number } | null => {
@@ -206,6 +268,12 @@ export function withV2DevTools(
       return false
     }
   }
+  const progress =
+    options.progress !== undefined
+      ? options.progress
+      : options.store.runDir
+        ? progressContextOf(options.store.runDir)
+        : null
   return {
     ...base,
     publishChanges: async (header) => {
@@ -235,7 +303,8 @@ export function withV2DevTools(
         })
       }
       try {
-        const result = await base.publishChanges(header)
+        // The push runs inside the broker's synchronous poster: its progress is tailed by a separate observer.
+        const result = await withProgress(progress, options.worktreePath, () => base.publishChanges(header))
         if (storage && result.ok) options.onStoragePush(result.result.pushedHead)
         return result
       } finally {
@@ -411,6 +480,8 @@ async function superviseChild(input: {
   signal?: AbortSignal
   deadlineMs: number
   startDeadline?: (fire: () => void, ms: number) => () => void
+  /** Shown each chunk of output as it arrives (progress only); anything it throws is ignored. */
+  onOutput?: (chunk: string) => void
 }): Promise<SupervisedRun> {
   // The child waits for one acknowledgement line before it becomes the command, so no work starts unregistered.
   const child = spawn('sh', ['-c', 'IFS= read -r _vinaya_ack || exit 1; exec "$0" "$@"', ...input.argv], {
@@ -421,11 +492,20 @@ async function superviseChild(input: {
   })
   let stdout = ''
   let stderr = ''
+  const show = (chunk: string) => {
+    try {
+      input.onOutput?.(chunk)
+    } catch {
+      // Progress never changes the run it narrates.
+    }
+  }
   child.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
     stdout += chunk
+    show(chunk)
   })
   child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
     stderr += chunk
+    show(chunk)
   })
   child.stdin?.on('error', () => {})
   const exited = new Promise<{ status: number | null; signal: NodeJS.Signals | null; error?: Error }>((resolve) => {
@@ -562,6 +642,8 @@ export async function runReadyGateLive(input: {
   deferTests?: boolean
   /** The run the deferral marker and its record belong to. */
   runId?: string
+  /** Where the hook's live progress goes; none when absent. */
+  progress?: ProgressContext | null
 }): Promise<ReadyGateResult> {
   const now = input.now ?? (() => Date.now())
   const log = input.log ?? (() => {})
@@ -609,19 +691,22 @@ export async function runReadyGateLive(input: {
   if (input.deferTests === true && !marked)
     log('ready push: the deferral marker could not be written; the tests run locally')
   try {
-    const run = await superviseChild({
-      argv: ['sh', hook, 'origin', 'origin'],
-      cwd: input.worktreePath,
-      env,
-      stdin: `${ref} ${input.head} ${ref} ${input.remoteHead ?? '0000000000000000000000000000000000000000'}\n`,
-      label: 'ready-gate pre-push hook',
-      runToken,
-      registry,
-      ...(input.register ? { register: input.register } : {}),
-      ...(input.signal ? { signal: input.signal } : {}),
-      deadlineMs: input.deadlineMs ?? READY_GATE_DEADLINE_MS,
-      ...(input.startDeadline ? { startDeadline: input.startDeadline } : {})
-    })
+    // The hook's progress is tailed by the observer under its own registry token: stopping it never stops the hook.
+    const run = await withProgress(input.progress, input.worktreePath, () =>
+      superviseChild({
+        argv: ['sh', hook, 'origin', 'origin'],
+        cwd: input.worktreePath,
+        env,
+        stdin: `${ref} ${input.head} ${ref} ${input.remoteHead ?? '0000000000000000000000000000000000000000'}\n`,
+        label: 'ready-gate pre-push hook',
+        runToken,
+        registry,
+        ...(input.register ? { register: input.register } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+        deadlineMs: input.deadlineMs ?? READY_GATE_DEADLINE_MS,
+        ...(input.startDeadline ? { startDeadline: input.startDeadline } : {})
+      })
+    )
     if (run.interrupted === 'cancel') throw new ReadyGateCancelledError()
     const wallMs = Math.max(0, now() - started)
     if (run.interrupted === 'deadline') {
@@ -724,6 +809,8 @@ export async function runExplicitCommandsLive(input: {
   cache?: TestRunCache
   commandTimeoutMs?: number
   log?: (line: string) => void
+  /** Where the run's live progress goes; none when absent. */
+  progress?: ProgressContext | null
 }): Promise<ExplicitCommandsResult> {
   const now = input.now ?? (() => Date.now())
   const log = input.log ?? (() => {})
@@ -737,59 +824,95 @@ export async function runExplicitCommandsLive(input: {
   if (input.commands.length === 0) return finish('passed')
   const drift = await worktreeDrift(input.worktreePath, input.head, input.signal)
   if (drift !== null) return finish('drift', { detail: drift })
-  for (const command of input.commands) {
-    if (input.signal?.aborted) throw new ReadyGateCancelledError()
-    const reused = await lookupGreenRun(command, input.worktreePath, cache)
-    if (reused) {
-      results.push({ command, outcome: 'passed', output: reused.output, reusedFrom: reused.reusedFrom ?? 'a receipt' })
-      log(`ready push: explicit command reused its receipt: ${command}`)
-      continue
+  // Progress: the run's start, each command as it finishes, and a Bun test command's output per file. Records only;
+  // nothing below reads one back, and the receipts, limits and outcomes are the same with progress on and off.
+  return withProgress(input.progress, input.worktreePath, async (dir) => {
+    const record = (name: string, value: ProgressRecord) => {
+      if (dir !== null) appendProgressRecord(dir, name, value)
     }
-    const remaining = input.deadlineAt - now()
-    if (remaining <= 0) {
-      results.push({ command, outcome: 'timed-out', output: 'the ready push deadline passed before this command ran' })
-      return finish('timed-out')
-    }
-    const limit = Math.min(input.commandTimeoutMs ?? resolveCommandTimeoutMs(), remaining)
-    const { ownedRun, runToken, registry } = await openSupervisedRun(input.registryDir)
-    const commandStarted = now()
-    try {
-      const run = await superviseChild({
-        argv: ['bash', '-c', command],
-        cwd: input.worktreePath,
-        env: agentCommandEnv({ PR_BODY: input.body, BRANCH: input.branch }),
-        label: 'ready-gate explicit command',
-        runToken,
-        registry,
-        ...(input.register ? { register: input.register } : {}),
-        ...(input.signal ? { signal: input.signal } : {}),
-        deadlineMs: limit,
-        ...(input.startDeadline ? { startDeadline: input.startDeadline } : {})
-      })
-      if (run.interrupted === 'cancel') throw new ReadyGateCancelledError()
-      const output = truncateAgentOutput(`${run.stdout}${run.stderr}`.trim())
-      const wallMs = Math.max(0, now() - commandStarted)
-      if (run.interrupted === 'deadline') {
-        results.push({ command, outcome: 'timed-out', output, wallMs, limitMs: limit })
-        log(`ready push: explicit command timed out after ${limit} ms: ${command}`)
+    const commandDone = (command: string, outcome: CommandProgressOutcome, ms: number) =>
+      record('commands.ndjson', { v: 1, kind: 'command', command, outcome, ms })
+    record('commands.ndjson', { v: 1, kind: 'commands-start', count: input.commands.length })
+    let index = 0
+    for (const command of input.commands) {
+      index += 1
+      if (input.signal?.aborted) throw new ReadyGateCancelledError()
+      const reused = await lookupGreenRun(command, input.worktreePath, cache)
+      if (reused) {
+        results.push({
+          command,
+          outcome: 'passed',
+          output: reused.output,
+          reusedFrom: reused.reusedFrom ?? 'a receipt'
+        })
+        log(`ready push: explicit command reused its receipt: ${command}`)
+        commandDone(command, 'reused', 0)
+        continue
+      }
+      const remaining = input.deadlineAt - now()
+      if (remaining <= 0) {
+        results.push({
+          command,
+          outcome: 'timed-out',
+          output: 'the ready push deadline passed before this command ran'
+        })
+        commandDone(command, 'timeout', 0)
         return finish('timed-out')
       }
-      if (run.status !== 0) {
-        results.push({ command, outcome: 'failed', output, wallMs, exitCode: run.status })
-        log(`ready push: explicit command failed (exit ${run.status ?? 'none'}): ${command}`)
-        return finish('failed')
+      const limit = Math.min(input.commandTimeoutMs ?? resolveCommandTimeoutMs(), remaining)
+      const { ownedRun, runToken, registry } = await openSupervisedRun(input.registryDir)
+      const commandStarted = now()
+      const stream = `cmd-${index}`
+      const copy = dir !== null && isBunTestCommand(command) ? dir : null
+      try {
+        if (copy !== null)
+          record(`${stream}.ndjson`, { v: 1, kind: 'tests-start', stream, total: null, label: command })
+        let run: SupervisedRun
+        try {
+          run = await superviseChild({
+            argv: ['bash', '-c', command],
+            cwd: input.worktreePath,
+            env: agentCommandEnv({ PR_BODY: input.body, BRANCH: input.branch }),
+            label: 'ready-gate explicit command',
+            runToken,
+            registry,
+            ...(input.register ? { register: input.register } : {}),
+            ...(input.signal ? { signal: input.signal } : {}),
+            deadlineMs: limit,
+            ...(input.startDeadline ? { startDeadline: input.startDeadline } : {}),
+            ...(copy !== null ? { onOutput: (chunk: string) => appendProgressBytes(copy, `${stream}.out`, chunk) } : {})
+          })
+        } finally {
+          if (copy !== null) record(`${stream}.ndjson`, { v: 1, kind: 'tests-end', stream })
+        }
+        if (run.interrupted === 'cancel') throw new ReadyGateCancelledError()
+        const output = truncateAgentOutput(`${run.stdout}${run.stderr}`.trim())
+        const wallMs = Math.max(0, now() - commandStarted)
+        if (run.interrupted === 'deadline') {
+          results.push({ command, outcome: 'timed-out', output, wallMs, limitMs: limit })
+          log(`ready push: explicit command timed out after ${limit} ms: ${command}`)
+          commandDone(command, 'timeout', wallMs)
+          return finish('timed-out')
+        }
+        if (run.status !== 0) {
+          results.push({ command, outcome: 'failed', output, wallMs, exitCode: run.status })
+          log(`ready push: explicit command failed (exit ${run.status ?? 'none'}): ${command}`)
+          commandDone(command, 'fail', wallMs)
+          return finish('failed')
+        }
+        // Only a genuine pass at this exact head and tree becomes a receipt.
+        const after = await worktreeDrift(input.worktreePath, input.head, input.signal)
+        if (after !== null) return finish('drift', { detail: after })
+        await recordGreenTestRun(command, output, input.worktreePath, 'pr-report', cache)
+        results.push({ command, outcome: 'passed', output, wallMs })
+        log(`ready push: explicit command passed in ${wallMs} ms: ${command}`)
+        commandDone(command, 'pass', wallMs)
+      } finally {
+        cleanupReadyGateStorage(ownedRun)
       }
-      // Only a genuine pass at this exact head and tree becomes a receipt.
-      const after = await worktreeDrift(input.worktreePath, input.head, input.signal)
-      if (after !== null) return finish('drift', { detail: after })
-      await recordGreenTestRun(command, output, input.worktreePath, 'pr-report', cache)
-      results.push({ command, outcome: 'passed', output, wallMs })
-      log(`ready push: explicit command passed in ${wallMs} ms: ${command}`)
-    } finally {
-      cleanupReadyGateStorage(ownedRun)
     }
-  }
-  return finish('passed')
+    return finish('passed')
+  })
 }
 
 function cleanupReadyGateStorage(run: Parameters<typeof removeTestTempRun>[0]): void {
@@ -839,9 +962,13 @@ export function liveV2Functions(input: {
   baselineRoot?: string
   /** Told as the driver's run of the approved explicit Test Plan commands starts, when there is one to run. */
   onExplicitCommandsStart?: () => void
+  /** Where the pushes', test runs' and CI wait's live progress goes; the store's run directory when absent, none when null. */
+  progress?: ProgressContext | null
 }): V2Functions {
   // A marker an earlier run (a crash, a stop) left in this worktree is never reused.
   endReadyDeferral(input.worktreePath)
+  const progress =
+    input.progress !== undefined ? input.progress : input.store.runDir ? progressContextOf(input.store.runDir) : null
   return {
     runReadyGate: async ({ head, signal, deferTests }) => {
       const gate = await runReadyGateLive({
@@ -854,7 +981,8 @@ export function liveV2Functions(input: {
         ...(input.startDeadline ? { startDeadline: input.startDeadline } : {}),
         ...(input.log ? { log: input.log } : {}),
         ...(deferTests ? { deferTests: true } : {}),
-        ...(input.runId ? { runId: input.runId } : {})
+        ...(input.runId ? { runId: input.runId } : {}),
+        progress
       })
       const path = input.store.gateResultPath
       mkdirSync(dirname(path), { recursive: true })
@@ -895,10 +1023,12 @@ export function liveV2Functions(input: {
         deadlineAt,
         ...(signal ? { signal } : {}),
         ...(input.startDeadline ? { startDeadline: input.startDeadline } : {}),
-        ...(input.log ? { log: input.log } : {})
+        ...(input.log ? { log: input.log } : {}),
+        progress
       })
     },
-    readRequiredCi: (request) => readRequiredCiLive(request),
+    readRequiredCi: (request, observe) => readRequiredCiLive(request, observe),
+    ...(progress ? { progressLine: progressLineWriter(progress) } : {}),
     ...(input.log ? { log: input.log } : {}),
     ...(input.writeEvidence ? { writeEvidence: input.writeEvidence } : {})
   }

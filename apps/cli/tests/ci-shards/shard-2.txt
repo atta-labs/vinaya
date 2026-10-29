@@ -51,3 +51,6 @@ tests/lib/remote-base.test.ts
 tests/lib/test-selector.test.ts
 tests/new-adr.test.ts
 tests/lib/task-tools/pr-facts.test.ts
+tests/lib/push-progress.test.ts
+tests/lib/push-progress-observer.test.ts
+tests/conformance/packed-push-progress.test.ts

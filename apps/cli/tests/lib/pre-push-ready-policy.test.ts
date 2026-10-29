@@ -233,7 +233,8 @@ describe('the generated hook’s deferral step, executed', () => {
   const step = HOOK.slice(start, HOOK.indexOf('\n', end) + 1)
 
   it('runs after the typecheck and before the test selector', () => {
-    expect(start).toBeGreaterThan(HOOK.indexOf('bunx turbo typecheck --affected || exit 1'))
+    expect(HOOK.indexOf('bunx turbo typecheck --affected')).toBeGreaterThan(-1)
+    expect(start).toBeGreaterThan(HOOK.indexOf('bunx turbo typecheck --affected'))
     expect(start).toBeGreaterThan(HOOK.indexOf('check --all --local'))
     expect(end).toBeGreaterThan(start)
   })
