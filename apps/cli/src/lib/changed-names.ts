@@ -29,15 +29,29 @@
  * over-approximates (a shadowing local of the same name creates an edge that
  * isn't real) — the safe direction.
  *
+ * ## A named export list is attributed line by line
+ *
+ * A hunk inside `export { a, b as c } from '…'` or `export { a, b }` is
+ * attributed to the specifiers written on its lines, by the name each one
+ * EXPORTS (`c`, not `b`) — the name a test imports. That is what keeps a
+ * one-name addition to a package barrel from selecting every test that reaches
+ * the barrel. Only the lines strictly between the list's braces narrow: a hunk
+ * on the `export {` line, the `}` line, the `from` clause or the module
+ * specifier re-points every name the statement exports, so it widens, as does a
+ * line inside the braces that holds no specifier. A local list's exported names
+ * join the intra-file closure through the declarations they name, so a change
+ * to `b` above also affects `c`.
+ *
  * ## When it gives up, it gives up completely
  *
  * {@link ALL_NAMES} — the whole file is affected — is the answer for every hunk
  * that cannot be attributed to exactly one declaration: module-scope executable
- * code, an `import` or `export` statement (including `export *`, which can
- * supply any name, and `export default`), a destructuring or computed binding,
- * a region that parses to nothing, and any range falling outside every
- * declaration. This is never a narrowing: it is the file-level answer, which is
- * what the selector does when it is told nothing at all.
+ * code, an `import` statement, an `export` statement outside a named export
+ * list's specifier lines (including `export *`, which can supply any name, and
+ * `export default`), a destructuring or computed binding, a region that parses
+ * to nothing, and any range falling outside every declaration. This is never a
+ * narrowing: it is the file-level answer, which is what the selector does when
+ * it is told nothing at all.
  */
 import type { TypeScriptApi } from './ts-module-graph.js'
 
@@ -81,8 +95,27 @@ function namesForRanges(
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.ES2022, true)
   const lineOf = (pos: number): number => sourceFile.getLineAndCharacterOfPosition(pos).line + 1
 
-  /** Every top-level declaration, with the line span it owns and the name it declares. A `null` name is a statement no hunk can be attributed to. */
-  const declarations: Array<{ name: string | null; start: number; end: number; node: import('typescript').Node }> = []
+  /**
+   * A named export list's own layout: the lines of its `{` and `}`, and each
+   * specifier's exported name, the local name it re-exports when the statement
+   * has no module specifier, and its line span.
+   */
+  type ExportList = {
+    open: number
+    close: number
+    specifiers: Array<{ exported: string; local: string | null; start: number; end: number }>
+  }
+  /**
+   * Every top-level declaration, with the line span it owns and the name it declares. A `null` name is a statement no
+   * hunk can be attributed to — unless it carries an `exportList`, whose specifier lines are attributed one by one.
+   */
+  const declarations: Array<{
+    name: string | null
+    start: number
+    end: number
+    node: import('typescript').Node
+    exportList?: ExportList
+  }> = []
   /**
    * Where a declaration's OWN text begins: its first leading comment when it has
    * one (a doc comment is part of the declaration for attribution — editing it
@@ -109,6 +142,28 @@ function namesForRanges(
       }
       continue
     }
+    // `export { … }` and `export { … } from '…'`; an `export *` (with or
+    // without `as ns`) has no list and stays unattributable.
+    if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+      const clause = statement.exportClause
+      const local = statement.moduleSpecifier === undefined
+      declarations.push({
+        name: null,
+        ...span,
+        node: statement,
+        exportList: {
+          open: lineOf(clause.getStart(sourceFile)),
+          close: lineOf(clause.getEnd()),
+          specifiers: clause.elements.map((element) => ({
+            exported: element.name.text,
+            local: local ? (element.propertyName ?? element.name).text : null,
+            start: lineOf(element.getStart(sourceFile)),
+            end: lineOf(element.getEnd())
+          }))
+        }
+      })
+      continue
+    }
     const named =
       ts.isFunctionDeclaration(statement) ||
       ts.isClassDeclaration(statement) ||
@@ -133,6 +188,18 @@ function namesForRanges(
     // can follow — either way the file is wholly affected.
     if (overlapping.length === 0) return null
     for (const d of overlapping) {
+      if (d.exportList) {
+        const list = d.exportList
+        for (let line = Math.max(range.start, d.start); line <= Math.min(range.end, d.end); line++) {
+          // The braces' own lines, and everything outside them — a leading
+          // comment, `export {`, `} from '…'` — re-point every name.
+          if (line <= list.open || line >= list.close) return null
+          const onLine = list.specifiers.filter((s) => s.start <= line && line <= s.end)
+          if (onLine.length === 0) return null
+          for (const s of onLine) seeded.add(s.exported)
+        }
+        continue
+      }
       if (d.name === null) return null
       seeded.add(d.name)
     }
@@ -150,6 +217,16 @@ function namesForRanges(
     }
     ts.forEachChild(d.node, visit)
     references.set(d.name, used)
+  }
+  // A local export list's exported name is affected whenever the declaration
+  // it names is.
+  for (const d of declarations) {
+    for (const s of d.exportList?.specifiers ?? []) {
+      if (s.local === null || s.local === s.exported || !topLevelNames.has(s.local)) continue
+      const used = references.get(s.exported) ?? new Set<string>()
+      used.add(s.local)
+      references.set(s.exported, used)
+    }
   }
   const affected = new Set(seeded)
   for (let grew = true; grew; ) {

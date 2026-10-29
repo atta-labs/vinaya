@@ -22,6 +22,7 @@ import {
 import { cliSpawnEdgeOf } from '../../src/lib/cli-spawn-tests'
 import { scannedRootsOf } from '../../src/lib/repo-scanner-tests'
 import { loadTypeScript } from '../../src/lib/ts-module-graph'
+import { fixtureDir } from './test-temp-fixture'
 
 function fixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'vinaya-selector-'))
@@ -403,8 +404,10 @@ describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue
 type PkgSpec = { name: string; main?: string; exports?: unknown; test?: string; files: Record<string, string> }
 
 /** Writes a throwaway multi-package workspace to a temp dir and returns its root plus a `dir(name)` locator. */
-function mkWorkspace(pkgs: PkgSpec[]): { root: string; dir: (name: string) => string } {
-  const root = mkdtempSync(join(tmpdir(), 'vinaya-sym-'))
+function mkWorkspace(
+  pkgs: PkgSpec[],
+  root = mkdtempSync(join(tmpdir(), 'vinaya-sym-'))
+): { root: string; dir: (name: string) => string } {
   writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }))
   const dirs = new Map<string, string>()
   pkgs.forEach((p, i) => {
@@ -1542,6 +1545,71 @@ describe('changed-name attribution (O3)', () => {
     })
   }
 
+  const EXPORT_LISTS = [
+    'export {', // 1
+    '  alpha,', // 2
+    '  beta as renamed,', // 3
+    "} from './a.js'", // 4
+    "export { solo } from './b.js'", // 5
+    "export * from './c.js'", // 6
+    'function local() { return 1 }', // 7
+    'export {', // 8
+    '  local as publicLocal', // 9
+    '}', // 10
+    'export {', // 11
+    '  moved', // 12
+    '}', // 13
+    "  from './d.js'" // 14
+  ].join('\n')
+
+  it('a hunk on a specifier line of a named export list attributes to that exported name', () => {
+    expect(modified(EXPORT_LISTS, [{ start: 2, end: 2 }])).toEqual(new Set(['alpha']))
+  })
+
+  it('an aliased specifier attributes to the name it exports, not the one it re-exports', () => {
+    expect(modified(EXPORT_LISTS, [{ start: 3, end: 3 }])).toEqual(new Set(['renamed']))
+    expect(modified(EXPORT_LISTS, [{ start: 9, end: 9 }])).toEqual(new Set(['publicLocal']))
+  })
+
+  it('a hunk across several specifier lines attributes to each of them', () => {
+    expect(modified(EXPORT_LISTS, [{ start: 2, end: 3 }])).toEqual(new Set(['alpha', 'renamed']))
+  })
+
+  it('a local declaration exported under an alias affects the exported name too', () => {
+    expect(modified(EXPORT_LISTS, [{ start: 7, end: 7 }])).toEqual(new Set(['local', 'publicLocal']))
+  })
+
+  for (const [label, line] of [
+    ['the `export {` line', 1],
+    ['the `} from` line', 4],
+    ['a one-line list, whose line holds its braces and module specifier', 5],
+    ['an `export *` statement', 6],
+    ['a local list’s closing brace', 10],
+    ['a module specifier on its own line', 14]
+  ] as const) {
+    it(`a hunk on ${label} widens to the whole file`, () => {
+      expect(modified(EXPORT_LISTS, [{ start: line, end: line }])).toBe(ALL_NAMES)
+    })
+  }
+
+  it('a hunk spanning a specifier line and the statement’s brace widens to the whole file', () => {
+    expect(modified(EXPORT_LISTS, [{ start: 3, end: 4 }])).toBe(ALL_NAMES)
+  })
+
+  it('a specifier removed by the diff is attributed from the OLD side', () => {
+    const before = "export {\n  kept,\n  gone,\n} from './a.js'\n"
+    const after = "export {\n  kept,\n} from './a.js'\n"
+    expect(
+      affectedNamesForFile(ts, {
+        file: '/w/mod.ts',
+        after,
+        before,
+        afterRanges: [{ start: 3, end: 2 }],
+        beforeRanges: [{ start: 3, end: 3 }]
+      })
+    ).toEqual(new Set(['gone']))
+  })
+
   it('a declaration deleted by the diff is attributed from the OLD side', () => {
     const before = 'export function gone() { return 1 }\nexport function kept() { return 2 }\n'
     const after = 'export function kept() { return 2 }\n'
@@ -1636,6 +1704,57 @@ describe('selection follows the changed names, and widens to file level when it 
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  it('a barrel that gains one name selects no test through the barrel, only what the diff adds and alwaysRun', () => {
+    const ts = loadTypeScript(REPO_ROOT) as NonNullable<ReturnType<typeof loadTypeScript>>
+    const before = "export {\n  hot,\n} from './hot.js'\nexport { cold } from './cold.js'\n"
+    const after = "export {\n  hot,\n  fresh,\n} from './hot.js'\nexport { cold } from './cold.js'\n"
+    const { root, dir } = mkWorkspace(
+      [
+        {
+          name: '@o2/lib',
+          main: INDEX_MAIN,
+          files: {
+            'src/index.ts': after,
+            'src/hot.ts': 'export function hot() { return 1 }\nexport function fresh() { return 3 }\n',
+            'src/cold.ts': 'export function cold() { return 2 }\n',
+            'src/index.test.ts': "import { hot, cold } from './index.js'\ntest('both', () => hot() + cold())\n"
+          }
+        },
+        {
+          name: '@o2/app',
+          files: {
+            'src/uses-hot.test.ts': "import { hot } from '@o2/lib'\ntest('hot', () => hot())\n",
+            'src/uses-cold.test.ts': "import { cold } from '@o2/lib'\ntest('cold', () => cold())\n",
+            'src/uses-fresh.test.ts': "import { fresh } from '@o2/lib'\ntest('fresh', () => fresh())\n",
+            'src/unrelated.test.ts': "test('unrelated', () => 1)\n"
+          }
+        }
+      ],
+      fixtureDir('vinaya-barrel-')
+    )
+    const index = join(dir('@o2/lib'), 'src/index.ts')
+    const added = join(dir('@o2/app'), 'src/uses-fresh.test.ts')
+    const names = affectedNamesForFile(ts, {
+      file: index,
+      after,
+      before,
+      afterRanges: [{ start: 3, end: 3 }],
+      beforeRanges: [{ start: 2, end: 1 }]
+    })
+    expect(names).toEqual(new Set(['fresh']))
+    const alwaysRun = 'packages/p1/src/unrelated.test.ts'
+    const selected = selectAffectedTestFiles(root, [index, added], {
+      affectedNames: new Map([[index, names]]),
+      alwaysRun: [alwaysRun]
+    }).selected
+    expect(new Set(selected)).toEqual(new Set([added, join(root, alwaysRun)]))
+    // The barrel is reached: at file level the same change selects every test through it.
+    const fileLevel = new Set(selectAffectedTestFiles(root, [index]).selected)
+    expect(fileLevel).toContain(join(dir('@o2/app'), 'src/uses-hot.test.ts'))
+    expect(fileLevel).toContain(join(dir('@o2/app'), 'src/uses-cold.test.ts'))
+    expect(fileLevel).toContain(join(dir('@o2/lib'), 'src/index.test.ts'))
   })
 
   // Two whole-repository selections, each walking every workspace package and
