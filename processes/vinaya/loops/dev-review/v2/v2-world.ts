@@ -29,7 +29,8 @@ import {
   type RunTrace
 } from '../../../bin/run-engine'
 import { createActions } from '../../../executing/actions'
-import { createV2Actions, type StagedPullRequest, type V2Functions } from './v2-actions'
+import { createV2Actions, type ExplicitCommandsResult, type StagedPullRequest, type V2Functions } from './v2-actions'
+import type { RequiredCiRead } from './ci-recovery'
 import type { DeveloperPromptFacts } from '../../../executing/developer-prompt'
 import { liveHandoffDeps, type HandoffDeps } from '../../../executing/handoff'
 
@@ -105,6 +106,16 @@ export interface Scenario {
   postedVerdicts?: (world: World) => { reviewer: string | null; security: string | null } | null
   /** The open pull request's head's CI once every run on it completed, as the reconcile step reads it; default green. */
   settledCi?: 'green' | 'red' | 'pending'
+  /** The default branch's ready-tests policy (`unreadable` throws); absent: no policy is wired, local tests. */
+  readyTests?: { mode: 'local' } | { mode: 'ci'; workflow: string; check: string } | 'unreadable'
+  /** The staged body the Developer's open_pull_request saves; default `Closes #<task>`. */
+  stagedBody?: string
+  /** The explicit-command phase of each deferred ready push (1-based); default every command passes. */
+  explicit?: (attempt: number, commands: readonly string[]) => ExplicitCommandsResult
+  /** The strict required-CI reads, in turn; the last repeats. Default green. */
+  requiredCi?: Array<RequiredCiRead | ((head: string) => RequiredCiRead)>
+  /** The read-only loop-baseline guard; default it holds. */
+  baseline?: (attempt: number) => { ok: true } | { ok: false; reason: string }
 }
 
 export interface World {
@@ -171,6 +182,14 @@ export interface World {
   gateRunsAtDeveloper: number[]
   /** The mergeability reads the fake forge answered, in turn. */
   mergeableReads: string[]
+  /** Whether each ready push asked the hook to defer its tests to required CI. */
+  readyDeferrals: boolean[]
+  /** The head and commands of each explicit-command phase the driver ran. */
+  explicitRuns: Array<{ head: string; commands: readonly string[] }>
+  /** The heads each strict required-CI read was made for. */
+  requiredCiReads: string[]
+  /** Loop-baseline guard reads made. */
+  baselineChecks: number
 }
 
 export interface Observed {
@@ -351,6 +370,10 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     prOpen: false,
     staged: null,
     readyRuns: [],
+    readyDeferrals: [],
+    explicitRuns: [],
+    requiredCiReads: [],
+    baselineChecks: 0,
     evidenceWrites: [],
     evidenceLogs: [],
     evidenceWaits: [],
@@ -565,8 +588,63 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       readCheckExcerpt: (jobId) => scenario.jobExcerpts?.[jobId] ?? null,
       stagedPullRequest: () => world.staged,
       findOpenPullRequest: () => (world.prOpen && !scenario.pullRequestLookupFails?.(world) ? { number: PR } : null),
-      runReadyGate: ({ head, signal }) => {
+      ...(scenario.readyTests !== undefined
+        ? {
+            readyTestsPolicy: () => {
+              if (scenario.readyTests === 'unreadable') throw new Error('the default branch could not be read')
+              return scenario.readyTests as { mode: 'local' } | { mode: 'ci'; workflow: string; check: string }
+            },
+            checkReadyBaseline: () => {
+              world.baselineChecks += 1
+              return scenario.baseline?.(world.baselineChecks) ?? { ok: true }
+            },
+            runExplicitCommands: ({ head, commands }) => {
+              world.explicitRuns.push({ head, commands })
+              return (
+                scenario.explicit?.(world.explicitRuns.length, commands) ?? {
+                  outcome: 'passed',
+                  results: commands.map((command) => ({ command, outcome: 'passed' as const, output: 'ok' })),
+                  wallMs: 1
+                }
+              )
+            },
+            readRequiredCi: ({ head }) => {
+              world.requiredCiReads.push(head)
+              const all = scenario.requiredCi ?? []
+              const entry = all[Math.min(world.requiredCiReads.length - 1, all.length - 1)]
+              if (entry === undefined)
+                return {
+                  state: 'green' as const,
+                  identity: {
+                    head,
+                    workflow: '.github/workflows/ci.yml',
+                    check: 'Vinaya CI',
+                    runId: 1,
+                    runAttempt: 1,
+                    checkRunId: 2,
+                    url: null
+                  }
+                }
+              return typeof entry === 'function' ? entry(head) : entry
+            }
+          }
+        : {}),
+      runReadyGate: ({ head, signal, deferTests }) => {
         world.readySignals.push(signal !== undefined)
+        world.readyDeferrals.push(deferTests === true)
+        if (deferTests === true) {
+          // The hook ran its cheap gates and deferred: no selection, no test run, no record of one.
+          world.readyRuns.push([])
+          return {
+            passed: true,
+            output: 'vinaya pre-push: tests deferred to required CI',
+            selection: null,
+            failed: [],
+            wallMs: 5,
+            localTests: 'deferred' as const,
+            requiredCi: { workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' }
+          }
+        }
         const note = chooseTests({
           record,
           head,
@@ -743,7 +821,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
               // A storage push of the commit, and the pull request staged rather than opened.
               act: () => {
                 world.commit(true)
-                world.staged = { title: 'Feat(sample): Do the thing', body: `Closes #${TASK}` }
+                world.staged = { title: 'Feat(sample): Do the thing', body: scenario.stagedBody ?? `Closes #${TASK}` }
                 world.remoteAfterTurn.push(world.remote)
               }
             }

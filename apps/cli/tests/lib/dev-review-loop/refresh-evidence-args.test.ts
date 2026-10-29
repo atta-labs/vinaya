@@ -8,7 +8,8 @@
  * it reaches the forge step instead of the usage refusal the old shape hit.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -40,6 +41,51 @@ describe('refresh_evidence argv', () => {
       })
       expect(result.status).not.toBe(2)
       expect(`${result.stdout}${result.stderr}`).not.toContain(USAGE)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('refresh_evidence on a head whose tests are deferred to required CI', () => {
+  it('runs the real `pr report --push` path, refuses a missing deferral binding before spawning anything, and pushes nothing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-refresh-deferred-'))
+    try {
+      const env = stripVinayaEnv()
+      for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, env, stdio: 'ignore' })
+      git('init', '-q', '-b', 'task/issue-1')
+      git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init')
+      git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+      const sentinel = join(dir, '..', `${dir.split('/').pop()}-ran`)
+      const body = [
+        '## Test Plan',
+        '',
+        '```',
+        'required-ci "Vinaya CI" .github/workflows/ci.yml → passes in required CI',
+        `bun -e 'require("fs").writeFileSync(${JSON.stringify(sentinel)}, "x")' → exits 0`,
+        '```',
+        ''
+      ].join('\n')
+      writeFileSync(join(dir, 'live-body.md'), body)
+      // A stand-in `gh` that serves the live body and refuses every other call, so nothing can reach a forge.
+      const bin = join(dir, 'bin')
+      mkdirSync(bin)
+      writeFileSync(
+        join(bin, 'gh'),
+        `#!/bin/sh\nif [ "$1" = "pr" ] && [ "$2" = "view" ]; then cat ${JSON.stringify(join(dir, 'live-body.md'))}; exit 0; fi\necho "gh stub: refused $*" >&2\nexit 1\n`
+      )
+      chmodSync(join(bin, 'gh'), 0o755)
+      const result = spawnSyncBudgeted('bun', [INDEX, ...prReportRefreshArgs(7)], {
+        cwd: dir,
+        encoding: 'utf8',
+        env: { ...env, PATH: `${bin}:${env.PATH ?? ''}` }
+      })
+      const output = `${result.stdout}${result.stderr}`
+      expect(result.status).toBe(1)
+      expect(output).toContain('no deferred-tests record names head')
+      expect(output).not.toContain('Pushed AEG:EVIDENCE block to PR 7')
+      expect(existsSync(sentinel)).toBe(false)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

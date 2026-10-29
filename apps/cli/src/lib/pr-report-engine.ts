@@ -26,6 +26,14 @@ import { collectBodyCheckErrors } from './forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from './numstat'
 import { packageRoot } from './package-root.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from './run-paths.js'
+import {
+  type DeferredTestsRecord,
+  isReadyCiCommand,
+  readDeferredTestsRecord,
+  readyCiPlanCommand,
+  type ReadyTestsPolicy,
+  readTrustedReadyTestsPolicy
+} from './pre-push-ready-policy.js'
 
 /**
  * The `AEG:EVIDENCE` engine — every function that computes, or writes, the
@@ -512,6 +520,12 @@ export type GroupCCommandResult = {
   reusedFrom?: string
   /** Set only for a Group C command that runs `check --all` (`commandRunsCheckAll`): this run left `evidence-fresh` out, because it would grade the AEG:EVIDENCE block this same report is about to write. `renderGroupC` states that omission on one line below the command's fence (O2); `undefined` for every other command, where `evidence-fresh` was never in play. */
   omittedEvidenceFresh?: boolean
+  /**
+   * Set only for the review loop's automatic selected-suite line on a head whose ready or driver-owned repair push
+   * deferred its tests to required current-head CI (`resolveDeferredGroupC`): the command was never run here, and
+   * the required check named here decides it. Never a pass: `exitCode` stays `null`, and the block says pending.
+   */
+  pendingCi?: { workflow: string; check: string; head: string }
 }
 export type GroupC = { commands: GroupCCommandResult[] }
 
@@ -1111,6 +1125,55 @@ async function runOneAgentCommand(
   }
 }
 
+/**
+ * A genuine green run of `command` already recorded against this EXACT head,
+ * working tree and machine — in an earlier `pr report`, the pre-push hook,
+ * or the review loop's driver at its publication boundary — or null. Never
+ * runs anything. Two record shapes match: the exact command text, and (for a
+ * `bun test <files>` command whose own text never ran verbatim) one recorded
+ * run that alone covered every file it names — never a run missing even one
+ * named file, never a failing, partial or cancelled run (only a green run is
+ * ever recorded), and never one from another machine (the state key hashes
+ * `hostname()` exactly as the exact-command key does).
+ */
+export async function lookupGreenRun(
+  command: string,
+  cwd: string | undefined,
+  cache: TestRunCache
+): Promise<GroupCCommandResult | null> {
+  const cacheKey = await testRunCacheKey(command, cwd)
+  const hit = cacheKey ? cache.get(cacheKey) : undefined
+  if (hit) {
+    return {
+      command,
+      output: hit.output,
+      exitCode: 0,
+      timedOut: false,
+      overflowed: false,
+      reusedFrom: describeReuse(hit)
+    }
+  }
+  const requestedFiles = bunTestFileArgs(command)
+  if (!requestedFiles) return null
+  const stateKey = await testRunStateKey(cwd)
+  if (!stateKey) return null
+  const covering = findCoveringRun(cache.get(`${FILE_COVERAGE_PREFIX}${stateKey}`), resolveFileSet(requestedFiles, cwd))
+  if (!covering) return null
+  return {
+    command,
+    output: covering.output,
+    exitCode: 0,
+    timedOut: false,
+    overflowed: false,
+    reusedFrom: describeReuse(covering)
+  }
+}
+
+/** The environment a Test Plan command runs under: the registered checks' own baseline plus `extraEnv` (see `runOneAgentCommand`). */
+export function agentCommandEnv(extraEnv: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return { ...buildCheckEnv(undefined), ...extraEnv }
+}
+
 export async function runAgentCommand(
   command: string,
   timeoutMs: number = resolveCommandTimeoutMs(),
@@ -1119,54 +1182,17 @@ export async function runAgentCommand(
   cache?: TestRunCache,
   maxBufferBytes: number = AGENT_COMMAND_MAX_BUFFER_BYTES
 ): Promise<GroupCCommandResult> {
-  // A command that already ran green against this EXACT
-  // head, working tree and command text — in an earlier `pr report`, or the
-  // pre-push hook, whichever wrote the matching record — is reused rather
-  // than run again. `cache` is `undefined` for every existing caller of this
-  // function (every test that calls it directly, and any future one that
-  // doesn't opt in) — reuse is additive, never a behavior change for a
-  // caller that never asked for it.
+  // `cache` is `undefined` for every existing caller of this function (every
+  // test that calls it directly, and any future one that doesn't opt in) —
+  // reuse is additive, never a behavior change for a caller that never asked
+  // for it.
   const cacheKey = cache ? await testRunCacheKey(command, cwd) : null
-  if (cache && cacheKey) {
-    const hit = cache.get(cacheKey)
-    if (hit) {
-      return {
-        command,
-        output: hit.output,
-        exitCode: 0,
-        timedOut: false,
-        overflowed: false,
-        reusedFrom: describeReuse(hit)
-      }
-    }
+  if (cache) {
+    const reused = await lookupGreenRun(command, cwd, cache)
+    if (reused) return reused
   }
-  // Per-file reuse: a Test-plan `bun test <files>` command
-  // whose own text never ran verbatim still reuses a recorded green run at
-  // this exact head/working-tree/machine, provided every file it names was
-  // covered by that run — never a run missing even one named file, never a
-  // failing/partial/cancelled run (only a green run is ever recorded, below
-  // and in `recordGreenTestRun`), and never one from another machine (the
-  // state key hashes `hostname()` exactly as the exact-command key does).
   const requestedFiles = cache ? bunTestFileArgs(command) : null
-  let resolvedRequested: string[] | undefined
-  if (cache && requestedFiles) {
-    const stateKey = await testRunStateKey(cwd)
-    if (stateKey) {
-      const coverage = cache.get(`${FILE_COVERAGE_PREFIX}${stateKey}`)
-      resolvedRequested = resolveFileSet(requestedFiles, cwd)
-      const covering = findCoveringRun(coverage, resolvedRequested)
-      if (covering) {
-        return {
-          command,
-          output: covering.output,
-          exitCode: 0,
-          timedOut: false,
-          overflowed: false,
-          reusedFrom: describeReuse(covering)
-        }
-      }
-    }
-  }
+  const resolvedRequested = requestedFiles ? resolveFileSet(requestedFiles, cwd) : undefined
   const result = await runOneAgentCommand(command, timeoutMs, cwd, extraEnv, maxBufferBytes)
   if (cache && cacheKey && result.exitCode === 0 && !result.timedOut && !result.overflowed) {
     const recordedAt = new Date().toISOString()
@@ -1251,12 +1277,109 @@ export async function recordGreenTestRun(
  * about, never an ambient value some other repo state happened to leave
  * around.
  */
+/** Refuses an Evidence build on a deferred head that cannot be validated; nothing ran when it is thrown. */
+export class DeferredEvidenceError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'DeferredEvidenceError'
+  }
+}
+
+/** What the deferred path reads; each injectable so a test needs no forge. */
+export type DeferredGroupCDeps = {
+  readHead?: (cwd: string) => Promise<string | null>
+  readRecord?: (cwd: string, head: string) => DeferredTestsRecord | null
+  readPolicy?: () => ReadyTestsPolicy
+}
+
+/**
+ * Group C on a head whose ready or driver-owned repair push deferred its selected tests to required current-head CI,
+ * or null for every other head (the ordinary path, unchanged). A head is deferred when this worktree's deferred-tests
+ * record (`READY_TESTS_DEFERRED_RECORD`, written by the hook) names it, or when the body carries the loop's automatic
+ * required-CI line. Then nothing is executed: the required-CI line — the only line that may defer, and only when it
+ * names the record's own workflow and check and the default branch's policy still opts in — is reported pending, and
+ * every other command must already hold a genuine green receipt at this exact head and tree (the driver ran it at its
+ * publication boundary). Anything that cannot be validated throws `DeferredEvidenceError` before any command runs: a
+ * missing or another head's record, a policy that no longer opts in or cannot be read, a body that dropped the line,
+ * or a command with no receipt — a command added to the live body gains no execution authority here.
+ */
+export async function resolveDeferredGroupC(
+  commands: readonly string[],
+  cwd: string | undefined,
+  cache: TestRunCache,
+  deps: DeferredGroupCDeps = {}
+): Promise<GroupC | null> {
+  const dir = cwd ?? process.cwd()
+  const head = await (deps.readHead ?? ((at: string) => gitOrNull(['rev-parse', 'HEAD'], at)))(dir)
+  const ciLines = commands.filter(isReadyCiCommand)
+  const record = head ? (deps.readRecord ?? ((at, h) => readDeferredTestsRecord(at, { head: h })))(dir, head) : null
+  if (record === null && ciLines.length === 0) return null
+  const fix =
+    'The ready push (or the driver-owned repair push) on this head records the deferral and the receipts; nothing was executed.'
+  if (head === null) throw new DeferredEvidenceError(`the worktree head could not be read. ${fix}`)
+  if (record === null)
+    throw new DeferredEvidenceError(
+      `the Test Plan's required-CI line defers the selected tests, but no deferred-tests record names head \`${head}\` in this worktree. ${fix}`
+    )
+  const expected = readyCiPlanCommand(record)
+  if (ciLines.length !== 1 || ciLines[0] !== expected)
+    throw new DeferredEvidenceError(
+      `head \`${head}\` deferred its selected tests to \`${record.check}\`, so the Test Plan must carry exactly one \`${expected}\` line; it carries ${ciLines.length === 0 ? 'none' : ciLines.map((line) => `\`${line}\``).join(', ')}. Restore the line through the approved publication path. ${fix}`
+    )
+  let policy: ReadyTestsPolicy
+  try {
+    policy = (deps.readPolicy ?? (() => readTrustedReadyTestsPolicy()))()
+  } catch (error) {
+    throw new DeferredEvidenceError(
+      `the default branch's ready-tests policy could not be read, so the deferral cannot be confirmed: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  if (policy.mode !== 'ci' || policy.workflow !== record.workflow || policy.check !== record.check)
+    throw new DeferredEvidenceError(
+      `head \`${head}\` deferred its selected tests to \`${record.check}\`, but the default branch's ready-tests policy no longer names that check; run the selected tests through the ready push again.`
+    )
+  const results: GroupCCommandResult[] = []
+  const missing: string[] = []
+  for (const command of commands) {
+    if (isReadyCiCommand(command)) {
+      results.push({
+        command,
+        output: `Not run locally: the selected tests run in the required check \`${record.check}\` (\`${record.workflow}\`) on \`${head}\`.`,
+        exitCode: null,
+        timedOut: false,
+        overflowed: false,
+        pendingCi: { workflow: record.workflow, check: record.check, head }
+      })
+      continue
+    }
+    const reused = await lookupGreenRun(command, cwd, cache)
+    if (reused) results.push(commandRunsCheckAll(command) ? { ...reused, omittedEvidenceFresh: true } : reused)
+    else missing.push(command)
+  }
+  if (missing.length > 0)
+    throw new DeferredEvidenceError(
+      `head \`${head}\` deferred its selected tests, and these Test Plan commands hold no green receipt at this head and tree: ${missing.map((m) => `\`${m}\``).join(', ')}. Only the driver runs Test Plan commands on a deferred head, at the ready or repair publication boundary; a command added or changed in the live body gains no execution authority here. ${fix}`
+    )
+  return { commands: results }
+}
+
 export async function computeGroupC(
   prBody: string,
   cwd?: string,
   extraEnv: Record<string, string> = {},
-  cache?: TestRunCache
+  cache?: TestRunCache,
+  deferral?: DeferredGroupCDeps
 ): Promise<GroupC> {
+  // A deferred head is validated and composed before anything runs; it never executes the deferred suite.
+  if (cache) {
+    const deferred = await resolveDeferredGroupC(
+      extractAgentCommandLines(prBody).map(agentCommandText),
+      cwd,
+      cache,
+      deferral
+    )
+    if (deferred) return deferred
+  }
   // Sequential, deliberately — a `.map` into `Promise.all` would run every
   // Test-Plan command concurrently, and a §9 list is conventionally ordered
   // (build, then test, then run) with later commands depending on earlier
@@ -1285,7 +1408,9 @@ export async function computeGroupC(
 
 /** True when any Group C command timed out, overflowed its output budget, or exited non-zero — folded into this command's overall exit code exactly like a failing Group B gate. */
 export function groupCFailed(groupC: GroupC): boolean {
-  return groupC.commands.some((c) => c.timedOut || c.overflowed || (c.exitCode !== null && c.exitCode !== 0))
+  return groupC.commands.some(
+    (c) => c.pendingCi === undefined && (c.timedOut || c.overflowed || (c.exitCode !== null && c.exitCode !== 0))
+  )
 }
 
 /**
@@ -1306,13 +1431,15 @@ export function renderGroupC(groupC: GroupC): string {
     return ['### Group C — Test Plan commands', '', '(no [agent] commands in the Test Plan section)'].join('\n')
   }
   const blocks = groupC.commands.map((c, i) => {
-    const status = c.overflowed
-      ? '[output overflow]'
-      : c.timedOut
-        ? '[timeout]'
-        : c.exitCode !== 0
-          ? `[exit ${c.exitCode}]`
-          : null
+    const status = c.pendingCi
+      ? '[pending in required CI]'
+      : c.overflowed
+        ? '[output overflow]'
+        : c.timedOut
+          ? '[timeout]'
+          : c.exitCode !== 0
+            ? `[exit ${c.exitCode}]`
+            : null
     // Status FIRST (task 5): the one fact a reviewer reads is
     // pass/fail, and a tail-truncated 600-char block should never bury it
     // below output text — put it at the top of the fence, not the bottom.
@@ -1540,12 +1667,25 @@ export async function buildReport(
     envOverlay?: NodeJS.ProcessEnv
     /** Where a green Test-plan run is looked up and recorded. Defaults to this repository's own runtime directory — a test that wants isolation from that real location injects its own, an in-memory one most often. */
     testRunCache?: TestRunCache
+    /** The deferred-head reads (`resolveDeferredGroupC`), for a test that injects them. */
+    deferral?: DeferredGroupCDeps
   } = {}
 ): Promise<ReportResult> {
   const groupA = opts.groupA ?? (await computeGroupA(opts.cwd))
+  const gradedBody = opts.body ?? process.env.PR_BODY ?? ''
+  // Resolved only when Group C is computed here, exactly as before.
+  const testRunCache = opts.groupC ? undefined : (opts.testRunCache ?? defaultTestRunCache())
+  // A deferred head is validated before anything runs, the gates included: a refusal spawns nothing.
+  const deferredGroupC = !testRunCache
+    ? null
+    : await resolveDeferredGroupC(
+        extractAgentCommandLines(gradedBody).map(agentCommandText),
+        opts.cwd,
+        testRunCache,
+        opts.deferral
+      )
   const gateRunner = opts.gateRunner ?? (() => runRealGates(opts.cwd, opts.envOverlay))
   const gateResult = await gateRunner()
-  const gradedBody = opts.body ?? process.env.PR_BODY ?? ''
   const gradedBodySource = opts.gradedBodySource ?? 'ambient'
   // O6 (found live 2026-09-04, initially misread): this gate run happens
   // while the OLD AEG:EVIDENCE block is still the live/on-disk body —
@@ -1569,7 +1709,8 @@ export async function buildReport(
   if (ambientReportEnv.BRANCH !== undefined) groupCExtraEnv.BRANCH = ambientReportEnv.BRANCH
   const groupC =
     opts.groupC ??
-    (await computeGroupC(gradedBody, opts.cwd, groupCExtraEnv, opts.testRunCache ?? defaultTestRunCache()))
+    deferredGroupC ??
+    (await computeGroupC(gradedBody, opts.cwd, groupCExtraEnv, testRunCache, opts.deferral))
   const blockInner = buildBlockInner(groupA, outcomes, groupC, gradedBodySource)
   const block = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
   return {

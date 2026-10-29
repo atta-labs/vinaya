@@ -6,13 +6,26 @@ import { join } from 'node:path'
 import type { DevToolContext } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { gitPath, LAST_PUSH_RESULT, SELECTION_NOTE } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import {
+  DEFERRAL_MARKER_TTL_MS,
+  parseDeferralMarker,
+  READY_DEFERRAL_MARKER
+} from '../../../../../apps/cli/src/lib/pre-push-ready-policy'
+import {
+  lookupGreenRun,
+  type TestRunCache,
+  type TestRunCacheRecord
+} from '../../../../../apps/cli/src/lib/pr-report-engine'
+import {
+  beginReadyDeferral,
   beginStoragePushes,
+  endReadyDeferral,
   endStoragePushes,
   liveV2Functions,
   NO_LOCAL_TESTS_MARKER,
   READY_GATE_DEADLINE_MS,
   readFetchedMainTip,
   readyGateEvidence,
+  runExplicitCommandsLive,
   runReadyGateLive,
   stagedPullRequestStore,
   withV2DevTools
@@ -457,7 +470,7 @@ describe('runReadyGateLive', () => {
       })
       expect(result.passed).toBe(true)
       expect(result.output).not.toContain('planted-driver-secret')
-      for (const key of keys) expect(result.output).not.toContain(key + '=')
+      for (const key of keys) expect(result.output).not.toContain(`${key}=`)
       expect(result.output).toContain('PATH=')
       expect(result.output).toContain('HOME=')
       expect(result.output).toContain('TMPDIR=')
@@ -541,3 +554,338 @@ describe('readyGateEvidence for a repaired head', () => {
     )
   })
 })
+
+describe('the ready push deferring its selected tests to required CI', () => {
+  const headOf = (dir: string) => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+  const withHook = (dir: string, body: string) => {
+    const hooks = join(dir, '.git', 'hooks')
+    mkdirSync(hooks, { recursive: true })
+    writeFileSync(join(hooks, 'pre-push'), `#!/bin/sh\n${body}\n`)
+    chmodSync(join(hooks, 'pre-push'), 0o755)
+  }
+  // What the generated hook's deferral step records: the head and run, bound to the marker the driver wrote.
+  const deferringHook = (runId: string) =>
+    [
+      'm="$(git rev-parse --git-path vinaya/ready-deferral)"',
+      '[ -f "$m" ] || { echo "no marker"; exit 0; }',
+      'read -r line; set -- $line',
+      `printf '{"version":1,"kind":"ready","head":"%s","branch":"task/issue-1","runId":"${runId}","workflow":".github/workflows/ci.yml","check":"Vinaya CI","recordedAt":"now"}' "$2" > "$(git rev-parse --git-path vinaya/ready-tests-deferred.json)"`,
+      'echo "vinaya pre-push: tests deferred to required CI"',
+      'exit 0'
+    ].join('\n')
+
+  test('a marked ready push whose hook deferred reads `deferred` from the head- and run-bound record; the marker is gone after', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    withHook(dir, deferringHook('run-1'))
+    const result = await runReadyGateLive({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      head,
+      remoteHead: head,
+      deferTests: true,
+      runId: 'run-1'
+    })
+    expect(result).toMatchObject({
+      passed: true,
+      localTests: 'deferred',
+      requiredCi: { check: 'Vinaya CI' },
+      selection: null
+    })
+    expect(existsSync(gitPath(dir, READY_DEFERRAL_MARKER) as string)).toBe(false)
+  })
+
+  test("another run's record, or a push the driver did not mark, is never deferred", async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    withHook(dir, deferringHook('someone-else'))
+    const other = await runReadyGateLive({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      head,
+      remoteHead: head,
+      deferTests: true,
+      runId: 'run-1'
+    })
+    expect(other.localTests).toBeUndefined()
+    withHook(dir, deferringHook('run-1'))
+    const unmarked = await runReadyGateLive({ worktreePath: dir, branch: 'task/issue-1', head, remoteHead: head })
+    expect(unmarked.localTests).toBeUndefined()
+    expect(unmarked.output).toContain('no marker')
+  })
+
+  test('a nested fixture printing the no-local-tests marker inside a real test run never makes it the no-runner state', async () => {
+    const dir = repo()
+    // A real test file whose own fixture prints the marker line, committed so the worktree is the approved commit.
+    const markerLine = `${NO_LOCAL_TESTS_MARKER} (no test runner declared)`
+    writeFileSync(
+      join(dir, 'nested.test.ts'),
+      `import { test } from 'bun:test'\ntest('prints the marker', () => console.log(${JSON.stringify(markerLine)}))\n`
+    )
+    execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' })
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'nested'], {
+      cwd: dir,
+      stdio: 'ignore'
+    })
+    const head = headOf(dir)
+    const recorder = join(
+      import.meta.dir,
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      'apps',
+      'cli',
+      'src',
+      'lib',
+      'pre-push-record-tests.ts'
+    )
+    const selected = join(dir, 'nested.test.ts')
+    const note = JSON.stringify({ version: 1, mode: 'full', head, fullCount: 1, selected: [selected] })
+    // The hook's own test step: the selector's note, the real supervised `bun test` run and the real recorder.
+    withHook(
+      dir,
+      [
+        `mkdir -p "$(dirname "$(git rev-parse --git-path ${SELECTION_NOTE})")"`,
+        `printf '%s' '${note}' > "$(git rev-parse --git-path ${SELECTION_NOTE})"`,
+        'log="$TMPDIR/nested-test.log"',
+        `bun ${JSON.stringify(recorder)} run ${JSON.stringify(selected)} > "$log" 2>&1 || exit 1`,
+        'cat "$log"',
+        `bun ${JSON.stringify(recorder)} passed "$log" 1 1>&2`,
+        'exit 0'
+      ].join('\n')
+    )
+    const result = await runReadyGateLive({ worktreePath: dir, branch: 'task/issue-1', head, remoteHead: head })
+    expect(result.passed).toBe(true)
+    expect(result.output.split('\n')).toContain(markerLine)
+    expect(result.localTests).toBeUndefined()
+    expect(result.selection?.selected).toEqual([selected])
+  })
+
+  test('the deferral marker names this driver, the run, the branch and the head, and expires', () => {
+    const dir = repo()
+    expect(
+      beginReadyDeferral(dir, { kind: 'ready', runId: 'run-1', branch: 'task/issue-1', head: 'a'.repeat(40) }, () => 0)
+    ).toBe(true)
+    const marker = parseDeferralMarker(readFileSync(gitPath(dir, READY_DEFERRAL_MARKER) as string, 'utf8'))
+    expect(marker).toMatchObject({
+      kind: 'ready',
+      runId: 'run-1',
+      branch: 'task/issue-1',
+      driver: { pid: process.pid }
+    })
+    expect(Date.parse(marker?.expiresAt ?? '')).toBe(DEFERRAL_MARKER_TTL_MS)
+    endReadyDeferral(dir)
+    expect(existsSync(gitPath(dir, READY_DEFERRAL_MARKER) as string)).toBe(false)
+  })
+
+  test('a starting run removes a deferral marker an earlier run left', () => {
+    const dir = repo()
+    beginReadyDeferral(dir, { kind: 'repair', runId: 'old', branch: 'task/issue-1', pr: 9 })
+    liveV2Functions({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      store: stagedPullRequestStore(join(dir, 'run')),
+      findOpenPullRequest: () => null,
+      remoteHead: () => null,
+      openWithDeveloperTool: async () => ({ ok: true, result: { prNumber: 1 } })
+    })
+    expect(existsSync(gitPath(dir, READY_DEFERRAL_MARKER) as string)).toBe(false)
+  })
+})
+
+describe('a driver-owned repair push on the run’s own open pull request', () => {
+  const marked = (dir: string) => existsSync(gitPath(dir, READY_DEFERRAL_MARKER) as string)
+
+  test('with the default branch opting in, the publish carries a repair marker for that pull request, removed after', async () => {
+    const dir = repo()
+    let seen: unknown = null
+    const base = {
+      ...baseTools([]),
+      publishChanges: async () => {
+        seen = parseDeferralMarker(readFileSync(gitPath(dir, READY_DEFERRAL_MARKER) as string, 'utf8'))
+        return { ok: true, result: { pushedHead: 'h2' } }
+      }
+    } as unknown as DevToolContext
+    const tools = withV2DevTools(base, {
+      worktreePath: dir,
+      runId: 'run-1',
+      branch: 'task/issue-1',
+      store: stagedPullRequestStore(join(dir, 'run')),
+      findOpenPullRequest: () => ({ number: 9 }),
+      onStoragePush: () => {},
+      readyTestsPolicy: () => POLICY_CI,
+      checkBaseline: () => ({ ok: true })
+    })
+    expect((await tools.publishChanges('Fix(x): y')).ok).toBe(true)
+    expect(seen).toMatchObject({ kind: 'repair', pr: 9, runId: 'run-1', branch: 'task/issue-1' })
+    expect(marked(dir)).toBe(false)
+  })
+
+  test('no opt-in, a failed policy read or no open pull request writes no repair marker', async () => {
+    for (const [policy, open] of [
+      [() => ({ mode: 'local' as const }), { number: 9 }],
+      [
+        () => {
+          throw new Error('offline')
+        },
+        { number: 9 }
+      ],
+      [() => POLICY_CI, null]
+    ] as const) {
+      const dir = repo()
+      let sawMarker = false
+      const base = {
+        ...baseTools([]),
+        publishChanges: async () => {
+          sawMarker = marked(dir)
+          return { ok: true, result: { pushedHead: 'h' } }
+        }
+      } as unknown as DevToolContext
+      const tools = withV2DevTools(base, {
+        worktreePath: dir,
+        runId: 'run-1',
+        branch: 'task/issue-1',
+        store: stagedPullRequestStore(join(dir, 'run')),
+        findOpenPullRequest: () => open,
+        onStoragePush: () => {},
+        readyTestsPolicy: policy
+      })
+      await tools.publishChanges('Fix(x): y')
+      expect(sawMarker).toBe(false)
+    }
+  })
+
+  test('a stale loop baseline refuses the repair publish before anything runs', async () => {
+    const dir = repo()
+    const calls: string[] = []
+    const tools = withV2DevTools(baseTools(calls), {
+      worktreePath: dir,
+      runId: 'run-1',
+      branch: 'task/issue-1',
+      store: stagedPullRequestStore(join(dir, 'run')),
+      findOpenPullRequest: () => ({ number: 9 }),
+      onStoragePush: () => {},
+      readyTestsPolicy: () => POLICY_CI,
+      checkBaseline: () => ({ ok: false, reason: 'refresh the baseline' })
+    })
+    const result = await tools.publishChanges('Fix(x): y')
+    expect(result.ok).toBe(false)
+    expect(calls).toEqual([])
+    expect(marked(dir)).toBe(false)
+  })
+})
+
+describe('the explicit Test Plan commands the driver runs at the publication boundary', () => {
+  const memoryCache = (): TestRunCache => {
+    const store = new Map<string, TestRunCacheRecord>()
+    return { get: (key) => store.get(key), set: (key, record) => void store.set(key, record) }
+  }
+  const headOf = (dir: string) => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+  const counter = () => join(fixtureDir('explicit-counter-'), 'runs')
+  const count = (path: string) => (existsSync(path) ? readFileSync(path, 'utf8').length : 0)
+
+  test('a command runs once and records its receipt; an unchanged head reuses it; a merge head runs it again', async () => {
+    const dir = repo()
+    const runs = counter()
+    const cache = memoryCache()
+    const command = `cd . && printf x >> ${JSON.stringify(runs)}`
+    const run = (head: string) =>
+      runExplicitCommandsLive({
+        worktreePath: dir,
+        head,
+        branch: 'task/issue-1',
+        body: '',
+        commands: [command],
+        deadlineAt: Date.now() + 60_000,
+        cache
+      })
+    const first = await run(headOf(dir))
+    expect(first.outcome).toBe('passed')
+    expect(count(runs)).toBe(1)
+    const second = await run(headOf(dir))
+    expect(second.outcome).toBe('passed')
+    expect(second.results[0]?.reusedFrom).toBeDefined()
+    expect(count(runs)).toBe(1)
+    // A driver-made merge head is a new state: its receipt is obtained by running the command again.
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'merge'], {
+      cwd: dir
+    })
+    const merged = await run(headOf(dir))
+    expect(merged.outcome).toBe('passed')
+    expect(merged.results[0]?.reusedFrom).toBeUndefined()
+    expect(count(runs)).toBe(2)
+  })
+
+  test('a failing command stops the phase with its command and output, and records no receipt', async () => {
+    const dir = repo()
+    const cache = memoryCache()
+    const failing = 'echo "expected 1 to be 2"; exit 3'
+    const result = await runExplicitCommandsLive({
+      worktreePath: dir,
+      head: headOf(dir),
+      branch: 'b',
+      body: '',
+      commands: [failing, 'echo never'],
+      deadlineAt: Date.now() + 60_000,
+      cache
+    })
+    expect(result.outcome).toBe('failed')
+    expect(result.results).toEqual([
+      expect.objectContaining({ command: failing, outcome: 'failed', exitCode: 3, output: 'expected 1 to be 2' })
+    ])
+    expect(await lookupGreenRun(failing, dir, cache)).toBeNull()
+  })
+
+  test('a command past its limit is stopped as a timeout, never a pass', async () => {
+    const dir = repo()
+    const result = await runExplicitCommandsLive({
+      worktreePath: dir,
+      head: headOf(dir),
+      branch: 'b',
+      body: '',
+      commands: ['sleep 30'],
+      deadlineAt: Date.now() + 60_000,
+      cache: memoryCache(),
+      commandTimeoutMs: 300
+    })
+    expect(result.outcome).toBe('timed-out')
+  })
+
+  test('a cancel stops the phase', async () => {
+    const dir = repo()
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(), 200)
+    await expect(
+      runExplicitCommandsLive({
+        worktreePath: dir,
+        head: headOf(dir),
+        branch: 'b',
+        body: '',
+        commands: ['sleep 30'],
+        deadlineAt: Date.now() + 60_000,
+        cache: memoryCache(),
+        signal: controller.signal
+      })
+    ).rejects.toThrow('cancelled')
+  })
+
+  test('a head that is not the published one runs nothing', async () => {
+    const dir = repo()
+    const runs = counter()
+    const result = await runExplicitCommandsLive({
+      worktreePath: dir,
+      head: 'f'.repeat(40),
+      branch: 'b',
+      body: '',
+      commands: [`printf x >> ${runs}`],
+      deadlineAt: Date.now() + 60_000,
+      cache: memoryCache()
+    })
+    expect(result.outcome).toBe('drift')
+    expect(count(runs)).toBe(0)
+  })
+})
+
+const POLICY_CI = { mode: 'ci' as const, workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' }

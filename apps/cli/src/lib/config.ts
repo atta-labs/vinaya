@@ -793,9 +793,26 @@ const VinayaConfigObjectSchema = z.object({
   // against the repo-root-relative path) that run on every push regardless
   // of reachability — additive only, on top of whatever the import graph
   // already selects, never a narrowing of it.
+  //
+  // `readyTests` opts a self-hosting repository's version-2 ready push, and
+  // the driver-owned repair pushes on its own open pull request, into
+  // required-CI testing: those pushes keep every cheap local gate and defer
+  // the selected test suite to the named required check on the approved
+  // head. Read from the default branch only (`pre-push-ready-policy.ts`);
+  // absent means local tests. The one supported pair is this repository's
+  // own CI workflow and its aggregate check — any other value is refused
+  // rather than read as an adopter CI protocol.
   prePush: z
     .object({
-      alwaysRun: z.array(z.string()).optional()
+      alwaysRun: z.array(z.string()).optional(),
+      readyTests: z
+        .object({
+          mode: z.literal('ci'),
+          workflow: z.literal('.github/workflows/ci.yml'),
+          check: z.literal('Vinaya CI')
+        })
+        .strict()
+        .optional()
     })
     .optional(),
   // The evidence runner's (`vinaya pr report`'s Group C) per-`[agent]`-command

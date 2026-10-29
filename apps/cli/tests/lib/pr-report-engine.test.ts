@@ -26,13 +26,19 @@ import {
   buildReport,
   commandRunsCheckAll,
   computeGroupC,
+  DeferredEvidenceError,
+  type DeferredGroupCDeps,
   describeReuse,
   type GateRunResult,
   type GroupC,
+  groupCFailed,
   renderGroupC,
+  resolveDeferredGroupC,
   runReportForOpenPr,
-  spliceIntoLiveBody
+  spliceIntoLiveBody,
+  type TestRunCacheRecord
 } from '../../src/lib/pr-report-engine'
+import { readyCiPlanCommand } from '../../src/lib/pre-push-ready-policy'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const ALWAYS_REFUSE_BODY_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', 'fake-always-refuse-body-check.cjs')
@@ -474,4 +480,91 @@ describe('computeGroupC — the exclusion reaches only the `check --all` command
     expect(groupC.commands[1]?.omittedEvidenceFresh).toBeFalsy()
     expect(groupC.commands[1]?.output).toBe('probe exclude=')
   }, 20000)
+})
+
+describe('the report engine on a head whose tests are deferred to required CI', () => {
+  const POLICY = { mode: 'ci' as const, workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' }
+  const HEAD = 'c'.repeat(40)
+  const RECORD = {
+    version: 1 as const,
+    kind: 'ready' as const,
+    head: HEAD,
+    branch: 'task/issue-1',
+    runId: 'r',
+    workflow: POLICY.workflow,
+    check: POLICY.check,
+    recordedAt: 'now'
+  }
+  const ciLine = readyCiPlanCommand(POLICY)
+  const store = () => {
+    const records = new Map<string, TestRunCacheRecord>()
+    return {
+      get: (key: string) => records.get(key),
+      set: (key: string, record: TestRunCacheRecord) => void records.set(key, record)
+    }
+  }
+  const deps = (over: Partial<DeferredGroupCDeps> = {}): DeferredGroupCDeps => ({
+    readHead: async () => HEAD,
+    readRecord: () => RECORD,
+    readPolicy: () => POLICY,
+    ...over
+  })
+
+  it('an ordinary head (no record, no required-CI line) is not deferred: the ordinary path runs', async () => {
+    expect(
+      await resolveDeferredGroupC(['bun run test'], undefined, store(), deps({ readRecord: () => null }))
+    ).toBeNull()
+  })
+
+  it('the required-CI line is pending — never a pass, never a failure — and renders so', async () => {
+    const groupC = await resolveDeferredGroupC([ciLine], undefined, store(), deps())
+    expect(groupC?.commands).toEqual([
+      expect.objectContaining({
+        command: ciLine,
+        exitCode: null,
+        pendingCi: { workflow: POLICY.workflow, check: POLICY.check, head: HEAD }
+      })
+    ])
+    expect(groupCFailed(groupC as GroupC)).toBe(false)
+    const rendered = renderGroupC(groupC as GroupC)
+    expect(rendered).toContain(`#### C1: \`${ciLine}\``)
+    expect(rendered).toContain('[pending in required CI]')
+    expect(rendered).not.toContain('[exit')
+  })
+
+  it.each([
+    ['another head’s record (or none)', { readRecord: () => null }, 'no deferred-tests record names head'],
+    [
+      'a policy that no longer opts in',
+      { readPolicy: () => ({ mode: 'local' as const }) },
+      'no longer names that check'
+    ],
+    ['a policy for another check', { readPolicy: () => ({ ...POLICY, check: 'Other' }) }, 'no longer names that check'],
+    [
+      'a failed policy read',
+      {
+        readPolicy: () => {
+          throw new Error('offline')
+        }
+      },
+      'could not be read'
+    ]
+  ])('refuses on %s', async (_name, over, message) => {
+    await expect(resolveDeferredGroupC([ciLine], undefined, store(), deps(over))).rejects.toThrow(message)
+  })
+
+  it('a deferred head refuses a body that dropped the line, or carries a line for another check', async () => {
+    await expect(resolveDeferredGroupC(['bun run test'], undefined, store(), deps())).rejects.toThrow(
+      'must carry exactly one'
+    )
+    await expect(
+      resolveDeferredGroupC([readyCiPlanCommand({ ...POLICY, check: 'Other' })], undefined, store(), deps())
+    ).rejects.toThrow('must carry exactly one')
+  })
+
+  it('a named explicit command outside CI selection with no receipt is refused, never discharged as pending CI', async () => {
+    await expect(
+      resolveDeferredGroupC([ciLine, 'cd apps/cli && bun test tests/x.test.ts'], undefined, store(), deps())
+    ).rejects.toThrow(DeferredEvidenceError)
+  })
 })

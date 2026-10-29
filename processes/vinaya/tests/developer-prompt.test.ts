@@ -15,6 +15,7 @@ import {
   conflictMergeText,
   type DeveloperPromptFacts,
   developerPrompt,
+  FLOW_V2_NOTE,
   withDefaultMergeConflict
 } from '../executing/developer-prompt'
 
@@ -328,13 +329,21 @@ describe('a conflict re-entry in a fresh run generation', () => {
   })
 })
 
-describe('the Developer runs no tests and no evidence refresh in version 2 only', () => {
-  test('a version 2 turn is told to run no tests and not to call refresh_evidence; a version 1 turn is not', () => {
+describe('the Developer’s optional focused test and no evidence refresh, in version 2 only', () => {
+  test('a version 2 turn may run one plain focused test per input set and writes no receipt; a version 1 turn is not told so', () => {
     const v2 = developerPrompt('', { ...FACTS, flow: 'v2' }, {})
-    expect(v2).toContain('Run no tests and do not call `refresh_evidence`')
+    expect(v2).toContain('You may run one plain focused test invocation per distinct set of code and test inputs')
+    expect(v2).toContain('naming the explicit test files that cover the behavior you changed')
+    expect(v2).toContain('never a whole directory or package suite, and never again on unchanged inputs')
+    expect(v2).toContain('after you change code or tests, one more focused run is allowed')
+    expect(v2).toContain('The brief’s mandatory commands and live checks still apply')
+    expect(v2).toContain('Write no test receipts and do not call `pr report --write` or `refresh_evidence`')
+    expect(v2).toContain('counts as neither a receipt nor a required CI result')
+    expect(v2).not.toContain('Run no tests')
     const v1 = developerPrompt('', FACTS, {})
-    expect(v1).not.toContain('Run no tests')
-    expect(v1).not.toContain('do not call `refresh_evidence`')
+    expect(v1).not.toContain(FLOW_V2_NOTE)
+    expect(v1).not.toContain('focused test invocation')
+    expect(v1).not.toContain('do not call `pr report --write` or `refresh_evidence`')
   })
 })
 
