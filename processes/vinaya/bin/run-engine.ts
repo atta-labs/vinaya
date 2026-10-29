@@ -282,7 +282,11 @@ import {
 } from '../executing/actions'
 import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../loops/dev-review/v2/v2-actions'
 import { runCli } from '../../../harness/gates/run-checks'
+import { checkReadyBaseline } from '../loops/dev-review/v2/ready-baseline'
+import { readTrustedReadyTestsPolicy } from '../../../apps/cli/src/lib/pre-push-ready-policy'
+import { detectVendoredVinaya } from '../../../apps/cli/src/lib/self-host'
 import {
+  endReadyDeferral,
   endStoragePushes,
   liveV2Functions,
   readyGateEvidence,
@@ -2938,6 +2942,8 @@ async function runLive(
   // Whatever storage marker an earlier run left in this worktree (a crash, a pause) ends now, for every flow: only
   // this run's own `publish_changes` writes a fresh one, and only in version 2.
   endStoragePushes(taskInput.worktreePath)
+  // So does a ready-tests deferral marker: a stopped or restarted run's marker is never reused.
+  endReadyDeferral(taskInput.worktreePath)
   // Version 2 (review locally, push once): storage pushes, a staged pull request, the ready push and CI once.
   let devToolsContext = liveContext.context
   if (loaded.flowKey === 'v2') {
@@ -2945,7 +2951,14 @@ async function runLive(
     const findOpenPullRequest = () => findOpenPrForBranch(taskInput.branch)
     taskInput.flow = 'v2'
     taskInput.stagedPullRequest = store.read
+    // The ready-tests policy (local tests, or deferral to required CI) exists only for a repository that vendors the
+    // CLI, where the generated hook carries the deferral step; it is read from the default branch on each use.
+    const readyTestsPolicy = detectVendoredVinaya(taskInput.worktreePath)
+      ? () => readTrustedReadyTestsPolicy()
+      : undefined
     taskInput.v2 = liveV2Functions({
+      runId: loopId,
+      ...(readyTestsPolicy ? { readyTestsPolicy } : {}),
       worktreePath: taskInput.worktreePath,
       branch: taskInput.branch,
       store,
@@ -2983,6 +2996,8 @@ async function runLive(
     devToolsContext = withV2DevTools(liveContext.context, {
       worktreePath: taskInput.worktreePath,
       runId: loopId,
+      ...(readyTestsPolicy ? { readyTestsPolicy } : {}),
+      checkBaseline: () => checkReadyBaseline(taskInput.worktreePath),
       store,
       findOpenPullRequest,
       onStoragePush: (head) =>
@@ -3068,7 +3083,10 @@ async function runLive(
     onRulingResume: () => {
       rulings.owed = true
     },
-    onRunHalted: () => endStoragePushes(taskInput.worktreePath),
+    onRunHalted: () => {
+      endStoragePushes(taskInput.worktreePath)
+      endReadyDeferral(taskInput.worktreePath)
+    },
     beginDeveloperTurn: liveContext.beginTurn,
     completeDeveloperTurn: liveContext.completeTurn
   })

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import {
   buildReport,
+  DeferredEvidenceError,
   type GateRunner,
   gh,
   GitCommandError,
@@ -29,6 +30,7 @@ export {
   computeGroupC,
   DEFAULT_COMMAND_TIMEOUT_MS,
   defaultTestRunCache,
+  DeferredEvidenceError,
   DivergentEvidenceAnchorError,
   extractAgentCommandLines,
   fileBackedTestRunCache,
@@ -207,7 +209,11 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
       gateRunner: testOverrides?.gateRunner
     })
   } catch (err) {
-    if (err instanceof UnresolvableMergeBaseError || err instanceof GitCommandError) {
+    if (
+      err instanceof UnresolvableMergeBaseError ||
+      err instanceof GitCommandError ||
+      err instanceof DeferredEvidenceError
+    ) {
       // Refuse — write nothing, print nothing that looks like a block.
       // See that class's doc comment: an unresolvable base is an
       // infrastructure failure, and writing an empty Group A here would

@@ -110,7 +110,7 @@ const workflowWithoutProducers = [
   'workflow:ci.yml:sandbox-conformance-macos:Install dependencies',
   "workflow:ci.yml:sandbox-conformance-macos:Install the checks' own tool",
   'workflow:ci.yml:sandbox-conformance-macos:Run the suite under both sandboxes',
-  'workflow:ci.yml:aggregate:Every upstream job succeeded or was correctly skipped (docs-only)',
+  'workflow:ci.yml:aggregate:Every mandatory job succeeded and the root-config probe succeeded or was skipped',
   'workflow:published-lifecycle.yml:verify-published-lifecycle:Check published version',
   'workflow:published-lifecycle.yml:verify-published-lifecycle:Install dependencies',
   'workflow:published-lifecycle.yml:verify-published-lifecycle:Verify published lifecycle',

@@ -1168,3 +1168,257 @@ for (const agent of AGENTS) {
     })
   })
 }
+
+// Opted in: the ready push keeps its cheap gates and defers the selected tests to required current-head CI; the
+// driver runs the approved explicit Test Plan commands on the published head; the run completes only on its own
+// head's successful required CI.
+const READY_CI = { mode: 'ci' as const, workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' }
+const PLAN_BODY = [
+  `Closes #${TASK}`,
+  '',
+  '## Test plan',
+  '',
+  '```',
+  'bun test ./a.test.ts → passes',
+  'cd apps/cli && bun test --timeout=30000 tests/a.test.ts → 0 fail',
+  'bunx turbo run typecheck --filter=@x/y → exits 0',
+  '```',
+  ''
+].join('\n')
+const EXPLICIT = ['cd apps/cli && bun test --timeout=30000 tests/a.test.ts', 'bunx turbo run typecheck --filter=@x/y']
+const pendingRead = { state: 'pending' as const, detail: 'run 1 attempt 1 is in_progress' }
+const codeRed = {
+  state: 'red' as const,
+  runId: 1,
+  runUrl: 'https://github.com/o/r/actions/runs/1',
+  failures: [{ job: 'Test (apps/cli, shard 2)', jobId: 11, url: null, step: 'Test shard 2', kind: 'code' as const }]
+}
+
+describe('ready tests deferred to required CI', () => {
+  test('the hook defers, the driver runs the explicit commands once on the head, the plan names the required check, and only green CI completes', async () => {
+    const observed = await runV2('claude', { readyTests: READY_CI, stagedBody: PLAN_BODY })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.world.readyDeferrals).toEqual([true])
+    expect(observed.world.explicitRuns.map((run) => run.commands)).toEqual([EXPLICIT])
+    const [ready] = records(observed, 'ready-push')
+    expect(ready?.localTests).toBe('deferred')
+    expect(ready?.requiredCi).toMatchObject({ check: 'Vinaya CI', head: ready?.head })
+    expect(observed.world.explicitRuns[0]?.head).toBe(ready?.head)
+    // The opened body's Test Plan leads with the required-CI line and keeps both explicit commands in order.
+    const opened = observed.world.openedBodies[0] ?? ''
+    expect(opened).toContain(
+      'required-ci "Vinaya CI" .github/workflows/ci.yml → the selected tests pass in the required current-head CI check'
+    )
+    expect(opened).not.toContain('bun test ./a.test.ts')
+    expect(opened.indexOf('required-ci')).toBeLessThan(opened.indexOf(EXPLICIT[0] as string))
+    expect(observed.world.requiredCiReads).toEqual([ready?.head])
+    const [ci] = records(observed, 'read-ci-once')
+    expect(ci?.conclusion).toBe('green')
+    expect(ci?.requiredCiIdentity).toMatchObject({ runId: 1, checkRunId: 2, head: ready?.head })
+  })
+
+  test('a repository that does not opt in tests locally, unchanged', async () => {
+    const observed = await runV2('claude', { readyTests: { mode: 'local' }, stagedBody: PLAN_BODY })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.world.readyDeferrals).toEqual([false])
+    expect(observed.world.readyRuns).toEqual([ALL_TESTS])
+    expect(observed.world.explicitRuns).toEqual([])
+    expect(observed.world.requiredCiReads).toEqual([])
+    expect(records(observed, 'ready-push')[0]?.requiredCi).toBeUndefined()
+  })
+
+  test('a failed trusted read of the policy pauses before anything runs, never deferring', async () => {
+    const observed = await runV2('claude', { readyTests: 'unreadable', stagedBody: PLAN_BODY })
+    expect(observed.outcome).toBe('pause:infrastructure')
+    expect(observed.world.readyRuns).toEqual([])
+    expect(observed.world.explicitRuns).toEqual([])
+    expect(records(observed, 'ready-push')[0]?.outcome).toBe('policy-unreadable')
+  })
+
+  test('a stale loop baseline sends the Developer back, naming the refresh, before the hook or any command', async () => {
+    const observed = await runV2('claude', {
+      readyTests: READY_CI,
+      stagedBody: PLAN_BODY,
+      baseline: (attempt) =>
+        attempt === 1
+          ? {
+              ok: false,
+              reason: 'the recorded loop baseline is stale; run `bun apps/cli/scripts/refresh-loop-baseline.ts`'
+            }
+          : { ok: true }
+    })
+    expect(observed.outcome).toBe('completed')
+    const [refused] = records(observed, 'ready-push')
+    expect(refused?.outcome).toBe('baseline-refused')
+    expect(refused?.sendBack).toMatchObject({ kind: 'ready-refused' })
+    expect(observed.prompts.developer[1]).toContain('refresh-loop-baseline.ts')
+    // The refused attempt ran neither the hook nor any command; only the next one did.
+    expect(observed.world.readyDeferrals).toEqual([true])
+    expect(observed.world.explicitRuns).toHaveLength(1)
+  })
+
+  test('a failing explicit command goes back to the Developer with its command and output, then a passing one completes', async () => {
+    const observed = await runV2('claude', {
+      readyTests: READY_CI,
+      stagedBody: PLAN_BODY,
+      explicit: (attempt, commands) =>
+        attempt === 1
+          ? {
+              outcome: 'failed',
+              results: [
+                { command: commands[0] as string, outcome: 'failed', output: 'expected 1 to be 2', exitCode: 1 }
+              ],
+              wallMs: 3
+            }
+          : {
+              outcome: 'passed',
+              results: commands.map((command) => ({ command, outcome: 'passed', output: 'ok' })),
+              wallMs: 1
+            }
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.prompts.developer[1]).toContain(`the Test Plan command \`${EXPLICIT[0]}\` failed`)
+    expect(observed.prompts.developer[1]).toContain('expected 1 to be 2')
+    expect(observed.world.explicitRuns).toHaveLength(2)
+    expect(observed.world.prsOpened).toBe(1)
+  })
+
+  test('an explicit command past its limit pauses, with no Developer turn', async () => {
+    const observed = await runV2('claude', {
+      readyTests: READY_CI,
+      stagedBody: PLAN_BODY,
+      explicit: (_attempt, commands) => ({
+        outcome: 'timed-out',
+        results: [{ command: commands[0] as string, outcome: 'timed-out', output: '' }],
+        wallMs: 9
+      })
+    })
+    expect(observed.outcome).toBe('pause:ready_push_failed')
+    expect(observed.spawns.developer).toBe(1)
+    expect(observed.world.prsOpened).toBe(0)
+  })
+
+  test('pending is never green, a code failure in required CI goes back to the Developer, and only a later green completes', async () => {
+    const observed = await runV2('claude', {
+      readyTests: READY_CI,
+      stagedBody: PLAN_BODY,
+      requiredCi: [
+        pendingRead,
+        codeRed,
+        pendingRead,
+        (head) => ({
+          state: 'green',
+          identity: {
+            head,
+            workflow: READY_CI.workflow,
+            check: READY_CI.check,
+            runId: 9,
+            runAttempt: 2,
+            checkRunId: 99,
+            url: null
+          }
+        })
+      ]
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.spawns.developer).toBe(2)
+    expect(observed.prompts.developer[1]).toContain('The required check Vinaya CI is red')
+    expect(observed.prompts.developer[1]).toContain('Test (apps/cli, shard 2)')
+    const reads = records(observed, 'read-ci-once')
+    expect(reads.map((r) => r.conclusion)).toEqual(['red', 'green'])
+    expect(reads[1]?.requiredCiIdentity).toMatchObject({ runId: 9, runAttempt: 2 })
+  })
+
+  test('a recognized setup failure pauses for the Operator with the job, URL and diagnostic, and no Developer turn', async () => {
+    const observed = await runV2('claude', {
+      readyTests: READY_CI,
+      stagedBody: PLAN_BODY,
+      requiredCi: [
+        {
+          state: 'red',
+          runId: 1,
+          runUrl: 'https://github.com/o/r/actions/runs/1',
+          failures: [
+            {
+              job: 'Sandbox conformance (Linux)',
+              jobId: 12,
+              url: 'https://github.com/o/r/actions/runs/1/job/12',
+              step: 'Install the Linux sandbox tools',
+              kind: 'infrastructure',
+              diagnostic: 'the setup step "Install the Linux sandbox tools" failed'
+            }
+          ]
+        }
+      ]
+    })
+    expect(observed.outcome).toBe('pause:infrastructure')
+    expect(observed.spawns.developer).toBe(1)
+    const [ci] = records(observed, 'read-ci-once')
+    expect(ci?.decision?.detail).toContain('Sandbox conformance (Linux)')
+    expect(ci?.decision?.detail).toContain('https://github.com/o/r/actions/runs/1/job/12')
+    expect(ci?.decision?.detail).toContain('Install the Linux sandbox tools')
+    expect(ci?.decision?.detail).toContain('nothing was rerun')
+  })
+
+  test('a queue that expired pauses distinctly from a code failure', async () => {
+    const observed = await runV2('claude', {
+      readyTests: READY_CI,
+      stagedBody: PLAN_BODY,
+      requiredCi: [
+        {
+          state: 'stalled',
+          bound: 'queue',
+          job: 'Test (shared packages)',
+          jobId: 3,
+          url: null,
+          detail: 'the job Test (shared packages) has waited over 10 minutes for a runner'
+        }
+      ]
+    })
+    expect(observed.outcome).toBe('pause:infrastructure')
+    expect(observed.spawns.developer).toBe(1)
+    expect(records(observed, 'read-ci-once')[0]?.stalled).toBe('queue')
+  })
+
+  test('another required check failing is still sent back even when the test check passed', async () => {
+    const observed = await runV2('claude', { readyTests: READY_CI, stagedBody: PLAN_BODY, ci: ['red', 'green'] })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.prompts.developer[1]).toContain(`CI is red on pull request #${PR}`)
+  })
+
+  test('a restart after the deferred ready push keeps its CI obligation: no second ready push, the strict read completes it', async () => {
+    const observed = await runV2('claude', {
+      readyTests: READY_CI,
+      stagedBody: PLAN_BODY,
+      restartAfter: { step: 'ready-push', beforeResume: () => {} }
+    })
+    expect(observed.driverLegs).toBe(2)
+    expect(observed.outcome).toBe('completed')
+    expect(observed.world.readyDeferrals).toEqual([true])
+    expect(observed.world.requiredCiReads).toHaveLength(1)
+  })
+})
+
+describe('a carried-approval merge on a deferred run', () => {
+  test('the driver obtains the explicit-command receipts on the merge head itself, with no Developer receipt turn, and the suite stays deferred', async () => {
+    const { scenario, merged } = approvedThenConflicting(KEPT_BOTH, {
+      readyTests: READY_CI,
+      // The approved Test Plan the run staged when it first opened the pull request.
+      after: {
+        'reconcile-external-state': (world) => {
+          world.staged = { title: 'Feat(sample): Do the thing', body: PLAN_BODY }
+        }
+      }
+    })
+    const observed = await runV2('claude', scenario)
+    expect(observed.outcome).toBe('completed')
+    expect(carries(observed)).toEqual(['carry'])
+    // One Developer turn: the merge itself. No reviewer, and no turn spent writing receipts.
+    expect(observed.spawns.developer).toBe(1)
+    expect(observed.spawns['code-reviewer']).toBe(0)
+    expect(observed.world.readyDeferrals).toEqual([true])
+    expect(observed.world.explicitRuns).toEqual([{ head: merged[0] as string, commands: EXPLICIT }])
+    expect(observed.world.requiredCiReads).toEqual(merged)
+    expect(observed.published).toEqual([])
+  })
+})

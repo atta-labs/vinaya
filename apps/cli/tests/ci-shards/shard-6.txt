@@ -58,3 +58,5 @@ tests/lib/dev-review-loop/inproc-5.test.ts
 tests/lib/task-tools/engine-runner-routing.test.ts
 tests/conformance/dev-review-log-parity.test.ts
 tests/lib/dispatch/claude-sandbox-dir.test.ts
+tests/lib/pre-push-ready-policy.test.ts
+tests/lib/ready-ci-workflow.test.ts

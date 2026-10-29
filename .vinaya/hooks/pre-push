@@ -36,6 +36,16 @@ fi
 # Ring 0 (O6): typecheck, then only the test files the real import graph
 # says the changed files could affect.
 bunx turbo typecheck --affected || exit 1
+# A version-2 run's ready push, or its driver-owned repair push on its own
+# open pull request, defers the selected tests to required current-head CI
+# when the default branch opts in (prePush.readyTests) and the run's live
+# driver marked this push. Every check above has already run; the selector,
+# the test run and the test cache below do not. Anything else is "local".
+VINAYA_READY_TESTS="$(bun apps/cli/src/lib/pre-push-ready-policy.ts)" || exit 1
+if [ "$VINAYA_READY_TESTS" = "deferred" ]; then
+  echo "vinaya pre-push: tests deferred to required CI — local checks passed; the selected tests run in the required CI check on this head"
+  exit 0
+fi
 VINAYA_SELECTED_TESTS="$(bun apps/cli/src/lib/pre-push-select-tests.ts)"
 if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # A git hook's own invoking git sets GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE

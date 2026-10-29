@@ -1,5 +1,15 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -2004,5 +2014,94 @@ exit 1
       rmSync(dir, { recursive: true, force: true })
       rmSync(binDir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('prReportCommand on a head whose ready push deferred its tests to required CI', () => {
+  class DeferredExit extends Error {
+    constructor(public code: number | undefined) {
+      super(`process.exit(${code})`)
+    }
+  }
+
+  /** Runs `pr report --write <body>` in a fresh repository; returns the exit code, stderr and whether the sentinel command ran. */
+  async function reportOn(opts: { body: (sentinel: string) => string; record?: boolean }) {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-deferred-'))
+    const sentinel = join(mkdtempSync(join(tmpdir(), 'vinaya-pr-report-deferred-sentinel-')), 'ran')
+    const originalCwd = process.cwd()
+    const originalExit = process.exit
+    const originalError = console.error
+    const saved = { PR_BODY: process.env.PR_BODY, BRANCH: process.env.BRANCH }
+    const errors: string[] = []
+    let code: number | undefined
+    try {
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+      git('init', '-q', '-b', 'task/issue-1')
+      git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init')
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+      git('update-ref', 'refs/remotes/origin/main', head)
+      if (opts.record) {
+        mkdirSync(join(dir, '.git', 'vinaya'), { recursive: true })
+        writeFileSync(
+          join(dir, '.git', 'vinaya', 'ready-tests-deferred.json'),
+          JSON.stringify({
+            version: 1,
+            kind: 'ready',
+            head,
+            branch: 'task/issue-1',
+            runId: 'r',
+            workflow: '.github/workflows/ci.yml',
+            check: 'Vinaya CI',
+            recordedAt: 'now'
+          })
+        )
+      }
+      const bodyPath = join(dir, 'body.md')
+      writeFileSync(bodyPath, opts.body(sentinel))
+      process.chdir(dir)
+      process.exit = ((c?: number) => {
+        throw new DeferredExit(c)
+      }) as never
+      console.error = (...args: unknown[]) => void errors.push(args.join(' '))
+      try {
+        await prReportCommand(['--write', bodyPath], { gateRunner: () => PASSING_GATES })
+      } catch (err) {
+        if (!(err instanceof DeferredExit)) throw err
+        code = err.code
+      }
+      return { code, stderr: errors.join('\n'), ran: existsSync(sentinel) }
+    } finally {
+      process.exit = originalExit
+      console.error = originalError
+      process.chdir(originalCwd)
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  const plan = (lines: string[]) => ['## Test Plan', '', '```', ...lines, '```', ''].join('\n')
+  const ciLine = 'required-ci "Vinaya CI" .github/workflows/ci.yml → passes in required CI'
+  const touch = (sentinel: string) => `bun -e 'require("fs").writeFileSync(${JSON.stringify(sentinel)}, "x")' → exits 0`
+
+  it('a required-CI line with no deferred-tests record for the head refuses before any command spawns', async () => {
+    const result = await reportOn({ body: (s) => plan([ciLine, touch(s)]) })
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('no deferred-tests record names head')
+    expect(result.ran).toBe(false)
+  })
+
+  it('a deferred head whose body dropped the required-CI line refuses, so an edited body never runs its commands', async () => {
+    const result = await reportOn({ record: true, body: (s) => plan([touch(s)]) })
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('must carry exactly one')
+    expect(result.ran).toBe(false)
+  })
+
+  it('an ordinary body on an ordinary head still runs its Test Plan commands', async () => {
+    const result = await reportOn({ body: (s) => plan([touch(s)]) })
+    expect(result.ran).toBe(true)
   })
 })

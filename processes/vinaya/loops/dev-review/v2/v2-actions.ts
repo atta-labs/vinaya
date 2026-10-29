@@ -10,6 +10,7 @@ import { discardHeldVerdicts } from '../../../../../apps/cli/src/lib/dev-review-
 import {
   checkPremiseAtHead,
   describeFailingCheckRun,
+  fetchCiConclusion,
   fetchFailingCheckRuns,
   fetchSettledCiConclusion
 } from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
@@ -23,6 +24,13 @@ import {
 import type { SelectionNote } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import { manifestDigest } from '../../../../../apps/cli/src/lib/review-result'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
+import {
+  isReadyCiCommand,
+  readyCiPlanCommand,
+  type ReadyTestsPolicy
+} from '../../../../../apps/cli/src/lib/pre-push-ready-policy'
+import { agentCommandText, extractAgentCommandLines } from '../../../../../apps/cli/src/lib/pr-report-engine'
+import type { ClassifiedFailure, RequiredCiRead } from './ci-recovery'
 import { readUnpushedWorkDetail } from '../../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import { spawnSync } from 'node:child_process'
 import { relative, resolve, sep } from 'node:path'
@@ -100,8 +108,34 @@ export interface ReadyGateResult {
   limitMinutes?: number
   /** How many test files the run had selected when it was stopped, when the selector's note says. */
   selectedCount?: number
-  /** `none` when the repository runs no local tests (no pre-push hook, or no declared test runner). */
-  localTests?: 'none'
+  /**
+   * `none` when the repository runs no local tests (no pre-push hook, or no declared test runner); `deferred` when the
+   * hook ran every cheap gate and deferred the selected tests to required current-head CI (`requiredCi`).
+   */
+  localTests?: 'none' | 'deferred'
+  /** The required check a deferred push owes (set with `localTests: 'deferred'`). */
+  requiredCi?: { workflow: string; check: string }
+}
+
+/** One explicit Test Plan command the driver ran (or reused a receipt for) at the publication boundary. */
+export interface ExplicitCommandResult {
+  command: string
+  outcome: 'passed' | 'failed' | 'timed-out'
+  output: string
+  /** Set when a genuine green receipt at this head and tree was reused instead of running the command. */
+  reusedFrom?: string
+  exitCode?: number | null
+  wallMs?: number
+  limitMs?: number
+}
+
+/** The explicit-command phase of a deferred ready push. */
+export interface ExplicitCommandsResult {
+  /** `drift`: the head or tree changed during verification, so nothing may publish. */
+  outcome: 'passed' | 'failed' | 'timed-out' | 'drift'
+  results: ExplicitCommandResult[]
+  wallMs: number
+  detail?: string
 }
 
 /** The staged pull request: what the Developer's `open_pull_request` saved while no pull request may open yet. */
@@ -112,8 +146,28 @@ export interface StagedPullRequest {
 
 /** The forge and process functions version 2's steps call; the runner supplies the live ones, a test its fakes. */
 export interface V2Functions {
-  /** Runs the repository's pre-push hook in its ready mode on `head`. */
-  runReadyGate: (input: { head: string; signal?: AbortSignal }) => Promise<ReadyGateResult> | ReadyGateResult
+  /** Runs the repository's pre-push hook in its ready mode on `head`; `deferTests` asks it to defer to required CI. */
+  runReadyGate: (input: {
+    head: string
+    signal?: AbortSignal
+    deferTests?: boolean
+  }) => Promise<ReadyGateResult> | ReadyGateResult
+  /** The default branch's ready-tests policy; throws when the trusted read fails. Absent: local tests. */
+  readyTestsPolicy?: () => ReadyTestsPolicy
+  /** The read-only loop-baseline guard an opted-in publication passes before any expensive work. */
+  checkReadyBaseline?: () => { ok: true } | { ok: false; reason: string }
+  /** The ready push's deadline in milliseconds; the explicit-command phase shares it. */
+  readyDeadlineMs?: () => number
+  /** Runs the approved explicit Test Plan commands on `head`, outside the worker sandbox, through the report engine's receipts. */
+  runExplicitCommands?: (input: {
+    head: string
+    body: string
+    commands: readonly string[]
+    signal?: AbortSignal
+    deadlineAt: number
+  }) => Promise<ExplicitCommandsResult> | ExplicitCommandsResult
+  /** The strict required-CI read for a deferred head (`ci-recovery.ts`). */
+  readRequiredCi?: (input: { head: string; workflow: string; check: string; now: number }) => RequiredCiRead
   /** The staged pull request, or null when the Developer staged none. */
   stagedPullRequest: () => StagedPullRequest | null
   /** The open pull request for the task branch, or null. */
@@ -148,6 +202,8 @@ export interface V2Functions {
   readCheckExcerpt?: (jobId: number, max: number) => string | null
   /** Milliseconds since an arbitrary origin, for the time a step spends. */
   now?: () => number
+  /** The wall clock the provider's own timestamps are compared against (the CI queue and execution bounds). */
+  wallNow?: () => number
   /**
    * The default branch's tip, fetched by the controller into the task worktree's object store, or null when it cannot
    * be read. A conflict's repair is proven against it, so a tip that cannot be read proves no repair.
@@ -302,6 +358,95 @@ function failingTestLines(gate: ReadyGateResult): string {
 }
 
 /**
+ * The approved Test Plan: the staged pull-request body the reviewers judged, never the live body (an edit there grants
+ * no command authority). Null when it cannot be read.
+ */
+function approvedTestPlanBody(fns: V2Functions): string | null {
+  return safeRead(fns.stagedPullRequest)?.body ?? null
+}
+
+/**
+ * The explicit commands of a Test Plan: every command line but the automatic selected-suite line (a bare test-run
+ * line, which the ready push's own selection replaces, or the required-CI line a deferred head carries). A
+ * `cd`-wrapped test, a build or any other verification is explicit, and needs its own genuine receipt.
+ */
+export function explicitTestPlanCommands(body: string): string[] {
+  return extractAgentCommandLines(body)
+    .filter((line) => !isTestRunLine(line))
+    .map(agentCommandText)
+    .filter((command) => command.length > 0 && !isReadyCiCommand(command))
+}
+
+/** Text in a fence no backtick run inside it can close. */
+const fenced = (text: string): string => {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length))
+  const fence = '`'.repeat(Math.max(3, longest + 1))
+  return `${fence}\n${text}\n${fence}`
+}
+
+/**
+ * Routes an explicit-command phase that did not pass: a failing command goes back to the Developer with its command
+ * and output, through the ready push's own failure count; a timeout pauses, since it proved nothing about the code; a
+ * head or tree that moved during verification publishes nothing and sends the Developer back to publish its work.
+ */
+function explicitCommandsRefused(
+  task: TaskInput,
+  results: Results,
+  head: string,
+  explicit: ExplicitCommandsResult
+): { exitCode: number; stdout: string } {
+  const last = explicit.results.at(-1)
+  const summary = explicit.results.map(({ command, outcome }) => ({ command, outcome }))
+  if (explicit.outcome === 'drift')
+    return sendBackAfterApproval(
+      task,
+      results,
+      'ready-refused',
+      `both reviewers approved ${head}, but the worktree changed while the driver ran the Test Plan's commands (${explicit.detail ?? 'head or tree moved'}), so nothing was published. Commit and publish your work with publish_changes, then finish your turn.`,
+      { outcome: 'refused', head, explicit: summary, events: [] }
+    )
+  if (explicit.outcome === 'timed-out') {
+    const detail = `the ready push of ${head} stopped the Test Plan command \`${last?.command ?? '(unknown)'}\` at its limit; the approved code was not changed. Shorten the command, raise the limit, or run it another way, then resume.`
+    pauseThrough(task, 'ready-push', { reason: 'ready_push_failed', detail })
+    return {
+      exitCode: BACK,
+      stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+        readyPushFailures: latestRecord(results)?.readyPushFailures ?? 0,
+        decision: { type: 'pause', reason: 'ready_push_failed', detail },
+        outcome: 'timed-out',
+        head,
+        explicit: summary,
+        events: []
+      })
+    }
+  }
+  const failures = (latestRecord(results)?.readyPushFailures ?? 0) + 1
+  if (failures >= READY_PUSH_FAILURE_LIMIT) {
+    ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, task.reviewRound())
+    const detail = `the ready push failed ${failures} consecutive times; the last failing Test Plan command: \`${last?.command ?? '(unknown)'}\``
+    pauseThrough(task, 'ready-push', { reason: 'ready_push_failed', detail })
+    return {
+      exitCode: BACK,
+      stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+        readyPushFailures: failures,
+        decision: { type: 'pause', reason: 'ready_push_failed', detail },
+        outcome: 'refused',
+        head,
+        explicit: summary,
+        events: []
+      })
+    }
+  }
+  return sendBackAfterApproval(
+    task,
+    results,
+    'ready-refused',
+    `both reviewers approved ${head}, but the Test Plan command \`${last?.command ?? '(unknown)'}\` failed when the driver ran it on that head (exit ${last?.exitCode ?? 'none'}). Its output (tail, untrusted):\n\n${fenced(last?.output ?? '')}\n\nFix the code or the command, run it yourself once on your fix, publish with publish_changes, then finish your turn.`,
+    { readyPushFailures: failures, outcome: 'refused', head, explicit: summary, events: [] }
+  )
+}
+
+/**
  * The ready push: on the approved head, the repository's pre-push hook in its ready mode runs the selected tests
  * (only the failed ones plus what the fix affects, after a refused one). The approved head must already be on the
  * remote — every commit was pushed as a storage push — or the Developer is sent back to publish it.
@@ -334,10 +479,86 @@ export async function readyPush(
       { outcome: 'refused', head, events: [] }
     )
   }
+  // The ready-tests policy, read from the default branch for this head and recorded with it, so a restart keeps it.
+  let policy: ReadyTestsPolicy = { mode: 'local' }
+  if (fns.readyTestsPolicy) {
+    try {
+      policy = fns.readyTestsPolicy()
+    } catch (error) {
+      const detail = `the default branch's ready-tests policy could not be read, so the ready push of ${head} cannot tell whether its tests run locally or in required CI: ${error instanceof Error ? error.message : String(error)}. Nothing ran; resume once the forge read works.`
+      pauseThrough(task, 'ready-push', { reason: 'infrastructure', detail })
+      return {
+        exitCode: BACK,
+        stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+          readyPushFailures: latestRecord(results)?.readyPushFailures ?? 0,
+          decision: { type: 'pause', reason: 'infrastructure', detail },
+          outcome: 'policy-unreadable',
+          head,
+          events: []
+        })
+      }
+    }
+  }
+  const deferTests = policy.mode === 'ci'
+  if (deferTests) {
+    // Read-only, before any expensive work: a stale loop baseline is the Developer's own reviewed refresh.
+    const baseline = fns.checkReadyBaseline?.() ?? { ok: true as const }
+    if (!baseline.ok)
+      return sendBackAfterApproval(
+        task,
+        results,
+        'ready-refused',
+        `both reviewers approved ${head}, but ${baseline.reason}`,
+        {
+          outcome: 'baseline-refused',
+          head,
+          events: []
+        }
+      )
+  }
   const now = nowOf(fns)
   const started = now()
-  const gate = await fns.runReadyGate({ head, ...(context.signal ? { signal: context.signal } : {}) })
+  const gate = await fns.runReadyGate({
+    head,
+    ...(context.signal ? { signal: context.signal } : {}),
+    ...(deferTests ? { deferTests: true } : {})
+  })
   const wallMs = gate.wallMs > 0 ? gate.wallMs : Math.max(0, now() - started)
+  const deferred = gate.passed && gate.localTests === 'deferred' && gate.requiredCi !== undefined
+  // Deferred: the approved explicit Test Plan commands run now, through the driver, on the head being published.
+  let explicit: ExplicitCommandsResult | null = null
+  if (deferred) {
+    const approved = approvedTestPlanBody(fns)
+    if (approved === null) {
+      const detail = `the ready push of ${head} deferred its selected tests, but the approved Test Plan (the staged pull-request body) could not be read, so its explicit commands cannot run; the live body grants no command authority. Restore the staged body, then resume.`
+      pauseThrough(task, 'ready-push', { reason: 'infrastructure', detail })
+      return {
+        exitCode: BACK,
+        stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+          readyPushFailures: latestRecord(results)?.readyPushFailures ?? 0,
+          decision: { type: 'pause', reason: 'infrastructure', detail },
+          outcome: 'plan-unreadable',
+          head,
+          events: []
+        })
+      }
+    }
+    const commands = explicitTestPlanCommands(approved)
+    if (commands.length > 0 && fns.runExplicitCommands) {
+      const deadlineMs = fns.readyDeadlineMs?.() ?? DEFAULT_READY_PUSH_TIMEOUT_MINUTES * 60_000
+      explicit = await fns.runExplicitCommands({
+        head,
+        body: approved,
+        commands,
+        deadlineAt: started + deadlineMs,
+        ...(context.signal ? { signal: context.signal } : {})
+      })
+      fns.log?.(
+        `ready push: explicit Test Plan commands ${explicit.outcome} in ${explicit.wallMs} ms (${commands.length} command(s))`
+      )
+    }
+  }
+  if (explicit !== null && explicit.outcome !== 'passed') return explicitCommandsRefused(task, results, head, explicit)
   const selected = gate.selection?.selected.length ?? 0
   const failedCount = gate.failed === 'all' ? Math.max(selected, 1) : gate.failed.length
   const events = [
@@ -373,6 +594,19 @@ export async function readyPush(
         head,
         selection: gate.selection,
         ...(gate.localTests ? { localTests: gate.localTests } : {}),
+        // The CI obligation a deferred head carries, bound to it here so a restarted run cannot forget it.
+        ...(deferred && gate.requiredCi ? { requiredCi: { ...gate.requiredCi, head } } : {}),
+        ...(explicit
+          ? {
+              explicit: explicit.results.map(({ command, outcome, reusedFrom, wallMs: ms }) => ({
+                command,
+                outcome,
+                ...(reusedFrom ? { reusedFrom } : {}),
+                ...(ms !== undefined ? { wallMs: ms } : {})
+              })),
+              explicitWallMs: explicit.wallMs
+            }
+          : {}),
         events
       })
     }
@@ -487,7 +721,7 @@ export async function openPullRequestStep(
   const command = readyGateCommand(results, task.worktreePath)
   const staged =
     stagedBody !== null && command !== null
-      ? { ...stagedBody, body: withReadyTestCommand(stagedBody.body, command) }
+      ? { ...stagedBody, body: withReadyTestCommand(stagedBody.body, command.command, command.observable) }
       : stagedBody
   if (staged === null) {
     return sendBackAfterApproval(
@@ -558,18 +792,34 @@ export function readyTestPlanCommand(files: readonly string[], worktreePath: str
 }
 
 /** The test command the passed ready push ran (its selection, worktree-relative), or null when it ran none. */
-function readyGateCommand(results: Results, worktreePath: string): string | null {
+function readyGateCommand(results: Results, worktreePath: string): { command: string; observable: string } | null {
   const ready = results['ready-push']
   if (!ready || !('stdout' in ready)) return null
   try {
-    const selected = (JSON.parse(String(ready.stdout)) as { selection?: SelectionNote | null }).selection?.selected
-    return selected && selected.length > 0 ? readyTestPlanCommand(selected, worktreePath) : null
+    const record = JSON.parse(String(ready.stdout)) as {
+      selection?: SelectionNote | null
+      requiredCi?: { workflow: string; check: string } | null
+    }
+    // A deferred head's automatic line names the required check its selected tests run in.
+    if (record.requiredCi)
+      return {
+        command: readyCiPlanCommand(record.requiredCi),
+        observable: 'the selected tests pass in the required current-head CI check'
+      }
+    const selected = record.selection?.selected
+    return selected && selected.length > 0
+      ? { command: readyTestPlanCommand(selected, worktreePath), observable: 'every selected test file passes' }
+      : null
   } catch {
     return null
   }
 }
 
-const isTestRunLine = (line: string): boolean => /^(bun\s+)?test(\s|$)/.test(line.split('→')[0]?.trim() ?? '')
+/** The automatic selected-suite line of a Test Plan: a bare test-run line, or a deferred head's required-CI line. */
+const isTestRunLine = (line: string): boolean => {
+  const command = line.split('→')[0]?.trim() ?? ''
+  return /^(bun\s+)?test(\s|$)/.test(command) || isReadyCiCommand(command)
+}
 
 /**
  * The staged body with its Test Plan's test-run line set to `command`, the ready push's own: the Evidence write then
@@ -577,7 +827,11 @@ const isTestRunLine = (line: string): boolean => /^(bun\s+)?test(\s|$)/.test(lin
  * Test Plan heading is the command list; its test-run lines become this one line, and every other command stays. A
  * body with no such block is returned unchanged.
  */
-export function withReadyTestCommand(body: string, command: string): string {
+export function withReadyTestCommand(
+  body: string,
+  command: string,
+  observable = 'every selected test file passes'
+): string {
   const lines = body.split('\n')
   const heading = lines.findIndex((line) => /^#{1,6}\s+test plan\b/i.test(line.trim()))
   if (heading === -1) return body
@@ -594,12 +848,7 @@ export function withReadyTestCommand(body: string, command: string): string {
   const close = lines.findIndex((line, i) => i > open && line.trim().startsWith('```'))
   if (close === -1) return body
   const kept = lines.slice(open + 1, close).filter((line) => !isTestRunLine(line))
-  return [
-    ...lines.slice(0, open + 1),
-    `${command} → every selected test file passes`,
-    ...kept,
-    ...lines.slice(close)
-  ].join('\n')
+  return [...lines.slice(0, open + 1), `${command} → ${observable}`, ...kept, ...lines.slice(close)].join('\n')
 }
 
 /** Records how the opening routed; the decision on this step reads that step's own exit result. */
@@ -623,6 +872,9 @@ export async function readCiOnce(
   const loop = loopOf(task, results)
   const open = safeRead(fns.findOpenPullRequest)
   if (open === null) throw new Error(`read-ci-once found no open pull request for branch ${task.branch}`)
+  // A head whose ready push deferred its selected tests owes the strict required-CI read.
+  const owed = requiredCiOwed(results)
+  if (owed !== null && fns.readRequiredCi) return readRequiredCiStep(task, context, open.number, owed)
   const now = nowOf(fns)
   const started = now()
   // The forge gates' read, given this step's own earlier record and no local gate to skip on.
@@ -672,6 +924,186 @@ export async function readCiOnce(
     'ci-red',
     `CI is red on pull request #${open.number} at ${head}. Failing check-run(s): ${ci.failingChecks.length > 0 ? ci.failingChecks.join(', ') : '(unknown)'}. Fix the failing check(s), commit, and publish the fix with publish_changes on this SAME branch — the pull request is open, so this push runs the selected tests.${failureExcerptsOnHead(task, fns, head)}`,
     { ...ci, events }
+  )
+}
+
+/** The required CI the ready push's record binds to its head, or null when its tests ran locally. */
+export function requiredCiOwed(results: Results): { workflow: string; check: string; head: string } | null {
+  const ready = results['ready-push']
+  if (!ready || !('stdout' in ready)) return null
+  try {
+    const record = JSON.parse(String(ready.stdout)) as {
+      requiredCi?: { workflow?: unknown; check?: unknown; head?: unknown } | null
+    }
+    const owed = record.requiredCi
+    return owed && typeof owed.workflow === 'string' && typeof owed.check === 'string' && typeof owed.head === 'string'
+      ? { workflow: owed.workflow, check: owed.check, head: owed.head }
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** One failure, as the send-back and pause details name it. */
+const describeFailure = (failure: ClassifiedFailure): string =>
+  `${failure.job} (job ${failure.jobId}${failure.step ? `, step "${failure.step}"` : ''}${failure.url ? `, ${failure.url}` : ''}${failure.diagnostic ? `: ${failure.diagnostic}` : ''})`
+
+/**
+ * The CI read of a head whose ready push deferred its selected tests (version 2 only). Polled within the gate poll
+ * budget, each poll reads two things: the strict required-CI verdict (`readRequiredCi` — the configured workflow's
+ * latest attempt for exactly this head, its required check completed `success`) and the ordinary mechanical
+ * conclusion, so another required check's failure is never hidden behind a green test check. A completed failing job
+ * is reacted to at once. Code failures (assertion, lint, typecheck, policy, security) go back to the Developer;
+ * recognized setup or provider failures, unclassified failures and a stalled queue or run pause for the Operator with
+ * the head, job, URL and diagnostic — nothing is rerun and no Developer turn is spent. Green only on both; pending
+ * past the budget pauses, and never reads green. The time bounds read the provider's own timestamps, and the
+ * obligation itself sits in the ready push's checkpointed record, so a restarted run resumes the same read.
+ */
+async function readRequiredCiStep(
+  task: TaskInput,
+  context: ActionContext,
+  pr: number,
+  owed: { workflow: string; check: string; head: string }
+): Promise<{ exitCode: number; stdout: string }> {
+  const { results } = context
+  const fns = v2Of(task)
+  const loop = loopOf(task, results)
+  const now = nowOf(fns)
+  const started = now()
+  const head = worktreeHeadOf(task)
+  const remote = safeRead(task.remoteHead)
+  const base = { head: owed.head, requiredCi: owed }
+  if (head !== owed.head || remote !== owed.head)
+    return sendBackAfterApproval(
+      task,
+      results,
+      'unpushed',
+      `The deferred head ${owed.head} is not the published head (worktree ${head ?? 'unreadable'}, remote ${remote ?? 'nothing'}), so its required CI cannot complete the run. Publish your work with publish_changes on this SAME branch.`,
+      { ...base, conclusion: 'unpushed', failingChecks: [] }
+    )
+  const pause = (detail: string, extra: Record<string, unknown>) => {
+    pauseThrough(task, 'read-ci-once', { reason: 'infrastructure', detail })
+    return {
+      exitCode: BACK,
+      stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+        decision: { type: 'pause', reason: 'infrastructure', detail },
+        ...base,
+        conclusion: 'pending',
+        failingChecks: [],
+        ...extra,
+        events: [
+          ciResultReadEvent(loop, {
+            pr,
+            head: owed.head,
+            conclusion: 'pending',
+            failingChecks: [],
+            waitMs: Math.max(0, now() - started)
+          })
+        ]
+      })
+    }
+  }
+  const readGeneric = task.bound?.fetchCiConclusion ?? fetchCiConclusion
+  const poll = gatePollOf(task)
+  const wallNow = fns.wallNow ?? (() => Date.now())
+  let last = 'no read completed'
+  for (let attempt = 1; attempt <= poll.gatePollMaxAttempts; attempt++) {
+    const strict = fns.readRequiredCi!({ ...owed, now: wallNow() })
+    const generic = safeRead(() => readGeneric(owed.head)) ?? 'pending'
+    if (strict.state === 'red') {
+      const code = strict.failures.filter((failure) => failure.kind === 'code')
+      if (code.length === 0) {
+        const named = strict.failures.map(describeFailure).join('; ')
+        return pause(
+          `the required check ${owed.check} failed on ${owed.head} for a reason the driver reads as ${strict.failures.some((f) => f.kind === 'infrastructure') ? 'a CI setup or provider failure' : 'unclassified'}: ${named}. Run ${strict.runUrl ?? strict.runId}. No Developer turn was sent and nothing was rerun; rerun the job or fix the runner, then resume — only a successful run on this head completes the task.`,
+          { failures: strict.failures, runId: strict.runId }
+        )
+      }
+      const failingChecks = code.map(describeFailure)
+      return sendBackAfterApproval(
+        task,
+        results,
+        'ci-red',
+        `The required check ${owed.check} is red on pull request #${pr} at ${owed.head}: the selected tests (deferred from the ready push) failed in CI. Failing job(s): ${failingChecks.join(', ')}. Fix them, commit, and publish the fix with publish_changes on this SAME branch.${failureExcerptsOnHead(task, fns, owed.head)}`,
+        {
+          ...base,
+          conclusion: 'red',
+          failingChecks,
+          failures: strict.failures,
+          events: [
+            ciResultReadEvent(loop, {
+              pr,
+              head: owed.head,
+              conclusion: 'red',
+              failingChecks,
+              waitMs: Math.max(0, now() - started)
+            })
+          ]
+        }
+      )
+    }
+    if (strict.state === 'stalled')
+      return pause(
+        `${strict.detail} (${strict.url ?? `job ${strict.jobId}`}); the ${strict.bound === 'queue' ? 'queue' : 'execution'} bound is not a code failure. No Developer turn was sent and nothing was rerun; resolve the runner, then resume — only a successful run on this head completes the task.`,
+        { stalled: strict.bound, jobId: strict.jobId }
+      )
+    if (generic === 'red') {
+      // Another required mechanical check failed: the ordinary CI send-back, with its failing checks.
+      const failingChecks =
+        safeRead(() =>
+          (task.bound?.fetchFailingCheckRuns ?? fetchFailingCheckRuns)(owed.head).map(describeFailingCheckRun)
+        ) ?? []
+      return sendBackAfterApproval(
+        task,
+        results,
+        'ci-red',
+        `CI is red on pull request #${pr} at ${owed.head}. Failing check-run(s): ${failingChecks.length > 0 ? failingChecks.join(', ') : '(unknown)'}. Fix the failing check(s), commit, and publish the fix with publish_changes on this SAME branch.${failureExcerptsOnHead(task, fns, owed.head)}`,
+        {
+          ...base,
+          conclusion: 'red',
+          failingChecks,
+          events: [
+            ciResultReadEvent(loop, {
+              pr,
+              head: owed.head,
+              conclusion: 'red',
+              failingChecks,
+              waitMs: Math.max(0, now() - started)
+            })
+          ]
+        }
+      )
+    }
+    if (strict.state === 'green' && generic === 'green') {
+      const previous = latestRecord(results)
+      return {
+        exitCode: FORWARD,
+        stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+          counters: previous?.counters ?? NO_COUNTERS,
+          decision: { type: 'ci_green' },
+          ...base,
+          conclusion: 'green',
+          failingChecks: [],
+          // The run and check that satisfied the required tests, kept with the current head.
+          requiredCiIdentity: strict.identity,
+          events: [
+            ciResultReadEvent(loop, {
+              pr,
+              head: owed.head,
+              conclusion: 'green',
+              failingChecks: [],
+              waitMs: Math.max(0, now() - started)
+            })
+          ]
+        })
+      }
+    }
+    last = strict.state === 'green' ? `${owed.check} passed; other checks are ${generic}` : strict.detail
+    if (attempt < poll.gatePollMaxAttempts) await poll.sleep(poll.gatePollIntervalMs)
+  }
+  return pause(
+    `the required CI on ${owed.head} did not complete within the poll budget (${last}); pending never counts as the tests passing. Resume once it completes.`,
+    {}
   )
 }
 
@@ -1105,7 +1537,10 @@ export const V2_ACTION_BINDINGS: Readonly<Record<string, V2Binding>> = {
   'vinaya.v2-classify-ready-push': { adapts: [], build: () => classifyReadyPush },
   'vinaya.v2-open-pull-request': { adapts: [], build: (task) => (context) => openPullRequestStep(task, context) },
   'vinaya.v2-classify-pr-opened': { adapts: [], build: () => classifyPullRequestOpened },
-  'vinaya.v2-read-ci-once': { adapts: [readForgeCi], build: (task) => (context) => readCiOnce(task, context) },
+  'vinaya.v2-read-ci-once': {
+    adapts: [readForgeCi, fetchCiConclusion, fetchFailingCheckRuns],
+    build: (task) => (context) => readCiOnce(task, context)
+  },
   'vinaya.v2-classify-ci-result': { adapts: [], build: () => classifyCiResult }
 }
 

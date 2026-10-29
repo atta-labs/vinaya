@@ -851,6 +851,19 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
 }`
   },
   {
+    key: 'prePush.readyTests',
+    type: "{ mode: 'ci', workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' } (optional)",
+    semantics: [
+      "Opts a self-hosting repository's version-2 ready push, and the driver-owned repair pushes on its own open pull request, into required-CI testing: those pushes keep lint, every registered local check and the affected typecheck, and defer the automatic selected test suite to the named required check on the approved current head. The run reaches ready-for-merge only once that check, in that workflow's run for that head, completed successfully.",
+      'Read from the default branch only — never from a task branch, a local override or an environment value — and a failed read refuses rather than deferring. Absent means local tests. The one supported value is the pair shown; any other value is refused. Approved explicit Test Plan commands still run locally, through the driver, on the head being published.'
+    ],
+    example: `{
+  "prePush": {
+    "readyTests": { "mode": "ci", "workflow": ".github/workflows/ci.yml", "check": "Vinaya CI" }
+  }
+}`
+  },
+  {
     key: 'report',
     type: 'object (optional)',
     semantics: [

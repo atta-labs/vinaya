@@ -272,10 +272,14 @@ jobs:
   # identical empty-stderr signature, each passing standalone. That finding
   # was about CROSS-PACKAGE concurrency, not about sharding apps/cli's own
   # suite by file — unrelated axis, left exactly as it was.
+  #
+  # No docs-only skip: a documentation-only pull request runs this job too
+  # (its selection decides what that costs), so `aggregate` can require it to
+  # succeed — a version-2 run that defers its selected tests to this required
+  # check never completes on a skipped test job.
   test-shared-packages:
     name: Test (shared packages)
     needs: build
-    if: needs.build.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -339,11 +343,11 @@ jobs:
   # — the same cwd `turbo` would have run it from, and the same
   # `--timeout=30000` the package's own script passes (`apps/cli/
   # package.json`), so a shard enforces the identical per-test ceiling the
-  # unsharded suite always did.
+  # unsharded suite always did. Like the shared-packages job, it runs on a
+  # documentation-only pull request too: `aggregate` requires it to succeed.
   test-cli:
     name: Test (apps/cli, shard ${{ matrix.shard }})
     needs: build
-    if: needs.build.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -691,6 +695,9 @@ jobs:
   # multiplying the required check every adopter's branch protection
   # already keys on. `if: always()` — this must still run (and
   # fail loudly) when an upstream job fails, never be skipped alongside it.
+  # Every mandatory job — the build, both test jobs and sandbox conformance —
+  # must succeed: failed, cancelled or skipped all refuse. Only the
+  # root-config probe is conditional, so it alone may be skipped.
   aggregate:
     name: Vinaya CI
     needs: [build, test-shared-packages, test-cli, test-cli-config-anchor, sandbox-conformance]
@@ -702,17 +709,23 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Every upstream job succeeded or was correctly skipped (docs-only)
+      - name: Every mandatory job succeeded and the root-config probe succeeded or was skipped
         run: |
-          for result in "${{ needs.build.result }}" "${{ needs.test-shared-packages.result }}" "${{ needs.test-cli.result }}" "${{ needs.test-cli-config-anchor.result }}" "${{ needs.sandbox-conformance.result }}"; do
-            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
-              echo "A required job did not succeed: $result" >&2
+          for result in "${{ needs.build.result }}" "${{ needs.test-shared-packages.result }}" "${{ needs.test-cli.result }}" "${{ needs.sandbox-conformance.result }}"; do
+            if [ "$result" != "success" ]; then
+              echo "A mandatory job did not succeed: $result" >&2
               # The review loop reads this line: this job's only failure is
               # an upstream job's result, whose own log names the cause.
               echo "vinaya-needs: a required job ended $result"
               exit 1
             fi
           done
+          probe="${{ needs.test-cli-config-anchor.result }}"
+          if [ "$probe" != "success" ] && [ "$probe" != "skipped" ]; then
+            echo "The root-config probe did not succeed: $probe" >&2
+            echo "vinaya-needs: a required job ended $probe"
+            exit 1
+          fi
       - name: Report this job's GitHub token budget
         if: failure()
         env:

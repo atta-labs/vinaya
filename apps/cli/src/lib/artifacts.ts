@@ -40,6 +40,7 @@ import type { CreateLabelOp, Op } from './ops.js'
 import { ownVersion } from './own-version.js'
 import { REVIEW_GATE_WORKFLOW_NAME } from './review-gate-check-name.js'
 import { ADOPTER_TEST_RUNNER, NO_LOCAL_TESTS_MARKER } from './pre-push-test-runner.js'
+import { READY_TESTS_DEFERRED_LINE } from './pre-push-ready-policy.js'
 import type { VendoredVinaya } from './self-host.js'
 
 export { type HookDir, TRACKED_HOOK_DIR } from './init-hook-paths.js'
@@ -1656,6 +1657,16 @@ fi
 # Ring 0 (O6): typecheck, then only the test files the real import graph
 # says the changed files could affect.
 bunx turbo typecheck --affected || exit 1
+# A version-2 run's ready push, or its driver-owned repair push on its own
+# open pull request, defers the selected tests to required current-head CI
+# when the default branch opts in (prePush.readyTests) and the run's live
+# driver marked this push. Every check above has already run; the selector,
+# the test run and the test cache below do not. Anything else is "local".
+VINAYA_READY_TESTS="$(${libBinInvocation(selfHost, 'pre-push-ready-policy.ts', 'vinaya-ready-policy')})" || exit 1
+if [ "$VINAYA_READY_TESTS" = "deferred" ]; then
+  echo "${READY_TESTS_DEFERRED_LINE} — local checks passed; the selected tests run in the required CI check on this head"
+  exit 0
+fi
 VINAYA_SELECTED_TESTS="$(${libBinInvocation(selfHost, 'pre-push-select-tests.ts', 'vinaya-select-tests')})"
 if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # A git hook's own invoking git sets GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE
