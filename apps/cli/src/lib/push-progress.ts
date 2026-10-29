@@ -368,6 +368,9 @@ const FILE_HEADER = /^(\S.*\.test\.[a-zA-Z]+):$/
 const SUMMARY_LINE =
   /^(?:\s*\d+ (?:pass|fail|skip|todo|snapshots?|expect\(\) calls?)\b|Ran \d+ tests? across \d+ files?\.)/
 
+/** The head of Bun's end-of-run failure recap, the same line `pre-push-failed-tests.ts` resets on. */
+const FAILURE_RECAP = /^\s*\d+ tests? failed:/
+
 /** A test's result line, with its duration in brackets when Bun printed one. */
 const RESULT_LINE = /^\((pass|fail|skip|todo)\) (.*?)(?: \[(\d+(?:\.\d+)?)(ms|s)\])?$/
 
@@ -385,6 +388,7 @@ export type FileProgress =
 export class BunProgressParser {
   private buffered = ''
   private open: { file: string; failures: string[]; ms: number; unhandled: boolean } | null = null
+  private inRecap = false
 
   /** Feeds a chunk; returns every file whose block it closed. */
   feed(chunk: string): FileProgress[] {
@@ -410,14 +414,23 @@ export class BunProgressParser {
     const header = FILE_HEADER.exec(line)
     if (header?.[1]) {
       this.close(closed)
+      this.inRecap = false
       this.open = { file: header[1], failures: [], ms: 0, unhandled: false }
+      return
+    }
+    // The end-of-run recap (`N tests failed:` then every failing test again) belongs to no file: it closes the open
+    // block, and its repeated lines are never counted against the last file.
+    if (FAILURE_RECAP.test(line)) {
+      this.close(closed)
+      this.inRecap = true
       return
     }
     if (SUMMARY_LINE.test(line)) {
       this.close(closed)
+      this.inRecap = false
       return
     }
-    if (!this.open) return
+    if (!this.open || this.inRecap) return
     const result = RESULT_LINE.exec(line)
     if (result) {
       if (result[1] === 'fail') this.open.failures.push(result[2] ?? '')
@@ -468,6 +481,20 @@ export class TestRunTally {
 // Wording: every progress line the driver log receives
 // ---------------------------------------------------------------------------
 
+/**
+ * A name from a test run, a check or a command as one plain line: every C0 and C1 control character (an escape
+ * sequence's introducer, a carriage return, a newline) becomes a space, so nothing a test or a check names can drive
+ * the terminal that follows the driver log or split one record into two.
+ */
+export function plainText(text: string): string {
+  let out = ''
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0
+    out += code < 0x20 || (code >= 0x7f && code <= 0x9f) ? ' ' : char
+  }
+  return out
+}
+
 /** `850 ms`, `12.3 s`, `4 min 05 s`. */
 export function formatDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return '?'
@@ -487,15 +514,17 @@ const CHECK_MARK: Record<CheckProgressOutcome, string> = {
 
 /** One local check finished. */
 export function checkLine(name: string, outcome: CheckProgressOutcome, ms: number): string {
-  return `push progress: check ${name} ${CHECK_MARK[outcome] ?? outcome}, ${formatDuration(ms)}`
+  return `push progress: check ${plainText(name)} ${CHECK_MARK[outcome] ?? plainText(outcome)}, ${formatDuration(ms)}`
 }
 
 /** One test file closed (or the stream ended inside it). */
 export function testFileLine(file: FileProgress, position: string | null): string {
-  if (file.outcome === 'interrupted') return `test progress: ${file.file} interrupted — outcome unknown`
+  const name = plainText(file.file)
+  if (file.outcome === 'interrupted') return `test progress: ${name} interrupted — outcome unknown`
   const at = position !== null ? `${position} ` : ''
-  const failure = file.outcome === 'fail' && file.firstFailure ? ` — first failing test: ${file.firstFailure}` : ''
-  return `test progress: ${at}${file.file} ${file.outcome === 'pass' ? '✓' : '✗'}, ${formatDuration(file.ms)}${failure}`
+  const failure =
+    file.outcome === 'fail' && file.firstFailure ? ` — first failing test: ${plainText(file.firstFailure)}` : ''
+  return `test progress: ${at}${name} ${file.outcome === 'pass' ? '✓' : '✗'}, ${formatDuration(file.ms)}${failure}`
 }
 
 /**
@@ -531,7 +560,7 @@ const COMMAND_MARK: Record<CommandProgressOutcome, string> = {
 
 /** One explicit command finished. */
 export function commandLine(command: string, outcome: CommandProgressOutcome, ms: number): string {
-  return `command progress: ${COMMAND_MARK[outcome] ?? outcome}, ${formatDuration(ms)}: ${command}`
+  return `command progress: ${COMMAND_MARK[outcome] ?? plainText(outcome)}, ${formatDuration(ms)}: ${plainText(command)}`
 }
 
 /** One CI job completed. */
@@ -543,9 +572,9 @@ export function ciJobLine(job: {
 }): string {
   const failure =
     !job.ok && job.firstFailure
-      ? ` — first failing test: ${job.firstFailure.file ? `${job.firstFailure.file}: ` : ''}${job.firstFailure.test}`
+      ? ` — first failing test: ${job.firstFailure.file ? `${plainText(job.firstFailure.file)}: ` : ''}${plainText(job.firstFailure.test)}`
       : ''
-  return `CI progress: ${job.name} ${job.ok ? '✓' : '✗'}, ${job.ms === null ? 'duration unknown' : formatDuration(job.ms)}${failure}`
+  return `CI progress: ${plainText(job.name)} ${job.ok ? '✓' : '✗'}, ${job.ms === null ? 'duration unknown' : formatDuration(job.ms)}${failure}`
 }
 
 /** A state the strict CI read reached. */
@@ -554,17 +583,20 @@ export function ciStateLine(
     | { kind: 'queued-without-runner'; job: string; minutes: number }
     | { kind: 'first-red'; job: string }
     | { kind: 'infrastructure-pause'; detail: string }
+    | { kind: 'poll-budget'; detail: string }
     | { kind: 'execution-ceiling'; detail: string }
 ): string {
   switch (state.kind) {
     case 'queued-without-runner':
-      return `CI progress: ${state.job} queued ${state.minutes} min without a runner`
+      return `CI progress: ${plainText(state.job)} queued ${state.minutes} min without a runner`
     case 'first-red':
-      return `CI progress: first red job: ${state.job}`
+      return `CI progress: first red job: ${plainText(state.job)}`
     case 'infrastructure-pause':
-      return `CI progress: paused for an infrastructure failure: ${state.detail}`
+      return `CI progress: paused for an infrastructure failure: ${plainText(state.detail)}`
+    case 'poll-budget':
+      return `CI progress: still pending when the poll budget ran out: ${plainText(state.detail)}`
     case 'execution-ceiling':
-      return `CI progress: execution ceiling reached: ${state.detail}`
+      return `CI progress: execution ceiling reached: ${plainText(state.detail)}`
   }
 }
 

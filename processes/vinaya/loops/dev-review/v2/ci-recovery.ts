@@ -415,7 +415,8 @@ export function readRequiredCiLive(
 export interface CiProgress {
   observe: (view: RequiredCiView) => void
   result: (read: RequiredCiRead) => void
-  paused: (detail: string) => void
+  /** A pause: an infrastructure failure, or a wait still pending when the poll budget ran out. */
+  paused: (detail: string, why?: 'infrastructure' | 'poll-budget') => void
   excerpt: (check: string, text: string | null) => void
   flush: () => void
   /** The 60-second line, from what the last read saw. */
@@ -474,10 +475,9 @@ export function createCiProgress(write: (line: string) => void, now: () => numbe
             : ciStateLine({ kind: 'execution-ceiling', detail: read.detail })
         )
     }),
-    paused: safe((detail: string) => {
-      emit(
-        ciStateLine({ kind: 'infrastructure-pause', detail: detail.length > 300 ? `${detail.slice(0, 300)}…` : detail })
-      )
+    paused: safe((detail: string, why: 'infrastructure' | 'poll-budget' = 'infrastructure') => {
+      const bounded = detail.length > 300 ? `${detail.slice(0, 300)}…` : detail
+      emit(ciStateLine({ kind: why === 'poll-budget' ? 'poll-budget' : 'infrastructure-pause', detail: bounded }))
     }),
     excerpt: safe((check: string, text: string | null) => {
       const first = text ? firstFailingTest(text) : null

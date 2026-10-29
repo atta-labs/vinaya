@@ -1002,6 +1002,61 @@ describe('live progress of the ready push and the explicit-command run', () => {
     expect(at(first)).toBeLessThan(ended - 1000)
   }, 60_000)
 
+  test('cancelling a running ready push stops its observer and leaves no mark', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    const { progress } = context()
+    const hooks = join(dir, '.git', 'hooks')
+    mkdirSync(hooks, { recursive: true })
+    writeFileSync(join(hooks, 'pre-push'), '#!/bin/sh\nread line\nsleep 30\n')
+    chmodSync(join(hooks, 'pre-push'), 0o755)
+    const registry = process.env.VINAYA_PROCESS_REGISTRY_DIR as string
+    // The observer's registration, read while the push runs: its own token, never the ready gate's.
+    const observers = () =>
+      existsSync(registry)
+        ? readdirSync(registry)
+            .filter((token) => decodeURIComponent(token).startsWith('push-progress-'))
+            .flatMap((token) =>
+              readdirSync(join(registry, token))
+                .filter((file) => file.endsWith('.json'))
+                .map((file) => (JSON.parse(readFileSync(join(registry, token, file), 'utf8')) as { pid: number }).pid)
+            )
+        : []
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+    const controller = new AbortController()
+    let seen: number[] = []
+    const watcher = (async () => {
+      const deadline = Date.now() + 10_000
+      while (seen.length === 0 && Date.now() < deadline) {
+        seen = observers()
+        await Bun.sleep(50)
+      }
+      controller.abort()
+    })()
+    await expect(
+      runReadyGateLive({
+        worktreePath: dir,
+        branch: 'task/issue-1',
+        head,
+        remoteHead: head,
+        progress,
+        signal: controller.signal
+      })
+    ).rejects.toThrow('cancelled')
+    await watcher
+    expect(seen).toHaveLength(1)
+    expect(alive(seen[0] as number)).toBe(false)
+    expect(observers()).toEqual([])
+    expect(existsSync(gitPath(dir, PROGRESS_MARKER) as string)).toBe(false)
+  }, 60_000)
+
   test('with no progress context nothing is written and the result is the same', async () => {
     const dir = repo()
     const { progress } = context()

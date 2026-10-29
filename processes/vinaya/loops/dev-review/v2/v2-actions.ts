@@ -999,8 +999,13 @@ async function readRequiredCiStep(
       `The deferred head ${owed.head} is not the published head (worktree ${head ?? 'unreadable'}, remote ${remote ?? 'nothing'}), so its required CI cannot complete the run. Publish your work with publish_changes on this SAME branch.`,
       { ...base, conclusion: 'unpushed', failingChecks: [] }
     )
-  const pause = (detail: string, extra: Record<string, unknown>) => {
-    if (extra.stalled === undefined) progress?.paused(detail)
+  const pause = (
+    detail: string,
+    extra: Record<string, unknown>,
+    why: 'infrastructure' | 'poll-budget' = 'infrastructure'
+  ) => {
+    // A stalled job already has its own queue or ceiling line.
+    if (extra.stalled === undefined) progress?.paused(detail, why)
     pauseThrough(task, 'read-ci-once', { reason: 'infrastructure', detail })
     return {
       exitCode: BACK,
@@ -1123,7 +1128,8 @@ async function readRequiredCiStep(
   }
   return pause(
     `the required CI on ${owed.head} did not complete within the poll budget (${last}); pending never counts as the tests passing. Resume once it completes.`,
-    {}
+    {},
+    'poll-budget'
   )
 }
 

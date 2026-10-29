@@ -6,6 +6,8 @@ import {
   appendProgressBytes,
   appendProgressRecord,
   BunProgressParser,
+  checkLine,
+  plainText,
   containedProgressDir,
   copyCaptureTail,
   type FileProgress,
@@ -69,6 +71,53 @@ describe('the closed-block rule', () => {
     expect(testFileLine(closed[1] as FileProgress, null)).toBe(
       'test progress: tests/aborted.test.ts interrupted — outcome unknown'
     )
+  })
+
+  it('the end-of-run failure recap closes the last file and is never counted against it', () => {
+    // An earlier file failed, the last one passed, then Bun repeats every failure under its recap line.
+    const output = [
+      'tests/first.test.ts:',
+      '(fail) first breaks [6.00ms]',
+      '',
+      'tests/last.test.ts:',
+      '(pass) last one [2.00ms]',
+      '',
+      '1 tests failed:',
+      '(fail) first breaks [6.00ms]',
+      '',
+      ' 1 pass',
+      ' 1 fail',
+      'Ran 2 tests across 2 files. [20.00ms]',
+      ''
+    ].join('\n')
+    const parser = new BunProgressParser()
+    const closed = [...parser.feed(output), ...parser.end()]
+    expect(closed).toEqual([
+      { file: 'tests/first.test.ts', outcome: 'fail', firstFailure: 'first breaks', ms: 6 },
+      { file: 'tests/last.test.ts', outcome: 'pass', firstFailure: null, ms: 2 }
+    ])
+    const tally = new TestRunTally(2)
+    for (const file of closed) tally.add(file)
+    expect(tally.failed).toBe(1)
+  })
+})
+
+describe('names from a test run never carry control characters into the driver log', () => {
+  it('escape sequences, carriage returns and newlines become spaces', () => {
+    const esc = String.fromCharCode(27)
+    const bell = String.fromCharCode(7)
+    const file: FileProgress = {
+      file: `tests/${esc}[2Ja.test.ts`,
+      outcome: 'fail',
+      firstFailure: `breaks${String.fromCharCode(13)}${esc}]0;title${bell}\nforged line`,
+      ms: 1
+    }
+    const line = testFileLine(file, '1/1')
+    expect(line).toBe(
+      'test progress: 1/1 tests/ [2Ja.test.ts ✗, 1 ms — first failing test: breaks  ]0;title  forged line'
+    )
+    expect(checkLine(`lint${esc}[31m`, 'pass', 1)).toBe('push progress: check lint [31m ✓, 1 ms')
+    expect(plainText(`a${String.fromCharCode(0x9b)}b`)).toBe('a b')
   })
 })
 
