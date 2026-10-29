@@ -903,3 +903,208 @@ describe('conflictRepairFailure on real git histories', () => {
     expect(proof(repo, resolveMerge(repo, later), { freshTip: later })).toBeNull()
   })
 })
+
+// The approvals a proven repair started from, on real git: one assertion both sides extend at the same place (each
+// adds a `.replace(...)` after `.trim()`), so the merge conflicts. Keeping both lines leaves the pull request's own
+// patch unchanged and the approvals carry; changing its own line gets an interdiff review against them.
+const ASSERTION = 'assert.test.ts'
+const assertion = (...calls: string[]) =>
+  ['expect(', '  value', '    .trim()', ...calls.map((call) => `    ${call}`), ')', ''].join('\n')
+const OWN_CALL = '.replace(/a/, "b")'
+const MAIN_CALL = '.replace(/x/, "y")'
+const KEPT_BOTH = assertion(MAIN_CALL, OWN_CALL)
+const CHANGED_OWN = assertion(MAIN_CALL, '.replace(/a/, "c")')
+const MAIN_ONLY = { 'main-only.ts': 'export const fromMain = true\n' }
+
+/** The default branch holds the assertion, the task branch has it too, then extends it with its own call. */
+const branchWithOwnCall = (world: Parameters<NonNullable<Scenario['setUp']>>[0]) => {
+  world.moveMainWith({ [ASSERTION]: assertion() })
+  world.git('merge', '-q', '--ff-only', world.mainTip())
+  return world.commitFiles({ [ASSERTION]: assertion(OWN_CALL) }, true)
+}
+
+/** A published, approved pull request whose assertion main extended too: the re-entry's first turn merges main. */
+const approvedThenConflicting = (
+  resolution: string,
+  extra: Scenario = {},
+  approvals: { rulingOrdinal?: number } = {}
+) => {
+  let posted: { reviewer: string; security: string } | null = null
+  const merged: string[] = []
+  const scenario: Scenario = {
+    attachAtRound: 1,
+    setUp: (world) => {
+      branchWithOwnCall(world)
+      posted = world.approvalsOfHead(approvals)
+      world.moveMainWith({ [ASSERTION]: assertion(MAIN_CALL), ...MAIN_ONLY })
+    },
+    postedVerdicts: () => posted,
+    developer: (attempt, world) =>
+      attempt === 1
+        ? { output: confident(90), act: () => void merged.push(world.mergeMainWith({ [ASSERTION]: resolution }, true)) }
+        : undefined,
+    ...extra
+  }
+  return { scenario, merged, posted: () => posted }
+}
+
+const carries = (observed: Awaited<ReturnType<typeof runV2>>) =>
+  records(observed, 'prove-conflict-repair')
+    .filter((record) => record.carry !== undefined)
+    .map((record) => record.carry.kind as string)
+
+for (const agent of AGENTS) {
+  describe(`approvals across a proven conflict repair (${agent})`, () => {
+    test('an unchanged own patch carries both approvals: no reviewer, scan or check; ready tests and CI on the merge', async () => {
+      const { scenario, merged } = approvedThenConflicting(KEPT_BOTH)
+      const observed = await runV2(agent, scenario)
+      const head = merged[0] as string
+      expect(observed.outcome).toBe('completed')
+      expect(carries(observed)).toEqual(['carry'])
+      expect(observed.spawns.developer).toBe(1)
+      expect(observed.spawns['code-reviewer']).toBe(0)
+      expect(observed.spawns['security-reviewer']).toBe(0)
+      const nodes = observed.steps.map((step) => step.node)
+      for (const skipped of ['run-mechanical-gates', 'run-security-scan', 'dispatch-reviewers', 'run-live-checks'])
+        expect(nodes).not.toContain(skipped)
+      expect(observed.gateRuns).toBe(0)
+      // The ready push and CI ran on the merge itself, and nothing was posted again or relabeled.
+      expect(observed.world.readyRuns).toHaveLength(1)
+      expect(records(observed, 'ready-push')[0]).toMatchObject({ outcome: 'passed', head })
+      expect(observed.world.evidenceWrites).toEqual([{ pr: PR, head }])
+      expect(observed.world.ciReads).toBe(1)
+      expect(observed.published).toEqual([])
+      // The review round did not move: the ready push is recorded in the round the approvals were cast in.
+      const ready = observed.rawEvents.filter((event) => event.event === 'ready_push')
+      expect(ready.map((event) => [event.round, event.head])).toEqual([[1, head]])
+      expect(observed.rawEvents.filter((event) => event.event === 'round_started')).toEqual([])
+    })
+
+    test('a changed own patch is reviewed by its interdiff against the approvals, by both reviewers', async () => {
+      const staged: Record<string, { diff: string; prior: string }> = {}
+      const { scenario, merged } = approvedThenConflicting(CHANGED_OWN, {
+        reviewer: (role, _attempt, _world, prompt) => {
+          const diff = /staged diff file \(([^)]+)\)/.exec(prompt)?.[1]
+          const prior = /staged prior-findings file \(([^)]+)\)/.exec(prompt)?.[1]
+          staged[role] = {
+            diff: diff ? readFileSync(diff, 'utf8') : '',
+            prior: prior ? readFileSync(prior, 'utf8') : ''
+          }
+          return 'approve'
+        }
+      })
+      const observed = await runV2(agent, scenario)
+      expect(observed.outcome).toBe('completed')
+      expect(carries(observed)).toEqual(['interdiff'])
+      expect(observed.spawns['code-reviewer']).toBe(1)
+      expect(observed.spawns['security-reviewer']).toBe(1)
+      for (const role of ['code-reviewer', 'security-reviewer']) {
+        const { diff, prior } = staged[role] ?? { diff: '', prior: '' }
+        expect(diff).toContain('-+    .replace(/a/, "b")')
+        expect(diff).toContain('++    .replace(/a/, "c")')
+        // Main-only work never appears as a change to review.
+        expect(diff).not.toContain('main-only.ts')
+        expect(diff).not.toContain(MAIN_CALL)
+        expect(prior).toContain('VERDICT: APPROVE')
+        expect(prior).toContain('VERDICT: PASS')
+      }
+      for (const prompt of [...observed.prompts['code-reviewer'], ...observed.prompts['security-reviewer']])
+        expect(prompt).toContain('This round reviews a conflict repair')
+      expect(observed.world.verdictHeads).toEqual(merged)
+    })
+
+    test('a moved review input refuses the carry: the merge gets a whole review', async () => {
+      // Approvals cast against an older ruling ordinal than the pull request holds now.
+      const { scenario } = approvedThenConflicting(KEPT_BOTH, {}, { rulingOrdinal: 5 })
+      const observed = await runV2(agent, scenario)
+      expect(carries(observed)).toEqual(['none'])
+      expect(records(observed, 'prove-conflict-repair').find((r) => r.carry)?.carry.reason).toContain('rulingOrdinal')
+      expect(observed.spawns['code-reviewer']).toBe(1)
+      expect(observed.spawns['security-reviewer']).toBe(1)
+    })
+
+    test('within one run, a conflict read after CI carries the approvals held for the first opening', async () => {
+      const merged: string[] = []
+      let judged = ''
+      const observed = await runV2(agent, {
+        setUp: (world) => {
+          world.moveMainWith({ [ASSERTION]: assertion() })
+          world.git('merge', '-q', '--ff-only', world.mainTip())
+        },
+        reviewer: (role, attempt, world) => {
+          if (role === 'code-reviewer' && attempt === 1)
+            world.moveMainWith({ [ASSERTION]: assertion(MAIN_CALL), ...MAIN_ONLY })
+          return 'approve'
+        },
+        developer: (attempt, world) =>
+          attempt === 1
+            ? {
+                output: confident(90),
+                act: () => {
+                  judged = world.commitFiles({ [ASSERTION]: assertion(OWN_CALL) }, true)
+                  world.staged = { title: 'Feat(sample): Do the thing', body: `Closes #${TASK}` }
+                  world.remoteAfterTurn.push(world.remote)
+                }
+              }
+            : attempt === 2
+              ? {
+                  output: confident(90),
+                  act: () => void merged.push(world.mergeMainWith({ [ASSERTION]: KEPT_BOTH }, true))
+                }
+              : undefined
+      })
+      expect(observed.outcome).toBe('completed')
+      expect(carries(observed)).toEqual(['carry'])
+      expect(observed.spawns.developer).toBe(2)
+      expect(observed.spawns['code-reviewer']).toBe(1)
+      expect(observed.spawns['security-reviewer']).toBe(1)
+      // The verdicts were posted once, for the head they judged; the merge got its own ready push, Evidence and CI.
+      expect(observed.world.verdictHeads).toEqual([judged])
+      expect(observed.world.readyRuns).toHaveLength(2)
+      expect(observed.world.evidenceWrites.map((write) => write.head)).toEqual([judged, ...merged])
+      expect(observed.world.ciReads).toBe(2)
+    })
+  })
+
+  describe(`the approval decision survives a checkpoint restart (${agent})`, () => {
+    test('a restart after a carrying proof: no reviewer, no verdict post, one ready push on the merge', async () => {
+      const { scenario, merged } = approvedThenConflicting(KEPT_BOTH, {
+        restartAfter: { step: 'prove-conflict-repair', beforeResume: () => {} }
+      })
+      const observed = await runV2(agent, scenario)
+      expect(observed.driverLegs).toBe(2)
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(1)
+      expect(observed.spawns['code-reviewer']).toBe(0)
+      expect(observed.published).toEqual([])
+      expect(observed.world.readyRuns).toHaveLength(1)
+      expect(observed.world.evidenceWrites).toEqual(merged.map((head) => ({ pr: PR, head })))
+    })
+
+    test('a restart after the carried ready push: no second ready push, no stale-head test, no post', async () => {
+      const { scenario, merged } = approvedThenConflicting(KEPT_BOTH, {
+        restartAfter: { step: 'ready-push', beforeResume: () => {} }
+      })
+      const observed = await runV2(agent, scenario)
+      expect(observed.driverLegs).toBe(2)
+      expect(observed.outcome).toBe('completed')
+      expect(observed.world.readyRuns).toHaveLength(1)
+      expect(records(observed, 'ready-push').map((record) => record.head)).toEqual(merged)
+      expect(observed.published).toEqual([])
+    })
+
+    test('a restart after an interdiff decision reviews the interdiff once', async () => {
+      const { scenario } = approvedThenConflicting(CHANGED_OWN, {
+        restartAfter: { step: 'prove-conflict-repair', beforeResume: () => {} }
+      })
+      const observed = await runV2(agent, scenario)
+      expect(observed.driverLegs).toBe(2)
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns['code-reviewer']).toBe(1)
+      expect(observed.spawns['security-reviewer']).toBe(1)
+      for (const prompt of observed.prompts['code-reviewer'])
+        expect(prompt).toContain('This round reviews a conflict repair')
+      expect(observed.published).toHaveLength(1)
+    })
+  })
+}

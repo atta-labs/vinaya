@@ -302,6 +302,70 @@ describe('the Vinaya review input', () => {
     const bare = renderVinayaReviewerPrompt('security', facts, null)
     expect(bare).not.toContain('/s/in/')
   })
+
+  test('a changed conflict repair stages its interdiff and the approvals, never the whole diff, for both roles', () => {
+    const { worktree, head } = repoWithCommit()
+    const root = fixtureDir('review-input-root-')
+    const read: string[] = []
+    const stager = createVinayaReviewInputStager({
+      root,
+      task: 9,
+      worktreePath: worktree,
+      judgedHead: () => head,
+      readHead: () => head,
+      baseOf: () => 'base',
+      brief: () => 'brief bytes',
+      prBody: () => 'body bytes',
+      diff: () => {
+        read.push('diff')
+        return 'the whole diff, with main-only work in it'
+      },
+      priorFindings: () => {
+        read.push('prior')
+        return 'the prior round'
+      }
+    })
+    const repair = {
+      judgedHead: 'j'.repeat(40),
+      head,
+      interdiff: '--- own patch at j\n+++ own patch at h\n-+    .replace(/a/, "b")\n++    .replace(/a/, "c")',
+      approvals: { reviewer: 'VERDICT: APPROVE\n\nJudged head: jjj', security: 'VERDICT: PASS\n\nJudged head: jjj' }
+    }
+    const roles = (['reviewer', 'security'] as const).map((role) => stager.stageAttempt(1, role, 1, repair))
+    for (const staged of roles) {
+      const diff = readFileSync(staged?.paths?.diff as string, 'utf8')
+      expect(diff).toContain(repair.interdiff)
+      expect(diff).not.toContain('the whole diff')
+      const prior = readFileSync(staged?.paths?.priorFindings as string, 'utf8')
+      expect(prior).toContain(repair.approvals.reviewer)
+      expect(prior).toContain(repair.approvals.security)
+      expect(prior).toContain(`return your verdict for ${head}`)
+    }
+    expect(read).toEqual([])
+    // A repair decided about another head is not this head's: the whole review is staged again.
+    const other = stager.stage(1, { ...repair, head: 'f'.repeat(40) })
+    expect(readFileSync(other?.paths?.diff as string, 'utf8')).toBe('the whole diff, with main-only work in it')
+    // The prompt names the repair and the two staged files.
+    const facts = {
+      objectives: 'O1. Do the thing.',
+      resolvedObjectives: [{ id: 'O1', text: 'Do the thing.' }],
+      rulings: [],
+      ciConclusion: 'green',
+      revision: 'rev',
+      manifest: {
+        headSha: head,
+        baseSha: null,
+        briefHash: null,
+        objectivesVersion: null,
+        rulingOrdinal: 0,
+        policyDigest: 'd'.repeat(64)
+      },
+      policy: DEFAULT_REVIEW_POLICY
+    } as ReviewerPromptFacts
+    const prompt = renderVinayaReviewerPrompt('reviewer', facts, roles[0] ?? null, null, repair)
+    expect(prompt).toContain('This round reviews a conflict repair')
+    expect(prompt).toContain(roles[0]?.paths?.diff as string)
+  })
 })
 
 describe('reviewerRulings', () => {

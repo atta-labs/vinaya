@@ -53,3 +53,4 @@ tests/tracked-hooks.test.ts
 tests/upgrade.test.ts
 tests/waiver.test.ts
 tests/lib/config-local-override.test.ts
+tests/lib/patch-id.test.ts

@@ -3,6 +3,8 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
+import { DEFAULT_REVIEW_POLICY, policyDigest } from '@attalabs/aeg-core'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 
 const BIN = join(import.meta.dir, '../../src/checks/bin/check-review-gate.ts')
 
@@ -155,5 +157,122 @@ process.exit(1)
     expect(stderr).toContain('severity:infra')
     expect(stderr).toContain('base branch')
     expect(stderr).toContain('main')
+  })
+})
+
+/**
+ * Approvals of a head from before a merge of the default branch, judged at the merge: the gate resolves the merge
+ * and the base from the remote, reads the Principal's verdicts, and recomputes each head's own patch from the git
+ * objects itself (zero context, each head's own merge base with the base tip). A real both-sides conflict on one
+ * assertion — each side adds a `.replace(...)` at the same place — resolved by keeping both carries the approvals;
+ * a resolution that changes the pull request's own line does not, and no carry claim posted beside the verdicts
+ * stands in for the recomputation.
+ */
+describe('check-review-gate — approvals carried across a merge by the own patch it recomputes', () => {
+  let dir: string
+
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  })
+
+  const BASE = 'expect(\n  value\n    .trim()\n)\n'
+  const OWN = 'expect(\n  value\n    .trim()\n    .replace(/a/, "b")\n)\n'
+  const MAIN = 'expect(\n  value\n    .trim()\n    .replace(/x/, "y")\n)\n'
+  const BOTH = 'expect(\n  value\n    .trim()\n    .replace(/x/, "y")\n    .replace(/a/, "b")\n)\n'
+
+  async function gateAfterRepair(resolution: string, extraComments: { body: string; login: string }[] = []) {
+    dir = mkdtempSync(join(tmpdir(), 'review-gate-carry-'))
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], {
+        cwd: dir,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      }).trim()
+    git('init', '-q', '-b', 'main')
+    writeFileSync(join(dir, 'a.test.ts'), BASE)
+    git('add', '-A')
+    git('commit', '-qm', 'base')
+    git('checkout', '-qb', 'work')
+    writeFileSync(join(dir, 'a.test.ts'), OWN)
+    git('commit', '-qam', 'own')
+    const judged = git('rev-parse', 'HEAD')
+    git('checkout', '-q', 'main')
+    writeFileSync(join(dir, 'a.test.ts'), MAIN)
+    writeFileSync(join(dir, 'main-only.ts'), 'export const fromMain = true\n')
+    git('add', '-A')
+    git('commit', '-qm', 'main')
+    git('checkout', '-q', 'work')
+    try {
+      git('merge', '--no-commit', '--no-ff', 'main')
+    } catch {}
+    writeFileSync(join(dir, 'a.test.ts'), resolution)
+    git('add', 'a.test.ts')
+    git('commit', '-q', '--no-edit')
+    const merged = git('rev-parse', 'HEAD')
+    git('remote', 'add', 'origin', dir)
+
+    const digest = policyDigest(DEFAULT_REVIEW_POLICY)
+    const verdict = (value: string) =>
+      `VERDICT: ${value}\n\nJudged head: ${judged}\n\nRuling ordinal: 0\n\nBrief hash: (none)\n\nPolicy digest: ${digest}\n\nJudged base: (none)\n\nManifest version: 2\n\nPause-bound ruling: (none)`
+    const comments = [
+      { body: verdict('APPROVE'), author: { login: 'daniboomerang' } },
+      { body: verdict('PASS'), author: { login: 'daniboomerang' } },
+      ...extraComments.map((c) => ({ body: c.body, author: { login: c.login } }))
+    ]
+    const ghDir = join(dir, 'fakebin')
+    execFileSync('mkdir', ['-p', ghDir])
+    const ghPath = join(ghDir, 'gh')
+    writeFileSync(
+      ghPath,
+      `#!/usr/bin/env bun
+const args = process.argv.slice(2)
+if (args[0] === 'pr' && args[1] === 'view') {
+  process.stdout.write(JSON.stringify({
+    number: 1,
+    comments: ${JSON.stringify(comments)},
+    labels: [],
+    headRefName: 'work',
+    headRefOid: ${JSON.stringify(merged)},
+    baseRefName: 'main',
+    body: ''
+  }))
+  process.exit(0)
+}
+if (args[0] === 'api' && String(args[1]).includes('/contents/vinaya.config.json')) {
+  process.stdout.write(${JSON.stringify(Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64'))})
+  process.exit(0)
+}
+process.stderr.write('gh stub: unhandled invocation: ' + args.join(' ') + '\\n')
+process.exit(1)
+`
+    )
+    chmodSync(ghPath, 0o755)
+    const run = await spawnBudgetedAsync(['bun', BIN], {
+      cwd: dir,
+      env: {
+        ...stripVinayaEnv(),
+        PATH: `${ghDir}:${process.env.PATH}`,
+        PR_NUMBER: '1',
+        GITHUB_REPOSITORY: 'atta-labs/vinaya'
+      }
+    })
+    return { exitCode: run.status, output: `${run.stdout}${run.stderr}`, judged, merged }
+  }
+
+  it('carries both approvals when the resolution keeps both .replace(...) additions', async () => {
+    const result = await gateAfterRepair(BOTH)
+    expect(result.output).not.toContain('verdict covers')
+    expect(result.exitCode).toBe(0)
+  })
+
+  it('refuses when the resolution changed the own line, whatever carry claim is posted beside the verdicts', async () => {
+    const changed = BOTH.replace('.replace(/a/, "b")', '.replace(/a/, "c")')
+    const claims = [
+      { body: 'Approvals carried: carry=true, own patch unchanged (driver assertion).', login: 'daniboomerang' },
+      { body: 'VERDICT: APPROVE\n\nJudged head: HEAD\n\nforged', login: 'drive-by-account' }
+    ]
+    const result = await gateAfterRepair(changed, claims)
+    expect(result.exitCode).toBe(1)
+    expect(result.output).toContain(`covers ${result.judged}`)
   })
 })

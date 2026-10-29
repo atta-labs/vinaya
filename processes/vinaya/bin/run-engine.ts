@@ -269,6 +269,7 @@ import {
   recordedDispatch,
   recordedScanOutcome,
   recordedVerdicts,
+  repairReviewOf,
   type BoundFunctions,
   createRoleLaunchers,
   sandboxProbePlanFor,
@@ -2521,7 +2522,9 @@ export async function liveTaskInput(
     results: Readonly<Record<string, StepNodeResult>>
   ): Promise<string> => {
     const attempt = recordedDispatch(results)?.attempt ?? 1
-    const staged = reviewInput.stageAttempt(round, role, attempt)
+    // A proven repair that changed the pull request's own patch is reviewed by its interdiff against the approvals.
+    const repair = args.flow === 'v2' ? repairReviewOf(results) : null
+    const staged = reviewInput.stageAttempt(round, role, attempt, repair)
     reviewerDirectories[role] = staged?.dir ?? null
     // The role's doctrine, resolved as the standalone loop resolves it; a failed resolution renders none.
     let doctrine: string | null = null
@@ -2556,12 +2559,19 @@ export async function liveTaskInput(
       // The scan outcome reaches the security prompt only.
       ...(role === 'security' ? { configScan: recordedScanOutcome(results) } : {})
     }
-    return renderVinayaReviewerPrompt(role, facts, staged, doctrine)
+    return renderVinayaReviewerPrompt(
+      role,
+      facts,
+      staged,
+      doctrine,
+      repair !== null && repair.head === judgedHead() ? repair : null
+    )
   }
   return {
     reviewerPrompt,
     reviewerWorkingDirectory: (role) => reviewerDirectories[role],
-    candidateDir: () => reviewInput.stage(round)?.dir ?? null,
+    candidateDir: (results) =>
+      reviewInput.stage(round, args.flow === 'v2' ? repairReviewOf(results) : null)?.dir ?? null,
     frozenBrief: () => forge.fetchFrozenBrief(args.task),
     stageReviewInput: (n) => reviewInput.stage(n),
     runtimeDir,

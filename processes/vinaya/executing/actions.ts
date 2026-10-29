@@ -12,6 +12,7 @@ import {
   type LoopState,
   type Observations,
   type PauseReason,
+  type PostedVerdictBodies,
   type ReviewInputManifest,
   type RoundStats,
   type TaskClock,
@@ -24,6 +25,7 @@ import { loadRoleGrants, ROLE_NAMES, withModel } from '../../../harness/adapters
 import { sessionIdOf, structuredResult } from '../../../harness/adapters/agents/structured-result'
 import { pullRequestCheckEnv, type PullRequestView } from './pull-request-env'
 import type { Handoff, InputVersions, PauseRequest } from './handoff'
+import type { RepairReview } from './review-input'
 import type { StagedPullRequest, V2Functions } from '../loops/dev-review/v2/v2-actions'
 import { encodeExecutionRound } from '../../../harness/dev-process/engine-runtime/checkpoint-round'
 import { runCliChecks } from '../../../harness/gates/run-checks'
@@ -221,8 +223,11 @@ export interface TaskInput {
   ) => string | Promise<string>
   /** The scratch directory prepared by the prompt for this role's current attempt. */
   reviewerWorkingDirectory?: (role: 'reviewer' | 'security') => string | null
-  /** The round's staged, head-verified candidate copy the security scan runs over, or null when none could be staged. */
-  candidateDir?: () => string | null
+  /**
+   * The round's staged, head-verified candidate copy the security scan runs over, or null when none could be staged;
+   * staged from the recorded results, so a changed conflict repair's interdiff is staged with it.
+   */
+  candidateDir?: (results: Readonly<Record<string, StepNodeResult>>) => string | null
   /** The task's frozen brief, whose `[live]` Test Plan lines the live-check step runs. */
   frozenBrief?: () => string
   /** The reviewers' verdicts for the round, read from the recorded results; advances the round. */
@@ -380,6 +385,11 @@ export interface SendBack {
   files?: string[]
   /** The default branch's tip the controller fetched for a conflict's repair: the Developer's merge must include it. */
   mainTip?: string | null
+  /**
+   * The reviewed baseline a conflict was recorded with: the newest verdict comment of each role, as they stood
+   * before anything was discarded, so a proven repair can be judged against the approvals it started from.
+   */
+  baseline?: PostedVerdictBodies | null
   /** The typed failures of a rejected turn result, for its one correction turn. */
   failures?: string[]
   /** The finding ids the rejected turn could cite, kept for its correction turn. */
@@ -820,6 +830,18 @@ export function recordedVerdicts(results: Results): VerdictObservation[] {
   return [reviewer.observation, security.observation]
 }
 
+/**
+ * The verdict pair the reviewer-output step held for the round, as rendered for publication — the comments this
+ * run posts — or null when it holds none. Read from the recorded result, so a held file already discarded keeps it.
+ */
+export function heldVerdictBodies(results: Results): PostedVerdictBodies | null {
+  const reviews = recordedReviews(results)
+  const reviewer = reviews?.accepted.reviewer
+  const security = reviews?.accepted.security
+  if (reviews?.next !== 'hold' || reviewer === undefined || security === undefined) return null
+  return { reviewer: reviewer.rendered, security: security.rendered }
+}
+
 /** The review-input fields whose change pauses the round, each with the pause it is; a head or base change is not one. */
 const MANIFEST_PAUSES: ReadonlyArray<[keyof ReturnType<typeof buildManifestRecord>, PauseReason]> = [
   ['objectivesVersion', 'objectives_changed'],
@@ -977,6 +999,71 @@ export function owedConflictRepair(results: Results): SendBack | null {
     if (sendBack?.kind === 'conflict' && (owed === null || parsed.seq > owed.seq)) owed = { seq: parsed.seq, sendBack }
   }
   return owed !== null && owed.seq > proven ? owed.sendBack : null
+}
+
+/**
+ * What a proven conflict repair decided about the approvals it started from (version 2): `carry` — the pull
+ * request's own patch is unchanged, so the approvals cover the repaired `head` as posted; `interdiff` — it changed,
+ * and the reviewers judge only the change between the two own patches against the approvals; `none` — a fresh
+ * review, with why.
+ */
+export interface RecordedApprovalCarry {
+  kind: 'carry' | 'interdiff' | 'none'
+  reason?: string
+  /** The head the approvals judged. */
+  judgedHead?: string
+  /** The repaired head the decision is about. */
+  head: string
+  /** The default branch's tip both own patches were read against. */
+  mainTip: string | null
+  /** The change between the two own patches (`interdiff` only). */
+  interdiff?: string
+  /** The approvals and findings the decision read. */
+  baseline?: PostedVerdictBodies | null
+}
+
+/** The approval decision the newest proof of a conflict repair recorded, or null when no proof holds one. */
+export function recordedApprovalCarry(results: Results): RecordedApprovalCarry | null {
+  return approvalCarryOf(results['prove-conflict-repair'])
+}
+
+function approvalCarryOf(result: StepNodeResult | undefined): RecordedApprovalCarry | null {
+  const stdout = stdoutOf(result)
+  if (!stdout) return null
+  try {
+    const parsed = JSON.parse(stdout) as { decision?: { type?: unknown }; carry?: RecordedApprovalCarry }
+    return parsed.decision?.type === CONFLICT_REPAIR_PROVEN && parsed.carry ? parsed.carry : null
+  } catch {
+    return null
+  }
+}
+
+/** The carried approvals of the newest proven repair, or null when the repair was not one that carries them. */
+export function carriedApprovals(results: Results): (RecordedApprovalCarry & { kind: 'carry' }) | null {
+  const carry = recordedApprovalCarry(results)
+  return carry?.kind === 'carry' ? (carry as RecordedApprovalCarry & { kind: 'carry' }) : null
+}
+
+/**
+ * The changed repair the round's reviewers judge by its interdiff, or null for a whole review: the newest proof's
+ * `interdiff` decision, with both approvals it read.
+ */
+export function repairReviewOf(results: Results): RepairReview | null {
+  const carry = recordedApprovalCarry(results)
+  const reviewer = carry?.baseline?.reviewer
+  const security = carry?.baseline?.security
+  if (carry?.kind !== 'interdiff' || !carry.judgedHead || !carry.interdiff || !reviewer || !security) return null
+  return {
+    judgedHead: carry.judgedHead,
+    head: carry.head,
+    interdiff: carry.interdiff,
+    approvals: { reviewer, security }
+  }
+}
+
+/** The approval decision's predicate: the proven repair's approvals carry, so the run goes on to the ready push. */
+export function isApprovalCarried(examined: StepNodeResult): boolean {
+  return approvalCarryOf(examined)?.kind === 'carry'
 }
 
 /** The assessment step's recorded exit result asks for a revision when it did not exit zero. */
@@ -1710,6 +1797,11 @@ async function checkPublishMergeability(
   })
   if (mergeable !== 'CONFLICTING') return ok(JSON.stringify({ mergeable }))
   const files = (task.bound?.fetchConflictingFiles ?? fetchConflictingFiles)('main', task.branch)
+  // Version 2 keeps the reviewed baseline before the held verdicts go: the pair this run posted, else the forge's.
+  const baseline =
+    task.flow === 'v2'
+      ? (heldVerdictBodies(results) ?? safeRead(() => task.v2?.readPostedVerdicts?.(prNumber) ?? null))
+      : undefined
   ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, task.reviewRound())
   const previous = latestRecord(results)
   const head = safeRead(task.remoteHead) ?? judgedHeadOf(task)
@@ -1719,7 +1811,13 @@ async function checkPublishMergeability(
     exitCode: BACK,
     stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
       counters: { ...(previous?.counters ?? NO_COUNTERS), stallCheck: null },
-      sendBack: { kind: 'conflict', headBefore: head, files, ...(mainTip === undefined ? {} : { mainTip }) },
+      sendBack: {
+        kind: 'conflict',
+        headBefore: head,
+        files,
+        ...(mainTip === undefined ? {} : { mainTip }),
+        ...(baseline === undefined ? {} : { baseline })
+      },
       decision: { type: 'dispatch_developer' },
       mergeable,
       files
@@ -2052,7 +2150,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
   'vinaya.classify-gate-result': { adapts: [classifyGateResult], build: () => classifyGateResult },
   'vinaya.run-security-scan': {
     adapts: [decideSecurityScan, defaultRunSecurityScanSubprocess, resolveTrustAnchorSecurityScanCommand],
-    build: (task) => () => {
+    build: (task) => (context) => {
       // The scan runs here, before either reviewer is dispatched and outside both reviewers' sandboxes. Its
       // outcome reaches the security reviewer's prompt only, and a scan that cannot run never stops the round.
       let outcome: SecurityScanOutcome
@@ -2063,7 +2161,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         outcome = decideSecurityScan({
           command,
           changedPaths: command === null ? [] : (task.bound?.changedPaths ?? worktreeChangedPaths)(task.worktreePath),
-          candidateDir: task.candidateDir?.() ?? null,
+          candidateDir: task.candidateDir?.(context?.results ?? {}) ?? null,
           runScan: task.bound?.runSecurityScan ?? defaultRunSecurityScanSubprocess
         })
       } catch (error) {
@@ -2226,6 +2324,10 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       const expectedHead = readHead(task.worktreePath)
       if (expectedHead === null) throw new Error(`harness.publish could not read the head of ${task.worktreePath}`)
       const results = context?.results ?? {}
+      // Carried approvals are already posted, each addressed to the head it judged: nothing is posted again, and
+      // none is relabeled as a review of the repaired head. The gate binds them to it by the pull request's own patch.
+      if (task.flow === 'v2' && carriedApprovals(results) !== null)
+        return ok(JSON.stringify({ events: heldCompletionEvents(results), carried: true }))
       if (task.flow === 'v2') {
         const raw = stdoutOf(results['open-pull-request'])
         const published = raw

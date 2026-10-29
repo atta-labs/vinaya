@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { checkReviewGate, isChangesetsReleasePr, isReviewGateExemptBranch } from './review-gate'
-import { policyDigest } from './review-input-manifest'
+import {
+  checkReviewGate,
+  decideApprovalCarry,
+  isChangesetsReleasePr,
+  isReviewGateExemptBranch,
+  newestVerdictBodies
+} from './review-gate'
+import { policyDigest, type ReviewInputManifest } from './review-input-manifest'
 import { DEFAULT_REVIEW_POLICY } from './review-policy'
 
 import type { ReviewGateComment } from './review-gate'
@@ -1441,5 +1447,99 @@ describe('checkReviewGate — deferral context (O2/O3/O4)', () => {
       }
     })
     expect(result.verdict).toBe('fail')
+  })
+})
+
+/**
+ * Approvals across a merge of the default branch: the judged head and the repaired head carry the same own patch
+ * (`patchIdOf` stands for the git read the callers make), or a changed one.
+ */
+describe('approvals carried to a repaired head', () => {
+  const JUDGED = '1'.repeat(40)
+  const REPAIRED = '2'.repeat(40)
+  const verdict = (
+    value: 'APPROVE' | 'PASS' | 'REQUEST_CHANGES' | 'FAIL',
+    fields: { head?: string; ruling?: number } = {}
+  ) =>
+    `VERDICT: ${value}\n\nJudged head: ${fields.head ?? JUDGED}\n\nRuling ordinal: ${fields.ruling ?? 0}\n\nBrief hash: (none)\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: (none)\n\nManifest version: 2\n\nPause-bound ruling: (none)`
+  const current: ReviewInputManifest = {
+    manifestVersion: 2,
+    headSha: REPAIRED,
+    baseSha: null,
+    briefHash: null,
+    objectivesVersion: null,
+    rulingOrdinal: 0,
+    pauseBoundRuling: null,
+    policyDigest: DEFAULT_POLICY_DIGEST
+  }
+  const samePatch = (sha: string) => (sha === JUDGED || sha === REPAIRED ? 'own' : null)
+  const changedPatch = (sha: string) => (sha === JUDGED ? 'own' : sha === REPAIRED ? 'changed' : null)
+  const decide = (
+    verdicts: { reviewer: string | null; security: string | null },
+    patchIdOf: (sha: string) => string | null = samePatch,
+    overrides: Partial<typeof current> = {}
+  ) =>
+    decideApprovalCarry({ verdicts, current: { ...current, ...overrides }, policy: DEFAULT_REVIEW_POLICY, patchIdOf })
+  const approvals = { reviewer: verdict('APPROVE'), security: verdict('PASS') }
+
+  it('carries both approvals when the own patch is unchanged', () => {
+    expect(decide(approvals)).toEqual({ kind: 'carry', judgedHead: JUDGED })
+  })
+
+  it('asks for an interdiff review when the own patch changed, and refuses when git could not compare', () => {
+    expect(decide(approvals, changedPatch)).toEqual({ kind: 'interdiff', judgedHead: JUDGED })
+    expect(decide(approvals, () => null).kind).toBe('none')
+  })
+
+  it('refuses a missing, negative or split pair, and a moved review input', () => {
+    expect(decide({ reviewer: approvals.reviewer, security: null }).kind).toBe('none')
+    expect(decide({ reviewer: verdict('REQUEST_CHANGES'), security: approvals.security }).kind).toBe('none')
+    expect(decide({ reviewer: approvals.reviewer, security: verdict('FAIL') }).kind).toBe('none')
+    expect(decide({ reviewer: approvals.reviewer, security: verdict('PASS', { head: '3'.repeat(40) }) }).kind).toBe(
+      'none'
+    )
+    const moved = decide(approvals, samePatch, { rulingOrdinal: 1 })
+    expect(moved).toMatchObject({ kind: 'none' })
+    expect(moved.kind === 'none' && moved.reason).toContain('rulingOrdinal')
+    expect(decide(approvals, samePatch, { policyDigest: 'other' }).kind).toBe('none')
+    expect(decide(approvals, samePatch, { briefHash: 'f'.repeat(64) }).kind).toBe('none')
+  })
+
+  it('reads the newest verdict of each role, so a later negative verdict supersedes an approval', () => {
+    const comments = [
+      principal(approvals.reviewer),
+      principal(approvals.security),
+      principal(verdict('REQUEST_CHANGES')),
+      forged(verdict('APPROVE'))
+    ]
+    const newest = newestVerdictBodies(comments, PRINCIPALS)
+    expect(newest.reviewer).toContain('REQUEST_CHANGES')
+    expect(newest.security).toBe(approvals.security)
+    expect(decide(newest).kind).toBe('none')
+  })
+
+  it('the gate binds carried approvals only by the own patch it recomputes; no carry claim in a comment counts', () => {
+    const gate = (patchIdOf: (sha: string) => string | null, extra: ReviewGateComment[] = []) =>
+      checkReviewGate({
+        principalAllowlist: PRINCIPALS,
+        comments: [principal(approvals.reviewer), principal(approvals.security), ...extra],
+        labels: [],
+        waiverLabelActor: null,
+        headSha: REPAIRED,
+        objectivesVersion: null,
+        rulingOrdinal: 0,
+        manifestVersion: 2,
+        pauseBoundRuling: null,
+        patchIdOf
+      })
+    expect(gate(samePatch).verdict).toBe('pass')
+    const claims = [
+      principal(`Approvals carried to ${REPAIRED}: carry=true, patch-id ${'a'.repeat(40)} matches.`),
+      principal(`Judged head: ${REPAIRED}\n\nThe driver asserts both approvals cover this head.`)
+    ]
+    const refused = gate(changedPatch, claims)
+    expect(refused.verdict).toBe('fail')
+    expect(refused.reason).toContain(`covers ${JUDGED}`)
+    expect(gate(() => null, claims).verdict).toBe('fail')
   })
 })

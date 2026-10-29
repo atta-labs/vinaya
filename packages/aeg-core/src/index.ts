@@ -233,11 +233,20 @@ export type { VerdictExtraction } from './verdict-extraction'
 export {
   CHANGESET_RELEASE_BRANCH,
   checkReviewGate,
+  decideApprovalCarry,
   DEFAULT_RELEASE_ACTOR,
   isChangesetsReleasePr,
-  isReviewGateExemptBranch
+  isReviewGateExemptBranch,
+  newestVerdictBodies
 } from './review-gate'
-export type { ReviewGateComment, ReviewGateInput, ReviewGateResult, ReviewGateVerdict } from './review-gate'
+export type {
+  ApprovalCarryDecision,
+  PostedVerdictBodies,
+  ReviewGateComment,
+  ReviewGateInput,
+  ReviewGateResult,
+  ReviewGateVerdict
+} from './review-gate'
 export {
   newestPrincipalRulingAuthor,
   newestPrincipalRulingOrdinal,

@@ -22,10 +22,15 @@ import { readUnpushedWorkDetail } from '../../../../../apps/cli/src/lib/dev-revi
 import { spawnSync } from 'node:child_process'
 import {
   assessRound,
+  decideApprovalCarry,
   DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
+  DEFAULT_REVIEW_POLICY,
   type DevReviewLoopEventInput,
-  type PauseReason
+  type PauseReason,
+  type PostedVerdictBodies,
+  type ReviewPolicy
 } from '@attalabs/aeg-core'
+import { ownPatchIdAt, ownPatchInterdiff } from '../../../../../apps/cli/src/lib/patch-id'
 import {
   fetchConflictingFiles,
   fetchMergeableState,
@@ -35,6 +40,7 @@ import {
 import { findOpenPrForBranch } from '../../../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import {
   BACK,
+  carriedApprovals,
   carriedLoopState,
   CONFLICT_REPAIR_PROVEN,
   createActions,
@@ -44,6 +50,7 @@ import {
   EXIT_OPEN_PR,
   FORWARD,
   gatePollOf,
+  isApprovalCarried,
   isSentBack,
   latestRecord,
   NO_COUNTERS,
@@ -52,6 +59,7 @@ import {
   pauseThrough,
   readAssessment,
   readForgeCi,
+  type RecordedApprovalCarry,
   recordedDispatch,
   recordOutput,
   safeRead,
@@ -137,6 +145,11 @@ export interface V2Functions {
    * be read. A conflict's repair is proven against it, so a tip that cannot be read proves no repair.
    */
   readMainTip?: () => string | null
+  /**
+   * The newest posted verdict comment of each review role on pull request `pr`, Principal-authored, or null when it
+   * cannot be read: the reviewed baseline a conflict re-entry starts from.
+   */
+  readPostedVerdicts?: (pr: number) => PostedVerdictBodies | null
 }
 
 /** Consecutive ready-push failures pause independently of review revisions. */
@@ -233,6 +246,9 @@ function sendBackAfterApproval(
  * — a run with no recorded inputs — the worktree's. Throws when the step follows anything but an approval.
  */
 function approvedHead(task: TaskInput, results: Results, step: string): string {
+  // Approvals carried across a proven merge cover the repaired head they were carried to.
+  const carried = carriedApprovals(results)
+  if (carried !== null) return carried.head
   const assessment = readAssessment(results)
   if (assessment.decision.type !== 'publish')
     throw new Error(`${step} reached after a ${assessment.decision.type} decision, not an approval`)
@@ -697,12 +713,17 @@ export async function reconcileExternalState(
   if (mergeable !== 'CONFLICTING') return { exitCode: EXIT_OPEN_PR, stdout: JSON.stringify(open) }
   const { results } = context
   const files = (task.bound?.fetchConflictingFiles ?? fetchConflictingFiles)('main', task.branch)
-  const mainTip = safeRead(v2Of(task).readMainTip)
+  const fns = v2Of(task)
+  const mainTip = safeRead(fns.readMainTip)
+  // The approvals the published pull request already carries: recorded with the conflict, the baseline its repair
+  // is judged against.
+  const baseline = safeRead(() => fns.readPostedVerdicts?.(open.number) ?? null)
   const sendBack: SendBack = {
     kind: 'conflict',
     headBefore: safeRead(task.remoteHead) ?? worktreeHeadOf(task),
     files,
-    mainTip
+    mainTip,
+    baseline
   }
   return {
     exitCode: EXIT_CONFLICT_REENTRY,
@@ -873,20 +894,32 @@ export async function proveConflictRepair(
     }
   }
   const fields = { head, mainTip: freshTip, mergeable, answered: previous?.answered ?? null }
-  if (failure === null)
+  if (failure === null) {
+    // The proven head and the tip are both frozen here: the approval decision reads only these two revisions.
+    const carry = approvalCarryFor(task, owed.baseline ?? null, head as string, freshTip as string)
+    fns.log?.(
+      carry.kind === 'carry'
+        ? `The merge ${carry.head} leaves the pull request's own patch unchanged: the approvals of ${carry.judgedHead} carry to it, with no new review.`
+        : carry.kind === 'interdiff'
+          ? `The merge ${carry.head} changed the pull request's own patch: both reviewers judge the change against the approvals of ${carry.judgedHead}.`
+          : `The merge ${carry.head} gets a fresh review: ${carry.reason}.`
+    )
     return {
       exitCode: FORWARD,
       stdout: recordOutput(results, state, {
         ...fields,
         counters: { ...counters, stallCheck: null },
-        decision: { type: CONFLICT_REPAIR_PROVEN }
+        decision: { type: CONFLICT_REPAIR_PROVEN },
+        carry
       })
     }
+  }
   const sendBack: SendBack = {
     kind: 'conflict',
     headBefore: remote ?? head,
     files: failure.files.length > 0 ? failure.files : (owed.files ?? []),
     mainTip: freshTip ?? owed.mainTip ?? null,
+    baseline: owed.baseline ?? null,
     detail: `The merge is not proven, so no reviewer is dispatched: ${failure.reason}.`
   }
   const stats = worktreeStats(task.worktreePath, 0)
@@ -917,6 +950,57 @@ export async function proveConflictRepair(
   return record({ type: 'dispatch_developer' })
 }
 
+/**
+ * What a proven repair means for the approvals the conflict was recorded with (`decideApprovalCarry`): each own
+ * patch is read in the task worktree against the default branch's tip fetched for the proof, from each head's own
+ * merge base with it and with zero context, so neither the lines the default branch brought in nor the lines around
+ * the pull request's own changes count. A changed own patch carries its interdiff for the reviewers.
+ */
+export function approvalCarryFor(
+  task: TaskInput,
+  baseline: PostedVerdictBodies | null,
+  head: string,
+  mainTip: string
+): RecordedApprovalCarry {
+  const none = (reason: string): RecordedApprovalCarry => ({ kind: 'none', reason, head, mainTip, baseline })
+  if (baseline === null) return none('no posted approvals were recorded with the conflict')
+  const current = safeRead(task.currentManifest)
+  if (current === null || current.headSha !== head)
+    return none('the review inputs of the repaired head could not be read')
+  let policy: ReviewPolicy = DEFAULT_REVIEW_POLICY
+  try {
+    policy = task.reviewPolicy?.() ?? DEFAULT_REVIEW_POLICY
+  } catch {
+    return none('the review policy could not be read')
+  }
+  const options = { cwd: task.worktreePath }
+  const decision = decideApprovalCarry({
+    verdicts: baseline,
+    current,
+    policy,
+    patchIdOf: (sha) => ownPatchIdAt(mainTip, sha, options)
+  })
+  if (decision.kind === 'none') return none(decision.reason)
+  if (decision.kind === 'carry') return { kind: 'carry', judgedHead: decision.judgedHead, head, mainTip, baseline }
+  const interdiff = ownPatchInterdiff(mainTip, decision.judgedHead, head, options)
+  if (interdiff === null) return none('the change between the two own patches could not be read')
+  return { kind: 'interdiff', judgedHead: decision.judgedHead, head, mainTip, interdiff, baseline }
+}
+
+/** Records how the approval decision routed: carried approvals go on to the ready push, anything else to the gates. */
+export function classifyApprovalCarry(context: ActionContext): { exitCode: number; stdout: string } {
+  const proved = context.results['prove-conflict-repair']
+  if (!proved) throw new Error('classify-approval-carry ran before the proof recorded a result')
+  return ok(isApprovalCarried(proved) ? 'ready-push' : 'gates')
+}
+
+/** The step carried approvals pass through on their way to the ready push: it records which head they carry to. */
+export function carryApprovals(context: ActionContext): { exitCode: number; stdout: string } {
+  const carried = carriedApprovals(context.results)
+  if (carried === null) throw new Error('carry-approvals ran with no carried approvals recorded by the proof')
+  return ok(JSON.stringify({ judgedHead: carried.judgedHead, head: carried.head }))
+}
+
 /** Records how the proof routed; the decision on this step reads that step's own exit result. */
 export function classifyConflictRepair(context: ActionContext): { exitCode: number; stdout: string } {
   const proved = context.results['prove-conflict-repair']
@@ -942,6 +1026,8 @@ export const V2_ACTION_BINDINGS: Readonly<Record<string, V2Binding>> = {
     build: (task) => (context) => proveConflictRepair(task, context)
   },
   'vinaya.v2-classify-conflict-repair': { adapts: [], build: () => classifyConflictRepair },
+  'vinaya.v2-classify-approval-carry': { adapts: [], build: () => classifyApprovalCarry },
+  'vinaya.v2-carry-approvals': { adapts: [], build: () => carryApprovals },
   'vinaya.v2-local-checks': { adapts: [runCli], build: (task) => (context) => runLocalChecks(task, context) },
   'vinaya.v2-check-premise': { adapts: [checkPremiseAtHead], build: (task) => () => checkPremiseStaged(task) },
   'vinaya.v2-ready-push': { adapts: [], build: (task) => (context) => readyPush(task, context) },
@@ -955,6 +1041,7 @@ export const V2_ACTION_BINDINGS: Readonly<Record<string, V2Binding>> = {
 /** Version 2's deciding steps, each read from the step it examines. */
 export const V2_DECISIONS = {
   'classify-conflict-repair': isSentBack,
+  'classify-approval-carry': isApprovalCarried,
   'classify-ready-push': isSentBack,
   'classify-pr-opened': isSentBack,
   'classify-ci-result': isSentBack
