@@ -23,11 +23,15 @@ import {
 import { NO_LOCAL_TESTS_MARKER } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { PUSH_MODE_MARKER, storageMarkerText } from '../../../../../apps/cli/src/lib/pre-push-mode-logic'
 import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../apps/cli/src/lib/test-temp'
-import { buildReport, computeGroupA, replaceEvidenceBlock } from '../../../../../apps/cli/src/lib/pr-report-engine'
-import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
+import {
+  buildReport,
+  computeGroupA,
+  replaceEvidenceBlock,
+  truncateAgentOutput
+} from '../../../../../apps/cli/src/lib/pr-report-engine'
 import { defaultReadDefaultBranchTip } from '../../../../../apps/cli/src/lib/dev-review-loop'
 import { readPostedReviewVerdicts } from '../../../../../apps/cli/src/lib/review-gate-input'
-import type { ReadyGateResult, StagedPullRequest, V2Functions } from './v2-actions'
+import { type ReadyGateResult, readyTestPlanCommand, type StagedPullRequest, type V2Functions } from './v2-actions'
 
 // The live wiring of review locally, push once (version 2 of the developer-review Flow) for the Engine runner: the
 // staged pull request the Developer's `open_pull_request` saves, the storage-push marker its worktree's pre-push hook
@@ -594,9 +598,10 @@ export async function readyGateEvidence(input: {
           command: none
             ? 'no local tests'
             : gate.selection
-              ? readyTestCommand(gate.selection.selected)
+              ? readyTestPlanCommand(gate.selection.selected, input.worktreePath)
               : 'repository pre-push hook',
-          output: none ? `No local tests ran.\n${gate.output}` : gate.output,
+          // The same tail every other Test Plan command keeps: a whole run's output would overflow the body.
+          output: truncateAgentOutput(none ? `No local tests ran.\n${gate.output}` : gate.output),
           exitCode: 0,
           timedOut: false,
           overflowed: false,

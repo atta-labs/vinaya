@@ -20,6 +20,7 @@ import { manifestDigest } from '../../../../../apps/cli/src/lib/review-result'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { readUnpushedWorkDetail } from '../../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import { spawnSync } from 'node:child_process'
+import { relative, resolve, sep } from 'node:path'
 import {
   assessRound,
   decideApprovalCarry,
@@ -476,7 +477,7 @@ export async function openPullRequestStep(
     return forward(open.number, false, [])
   }
   const stagedBody = safeRead(fns.stagedPullRequest)
-  const command = readyGateCommand(results)
+  const command = readyGateCommand(results, task.worktreePath)
   const staged =
     stagedBody !== null && command !== null
       ? { ...stagedBody, body: withReadyTestCommand(stagedBody.body, command) }
@@ -534,13 +535,28 @@ async function writeEvidenceFor(fns: V2Functions, pr: number, head: string): Pro
   return written.ok ? 'written' : `not written: ${written.reason}`
 }
 
-/** The test command the passed ready push ran (its selection, as the hook runs it), or null when it ran none. */
-function readyGateCommand(results: Results): string | null {
+/**
+ * The ready push's test command as the pull-request body names it: the hook's own command text with each selected
+ * file as a `./`-prefixed path relative to the task worktree's root, never the worktree's absolute path. The Evidence
+ * write still reuses the hook's run per file, since the report engine resolves each relative path against the
+ * worktree before comparing it with the hook's recorded absolute ones.
+ */
+export function readyTestPlanCommand(files: readonly string[], worktreePath: string): string {
+  return readyTestCommand(
+    files.map((file) => {
+      const rel = relative(worktreePath, resolve(worktreePath, file)).split(sep).join('/')
+      return rel.startsWith('../') ? rel : `./${rel}`
+    })
+  )
+}
+
+/** The test command the passed ready push ran (its selection, worktree-relative), or null when it ran none. */
+function readyGateCommand(results: Results, worktreePath: string): string | null {
   const ready = results['ready-push']
   if (!ready || !('stdout' in ready)) return null
   try {
     const selected = (JSON.parse(String(ready.stdout)) as { selection?: SelectionNote | null }).selection?.selected
-    return selected && selected.length > 0 ? readyTestCommand(selected) : null
+    return selected && selected.length > 0 ? readyTestPlanCommand(selected, worktreePath) : null
   } catch {
     return null
   }
