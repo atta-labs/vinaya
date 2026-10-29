@@ -90,6 +90,7 @@ interface World {
 }
 
 interface Observed {
+  findingSchemas: Array<{ items: { enum?: string[] }; maxItems: number }>
   trace: RunTrace
   world: World
   spawns: Record<Role, number>
@@ -374,6 +375,7 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
   const launchDirectories: Record<Role, string[]> = { developer: [], 'code-reviewer': [], 'security-reviewer': [] }
   const sessionIds: Record<Role, string[]> = { developer: [], 'code-reviewer': [], 'security-reviewer': [] }
   const rawEvents: Array<Record<string, unknown>> = []
+  const findingSchemas: Observed['findingSchemas'] = []
   const facts = (): DeveloperPromptFacts => ({
     brief,
     objectives: { objectives: world.objectives, version: objectivesVersion(world.objectives) },
@@ -406,6 +408,13 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
     developerFacts: async () => facts(),
     spawnFn: (_command, args, options) => {
       const role = roleOf(agent, args, options?.env)
+      if (role === 'developer') {
+        const inline = args.indexOf('--json-schema')
+        const schema = JSON.parse(
+          inline === -1 ? readFileSync(args[args.indexOf('--output-schema') + 1]!, 'utf8') : args[inline + 1]!
+        )
+        findingSchemas.push(schema.properties.turnResult.anyOf[0].properties.addressedFindingIds)
+      }
       spawns[role] += 1
       const attempt = spawns[role]
       const sessionId = `${agent}-${role}-${attempt}`
@@ -433,6 +442,7 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
   const trace = JSON.parse(readFileSync(result.tracePath, 'utf8')) as RunTrace
   const gateRuns = existsSync(join(root, 'gate-runs')) ? Number(readFileSync(join(root, 'gate-runs'), 'utf8')) : 0
   return {
+    findingSchemas,
     trace,
     world,
     spawns,
@@ -488,6 +498,49 @@ test('the Engine runner reads unpushed work with the standalone reader, and noth
 })
 
 for (const agent of AGENTS) {
+  test(`launch schemas follow each review handoff (${agent})`, async () => {
+    const observed = await run(agent, {
+      policy: { maxRounds: 4 },
+      reviewer: (role, attempt, world, prompt) =>
+        role === 'code-reviewer' && attempt <= 3
+          ? { output: review(role, prompt, world, `distinct blocking finding ${attempt}`) }
+          : 'approve'
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.findingSchemas.map((schema) => schema.items.enum ?? [])).toEqual([
+      [],
+      ['R1-CR-1'],
+      ['R2-CR-1'],
+      ['R3-CR-1']
+    ])
+    expect(observed.findingSchemas.map((schema) => schema.maxItems)).toEqual([0, 1, 1, 1])
+  })
+
+  test(`a gate send-back clears findings and validation rejects an earlier ID (${agent})`, async () => {
+    const observed = await run(agent, {
+      gates: [
+        { code: 0, output: 'checks passed' },
+        { code: 1, output: 'repair the gate' },
+        { code: 0, output: 'checks passed' }
+      ],
+      reviewer: (role, attempt) => (role === 'code-reviewer' && attempt === 1 ? 'request-changes' : 'approve'),
+      developer: (attempt, world) =>
+        attempt === 3
+          ? { output: confident(90, ['R1-CR-1']), act: () => world.commit(true) }
+          : attempt === 4
+            ? { output: confident(90) }
+            : { output: confident(90, attempt === 2 ? ['R1-CR-1'] : []), act: () => world.commit(true) }
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.findingSchemas.map((schema) => schema.items.enum ?? [])).toEqual([[], ['R1-CR-1'], [], []])
+    expect(observed.findingSchemas.map((schema) => schema.maxItems)).toEqual([0, 1, 0, 0])
+    const correction = records(observed, 'validate-developer-output').find(
+      (record) => record.sendBack?.kind === 'correction'
+    )
+    expect(correction?.sendBack.knownFindingIds).toEqual([])
+    expect(correction?.sendBack.failures.join(' ')).toContain('unknown finding id "R1-CR-1"')
+  })
+
   describe(`the red gate is a gate observation (${agent})`, () => {
     test('the same normalized failure twice ends repeat_failure, and no reviewer runs', async () => {
       const observed = await run(agent, {

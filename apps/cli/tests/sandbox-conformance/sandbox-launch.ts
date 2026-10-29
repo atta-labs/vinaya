@@ -76,6 +76,19 @@ export const COMMAND_BUDGET_MS = 600_000
 
 export type CommandResult = { exitCode: number; output: string }
 
+/** A failed mount setup never started the command; retry it once with the identical sandbox. */
+export async function retrySandboxMountSetup(run: () => Promise<CommandResult>): Promise<CommandResult> {
+  const result = await run()
+  if (
+    result.exitCode !== 0 &&
+    /^bwrap: Can't mount tmpfs on [^\n]+: No such file or directory$/.test(result.output.trim())
+  ) {
+    console.warn('Sandbox mount setup failed before command launch; retrying once with the same configuration.')
+    return run()
+  }
+  return result
+}
+
 export type SandboxSession = {
   readonly agent: Agent
   readonly worktreeDir: string
@@ -338,11 +351,13 @@ function codexSession(): SandboxSession {
     sourceStore: store,
     runOutside: (command, env) => runOutsideSandbox(worktreeDir, command, env),
     run: (command, env) =>
-      runIn(
-        [process.execPath, 'x', CODEX_PACKAGE, ...sandboxArgs, '--', 'bash', '-c', withAbsoluteBun(command)],
-        worktreeDir,
-        { ...stripVinayaEnv(), ...envExtras, ...env },
-        `codex: ${command}`
+      retrySandboxMountSetup(() =>
+        runIn(
+          [process.execPath, 'x', CODEX_PACKAGE, ...sandboxArgs, '--', 'bash', '-c', withAbsoluteBun(command)],
+          worktreeDir,
+          { ...stripVinayaEnv(), ...envExtras, ...env },
+          `codex: ${command}`
+        )
       ),
     dispose: () => {
       removeWorktree(worktreeDir)
