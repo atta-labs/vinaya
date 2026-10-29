@@ -205,6 +205,9 @@ function fakeForge(over: Partial<ResumeDeps> = {}) {
     body: `Closes #${TASK}`,
     bound: [] as number[],
     openPr: PR as number | null,
+    /** The pull request's own state, and every pull request whose state was read. */
+    prState: 'OPEN' as 'OPEN' | 'MERGED' | 'CLOSED',
+    prStateReads: [] as number[],
     post: () => {
       forge.ordinal += 1
     }
@@ -232,6 +235,10 @@ function fakeForge(over: Partial<ResumeDeps> = {}) {
     fetchNewestIssueRulingOrdinal: () => forge.ordinal,
     fetchNewestRulingAuthor: () => (forge.ordinal > 0 ? 'principal' : null),
     fetchNewestIssueRulingAuthor: () => (forge.ordinal > 0 ? 'principal' : null),
+    fetchPrState: (pr) => {
+      forge.prStateReads.push(pr)
+      return forge.prState
+    },
     liveDriver: () => forge.driver,
     infrastructureRetries: () => 0,
     ...over
@@ -367,6 +374,64 @@ for (const agent of AGENTS) {
       const result = await watchForRuling(runtimeDir, TASK, watch, new AbortController().signal)
       expect(result).toEqual({ kind: 'cancelled' })
       expect(forge.claims).toEqual([])
+    })
+
+    test('a pull request merged or closed while the run is halted ends the watch, and no resolution is claimed', async () => {
+      for (const [state, ended] of [
+        ['MERGED', 'merged'],
+        ['CLOSED', 'closed']
+      ] as const) {
+        const { forge, deps } = fakeForge()
+        const runtimeDir = fixtureDir('resume-watch-')
+        writePauseState(runtimeDir, heldPause())
+        const watch = watching(deps, (poll) => {
+          if (poll === 2) forge.prState = state
+        })
+        const result = await watchForRuling(runtimeDir, TASK, watch, new AbortController().signal)
+        expect(result).toEqual({ kind: 'ended', state: ended })
+        expect(watch.polls()).toBe(2)
+        expect(forge.prStateReads.every((pr) => pr === PR)).toBe(true)
+        expect(forge.claims).toEqual([])
+      }
+    })
+
+    test('a pause bound to its pull request after it was raised is watched on that pull request', async () => {
+      const { forge, deps } = fakeForge()
+      const runtimeDir = fixtureDir('resume-watch-')
+      writePauseState(runtimeDir, heldPause({ prNumber: null }))
+      const watch = watching(deps, (poll) => {
+        if (poll === 1) writePauseState(runtimeDir, heldPause({ prNumber: PR }))
+        if (poll === 2) forge.prState = 'MERGED'
+      })
+      const result = await watchForRuling(runtimeDir, TASK, watch, new AbortController().signal)
+      expect(result).toEqual({ kind: 'ended', state: 'merged' })
+      // No pull request was read before the pause named one.
+      expect(forge.prStateReads).toEqual([PR, PR])
+      expect(forge.claims).toEqual([])
+    })
+
+    test('a halted run whose pull request is merged ends its process and releases its driver lock', async () => {
+      const { forge, deps } = fakeForge()
+      const watch = watching(deps, (poll) => {
+        if (poll === 1) forge.prState = 'MERGED'
+      })
+      const first = stubRun({
+        agent,
+        watch,
+        actions: {
+          // The reconcile step finds the pull request the pause then belongs to.
+          'vinaya.reconcile-external-state': () => ({ exitCode: 0, stdout: JSON.stringify({ number: PR }) }),
+          'harness.run-gates': () => {
+            throw new Error('the gate runner broke')
+          }
+        }
+      })
+      await runEngine(first.options)
+      expect(forge.claims).toEqual([])
+      expect(forge.prStateReads).toContain(PR)
+      expect(first.spawns).toEqual(['develop'])
+      expect(first.driverLog()).toContain('the pull request was merged while the run was halted; ending')
+      expect(readDriverLock(first.runtimeDir, TASK)).toBeNull()
     })
 
     test('a resolution another process claimed first ends the watch without a second resume', async () => {

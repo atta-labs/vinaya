@@ -105,6 +105,7 @@ import {
   fetchFailedCheckWorkflowRunIds,
   fetchFailingCheckRuns,
   fetchMergeableState,
+  type fetchSettledCiConclusion,
   pollMergeableState,
   readWorktreeHead,
   rerunFailedWorkflowJobs,
@@ -324,6 +325,8 @@ export interface BoundFunctions {
   localGateControl: () => EnforcementControl
   probeAgentSandbox: typeof probeAgentSandbox
   fetchCiConclusion: typeof fetchCiConclusion
+  /** A head's CI conclusion under the every-run-completed rule alone, with no early red. */
+  fetchSettledCiConclusion: typeof fetchSettledCiConclusion
   fetchFailingCheckRuns: typeof fetchFailingCheckRuns
   fetchFailedCheckWorkflowRunIds: typeof fetchFailedCheckWorkflowRunIds
   rerunFailedWorkflowJobs: typeof rerunFailedWorkflowJobs
@@ -968,12 +971,19 @@ export const EXIT_OPEN_PR = 1
 /** The reconcile step's exit code when the open pull request conflicts with the default branch (version 2). */
 export const EXIT_CONFLICT_REENTRY = 2
 
+/** The reconcile step's exit code when every run on the open pull request's head completed and CI is red (version 2). */
+export const EXIT_CI_RED_REENTRY = 3
+
 /**
  * The start decision's predicate: the Developer is due when the reconcile step found no open pull request, or found
- * one in conflict with the default branch and recorded the conflict the Developer's first turn answers.
+ * one in conflict with the default branch or red on its head, and recorded what the Developer's first turn answers.
  */
 export function isDevelopmentDue(examined: StepNodeResult): boolean {
-  return examined.exitCode === EXIT_NO_OPEN_PR || examined.exitCode === EXIT_CONFLICT_REENTRY
+  return (
+    examined.exitCode === EXIT_NO_OPEN_PR ||
+    examined.exitCode === EXIT_CONFLICT_REENTRY ||
+    examined.exitCode === EXIT_CI_RED_REENTRY
+  )
 }
 
 /** The decision a conflict repair's proof records once it holds. */

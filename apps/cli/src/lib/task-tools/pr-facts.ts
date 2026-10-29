@@ -376,8 +376,10 @@ export function buildReviewRecord(comments: readonly PrComment[], allowlist: rea
 
 /**
  * A head's check runs as ONE word. The same three-value reading
- * `gate-reading.ts`'s `fetchCiConclusion` gives the driver, over the same
- * population and in the same order of precedence:
+ * `gate-reading.ts`'s every-run-completed rule (`fetchSettledCiConclusion`)
+ * gives the driver, over the same population and in the same order of
+ * precedence — the driver's own poll (`fetchCiConclusion`) adds an early red
+ * on top of it, which this word does not:
  *
  *   - **The same population.** CHECK RUNS only. A plain commit status
  *     (`StatusContext`) is not counted at all, because the driver's own read
@@ -388,7 +390,7 @@ export function buildReviewRecord(comments: readonly PrComment[], allowlist: rea
  *     because a head whose suite has not finished has not failed yet; then every
  *     completed run must conclude `SUCCESS`/`NEUTRAL`/`SKIPPED` for green, and
  *     anything else — a `FAILURE`, a `TIMED_OUT`, or a completed run carrying no
- *     conclusion at all — is red, exactly as the driver reads it.
+ *     conclusion at all — is red, exactly as that rule reads it.
  */
 export type TaskPrCheckSummary = 'green' | 'red' | 'running'
 

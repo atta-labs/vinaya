@@ -791,6 +791,67 @@ for (const agent of AGENTS) {
   })
 }
 
+// A published pull request whose CI turned red once every run on its head completed, re-entered by a fresh run: the
+// reconcile step records the failing checks, and the Developer's first turn answers them before any check or reviewer.
+const ciRedReentry = (extra: Scenario = {}): Scenario => ({
+  attachAtRound: 1,
+  setUp: (world) => void world.commit(true),
+  settledCi: 'red',
+  failingRuns: [
+    { name: 'evidence-fresh', id: 601 },
+    { name: 'test-cli (1)', id: 602 }
+  ],
+  jobExcerpts: { 601: 'Evidence is stale for the head', 602: '(fail) watch > reads red' },
+  ...extra
+})
+
+for (const agent of AGENTS) {
+  describe(`a red CI re-entry (${agent})`, () => {
+    test('the first Developer turn names each failing check, before any check or reviewer', async () => {
+      const observed = await runV2(agent, ciRedReentry())
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(1)
+      const [first] = observed.prompts.developer
+      expect(first).toContain(`CI turned red on pull request #${PR}`)
+      expect(first).toContain('evidence-fresh (run 601)')
+      expect(first).toContain('test-cli (1) (run 602)')
+      expect(first).toContain('(fail) watch > reads red')
+      // A fresh run's red turn starts the session, so it carries the brief as well.
+      expect(first).toContain('# Frozen brief')
+      expect(observed.world.gateRunsAtDeveloper).toEqual([0])
+      const [reconciled] = records(observed, 'reconcile-external-state')
+      expect(reconciled?.sendBack).toMatchObject({ kind: 'ci-red' })
+      expect(reconciled?.failingChecks).toEqual(['evidence-fresh (run 601)', 'test-cli (1) (run 602)'])
+      // The fix is reviewed and published on the same pull request.
+      expect(observed.spawns['code-reviewer']).toBe(1)
+      expect(observed.world.prsOpened).toBe(0)
+      expect(observed.published).toHaveLength(1)
+    })
+
+    test('a restart after the red is recorded runs one red turn, not two and not none', async () => {
+      const observed = await runV2(
+        agent,
+        ciRedReentry({ restartAfter: { step: 'reconcile-external-state', beforeResume: () => {} } })
+      )
+      expect(observed.driverLegs).toBe(2)
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(1)
+      expect(observed.prompts.developer[0]).toContain('evidence-fresh (run 601)')
+      expect(observed.published).toHaveLength(1)
+    })
+  })
+}
+
+test('an open pull request whose CI is not red attaches at the local checks, as before', async () => {
+  const observed = await runV2('claude', ciRedReentry({ settledCi: 'pending' }))
+  expect(observed.outcome).toBe('completed')
+  const [reconciled] = records(observed, 'reconcile-external-state')
+  // The step records the open pull request alone, with no send-back.
+  expect(reconciled).toMatchObject({ number: PR })
+  expect(reconciled?.sendBack).toBeUndefined()
+  expect(observed.spawns.developer ?? 0).toBe(0)
+})
+
 // The proof's local half on real git histories: each way a repair can fall short, and the merges that hold.
 describe('conflictRepairFailure on real git histories', () => {
   const setUpRepo = () => {

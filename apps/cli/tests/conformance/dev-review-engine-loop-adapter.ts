@@ -544,6 +544,7 @@ async function drive(
     fetchNewestIssueRulingOrdinal: () => 0,
     fetchSourceRevision: () => head,
     fetchCiConclusion: () => (!ciRed && json(gateState)?.code === 0 ? 'green' : 'red'),
+    fetchSettledCiConclusion: () => (!ciRed && json(gateState)?.code === 0 ? 'green' : 'red'),
     fetchIssueRulingsAfterBrief: () => [],
     fetchRulings: () => (ruling ? ['Go ahead.'] : []),
     fetchLoopHistory: () => ({
@@ -925,7 +926,8 @@ async function drive(
     fetchNewestRulingOrdinal: () => (ruling ? 1 : 0),
     fetchNewestIssueRulingOrdinal: () => 0,
     fetchNewestRulingAuthor: () => (ruling ? 'principal' : null),
-    fetchNewestIssueRulingAuthor: () => null
+    fetchNewestIssueRulingAuthor: () => null,
+    fetchPrState: () => 'OPEN'
   }
   /**
    * The run pauses for the Principal and watches for the decision; the Operator's shared cancel, beside it,

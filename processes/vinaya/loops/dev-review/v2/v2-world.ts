@@ -103,6 +103,8 @@ export interface Scenario {
   pullRequestLookupFails?: (world: World) => boolean
   /** The verdict comments the forge holds on the pull request, newest of each role; default none. */
   postedVerdicts?: (world: World) => { reviewer: string | null; security: string | null } | null
+  /** The open pull request's head's CI once every run on it completed, as the reconcile step reads it; default green. */
+  settledCi?: 'green' | 'red' | 'pending'
 }
 
 export interface World {
@@ -506,6 +508,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       return conclusion
     },
     ...QUIET_FORGE_GATES,
+    fetchSettledCiConclusion: () => scenario.settledCi ?? 'green',
     // The forge's mergeability and conflicting files, as real git computes them for the remote head.
     fetchMergeableState: () => {
       const read = scenario.mergeable?.(mergeableFromGit(), world) ?? mergeableFromGit()

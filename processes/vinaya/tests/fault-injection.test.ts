@@ -212,7 +212,8 @@ function fakeWatch(onSleep: (ms: number, state: WatchState) => void = () => {}) 
       return state.ordinal
     },
     fetchNewestRulingAuthor: () => (state.ordinal > 0 ? 'principal' : null),
-    fetchNewestIssueRulingAuthor: () => (state.ordinal > 0 ? 'principal' : null)
+    fetchNewestIssueRulingAuthor: () => (state.ordinal > 0 ? 'principal' : null),
+    fetchPrState: () => 'OPEN'
   }
   const watch: RulingWatch = {
     deps,

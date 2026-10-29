@@ -16,6 +16,7 @@ import { existsSync } from 'node:fs'
 import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
 import {
   BODY_CHECKS_WORKFLOW_PATH,
+  CHECKS_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   REVIEW_WORKFLOW_PATH
 } from '../managed-workflow-paths.js'
@@ -106,7 +107,8 @@ export function resolveHead(branch: string): string {
   return sha
 }
 
-type RestCheckRun = {
+/** One check run for a head, as the REST check-runs list reports it. */
+export type RestCheckRun = {
   id: number
   name: string
   status: string
@@ -175,6 +177,8 @@ export type RestWorkflowRun = {
   /** The workflow file, e.g. `.github/workflows/vinaya-review.yml` — stable, unlike `name`, which GitHub reports as the run's own run name when the workflow sets one. */
   path?: string | null
   workflow_id: number | null
+  /** The check suite the run owns — the same id each of its jobs' check runs carries as `check_suite_id`. */
+  check_suite_id?: number | null
   status: string
   conclusion: string | null
   created_at: string | null
@@ -260,7 +264,7 @@ export function fetchWorkflowRuns(headSha: string): RestWorkflowRun[] | null {
       `repos/{owner}/{repo}/actions/runs?head_sha=${headSha}&per_page=100`,
       '--paginate',
       '--jq',
-      '.workflow_runs[] | {id, name, path, workflow_id, status, conclusion, created_at, run_started_at}'
+      '.workflow_runs[] | {id, name, path, workflow_id, check_suite_id, status, conclusion, created_at, run_started_at}'
     ])
     return out
       .split('\n')
@@ -272,29 +276,106 @@ export function fetchWorkflowRuns(headSha: string): RestWorkflowRun[] | null {
 }
 
 /**
+ * The workflows that run on a pull-request `edited` event — the managed checks
+ * workflow, the review workflow (whose jobs include `evidence-fresh`) and the
+ * body-checks workflow. A body edit re-runs them against a body that may still
+ * be on its way, so a failure of one of their jobs is read only once every run
+ * on the head has completed, never early.
+ */
+export const EDITED_EVENT_WORKFLOW_PATHS: readonly string[] = [
+  CHECKS_WORKFLOW_PATH,
+  REVIEW_WORKFLOW_PATH,
+  BODY_CHECKS_WORKFLOW_PATH
+]
+
+/** A check-run conclusion that is not a failure. */
+function isPassingConclusion(conclusion: string | null): boolean {
+  return conclusion === 'success' || conclusion === 'neutral' || conclusion === 'skipped'
+}
+
+/**
+ * Pure: the newest check runs that already completed in a failure an early red
+ * reads — neither passing nor `cancelled` (a run its own workflow's newer run
+ * cancelled is read only once everything completes) — and that belong to no
+ * workflow running on an `edited` event (`EDITED_EVENT_WORKFLOW_PATHS`),
+ * matched by check suite. A check run whose suite no listed workflow run owns
+ * (one an app posts) counts. A queued or in-progress run is never in it.
+ */
+export function earlyRedCheckRuns(
+  latestCheckRuns: readonly RestCheckRun[],
+  workflowRuns: readonly RestWorkflowRun[]
+): RestCheckRun[] {
+  const editedSuites = new Set<number>()
+  for (const run of workflowRuns) {
+    if (typeof run.check_suite_id !== 'number') continue
+    if (run.path != null && EDITED_EVENT_WORKFLOW_PATHS.includes(run.path)) editedSuites.add(run.check_suite_id)
+  }
+  return latestCheckRuns.filter(
+    (r) =>
+      r.status === 'completed' &&
+      !isPassingConclusion(r.conclusion) &&
+      r.conclusion !== 'cancelled' &&
+      !(typeof r.check_suite_id === 'number' && editedSuites.has(r.check_suite_id))
+  )
+}
+
+/**
+ * Pure: a head's mechanical CI conclusion from its newest-per-name check runs
+ * and its workflow runs. Settled (`earlyRed: false`), it is the
+ * every-run-completed rule: `'pending'` while any check run or newest workflow
+ * run has not completed or nothing has reported, else `'red'` when a workflow
+ * run failed or a check run did not pass, else `'green'`. With `earlyRed`, a
+ * head the settled rule still reads pending reads `'red'` as soon as
+ * `earlyRedCheckRuns` names a run; a head whose completed runs all passed stays
+ * pending.
+ */
+export function judgeCiConclusion(
+  latestCheckRuns: readonly RestCheckRun[],
+  workflowRuns: readonly RestWorkflowRun[],
+  opts: { earlyRed: boolean }
+): 'green' | 'red' | 'pending' {
+  const workflows = judgeWorkflowRuns(workflowRuns)
+  if (workflows === 'pending' || latestCheckRuns.some((r) => r.status !== 'completed')) {
+    return opts.earlyRed && earlyRedCheckRuns(latestCheckRuns, workflowRuns).length > 0 ? 'red' : 'pending'
+  }
+  if (workflows === 'red') return 'red'
+  if (latestCheckRuns.length === 0) return 'pending'
+  return latestCheckRuns.every((r) => isPassingConclusion(r.conclusion)) ? 'green' : 'red'
+}
+
+/**
  * The mechanical gate's own conclusion for `headSha` — never the review
  * gate's own check-run (excluded by `fetchMechanicalCheckRuns`), so a head
  * with green CI and no verdicts yet reads as green, never red. A workflow run
  * that ended `failure`, `startup_failure`, `timed_out` or `cancelled` (newest
  * run per workflow) reads red even when every check-run that exists passed —
- * a run can fail having created only some of its jobs.
- * `'pending'` when any latest-per-name mechanical run or newest workflow run
- * has not completed, either fetch fails, or nothing has reported at all yet
- * — the driver is expected to poll this, not treat one `'pending'` read as
- * final.
+ * a run can fail having created only some of its jobs. Red as soon as the
+ * newest run of a mechanical check outside the `edited`-event workflows has
+ * completed in a failure (`earlyRedCheckRuns`), even while other runs are
+ * still queued or in progress, so a poll over it stops on that failure.
+ * Otherwise `'pending'` when any latest-per-name mechanical run or newest
+ * workflow run has not completed, either fetch fails, or nothing has reported
+ * at all yet — the driver is expected to poll this, not treat one `'pending'`
+ * read as final.
  */
 export function fetchCiConclusion(headSha: string): 'green' | 'red' | 'pending' {
   const latest = fetchMechanicalCheckRuns(headSha)
   const workflowRuns = fetchWorkflowRuns(headSha)
   if (latest === null || workflowRuns === null) return 'pending'
-  const workflows = judgeWorkflowRuns(workflowRuns)
-  if (workflows === 'pending' || latest.some((r) => r.status !== 'completed')) return 'pending'
-  if (workflows === 'red') return 'red'
-  if (latest.length === 0) return 'pending'
-  if (latest.every((r) => r.conclusion === 'success' || r.conclusion === 'neutral' || r.conclusion === 'skipped')) {
-    return 'green'
-  }
-  return 'red'
+  return judgeCiConclusion(latest, workflowRuns, { earlyRed: true })
+}
+
+/**
+ * `headSha`'s conclusion under the every-run-completed rule alone, with no
+ * early red: `'red'` only once every mechanical run on the head has completed
+ * and one failed. The published watch reads this one, so a body edit's re-run
+ * of an `edited`-event workflow is never reacted to before it finishes.
+ */
+export function fetchSettledCiConclusion(headSha: string): 'green' | 'red' | 'pending' {
+  const latest = fetchMechanicalCheckRuns(headSha)
+  const workflowRuns = fetchWorkflowRuns(headSha)
+  if (latest === null || workflowRuns === null) return 'pending'
+  return judgeCiConclusion(latest, workflowRuns, { earlyRed: false })
 }
 
 /** One completed, non-passing mechanical check-run — the identity a pause built from it can be audited against. A failed workflow run carries `detail`, its whole display form: it is no job, so no job log is read for it. */
@@ -486,28 +567,41 @@ export function fetchPrState(prNumber: number): PrOpenState {
  */
 export const MAX_AUTOMATIC_CONFLICT_REENTRIES = 3
 
-/** What one watch tick over a published pull request read: an end, a conflict to re-enter, or nothing yet. */
-export type PublishedPullRequestRead = 'merged' | 'closed' | 'conflicting' | 'watching'
+/** What one watch tick over a published pull request read: an end, a conflict or a red head to re-enter, or nothing yet. */
+export type PublishedPullRequestRead = 'merged' | 'closed' | 'conflicting' | 'red' | 'watching'
 
 /**
  * One watch tick over a published pull request: its state first (merged or
- * closed ends the watch), then its forge mergeability (`fetchMergeableState`).
- * `UNKNOWN` — the forge still computing it — is never read as conflicting or
- * as clean: the tick reports `watching`, and the next tick reads it again.
+ * closed ends the watch), then its forge mergeability (`fetchMergeableState`),
+ * then — for a watcher that reads it — its head's CI conclusion under the
+ * every-run-completed rule (`fetchHeadCiConclusion`), where red reports
+ * `red`. `UNKNOWN` — the forge still computing mergeability — is never read
+ * as conflicting or as clean, and pending CI is never read as red: the tick
+ * reports `watching`, and the next tick reads them again.
  */
 export function readPublishedPullRequest(
   prNumber: number,
-  d: { fetchPrState: (prNumber: number) => PrOpenState; fetchMergeableState: (prNumber: number) => MergeableState }
+  d: {
+    fetchPrState: (prNumber: number) => PrOpenState
+    fetchMergeableState: (prNumber: number) => MergeableState
+    fetchHeadCiConclusion?: (prNumber: number) => 'green' | 'red' | 'pending'
+  }
 ): PublishedPullRequestRead {
   const state = d.fetchPrState(prNumber)
   if (state === 'MERGED') return 'merged'
   if (state === 'CLOSED') return 'closed'
-  return d.fetchMergeableState(prNumber) === 'CONFLICTING' ? 'conflicting' : 'watching'
+  if (d.fetchMergeableState(prNumber) === 'CONFLICTING') return 'conflicting'
+  return d.fetchHeadCiConclusion?.(prNumber) === 'red' ? 'red' : 'watching'
 }
 
 /** The pause detail a spent conflict re-entry bound leaves: what happened, and that a person decides. */
 export function conflictReentryBoundDetail(prNumber: number, bound: number): string {
   return `PR #${prNumber} fell into conflict with the default branch again after it was published, and this driver has already re-entered it automatically ${bound} time${bound === 1 ? '' : 's'} (the bound) — a person decides whether to resolve it again, or how`
+}
+
+/** The pause detail a red head leaves once the re-entry bound it shares with conflicts is spent. */
+export function ciRedReentryBoundDetail(prNumber: number, bound: number): string {
+  return `PR #${prNumber}'s CI turned red after it was published, and this driver has already re-entered it automatically ${bound} time${bound === 1 ? '' : 's'} (the bound it shares with conflict re-entries) — a person decides whether to fix it again, or how`
 }
 
 /**

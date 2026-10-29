@@ -11,3 +11,4 @@
 export const REVIEW_WORKFLOW_PATH = '.github/workflows/vinaya-review.yml'
 export const REVIEW_VERDICT_WORKFLOW_PATH = '.github/workflows/vinaya-review-verdict.yml'
 export const BODY_CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-body-checks.yml'
+export const CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-checks.yml'
