@@ -69,6 +69,7 @@ import {
   conformanceSkipReason,
   openEngineSandboxSession,
   openSandboxSession,
+  retrySandboxMountSetup,
   type SandboxSession,
   sourceBranch
 } from './sandbox-launch.js'
@@ -103,6 +104,49 @@ import {
   probeLeaked,
   roleHasShell
 } from './engine-attack-probes.js'
+
+describe('sandbox mount setup retry', () => {
+  const missingMount = {
+    exitCode: 1,
+    output: "bwrap: Can't mount tmpfs on /newroot/cache/.aws: No such file or directory\n"
+  }
+
+  it('retries a mount startup failure once and returns the command result', async () => {
+    let calls = 0
+    const success = { exitCode: 0, output: 'command ran' }
+    expect(await retrySandboxMountSetup(async () => (++calls === 1 ? missingMount : success))).toEqual(success)
+    expect(calls).toBe(2)
+  })
+
+  it('still fails when mount setup fails twice', async () => {
+    let calls = 0
+    expect(
+      await retrySandboxMountSetup(async () => {
+        calls++
+        return missingMount
+      })
+    ).toEqual(missingMount)
+    expect(calls).toBe(2)
+  })
+
+  it('does not retry command failures, other sandbox errors, or successful commands', async () => {
+    for (const result of [
+      { exitCode: 1, output: 'git failed' },
+      { exitCode: 1, output: 'bwrap: permission denied' },
+      { exitCode: 1, output: `command output\n${missingMount.output}` },
+      { exitCode: 0, output: missingMount.output }
+    ]) {
+      let calls = 0
+      expect(
+        await retrySandboxMountSetup(async () => {
+          calls++
+          return result
+        })
+      ).toEqual(result)
+      expect(calls).toBe(1)
+    }
+  })
+})
 
 describe('Engine controller-boundary probes — matrix coverage', () => {
   it('names exactly the nine capability and controller-boundary rows', () => {
