@@ -291,7 +291,6 @@ import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../loops/dev-
 import { runCli } from '../../../harness/gates/run-checks'
 import { checkReadyBaseline } from '../loops/dev-review/v2/ready-baseline'
 import { readTrustedReadyTestsPolicy } from '../../../apps/cli/src/lib/pre-push-ready-policy'
-import { detectVendoredVinaya } from '../../../apps/cli/src/lib/self-host'
 import {
   endReadyDeferral,
   endStoragePushes,
@@ -3067,14 +3066,12 @@ async function runLive(
     const findOpenPullRequest = () => findOpenPrForBranch(taskInput.branch)
     taskInput.flow = 'v2'
     taskInput.stagedPullRequest = store.read
-    // The ready-tests policy (local tests, or deferral to required CI) exists only for a repository that vendors the
-    // CLI, where the generated hook carries the deferral step; it is read from the default branch on each use.
-    const readyTestsPolicy = detectVendoredVinaya(taskInput.worktreePath)
-      ? () => readTrustedReadyTestsPolicy()
-      : undefined
+    // The ready-tests policy (local tests, or deferral to required CI) is the default branch's own opt-in, read on
+    // each push for the ready push and the driver-owned repair pushes alike; nothing else decides it.
+    const readyTestsPolicy = () => readTrustedReadyTestsPolicy()
     taskInput.v2 = liveV2Functions({
       runId: loopId,
-      ...(readyTestsPolicy ? { readyTestsPolicy } : {}),
+      readyTestsPolicy,
       worktreePath: taskInput.worktreePath,
       branch: taskInput.branch,
       store,
@@ -3113,7 +3110,7 @@ async function runLive(
     devToolsContext = withV2DevTools(liveContext.context, {
       worktreePath: taskInput.worktreePath,
       runId: loopId,
-      ...(readyTestsPolicy ? { readyTestsPolicy } : {}),
+      readyTestsPolicy,
       checkBaseline: () => checkReadyBaseline(taskInput.worktreePath),
       store,
       findOpenPullRequest,
