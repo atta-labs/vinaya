@@ -267,6 +267,24 @@ export function checkProgressRecord(outcome: { name: string; status: string; dur
   return { v: 1, kind: 'check', name: outcome.name, outcome: mapped, ms: Math.round(outcome.durationMs ?? 0) }
 }
 
+/**
+ * The check command's progress writer: for a hook's run (`host` is `hook`) behind a live driver, a function that
+ * records each finished check into the reserved directory; null otherwise. Call it before any check starts — the
+ * resolution spawns `git` and `ps`.
+ */
+export function checkProgressWriter(
+  host: string | undefined,
+  cwd: string
+): ((outcome: { name: string; status: string; durationMs?: number }) => void) | null {
+  if (host !== 'hook') return null
+  const dir = resolveProgressDirLive(cwd)
+  if (dir === null) return null
+  const file = `checks-${process.pid}.ndjson`
+  return (outcome) => {
+    appendProgressRecord(dir, file, checkProgressRecord(outcome))
+  }
+}
+
 /** A record of the right shape, or null. */
 export function parseProgressRecord(line: string): ProgressRecord | null {
   try {
