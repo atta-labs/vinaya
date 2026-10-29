@@ -470,7 +470,7 @@ describe('runReadyGateLive', () => {
       })
       expect(result.passed).toBe(true)
       expect(result.output).not.toContain('planted-driver-secret')
-      for (const key of keys) expect(result.output).not.toContain(key + '=')
+      for (const key of keys) expect(result.output).not.toContain(`${key}=`)
       expect(result.output).toContain('PATH=')
       expect(result.output).toContain('HOME=')
       expect(result.output).toContain('TMPDIR=')
