@@ -66,6 +66,7 @@ import {
   type SendBack,
   startReviewRound,
   type TaskInput,
+  withDeveloperContext,
   worktreeHeadOf,
   worktreeStats
 } from '../../../executing/actions'
@@ -1049,5 +1050,7 @@ export const V2_DECISIONS = {
 
 /** Version 2's action registry for one task. */
 export function createV2Actions(task: TaskInput) {
-  return Object.fromEntries(Object.entries(V2_ACTION_BINDINGS).map(([name, binding]) => [name, binding.build(task)]))
+  return Object.fromEntries(
+    Object.entries(V2_ACTION_BINDINGS).map(([name, binding]) => [name, withDeveloperContext(task, binding.build(task))])
+  )
 }

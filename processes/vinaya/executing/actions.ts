@@ -683,7 +683,10 @@ function withoutRepeatedStart(
 
 /** The finding ids the newest revision handoff gave the Developer. */
 function handedOverIds(results: Results): string[] {
-  const stdout = stdoutOf(results['build-revision-handoff'])
+  return findingIdsOfHandoff(stdoutOf(results['build-revision-handoff']))
+}
+
+function findingIdsOfHandoff(stdout: string | null): string[] {
   if (!stdout) return []
   try {
     const parsed = JSON.parse(stdout) as Array<{ id?: unknown }>
@@ -1146,7 +1149,6 @@ function validateDeveloperOutput(task: TaskInput, context: ActionContext): { exi
   const original = correcting ? (answered.corrects ?? null) : answered
   const answersFindings = correcting ? answered.answersFindings === true : answered?.kind === 'review'
   const knownFindingIds = correcting ? (answered.knownFindingIds ?? []) : answersFindings ? handedOverIds(results) : []
-  task.developerContext = { ...task.developerContext, knownFindingIds }
   const head = worktreeHeadOf(task)
   let judged = judgeTurn(task, results, round, knownFindingIds, answersFindings)
   if (judged.ok && correcting && answered.head !== undefined && head !== answered.head)
@@ -2217,10 +2219,17 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
           `build-revision-handoff found no decision type in the assess-round output: ${stdout.slice(0, 200)}`
         )
       // The step ends the round: its result records the round it leaves the run in, the checkpoint's authority for it.
-      const recorded = (stdout: string) => ({
-        ...ok(stdout),
-        stderr: encodeExecutionRound({ round: task.reviewRound(), advancedBy: 'build-revision-handoff' })
-      })
+      const recorded = (stdout: string) => {
+        const result = ok(stdout)
+        task.developerContext = {
+          ...task.developerContext,
+          knownFindingIds: findingIdsOfHandoff(stdout)
+        }
+        return {
+          ...result,
+          stderr: encodeExecutionRound({ round: task.reviewRound(), advancedBy: 'build-revision-handoff' })
+        }
+      }
       if (decision === 'publish') return recorded('')
       // A pause does not end the round: the ruling that resumes it sends the Developer back to the same round,
       // so the round stays open and no verdict is consumed.
@@ -2460,9 +2469,27 @@ export function sandboxProbePlanFor(
   }
 }
 
+/** Prepare the next launch from the same send-back and handoff its validation reads. */
+export function withDeveloperContext(task: TaskInput, action: ProcessAction): ProcessAction {
+  return (context) => {
+    const results = context.results ?? {}
+    const answered = latestRecord(results)?.sendBack
+    const knownFindingIds =
+      answered?.kind === 'correction'
+        ? (answered.knownFindingIds ?? [])
+        : answered?.kind === 'review'
+          ? handedOverIds(results)
+          : []
+    task.developerContext = { ...task.developerContext, knownFindingIds }
+    return action(context)
+  }
+}
+
 /** The action registry for one task: each binding's action, built over that task's input. */
 export function createActions(task: TaskInput): ActionRegistry {
-  return Object.fromEntries(Object.entries(ACTION_BINDINGS).map(([name, binding]) => [name, binding.build(task)]))
+  return Object.fromEntries(
+    Object.entries(ACTION_BINDINGS).map(([name, binding]) => [name, withDeveloperContext(task, binding.build(task))])
+  )
 }
 
 /** Deciding step id to its boolean, read from the examined step's exit result. */
