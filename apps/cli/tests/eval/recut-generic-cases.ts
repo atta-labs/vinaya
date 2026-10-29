@@ -26,7 +26,9 @@
  * A development case's task statement is the one `generic-task-statements.json`
  * holds for its id. A held-out case's is generated here from the case's own
  * fields; a held-out run writes only the derived files and prints only case
- * counts, ids and digests, never case content.
+ * counts, ids and digests, never case content. Either statement of a
+ * developer case, and of its loop case, ends with the case's Interface block
+ * (`interfaceItems`) when it has one.
  *
  *     bun apps/cli/tests/eval/recut-generic-cases.ts development
  *     bun apps/cli/tests/eval/recut-generic-cases.ts held-out --approve-developer <sha256> --approve-reviewer <sha256> --approve-source-citation <sha256>
@@ -35,7 +37,8 @@ import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
+import ts from 'typescript'
 import { findBannedTerms } from '../../src/lib/dev-review-eval/banned-terms'
 import { canonicalJson } from '../../src/lib/dev-review-eval/neutral-case'
 import { renderCase } from '../../src/lib/dev-review-eval/vinaya-renderer'
@@ -375,6 +378,527 @@ export function deriveSourceCitationCase(repositoryCommit: string, c: SourceCita
   }
 }
 
+// ── Interface blocks ────────────────────────────────────────────────────────
+//
+// A withheld test can fail a correct solution that only names things
+// differently, so a developer case's statement ends with what its
+// fail-to-pass tests import from the reference change, and the literals both
+// they and the reference solution use. Each source file is read by its pinned
+// blob, or at the base revision, and parsed with the TypeScript compiler API;
+// an item the base revision already holds is left out.
+
+/** The kinds an Interface item is labelled with, in the order the block lists them. */
+export const INTERFACE_KINDS = ['export', 'file', 'env', 'flag', 'event', 'field', 'string'] as const
+export type InterfaceKind = (typeof INTERFACE_KINDS)[number]
+
+export interface InterfaceItem {
+  kind: InterfaceKind
+  text: string
+}
+
+/** The block a statement ends with: ` Interface: <kind> `<text>`; …` and a full stop; empty for no item. */
+export function interfaceBlock(items: readonly InterfaceItem[]): string {
+  if (items.length === 0) return ''
+  return ` Interface: ${items.map((item) => `${item.kind} \`${item.text}\``).join('; ')}.`
+}
+
+/** The statement with its Interface block appended, or unchanged when the case has no item. */
+export function withInterface(statement: string, items: readonly InterfaceItem[]): string {
+  return `${statement}${interfaceBlock(items)}`
+}
+
+const utf8 = (bytes: Uint8Array) => Buffer.from(bytes).toString('utf8')
+
+/** Collapses a declaration written across lines onto one, as a statement holds it. */
+const oneLine = (source: string) => source.replace(/\s+/g, ' ').trim()
+
+const CODE_FILE = /\.(?:[cm]?[jt]sx?)$/
+
+const parse = (path: string, source: string) => ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true)
+
+const hasExport = (node: ts.Node) =>
+  ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+
+/** Every node of a file, depth first. */
+function eachNode(file: ts.SourceFile, visit: (node: ts.Node) => void): void {
+  const walk = (node: ts.Node) => {
+    visit(node)
+    ts.forEachChild(node, walk)
+  }
+  walk(file)
+}
+
+/** A parameter list as written, without its default values, which belong to the body. */
+function parameterList(file: ts.SourceFile, parameters: readonly ts.ParameterDeclaration[]): string {
+  const one = (p: ts.ParameterDeclaration) =>
+    `${p.dotDotDotToken === undefined ? '' : '...'}${p.name.getText(file)}${
+      p.questionToken !== undefined || p.initializer !== undefined ? '?' : ''
+    }${p.type === undefined ? '' : `: ${p.type.getText(file)}`}`
+  return `(${parameters.map(one).join(', ')})`
+}
+
+const typeParameterList = (file: ts.SourceFile, params: ts.NodeArray<ts.TypeParameterDeclaration> | undefined) =>
+  params === undefined ? '' : `<${params.map((p) => p.getText(file)).join(', ')}>`
+
+/** A function's signature as written: its parameters and, when written, its return annotation. */
+function signature(file: ts.SourceFile, fn: ts.SignatureDeclarationBase): string {
+  return `${typeParameterList(file, fn.typeParameters)}${parameterList(file, fn.parameters)}${
+    fn.type === undefined ? '' : `: ${fn.type.getText(file)}`
+  }`
+}
+
+/** A type alias names its members when it is a union of literals, and only its kind otherwise. */
+function literalMembers(file: ts.SourceFile, type: ts.TypeNode): string | null {
+  const members = ts.isUnionTypeNode(type) ? type.types : [type]
+  return members.every((m) => ts.isLiteralTypeNode(m)) ? members.map((m) => m.getText(file)).join(' | ') : null
+}
+
+/** The declared signature of the top-level declaration `name` in `statement`, never a type the compiler infers. */
+function declarationText(file: ts.SourceFile, statement: ts.Statement, name: string): string | null {
+  if (ts.isFunctionDeclaration(statement) && statement.name?.text === name)
+    return `function ${name}${signature(file, statement)}`
+  if (ts.isClassDeclaration(statement) && statement.name?.text === name) {
+    const heritage = (statement.heritageClauses ?? []).map((h) => ` ${h.getText(file)}`).join('')
+    const ctor = statement.members.find(ts.isConstructorDeclaration)
+    return `class ${name}${typeParameterList(file, statement.typeParameters)}${heritage}${
+      ctor === undefined ? '' : ` { constructor${parameterList(file, ctor.parameters)} }`
+    }`
+  }
+  if (ts.isInterfaceDeclaration(statement) && statement.name.text === name)
+    return `interface ${name}${typeParameterList(file, statement.typeParameters)}`
+  if (ts.isTypeAliasDeclaration(statement) && statement.name.text === name) {
+    const members = literalMembers(file, statement.type)
+    return `type ${name}${typeParameterList(file, statement.typeParameters)}${members === null ? '' : ` = ${members}`}`
+  }
+  if (ts.isEnumDeclaration(statement) && statement.name.text === name)
+    return `enum ${name} { ${statement.members.map((m) => m.name.getText(file)).join(', ')} }`
+  if (ts.isVariableStatement(statement)) {
+    const keyword = statement.declarationList.flags & ts.NodeFlags.Const ? 'const' : 'let'
+    for (const d of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(d.name) || d.name.text !== name) continue
+      if (d.type !== undefined) return `${keyword} ${name}: ${d.type.getText(file)}`
+      const init = d.initializer
+      if (init !== undefined && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)))
+        return `${keyword} ${name}${signature(file, init)}`
+      return `${keyword} ${name}`
+    }
+  }
+  return null
+}
+
+/** Each blob's text, by the git that read it, so the cases that share a file read it once. */
+const blobTexts = new WeakMap<Git, Map<string, string>>()
+
+function blobReader(git: Git): (blob: string) => string {
+  const known = blobTexts.get(git) ?? new Map<string, string>()
+  blobTexts.set(git, known)
+  return (blob) => {
+    let source = known.get(blob)
+    if (source === undefined) {
+      source = utf8(git(['cat-file', 'blob', blob]))
+      known.set(blob, source)
+    }
+    return source
+  }
+}
+
+/** Every file of a commit's tree, by its path, with its blob. */
+function treeOf(git: Git, commit: string): Map<string, string> {
+  const tree = new Map<string, string>()
+  for (const entry of utf8(git(['ls-tree', '-r', '-z', commit])).split('\0')) {
+    const tab = entry.indexOf('\t')
+    if (tab < 0) continue
+    const [, type, blob] = entry.slice(0, tab).split(' ')
+    if (type === 'blob' && blob !== undefined) tree.set(entry.slice(tab + 1), blob)
+  }
+  return tree
+}
+
+/** One revision's files: whether it holds a path, and that file's text. */
+interface Revision {
+  has: (path: string) => boolean
+  read: (path: string) => string | null
+}
+
+/** Where a module specifier imported from `importer` points: a repository path, or `null` outside it. */
+function resolveModule(
+  specifier: string,
+  importer: string,
+  revision: Revision,
+  workspace: ReadonlyMap<string, string>
+): string | null {
+  const target = specifier.startsWith('.')
+    ? posix.normalize(posix.join(posix.dirname(importer), specifier))
+    : (workspace.get(specifier) ?? null)
+  if (target === null) return null
+  const stem = target.replace(/\.[cm]?[jt]sx?$/, '')
+  return [target, `${stem}.ts`, `${stem}.tsx`, `${stem}/index.ts`].find(revision.has) ?? null
+}
+
+/** Each workspace package's entry points at the base revision, by the specifier that imports them. */
+function workspaceEntries(paths: Iterable<string>, base: Revision): Map<string, string> {
+  const entries = new Map<string, string>()
+  for (const path of paths) {
+    const segments = path.split('/')
+    if (segments.length !== 3 || !['packages', 'apps'].includes(segments[0] as string)) continue
+    if (segments[2] !== 'package.json') continue
+    const manifest = base.read(path)
+    if (manifest === null) continue
+    const { name, exports } = JSON.parse(manifest) as { name?: unknown; exports?: unknown }
+    if (typeof name !== 'string' || exports === null || typeof exports !== 'object') continue
+    const dir = posix.dirname(path)
+    for (const [subpath, entry] of Object.entries(exports as Record<string, unknown>)) {
+      if (typeof entry !== 'string') continue
+      entries.set(subpath === '.' ? name : `${name}/${subpath.slice(2)}`, posix.join(dir, entry))
+    }
+  }
+  return entries
+}
+
+/** The name a top-level statement declares and exports, when it exports one. */
+function exportedNames(statement: ts.Statement): string[] {
+  if (!hasExport(statement)) return []
+  if (ts.isVariableStatement(statement))
+    return statement.declarationList.declarations.flatMap((d) => (ts.isIdentifier(d.name) ? [d.name.text] : []))
+  const named = statement as ts.Statement & { name?: ts.Node }
+  return named.name !== undefined && ts.isIdentifier(named.name) ? [named.name.text] : []
+}
+
+/**
+ * The declared signature of the export `name` of the module at `path`,
+ * following `export … from` to the module that declares it; `null` when the
+ * module does not export it.
+ */
+function exportOf(
+  revision: Revision,
+  parsed: (path: string) => ts.SourceFile | null,
+  workspace: ReadonlyMap<string, string>,
+  path: string,
+  name: string,
+  seen = new Set<string>()
+): string | null {
+  const file = parsed(path)
+  if (file === null || seen.has(path)) return null
+  seen.add(path)
+  const local = (declared: string) => {
+    for (const statement of file.statements) {
+      const text = declarationText(file, statement, declared)
+      if (text !== null) return text
+    }
+    return null
+  }
+  const from = (statement: ts.ExportDeclaration) =>
+    statement.moduleSpecifier !== undefined && ts.isStringLiteral(statement.moduleSpecifier)
+      ? resolveModule(statement.moduleSpecifier.text, path, revision, workspace)
+      : null
+  const starred: string[] = []
+  for (const statement of file.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      const clause = statement.exportClause
+      if (clause === undefined) {
+        const module = from(statement)
+        if (module !== null) starred.push(module)
+        continue
+      }
+      if (!ts.isNamedExports(clause)) continue
+      const element = clause.elements.find((e) => e.name.getText(file) === name)
+      if (element === undefined) continue
+      const original = (element.propertyName ?? element.name).getText(file)
+      if (statement.moduleSpecifier === undefined) return local(original)
+      const module = from(statement)
+      return module === null ? null : exportOf(revision, parsed, workspace, module, original, seen)
+    }
+    if (exportedNames(statement).includes(name)) return declarationText(file, statement, name)
+  }
+  for (const module of starred) {
+    const text = exportOf(revision, parsed, workspace, module, name, seen)
+    if (text !== null) return text
+  }
+  return null
+}
+
+/** The modules a test file imports, each with the names it takes from it. */
+function importsOf(file: ts.SourceFile): { specifier: string; names: string[] }[] {
+  const imports: { specifier: string; names: string[] }[] = []
+  for (const statement of file.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
+    const bindings = statement.importClause?.namedBindings
+    const names: string[] = []
+    if (bindings !== undefined && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) names.push((element.propertyName ?? element.name).getText(file))
+    } else if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
+      // A namespace import takes the names its accesses read.
+      const alias = bindings.name.text
+      eachNode(file, (node) => {
+        if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === alias)
+          names.push(node.name.text)
+      })
+    }
+    imports.push({ specifier: statement.moduleSpecifier.text, names })
+  }
+  // A dynamic import is a module the test needs, named by the bindings it destructures.
+  eachNode(file, (node) => {
+    if (!ts.isCallExpression(node) || node.expression.kind !== ts.SyntaxKind.ImportKeyword) return
+    const [argument] = node.arguments
+    if (argument === undefined || !ts.isStringLiteralLike(argument)) return
+    const declaration = ts.isAwaitExpression(node.parent) ? node.parent.parent : node.parent
+    const names =
+      declaration !== undefined && ts.isVariableDeclaration(declaration) && ts.isObjectBindingPattern(declaration.name)
+        ? declaration.name.elements.map((e) => (e.propertyName ?? e.name).getText(file))
+        : []
+    imports.push({ specifier: argument.text, names })
+  })
+  return imports
+}
+
+/** Whether a call is `expect(...)`, `expect.<matcher>(...)` or a matcher chained onto one. */
+function isAssertion(call: ts.CallExpression): boolean {
+  let callee: ts.Expression = call.expression
+  for (;;) {
+    if (ts.isIdentifier(callee)) return callee.text === 'expect'
+    if (ts.isPropertyAccessExpression(callee)) callee = callee.expression
+    else if (ts.isCallExpression(callee)) callee = callee.expression
+    else return false
+  }
+}
+
+const isEnvObject = (node: ts.Expression) => {
+  const written = node.getText()
+  return written === 'env' || written.endsWith('.env')
+}
+
+/** A string an assertion expects that is no numeric value: it holds a letter, and no backtick or line break. */
+const assertable = (value: string) => /\p{L}/u.test(value) && !/[`\r\n]/.test(value)
+
+/** A command-line flag a string literal names: its leading `--name`, before any `=` value. */
+function flagIn(value: string): string | null {
+  const [token] = value.split(/[=\s]/)
+  return token !== undefined && /^--[a-z][a-z0-9-]*$/.test(token) ? token : null
+}
+
+/** What one parsed test file contributes: its identifiers, property names and string literal pieces. */
+function testTokens(file: ts.SourceFile, into: Set<string>): void {
+  eachNode(file, (node) => {
+    if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) into.add(node.text)
+    else if (ts.isStringLiteralLike(node)) {
+      into.add(node.text)
+      for (const piece of node.text.split(/\s+/)) {
+        into.add(piece)
+        const flag = flagIn(piece)
+        if (flag !== null) into.add(flag)
+      }
+    }
+  })
+}
+
+/**
+ * The name of the interface, class or object type alias a field is a direct
+ * member of; a field of a nested type is written in its parent field's type.
+ */
+function ownerOf(node: ts.Node): string | null {
+  const parent = node.parent
+  if ((ts.isInterfaceDeclaration(parent) || ts.isClassDeclaration(parent)) && parent.name !== undefined)
+    return parent.name.text
+  if (ts.isTypeLiteralNode(parent) && ts.isTypeAliasDeclaration(parent.parent)) return parent.parent.name.text
+  return null
+}
+
+/**
+ * A field's value type as written, followed by its type's literal union or
+ * enum members when the same file declares that type.
+ */
+function fieldType(file: ts.SourceFile, type: ts.TypeNode): string {
+  const written = type.getText(file)
+  if (!ts.isTypeReferenceNode(type) || !ts.isIdentifier(type.typeName)) return written
+  const name = type.typeName.text
+  for (const statement of file.statements) {
+    if (ts.isTypeAliasDeclaration(statement) && statement.name.text === name) {
+      const members = literalMembers(file, statement.type)
+      return members === null ? written : `${written} = ${members}`
+    }
+    if (ts.isEnumDeclaration(statement) && statement.name.text === name)
+      return `${written} = ${statement.members.map((m) => `${name}.${m.name.getText(file)}`).join(' | ')}`
+  }
+  return written
+}
+
+/**
+ * The literals some tracked file of `commit`, other than the `skipped` paths,
+ * contains, found by one `git grep -F -o`. A literal the search printed only
+ * inside a longer match it also printed is found too.
+ */
+function baseMatches(git: Git, commit: string, literals: readonly string[], skipped: readonly string[]): Set<string> {
+  if (literals.length === 0) return new Set()
+  let output = ''
+  try {
+    output = utf8(
+      git([
+        'grep',
+        '-F',
+        '-o',
+        '-h',
+        '--no-color',
+        ...literals.flatMap((l) => ['-e', l]),
+        commit,
+        '--',
+        '.',
+        ...skipped.map((path) => `:(exclude)${path}`)
+      ])
+    )
+  } catch {
+    // `git grep` exits 1 when no literal is found.
+  }
+  // With `-h`, each printed line is one match alone.
+  const matched = [...new Set(output.split('\n').filter(Boolean))]
+  return new Set(literals.filter((l) => matched.some((m) => m.includes(l))))
+}
+
+/**
+ * A case's Interface items: each export its fail-to-pass tests import from
+ * the reference change with its declared signature, each new file they
+ * import, and each environment variable, flag, event, field and asserted
+ * string both they and the reference solution contain — less every item the
+ * base revision already holds. Items are listed by kind, then by text.
+ */
+export function interfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceItem[] {
+  const memo = <T>(compute: (path: string) => T) => {
+    const cache = new Map<string, T>()
+    return (path: string) => {
+      if (!cache.has(path)) cache.set(path, compute(path))
+      return cache.get(path) as T
+    }
+  }
+  const blobText = blobReader(git)
+  const baseTree = treeOf(git, c.baseCommit)
+  const base: Revision = {
+    has: (path) => baseTree.has(path),
+    read: (path) => {
+      const blob = baseTree.get(path)
+      return blob === undefined ? null : blobText(blob)
+    }
+  }
+  const referenceBlobs = new Map(c.referenceSolution.files.map((f) => [f.path, f.blob]))
+  const deleted = new Set(c.referenceSolution.deleted)
+  const referenceBlob = (path: string) =>
+    deleted.has(path) ? undefined : (referenceBlobs.get(path) ?? baseTree.get(path))
+  const reference: Revision = {
+    has: (path) => referenceBlob(path) !== undefined,
+    read: (path) => {
+      const blob = referenceBlob(path)
+      return blob === undefined ? null : blobText(blob)
+    }
+  }
+  const parser = (revision: Revision) =>
+    memo((path) => {
+      const source = revision.read(path)
+      return source === null ? null : parse(path, source)
+    })
+  const testBlobs = new Map(c.hiddenTests.files.map((f) => [f.path, f.blob]))
+  const failToPass = Object.keys(c.failToPass).filter((path) => testBlobs.has(path) && CODE_FILE.test(path))
+  const tests = failToPass.map((path) => parse(path, blobText(testBlobs.get(path) as string)))
+  const workspace = workspaceEntries(baseTree.keys(), base)
+
+  const items = new Map<string, InterfaceItem>()
+  const add = (kind: InterfaceKind, text: string) => {
+    if (!text.includes('`')) items.set(`${kind}\0${text}`, { kind, text })
+  }
+
+  // Exports and new files, from each test's imports.
+  const referenceParsed = parser(reference)
+  const baseParsed = parser(base)
+  for (const test of tests) {
+    for (const { specifier, names } of importsOf(test)) {
+      const path = resolveModule(specifier, test.fileName, reference, workspace)
+      if (path === null || testBlobs.has(path)) continue
+      if (referenceBlobs.has(path) && !base.has(path)) add('file', path)
+      for (const name of new Set(names)) {
+        const declared = exportOf(reference, referenceParsed, workspace, path, name)
+        if (declared === null || exportOf(base, baseParsed, workspace, path, name) === declared) continue
+        add('export', `${path}: ${oneLine(declared)}`)
+      }
+    }
+  }
+
+  // Literals both the tests and the reference solution contain.
+  const tokens = new Set<string>()
+  for (const test of tests) testTokens(test, tokens)
+  const referenceFiles = c.referenceSolution.files.flatMap((f) => {
+    const source = reference.read(f.path)
+    return source === null ? [] : [{ path: f.path, source }]
+  })
+  // Each literal with the text the base check looks for: a field as the source writes it, without its owner.
+  const literals: (InterfaceItem & { probe: string })[] = []
+  const literal = (kind: InterfaceKind, text: string, probe = text) => literals.push({ kind, text, probe })
+  for (const { path, source } of referenceFiles.filter((f) => CODE_FILE.test(f.path))) {
+    const file = parse(path, source)
+    eachNode(file, (node) => {
+      if (ts.isPropertyAccessExpression(node) && isEnvObject(node.expression)) {
+        literal('env', node.name.text)
+      } else if (
+        ts.isElementAccessExpression(node) &&
+        isEnvObject(node.expression) &&
+        ts.isStringLiteralLike(node.argumentExpression)
+      ) {
+        literal('env', node.argumentExpression.text)
+      } else if (ts.isStringLiteralLike(node)) {
+        const flag = flagIn(node.text)
+        if (flag !== null) literal('flag', flag)
+      } else if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ['on', 'emit', 'once'].includes(node.expression.name.text)
+      ) {
+        const [event] = node.arguments
+        if (event !== undefined && ts.isStringLiteralLike(event)) literal('event', event.text)
+      } else if (
+        (ts.isPropertySignature(node) || ts.isPropertyDeclaration(node)) &&
+        node.type !== undefined &&
+        (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name))
+      ) {
+        const name = node.name.text
+        if (!tokens.has(name)) return
+        // A field of an anonymous type — a cast, a local parameter — belongs to the code, not its interface.
+        const owner = ownerOf(node)
+        if (owner === null) return
+        literal(
+          'field',
+          `${owner}.${name}: ${oneLine(fieldType(file, node.type))}`,
+          `${name}: ${oneLine(node.type.getText(file))}`
+        )
+      }
+    })
+  }
+  const asserted = new Set<string>()
+  for (const test of tests) {
+    eachNode(test, (node) => {
+      if (!ts.isCallExpression(node) || !isAssertion(node)) return
+      for (const argument of node.arguments) {
+        if (ts.isStringLiteralLike(argument) && assertable(argument.text)) asserted.add(argument.text)
+      }
+    })
+  }
+  for (const value of asserted) {
+    if (referenceFiles.some((f) => f.source.includes(value))) literal('string', value)
+  }
+
+  // A literal any base file outside the fail-to-pass tests already holds is left out. The
+  // base copies of the files the reference solution changes are read already; every
+  // literal none of them holds is looked for by one fixed-string search of the base revision.
+  const candidates = literals.filter(({ kind, text }) => kind === 'field' || kind === 'string' || tokens.has(text))
+  const changedAtBase = c.referenceSolution.files.flatMap((f) => {
+    const source = failToPass.includes(f.path) ? null : base.read(f.path)
+    return source === null ? [] : [source]
+  })
+  const unseen = [...new Set(candidates.map((l) => l.probe))].filter((p) => !changedAtBase.some((s) => s.includes(p)))
+  const searched = baseMatches(git, c.baseCommit, unseen, failToPass)
+  for (const { kind, text, probe } of candidates) {
+    if (unseen.includes(probe) && !searched.has(probe)) add(kind, text)
+  }
+
+  const order = (item: InterfaceItem) => INTERFACE_KINDS.indexOf(item.kind)
+  return [...items.values()].sort((a, b) => order(a) - order(b) || (a.text < b.text ? -1 : a.text > b.text ? 1 : 0))
+}
+
 // ── Held-out task statements ────────────────────────────────────────────────
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
@@ -520,9 +1044,13 @@ function reviewerSuites(git: Git, splits: readonly ReviewerSplit[], statementOf:
 export function recutDevelopment(git: Git = repositoryGit): Recut {
   const statementFor = loadStatements()
   const developerFile = loadDeveloperCaseFile()
+  const developerStatement = new Map(
+    developerFile.cases.map((c) => [c.id, withInterface(statementFor(c.id), interfaceItems(git, c))])
+  )
+  const statementOf = (c: DeveloperCapabilityCase) => developerStatement.get(c.id) as string
   let undeliverable = 0
   const developerCases = developerFile.cases.map((c) => {
-    const derived = deriveDeveloperCase(git, c, statementFor(c.id))
+    const derived = deriveDeveloperCase(git, c, statementOf(c))
     undeliverable += derived.undeliverable
     return derived.case
   })
@@ -571,7 +1099,7 @@ export function recutDevelopment(git: Git = repositoryGit): Recut {
     ],
     0
   )
-  const loopCases = developerFile.cases.map((c) => deriveLoopCase(git, c, statementFor(c.id)).case)
+  const loopCases = developerFile.cases.map((c) => deriveLoopCase(git, c, statementOf(c)).case)
   const wholeLoop = derivedFile(
     DERIVED_FILES.wholeLoop.development,
     'development',
@@ -605,9 +1133,14 @@ export function recutHeldOut(
 ): Recut {
   const developerFile = loadDeveloperCaseFile()
   const developerHeld = loadDeveloperHeldOut(developerFile, approvals.developer)
+  // Derived only here, once the approval has opened the held-out cases, and never printed.
+  const developerStatement = new Map(
+    developerHeld.map((c) => [c.id, withInterface(generatedDeveloperStatement(c), interfaceItems(git, c))])
+  )
+  const statementOf = (c: DeveloperCapabilityCase) => developerStatement.get(c.id) as string
   let undeliverable = 0
   const developerCases = developerHeld.map((c) => {
-    const derived = deriveDeveloperCase(git, c, generatedDeveloperStatement(c))
+    const derived = deriveDeveloperCase(git, c, statementOf(c))
     undeliverable += derived.undeliverable
     return derived.case
   })
@@ -652,7 +1185,7 @@ export function recutHeldOut(
     [{ suite: GENERIC_SUITE_IDS.sourceCitation, cases: citationCases, layerPOnly: [] }],
     0
   )
-  const loopCases = developerHeld.map((c) => deriveLoopCase(git, c, generatedDeveloperStatement(c)).case)
+  const loopCases = developerHeld.map((c) => deriveLoopCase(git, c, statementOf(c)).case)
   const wholeLoop = derivedFile(
     DERIVED_FILES.wholeLoop.heldOut,
     'held-out',

@@ -8,7 +8,8 @@
  *
  *  - `task.toml` — the Harbor version, the suite, the Vinaya renderer version
  *    and the network policy of each phase;
- *  - `instruction.md` — the case's neutral task statement;
+ *  - `instruction.md` — the case's neutral task statement, its `taskStatement`
+ *    in either split;
  *  - `environment/` — the image: the case repository at `/app` at its real
  *    base commit, with every evaluation case file and every held-out file left
  *    out of its working tree and object store, and `case.json`, the neutral
@@ -45,7 +46,7 @@ import {
   type ReadBytes,
   referenceEntry
 } from '../../../tests/eval/generic-suites'
-import { GENERIC_SUITE_IDS, SEEDED_COMMIT_IDENTITY, STATEMENTS_PATH } from '../../../tests/eval/recut-generic-cases'
+import { GENERIC_SUITE_IDS, SEEDED_COMMIT_IDENTITY } from '../../../tests/eval/recut-generic-cases'
 import {
   loadDevelopment as loadReviewerDevelopment,
   loadHeldOut as loadReviewerHeldOut,
@@ -704,10 +705,6 @@ const HELD_OUT_FAMILY: Partial<Record<GenericSuiteKey, string>> = {
   sourceCitation: DERIVED_FILE_DIGESTS.sourceCitation.heldOut
 }
 
-function statementsOf(): Record<string, string> {
-  return JSON.parse(readFileSync(STATEMENTS_PATH, 'utf8')) as Record<string, string>
-}
-
 /** The layer-`P` counterparts a split converts with, by suite. */
 function counterparts(split: 'development' | 'held-out', keys: readonly GenericSuiteKey[]) {
   const developer: DeveloperCapabilityCase[] = []
@@ -762,7 +759,6 @@ export async function convertHarborTasks(options: ConvertOptions): Promise<Conve
       throw new HarborTasksRefused(`the quarantine record names ${stray.taskId}, which ${suite} does not hold`)
   }
   const script = await bundleGradeScript()
-  const statements = split === 'development' ? statementsOf() : {}
   const layerP = counterparts(split, keys)
   const url = options.repositoryUrl ?? GITHUB_REPOSITORY_URL
   // The archive is written first: every task image installs the Vinaya CLI from it at build.
@@ -793,7 +789,7 @@ export async function convertHarborTasks(options: ConvertOptions): Promise<Conve
       const sources: CaseSources = {
         key,
         case: c,
-        statement: split === 'development' ? (statements[c.id] ?? '') : c.taskStatement,
+        statement: c.taskStatement,
         developer: layerP.developer.find((p) => p.id === c.id),
         reviewer: layerP.reviewer.find((p) => p.id === c.id && p.role === role),
         citation: layerP.citation.find((p) => p.id === c.id),

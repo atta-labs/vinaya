@@ -64,11 +64,34 @@ export interface BannedTermHit {
   index: number
 }
 
+/** The marker an Interface block opens with. */
+const INTERFACE_MARKER = ' Interface: '
+
+/** A whole Interface block: items `<kind> `<text>`` separated by `; `, ending the statement with a full stop. */
+const INTERFACE_BLOCK =
+  /^ Interface: (?:export|file|env|flag|event|field|string) `[^`]*`(?:; (?:export|file|env|flag|event|field|string) `[^`]*`)*\.$/
+
+/**
+ * The statement with the code spans of a closing Interface block blanked out:
+ * a span names an identifier the task's tests use, which may hold a process
+ * word (a `--surface-*` flag) without stating the task in process terms. Only
+ * a block after the last marker that ends the statement counts; the rest of
+ * the statement is checked as written, and each index stays where it was.
+ */
+function withoutInterfaceSpans(statement: string): string {
+  const at = statement.lastIndexOf(INTERFACE_MARKER)
+  if (at < 0) return statement
+  const block = statement.slice(at)
+  if (!INTERFACE_BLOCK.test(block)) return statement
+  return statement.slice(0, at) + block.replace(/`[^`]*`/g, (span) => `\`${' '.repeat(span.length - 2)}\``)
+}
+
 /** Every banned term the statement contains, in the order the list names them. */
 export function findBannedTerms(statement: string): BannedTermHit[] {
+  const checked = withoutInterfaceSpans(statement)
   const hits: BannedTermHit[] = []
   for (const { term, pattern } of BANNED_TERMS) {
-    const found = pattern.exec(statement)
+    const found = pattern.exec(checked)
     if (found !== null) hits.push({ term, match: found[0], index: found.index })
   }
   return hits
