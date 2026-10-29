@@ -40,8 +40,8 @@ export const GENERIC_SUITES_PROCESS_LAYER = 'G' as const
 /** The SHA-256 of each derived file's bytes, as the re-cut wrote it. */
 export const DERIVED_FILE_DIGESTS = {
   developer: {
-    development: 'dbcc2ad6f65182a12901a1d5570f5612d8aad5d0f807478e678f9c955766326a',
-    heldOut: '65924eb4548d0bc521b385d5aa5259eeab590ce5517d327be5d9b99738422334'
+    development: 'ed50e022fe89d22e3ca8cc5bd12141d32a071d067a9f7f45eefa95e8fe02a5b6',
+    heldOut: '64395254beb206b39e65bad747c1e64c85cb6324a1e5e45c8ac66ad2eb6e2d8b'
   },
   reviewer: {
     development: 'a2161462e9012c5c77eee21c6d2ece09c3d34d89464b763ec3f58fd334a1e355',
@@ -52,8 +52,8 @@ export const DERIVED_FILE_DIGESTS = {
     heldOut: '63259630cdfcd7594110c8f61241587eaa6b5a8cab12c9fbf31bdc73510e409c'
   },
   wholeLoop: {
-    development: '606269afc1b72cf49955897f99141561eee52dd47dc04135c7c3a696d45a3f2f',
-    heldOut: '8dcf330af8f646031f7f2e6344523cc55812ca0eff450730716b5d47d535e52c'
+    development: '49a93e7ce536b727e8356fe41c316c7a6d870eec9dc2dc5f2151c83bac6b3e9a',
+    heldOut: '4d1633597109cbeb26e8a44e21bc0a729050999639878e4de62c95ff7555f5e0'
   }
 } as const
 

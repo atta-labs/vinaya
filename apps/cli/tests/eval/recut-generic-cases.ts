@@ -145,7 +145,14 @@ const sha256 = (bytes: string | Uint8Array) => createHash('sha256').update(bytes
 
 // ── Git ─────────────────────────────────────────────────────────────────────
 
-export type Git = (args: readonly string[], options?: { env?: Record<string, string>; input?: string }) => Uint8Array
+/**
+ * Runs one git command. `quietExit` names an exit status that means "nothing
+ * found" rather than a failure, such as `git grep`'s `1`: it returns empty output.
+ */
+export type Git = (
+  args: readonly string[],
+  options?: { env?: Record<string, string>; input?: string; quietExit?: number }
+) => Uint8Array
 
 /** Git in the repository the cases are cut from; refuses when the command fails. */
 export const repositoryGit: Git = (args, options = {}) => {
@@ -157,6 +164,8 @@ export const repositoryGit: Git = (args, options = {}) => {
     timeout: SPAWN_BUDGET_MS,
     killSignal: 'SIGKILL'
   })
+  if (options.quietExit !== undefined && run.status === options.quietExit && run.stdout.length === 0)
+    return new Uint8Array()
   if (run.status !== 0) throw new RecutRefused(`git ${args[0]} failed`)
   return run.stdout
 }
@@ -428,12 +437,35 @@ function eachNode(file: ts.SourceFile, visit: (node: ts.Node) => void): void {
   walk(file)
 }
 
-/** A parameter list as written, without its default values, which belong to the body. */
+const printer = ts.createPrinter({ removeComments: true, newLine: ts.NewLineKind.LineFeed })
+
+/**
+ * A type as written, on one line. A type the source writes on one line is
+ * kept byte for byte; one written across lines is printed by the compiler's
+ * printer in single-line mode, which keeps every token and writes the member
+ * separators a line break stood for, so the text stays valid TypeScript.
+ */
+function typeText(file: ts.SourceFile, type: ts.TypeNode): string {
+  const written = type.getText(file)
+  if (!/[\r\n]/.test(written)) return written
+  const singleLine = (node: ts.Node) => {
+    ts.setEmitFlags(node, ts.EmitFlags.SingleLine)
+    ts.forEachChild(node, singleLine)
+  }
+  singleLine(type)
+  return oneLine(printer.printNode(ts.EmitHint.Unspecified, type, file))
+}
+
+/**
+ * A parameter list as written, without its default values, which belong to
+ * the body: a parameter with a default is written optional, with its type
+ * only when the source annotates it, never the type the default implies.
+ */
 function parameterList(file: ts.SourceFile, parameters: readonly ts.ParameterDeclaration[]): string {
   const one = (p: ts.ParameterDeclaration) =>
     `${p.dotDotDotToken === undefined ? '' : '...'}${p.name.getText(file)}${
       p.questionToken !== undefined || p.initializer !== undefined ? '?' : ''
-    }${p.type === undefined ? '' : `: ${p.type.getText(file)}`}`
+    }${p.type === undefined ? '' : `: ${typeText(file, p.type)}`}`
   return `(${parameters.map(one).join(', ')})`
 }
 
@@ -443,7 +475,7 @@ const typeParameterList = (file: ts.SourceFile, params: ts.NodeArray<ts.TypePara
 /** A function's signature as written: its parameters and, when written, its return annotation. */
 function signature(file: ts.SourceFile, fn: ts.SignatureDeclarationBase): string {
   return `${typeParameterList(file, fn.typeParameters)}${parameterList(file, fn.parameters)}${
-    fn.type === undefined ? '' : `: ${fn.type.getText(file)}`
+    fn.type === undefined ? '' : `: ${typeText(file, fn.type)}`
   }`
 }
 
@@ -476,7 +508,7 @@ function declarationText(file: ts.SourceFile, statement: ts.Statement, name: str
     const keyword = statement.declarationList.flags & ts.NodeFlags.Const ? 'const' : 'let'
     for (const d of statement.declarationList.declarations) {
       if (!ts.isIdentifier(d.name) || d.name.text !== name) continue
-      if (d.type !== undefined) return `${keyword} ${name}: ${d.type.getText(file)}`
+      if (d.type !== undefined) return `${keyword} ${name}: ${typeText(file, d.type)}`
       const init = d.initializer
       if (init !== undefined && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)))
         return `${keyword} ${name}${signature(file, init)}`
@@ -555,9 +587,13 @@ function workspaceEntries(paths: Iterable<string>, base: Revision): Map<string, 
   return entries
 }
 
-/** The name a top-level statement declares and exports, when it exports one. */
+const hasDefault = (node: ts.Node) =>
+  ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)
+
+/** The name a top-level statement declares and exports, when it exports one; a default export's is `default`. */
 function exportedNames(statement: ts.Statement): string[] {
   if (!hasExport(statement)) return []
+  if (hasDefault(statement)) return ['default']
   if (ts.isVariableStatement(statement))
     return statement.declarationList.declarations.flatMap((d) => (ts.isIdentifier(d.name) ? [d.name.text] : []))
   const named = statement as ts.Statement & { name?: ts.Node }
@@ -608,7 +644,16 @@ function exportOf(
       const module = from(statement)
       return module === null ? null : exportOf(revision, parsed, workspace, module, original, seen)
     }
-    if (exportedNames(statement).includes(name)) return declarationText(file, statement, name)
+    if (name === 'default' && ts.isExportAssignment(statement) && !statement.isExportEquals) {
+      // `export default <name>` names a local declaration; any other expression is written by its kind alone.
+      const declared = ts.isIdentifier(statement.expression) ? local(statement.expression.text) : null
+      return `default ${declared ?? 'value'}`
+    }
+    if (!exportedNames(statement).includes(name)) continue
+    if (name !== 'default') return declarationText(file, statement, name)
+    const named = (statement as ts.Statement & { name?: ts.Identifier }).name
+    const declared = named === undefined ? null : declarationText(file, statement, named.text)
+    return `default ${declared ?? (ts.isClassDeclaration(statement) ? 'class' : 'function')}`
   }
   for (const module of starred) {
     const text = exportOf(revision, parsed, workspace, module, name, seen)
@@ -623,7 +668,8 @@ function importsOf(file: ts.SourceFile): { specifier: string; names: string[] }[
   for (const statement of file.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
     const bindings = statement.importClause?.namedBindings
-    const names: string[] = []
+    // A default import takes the module's `default` export.
+    const names: string[] = statement.importClause?.name === undefined ? [] : ['default']
     if (bindings !== undefined && ts.isNamedImports(bindings)) {
       for (const element of bindings.elements) names.push((element.propertyName ?? element.name).getText(file))
     } else if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
@@ -708,7 +754,7 @@ function ownerOf(node: ts.Node): string | null {
  * enum members when the same file declares that type.
  */
 function fieldType(file: ts.SourceFile, type: ts.TypeNode): string {
-  const written = type.getText(file)
+  const written = typeText(file, type)
   if (!ts.isTypeReferenceNode(type) || !ts.isIdentifier(type.typeName)) return written
   const name = type.typeName.text
   for (const statement of file.statements) {
@@ -722,35 +768,70 @@ function fieldType(file: ts.SourceFile, type: ts.TypeNode): string {
   return written
 }
 
+/** One field a named type declares: the item text it is named by, and its written form when that is one line. */
+interface DeclaredField {
+  name: string
+  text: string
+  /** `name: type` as the source writes it, for the base search; `null` when the type spans lines. */
+  probe: string | null
+}
+
+/** Every field a direct member of a named interface, class or object type alias declares in `file`. */
+function declaredFields(file: ts.SourceFile): DeclaredField[] {
+  const fields: DeclaredField[] = []
+  eachNode(file, (node) => {
+    if (!(ts.isPropertySignature(node) || ts.isPropertyDeclaration(node)) || node.type === undefined) return
+    if (!ts.isIdentifier(node.name) && !ts.isStringLiteral(node.name)) return
+    // A field of an anonymous type — a cast, a local parameter — belongs to the code, not its interface.
+    const owner = ownerOf(node)
+    if (owner === null) return
+    const name = node.name.text
+    const written = node.type.getText(file)
+    fields.push({
+      name,
+      text: `${owner}.${name}: ${oneLine(fieldType(file, node.type))}`,
+      probe: /[\r\n]/.test(written) ? null : `${name}: ${written}`
+    })
+  })
+  return fields
+}
+
+/** Most `-e` patterns one `git grep` is given, so its argument list stays well inside the system's limit. */
+const GREP_PATTERNS_PER_CALL = 200
+
 /**
  * The literals some tracked file of `commit`, other than the `skipped` paths,
- * contains, found by one `git grep -F -o`. A literal the search printed only
- * inside a longer match it also printed is found too.
+ * contains, found by fixed-string `git grep -F -o` calls. A literal the
+ * search printed only inside a longer match it also printed is found too.
+ * Only exit status `1`, nothing found, is read as no match; any other failure
+ * refuses the re-cut.
  */
 function baseMatches(git: Git, commit: string, literals: readonly string[], skipped: readonly string[]): Set<string> {
-  if (literals.length === 0) return new Set()
-  let output = ''
-  try {
-    output = utf8(
-      git([
-        'grep',
-        '-F',
-        '-o',
-        '-h',
-        '--no-color',
-        ...literals.flatMap((l) => ['-e', l]),
-        commit,
-        '--',
-        '.',
-        ...skipped.map((path) => `:(exclude)${path}`)
-      ])
+  const found = new Set<string>()
+  for (let at = 0; at < literals.length; at += GREP_PATTERNS_PER_CALL) {
+    const batch = literals.slice(at, at + GREP_PATTERNS_PER_CALL)
+    const output = utf8(
+      git(
+        [
+          'grep',
+          '-F',
+          '-o',
+          '-h',
+          '--no-color',
+          ...batch.flatMap((l) => ['-e', l]),
+          commit,
+          '--',
+          '.',
+          ...skipped.map((path) => `:(exclude)${path}`)
+        ],
+        { quietExit: 1 }
+      )
     )
-  } catch {
-    // `git grep` exits 1 when no literal is found.
+    // With `-h`, each printed line is one match alone.
+    const matched = [...new Set(output.split('\n').filter(Boolean))]
+    for (const l of batch) if (matched.some((m) => m.includes(l))) found.add(l)
   }
-  // With `-h`, each printed line is one match alone.
-  const matched = [...new Set(output.split('\n').filter(Boolean))]
-  return new Set(literals.filter((l) => matched.some((m) => m.includes(l))))
+  return found
 }
 
 /**
@@ -826,14 +907,28 @@ export function interfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceI
     const source = reference.read(f.path)
     return source === null ? [] : [{ path: f.path, source }]
   })
-  // Each literal with the text the base check looks for: a field as the source writes it, without its owner.
-  const literals: (InterfaceItem & { probe: string })[] = []
-  const literal = (kind: InterfaceKind, text: string, probe = text) => literals.push({ kind, text, probe })
+  // Each literal with the text the base search looks for: a field as the source writes it, without its owner,
+  // or `null` for a field whose type spans lines, which only the structural check below can find.
+  const literals: (InterfaceItem & { probe: string | null })[] = []
+  const literal = (kind: InterfaceKind, text: string, probe: string | null = text) =>
+    literals.push({ kind, text, probe })
   for (const { path, source } of referenceFiles.filter((f) => CODE_FILE.test(f.path))) {
     const file = parse(path, source)
+    for (const field of declaredFields(file)) if (tokens.has(field.name)) literal('field', field.text, field.probe)
     eachNode(file, (node) => {
       if (ts.isPropertyAccessExpression(node) && isEnvObject(node.expression)) {
         literal('env', node.name.text)
+      } else if (
+        ts.isVariableDeclaration(node) &&
+        ts.isObjectBindingPattern(node.name) &&
+        node.initializer !== undefined &&
+        isEnvObject(node.initializer)
+      ) {
+        // `const { NAME } = process.env` reads each name it destructures.
+        for (const element of node.name.elements) {
+          const read = element.propertyName ?? element.name
+          if (ts.isIdentifier(read) || ts.isStringLiteral(read)) literal('env', read.text)
+        }
       } else if (
         ts.isElementAccessExpression(node) &&
         isEnvObject(node.expression) &&
@@ -850,21 +945,6 @@ export function interfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceI
       ) {
         const [event] = node.arguments
         if (event !== undefined && ts.isStringLiteralLike(event)) literal('event', event.text)
-      } else if (
-        (ts.isPropertySignature(node) || ts.isPropertyDeclaration(node)) &&
-        node.type !== undefined &&
-        (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name))
-      ) {
-        const name = node.name.text
-        if (!tokens.has(name)) return
-        // A field of an anonymous type — a cast, a local parameter — belongs to the code, not its interface.
-        const owner = ownerOf(node)
-        if (owner === null) return
-        literal(
-          'field',
-          `${owner}.${name}: ${oneLine(fieldType(file, node.type))}`,
-          `${name}: ${oneLine(node.type.getText(file))}`
-        )
       }
     })
   }
@@ -882,17 +962,27 @@ export function interfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceI
   }
 
   // A literal any base file outside the fail-to-pass tests already holds is left out. The
-  // base copies of the files the reference solution changes are read already; every
-  // literal none of them holds is looked for by one fixed-string search of the base revision.
+  // base copies of the files the reference solution changes are read already: a field any
+  // of them declares with the same owner, name and type is held, compared as parsed so a
+  // type written across lines is found too, and every other literal none of their texts
+  // holds is looked for by a fixed-string search of the base revision.
   const candidates = literals.filter(({ kind, text }) => kind === 'field' || kind === 'string' || tokens.has(text))
   const changedAtBase = c.referenceSolution.files.flatMap((f) => {
     const source = failToPass.includes(f.path) ? null : base.read(f.path)
-    return source === null ? [] : [source]
+    return source === null ? [] : [{ path: f.path, source }]
   })
-  const unseen = [...new Set(candidates.map((l) => l.probe))].filter((p) => !changedAtBase.some((s) => s.includes(p)))
+  const baseFields = new Set(
+    changedAtBase
+      .filter((f) => CODE_FILE.test(f.path))
+      .flatMap((f) => declaredFields(parse(f.path, f.source)).map((field) => field.text))
+  )
+  const held = (probe: string) => changedAtBase.some((f) => f.source.includes(probe))
+  const unseen = [...new Set(candidates.flatMap((l) => (l.probe === null || held(l.probe) ? [] : [l.probe])))]
   const searched = baseMatches(git, c.baseCommit, unseen, failToPass)
   for (const { kind, text, probe } of candidates) {
-    if (unseen.includes(probe) && !searched.has(probe)) add(kind, text)
+    if (kind === 'field' && baseFields.has(text)) continue
+    if (probe !== null && (held(probe) || searched.has(probe))) continue
+    add(kind, text)
   }
 
   const order = (item: InterfaceItem) => INTERFACE_KINDS.indexOf(item.kind)
