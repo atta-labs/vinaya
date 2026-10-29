@@ -15,7 +15,8 @@
       "apps/cli/tests/run-paths-only.test.ts",
       "apps/cli/tests/lib/log-callers.test.ts",
       "apps/cli/tests/commands/task-status.test.ts"
-    ]
+    ],
+    "readyTests": { "mode": "ci", "workflow": ".github/workflows/ci.yml", "check": "Vinaya CI" }
   },
   "checks": {
     "atta-labs/secret-scan": {
