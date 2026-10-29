@@ -7,8 +7,11 @@ import { storagePushEvent } from '../../../../../apps/cli/src/lib/flow-v2-events
 import {
   FAILED_TESTS_RECORD,
   gitPath,
+  readJsonUnderGit,
   readLastPushResult,
-  removeUnderGit
+  removeUnderGit,
+  SELECTION_NOTE,
+  type SelectionNote
 } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import {
   containmentLogLine,
@@ -234,8 +237,24 @@ export async function prePushHookPath(worktreePath: string, signal?: AbortSignal
   return existsSync(hook) ? hook : null
 }
 
-/** Twenty minutes: the ready push's deadline. Past it the run is stopped and recorded as a timed-out refusal. */
+/** Twenty minutes: the ready push's default deadline, `reviewPolicy.readyPushTimeoutMinutes` when set. Past it the run is stopped and recorded as a timed-out refusal. */
 export const READY_GATE_DEADLINE_MS = 20 * 60 * 1000
+
+/** The selector's note when it describes `head`, else null (absent, unreadable, or left by another commit). */
+function parseSelectionNote(text: string | null, head: string): SelectionNote | null {
+  if (!text) return null
+  try {
+    const note = JSON.parse(text) as SelectionNote
+    return note.head === head && Array.isArray(note.selected) ? note : null
+  } catch {
+    return null
+  }
+}
+
+function startRealDeadline(fire: () => void, ms: number): () => void {
+  const timer = setTimeout(fire, ms)
+  return () => clearTimeout(timer)
+}
 
 /** How long a stopped test run gets between TERM and KILL. */
 const STOP_GRACE_MS = 5000
@@ -266,6 +285,8 @@ export async function runReadyGateLive(input: {
   now?: () => number
   signal?: AbortSignal
   deadlineMs?: number
+  /** Starts the deadline: calls `fire` after `ms` and returns its canceller. A test fakes the clock through it. */
+  startDeadline?: (fire: () => void, ms: number) => () => void
   log?: (line: string) => void
   /** The registry folder for the run's processes (the default registry when absent). */
   registryDir?: string
@@ -356,9 +377,12 @@ export async function runReadyGateLive(input: {
     await stopRegistered(runToken, { graceMs: STOP_GRACE_MS, ...registry })
   }
   let interrupted: 'cancel' | 'deadline' | null = null
-  let timer: ReturnType<typeof setTimeout> | undefined
+  let cancelDeadline: (() => void) | undefined
   const interruption = new Promise<'cancel' | 'deadline'>((resolve) => {
-    timer = setTimeout(() => resolve('deadline'), input.deadlineMs ?? READY_GATE_DEADLINE_MS)
+    cancelDeadline = (input.startDeadline ?? startRealDeadline)(
+      () => resolve('deadline'),
+      input.deadlineMs ?? READY_GATE_DEADLINE_MS
+    )
     if (input.signal?.aborted) resolve('cancel')
     input.signal?.addEventListener('abort', () => resolve('cancel'), { once: true })
   })
@@ -395,13 +419,17 @@ export async function runReadyGateLive(input: {
       const minutes = Math.round((input.deadlineMs ?? READY_GATE_DEADLINE_MS) / 60000)
       log(`ready push: timed out after ${minutes} min; the test run was stopped`)
       log(`ready push failed: all; wall time ${wallMs} ms`)
+      // The selector writes its note before the tests start, so a stopped run still says how many files it selected.
+      const note = parseSelectionNote(readJsonUnderGit(input.worktreePath, SELECTION_NOTE), input.head)
       return {
         passed: false,
         output: `${stdout}${stderr}\nthe ready push timed out after ${minutes} min and was stopped; the next ready push runs its full selection`,
         selection: null,
         failed: 'all',
         wallMs,
-        timedOut: true
+        timedOut: true,
+        limitMinutes: minutes,
+        ...(note ? { selectedCount: note.selected.length } : {})
       }
     }
     const run = (await exited) as { status: number | null; signal: NodeJS.Signals | null; error?: Error }
@@ -438,7 +466,7 @@ export async function runReadyGateLive(input: {
     }
     throw error
   } finally {
-    if (timer) clearTimeout(timer)
+    cancelDeadline?.()
     cleanupReadyGateStorage(ownedRun)
   }
 }
@@ -474,6 +502,10 @@ export function liveV2Functions(input: {
   openWithDeveloperTool: (title: string, body: string) => ReturnType<DevToolContext['openPullRequest']>
   /** Writes the open pull request's Evidence block for the head the ready push passed. */
   writeEvidence?: V2Functions['writeEvidence']
+  /** The ready push's test-run limit in milliseconds, read from the review policy; `READY_GATE_DEADLINE_MS` when absent. */
+  readyPushDeadlineMs?: () => number
+  /** The ready push's deadline timer, for a test that fakes the clock. */
+  startDeadline?: (fire: () => void, ms: number) => () => void
   /** A line for the driver's log: the containment backend, the no-local-tests state, a timeout, an Evidence failure. */
   log?: (line: string) => void
   /** The repository's URL the default branch's tip is read and fetched from, or null when the run names none. */
@@ -487,6 +519,8 @@ export function liveV2Functions(input: {
         head,
         remoteHead: input.remoteHead(),
         ...(signal ? { signal } : {}),
+        ...(input.readyPushDeadlineMs ? { deadlineMs: input.readyPushDeadlineMs() } : {}),
+        ...(input.startDeadline ? { startDeadline: input.startDeadline } : {}),
         ...(input.log ? { log: input.log } : {})
       })
       const path = input.store.gateResultPath

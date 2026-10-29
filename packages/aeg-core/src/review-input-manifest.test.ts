@@ -85,6 +85,19 @@ describe('briefHash / policyDigest', () => {
     expect(threeHours).toBe(oneHour)
     expect(threeHours).toBe(off)
   })
+
+  it('policyDigest ignores the ready push limit — two policies differing only in readyPushTimeoutMinutes share one digest', () => {
+    const base = {
+      codeReviewThreshold: 'BLOCKER',
+      securityThreshold: 'HIGH',
+      maxRounds: 3,
+      maxTaskMinutes: 180
+    } as const
+    const twenty = policyDigest({ ...base, readyPushTimeoutMinutes: 20 })
+    const ninety = policyDigest({ ...base, readyPushTimeoutMinutes: 90 })
+    expect(twenty).toBe(ninety)
+    expect(twenty).toBe(policyDigest(base))
+  })
 })
 
 describe('buildReviewInputManifest', () => {

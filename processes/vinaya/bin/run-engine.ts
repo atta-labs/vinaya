@@ -12,6 +12,7 @@ import {
   type ControlStoreDeps,
   initialLoopState,
   buildReviewInputManifest,
+  DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
   DEFAULT_REVIEW_POLICY,
   type DevReviewLoopEventInput,
   type LoopConfig,
@@ -2915,6 +2916,9 @@ async function runLive(
       store,
       findOpenPullRequest,
       remoteHead: () => taskInput.remoteHead?.() ?? null,
+      // The ready push's test-run limit comes from the review policy, read the way the round cap is.
+      readyPushDeadlineMs: () =>
+        (taskInput.reviewPolicy?.().readyPushTimeoutMinutes ?? DEFAULT_READY_PUSH_TIMEOUT_MINUTES) * 60_000,
       // A conflict's repair is proven against the default branch's tip the driver fetches from here.
       remoteUrl: repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null,
       openWithDeveloperTool: (title, body) => liveContext.context.openPullRequest(title, body),

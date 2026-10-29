@@ -196,15 +196,40 @@ describe('the ready push tests exactly the approved commit', () => {
 })
 
 describe('a ready push past its deadline', () => {
-  test('is a recorded timeout that goes back to the Developer, and the next ready push runs its full selection', async () => {
-    const observed = await runV2('claude', { readyTimesOut: (attempt) => attempt === 1 })
-    expect(observed.outcome).toBe('completed')
-    expect(observed.world.readyRuns).toEqual([ALL_TESTS, ALL_TESTS])
-    const [timedOut, passed] = records(observed, 'ready-push')
+  test('pauses for a person naming the limit and the selected files, with no send-back and no Developer turn', async () => {
+    const observed = await runV2('claude', {
+      policy: { readyPushTimeoutMinutes: 45 },
+      readyTimesOut: () => true
+    })
+    expect(observed.outcome).toBe('pause:ready_push_failed')
+    expect(observed.trace.pauseReason).toBe('ready_push_failed')
+    expect(observed.world.readyRuns).toEqual([ALL_TESTS])
+    expect(observed.spawns.developer).toBe(1)
+    const [timedOut] = records(observed, 'ready-push')
     expect(timedOut?.outcome).toBe('timed-out')
-    expect(timedOut?.sendBack).toMatchObject({ kind: 'ready-refused' })
-    expect(passed?.outcome).toBe('passed')
-    expect(observed.prompts.developer[1]).toContain('ran past the deadline')
+    expect(timedOut?.sendBack ?? null).toBeNull()
+    expect(timedOut?.readyPushFailures).toBe(0)
+    expect(timedOut?.decision).toMatchObject({
+      type: 'pause',
+      reason: 'ready_push_failed',
+      detail: expect.stringContaining(`${ALL_TESTS.length} selected test files at its 45-minute limit`)
+    })
+  })
+
+  test('names the default limit when the policy sets none', async () => {
+    const observed = await runV2('claude', { readyTimesOut: () => true })
+    expect(records(observed, 'ready-push')[0]?.decision).toMatchObject({
+      detail: expect.stringContaining('at its 20-minute limit')
+    })
+  })
+
+  test('a real test failure is still sent back with its failing lines', async () => {
+    const observed = await runV2('claude', { failingTests: (attempt) => (attempt === 1 ? ['/repo/b.test.ts'] : []) })
+    expect(observed.outcome).toBe('completed')
+    const [refused] = records(observed, 'ready-push')
+    expect(refused?.outcome).toBe('refused')
+    expect(refused?.sendBack).toMatchObject({ kind: 'ready-refused' })
+    expect(observed.prompts.developer[1]).toContain('/repo/b.test.ts')
   })
 })
 
@@ -451,7 +476,7 @@ test('the repair turn names the failed files and the ready-hook contract', async
   expect(prompt).toContain('/repo/b.test.ts')
   expect(prompt).toContain('selected test files on the approved head')
   expect(prompt).toContain("repository's pre-push hook in ready mode")
-  expect(prompt).toContain('20-minute deadline')
+  expect(prompt).not.toContain('deadline')
   expect(prompt).toContain('Run the named failing files before publishing')
 })
 

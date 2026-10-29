@@ -4,11 +4,13 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DevToolContext } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
-import { gitPath, LAST_PUSH_RESULT } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import { gitPath, LAST_PUSH_RESULT, SELECTION_NOTE } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import {
   beginStoragePushes,
   endStoragePushes,
+  liveV2Functions,
   NO_LOCAL_TESTS_MARKER,
+  READY_GATE_DEADLINE_MS,
   readFetchedMainTip,
   runReadyGateLive,
   stagedPullRequestStore,
@@ -286,6 +288,124 @@ describe('runReadyGateLive', () => {
     expect(result.passed).toBe(true)
     expect(result.localTests).toBeUndefined()
     expect(lines[0]).toContain('containment backend: registry')
+  })
+
+  describe('the deadline', () => {
+    // A fake clock: the deadline fires at once and records the limit it was asked for.
+    const fakeClock = () => {
+      const asked: number[] = []
+      const startDeadline = (fire: () => void, ms: number) => {
+        asked.push(ms)
+        fire()
+        return () => {}
+      }
+      return { asked, startDeadline }
+    }
+    const hangingHook = (dir: string) => withHook(dir, 'sleep 30')
+
+    test('a configured limit is the deadline, and the timeout line names those minutes', async () => {
+      const dir = repo()
+      const head = headOf(dir)
+      hangingHook(dir)
+      const clock = fakeClock()
+      const lines: string[] = []
+      const result = await runReadyGateLive({
+        worktreePath: dir,
+        branch: 'task/issue-1',
+        head,
+        remoteHead: head,
+        deadlineMs: 45 * 60_000,
+        startDeadline: clock.startDeadline,
+        log: (line) => lines.push(line)
+      })
+      expect(clock.asked).toEqual([45 * 60_000])
+      expect(result.timedOut).toBe(true)
+      expect(result.limitMinutes).toBe(45)
+      expect(lines).toContain('ready push: timed out after 45 min; the test run was stopped')
+    })
+
+    test('the default of twenty minutes applies when no limit is given', async () => {
+      const dir = repo()
+      const head = headOf(dir)
+      hangingHook(dir)
+      const clock = fakeClock()
+      const lines: string[] = []
+      const result = await runReadyGateLive({
+        worktreePath: dir,
+        branch: 'task/issue-1',
+        head,
+        remoteHead: head,
+        startDeadline: clock.startDeadline,
+        log: (line) => lines.push(line)
+      })
+      expect(clock.asked).toEqual([READY_GATE_DEADLINE_MS])
+      expect(result.limitMinutes).toBe(20)
+      expect(lines).toContain('ready push: timed out after 20 min; the test run was stopped')
+    })
+
+    test('a stopped run reports how many files the selector had chosen for this commit', async () => {
+      const dir = repo()
+      const head = headOf(dir)
+      hangingHook(dir)
+      mkdirSync(join(dir, '.git', 'vinaya'), { recursive: true })
+      writeFileSync(
+        join(dir, '.git', SELECTION_NOTE),
+        JSON.stringify({
+          version: 1,
+          mode: 'full',
+          head,
+          fullCount: 3,
+          selected: ['a.test.ts', 'b.test.ts', 'c.test.ts']
+        })
+      )
+      const result = await runReadyGateLive({
+        worktreePath: dir,
+        branch: 'task/issue-1',
+        head,
+        remoteHead: head,
+        startDeadline: fakeClock().startDeadline
+      })
+      expect(result.selectedCount).toBe(3)
+    })
+
+    test('a note left by another commit is not counted', async () => {
+      const dir = repo()
+      const head = headOf(dir)
+      hangingHook(dir)
+      mkdirSync(join(dir, '.git', 'vinaya'), { recursive: true })
+      writeFileSync(
+        join(dir, '.git', SELECTION_NOTE),
+        JSON.stringify({ version: 1, mode: 'full', head: 'old', fullCount: 1, selected: ['a.test.ts'] })
+      )
+      const result = await runReadyGateLive({
+        worktreePath: dir,
+        branch: 'task/issue-1',
+        head,
+        remoteHead: head,
+        startDeadline: fakeClock().startDeadline
+      })
+      expect(result.selectedCount).toBeUndefined()
+    })
+
+    test('the live functions pass the policy limit to the ready push', async () => {
+      const dir = repo()
+      const head = headOf(dir)
+      hangingHook(dir)
+      const clock = fakeClock()
+      const functions = liveV2Functions({
+        worktreePath: dir,
+        branch: 'task/issue-1',
+        store: stagedPullRequestStore(join(dir, 'run')),
+        findOpenPullRequest: () => null,
+        remoteHead: () => head,
+        openWithDeveloperTool: async () => ({ ok: false, error: { message: 'unused' } }) as never,
+        readyPushDeadlineMs: () => 90 * 60_000,
+        startDeadline: clock.startDeadline
+      })
+      const gate = await functions.runReadyGate({ head })
+      expect(clock.asked).toEqual([90 * 60_000])
+      expect(gate.limitMinutes).toBe(90)
+    })
   })
 
   test('the hook starts only once its registration is acknowledged, in its own process group', async () => {
