@@ -40,7 +40,11 @@ import {
   readAgentProvenance,
   type AgentCheckpointProvenance
 } from '../../../harness/dev-process/engine-runtime/checkpoint-round'
-import { DispatchUsageLimit, usageLimitPauseDetail } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import {
+  DispatchUsageLimit,
+  isUsageLimitPauseDetail,
+  usageLimitPauseDetail
+} from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import {
   mirrorExecutionRoundOnCommit,
   readEffectiveResumedStateFrom
@@ -163,8 +167,11 @@ import {
 import {
   clearDriverLock,
   isDriverPidAlive,
+  PAUSE_REASON_PROFILE,
   readPauseState
 } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+import { formatAgentLine } from '../../../apps/cli/src/lib/agent-line'
+import { formatStageLine, type Stage, type StageChange } from '../../../apps/cli/src/lib/follow-view'
 import {
   appendLoopLogLine,
   appendRoleLine,
@@ -753,6 +760,74 @@ export async function dryRunLines(options: {
 /** Where a run's own Flow is written: the checked-in one with the run's policy ceilings, under its run directory. */
 export const renderedFlowPath = (runDir: string): string => join(runDir, 'dev-review.flow.yaml')
 
+/**
+ * The stage each node of version 2's Flow belongs to, as the follow view and the status row read it. A node's start
+ * moves the run to its stage; the decisions and checks around an agent step count toward that step's stage. The
+ * focused checks at ready and the pauses are reached inside a node, so no node maps to them.
+ */
+export const V2_NODE_STAGES: Readonly<Record<string, Stage>> = {
+  'prepare-run': 'develop',
+  'reconcile-external-state': 'develop',
+  'prepare-sources': 'develop',
+  'choose-start': 'develop',
+  develop: 'develop',
+  'validate-developer-output': 'develop',
+  'classify-developer-output': 'develop',
+  'prove-conflict-repair': 'develop',
+  'classify-conflict-repair': 'develop',
+  'classify-approval-carry': 'develop',
+  'carry-approvals': 'review',
+  'run-mechanical-gates': 'local_checks',
+  'check-premise': 'local_checks',
+  'assess-gate': 'local_checks',
+  'classify-gate-result': 'local_checks',
+  'run-security-scan': 'review',
+  'dispatch-reviewers': 'review',
+  'code-review': 'review',
+  'security-review': 'review',
+  'validate-reviewer-outputs': 'review',
+  'classify-reviewer-outputs': 'review',
+  'assess-round': 'review',
+  'build-revision-handoff': 'review',
+  'run-live-checks': 'review',
+  'classify-live-result': 'review',
+  'ready-push': 'ready_push',
+  'classify-ready-push': 'ready_push',
+  'open-pull-request': 'pr_opened',
+  'classify-pr-opened': 'pr_opened',
+  'read-ci-once': 'required_ci',
+  'classify-ci-result': 'required_ci',
+  'check-publish-mergeability': 'waiting_merge',
+  'classify-publish-mergeability': 'waiting_merge',
+  'publish-ready-for-merge': 'waiting_merge'
+}
+
+/**
+ * The paused stage a recorded pause puts the run in, from the reason and detail the pause record holds: a pause for
+ * the agent's usage limit waits on the Developer's agent, which resumes at its reset; any other is addressed by the
+ * reason's own requested authority — the Operator for an operator-addressed pause and for one the driver raised for
+ * its own safety (`self`), which the Operator's `task_resume` continues; the Principal for a principal-addressed pause
+ * and for a planner-addressed one, whose task correction is the Principal's planning call.
+ */
+export function stageOfPause(reason: string, detail: string | undefined): Stage {
+  if (isUsageLimitPauseDetail(detail)) return 'paused_developer'
+  const authority = (PAUSE_REASON_PROFILE as Record<string, { requestedAuthority: string } | undefined>)[reason]
+    ?.requestedAuthority
+  if (authority === 'operator' || authority === 'self') return 'paused_operator'
+  return 'paused_principal'
+}
+
+/** Writes one stage-change line each time the run moves to another stage or round; a repeat writes nothing. */
+export function createStageNarrator(write: (line: string) => void, now: () => Date = () => new Date()) {
+  let current: string | null = null
+  return (change: StageChange): void => {
+    const key = `${change.stage}:${change.round}`
+    if (key === current) return
+    current = key
+    write(formatStageLine(change, now()))
+  }
+}
+
 /** The pause a spent Flow ceiling records. Version 2's assessment enforces the round cap itself, so a spent ceiling there means the approved repair turns ran out. */
 export function exhaustedPause(flowKey: LoadedProcess['flowKey']): { reason: PauseReason; detail: string } {
   return flowKey === 'v2'
@@ -927,8 +1002,10 @@ export function withAgentNarration(
           for (const line of lines) {
             if (line.trim().length === 0) continue
             try {
-              for (const { words, mark, details } of renderer.render(JSON.parse(line) as Record<string, unknown>))
-                appendRoleLine(narration.logPath, role, words, details, mark)
+              for (const { words, mark, details, callId, commandFrom } of renderer.render(
+                JSON.parse(line) as Record<string, unknown>
+              ))
+                appendRoleLine(narration.logPath, role, words, details, mark, { callId, commandFrom })
             } catch {
               // Not a JSON line, or a renderer that refused it: narration never ends the run it observes.
             }
@@ -1250,6 +1327,8 @@ export interface EngineRunOptions {
   beginDeveloperTurn?: () => Promise<void | { conflictFiles: string[] | null }>
   /** Called when a newer ruling resumes the halted run, so the next Developer turn carries the rulings' text. */
   onRulingResume?: () => void
+  /** Handed the call that writes the focused-checks stage line, for the ready push to make when its explicit Test Plan run starts. */
+  registerFocusedChecks?: (notify: () => void) => void
   /**
    * Called whenever the run stops working: before it watches a pause (a halt, the round cap, a cancel) and once
    * more as it ends, however it ends. Version 2 ends its storage pushes here, so no later push skips the tests.
@@ -1394,6 +1473,14 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   const translator = createLogTranslator(producers, sinkLog as unknown as EmitLogEvent)
   let launchSeq = 0
   const narrate = (line: string): void => appendLoopLogLine(logPath, `${new Date().toISOString()}  ${line}`)
+  // Version 2's stage-change lines, into the driver log only: a node's start, a pause, the focused checks at ready and
+  // the published watch each move the run to its stage, and a repeat of the current stage writes nothing.
+  const narrateStage =
+    options.process.flowKey === 'v2'
+      ? createStageNarrator((line) => appendLoopLogLine(logPath, line), lifecycle.now)
+      : () => {}
+  const stageRound = (): number => options.taskInput?.reviewRound?.() ?? 1
+  options.registerFocusedChecks?.(() => narrateStage({ round: stageRound(), stage: 'focused_checks' }))
   let pausedFor: string | undefined
   const writeTrace = (
     outcome: string,
@@ -1522,7 +1609,24 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       return null
     }
   }
-  const makeHandoff = (): Handoff =>
+  // A pause the handoff made durable moves the run to the paused stage its recorded reason addresses.
+  const makeHandoff = (): Handoff => {
+    const handoff = createLegHandoff()
+    return {
+      ...handoff,
+      pause: (request) => {
+        const result = handoff.pause(request)
+        if (!result.repeated)
+          narrateStage({
+            round: stageRound(),
+            stage: stageOfPause(request.reason, request.detail),
+            reason: request.reason
+          })
+        return result
+      }
+    }
+  }
+  const createLegHandoff = (): Handoff =>
     createHandoff(
       {
         task: args.task,
@@ -2023,7 +2127,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           control,
           onEvent: (event) => {
             const lifecycleEvent = event as NodeLifecycle
-            if (lifecycleEvent.type === 'node:start') currentNode = lifecycleEvent.nodeId
+            if (lifecycleEvent.type === 'node:start') {
+              currentNode = lifecycleEvent.nodeId
+              const stage = V2_NODE_STAGES[lifecycleEvent.nodeId]
+              if (stage !== undefined) narrateStage({ round: stageRound(), stage })
+            }
             options.observe?.(lifecycleEvent)
             trace.onEvent(lifecycleEvent)
             translator.onEvent(lifecycleEvent)
@@ -2058,6 +2166,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         const published = prNumber > 0 ? prNumber : openPullRequest()
         if (published === null) break
         narrate(`watching PR #${published} after its publication, until it is merged or closed`)
+        narrateStage({ round: stageRound(), stage: 'waiting_merge' })
         const read = await watchPublishedPullRequest(published, lifecycle.publishedWatch, stopWatching.signal, narrate)
         if (read !== 'conflicting' && read !== 'red') {
           narrate(read === 'stopped' ? 'the watch was stopped; ending' : `PR #${published} was ${read}; ending`)
@@ -2134,6 +2243,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       )
       if (watched.kind === 'ruled') {
         narrate(`a newer ruling resumed escalation ${watched.escalationId}`)
+        // The Principal's ruling is what moved the run: one line in the Principal's own name.
+        appendLoopLogLine(
+          logPath,
+          formatAgentLine('principal', 'A ruling resumed the paused run.', { log: true, unicode: false, mark: 'done' })
+        )
         options.onRulingResume?.()
       } else if (watched.kind === 'recovered') {
         narrate(`the usage limit reset: escalation ${watched.escalationId} resumes with no ruling`)
@@ -2945,6 +3059,8 @@ async function runLive(
   endReadyDeferral(taskInput.worktreePath)
   // Version 2 (review locally, push once): storage pushes, a staged pull request, the ready push and CI once.
   let devToolsContext = liveContext.context
+  // The focused-checks stage line is the runner's to write; the ready push only says when its explicit run starts.
+  let focusedChecks: () => void = () => {}
   if (loaded.flowKey === 'v2') {
     const store = stagedPullRequestStore(runDirectory(runtimeDir, args.task))
     const findOpenPullRequest = () => findOpenPrForBranch(taskInput.branch)
@@ -2988,7 +3104,8 @@ async function runLive(
           return { ok: false, reason: error instanceof Error ? error.message : String(error), retryable: true }
         }
       },
-      log: (line) => process.stderr.write(`${new Date().toISOString()}  ${line}\n`)
+      log: (line) => process.stderr.write(`${new Date().toISOString()}  ${line}\n`),
+      onExplicitCommandsStart: () => focusedChecks()
     })
     devToolsContext = withV2DevTools(liveContext.context, {
       worktreePath: taskInput.worktreePath,
@@ -3079,6 +3196,9 @@ async function runLive(
     devToolsContext,
     onRulingResume: () => {
       rulings.owed = true
+    },
+    registerFocusedChecks: (notify) => {
+      focusedChecks = notify
     },
     onRunHalted: () => {
       endStoragePushes(taskInput.worktreePath)

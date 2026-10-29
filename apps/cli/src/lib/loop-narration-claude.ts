@@ -10,7 +10,8 @@ import { redact } from '@attalabs/aeg-core'
  * bulk of a run and can carry secrets and absolute paths. What it keeps is a
  * kind, one subject naming the target, line counts for edits and creates, and
  * for a result only success or failure, the time the call took and a failure's
- * first line.
+ * first line — and, for a test run, the failed-test count its own summary line
+ * states, a number and nothing else of the output.
  */
 
 export type ActionKind =
@@ -62,6 +63,8 @@ export interface NarratedResult {
   durationMs: number
   /** A failure's first error line, shortened and redacted. Absent on success. */
   error?: string
+  /** A finished test run's failed-test count, read from the run's own summary line; absent when it printed none. */
+  failedTests?: number
 }
 
 export type NarratedUpdate = NarratedAction | NarratedResult
@@ -342,17 +345,56 @@ function classifyCall(
   }
 }
 
+/**
+ * The test runners' own summary lines, each read for its failed count: bun's ` 3 fail`, Jest's
+ * `Tests: 3 failed, 9 passed, 12 total`, Vitest's `Tests  3 failed | 9 passed (12)` and pytest's
+ * `=== 3 failed, 9 passed in 1.2s ===`. A summary that names no failure counts zero.
+ */
+const TEST_SUMMARIES: readonly ((line: string) => number | null)[] = [
+  (line) => {
+    const m = /^\s*(\d+) fail\s*$/.exec(line)
+    return m ? Number(m[1]) : null
+  },
+  (line) => {
+    if (!/^\s*Tests:?\s+\d+ (?:failed|passed|skipped|todo)/.test(line)) return null
+    const m = /(\d+) failed/.exec(line)
+    return m ? Number(m[1]) : 0
+  },
+  (line) => {
+    if (!/^=+ .*\b(?:passed|failed)\b.* in [\d.]+s\b.*=+\s*$/.test(line)) return null
+    const m = /(\d+) failed/.exec(line)
+    return m ? Number(m[1]) : 0
+  }
+]
+
+/** The failed-test count of a test run's output, from the last summary line it printed; undefined when it printed none. */
+export function failedTestCount(output: string): number | undefined {
+  let count: number | undefined
+  for (const line of output.split('\n')) {
+    for (const read of TEST_SUMMARIES) {
+      const found = read(line)
+      if (found !== null) {
+        count = found
+        break
+      }
+    }
+  }
+  return count
+}
+
+/** A tool result's text: a string, or its text blocks joined. */
+function resultText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return (content as Record<string, unknown>[])
+    .map((b) => (b?.type === 'text' ? str(b.text) : ''))
+    .filter((t) => t.length > 0)
+    .join('\n')
+}
+
 /** The first non-empty line of a failed result's text, shortened and redacted. */
 function firstErrorLine(content: unknown, ctx: NarrationContext): string {
-  let text = ''
-  if (typeof content === 'string') text = content
-  else if (Array.isArray(content)) {
-    text = (content as Record<string, unknown>[])
-      .map((b) => (b?.type === 'text' ? str(b.text) : ''))
-      .filter((t) => t.length > 0)
-      .join('\n')
-  }
-  return firstLine(text, ctx)
+  return firstLine(resultText(content), ctx)
 }
 
 /**
@@ -391,8 +433,12 @@ export function translateClaudeEvent(
         ok,
         durationMs: Math.max(0, ctx.now - call.at)
       }
-      // Success never reads the result's content; a failure keeps one line.
+      // Success never reads the result's content; a failure keeps one line, a test run its failed count.
       if (!ok) result.error = firstErrorLine(block.content, ctx)
+      if (call.kind === 'running_tests') {
+        const failed = failedTestCount(resultText(block.content))
+        if (failed !== undefined) result.failedTests = failed
+      }
       out.push(result)
     }
   }

@@ -35,7 +35,7 @@ import { type NarrationKind, narrate } from '@attalabs/aeg-core/log'
 import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import { runPath, runtimeDirForThisRepo } from './run-paths.js'
-import { type AgentLineMark, formatAgentLine } from './agent-line.js'
+import { type AgentLineMark, type AgentLineParts, formatAgentLine, formatLineMeta } from './agent-line.js'
 
 export type LoopLogRepo = { owner: string; repo: string } | null
 
@@ -92,17 +92,36 @@ export function appendLoopLogLine(path: string, line: string): void {
   }
 }
 
+/**
+ * One agent record into the driver log: its primary line, then each detail as its own `·` record. `meta` adds, after
+ * the ISO time, the action's call identifier on the primary line and a `command` mark on each detail that is the
+ * shell command; every word of either record is what it would be without it.
+ */
 export function appendRoleLine(
   path: string,
   role: string,
   text: string,
   details: readonly string[] = [],
-  mark: AgentLineMark = 'working'
+  mark: AgentLineMark = 'working',
+  meta: Pick<AgentLineParts, 'callId' | 'commandFrom'> = {}
 ): void {
-  appendLoopLogLine(path, formatAgentLine(role, redact(text, homedir()), { log: true, unicode: false, mark }))
-  for (const detail of details.filter(Boolean)) {
-    appendLoopLogLine(path, `${new Date().toISOString()}  · ${redact(detail, homedir())}`)
-  }
+  appendLoopLogLine(
+    path,
+    formatAgentLine(role, redact(text, homedir()), {
+      log: true,
+      unicode: false,
+      mark,
+      ...(meta.callId !== undefined ? { meta: { call: meta.callId } } : {})
+    })
+  )
+  details.forEach((detail, index) => {
+    if (!detail) return
+    const command = meta.commandFrom !== undefined && index >= meta.commandFrom
+    appendLoopLogLine(
+      path,
+      `${new Date().toISOString()}${command ? formatLineMeta({ command: true }) : ''}  · ${redact(detail, homedir())}`
+    )
+  })
 }
 
 /** Marks a process's start in the log — the delineation `--follow`/a human reader needs to tell one relaunch's narration apart from the last. A first start reads "run started"; a relaunch of a task that already ran reads "Resumed". */
@@ -170,6 +189,10 @@ export type FollowLoopLogDeps = {
   /** `true` ends the follow loop — production never sets this (it runs until the process is killed, `Ctrl-C`); a test supplies one that flips true after a bounded number of ticks. */
   shouldStop: () => boolean
   pollIntervalMs: number
+  /** Receives what the file already holds when the follow starts; absent, `write` does. */
+  writeBacklog?: (chunk: Buffer) => void
+  /** Called once per poll, after any new bytes were written: the follow view's clock for its still-in-stage lines. */
+  tick?: () => void
 }
 
 const defaultFollowLoopLogDeps: FollowLoopLogDeps = {
@@ -196,12 +219,17 @@ export async function followLoopLog(path: string, overrides: Partial<FollowLoopL
   let lastSize = 0
   if (existsSync(path)) {
     const buf = readFileSync(path)
-    deps.write(buf)
+    ;(deps.writeBacklog ?? deps.write)(buf)
     lastSize = buf.length
   }
   while (!deps.shouldStop()) {
     await deps.sleep(deps.pollIntervalMs)
-    if (!existsSync(path)) continue
+    readGrowth()
+    deps.tick?.()
+  }
+
+  function readGrowth(): void {
+    if (!existsSync(path)) return
     const stat = statSync(path)
     if (stat.size < lastSize) lastSize = 0
     if (stat.size > lastSize) {

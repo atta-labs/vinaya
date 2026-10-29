@@ -109,7 +109,11 @@ export function createAgentStreamRenderer(
       for (const update of updates) {
         const parts = renderNarratedUpdate(update)
         const command = update.type === 'action' && update.id !== null ? commands.get(update.id) : undefined
-        if (command !== undefined && command !== '') parts.details.push(...textLines(command, ctx))
+        if (command !== undefined && command !== '') {
+          // The command's lines are marked where they are written, so a reader leaves them out without guessing.
+          parts.commandFrom = parts.details.length
+          parts.details.push(...textLines(command, ctx))
+        }
         if (update.type === 'action' && update.kind === 'message') {
           const full = codexMessage(event)
           if (full !== '') parts.details = textLines(full, ctx)

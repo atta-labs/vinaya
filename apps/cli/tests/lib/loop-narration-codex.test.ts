@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { createNarrationState, type NarrationContext, translateClaudeEvent } from '../../src/lib/loop-narration-claude'
+import { renderNarratedUpdate } from '../../src/lib/agent-line'
+import {
+  createNarrationState,
+  type NarratedUpdate,
+  type NarrationContext,
+  translateClaudeEvent
+} from '../../src/lib/loop-narration-claude'
 import { translateCodexEvent } from '../../src/lib/loop-narration-codex'
 
 const WORKTREE = '/work/repo/.worktrees/task/t/1'
@@ -63,6 +69,42 @@ describe('commands, file changes, tool calls and messages (O1, O2)', () => {
       }
     ])
     expect(JSON.stringify(out)).not.toContain('SECRET')
+  })
+
+  test("a finished test run carries its failed-test count from the run's own summary line, and nothing else of it", () => {
+    const state = createNarrationState()
+    const item = { id: 't', type: 'command_execution', command: `/bin/zsh -lc 'bun test a.test.ts'` }
+    translateCodexEvent(started({ ...item, aggregated_output: '', exit_code: null }), state, ctx(0))
+    const output = '(fail) pairs SECRET /Users/someone/x\n\n 7 pass\n 2 fail\nRan 9 tests across 1 file.'
+    const [failed] = translateCodexEvent(
+      completed({ ...item, status: 'failed', exit_code: 1, aggregated_output: output }),
+      state,
+      ctx(3000)
+    )
+    expect(failed).toMatchObject({ type: 'result', id: 't', kind: 'running_tests', ok: false, failedTests: 2 })
+    expect(JSON.stringify(failed)).not.toContain('SECRET')
+    expect(renderNarratedUpdate(failed as NarratedUpdate).words).toBe(
+      'Failed running tests bun test a.test.ts after 3.0s, 2 tests failed'
+    )
+
+    const passing = { id: 'p', type: 'command_execution', command: 'bun test b.test.ts' }
+    translateCodexEvent(started({ ...passing, exit_code: null }), state, ctx(0))
+    const [passed] = translateCodexEvent(
+      completed({ ...passing, exit_code: 0, aggregated_output: ' 4 pass\n 0 fail\n' }),
+      state,
+      ctx(10)
+    )
+    expect(passed).toMatchObject({ ok: true, failedTests: 0 })
+
+    // A command that is not a test run never has its output read for a count.
+    const other = { id: 'o', type: 'command_execution', command: 'bun run build' }
+    translateCodexEvent(started({ ...other, exit_code: null }), state, ctx(0))
+    const [build] = translateCodexEvent(
+      completed({ ...other, exit_code: 0, aggregated_output: ' 3 fail' }),
+      state,
+      ctx(5)
+    )
+    expect(build).not.toHaveProperty('failedTests')
   })
 
   test('a file change is one action per path with the kind of change, relative to the worktree', () => {

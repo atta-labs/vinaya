@@ -36,6 +36,7 @@ import {
   prFactsReaderFor,
   taskStatusIdentityMatches,
   readLastConfidence,
+  readEngineStage,
   readLoopPhase,
   readStartClaim,
   renderTaskStatusTable,
@@ -1354,6 +1355,41 @@ describe('readLoopPhase (O1)', () => {
   })
 })
 
+describe('readEngineStage (O7, O8)', () => {
+  const writeLog = (root: string, lines: string[]) => {
+    const path = join(root, 'tasks-execution', String(TASK), 'output', 'driver.log')
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, `${lines.join('\n')}\n`)
+  }
+
+  it('returns null with no driver log, or one with no stage-change line', () => {
+    const root = tempDir()
+    expect(readEngineStage(root, TASK)).toBeNull()
+    writeLog(root, ['2026-10-29T07:00:00.000Z  # Loop   Round 1 started.'])
+    expect(readEngineStage(root, TASK)).toBeNull()
+  })
+
+  it("reads the newest stage line's round, stage and minutes, a paused stage, and an ending after it", () => {
+    const root = tempDir()
+    const lines = [
+      '2026-10-29T07:00:00.000Z [stage=review round=2]  # Loop   Round 2: review.',
+      '2026-10-29T07:10:00.000Z [stage=paused_principal round=2 reason=escalation]  # Loop   Round 2: paused for the Principal (escalation).',
+      '2026-10-29T07:10:00.100Z  the run is halted; watching for a newer ruling or a cancel'
+    ]
+    writeLog(root, lines)
+    expect(readEngineStage(root, TASK, () => new Date('2026-10-29T07:25:20.000Z'))).toEqual({
+      round: 2,
+      recordedPhase: 'paused_principal',
+      phase: 'paused for the Principal',
+      minutesInPhase: 15,
+      ended: false,
+      paused: true
+    })
+    writeLog(root, [...lines, '2026-10-29T07:30:00.000Z  driver exited (paused, cancel); driver lock cleared'])
+    expect(readEngineStage(root, TASK)?.ended).toBe(true)
+  })
+})
+
 /** The published-marker half of the confidence read, over one principal-authored comment — the same rule `publishedSummaryConfidence` applies after its forge read. */
 function summaryConfidenceFor(body: string) {
   return confidenceFromSummaryComments([{ body, author: 'principal' }], ['principal'])
@@ -2651,7 +2687,8 @@ describe('gatherTaskStatusList — planned backlog tasks', () => {
   // `null` answers its read with a 404, as a repository without the file does.
   function spawnReader(
     selector: string,
-    principals: string[] | null = ['daniboomerang']
+    principals: string[] | null = ['daniboomerang'],
+    reader: { before?: string; row?: string } = {}
   ): { child: ReturnType<typeof spawnSyncBudgeted>; calls: string } {
     const home = tempDir()
     const bin = join(home, 'bin')
@@ -2704,8 +2741,9 @@ exit 1
       [
         '-e',
         `import { gatherTaskStatusList } from './src/lib/task-status.ts'
+${reader.before ?? ''}
 const view = gatherTaskStatusList(${selector}, 'skip')
-console.log('ROWS:' + JSON.stringify(view.rows.map((r) => ({ issue: r.issue, state: r.state }))))`
+console.log('ROWS:' + JSON.stringify(view.rows.map((r) => (${reader.row ?? '{ issue: r.issue, state: r.state }'}))))`
       ],
       { cwd: CLI_ROOT, env, encoding: 'utf8' }
     )
@@ -2728,6 +2766,28 @@ console.log('ROWS:' + JSON.stringify(view.rows.map((r) => ({ issue: r.issue, sta
     const { rows, calls } = run('{ issue: 701 }')
     expect(rows).toEqual([{ issue: 701, state: { kind: 'not_started' } }])
     expect(calls.filter((c) => c.includes('--search'))).toEqual([])
+  })
+
+  it("reports an Engine run's round, stage and minutes in stage from its driver log's newest stage-change line", () => {
+    const { child } = spawnReader('{ issue: 704 }', ['daniboomerang'], {
+      before: `import { recordTaskRunner } from './src/lib/task-run-engine.ts'
+import { appendLoopLogLine, loopLogPathFor } from './src/lib/loop-log.ts'
+import { formatStageLine } from './src/lib/follow-view.ts'
+recordTaskRunner(704, 'atta-engine')
+const log = loopLogPathFor(null, 704)
+const ago = (minutes) => new Date(Date.now() - minutes * 60_000)
+appendLoopLogLine(log, formatStageLine({ round: 1, stage: 'develop' }, ago(40)))
+appendLoopLogLine(log, formatStageLine({ round: 2, stage: 'review' }, ago(7)))
+appendLoopLogLine(log, ago(6).toISOString() + '  # Loop   Round 2 started.')`,
+      row: '{ issue: r.issue, runner: r.runner, round: r.round, phase: r.phase, minutesInPhase: r.minutesInPhase }'
+    })
+    const line = String(child.stdout)
+      .split('\n')
+      .find((l) => l.startsWith('ROWS:'))
+    if (!line) throw new Error(`reader printed no rows\n${child.stdout}\n${child.stderr}`)
+    expect(JSON.parse(line.slice('ROWS:'.length))).toEqual([
+      { issue: 704, runner: 'atta-engine', round: 2, phase: 'review', minutesInPhase: 7 }
+    ])
   })
 
   it('leaves out a named backlog Issue with no frozen brief', () => {

@@ -43,7 +43,7 @@ describe('renderNarratedUpdate (O1)', () => {
         added: 14,
         removed: 3
       })
-    ).toEqual({ words: 'Editing apps/cli/src/lib/dispatch.ts +14 −3', mark: 'working', details: [] })
+    ).toEqual({ words: 'Editing apps/cli/src/lib/dispatch.ts +14 −3', mark: 'working', details: [], callId: 'a' })
   })
 
   it('renders a success as a done line with its duration', () => {
@@ -56,7 +56,7 @@ describe('renderNarratedUpdate (O1)', () => {
         ok: true,
         durationMs: 2300
       })
-    ).toEqual({ words: 'Finished running tests a.test.ts in 2.3s', mark: 'done', details: [] })
+    ).toEqual({ words: 'Finished running tests a.test.ts in 2.3s', mark: 'done', details: [], callId: 'a' })
   })
 
   it('renders a failure as a failed line with its first error line beneath', () => {
@@ -70,14 +70,15 @@ describe('renderNarratedUpdate (O1)', () => {
         durationMs: 40,
         error: 'exit 2'
       })
-    ).toEqual({ words: 'Failed running bun run build after 40ms', mark: 'failed', details: ['exit 2'] })
+    ).toEqual({ words: 'Failed running bun run build after 40ms', mark: 'failed', details: ['exit 2'], callId: 'a' })
   })
 
   it('puts a message in the detail, not the primary line', () => {
     expect(renderNarratedUpdate({ ...action, kind: 'message', subject: 'hello there' })).toEqual({
       words: 'Writing',
       mark: 'working',
-      details: ['hello there']
+      details: ['hello there'],
+      callId: 'a'
     })
   })
 })
@@ -164,13 +165,36 @@ describe('the dispatcher renders each agent’s stream through its translator (O
         message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'nope', is_error: true }] }
       }
     ])
-    for (const l of lines) appendRoleLine(path, 'developer', l.words, l.details, l.mark)
+    for (const l of lines) appendRoleLine(path, 'developer', l.words, l.details, l.mark, l)
     const file = readFileSync(path, 'utf8')
     expect(file).toMatch(/> Developer {3}Writing$/m)
     expect(file).toMatch(/· thinking out loud$/m)
-    expect(file).toMatch(/> Developer {3}Reading a\.ts$/m)
-    expect(file).toMatch(/x Developer {3}Failed reading a\.ts after 0ms$/m)
+    // The action's call id rides beside its time on its start and its finish; the words are unchanged.
+    expect(file).toMatch(/^\S+ \[call=t\] {2}> Developer {3}Reading a\.ts$/m)
+    expect(file).toMatch(/^\S+ \[call=t\] {2}x Developer {3}Failed reading a\.ts after 0ms$/m)
     expect(file).toMatch(/· nope$/m)
+  })
+
+  it('marks the shell command detail as the command in the file, and only that detail', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-stream-'))
+    const path = join(dir, 'driver.log')
+    const lines = replay('codex', [
+      {
+        type: 'item.started',
+        item: {
+          id: 'c1',
+          type: 'command_execution',
+          command: `/bin/zsh -lc 'bun test a.test.ts'`,
+          status: 'in_progress'
+        }
+      }
+    ])
+    expect(lines).toMatchObject([{ words: 'Running tests bun test a.test.ts', callId: 'c1', commandFrom: 0 }])
+    for (const l of lines) appendRoleLine(path, 'developer', l.words, l.details, l.mark, l)
+    appendRoleLine(path, 'developer', 'Writing', ['a note'])
+    const file = readFileSync(path, 'utf8').split('\n')
+    expect(file[1]).toMatch(/^\S+Z \[command\] {2}· bun test a\.test\.ts$/)
+    expect(file[3]).toMatch(/^\S+Z {2}· a note$/)
   })
 
   it('replays the Claude translator tests’ developer run as plain lines, never tool output', () => {
@@ -218,7 +242,8 @@ describe('the dispatcher renders each agent’s stream through its translator (O
       'Creating apps/cli/tests/a.test.ts +2',
       'Finished creating apps/cli/tests/a.test.ts in 1.0s',
       'Running tests bun test apps/cli/tests/a.test.ts',
-      'Failed running tests bun test apps/cli/tests/a.test.ts after 1.0s',
+      // Its failed-test count is the run's own summary line, `1 fail`; nothing else of the output is kept.
+      'Failed running tests bun test apps/cli/tests/a.test.ts after 1.0s, 1 test failed',
       'Reporting completed (confidence 90)',
       'Finished reporting completed in 1.0s'
     ])

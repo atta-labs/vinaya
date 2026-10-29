@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { renderNarratedUpdate } from '../../src/lib/agent-line'
 import {
   createNarrationState,
   type NarratedUpdate,
@@ -189,6 +190,30 @@ describe('results, durations and open calls (O3, O4)', () => {
     expect(r.error?.startsWith('~/x failed with')).toBe(true)
     expect(r.error?.length).toBeLessThanOrEqual(160)
     expect(r.error).not.toContain('second line')
+  })
+
+  test("a finished test run carries its failed-test count from the run's own summary line, and nothing else of it", () => {
+    const state = createNarrationState()
+    translateClaudeEvent(call('Bash', { command: 'bun test a.test.ts' }, 'T'), state, ctx(0))
+    const output = `a.test.ts:\n(fail) pairs SECRET ${HOME}/x\n\n 7 pass\n 2 fail\n 9 expect() calls\nRan 9 tests across 1 file.`
+    const [failed] = translateClaudeEvent(result('T', [{ type: 'text', text: output }], true), state, ctx(3000))
+    expect(failed).toMatchObject({ type: 'result', id: 'T', kind: 'running_tests', ok: false, failedTests: 2 })
+    expect(JSON.stringify(failed)).not.toContain('SECRET')
+    expect(renderNarratedUpdate(failed as NarratedUpdate).words).toBe(
+      'Failed running tests bun test a.test.ts after 3.0s, 2 tests failed'
+    )
+
+    translateClaudeEvent(call('Bash', { command: 'bun test a.test.ts' }, 'U'), state, ctx(0))
+    const [passed] = translateClaudeEvent(result('U', ' 9 pass\n 0 fail\n'), state, ctx(10))
+    expect(passed).toMatchObject({ ok: true, failedTests: 0 })
+
+    // Another runner's summary, and a test run that printed none.
+    translateClaudeEvent(call('Bash', { command: 'npx jest' }, 'V'), state, ctx(0))
+    const [jest] = translateClaudeEvent(result('V', 'Tests:       3 failed, 5 passed, 8 total', true), state, ctx(10))
+    expect(jest).toMatchObject({ failedTests: 3 })
+    translateClaudeEvent(call('Bash', { command: 'bun test' }, 'W'), state, ctx(0))
+    const [none] = translateClaudeEvent(result('W', 'killed', true), state, ctx(10))
+    expect(none).not.toHaveProperty('failedTests')
   })
 
   test('a result naming no known call, or answered twice, yields nothing', () => {
