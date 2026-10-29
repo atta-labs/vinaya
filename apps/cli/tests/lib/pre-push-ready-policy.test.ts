@@ -80,11 +80,11 @@ describe('the trusted opt-in', () => {
     ).toThrow('could not read')
   })
 
-  it("this repository's own default-branch configuration does not opt in yet: activation waits for the required check", () => {
+  it("this repository's own default-branch configuration opts in to required-CI ready tests", () => {
     const config = JSON.parse(readFileSync(join(REPO_ROOT, 'vinaya.config.json'), 'utf8')) as Parameters<
       typeof readyTestsPolicyOf
     >[0]
-    expect(readyTestsPolicyOf(config)).toEqual({ mode: 'local' })
+    expect(readyTestsPolicyOf(config)).toEqual({ mode: 'ci', workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' })
   })
 })
 
