@@ -1,10 +1,11 @@
 import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
-import { describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DevToolContext } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { gitPath, LAST_PUSH_RESULT, SELECTION_NOTE } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import { PROGRESS_MARKER } from '../../../../../apps/cli/src/lib/push-progress'
 import {
   DEFERRAL_MARKER_TTL_MS,
   parseDeferralMarker,
@@ -22,6 +23,7 @@ import {
   endStoragePushes,
   liveV2Functions,
   NO_LOCAL_TESTS_MARKER,
+  progressContextOf,
   READY_GATE_DEADLINE_MS,
   readFetchedMainTip,
   readyGateEvidence,
@@ -885,6 +887,190 @@ describe('the explicit Test Plan commands the driver runs at the publication bou
     })
     expect(result.outcome).toBe('drift')
     expect(count(runs)).toBe(0)
+  })
+})
+
+describe('live progress of the ready push and the explicit-command run', () => {
+  const HELPER = join(
+    import.meta.dir,
+    '..',
+    '..',
+    '..',
+    '..',
+    '..',
+    'apps',
+    'cli',
+    'src',
+    'lib',
+    'pre-push-progress-dir.ts'
+  )
+  const headOf = (dir: string) => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+  /** A run directory under its own runtime directory, as the Engine lays it out, and the task's driver log. */
+  const context = () => {
+    const runtime = fixtureDir('progress-runtime-')
+    const progress = progressContextOf(join(runtime, 'engine-runs', '5'))
+    if (progress === null) throw new Error('not an Engine run directory')
+    return { runtime, progress }
+  }
+  const lines = (path: string) => (existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean) : [])
+  const at = (line: string | undefined) => Date.parse((line ?? '').split('  ')[0] ?? '')
+  // The progress observer registers in the process registry: a private one for these tests.
+  const savedRegistry = process.env.VINAYA_PROCESS_REGISTRY_DIR
+  beforeEach(() => {
+    process.env.VINAYA_PROCESS_REGISTRY_DIR = fixtureDir('progress-registry-')
+  })
+  afterEach(() => {
+    if (savedRegistry === undefined) delete process.env.VINAYA_PROCESS_REGISTRY_DIR
+    else process.env.VINAYA_PROCESS_REGISTRY_DIR = savedRegistry
+  })
+
+  test('a ready push puts its per-check progress lines in the driver log while it runs', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    const { runtime, progress } = context()
+    expect(progress.logPath).toBe(join(runtime, 'tasks-execution', '5', 'output', 'driver.log'))
+    // The hook writes through the real helper, which resolves the runtime directory and the run's mark itself.
+    const hooks = join(dir, '.git', 'hooks')
+    mkdirSync(hooks, { recursive: true })
+    writeFileSync(
+      join(hooks, 'pre-push'),
+      [
+        '#!/bin/sh',
+        'read line',
+        `export VINAYA_RUNTIME_DIR=${JSON.stringify(runtime)}`,
+        'S=$(date +%s)',
+        `bun ${JSON.stringify(HELPER)} check lint pass "$S" >/dev/null 2>&1`,
+        'sleep 2',
+        `bun ${JSON.stringify(HELPER)} check typecheck fail "$S" >/dev/null 2>&1`,
+        'echo "hook done"',
+        'exit 0'
+      ].join('\n')
+    )
+    chmodSync(join(hooks, 'pre-push'), 0o755)
+    const result = await runReadyGateLive({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      head,
+      remoteHead: head,
+      progress
+    })
+    const ended = Date.now()
+    expect(result.passed).toBe(true)
+    expect(result.output).toBe('hook done\n')
+    const log = lines(progress.logPath)
+    const lint = log.find((line) => line.includes('push progress: check lint ✓, '))
+    expect(lint).toBeDefined()
+    expect(log.some((line) => line.includes('push progress: check typecheck ✗, '))).toBe(true)
+    // Written while the hook was still running, not after it returned.
+    expect(at(lint)).toBeLessThan(ended - 1000)
+    expect(existsSync(gitPath(dir, PROGRESS_MARKER) as string)).toBe(false)
+  }, 60_000)
+
+  test('the explicit-command run puts its start, per-file and per-command lines in the driver log while it runs', async () => {
+    const dir = repo()
+    const tests = fixtureDir('progress-tests-')
+    writeFileSync(
+      join(tests, 'a.test.ts'),
+      "import { expect, test } from 'bun:test'\ntest('a passes', () => expect(1).toBe(1))\n"
+    )
+    writeFileSync(
+      join(tests, 'b.test.ts'),
+      "import { expect, test } from 'bun:test'\ntest('b waits', async () => { await Bun.sleep(1500); expect(1).toBe(1) })\n"
+    )
+    const { progress } = context()
+    // Bun hides passing files from an agent's terminal; the driver's own runs have no agent in their environment.
+    const command = `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u AI_AGENT bun test ${join(tests, 'a.test.ts')} ${join(tests, 'b.test.ts')}`
+    const result = await runExplicitCommandsLive({
+      worktreePath: dir,
+      head: headOf(dir),
+      branch: 'task/issue-1',
+      body: '',
+      commands: [command],
+      deadlineAt: Date.now() + 60_000,
+      cache: { get: () => undefined, set: () => {} },
+      progress
+    })
+    const ended = Date.now()
+    expect(result.outcome).toBe('passed')
+    const log = lines(progress.logPath)
+    const words = log.map((line) => line.split('  ').slice(1).join('  '))
+    expect(words[0]).toBe('ready push: running 1 explicit Test Plan command')
+    const first = log.find((line) => /test progress: 1 \S*a\.test\.ts ✓, /.test(line))
+    expect(first).toBeDefined()
+    expect(log.some((line) => /test progress: 2 \S*b\.test\.ts ✓, /.test(line))).toBe(true)
+    expect(words.some((w) => w.startsWith('command progress: ✓, ') && w.endsWith(`: ${command}`))).toBe(true)
+    expect(at(first)).toBeLessThan(ended - 1000)
+  }, 60_000)
+
+  test('cancelling a running ready push stops its observer and leaves no mark', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    const { progress } = context()
+    const hooks = join(dir, '.git', 'hooks')
+    mkdirSync(hooks, { recursive: true })
+    writeFileSync(join(hooks, 'pre-push'), '#!/bin/sh\nread line\nsleep 30\n')
+    chmodSync(join(hooks, 'pre-push'), 0o755)
+    const registry = process.env.VINAYA_PROCESS_REGISTRY_DIR as string
+    // The observer's registration, read while the push runs: its own token, never the ready gate's.
+    const observers = () =>
+      existsSync(registry)
+        ? readdirSync(registry)
+            .filter((token) => decodeURIComponent(token).startsWith('push-progress-'))
+            .flatMap((token) =>
+              readdirSync(join(registry, token))
+                .filter((file) => file.endsWith('.json'))
+                .map((file) => (JSON.parse(readFileSync(join(registry, token, file), 'utf8')) as { pid: number }).pid)
+            )
+        : []
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+    const controller = new AbortController()
+    let seen: number[] = []
+    const watcher = (async () => {
+      const deadline = Date.now() + 10_000
+      while (seen.length === 0 && Date.now() < deadline) {
+        seen = observers()
+        await Bun.sleep(50)
+      }
+      controller.abort()
+    })()
+    await expect(
+      runReadyGateLive({
+        worktreePath: dir,
+        branch: 'task/issue-1',
+        head,
+        remoteHead: head,
+        progress,
+        signal: controller.signal
+      })
+    ).rejects.toThrow('cancelled')
+    await watcher
+    expect(seen).toHaveLength(1)
+    expect(alive(seen[0] as number)).toBe(false)
+    expect(observers()).toEqual([])
+    expect(existsSync(gitPath(dir, PROGRESS_MARKER) as string)).toBe(false)
+  }, 60_000)
+
+  test('with no progress context nothing is written and the result is the same', async () => {
+    const dir = repo()
+    const { progress } = context()
+    const result = await runExplicitCommandsLive({
+      worktreePath: dir,
+      head: headOf(dir),
+      branch: 'task/issue-1',
+      body: '',
+      commands: ['true'],
+      deadlineAt: Date.now() + 60_000,
+      cache: { get: () => undefined, set: () => {} }
+    })
+    expect(result.outcome).toBe('passed')
+    expect(lines(progress.logPath)).toEqual([])
   })
 })
 

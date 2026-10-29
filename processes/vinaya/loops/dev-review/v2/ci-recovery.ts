@@ -1,4 +1,5 @@
 import { sh } from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { ciJobLine, ciStateLine, ciSummaryLine, firstFailingTest } from '../../../../../apps/cli/src/lib/push-progress'
 
 // The required-CI read of a version-2 run whose ready push deferred its selected tests: the strict current-head test
 // verdict, and the recovery classification of a failure. Only the configured workflow's run for the approved head
@@ -302,8 +303,8 @@ export function judgeRequiredCi(input: {
   }
 }
 
-function ghLines<T>(args: string[]): T[] {
-  return sh('gh', args)
+function ghLines<T>(args: string[], gh: (args: string[]) => string = (a) => sh('gh', a)): T[] {
+  return gh(args)
     .split('\n')
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line) as T)
@@ -331,22 +332,39 @@ export function classifyFailedJobLive(job: CiJob, readLog: typeof readStepLog = 
   })
 }
 
-/** The live strict read: the runs list for the head, then the latest attempt's jobs. A failed read is `unreadable`. */
-export function readRequiredCiLive(request: {
-  head: string
-  workflow: string
-  check: string
-  now: number
-}): RequiredCiRead {
+/** What one strict read saw: the head's latest run of the workflow and that attempt's jobs, as read. */
+export interface RequiredCiView {
+  run: CiWorkflowRun | null
+  jobs: readonly CiJob[] | null
+}
+
+/**
+ * The live strict read: the runs list for the head, then the latest attempt's jobs. A failed read is `unreadable`.
+ * `observe` is handed what the read saw, after the reads and before the verdict, inside a try/catch: it reads
+ * nothing of its own and can change no verdict. `forge` replaces the `gh` reads for a test.
+ */
+export function readRequiredCiLive(
+  request: {
+    head: string
+    workflow: string
+    check: string
+    now: number
+  },
+  observe?: (view: RequiredCiView) => void,
+  forge: { gh?: (args: string[]) => string; readLog?: typeof readStepLog } = {}
+): RequiredCiRead {
   let runs: CiWorkflowRun[]
   try {
-    runs = ghLines<CiWorkflowRun>([
-      'api',
-      `repos/{owner}/{repo}/actions/runs?head_sha=${request.head}&per_page=100`,
-      '--paginate',
-      '--jq',
-      '.workflow_runs[] | {id, path, head_sha, run_attempt, status, conclusion, html_url, created_at, run_started_at}'
-    ])
+    runs = ghLines<CiWorkflowRun>(
+      [
+        'api',
+        `repos/{owner}/{repo}/actions/runs?head_sha=${request.head}&per_page=100`,
+        '--paginate',
+        '--jq',
+        '.workflow_runs[] | {id, path, head_sha, run_attempt, status, conclusion, html_url, created_at, run_started_at}'
+      ],
+      forge.gh
+    )
   } catch (error) {
     return {
       state: 'unreadable',
@@ -357,16 +375,130 @@ export function readRequiredCiLive(request: {
   let jobs: CiJob[] | null = null
   if (run !== null) {
     try {
-      jobs = ghLines<CiJob>([
-        'api',
-        `repos/{owner}/{repo}/actions/runs/${run.id}/attempts/${run.run_attempt ?? 1}/jobs?per_page=100`,
-        '--paginate',
-        '--jq',
-        '.jobs[] | {id, run_id, run_attempt, head_sha, name, status, conclusion, created_at, started_at, completed_at, html_url, runner_id, steps: [.steps[]? | {name, number, status, conclusion}]}'
-      ])
+      jobs = ghLines<CiJob>(
+        [
+          'api',
+          `repos/{owner}/{repo}/actions/runs/${run.id}/attempts/${run.run_attempt ?? 1}/jobs?per_page=100`,
+          '--paginate',
+          '--jq',
+          '.jobs[] | {id, run_id, run_attempt, head_sha, name, status, conclusion, created_at, started_at, completed_at, html_url, runner_id, steps: [.steps[]? | {name, number, status, conclusion}]}'
+        ],
+        forge.gh
+      )
     } catch {
       jobs = null
     }
   }
-  return judgeRequiredCi({ ...request, run, jobs, classify: (job) => classifyFailedJobLive(job) })
+  if (observe) {
+    try {
+      observe({ run, jobs })
+    } catch {
+      // Progress never changes the read it narrates.
+    }
+  }
+  return judgeRequiredCi({
+    ...request,
+    run,
+    jobs,
+    classify: (job) => classifyFailedJobLive(job, forge.readLog ?? readStepLog)
+  })
+}
+
+/**
+ * The CI wait's progress: turns what each strict read already saw into driver-log lines — one line per job as it
+ * completes, the states the read reaches (a job queued without a runner, the first red job, a pause for an
+ * infrastructure failure, the execution ceiling) and the 60-second line. It reads nothing from the forge: a failed
+ * test job's first failing file and test come only from the job-log excerpts the code-red send-back already read
+ * (`excerpt`), so a failed job's line is held until the poll that saw it ends (`flush`). Every method swallows its
+ * own failures, so nothing here can change a CI decision.
+ */
+export interface CiProgress {
+  observe: (view: RequiredCiView) => void
+  result: (read: RequiredCiRead) => void
+  /** A pause: an infrastructure failure, or a wait still pending when the poll budget ran out. */
+  paused: (detail: string, why?: 'infrastructure' | 'poll-budget') => void
+  excerpt: (check: string, text: string | null) => void
+  flush: () => void
+  /** The 60-second line, from what the last read saw. */
+  summary: () => void
+}
+
+export function createCiProgress(write: (line: string) => void, now: () => number): CiProgress {
+  const started = now()
+  const emitted = new Set<number>()
+  const held = new Map<number, CiJob>()
+  const firstFailures = new Map<string, { file: string | null; test: string }>()
+  let jobs: CiJob[] = []
+  let red = false
+  const emit = (line: string) => {
+    try {
+      write(line)
+    } catch {
+      // A line that cannot be written is dropped.
+    }
+  }
+  const safe =
+    <A extends unknown[]>(fn: (...args: A) => void) =>
+    (...args: A): void => {
+      try {
+        fn(...args)
+      } catch {
+        // Progress never changes the read it narrates.
+      }
+    }
+  const failed = (job: CiJob) => job.status === 'completed' && job.conclusion !== null && FAILED.has(job.conclusion)
+  const duration = (job: CiJob): number | null => {
+    const ms = at(job.completed_at) - at(job.started_at)
+    return Number.isFinite(ms) && ms >= 0 ? ms : null
+  }
+  return {
+    observe: safe((view: RequiredCiView) => {
+      if (view.run === null || view.jobs === null) return
+      const run = view.run
+      jobs = view.jobs.filter((job) => job.run_id === run.id && job.head_sha === run.head_sha)
+      for (const job of jobs) {
+        if (job.status !== 'completed' || emitted.has(job.id)) continue
+        emitted.add(job.id)
+        if (failed(job)) held.set(job.id, job)
+        else emit(ciJobLine({ name: job.name, ok: true, ms: duration(job) }))
+      }
+    }),
+    result: safe((read: RequiredCiRead) => {
+      if (read.state === 'red' && !red) {
+        red = true
+        emit(ciStateLine({ kind: 'first-red', job: read.failures[0]?.job ?? 'unknown job' }))
+      }
+      if (read.state === 'stalled')
+        emit(
+          read.bound === 'queue'
+            ? ciStateLine({ kind: 'queued-without-runner', job: read.job, minutes: QUEUE_BOUND_MS / 60000 })
+            : ciStateLine({ kind: 'execution-ceiling', detail: read.detail })
+        )
+    }),
+    paused: safe((detail: string, why: 'infrastructure' | 'poll-budget' = 'infrastructure') => {
+      const bounded = detail.length > 300 ? `${detail.slice(0, 300)}…` : detail
+      emit(ciStateLine({ kind: why === 'poll-budget' ? 'poll-budget' : 'infrastructure-pause', detail: bounded }))
+    }),
+    excerpt: safe((check: string, text: string | null) => {
+      const first = text ? firstFailingTest(text) : null
+      if (first) firstFailures.set(check, first)
+    }),
+    flush: safe(() => {
+      for (const job of held.values())
+        emit(
+          ciJobLine({ name: job.name, ok: false, ms: duration(job), firstFailure: firstFailures.get(job.name) ?? null })
+        )
+      held.clear()
+    }),
+    summary: safe(() => {
+      emit(
+        ciSummaryLine({
+          done: jobs.filter((job) => job.status === 'completed').length,
+          total: jobs.length,
+          failed: jobs.filter(failed).length,
+          elapsedMs: Math.max(0, now() - started)
+        })
+      )
+    })
+  }
 }

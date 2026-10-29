@@ -1396,8 +1396,11 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
-    expect(prePush).toContain('bunx biome check --no-errors-on-unmatched -- || exit 1')
-    expect(prePush).toContain('bunx turbo typecheck --affected || exit 1')
+    expect(prePush).toContain(
+      'if echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched --; then VINAYA_STEP=pass; else VINAYA_STEP=fail; fi'
+    )
+    expect(prePush).toContain('if bunx turbo typecheck --affected; then VINAYA_STEP=pass; else VINAYA_STEP=fail; fi')
+    expect(prePush).toContain('[ "$VINAYA_STEP" = pass ] || exit 1')
     expect(prePush).toContain('bun apps/cli/src/lib/pre-push-changed-files.ts')
     expect(prePush).toContain('bun apps/cli/src/lib/pre-push-select-tests.ts')
     expect(prePush).not.toContain('--concurrency=1')
@@ -1480,7 +1483,7 @@ git rev-parse --git-dir 2>&1 || true
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
-    expect(prePush).toContain('xargs bunx biome check --no-errors-on-unmatched -- ||')
+    expect(prePush).toContain('xargs bunx biome check --no-errors-on-unmatched --; then')
     expect(prePush).toContain('xargs bun apps/cli/src/lib/pre-push-record-tests.ts run')
   })
 

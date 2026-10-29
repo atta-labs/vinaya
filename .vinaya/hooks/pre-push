@@ -1,6 +1,12 @@
 #!/usr/bin/env sh
 
 # >>> vinaya:managed:pre-push >>>
+# Live progress for a version-2 driver behind this push: "on" only when the
+# helper resolves the run's reserved progress directory itself (a live
+# driver's mark, no symlinked component). It prints nothing else and every
+# progress step below discards its own output, so with no driver this hook
+# prints and exits exactly as it would without it.
+VINAYA_PROGRESS="$(bun apps/cli/src/lib/pre-push-progress-dir.ts dir 2>/dev/null)" || VINAYA_PROGRESS=""
 # Ring 0 (O5): Biome over the files changed since the remote base —
 # literally the hook's first step, before the doctrine gate and everything
 # else that follows costs real time. The trailing "--" stops flag parsing
@@ -8,7 +14,10 @@
 # passed through as a literal path, never interpreted as one.
 VINAYA_CHANGED_FILES="$(bun apps/cli/src/lib/pre-push-changed-files.ts)"
 if [ -n "$VINAYA_CHANGED_FILES" ]; then
-  echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched -- || exit 1
+  VINAYA_STEP_STARTED=$(date +%s)
+  if echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched --; then VINAYA_STEP=pass; else VINAYA_STEP=fail; fi
+  [ -z "$VINAYA_PROGRESS" ] || bun apps/cli/src/lib/pre-push-progress-dir.ts check lint "$VINAYA_STEP" "$VINAYA_STEP_STARTED" >/dev/null 2>&1 || true
+  [ "$VINAYA_STEP" = pass ] || exit 1
 fi
 # The push mode: storage (a task-branch push while no pull request is open —
 # cheap checks only, no typecheck, no tests; refused when one is open), ready
@@ -35,7 +44,10 @@ if [ "$VINAYA_PUSH_MODE" = "storage" ]; then
 fi
 # Ring 0 (O6): typecheck, then only the test files the real import graph
 # says the changed files could affect.
-bunx turbo typecheck --affected || exit 1
+VINAYA_STEP_STARTED=$(date +%s)
+if bunx turbo typecheck --affected; then VINAYA_STEP=pass; else VINAYA_STEP=fail; fi
+[ -z "$VINAYA_PROGRESS" ] || bun apps/cli/src/lib/pre-push-progress-dir.ts check typecheck "$VINAYA_STEP" "$VINAYA_STEP_STARTED" >/dev/null 2>&1 || true
+[ "$VINAYA_STEP" = pass ] || exit 1
 # A version-2 run's ready push, or its driver-owned repair push on its own
 # open pull request, defers the selected tests to required current-head CI
 # when the default branch opts in (prePush.readyTests) and the run's live
@@ -106,8 +118,25 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # what a later PR-body Test-plan command line would need to match,
   # verbatim, to reuse this run instead of re-executing it.
   VINAYA_TEST_CMD="bun test --timeout=30000 -- $(printf '%s' "$VINAYA_SELECTED_TESTS" | tr '\n' ' ')"
+  # Progress copies the capture, never moves it: the capture above stays
+  # where it is and feeds everything below exactly as without progress. The
+  # copier follows it into the run's progress directory while the tests run,
+  # and is skipped entirely when that directory is unusable.
+  VINAYA_PROGRESS_COPIER=""
+  if [ -n "$VINAYA_PROGRESS" ]; then
+    VINAYA_PROGRESS_TOTAL=$(printf '%s\n' "$VINAYA_SELECTED_TESTS" | grep -c .)
+    bun apps/cli/src/lib/pre-push-progress-dir.ts follow "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 &
+    VINAYA_PROGRESS_COPIER=$!
+  fi
   echo "$VINAYA_SELECTED_TESTS" | xargs bun apps/cli/src/lib/pre-push-record-tests.ts run > "$VINAYA_TEST_LOG" 2>&1
   VINAYA_TEST_STATUS=$?
+  if [ -n "$VINAYA_PROGRESS_COPIER" ]; then
+    # Stop the copier, then drain the copy to the capture's end (bounded)
+    # before anything reads, caches or removes the capture.
+    kill "$VINAYA_PROGRESS_COPIER" 2>/dev/null
+    wait "$VINAYA_PROGRESS_COPIER" 2>/dev/null
+    bun apps/cli/src/lib/pre-push-progress-dir.ts finish "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 || true
+  fi
   cat "$VINAYA_TEST_LOG"
   VINAYA_TEST_ELAPSED=$(( $(date +%s) - VINAYA_TEST_STARTED ))
   VINAYA_SELECTED_COUNT=$(printf '%s\n' "$VINAYA_SELECTED_TESTS" | grep -c .)

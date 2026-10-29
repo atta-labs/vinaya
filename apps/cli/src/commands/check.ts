@@ -13,6 +13,7 @@ import {
 import { CHECK_EXCLUDE_ENV, defaultParallelism, runChecks } from '../checks/runner'
 import { type ConfigLoadResult, configPath, loadConfigChecked } from '../lib/config'
 import { printJson } from '../lib/envelope'
+import { checkProgressWriter } from '../lib/push-progress'
 import { type ProseRulesPlan, proseRulesPlanSection } from '../lib/prose-rules-plan'
 import { buildRolePlan, type RolePlan } from '../roles/plan'
 import type { RoleResolutionState } from '../roles/resolver'
@@ -409,6 +410,9 @@ export async function checkCommand(args: string[]): Promise<void> {
     .map((s) => s.trim())
     .filter(Boolean)
 
+  // A hook's run behind a live driver writes one progress record per finished check. Resolved here, before any check
+  // starts: the resolution spawns `git` and `ps`, which must never run while async check children are running.
+  const onCheckComplete = specsToRun.length > 0 ? checkProgressWriter(process.env.VINAYA_HOST, process.cwd()) : null
   const outcomes =
     specsToRun.length > 0
       ? await runChecks(specsToRun, {
@@ -418,7 +422,8 @@ export async function checkCommand(args: string[]): Promise<void> {
           defaultTimeoutMs: 30_000,
           localOnly,
           skipFull,
-          excludeChecks
+          excludeChecks,
+          ...(onCheckComplete !== null ? { onCheckComplete } : {})
         })
       : []
 
@@ -478,5 +483,5 @@ export function isRunFailed(outcomes: CheckOutcome[], specs: CheckSpec[]): boole
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  check: { date: '2026-09-05', callsToday: 4, retiresVia: 'runChecks' }
+  check: { date: '2026-09-05', callsToday: 5, retiresVia: 'runChecks' }
 }

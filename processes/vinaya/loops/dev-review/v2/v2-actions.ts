@@ -22,6 +22,7 @@ import {
   sanitizeForgeText
 } from '../../../../../apps/cli/src/lib/task-tools/pr-facts'
 import type { SelectionNote } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import { PROGRESS_SUMMARY_INTERVAL_MS } from '../../../../../apps/cli/src/lib/push-progress'
 import { manifestDigest } from '../../../../../apps/cli/src/lib/review-result'
 import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import {
@@ -30,7 +31,13 @@ import {
   type ReadyTestsPolicy
 } from '../../../../../apps/cli/src/lib/pre-push-ready-policy'
 import { agentCommandText, extractAgentCommandLines } from '../../../../../apps/cli/src/lib/pr-report-engine'
-import type { ClassifiedFailure, RequiredCiRead } from './ci-recovery'
+import {
+  type CiProgress,
+  type ClassifiedFailure,
+  createCiProgress,
+  type RequiredCiRead,
+  type RequiredCiView
+} from './ci-recovery'
 import { readUnpushedWorkDetail } from '../../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import { spawnSync } from 'node:child_process'
 import { relative, resolve, sep } from 'node:path'
@@ -167,7 +174,15 @@ export interface V2Functions {
     deadlineAt: number
   }) => Promise<ExplicitCommandsResult> | ExplicitCommandsResult
   /** The strict required-CI read for a deferred head (`ci-recovery.ts`). */
-  readRequiredCi?: (input: { head: string; workflow: string; check: string; now: number }) => RequiredCiRead
+  readRequiredCi?: (
+    input: { head: string; workflow: string; check: string; now: number },
+    /** Handed what the read saw, for the CI wait's progress lines; it reads nothing and decides nothing. */
+    observe?: (view: RequiredCiView) => void
+  ) => RequiredCiRead
+  /** One progress line for the task's driver log (the CI wait's per-job, state and 60-second lines). */
+  progressLine?: (line: string) => void
+  /** Calls `fn` every `ms` until the returned canceller runs: the CI wait's 60-second line. A test fakes it. */
+  progressEvery?: (fn: () => void, ms: number) => () => void
   /** The staged pull request, or null when the Developer staged none. */
   stagedPullRequest: () => StagedPullRequest | null
   /** The open pull request for the task branch, or null. */
@@ -874,7 +889,8 @@ export async function readCiOnce(
   if (open === null) throw new Error(`read-ci-once found no open pull request for branch ${task.branch}`)
   // A head whose ready push deferred its selected tests owes the strict required-CI read.
   const owed = requiredCiOwed(results)
-  if (owed !== null && fns.readRequiredCi) return readRequiredCiStep(task, context, open.number, owed)
+  if (owed !== null && fns.readRequiredCi)
+    return withCiProgress(fns, (progress) => readRequiredCiStep(task, context, open.number, owed, progress))
   const now = nowOf(fns)
   const started = now()
   // The forge gates' read, given this step's own earlier record and no local gate to skip on.
@@ -963,7 +979,9 @@ async function readRequiredCiStep(
   task: TaskInput,
   context: ActionContext,
   pr: number,
-  owed: { workflow: string; check: string; head: string }
+  owed: { workflow: string; check: string; head: string },
+  /** The wait's progress lines, from what each read already saw: no read of their own, no say in any decision. */
+  progress: CiProgress | null = null
 ): Promise<{ exitCode: number; stdout: string }> {
   const { results } = context
   const fns = v2Of(task)
@@ -981,7 +999,13 @@ async function readRequiredCiStep(
       `The deferred head ${owed.head} is not the published head (worktree ${head ?? 'unreadable'}, remote ${remote ?? 'nothing'}), so its required CI cannot complete the run. Publish your work with publish_changes on this SAME branch.`,
       { ...base, conclusion: 'unpushed', failingChecks: [] }
     )
-  const pause = (detail: string, extra: Record<string, unknown>) => {
+  const pause = (
+    detail: string,
+    extra: Record<string, unknown>,
+    why: 'infrastructure' | 'poll-budget' = 'infrastructure'
+  ) => {
+    // A stalled job already has its own queue or ceiling line.
+    if (extra.stalled === undefined) progress?.paused(detail, why)
     pauseThrough(task, 'read-ci-once', { reason: 'infrastructure', detail })
     return {
       exitCode: BACK,
@@ -1008,7 +1032,8 @@ async function readRequiredCiStep(
   const wallNow = fns.wallNow ?? (() => Date.now())
   let last = 'no read completed'
   for (let attempt = 1; attempt <= poll.gatePollMaxAttempts; attempt++) {
-    const strict = fns.readRequiredCi!({ ...owed, now: wallNow() })
+    const strict = fns.readRequiredCi!({ ...owed, now: wallNow() }, progress?.observe)
+    progress?.result(strict)
     const generic = safeRead(() => readGeneric(owed.head)) ?? 'pending'
     if (strict.state === 'red') {
       const code = strict.failures.filter((failure) => failure.kind === 'code')
@@ -1024,7 +1049,7 @@ async function readRequiredCiStep(
         task,
         results,
         'ci-red',
-        `The required check ${owed.check} is red on pull request #${pr} at ${owed.head}: the selected tests (deferred from the ready push) failed in CI. Failing job(s): ${failingChecks.join(', ')}. Fix them, commit, and publish the fix with publish_changes on this SAME branch.${failureExcerptsOnHead(task, fns, owed.head)}`,
+        `The required check ${owed.check} is red on pull request #${pr} at ${owed.head}: the selected tests (deferred from the ready push) failed in CI. Failing job(s): ${failingChecks.join(', ')}. Fix them, commit, and publish the fix with publish_changes on this SAME branch.${failureExcerptsOnHead(task, fns, owed.head, progress?.excerpt)}`,
         {
           ...base,
           conclusion: 'red',
@@ -1057,7 +1082,7 @@ async function readRequiredCiStep(
         task,
         results,
         'ci-red',
-        `CI is red on pull request #${pr} at ${owed.head}. Failing check-run(s): ${failingChecks.length > 0 ? failingChecks.join(', ') : '(unknown)'}. Fix the failing check(s), commit, and publish the fix with publish_changes on this SAME branch.${failureExcerptsOnHead(task, fns, owed.head)}`,
+        `CI is red on pull request #${pr} at ${owed.head}. Failing check-run(s): ${failingChecks.length > 0 ? failingChecks.join(', ') : '(unknown)'}. Fix the failing check(s), commit, and publish the fix with publish_changes on this SAME branch.${failureExcerptsOnHead(task, fns, owed.head, progress?.excerpt)}`,
         {
           ...base,
           conclusion: 'red',
@@ -1103,8 +1128,42 @@ async function readRequiredCiStep(
   }
   return pause(
     `the required CI on ${owed.head} did not complete within the poll budget (${last}); pending never counts as the tests passing. Resume once it completes.`,
-    {}
+    {},
+    'poll-budget'
   )
+}
+
+/**
+ * Runs the required-CI wait with its progress, when the driver log takes progress lines: the tracker the wait feeds
+ * its reads to, its 60-second line on a timer, and on the way out the held failed-job lines and the timer's end. None
+ * of it can throw into the wait or change what it returns.
+ */
+async function withCiProgress<T>(fns: V2Functions, wait: (progress: CiProgress | null) => Promise<T>): Promise<T> {
+  if (!fns.progressLine) return wait(null)
+  const progress = createCiProgress(fns.progressLine, fns.wallNow ?? (() => Date.now()))
+  let stopSummary: () => void = () => {}
+  try {
+    stopSummary = (fns.progressEvery ?? everyInterval)(() => progress.summary(), PROGRESS_SUMMARY_INTERVAL_MS)
+  } catch {
+    // No 60-second line; the wait itself is unchanged.
+  }
+  try {
+    return await wait(progress)
+  } finally {
+    progress.flush()
+    try {
+      stopSummary()
+    } catch {
+      // The timer is the wait's own; it never fails the step.
+    }
+  }
+}
+
+/** `setInterval` with its timer unreferenced, so a pending line never keeps the driver alive. */
+function everyInterval(fn: () => void, ms: number): () => void {
+  const timer = setInterval(fn, ms)
+  timer.unref?.()
+  return () => clearInterval(timer)
 }
 
 /**
@@ -1112,7 +1171,13 @@ async function readRequiredCiStep(
  * is read only for a check that failed (a failed workflow run is no job, so it has none), each excerpt is bounded and
  * the total is too; a log that cannot be read keeps its check's name and says so.
  */
-function failureExcerptsOnHead(task: TaskInput, fns: V2Functions, head: string): string {
+function failureExcerptsOnHead(
+  task: TaskInput,
+  fns: V2Functions,
+  head: string,
+  /** Shown each excerpt this send-back read, for the CI wait's progress; it reads nothing of its own. */
+  onExcerpt?: (check: string, excerpt: string | null) => void
+): string {
   const read = fns.readCheckExcerpt ?? ((jobId: number, max: number) => readFailedCheckExcerpt(jobId, max))
   let runs: { name: string; id: number; detail?: string }[]
   try {
@@ -1136,6 +1201,8 @@ function failureExcerptsOnHead(task: TaskInput, fns: V2Functions, head: string):
       excerpt = null
     }
     remaining -= excerpt?.length ?? 0
+    // `run.name`, not the sanitized label: it is the CI job's own name, the key its progress line was held under.
+    onExcerpt?.(run.name, excerpt)
     parts.push(renderFailureExcerpt(check, run.id, excerpt))
   }
   return parts.length === 0 ? '' : `\n\n${parts.join('\n\n')}`

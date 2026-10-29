@@ -169,3 +169,42 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     expect(e.input_fingerprint as string).toMatch(/^[0-9a-f]{64}$/)
   })
 })
+
+/**
+ * The push's live progress: a completion observer told about every finished check, pass and skip included, that
+ * changes nothing about the run — the same outcomes in the same order, and the same exit, with it on, off, or throwing.
+ */
+describe('runChecks — the completion observer', () => {
+  const specs = (): CheckSpec[] => [
+    fullScope({ name: 'passing', run: PASSING }),
+    fullScope({ name: 'pr-only', run: PASSING, requiresOpenPr: true }),
+    fullScope({ name: 'failing', run: FAILING }),
+    fullScope({ name: 'malformed', run: MALFORMED })
+  ]
+  const shape = (outcomes: { name: string; status: string; exitCode: number | null; errors: unknown[] }[]) =>
+    outcomes.map((o) => ({ name: o.name, status: o.status, exitCode: o.exitCode, errors: o.errors.length }))
+  const failed = (outcomes: { status: string }[]) => outcomes.some((o) => o.status !== 'pass' && o.status !== 'skipped')
+
+  it('fires for pass, skip, fail and error, and outcomes, order and exit are identical on, off and throwing', async () => {
+    const { log } = capture()
+    const opts = { ...BASE_OPTS, parallel: 2, localOnly: true, log }
+    const off = await runChecks(specs(), opts)
+    const seen: string[] = []
+    const on = await runChecks(specs(), {
+      ...opts,
+      onCheckComplete: (outcome) => seen.push(`${outcome.name}:${outcome.status}`)
+    })
+    const throwing = await runChecks(specs(), {
+      ...opts,
+      onCheckComplete: () => {
+        throw new Error('the progress sink is broken')
+      }
+    })
+    expect([...seen].sort()).toEqual(['failing:fail', 'malformed:error', 'passing:pass', 'pr-only:skipped'])
+    expect(shape(on)).toEqual(shape(off))
+    expect(shape(throwing)).toEqual(shape(off))
+    expect(shape(off).map((o) => o.name)).toEqual(['passing', 'pr-only', 'failing', 'malformed'])
+    expect(failed(on)).toBe(failed(off))
+    expect(failed(throwing)).toBe(failed(off))
+  })
+})
