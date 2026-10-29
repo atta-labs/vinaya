@@ -388,6 +388,15 @@ function resolveTrueHeadSha(pr: PrView): string | null {
   return trueSha
 }
 
+/**
+ * The Principal list from the default branch's trust anchor — the one read
+ * every caller in this module goes through. Throws `PrincipalsUnresolvedError`
+ * when it cannot be read or names no Principal.
+ */
+function trustedPrincipals(): string[] {
+  return resolveTrustedPrincipals()
+}
+
 type TimelineLabeledEvent = { event: string; actor?: { login: string } | null; label?: { name: string } | null }
 
 function fetchWaiverLabelActor(prNumber: number, label: string): string | null {
@@ -480,7 +489,7 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
   // so the gate fails closed here, before the waiver is checked.
   let principalAllowlist: string[]
   try {
-    principalAllowlist = resolveTrustedPrincipals()
+    principalAllowlist = trustedPrincipals()
   } catch (err) {
     if (!(err instanceof PrincipalsUnresolvedError)) throw err
     return failure(
@@ -582,7 +591,7 @@ export function readPostedReviewVerdicts(prNumber: number): PostedVerdictBodies 
   if (pr === null) return null
   let principals: string[]
   try {
-    principals = resolveTrustedPrincipals()
+    principals = trustedPrincipals()
   } catch {
     return null
   }
