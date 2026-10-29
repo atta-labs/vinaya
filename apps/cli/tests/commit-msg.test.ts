@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { commitMsgCommand } from '../src/commands/commit-msg.js'
+import { fixtureDir } from './lib/test-temp-fixture'
 
 let dir: string
 
@@ -85,15 +87,78 @@ describe('vinaya commit-msg (Issue #63)', () => {
     expect(process.exitCode).toBe(0)
   })
 
-  it('skips validation outright when source is "merge" — git wrote that message, not the committer', () => {
-    const stderr = captureStderr(() => commitMsgCommand([messageFile("Merge branch 'main' into feature\n"), 'merge']))
-    expect(stderr).toBe('')
-    expect(process.exitCode).toBe(0)
+  it('ignores a source keyword — only the merge in progress exempts a message', () => {
+    captureStderr(() => commitMsgCommand([messageFile('fixed stuff\n'), 'merge']))
+    expect(process.exitCode).toBe(1)
   })
 
-  it('still validates a non-merge source keyword (e.g. "message")', () => {
-    captureStderr(() => commitMsgCommand([messageFile('fixed stuff\n'), 'message']))
-    expect(process.exitCode).toBe(1)
+  describe('in a git repository', () => {
+    const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')))
+    let repo: string
+    let originalCwd: string
+
+    function git(...args: string[]): string {
+      return execFileSync('git', args, { cwd: repo, env: gitEnv, encoding: 'utf-8' }).trim()
+    }
+
+    beforeEach(() => {
+      originalCwd = process.cwd()
+      repo = fixtureDir('vinaya-commit-msg-repo-')
+      git('init', '-q', '-b', 'main')
+      git('config', 'user.email', 'a@example.com')
+      git('config', 'user.name', 'A')
+      git('config', 'commit.gpgsign', 'false')
+      git('commit', '-q', '--allow-empty', '-m', 'Chore: Start')
+    })
+
+    afterEach(() => {
+      process.chdir(originalCwd)
+    })
+
+    function run(message: string): { stderr: string; code: number } {
+      const file = join(repo, 'MSG')
+      writeFileSync(file, message)
+      process.chdir(repo)
+      process.exitCode = 0
+      const stderr = captureStderr(() => commitMsgCommand([file]))
+      return { stderr, code: Number(process.exitCode) }
+    }
+
+    it('accepts conventional messages with and without a merge in progress; refuses a merge message without one', () => {
+      const merge = "Merge commit 'abc1234' into task/issue-1\n"
+      expect(run('Fix(cli): Do the thing\n').code).toBe(0)
+      expect(run(merge).code).toBe(1)
+
+      git('checkout', '-q', '-b', 'other')
+      git('commit', '-q', '--allow-empty', '-m', 'Chore: Other')
+      git('checkout', '-q', 'main')
+      git('commit', '-q', '--allow-empty', '-m', 'Chore: Main')
+      git('merge', '-q', '--no-commit', '--no-ff', 'other')
+      expect(run(merge)).toEqual({ stderr: '', code: 0 })
+      expect(run('Fix(cli): Do the thing\n').code).toBe(0)
+    })
+
+    it('lets a real `git merge --no-edit --no-ff` land under the armed hook', () => {
+      const hook = join(repo, '.git', 'hooks', 'commit-msg')
+      const cli = join(import.meta.dir, '..', 'src', 'index.ts')
+      writeFileSync(hook, `#!/bin/sh\nexec bun "${cli}" commit-msg "$1" "$2"\n`)
+      chmodSync(hook, 0o755)
+
+      git('checkout', '-q', '-b', 'other')
+      git('commit', '-q', '--allow-empty', '-m', 'Chore: Other')
+      const tip = git('rev-parse', 'HEAD')
+      git('checkout', '-q', 'main')
+      git('commit', '-q', '--allow-empty', '-m', 'Chore: Main')
+
+      const result = spawnSync('git', ['merge', '--no-edit', '--no-ff', tip], {
+        cwd: repo,
+        env: gitEnv,
+        encoding: 'utf-8'
+      })
+      expect(result.stderr).not.toContain("doesn't match")
+      expect(result.status).toBe(0)
+      expect(git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ')).toHaveLength(3)
+    })
   })
 
   it('prints usage and exits 2 when no message file is given', () => {
