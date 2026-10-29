@@ -1,0 +1,5 @@
+---
+'@attalabs/vinaya': minor
+---
+
+`vinaya task status --follow` now reads as one line per actor: each line starts with the local time, takes its actor's colour on a terminal (none when piped or with `NO_COLOR` set), leaves out shell command text and the driver's terminal copies, shows paths relative to the repository and the agent's notes dimmed, and pairs each action's start and finish by its call id. A version-2 run writes a stage-change line each time it moves between develop, local checks, review, ready push, focused checks at ready, pull request opened, waiting on required CI, waiting for merge, and paused for the Developer, the Operator or the Principal; the follow view shows each as a banner with the stage's typical length on this machine, and adds a still-in-stage line every five minutes and once past twice the typical length. A test run's finished line carries its failed-test count, for Claude Code and Codex alike. `vinaya task status` and `task_status` now show an Engine run's round, stage and minutes in stage. The driver log keeps every line it held before; its records may now carry a bracketed metadata token after the time.

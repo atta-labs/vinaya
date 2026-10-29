@@ -83,7 +83,11 @@ const ROLE_OF_LAUNCH: Record<string, keyof typeof SCRIPT> = {
   'security-reviewer': 'security'
 }
 
-const withoutTimestamp = (line: string): string => line.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z {2}/, '')
+// The time goes; a record's metadata (an action's call id, a command mark) stays, as both runners write it alike.
+const withoutTimestamp = (line: string): string =>
+  line.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z(?: (\[[^\]]*\]))? {2}/, (_, meta?: string) =>
+    meta ? `${meta}  ` : ''
+  )
 
 const linesOf = (path: string): string[] =>
   readFileSync(path, 'utf8')
@@ -321,8 +325,8 @@ describe('the Engine runner narrates a run into the driver log as the standalone
     ].map((line) => withoutDuration(line ?? ''))
     expect(engine.map(withoutDuration)).toEqual(expected)
     // The comparison covers each turn and each narrated event.
-    expect(expected).toContain('> Developer   Running ')
-    expect(expected).toContain('> Security   Reading ')
+    expect(expected).toContain('[call=toolu_replay]  > Developer   Running ')
+    expect(expected).toContain('[call=toolu_replay]  > Security   Reading ')
     expect(expected).toContain('+ Loop   Round 1 verdicts: The code reviewer approved; the security reviewer approved.')
     // The launch lines the standalone's filter removed are exactly the three each of its three turns wrote.
     expect(standalone.filter((line) => STANDALONE_LAUNCH_LINE.test(line))).toHaveLength(9)

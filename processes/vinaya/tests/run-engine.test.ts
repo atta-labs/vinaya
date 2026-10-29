@@ -1,5 +1,16 @@
 import { fixtureDir } from '../../../apps/cli/tests/lib/test-temp-fixture'
-import { describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { PAUSE_REASON_PROFILE } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+import { usageLimitPauseDetail } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import { newestStage, PAUSED_STAGE_ACTOR, parseDriverLogLine, STAGES } from '../../../apps/cli/src/lib/follow-view'
+import { createStageNarrator, stageOfPause, V2_NODE_STAGES } from '../bin/run-engine'
+import {
+  PROCESS as V2_PROCESS,
+  runV2,
+  setUpWorld,
+  TASK as V2_TASK,
+  tearDownWorld
+} from '../loops/dev-review/v2/v2-world'
 import { DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
 import { recordedHandoff } from './handoff-fakes'
 import { PASSING_FORGE_GATES } from './round-fakes'
@@ -1630,4 +1641,92 @@ describe('generated role configs reach their own bridge', () => {
       }
     })
   }
+})
+
+describe("version 2's stage-change lines", () => {
+  test('every node of the version-2 flow maps to exactly one stage, and nothing else is mapped', () => {
+    const flowNodes = [...readFileSync(V2_PROCESS.flowPath, 'utf8').matchAll(/^\s*- (?:\{ )?id: ([a-z-]+)/gm)].map(
+      (match) => match[1] as string
+    )
+    expect(flowNodes.length).toBeGreaterThan(30)
+    expect(Object.keys(V2_NODE_STAGES).sort()).toEqual([...new Set(flowNodes)].sort())
+    for (const stage of Object.values(V2_NODE_STAGES)) expect(Object.keys(STAGES)).toContain(stage)
+  })
+
+  test('every recorded pause reason maps to one paused stage, and that stage names who must act', () => {
+    const expected: Record<string, string> = {
+      principal: 'paused_principal',
+      planner: 'paused_principal',
+      operator: 'paused_operator',
+      self: 'paused_operator'
+    }
+    for (const [reason, profile] of Object.entries(PAUSE_REASON_PROFILE)) {
+      const stage = stageOfPause(reason, `a detail for ${reason}`)
+      expect({ reason, stage }).toEqual({ reason, stage: expected[profile.requestedAuthority] as never })
+      expect(PAUSED_STAGE_ACTOR[stage]).toBeDefined()
+    }
+    // A pause for the agent's usage limit waits on the Developer's agent, which resumes at its reset.
+    const detail = usageLimitPauseDetail({ agent: 'claude', message: 'limit', resetAtMs: null }, 0)
+    expect(stageOfPause('infrastructure', detail)).toBe('paused_developer')
+  })
+
+  test('a stage change writes one stage-change line, and a repeat of the same stage and round writes none', () => {
+    const written: string[] = []
+    const narrate = createStageNarrator(
+      (line) => written.push(line),
+      () => new Date('2026-10-29T07:00:00Z')
+    )
+    narrate({ round: 1, stage: 'develop' })
+    narrate({ round: 1, stage: 'develop' })
+    narrate({ round: 1, stage: 'local_checks' })
+    narrate({ round: 2, stage: 'develop' })
+    narrate({ round: 2, stage: 'paused_operator', reason: 'no_push' })
+    expect(written).toEqual([
+      '2026-10-29T07:00:00.000Z [stage=develop round=1]  # Loop   Round 1: develop.',
+      '2026-10-29T07:00:00.000Z [stage=local_checks round=1]  # Loop   Round 1: local checks.',
+      '2026-10-29T07:00:00.000Z [stage=develop round=2]  # Loop   Round 2: develop.',
+      '2026-10-29T07:00:00.000Z [stage=paused_operator round=2 reason=no_push]  # Loop   Round 2: paused for the Operator (no_push).'
+    ])
+  })
+
+  describe('a version-2 run writes them into its driver log', () => {
+    beforeAll(setUpWorld)
+    afterAll(tearDownWorld)
+
+    const stagesIn = (runtimeDir: string): string[] =>
+      readFileSync(loopLogPathFor(null, V2_TASK, runtimeDir), 'utf8')
+        .split('\n')
+        .map(parseDriverLogLine)
+        .flatMap((line) =>
+          line.kind === 'primary' && typeof line.meta.stage === 'string'
+            ? [`${line.meta.round} ${line.meta.stage}${line.meta.reason ? ` ${line.meta.reason}` : ''}`]
+            : []
+        )
+
+    test('approved in round 1: one line per stage it moved through, in order', async () => {
+      const observed = await runV2('claude')
+      expect(observed.outcome).toBe('completed')
+      expect(stagesIn(observed.world.runtimeDir)).toEqual([
+        '1 develop',
+        '1 local_checks',
+        '1 review',
+        '1 ready_push',
+        '1 pr_opened',
+        '1 required_ci',
+        '1 waiting_merge'
+      ])
+    })
+
+    test('a pause writes its paused stage, with the reason it recorded; the status readers read it back', async () => {
+      const observed = await runV2('codex', {
+        policy: { maxRounds: 1 },
+        reviewer: (role) => (role === 'code-reviewer' ? 'request-changes' : 'approve')
+      })
+      expect(observed.outcome).toBe('pause:max_rounds')
+      const stages = stagesIn(observed.world.runtimeDir)
+      expect(stages.at(-1)).toBe('1 paused_principal max_rounds')
+      const log = readFileSync(loopLogPathFor(null, V2_TASK, observed.world.runtimeDir), 'utf8').split('\n')
+      expect(newestStage(log)).toMatchObject({ round: 1, stage: 'paused_principal', reason: 'max_rounds' })
+    })
+  })
 })

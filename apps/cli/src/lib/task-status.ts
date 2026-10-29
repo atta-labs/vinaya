@@ -46,6 +46,7 @@ import { readEngineRun, readTaskRunner, type EngineRunReading } from './task-run
 import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
 import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
+import { newestStage, OVER_TYPICAL_MARK, PAUSED_STAGE_ACTOR, STAGES } from './follow-view.js'
 import { confidenceFromRecords, readTurnResultRecords } from './dev-review-loop/turn-result.js'
 import {
   phaseHistoryLookup,
@@ -825,6 +826,35 @@ export function readLoopPhase(root: string, task: number, now: () => Date = () =
   }
 }
 
+/**
+ * An Engine run's place, read from its driver log's newest stage-change line — the version-2 driver writes no
+ * `loop_state` record, so this is where its round and stage live. Minutes in stage run from that line's own time.
+ * `ended` is true when the run's ending record (its exit line, a cancel, a new process's start) followed the line.
+ * `null` when the log holds no stage-change line, or cannot be read.
+ */
+export function readEngineStage(
+  root: string,
+  task: number,
+  now: () => Date = () => new Date()
+): (LoopPhaseReading & { ended: boolean; paused: boolean }) | null {
+  let text: string
+  try {
+    text = readFileSync(loopLogPathFor(null, task, root), 'utf8')
+  } catch {
+    return null
+  }
+  const newest = newestStage(text.split('\n'))
+  if (newest === null) return null
+  return {
+    round: newest.round,
+    recordedPhase: newest.stage,
+    phase: STAGES[newest.stage],
+    minutesInPhase: Math.max(0, Math.round((now().getTime() - newest.at) / 60_000)),
+    ended: newest.ended,
+    paused: PAUSED_STAGE_ACTOR[newest.stage] !== undefined
+  }
+}
+
 // --- the newest confidence on record ---------------------------------------
 
 /**
@@ -1262,8 +1292,10 @@ function historyCell(history: TaskPhaseHistory | null): string {
   return `${history.typicalPhaseMinutes}m (n=${history.typicalPhaseSamples})`
 }
 
-/** The mark on a phase that has already run past twice what the same phase typically took here. A phase with no typical time never carries it — there is nothing to be twice OF, and a mark with no comparison behind it would be a judgement this table never makes. */
-const OVER_TYPICAL_MARK = '⚠'
+// The mark on a phase that has already run past twice what the same phase typically took here
+// (`OVER_TYPICAL_MARK`, shared with the follow view's over-typical line). A phase with no typical time never carries
+// it — there is nothing to be twice OF, and a mark with no comparison behind it would be a judgement this table never
+// makes.
 
 /**
  * Has this phase run past twice its own typical time? History compared against
@@ -1630,7 +1662,12 @@ function buildRow(
     held !== null && derived.kind !== 'paused'
       ? { kind: 'paused', reason: held.reason, detail: held.detail, round: held.round }
       : derived
-  const phase = readLoopPhase(root, ref.issue)
+  const runnerReading = runnerReadingFor(ref.issue, root)
+  // An Engine run records no `loop_state`: its round and stage are its driver log's newest stage-change line.
+  const recordedPhase = readLoopPhase(root, ref.issue)
+  const engineStage =
+    runnerReading.runner === 'atta-engine' && recordedPhase === null ? readEngineStage(root, ref.issue) : null
+  const phase = engineStage ?? recordedPhase
   // One read per pull request, and none at all for a row without one.
   const prRead = pr ? readPrFacts(pr.number) : null
   const confidence = readLastConfidence(
@@ -1649,7 +1686,13 @@ function buildRow(
         }
       : null
   )
-  const phaseIsCurrent = phase === null ? null : phaseIsCurrentFor(state, phase.recordedPhase)
+  // A stage line is current while a driver runs it and its run has not ended, or while a pause holds a paused stage.
+  const phaseIsCurrent =
+    engineStage !== null
+      ? !engineStage.ended && (state.kind === 'running' || (state.kind === 'paused' && engineStage.paused))
+      : phase === null
+        ? null
+        : phaseIsCurrentFor(state, phase.recordedPhase)
   return {
     briefFrozen: true,
     row: {
@@ -1667,13 +1710,15 @@ function buildRow(
       // question only a run actually in that phase is asking. A stopped run's
       // last recorded phase gets none, which is also what keeps the forge read
       // out of a listing where nothing is in flight.
-      phaseHistory: phase !== null && phaseIsCurrent === true ? history(phase.recordedPhase) : null,
+      // An Engine stage has no standalone phase class to compare against; the follow view gives its typical length.
+      phaseHistory:
+        engineStage === null && phase !== null && phaseIsCurrent === true ? history(phase.recordedPhase) : null,
       prFacts: prRead === null ? null : prRead.facts,
       // The disposition is what a PAUSE is waiting for — carried only for a row
       // that reads `paused` (whether derived so or recovered from a killed
       // pause above), and already computed, never read twice.
       pauseDisposition: state.kind === 'paused' ? disposition : null,
-      ...runnerReadingFor(ref.issue, root)
+      ...runnerReading
     }
   }
 }

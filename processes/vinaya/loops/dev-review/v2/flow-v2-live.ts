@@ -837,6 +837,8 @@ export function liveV2Functions(input: {
   readyTestsPolicy?: () => ReadyTestsPolicy
   /** The repository root the loop baseline is read from (this repository's own scenario corpus). */
   baselineRoot?: string
+  /** Told as the driver's run of the approved explicit Test Plan commands starts, when there is one to run. */
+  onExplicitCommandsStart?: () => void
 }): V2Functions {
   // A marker an earlier run (a crash, a stop) left in this worktree is never reused.
   endReadyDeferral(input.worktreePath)
@@ -876,8 +878,15 @@ export function liveV2Functions(input: {
     ...(input.readyTestsPolicy ? { readyTestsPolicy: input.readyTestsPolicy } : {}),
     checkReadyBaseline: () => checkReadyBaseline(input.baselineRoot ?? input.worktreePath),
     ...(input.readyPushDeadlineMs ? { readyDeadlineMs: input.readyPushDeadlineMs } : {}),
-    runExplicitCommands: ({ head, body, commands, signal, deadlineAt }) =>
-      runExplicitCommandsLive({
+    runExplicitCommands: ({ head, body, commands, signal, deadlineAt }) => {
+      if (commands.length > 0) {
+        try {
+          input.onExplicitCommandsStart?.()
+        } catch {
+          // Narration never changes the run it narrates.
+        }
+      }
+      return runExplicitCommandsLive({
         worktreePath: input.worktreePath,
         branch: input.branch,
         head,
@@ -887,7 +896,8 @@ export function liveV2Functions(input: {
         ...(signal ? { signal } : {}),
         ...(input.startDeadline ? { startDeadline: input.startDeadline } : {}),
         ...(input.log ? { log: input.log } : {})
-      }),
+      })
+    },
     readRequiredCi: (request) => readRequiredCiLive(request),
     ...(input.log ? { log: input.log } : {}),
     ...(input.writeEvidence ? { writeEvidence: input.writeEvidence } : {})

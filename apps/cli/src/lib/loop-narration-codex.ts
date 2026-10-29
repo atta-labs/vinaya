@@ -2,6 +2,7 @@ import {
   type ActionKind,
   classifyCommand,
   classifyDriverTool,
+  failedTestCount,
   firstLine,
   type NarratedAction,
   type NarratedResult,
@@ -21,7 +22,8 @@ import {
  *
  * Like the Claude side it is a pure function that reads no clock and keeps
  * nothing of a payload: a command keeps its first words and its exit status,
- * never its output; a file change keeps each path and the kind of change,
+ * never its output, except a test run's failed-test count read from its own
+ * summary line; a file change keeps each path and the kind of change,
  * never content; a tool call keeps its name (and a documentation URL), never
  * its arguments or result. An event or item type it does not recognise yields
  * nothing and never throws.
@@ -169,6 +171,10 @@ export function translateCodexEvent(event: Json, state: NarrationState, ctx: Nar
         durationMs: open === undefined ? 0 : Math.max(0, ctx.now - open.at)
       }
       if (!ok) result.error = failureLine(item, ctx)
+      if (call.kind === 'running_tests' && item.type === 'command_execution') {
+        const failed = failedTestCount(str(item.aggregated_output))
+        if (failed !== undefined) result.failedTests = failed
+      }
       out.push(result)
     }
     return out

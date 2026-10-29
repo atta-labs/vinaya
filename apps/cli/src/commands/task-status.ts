@@ -8,8 +8,10 @@
  * narrows to one task and adds the last round's verdict lines plus the
  * exact resume command when paused. `--follow`,
  * on either the `<tranche> <n>` form or `--issue <n>`, tails that task's
- * driver log — `~/.vinaya/loops/<owner>-<repo>/<issue>.log` — live,
- * `tail -f` style, with its detail lines unless `--quiet` hides them, so the state of any run is one command away regardless
+ * driver log — `<runtimeDir>/tasks-execution/<issue>/output/driver.log` — live,
+ * `tail -f` style, through the follow view (`lib/follow-view.js`): one
+ * coloured line per actor, stage banners, and its detail lines unless
+ * `--quiet` hides them, so the state of any run is one command away regardless
  * of where it was launched.
  *
  * Origin: the Principal, running seven loops in seven terminals,
@@ -21,10 +23,14 @@
  * `loopLogPathFor`/`followLoopLog` for `--follow`, are the entire reader.
  */
 
+import { execFileSync } from 'node:child_process'
+import { homedir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { colourEnabled } from '../lib/dispatch.js'
 import { printJson } from '../lib/envelope.js'
-import { followLoopLog, loopLogPathFor } from '../lib/loop-log.js'
+import { createFollowView, lineSplitter, readStageHistory } from '../lib/follow-view.js'
+import { followLoopLog, loopLogPathFor, loopsRoot } from '../lib/loop-log.js'
 import { gatherSingleTaskStatus, gatherTaskStatusList } from '../lib/task-status.js'
 
 type ParsedArgs = { json: boolean; follow: boolean; quiet: boolean; issue: string | undefined; positional: string[] }
@@ -115,9 +121,9 @@ function resolveFollowIssue(parsed: ParsedArgs): number {
   return result.row.issue
 }
 
-const DETAIL_RECORD = /^(?:\S+ {2}| {2})· /
+const DETAIL_RECORD = /^(?:\S+(?: \[[^\]]*\])? {2}| {2})· /
 
-/** Writes only the file's primary lines: a detail record, in the log form (`<ISO time>  · <text>`) or the terminal copy (`  · <text>`), is dropped, a trailing partial line waits for its newline (the log appends whole lines), and multibyte characters split across chunks stay whole. */
+/** Writes only the file's primary lines: a detail record, in the log form (`<ISO time>[ <metadata>]  · <text>`) or the terminal copy (`  · <text>`), is dropped, a trailing partial line waits for its newline (the log appends whole lines), and multibyte characters split across chunks stay whole. */
 export function quietLogWriter(write: (text: string) => void): (chunk: Buffer) => void {
   const decoder = new StringDecoder('utf8')
   let pending = ''
@@ -129,11 +135,45 @@ export function quietLogWriter(write: (text: string) => void): (chunk: Buffer) =
   }
 }
 
+/** The repository's checkout and every worktree of it, in both the absolute and the home-redacted form the log may hold: the paths the view shows relative. */
+function followRoots(): string[] {
+  try {
+    const listed = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+    const roots = listed
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .map((line) => line.slice('worktree '.length))
+    const home = homedir()
+    return roots.flatMap((root) => (root.startsWith(`${home}/`) ? [root, `~${root.slice(home.length)}`] : [root]))
+  } catch {
+    return []
+  }
+}
+
+/** Follows the task's driver log through the follow view: the file's lines as one readable line per actor, with stage banners and the poll tick's still-in-stage lines. */
 async function runFollow(parsed: ParsedArgs): Promise<void> {
   const issue = resolveFollowIssue(parsed)
   const repo = await resolveRepo().catch(() => null)
-  const path = loopLogPathFor(repo, issue)
-  await followLoopLog(path, parsed.quiet ? { write: quietLogWriter((text) => void process.stdout.write(text)) } : {})
+  const root = loopsRoot()
+  const path = loopLogPathFor(repo, issue, root)
+  const view = createFollowView({
+    colour: colourEnabled(process.stdout),
+    details: !parsed.quiet,
+    roots: followRoots(),
+    history: readStageHistory(root, issue)
+  })
+  const print = (lines: string[]): void => {
+    if (lines.length > 0) process.stdout.write(`${lines.join('\n')}\n`)
+  }
+  const split = lineSplitter()
+  await followLoopLog(path, {
+    writeBacklog: (chunk) => print(view.backlog(split(chunk), new Date())),
+    write: (chunk) => print(view.push(split(chunk), new Date())),
+    tick: () => print(view.tick(new Date()))
+  })
 }
 
 export async function taskStatusCommand(args: string[]): Promise<void> {

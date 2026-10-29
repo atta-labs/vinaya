@@ -157,10 +157,10 @@ import {
  * read before this task. `NO_COLOR` (https://no-color.org) is honored by
  * presence alone, any value including empty, not by its truthiness.
  */
-const ANSI_RESET = '\x1b[0m'
+export const ANSI_RESET = '\x1b[0m'
 
 /** One fixed colour per role, never per vendor — the reader is separating who is speaking, not which binary ran. */
-const ROLE_ANSI: Record<Role, string> = {
+export const ROLE_ANSI: Record<Role, string> = {
   planner: '\x1b[34m', // blue
   developer: '\x1b[36m', // cyan
   'code-reviewer': '\x1b[35m', // magenta
@@ -171,7 +171,7 @@ const ROLE_ANSI: Record<Role, string> = {
 }
 
 /** The coordinator's own colour — distinct from every role above, so a lifecycle/loop line reads as the loop's without reading the text. */
-const LOOP_ANSI = '\x1b[90m' // bright black / grey
+export const LOOP_ANSI = '\x1b[90m' // bright black / grey
 
 export function colourEnabled(stream: { isTTY?: boolean }): boolean {
   return Boolean(stream.isTTY) && process.env.NO_COLOR === undefined
@@ -5551,13 +5551,15 @@ export async function dispatchRole(
           }
         }
         try {
-          for (const { words, mark, details } of streamRenderer.render(JSON.parse(line) as Record<string, unknown>)) {
+          for (const { words, mark, details, callId, commandFrom } of streamRenderer.render(
+            JSON.parse(line) as Record<string, unknown>
+          )) {
             process.stderr.write(`${colourAgentLine(role, words, process.stderr, mark)}\n`)
             for (const detail of formatAgentDetails(details)) process.stderr.write(`${detail}\n`)
             // Security (round 2 review, HIGH): the words and details are agent
             // output, the same untrusted-bytes hazard `openOutputTee`'s `redact`
             // pass exists for — `appendRoleLine` redacts before it reaches disk.
-            if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, words, details, mark)
+            if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, words, details, mark, { callId, commandFrom })
           }
         } catch {
           // not a JSON line, or a renderer that refused it — never fatal
