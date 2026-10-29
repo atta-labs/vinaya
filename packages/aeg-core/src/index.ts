@@ -88,6 +88,7 @@ export {
   CODE_REVIEW_SEVERITY_ORDER,
   codeReviewBlockingSeverities,
   consequentialFindings,
+  DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
   DEFAULT_REVIEW_POLICY,
   DEFERRAL_REASON_TEXT,
   evaluateCodeReview,

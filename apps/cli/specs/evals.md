@@ -316,6 +316,24 @@ bun apps/cli/tests/eval/recut-generic-cases.ts held-out --approve-developer <sha
 
 <!-- AEG:CLAIM: apps/cli/tests/eval/generic-suites.ts contains:export const DERIVED_FILE_DIGESTS = { -->
 
+### The whole-loop runner
+
+`apps/cli/src/lib/dev-review-eval/whole-loop.ts` runs one `whole-loop.l6` case end to end through a real `vinaya task run` against the disposable sandbox repository the freeze record names (`wholeLoopSandboxRepository`), on one backend (`standalone` or `engine`, passed as `--runner standalone` or `--runner atta-engine`), one flow (`v1`, or `v2` on the Engine backend only) and one adapter (`claude-code` or `codex`, passed as `--agent claude` or `--agent codex`), and grades it with the six loop graders. Trials run one at a time, since each moves the sandbox's `main`.
+
+```
+bun apps/cli/src/lib/dev-review-eval/whole-loop.ts --case <id> --split development --backend engine --flow v2 --adapter codex --attempt 1 --sandbox <owner/name> --result <file>
+```
+
+- **Refusals, before any forge write.** The runner refuses a sandbox other than the one the freeze record names, a target of `atta-labs/vinaya`, a sandbox that is not private, a forge login without write permission to it, a sandbox that still has an open Issue or pull request from an earlier trial, `v2` on the standalone backend, a held-out case without the held-out approval, a loaded case whose repository is not the sandbox, and a sandbox that does not hold the case's base commit.
+- **Loaded cases target the sandbox.** The committed cases name the repository they were cut from; `loadSandboxCases` sets each loaded case's repository to the sandbox at load time and never rewrites the committed files.
+- **The trial.** The runner force-updates the sandbox's `main` to the case's base commit — both runners base the task branch and its pull request on `main` — and makes the trial clone with `git clone --single-branch --branch main --no-tags`, the sandbox its only remote. The clone must hold the base commit, no ref but `main` and `origin/main`, and no commit outside the base commit's history (`git rev-list --all` equals `git rev-list <base commit>`, evaluation program §11); otherwise the trial is refused before its Issue opens, the `main` move being its one write. The trial Issue is the renderer's brief with its Documentation lines in the Issue grammar's `- <source> — <mechanism> (O1)` form, plus `**Project:**`, `**Tier:**`, `## Parts`, `## Test plan` and `## Stop conditions`. One `task run --issue <n> --agent <agent> --runner <runner> --flow <flow>` starts with this tree's CLI, its working directory the trial clone, with `AEG_REPO` and `GH_REPO` naming the sandbox, a fresh `VINAYA_RUNTIME_DIR` and `VINAYA_LOG_FOLDER_ONLY=1`. The clone gets no `core.hooksPath`, so a `v2` ready push records `no-local-tests`, a recorded limit. A run that pauses for a ruling is stopped and recorded as paused, never as a pass.
+- **The trial record**, from the forge and the clone alone: the pull request as `gh pr view --json number,state,headRefOid,statusCheckRollup,reviews,body,comments` returns it, its base the merge base of the forge's `main` and its head; the change measured on the clone's task branch; every check of the head's rollup, each counted as required; each reviewer's latest verdict comment, bound to the trial's brief when its brief hash is one frozen on the trial Issue; the ready-for-merge publication marker; the effects the comments show (the pull request opened, each Developer round marker, each publication); and the hidden tests run in a grading copy of the final head. The Developer's turn result, receipts and trace are not observed, so no loop grader reads them. The trial's pull request and Issue are then closed unmerged.
+- **The result** names the case, split, backend, flow, adapter, attempt, renderer version, how the run ended, its ready-gate state (`no-local-tests`, `local-tests` or `not-reached`), each grader's verdict, the rounds, the wall time and the tokens its Log reported. A held-out case is printed by its id alone and its verdicts carry no reason.
+
+`apps/cli/tests/eval/whole-loop.test.ts` drives the whole runner against a fake forge, a local repository as the sandbox and a fake task run, on each backend with each flow it accepts and each adapter, for a run that reaches ready-for-merge and one that stops before it; asserts each refusal and that it writes nothing; asserts the task run's environment and that every forge write names the sandbox; and builds the trial Issue body for every development case and passes it through the core Issue grammar checks.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/whole-loop.ts contains:export async function runWholeLoopTrial(options: WholeLoopOptions, deps: WholeLoopDeps): Promise<WholeLoopOutcome> { -->
+
 ## Trial staging
 
 The evaluation program's §11 "Repository isolation" requires every trial to start clean, proven mechanically before any model process starts. `staging.ts` stages a trial; `contamination.ts` tests it, admits or refuses it, and, after the trial, attributes what it created and builds the grading copy. Neither runs an agent, and neither touches the product's own linked-worktree mechanism, which adapter conformance proves separately.
@@ -643,7 +661,10 @@ Container mode skips these host steps, each for its own reason:
 - the trial-bundle import — there is no host copy to import into.
 
 The record's `hiddenTests` and `measuredChange` are left unset (`null`) for
-the verifier to fill; every other field is produced as on the host. Each step
+the verifier to fill; every other field is produced as on the host. The copy
+written to the record path also carries `backend`, the backend the role step
+ran on (`StepOneContainer.backend`): `standalone` unless the container names
+`engine`, which a Harbor trial alone does (below). Each step
 a live trial takes is a seam (`VinayaProcessSteps`, run through
 `vinayaProcess`; production passes `PRODUCTION_VINAYA_PROCESS_STEPS`), so
 `apps/cli/tests/eval/step-one.test.ts` runs one case of each kind on fake
@@ -767,9 +788,13 @@ renderer, so its version may be empty. The record also holds:
   result is refused in a record without comparison parameters, and the
   comparison parameters are refused when dated after any of them.
 
-The whole-loop step-one run remains owed until a disposable sandbox repository
-exists, and Operator capability selection remains owed by the Operator on one
-host project; the record's `owed` section names both.
+The record names the disposable sandbox repository every whole-loop trial
+runs against, `wholeLoopSandboxRepository`, as `owner/name`; a record that
+names none, or names `atta-labs/vinaya`, is refused. The whole-loop practice
+run stays owed until `practiceRuns` holds a `whole-loop.l6` result: while it
+holds none, `owed.wholeLoopStepOne` must say so, and a record that holds one
+while still owing it is refused. Operator capability selection remains owed by
+the Operator on one host project; the record's `owed` section names it.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/freeze-record.ts contains:export const LIVE_SUITE_LAYERS = { -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:export const STEP_ONE_COMPARISON_SUITES = [ -->
@@ -940,10 +965,10 @@ runtime must also permit the namespaces needed by Codex's sandbox.
 `apps/cli/src/lib/dev-review-eval/vinaya_harbor_agent.py` is a Harbor installed agent, a subclass of `BaseInstalledAgent` named `vinaya`:
 
 ```text
-PYTHONPATH=apps/cli/src/lib/dev-review-eval harbor run --path <out>/<suite> --agent vinaya_harbor_agent:VinayaAgent --ak archive=<file.tar> --ak adapter=claude-code --model <exact model id>
+PYTHONPATH=apps/cli/src/lib/dev-review-eval harbor run --path <out>/<suite> --agent vinaya_harbor_agent:VinayaAgent --ak archive=<file.tar> --ak adapter=claude-code [--ak backend=standalone|engine] --model <exact model id>
 ```
 
-Its install step uploads the archive and refuses unless the archive's SHA-256 equals the digest the image recorded for the archive it installed at `/opt/vinaya`, then runs `claude --version`. On an image converted without `--archive` it refuses, naming the flag. Both CLIs and the Vinaya CLI's dependencies are already in the image; install runs no package fetch. The default Claude install path runs no network step. Its run step runs as the image's user, `tester`, with `HOME` set to `/home/tester`, and names paths `tester` owns — `/opt/vinaya`, `/case/case.json`, `/app` and `/logs/agent`; it runs `apps/cli/src/lib/dev-review-eval/harbor-trial.ts` on `/case/case.json` in container mode, with backend `standalone`, the requested adapter (`claude-code` by default, or `codex`) and the exact model id it is given, since an alias is not resolved. Claude forwards only `CLAUDE_FORCE_OAUTH` and `CLAUDE_CODE_OAUTH_TOKEN`, the subscription login, read from the environment of the `harbor run` process. Login variables are refused from an agent-env flag, whose values Harbor writes into the job's configuration; API-key agent-env variables are also refused, and no API key is read or forwarded. After the run it sets Harbor's input, cache and output tokens and cost from the run's usage file: the input count is the uncached input, and the cache count is the sum of the usage's cache read and cache creation tokens. The dispatch reads a Claude Code session's usage from the last bytes of its stream, where its terminal `result` line sits, so a long session's tokens are recorded. The agent is the repository's only Python file: Biome neither lints nor formats it, and its check is `python3 -m py_compile`.
+Its install step uploads the archive and refuses unless the archive's SHA-256 equals the digest the image recorded for the archive it installed at `/opt/vinaya`, then runs `claude --version`. On an image converted without `--archive` it refuses, naming the flag. Both CLIs and the Vinaya CLI's dependencies are already in the image; install runs no package fetch. The default Claude install path runs no network step. Its run step runs as the image's user, `tester`, with `HOME` set to `/home/tester`, and names paths `tester` owns — `/opt/vinaya`, `/case/case.json`, `/app` and `/logs/agent`; it runs `apps/cli/src/lib/dev-review-eval/harbor-trial.ts` on `/case/case.json` in container mode, with the requested backend (`standalone` by default, or `engine`; any other value refuses the agent before any container access), the requested adapter (`claude-code` by default, or `codex`) and the exact model id it is given, since an alias is not resolved. Claude forwards only `CLAUDE_FORCE_OAUTH` and `CLAUDE_CODE_OAUTH_TOKEN`, the subscription login, read from the environment of the `harbor run` process. Login variables are refused from an agent-env flag, whose values Harbor writes into the job's configuration; API-key agent-env variables are also refused, and no API key is read or forwarded. After the run it sets Harbor's input, cache and output tokens and cost from the run's usage file: the input count is the uncached input, and the cache count is the sum of the usage's cache read and cache creation tokens. The dispatch reads a Claude Code session's usage from the last bytes of its stream, where its terminal `result` line sits, so a long session's tokens are recorded. The agent is the repository's only Python file: Biome neither lints nor formats it, and its check is `python3 -m py_compile`.
 
 For Codex, convert with `--adapter codex` and run Harbor with `--ak adapter=codex`
 against that output. The operator sets `CODEX_ACCESS_TOKEN` in the `harbor run`
@@ -971,9 +996,14 @@ the staged `/home/tester/.codex` owned and writable by `tester`. The trial gets
 the staged home breaks Codex's bearer authentication. An unstaged login also
 refuses the run. Neither adapter reads or forwards API-key variables.
 
-`harbor-trial.ts` renders the case with `renderCase` and runs the case kind's live path in container mode, in `/app`: a `change` case's Developer through `dispatchRole` with the driver-run tool host and its fake forge, a `review` case's reviewer through `dispatchRole`, an `answer` case through `readOnlyDeveloperTurn`. It reads the case file once and removes it before the role starts, since the neutral case carries fields only grading reads, and writes the agent part of the Vinaya trial record to `/logs/agent/vinaya-trial-record.json` and the run's `StepOneUsage` to `/logs/agent/vinaya-usage.json`.
+`harbor-trial.ts` renders the case with `renderCase` and runs the case kind's live path in container mode, in `/app`, on the backend `--backend` names (`HARBOR_TRIAL_BACKENDS`: `standalone` or `engine`; any other is refused before the case file is read): a `change` case's Developer with the driver-run tool host and its fake forge and a `review` case's reviewer, each through `dispatchRole` on `standalone` or as the role's one-step Flow on `engine` (below), and an `answer` case through `readOnlyDeveloperTurn`, on `standalone` only. A `loop` case is refused on both backends with its existing reason, `step one runs no loop case`, before any role starts. It reads the case file once and removes it before the role starts, since the neutral case carries fields only grading reads, and writes the agent part of the Vinaya trial record to `/logs/agent/vinaya-trial-record.json`, with a `backend` field naming the backend the role ran on, and the run's `StepOneUsage` to `/logs/agent/vinaya-usage.json`. The verifier grades the record the same way on both backends.
+
+On `engine` (`runEngineRoleStep`, `engine-role-step.ts`), the role's single agent step is written as a one-step Flow into the trial's scratch directory, outside `/app`, and run through the Engine's public process-run start (`startProcessRun`), with no mechanical step, gate or forge read or write. Its agent is launched by the Engine's role launcher (`createRoleLauncher`) from the settings the adapter generates from the process's own grants file for the role (`processes/vinaya/executing/<role>/grants.yaml`), the exact model id substituted for the grants' process-supplied model. The generated settings name the driver-run tools' server `vinaya_dev_tools` and, on Codex, require it; the trial starts the same dev-tools host the standalone trial starts — the Developer's on its fake forge world, a reviewer's serving `read_source` on an empty source world — and the generated settings reach it through a bridge script in the scratch directory. The checkpoint store is a SQLite file in the same scratch directory, removed with it. The role gets the same logins as the standalone container trial and no other credential: Claude the subscription token alone, refused when it is unset; Codex a copy of the login the agent staged in `/home/tester/.codex`, in its generated Codex home. The executor's environment allowlist passes only `PATH` and `HOME`. The run's stdout stream is read back into the standalone dispatch's handle — the turn result or review result from the adapter's own structured output, the usage from the stream — with the Engine's server name read as the standalone one, so the same tool call is the same trace entry on both backends. A run that does not complete is a failed dispatch, never a result. A host-side step-one run never takes the Engine backend: `runStepOne` still refuses it with `engine_forbidden`. `apps/cli/tests/eval/harbor-tasks.test.ts` runs one change case and one review case on each backend with stub agents in place of Claude Code and Codex, and the same change case on the Engine on both adapters, and the verifier grades each record with the same verdicts.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-trial.ts contains:export async function runHarborTrial( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-trial.ts contains:export const HARBOR_TRIAL_BACKENDS = ['standalone', 'engine'] as const -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/engine-role-step.ts contains:export async function runEngineRoleStep(request: EngineRoleStepRequest): Promise<DispatchHandle> { -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:return refusal('engine_forbidden', 'step one runs only on the standalone backend') -->
 
 ### Each outcome's source and the reward
 

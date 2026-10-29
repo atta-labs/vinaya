@@ -417,6 +417,57 @@ describe('the Harbor Codex subscription login', () => {
   })
 })
 
+describe('the Harbor agent backend', () => {
+  it('passes the requested backend to the trial, standalone by default, and refuses any other', () => {
+    const work = tempDir('harbor-agent-backend-')
+    const printed = run(
+      'python3',
+      [
+        '-c',
+        [
+          ...HARBOR_STUBS,
+          'class Base:',
+          '    def __init__(self, logs_dir, **kwargs):',
+          '        self.extra_env = kwargs.get("extra_env", {})',
+          '        self.model_name = "claude-test-model"',
+          'sys.modules["harbor.agents.installed.base"].BaseInstalledAgent = Base',
+          'import asyncio, json',
+          'from pathlib import Path, PurePosixPath',
+          'sys.path.insert(0, sys.argv[1])',
+          'import vinaya_harbor_agent as module',
+          'work = Path(sys.argv[2])',
+          'archive = work / "archive.tar"',
+          'archive.write_text("archive")',
+          'commands = {}',
+          'for backend in (None, "standalone", "engine"):',
+          '    options = {} if backend is None else {"backend": backend}',
+          '    agent = module.VinayaAgent(work, archive=str(archive), **options)',
+          '    agent.environment_logs_dir = PurePosixPath("/logs/agent")',
+          '    async def run_agent(environment, command, env=None):',
+          '        commands[backend or "default"] = command',
+          '    agent.exec_as_agent = run_agent',
+          '    asyncio.run(agent.run("instruction", None, None))',
+          'refused = []',
+          'try: module.VinayaAgent(work, archive=str(archive), backend="other")',
+          'except ValueError as error: refused.append(str(error))',
+          'print(json.dumps({"commands": commands, "refused": refused}))'
+        ].join('\n'),
+        join(REPOSITORY_ROOT, 'apps/cli/src/lib/dev-review-eval'),
+        work
+      ],
+      { env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', CLAUDE_CODE_OAUTH_TOKEN: 'test-subscription-token' } }
+    )
+    expect(printed.stderr).toBe('')
+    expect(printed.status).toBe(0)
+    const result = JSON.parse(printed.stdout) as { commands: Record<string, string>; refused: string[] }
+    expect(result.commands.default).toContain('--backend standalone --adapter claude-code --model claude-test-model')
+    expect(result.commands.standalone).toContain('--backend standalone --adapter claude-code --model claude-test-model')
+    expect(result.commands.engine).toContain('--backend engine --adapter claude-code --model claude-test-model')
+    expect(result.commands.engine).not.toContain('--backend standalone')
+    expect(result.refused).toEqual(['backend other is not one of standalone, engine'])
+  })
+})
+
 describe('the Vinaya CLI installed at image build', () => {
   const citation = loadCitationCaseFile().cases.find((entry) => entry.id === 'dev-correct-citation')
   const answer = developmentCases('sourceCitation').find((entry) => entry.id === 'dev-correct-citation')

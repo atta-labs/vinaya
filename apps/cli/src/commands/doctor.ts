@@ -985,7 +985,10 @@ export function diagnoseLocalOverride(cwd: string = process.cwd()): Finding[] {
     if (!local) return []
     const values = [
       local.maxRounds !== undefined ? `reviewPolicy.maxRounds=${local.maxRounds}` : null,
-      local.maxTaskMinutes !== undefined ? `reviewPolicy.maxTaskMinutes=${local.maxTaskMinutes}` : null
+      local.maxTaskMinutes !== undefined ? `reviewPolicy.maxTaskMinutes=${local.maxTaskMinutes}` : null,
+      local.readyPushTimeoutMinutes !== undefined
+        ? `reviewPolicy.readyPushTimeoutMinutes=${local.readyPushTimeoutMinutes}`
+        : null
     ].filter((v): v is string => v !== null)
     const ignored = local.ignoredKeys.length > 0 ? `; ignoring ${local.ignoredKeys.join(', ')}` : ''
     return [

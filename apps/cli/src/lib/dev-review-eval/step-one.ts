@@ -16,6 +16,7 @@ import { startDevToolsHost } from '../task-tools/dev-tools-host'
 import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
 import { buildWorkerEnv, containerClaudeLogin, stageCodexPolicyHome } from '../worker-boundary'
 import { prepareGradingCopy, testContamination, type Attribution, type HiddenInputs } from './contamination'
+import { ENGINE_SPAWN, runEngineRoleStep, type SpawnFn } from './engine-role-step'
 import { suiteMean, type BootstrapMethod } from './estimators'
 import { GENERIC_GRADERS } from './generic-graders'
 import type { NeutralCase } from './neutral-case'
@@ -776,7 +777,21 @@ export interface StepOneContainer {
   workingTree: string
   /** Where the run writes the trial record it produced, for the verifier. */
   recordPath: string
+  /**
+   * The backend a `change` or `review` case's role step runs on: `standalone`
+   * (`dispatchRole`) when absent, or `engine`, a one-step Flow on the Atta
+   * Engine runtime (`runEngineRoleStep`). Only a container trial takes the
+   * Engine backend; `runStepOne` refuses it on the host.
+   */
+  backend?: StepOneBackend
 }
+
+/** The backends a container trial's role step runs on. */
+export const STEP_ONE_BACKENDS = ['standalone', 'engine'] as const
+export type StepOneBackend = (typeof STEP_ONE_BACKENDS)[number]
+
+/** The record a container trial writes for its verifier: the trial record and the backend its role ran on. */
+export type ContainerTrialRecord = VinayaTrialRecord & { backend: StepOneBackend }
 
 const adapterVendor = (adapter: StepOneAdapter): AgentVendor => (adapter === 'claude-code' ? 'claude' : 'codex')
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -1175,6 +1190,8 @@ export interface VinayaProcessSteps {
   importTrialBundle: typeof importTrialBundle
   prepareGradingCopy: typeof prepareGradingCopy
   gradeInSandbox: typeof gradeInSandbox
+  /** The spawn an Engine role step launches its agent with; a test passes a stub agent. */
+  engineSpawn: SpawnFn
 }
 
 export const PRODUCTION_VINAYA_PROCESS_STEPS: VinayaProcessSteps = {
@@ -1190,7 +1207,8 @@ export const PRODUCTION_VINAYA_PROCESS_STEPS: VinayaProcessSteps = {
   commitTrialInSandbox,
   importTrialBundle,
   prepareGradingCopy,
-  gradeInSandbox
+  gradeInSandbox,
+  engineSpawn: ENGINE_SPAWN
 }
 
 /**
@@ -1384,7 +1402,9 @@ interface DeveloperInTreeRun {
 /**
  * Runs one container-mode Developer trial of `item` with `prompt`, directly
  * in the container's working tree at the base commit checked out there, and
- * commits the work on that tree's `HEAD`. Each host step it leaves out, and
+ * commits the work on that tree's `HEAD`. The role step is `dispatchRole`, or on
+ * the Engine backend the Developer's one-step Flow (`runEngineRoleStep`) with
+ * the same tool host. Each host step it leaves out, and
  * why:
  *
  * - `hiddenInputs`: the hidden tests and the reference commit are not in the
@@ -1404,7 +1424,9 @@ async function runDeveloperInTree(
   container: StepOneContainer,
   item: DeveloperCase,
   prompt: string,
-  steps: VinayaProcessSteps
+  steps: VinayaProcessSteps,
+  /** The documents the turn result must cite, on the Engine backend's turn schema. */
+  requiredSources: readonly string[] = []
 ): Promise<Staged<DeveloperInTreeRun>> {
   const tree = container.workingTree
   const base = git(tree, ['rev-parse', 'HEAD']).trim()
@@ -1425,16 +1447,34 @@ async function runDeveloperInTree(
       context: world.context,
       role: 'developer'
     })
-    handle = await steps.dispatch('developer', adapterVendor(input.adapter), prompt, {
-      promptFile: promptPath,
-      cwd: tree,
-      unattended: true,
-      containerMode: true,
-      ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
-      turnResultKnownFindingIds: [],
-      devToolsBridge: driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts')),
-      observeStdoutLine: (line) => transcript.push(line)
-    })
+    const devToolsBridge = driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts'))
+    if (container.backend === 'engine') {
+      const { developerTurnResultJsonSchema } = await import('../developer-turn-result')
+      handle = await runEngineRoleStep({
+        role: 'developer',
+        adapter: input.adapter,
+        prompt,
+        workingTree: tree,
+        scratch: join(parent, 'engine'),
+        ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
+        timeoutMs: context.timeoutMs,
+        outputSchema: developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: [...requiredSources] }),
+        devToolsBridge,
+        spawnFn: steps.engineSpawn,
+        observeStdoutLine: (line) => transcript.push(line)
+      })
+    } else {
+      handle = await steps.dispatch('developer', adapterVendor(input.adapter), prompt, {
+        promptFile: promptPath,
+        cwd: tree,
+        unattended: true,
+        containerMode: true,
+        ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
+        turnResultKnownFindingIds: [],
+        devToolsBridge,
+        observeStdoutLine: (line) => transcript.push(line)
+      })
+    }
     const trace = await traceOf(input.adapter, transcript)
     const toolState = world.state()
     let committed: TrialCommit
@@ -1531,10 +1571,58 @@ async function executeDeveloper(
 }
 
 /**
+ * A container reviewer trial's role step on the Engine backend: the
+ * reviewer's one-step Flow in the working tree, its `read_source` tool served
+ * by a dev-tools host the trial starts on an empty source world, since the
+ * Engine's generated settings require that server and a review case delivers
+ * no document.
+ */
+async function runEngineReviewer(
+  input: Parameters<StepOneExecutor>[0],
+  context: StepOneCommandContext,
+  container: StepOneContainer,
+  item: ReviewCase,
+  prompt: string,
+  parent: string,
+  steps: VinayaProcessSteps,
+  transcript: string[]
+): Promise<Awaited<ReturnType<typeof dispatchRole>>> {
+  const { reviewResultJsonSchema } = await import('../review-result')
+  const tools = await import('../../../tests/eval/tool-selection-suite')
+  const granted = item.role === 'security-reviewer' ? 'security' : 'code-reviewer'
+  const world = tools.createWorld({}, granted)
+  const socketPath = devToolsSocketPath(`step-one:${item.id}:${item.role}:${input.adapter}:${input.attempt}`)
+  const toolHost = await steps.startToolHost({
+    socketPath,
+    serverVersion: 'step-one-1',
+    context: world.context,
+    role: granted
+  })
+  try {
+    return await runEngineRoleStep({
+      role: item.role,
+      adapter: input.adapter,
+      prompt,
+      workingTree: container.workingTree,
+      scratch: join(parent, 'engine'),
+      ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
+      timeoutMs: context.timeoutMs,
+      outputSchema: reviewResultJsonSchema(item.role),
+      devToolsBridge: driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts')),
+      spawnFn: steps.engineSpawn,
+      observeStdoutLine: (line) => transcript.push(line)
+    })
+  } finally {
+    await toolHost.close()
+  }
+}
+
+/**
  * Stages a reviewer trial's snapshot at `baseCommit`, dispatches `role` with
  * `prompt`, and cleans up after `finish`. In container mode the reviewer runs
  * directly in the container's working tree instead: no snapshot is staged, and
- * the contamination check is skipped because no hidden input exists there.
+ * the contamination check is skipped because no hidden input exists there; on
+ * the Engine backend the reviewer runs as its one-step Flow (`runEngineReviewer`).
  */
 async function runReviewerTrial<T>(
   input: Parameters<StepOneExecutor>[0],
@@ -1552,6 +1640,19 @@ async function runReviewerTrial<T>(
       const promptPath = join(parent, 'prompt.md')
       writeFileSync(promptPath, prompt)
       const transcript: string[] = []
+      if (context.container.backend === 'engine') {
+        const handle = await runEngineReviewer(
+          input,
+          context,
+          context.container,
+          item,
+          prompt,
+          parent,
+          steps,
+          transcript
+        )
+        return await finish(handle, transcript)
+      }
       const handle = await steps.dispatch(role, adapterVendor(input.adapter), prompt, {
         promptFile: promptPath,
         cwd: context.container.workingTree,
@@ -1825,7 +1926,15 @@ async function runChangeCase(
     `When your work is ready, ${publishingInstructionLine()}`
   ].join('\n\n')
   if (container !== undefined) {
-    const run = await runDeveloperInTree(trial, context, container, item, prompt, steps)
+    const run = await runDeveloperInTree(
+      trial,
+      context,
+      container,
+      item,
+      prompt,
+      steps,
+      input.sources.filter((source) => source.required).map((source) => source.sourceId)
+    )
     if (!run.ok) return run
     // The hidden tests are not in the container: the verifier runs them on the tree's commit.
     const record: VinayaTrialRecord = {
@@ -2062,13 +2171,16 @@ async function runAnswerCase(
 /**
  * The run of a rendered case through `steps`: each kind dispatched its own
  * way, on its layer-`P` counterpart. In container mode the record a run
- * produced is also written to the container's `recordPath` for the verifier.
+ * produced is also written to the container's `recordPath` for the verifier,
+ * naming the backend the role ran on.
  */
 export function vinayaProcess(steps: VinayaProcessSteps): VinayaProcessRunner {
   return async (request, context) => {
     const ran = await runKind(request, context, steps)
-    if (context.container !== undefined && ran.ok)
-      writeFileSync(context.container.recordPath, `${JSON.stringify(ran.record, null, 2)}\n`)
+    if (context.container !== undefined && ran.ok) {
+      const written: ContainerTrialRecord = { ...ran.record, backend: context.container.backend ?? 'standalone' }
+      writeFileSync(context.container.recordPath, `${JSON.stringify(written, null, 2)}\n`)
+    }
     return ran
   }
 }
@@ -2091,6 +2203,8 @@ function runKind(
     return runReviewCase(request, context, item, steps)
   }
   if (c.kind === 'answer') {
+    // The read-only answer turn has no Engine role step; recording it under the Engine would misname its backend.
+    if (context.container?.backend === 'engine') throw new Error('an answer case runs only on the standalone backend')
     const item = context.loaded.sourceCitationCases.find((entry) => entry.id === c.id)
     if (item === undefined) throw new Error(`${c.id} has no layer-P source-citation case`)
     return runAnswerCase(request, context, item, steps)

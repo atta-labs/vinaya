@@ -17,6 +17,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync
@@ -53,11 +54,16 @@ import {
   suiteName,
   writeArchive
 } from '../../src/lib/dev-review-eval/harbor-tasks'
-import { type HarborCaseFile, runHarborTrial } from '../../src/lib/dev-review-eval/harbor-trial'
+import { EventEmitter } from 'node:events'
+import type { SpawnFn } from '@atta/executor-agent-spawn'
+import { ENGINE_DEV_TOOLS_SERVER } from '../../src/lib/dev-review-eval/engine-role-step'
+import { HARBOR_TRIAL_BACKENDS, type HarborCaseFile, runHarborTrial } from '../../src/lib/dev-review-eval/harbor-trial'
 import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import {
+  type ContainerTrialRecord,
   GRADING_CODEX_PACKAGE,
   PRODUCTION_VINAYA_PROCESS_STEPS,
+  type StepOneBackend,
   type VinayaProcessSteps
 } from '../../src/lib/dev-review-eval/step-one'
 import { renderCase, VINAYA_RENDERER_VERSION } from '../../src/lib/dev-review-eval/vinaya-renderer'
@@ -658,14 +664,15 @@ describe('the case repository built from a local mirror', () => {
       expect(outcome).toEqual({ ok: true })
       // The case file is gone before the role starts; the record and the usage are written.
       expect(existsSync(casePath)).toBe(false)
-      const record = readJson<ReturnType<typeof splitRecord>['agent']>(recordPath)
+      const record = readJson<ContainerTrialRecord>(recordPath)
       expect(readJson<{ inputTokens: number }>(usagePath).inputTokens).toBeGreaterThanOrEqual(0)
-      // The record is an agent part: the verifier's two facts unset, every other field the split's.
+      // The record is an agent part naming its backend: the verifier's two facts unset, every other field the split's.
       const rendered = renderCase(caseFile.case)
       if (!rendered.ok) throw new Error('the case does not render')
       const oracle = readJson<OracleSpec>(join(dir, 'solution/reference.json'))
       const split = splitRecord(referenceRecord(oracle, rendered.input)).agent
-      expect(Object.keys(record).sort()).toEqual(Object.keys(split).sort())
+      expect(record.backend).toBe('standalone')
+      expect(Object.keys(record).sort()).toEqual([...Object.keys(split), 'backend'].sort())
       expect(record.measuredChange).toBeNull()
       expect(record.hiddenTests).toBeNull()
       expect(record.input).toEqual(rendered.input)
@@ -694,8 +701,9 @@ describe('the case repository built from a local mirror', () => {
       model: 'claude-test-model',
       timeoutMs: 1000
     }
-    expect(await runHarborTrial({ ...options, backend: 'engine' })).toMatchObject({ ok: false, refused: true })
+    expect(await runHarborTrial({ ...options, backend: 'unsupported' })).toMatchObject({ ok: false, refused: true })
     expect(await runHarborTrial({ ...options, adapter: 'unsupported' })).toMatchObject({ ok: false, refused: true })
+    expect(HARBOR_TRIAL_BACKENDS).toEqual(['standalone', 'engine'])
   })
 
   it('runs a Codex reviewer trial through the same container process contract', async () => {
@@ -736,6 +744,181 @@ describe('the case repository built from a local mirror', () => {
     expect(readJson<NonNullable<ReturnType<typeof splitRecord>['agent']>>(join(work, 'record.json')).input).toEqual(
       rendered.input
     )
+  })
+
+  /** A container trial of one case on `backend` and `adapter`, with stub agents; its record, grade and launches. */
+  async function backendTrial(
+    suite: string,
+    kind: 'change' | 'review',
+    backend: StepOneBackend,
+    adapter: 'claude-code' | 'codex'
+  ) {
+    const { dir, caseFile } = oneOf(suite, kind)
+    const tree = join(tempDir('harbor-backend-trial-'), 'app')
+    run('cp', ['-R', cloneOf(dir), tree])
+    if (kind === 'review') {
+      const head = (caseFile.case as Extract<NeutralCase, { kind: 'review' }>).changeUnderReview.head
+      run('sh', [
+        join(dir, 'environment/commit-review.sh'),
+        tree,
+        join(dir, 'environment/case.json'),
+        head,
+        `Seeded change ${caseFile.case.id}`
+      ])
+    }
+    const work = tempDir('harbor-backend-trial-files-')
+    const casePath = join(work, 'case.json')
+    copyFileSync(join(dir, 'environment/case.json'), casePath)
+    const recordPath = join(work, 'agent', 'vinaya-trial-record.json')
+    const dispatched: { cwd?: string; containerMode?: boolean }[] = []
+    const launches: StubLaunch[] = []
+    const hosts: string[] = []
+    const standalone = fakeSteps(kind, dispatched)
+    let world: { context: DevToolContext } | null = null
+    const steps: VinayaProcessSteps = {
+      ...standalone,
+      startToolHost: async (opts) => {
+        hosts.push(opts.role)
+        world = { context: opts.context }
+        return standalone.startToolHost(opts)
+      },
+      engineSpawn: stubAgent(kind, adapter, () => world, launches)
+    }
+    // The container's subscription logins: Claude's token, and a Codex home holding a staged login.
+    const codexHome = tempDir('harbor-backend-codex-home-')
+    writeFileSync(join(codexHome, 'auth.json'), '{"staged":"login"}')
+    const prior = { token: process.env.CLAUDE_CODE_OAUTH_TOKEN, codexHome: process.env.CODEX_HOME }
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'test-subscription-token'
+    process.env.CODEX_HOME = codexHome
+    const outcome = await runHarborTrial(
+      {
+        casePath,
+        tree,
+        recordPath,
+        usagePath: join(work, 'agent', 'vinaya-usage.json'),
+        backend,
+        adapter,
+        model: `${adapter}-test-model`,
+        timeoutMs: 30_000
+      },
+      steps
+    ).finally(() => {
+      if (prior.token === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+      else process.env.CLAUDE_CODE_OAUTH_TOKEN = prior.token
+      if (prior.codexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = prior.codexHome
+    })
+    expect(outcome).toEqual({ ok: true })
+    const record = readJson<ContainerTrialRecord>(recordPath)
+    const spec = readJson<GradingSpec>(join(dir, 'tests/grading.json'))
+    const measured =
+      kind === 'change'
+        ? { measuredChange: measureChange(tree, caseFile.case.baseRevision), hiddenTests: null }
+        : { measuredChange: null, hiddenTests: null }
+    const grade = await gradeTrial(spec, record, measured)
+    return { tree, record, grade, dispatched, launches, hosts }
+  }
+
+  const BACKEND_CASES = [
+    { suite: 'developer-capability-neutral.l5', kind: 'change' },
+    { suite: 'code-reviewer-quality-neutral.l5', kind: 'review' }
+  ] as const
+
+  for (const { suite, kind } of BACKEND_CASES) {
+    for (const backend of HARBOR_TRIAL_BACKENDS) {
+      it(`runs a ${kind} case on the ${backend} backend with stub agents into a record the generic graders accept`, async () => {
+        const trial = await backendTrial(suite, kind, backend, 'claude-code')
+        expect(trial.record.backend).toBe(backend)
+        expect(trial.grade.reason).toBeNull()
+        expect(Object.keys(trial.grade.verdicts).length).toBeGreaterThan(0)
+        if (backend === 'standalone') {
+          expect(trial.dispatched).toEqual([{ cwd: trial.tree, containerMode: true }])
+          expect(trial.launches).toEqual([])
+          return
+        }
+        // The Engine ran the role's one step through its own role launcher; the standalone dispatch never ran.
+        expect(trial.dispatched).toEqual([])
+        expect(trial.launches).toHaveLength(1)
+        const [launch] = trial.launches as [StubLaunch]
+        expect(launch.command).toBe('claude')
+        expect(realpathSync(launch.cwd)).toBe(realpathSync(trial.tree))
+        expect(launch.prompt).toContain(kind === 'change' ? 'Closes #' : 'Review the following change')
+        const settings = launch.args[launch.args.indexOf('--settings') + 1] as string
+        expect(
+          settings.endsWith(`generated/${kind === 'change' ? 'developer' : 'code-reviewer'}/role-settings.json`)
+        ).toBe(true)
+        // The generated MCP settings reach the trial's own tool host through the bridge script, and nothing else.
+        const mcp = JSON.parse(launch.settings) as { mcpServers: Record<string, { command: string }> }
+        expect(Object.keys(mcp.mcpServers)).toEqual([ENGINE_DEV_TOOLS_SERVER])
+        expect(launch.bridge).toContain("'task-tools' 'dev-bridge' '--socket'")
+        expect(trial.hosts).toEqual([kind === 'change' ? 'developer' : 'code-reviewer'])
+        // No forge credential and no API key reaches the role; Claude logs in from the subscription token.
+        expect(Object.keys(launch.env).some((key) => /GH_TOKEN|GITHUB_TOKEN|API_KEY/.test(key))).toBe(false)
+        expect(launch.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('test-subscription-token')
+        expect(launch.env.CLAUDE_FORCE_OAUTH).toBe('1')
+        // The Engine's name for the dev-tools server reads as the standalone one in the record's trace.
+        if (kind === 'change')
+          expect(trial.record.trace?.map((call) => call.tool)).toEqual([
+            'shell',
+            'publish_changes',
+            'open_pull_request'
+          ])
+      }, 120_000)
+    }
+  }
+
+  it('runs the same change case on the Engine on Claude Code and on Codex, both grading with the same verdicts', async () => {
+    const claude = await backendTrial('developer-capability-neutral.l5', 'change', 'engine', 'claude-code')
+    const codex = await backendTrial('developer-capability-neutral.l5', 'change', 'engine', 'codex')
+    expect(claude.grade.reason).toBeNull()
+    expect(codex.grade.reason).toBeNull()
+    expect(codex.grade.verdicts).toEqual(claude.grade.verdicts)
+    expect(codex.grade.reward).toBe(claude.grade.reward)
+    expect(claude.record.backend).toBe('engine')
+    expect(codex.record.backend).toBe('engine')
+    const [launch] = codex.launches as [StubLaunch]
+    expect(launch.command).toBe('codex')
+    // Codex launches from its generated home: the required dev-tools server is the trial's bridge, its login a staged copy.
+    expect(launch.settings).toContain(`[mcp_servers.${ENGINE_DEV_TOOLS_SERVER}]\nenabled = true\nrequired = true\n`)
+    expect(launch.settings).toContain(`command = ${JSON.stringify(launch.mcpCommand)}`)
+    expect(launch.bridge).toContain("'task-tools' 'dev-bridge' '--socket'")
+    expect(launch.codexLogin).toBe('{"staged":"login"}')
+    expect(launch.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+    expect(launch.args).toContain('codex-test-model')
+  }, 240_000)
+
+  it('refuses a loop case on both backends with its existing reason', async () => {
+    const { dir } = oneOf('developer-capability-neutral.l5', 'change')
+    const [loop] = developmentCases('wholeLoop')
+    if (loop === undefined || loop.kind !== 'loop') throw new Error('no loop case')
+    for (const backend of HARBOR_TRIAL_BACKENDS) {
+      const work = tempDir('harbor-loop-refused-')
+      const casePath = join(work, 'case.json')
+      const caseFile: HarborCaseFile = {
+        ...readJson<HarborCaseFile>(join(dir, 'environment/case.json')),
+        case: loop
+      }
+      writeFileSync(casePath, JSON.stringify(caseFile))
+      const launches: StubLaunch[] = []
+      const dispatched: { cwd?: string; containerMode?: boolean }[] = []
+      const trial = runHarborTrial(
+        {
+          casePath,
+          tree: work,
+          recordPath: join(work, 'record.json'),
+          usagePath: join(work, 'usage.json'),
+          backend,
+          adapter: 'claude-code',
+          model: 'claude-test-model',
+          timeoutMs: 1000
+        },
+        { ...fakeSteps('change', dispatched), engineSpawn: stubAgent('change', 'claude-code', () => null, launches) }
+      )
+      await expect(trial).rejects.toThrow('step one runs no loop case')
+      expect(dispatched).toEqual([])
+      expect(launches).toEqual([])
+      expect(existsSync(join(work, 'record.json'))).toBe(false)
+    }
   })
 })
 
@@ -794,6 +977,139 @@ describe('the bundled grade script', () => {
     expect(underNode(['bun', 'test', 'x.test.ts'])).toEqual(['bun', 'test', 'x.test.ts'])
   })
 })
+
+/** What one stub agent launch received from the Engine: its command line, working directory, environment and prompt. */
+interface StubLaunch {
+  command: string
+  args: string[]
+  cwd: string
+  env: Record<string, string | undefined>
+  prompt: string
+  /**
+   * Read at launch, before the trial removes its scratch directory: the
+   * generated settings naming the dev-tools server (Claude's MCP settings,
+   * Codex's `config.toml`), the server command they name and that script's
+   * text, and Codex's staged login.
+   */
+  settings: string
+  mcpCommand: string
+  bridge: string
+  codexLogin: string | null
+}
+
+/** The generated settings a launch names its dev-tools server in, and that server's command. */
+function mcpSettingsOf(command: string, args: readonly string[], env: Record<string, string | undefined>) {
+  if (command === 'claude') {
+    const settings = readFileSync(args[args.indexOf('--mcp-config') + 1] as string, 'utf8')
+    const mcp = JSON.parse(settings) as { mcpServers: Record<string, { command: string }> }
+    return { settings, mcpCommand: mcp.mcpServers[ENGINE_DEV_TOOLS_SERVER]?.command ?? '' }
+  }
+  const settings = readFileSync(join(env.CODEX_HOME as string, 'config.toml'), 'utf8')
+  const section = settings.slice(settings.indexOf(`[mcp_servers.${ENGINE_DEV_TOOLS_SERVER}]`))
+  return { settings, mcpCommand: JSON.parse(/\ncommand = (".*")\n/.exec(section)?.[1] ?? '""') as string }
+}
+
+/**
+ * A stub agent the Engine's executor spawns in place of Claude Code or Codex:
+ * it records its launch, reads the prompt from stdin, makes a Developer's
+ * change and publication through the trial's tool-host world, and prints the
+ * adapter's own structured stream ending in the role's structured output.
+ */
+function stubAgent(
+  kind: 'change' | 'review',
+  adapter: 'claude-code' | 'codex',
+  world: () => { context: DevToolContext } | null,
+  launches: StubLaunch[]
+): SpawnFn {
+  return (command, args, options) => {
+    const stdout = new EventEmitter()
+    const lifecycle = new EventEmitter()
+    const { settings, mcpCommand } = mcpSettingsOf(command, args, options.env)
+    const codexAuth = command === 'codex' ? join(options.env.CODEX_HOME as string, 'auth.json') : null
+    const launch: StubLaunch = {
+      command,
+      args: [...args],
+      cwd: options.cwd,
+      env: { ...options.env },
+      prompt: '',
+      settings,
+      mcpCommand,
+      bridge: readFileSync(mcpCommand, 'utf8'),
+      codexLogin: codexAuth !== null && existsSync(codexAuth) ? readFileSync(codexAuth, 'utf8') : null
+    }
+    launches.push(launch)
+    const output =
+      kind === 'change' ? { turnResult: { status: 'completed' } } : { reviewResult: { status: 'completed' } }
+    const act = async () => {
+      const context = world()?.context
+      if (kind === 'change' && context !== undefined) {
+        writeFileSync(join(options.cwd, 'apps/cli/src/lib/harbor-fake.ts'), 'export const fake = true\n')
+        await context.publishChanges('Feat(cli): Add it')
+        const issue = /Closes #(\d+)/.exec(launch.prompt)?.[1]
+        await context.openPullRequest('t', `Closes #${issue}\n\nThe change.`)
+      }
+      const tools =
+        kind === 'change'
+          ? [
+              { name: 'Bash', input: { command: 'bun run typecheck' } },
+              { name: `mcp__${ENGINE_DEV_TOOLS_SERVER}__publish_changes`, input: { header: 'Feat(cli): Add it' } },
+              { name: `mcp__${ENGINE_DEV_TOOLS_SERVER}__open_pull_request`, input: { title: 't' } }
+            ]
+          : [{ name: 'Bash', input: { command: 'git diff' } }]
+      const lines =
+        adapter === 'claude-code'
+          ? [
+              { type: 'system', subtype: 'init', session_id: 'stub-session' },
+              {
+                type: 'assistant',
+                message: {
+                  content: tools.map((tool, index) => ({ type: 'tool_use', id: `t${index}`, ...tool }))
+                }
+              },
+              {
+                type: 'result',
+                subtype: 'success',
+                session_id: 'stub-session',
+                structured_output: output,
+                usage: { input_tokens: 3, output_tokens: 2 }
+              }
+            ]
+          : [
+              { type: 'thread.started', thread_id: 'stub-thread' },
+              ...tools.map((tool, index) => ({
+                type: 'item.completed',
+                item: tool.name.startsWith('mcp__')
+                  ? {
+                      id: `m${index}`,
+                      type: 'mcp_tool_call',
+                      server: ENGINE_DEV_TOOLS_SERVER,
+                      tool: tool.name.split('__')[2],
+                      arguments: tool.input
+                    }
+                  : { id: `c${index}`, type: 'command_execution', command: tool.input.command }
+              })),
+              { type: 'item.completed', item: { id: 'a1', type: 'agent_message', text: JSON.stringify(output) } },
+              { type: 'turn.completed', usage: { input_tokens: 3, output_tokens: 2, cached_input_tokens: 0 } }
+            ]
+      for (const line of lines) stdout.emit('data', `${JSON.stringify(line)}\n`)
+      lifecycle.emit('close', 0)
+    }
+    return {
+      stdin: {
+        write: (chunk: string) => {
+          launch.prompt += chunk
+        },
+        end: () => {
+          setTimeout(() => void act(), 0)
+        }
+      },
+      stdout: { on: (event: 'data', listener: (chunk: Buffer | string) => void) => stdout.on(event, listener) },
+      stderr: { on: () => {} },
+      on: (event: string, listener: (...args: unknown[]) => void) => lifecycle.on(event, listener),
+      kill: () => {}
+    } as unknown as ReturnType<SpawnFn>
+  }
+}
 
 /** Fake process steps for a container run: the role's transcript, and for a Developer its change and publication. */
 function fakeSteps(

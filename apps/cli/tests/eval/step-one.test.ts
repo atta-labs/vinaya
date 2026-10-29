@@ -20,6 +20,7 @@ import {
   runStepOne,
   runStepOneCommand,
   selectStepOneSuites,
+  STEP_ONE_BACKENDS,
   STEP_ONE_COMPARISON_SUITES,
   STEP_ONE_PRACTICE_SUITES,
   STEP_ONE_SUITE_LAYERS,
@@ -37,12 +38,13 @@ import {
   type VinayaProcessSteps
 } from '../../src/lib/dev-review-eval/step-one'
 import { LIVE_SUITE_LAYERS } from '../../src/lib/dev-review-eval/freeze-record'
+import { HARBOR_TRIAL_BACKENDS } from '../../src/lib/dev-review-eval/harbor-trial'
 import {
   renderCase,
   VINAYA_RENDERER_VERSION,
   type VinayaTrialRecord
 } from '../../src/lib/dev-review-eval/vinaya-renderer'
-import { developerReferenceCases, type GenericSuiteKey, referenceEntry } from './generic-suites'
+import { developerReferenceCases, developmentCases, type GenericSuiteKey, referenceEntry } from './generic-suites'
 import { KNOWN_BAD_VARIANTS, referenceRecord } from './vinaya-trial-records'
 import { expectGradingSandboxDenies, proveGradingSandbox } from './grading-sandbox-proof'
 
@@ -419,6 +421,9 @@ describe('development-only step one', () => {
       refusal: { code: 'engine_forbidden', detail: expect.any(String) }
     })
     expect(reads).toBe(0)
+    // A Harbor container trial takes the Engine backend; a host-side step-one run still never does.
+    expect(STEP_ONE_BACKENDS).toEqual(['standalone', 'engine'])
+    expect(HARBOR_TRIAL_BACKENDS).toEqual(STEP_ONE_BACKENDS)
   })
 
   it('declares each suite at the process layer the module registry gives it', () => {
@@ -1131,7 +1136,8 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
       // The verifier fills these two.
       expect(contained.record.hiddenTests).toBeNull()
       expect(contained.record.measuredChange).toBeNull()
-      expect(JSON.parse(readFileSync(recordPath, 'utf8'))).toEqual(contained.record)
+      // The written record also names the backend the role ran on, standalone when the container names none.
+      expect(JSON.parse(readFileSync(recordPath, 'utf8'))).toEqual({ ...contained.record, backend: 'standalone' })
       expect(inContainer.calls.filter((call) => SKIPPED_IN_CONTAINER.includes(call))).toEqual([])
 
       if (kind === 'answer') {
@@ -1297,5 +1303,71 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
         context
       )
     ).rejects.toThrow('container mode runs no layer-P suite')
+  })
+
+  it('refuses a loop case on the host and in a container on both backends, before any step runs', async () => {
+    const [loop] = developmentCases('wholeLoop')
+    if (loop === undefined || loop.kind !== 'loop') throw new Error('no loop case')
+    const rendered = renderCase(loop)
+    if (!rendered.ok) throw new Error('the loop case does not render')
+    const request = {
+      trial: {
+        suite: 'developer-capability-neutral.l5' as const,
+        adapter: 'codex' as const,
+        taskId: loop.id,
+        attempt: 1
+      },
+      neutralCase: loop,
+      input: rendered.input
+    }
+    const context: StepOneCommandContext = {
+      repository: '.',
+      developerBriefs: new Map(),
+      models: {},
+      timeoutMs: 1000,
+      loaded: await loading
+    }
+    const recordPath = join(tempDir('step-one-loop-record-'), 'record.json')
+    const placements = [
+      undefined,
+      ...STEP_ONE_BACKENDS.map((backend) => ({ workingTree: tempDir('step-one-loop-app-'), recordPath, backend }))
+    ]
+    for (const container of placements) {
+      const recording = recordingSteps('loop', 1)
+      await expect(
+        vinayaProcess(recording.steps)(request, { ...context, ...(container === undefined ? {} : { container }) })
+      ).rejects.toThrow('step one runs no loop case')
+      expect(recording.calls).toEqual([])
+    }
+    expect(existsSync(recordPath)).toBe(false)
+  })
+
+  it('runs an answer case on the standalone backend only', async () => {
+    const c = await caseOf('source-delivery-neutral.l5', 'answer')
+    const rendered = renderCase(c)
+    if (!rendered.ok) throw new Error('the case does not render')
+    const recording = recordingSteps('answer', 1)
+    await expect(
+      vinayaProcess(recording.steps)(
+        {
+          trial: { suite: 'source-delivery-neutral.l5', adapter: 'codex', taskId: c.id, attempt: 1 },
+          neutralCase: c,
+          input: rendered.input
+        },
+        {
+          repository: '.',
+          developerBriefs: new Map(),
+          models: {},
+          timeoutMs: 1000,
+          loaded: await loading,
+          container: {
+            workingTree: tempDir('step-one-answer-engine-app-'),
+            recordPath: join(tempDir('step-one-answer-engine-record-'), 'record.json'),
+            backend: 'engine'
+          }
+        }
+      )
+    ).rejects.toThrow('an answer case runs only on the standalone backend')
+    expect(recording.calls).toEqual([])
   })
 })

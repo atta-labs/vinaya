@@ -3,11 +3,13 @@
  * agent (`vinaya_harbor_agent.py`) runs it inside the task container, from
  * the Vinaya CLI unpacked at `/opt/vinaya`, on the one case the container
  * holds. It renders the case with the Vinaya renderer and runs the case
- * kind's live path in container mode, in the case repository at `/app`: a
- * `change` case's Developer through `dispatchRole` with the driver-run tool
- * host and its fake forge, a `review` case's reviewer through `dispatchRole`,
- * an `answer` case's read-only turn. It writes the agent part of the Vinaya
- * trial record and the run's usage to Harbor's agent log directory; the task's
+ * kind's live path in container mode, in the case repository at `/app`, on
+ * the requested backend: a `change` case's Developer with the driver-run tool
+ * host and its fake forge and a `review` case's reviewer, each through
+ * `dispatchRole` on `standalone` or as the role's one-step Flow on the Atta
+ * Engine runtime on `engine`, and an `answer` case's read-only turn. It writes
+ * the agent part of the Vinaya trial record, naming its backend, and the run's
+ * usage to Harbor's agent log directory; the task's
  * verifier measures and grades the rest.
  *
  * The case file holds the neutral case and only what the run needs from the
@@ -28,6 +30,7 @@ import {
   type LoadedDevelopment,
   PRODUCTION_VINAYA_PROCESS_STEPS,
   type StepOneAdapter,
+  type StepOneBackend,
   type StepOneCommandContext,
   type StepOneRunSuite,
   STEP_ONE_SUITE_LAYERS,
@@ -52,8 +55,13 @@ export interface HarborCaseFile {
   counterpart: HarborCounterpart
 }
 
-/** The only backend a Harbor trial runs on now. */
-export const HARBOR_TRIAL_BACKENDS = ['standalone'] as const
+/**
+ * The backends a Harbor trial runs a `change` or `review` case's role step on:
+ * `standalone` dispatches the role as the standalone loop does; `engine` runs
+ * it as a one-step Flow on the Atta Engine runtime. An `answer` case runs on
+ * `standalone` only.
+ */
+export const HARBOR_TRIAL_BACKENDS = ['standalone', 'engine'] as const satisfies readonly StepOneBackend[]
 
 /** The subscription-authenticated adapters a Harbor trial runs. */
 export const HARBOR_TRIAL_ADAPTERS = ['claude-code', 'codex'] as const satisfies readonly StepOneAdapter[]
@@ -146,7 +154,11 @@ export async function runHarborTrial(
     models: { [adapter]: options.model },
     timeoutMs: options.timeoutMs,
     loaded: loadedFor(file),
-    container: { workingTree: options.tree, recordPath: options.recordPath }
+    container: {
+      workingTree: options.tree,
+      recordPath: options.recordPath,
+      backend: options.backend as StepOneBackend
+    }
   }
   mkdirSync(dirname(options.recordPath), { recursive: true })
   mkdirSync(dirname(options.usagePath), { recursive: true })
@@ -179,7 +191,7 @@ const flag = (argv: readonly string[], name: string): string | undefined => {
 }
 
 export const HARBOR_TRIAL_USAGE =
-  'usage: harbor-trial.ts --case <case.json> --tree <dir> --record <file> --usage <file> --backend standalone --adapter claude-code|codex --model <exact model id> [--timeout-sec <n>]'
+  'usage: harbor-trial.ts --case <case.json> --tree <dir> --record <file> --usage <file> --backend standalone|engine --adapter claude-code|codex --model <exact model id> [--timeout-sec <n>]'
 
 /** The command entry: exit 0 when the run recorded its trial, 1 when it is unavailable, 2 on a refused option. */
 export async function harborTrialCommand(

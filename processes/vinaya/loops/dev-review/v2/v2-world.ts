@@ -7,7 +7,12 @@ import {
 } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
-import { DEFAULT_REVIEW_POLICY, objectivesVersion, type ReviewPolicy } from '@attalabs/aeg-core'
+import {
+  DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
+  DEFAULT_REVIEW_POLICY,
+  objectivesVersion,
+  type ReviewPolicy
+} from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../../harness/dev-process/loader/load-process'
 import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, useRuntimeDir } from '../../../tests/round-fakes'
@@ -572,7 +577,16 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
         if (scenario.readyTimesOut?.(world.readyRuns.length)) {
           // A stopped run leaves no complete failure record: the next ready push runs its full selection.
           record = null
-          return { passed: false, output: 'timed out', selection: null, failed: 'all', wallMs: 5, timedOut: true }
+          return {
+            passed: false,
+            output: 'timed out',
+            selection: null,
+            failed: 'all',
+            wallMs: 5,
+            timedOut: true,
+            limitMinutes: policy.readyPushTimeoutMinutes ?? DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
+            selectedCount: note.selected.length
+          }
         }
         const failing = scenario.failingTests?.(world.readyRuns.length) ?? []
         const failed = note.selected.filter((file) => failing.includes(file))

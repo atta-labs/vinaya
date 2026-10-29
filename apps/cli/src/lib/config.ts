@@ -8,6 +8,7 @@ import { z } from 'zod'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
   DEFAULT_COLLISION_THRESHOLD,
+  DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
   DEFAULT_RELEASE_ACTOR,
   DEFAULT_REVIEW_POLICY,
   type GateCutovers,
@@ -714,7 +715,10 @@ const VinayaConfigObjectSchema = z.object({
       // Same deliberately-loose typing, same reason as the fields above: a
       // schema-level refusal here would fail the WHOLE config's parse rather
       // than this field's own loud refusal in `resolveReviewPolicy`.
-      maxTaskMinutes: z.number().optional()
+      maxTaskMinutes: z.number().optional(),
+      // Same deliberately-loose typing, same reason: the positive-integer
+      // refusal lives in `resolveReviewPolicy`.
+      readyPushTimeoutMinutes: z.number().optional()
     })
     .optional(),
   // The agent-configuration security scanner the review loop runs before the
@@ -1155,9 +1159,9 @@ export function resolveReleaseActor(config: VinayaConfig | null): string {
  * defaults; a PRESENT one that is not a real severity on its role's own scale
  * REFUSES (throws), never falls back to the default — an unknown value is a
  * config defect to fix, not a value to silently downgrade past. The two
- * numeric fields (`maxRounds`, `maxTaskMinutes`) follow the identical rule,
- * each with its own legal range — `maxTaskMinutes` accepts `0`, which turns
- * the task's wall-clock budget off. Same sourcing
+ * numeric fields (`maxRounds`, `maxTaskMinutes`, `readyPushTimeoutMinutes`)
+ * follow the identical rule, each with its own legal range — `maxTaskMinutes`
+ * accepts `0`, which turns the task's wall-clock budget off. Same sourcing
  * rule as `resolveTrustedPrincipals`/`resolveReleaseActor`: callers MUST
  * pass `loadTrustAnchorConfig()` (the default branch), never `loadConfig()`
  * or anything PR-checkout-derived, so a change cannot lower its own
@@ -1200,11 +1204,21 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
       `vinaya.config.json: reviewPolicy.maxTaskMinutes "${maxTaskMinutes}" is not a non-negative integer (0 turns the budget off) — fix the config, this never falls back to a default.`
     )
   }
+  // The version-2 ready push's test-run limit, in minutes. Same refuse-never-
+  // downgrade discipline; the floor is one, since a zero-minute limit would
+  // stop every run before it started.
+  const readyPushTimeoutMinutes = raw.readyPushTimeoutMinutes ?? DEFAULT_READY_PUSH_TIMEOUT_MINUTES
+  if (!Number.isInteger(readyPushTimeoutMinutes) || readyPushTimeoutMinutes < 1) {
+    throw new Error(
+      `vinaya.config.json: reviewPolicy.readyPushTimeoutMinutes "${readyPushTimeoutMinutes}" is not a positive integer — fix the config, this never falls back to a default.`
+    )
+  }
   return {
     codeReviewThreshold: codeReviewThreshold as ReviewPolicy['codeReviewThreshold'],
     securityThreshold: securityThreshold as ReviewPolicy['securityThreshold'],
     maxRounds,
-    maxTaskMinutes
+    maxTaskMinutes,
+    readyPushTimeoutMinutes
   }
 }
 
@@ -1212,13 +1226,18 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
 export const LOCAL_OVERRIDE_FILENAME = 'vinaya.config.local.json'
 
 /** The only keys the local file may set. Anything else in it is ignored with a warning. */
-export const LOCAL_OVERRIDABLE_KEYS = ['reviewPolicy.maxRounds', 'reviewPolicy.maxTaskMinutes'] as const
+export const LOCAL_OVERRIDABLE_KEYS = [
+  'reviewPolicy.maxRounds',
+  'reviewPolicy.maxTaskMinutes',
+  'reviewPolicy.readyPushTimeoutMinutes'
+] as const
 
 export type LocalPacingOverride = {
   /** Absolute path of the local file that was read. */
   path: string
   maxRounds?: number
   maxTaskMinutes?: number
+  readyPushTimeoutMinutes?: number
   /** Dotted paths present in the file that are outside the allowlist. */
   ignoredKeys: string[]
 }
@@ -1296,7 +1315,11 @@ export function resolveLocalPacingOverride(cwd: string = process.cwd()): LocalPa
       console.error(`⚠ ${message}`)
     }
   }
-  const policy = (raw as { reviewPolicy?: { maxRounds?: unknown; maxTaskMinutes?: unknown } }).reviewPolicy
+  const policy = (
+    raw as {
+      reviewPolicy?: { maxRounds?: unknown; maxTaskMinutes?: unknown; readyPushTimeoutMinutes?: unknown }
+    }
+  ).reviewPolicy
   const result: LocalPacingOverride = { path, ignoredKeys }
   if (policy && typeof policy === 'object' && !Array.isArray(policy)) {
     if (policy.maxRounds !== undefined) {
@@ -1316,6 +1339,15 @@ export function resolveLocalPacingOverride(cwd: string = process.cwd()): LocalPa
         )
       }
       result.maxTaskMinutes = v
+    }
+    if (policy.readyPushTimeoutMinutes !== undefined) {
+      const v = policy.readyPushTimeoutMinutes
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) {
+        throw new Error(
+          `${LOCAL_OVERRIDE_FILENAME}: reviewPolicy.readyPushTimeoutMinutes "${String(v)}" is not a positive integer — fix the file, this never falls back to a default.`
+        )
+      }
+      result.readyPushTimeoutMinutes = v
     }
   }
   return result

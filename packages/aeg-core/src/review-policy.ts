@@ -39,12 +39,20 @@ export const DEFAULT_MAX_ROUNDS = 3
  */
 export const DEFAULT_MAX_TASK_MINUTES = 180
 
+/**
+ * How long the version-2 ready push's test run may take before it is stopped, in minutes — default, overridable via
+ * `reviewPolicy.readyPushTimeoutMinutes`. A large core change can select over a hundred test files, which one
+ * machine runs serially while CI shards the same work, so a repository or a machine that needs longer says so.
+ */
+export const DEFAULT_READY_PUSH_TIMEOUT_MINUTES = 20
+
 /** An omitted policy means today's behaviour: code review at `BLOCKER`, security at `HIGH`, `DEFAULT_MAX_ROUNDS` rounds, `DEFAULT_MAX_TASK_MINUTES` minutes. */
 export const DEFAULT_REVIEW_POLICY: ReviewPolicy = {
   codeReviewThreshold: 'BLOCKER',
   securityThreshold: 'HIGH',
   maxRounds: DEFAULT_MAX_ROUNDS,
-  maxTaskMinutes: DEFAULT_MAX_TASK_MINUTES
+  maxTaskMinutes: DEFAULT_MAX_TASK_MINUTES,
+  readyPushTimeoutMinutes: DEFAULT_READY_PUSH_TIMEOUT_MINUTES
 }
 
 export type ReviewPolicy = {
@@ -72,6 +80,13 @@ export type ReviewPolicy = {
    * the loop runs, never whether a finding in an already-cast verdict blocks.
    */
   maxTaskMinutes: number
+  /**
+   * How long the version-2 ready push's test run may take, in minutes, before the run is stopped and paused for a
+   * person. Same trust class and resolution point as the fields above: read from the default branch. Like them, NOT
+   * part of `policyDigest` (`review-input-manifest.ts`): it bounds how long the loop runs, never whether a finding
+   * in an already-cast verdict blocks. Absent reads as `DEFAULT_READY_PUSH_TIMEOUT_MINUTES`.
+   */
+  readyPushTimeoutMinutes?: number
 }
 
 /** The minimal shape the evaluator needs — every real finding type (review-post.ts's `Finding`, a gate-side severity-only extraction) satisfies it. `location` is optional so a caller with no location to report (an older extraction shape) still type-checks; such a finding is simply never prose-capped (O5, below). */
