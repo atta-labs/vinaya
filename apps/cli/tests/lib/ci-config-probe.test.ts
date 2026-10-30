@@ -10,7 +10,6 @@ import { execFileSync } from 'node:child_process'
 import { rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveCiTrustAnchorProbeRef } from '../../src/lib/config.js'
 import { fixtureDir } from './test-temp-fixture.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 
@@ -161,8 +160,18 @@ describe('the committed-configuration probe process', () => {
   })
 
   it('leaves the ordinary test preload isolating the ambient flag', () => {
-    // This process runs under the test preload: the runner marker is gone, so the guard is inert here.
+    // This process runs under the test preload: the runner marker is gone, so a probe started from the
+    // ambient environment (only the ref added) is refused, exactly as the guard would be inert in-process.
     expect(process.env.GITHUB_ACTIONS).toBeUndefined()
-    expect(resolveCiTrustAnchorProbeRef({ ...process.env, VINAYA_CI_CONFIG_PROBE_REF: 'HEAD' })).toBeNull()
+    const ambient: NodeJS.ProcessEnv = { ...process.env, VINAYA_CI_CONFIG_PROBE_REF: 'candidate' }
+    delete ambient.GH_TOKEN
+    delete ambient.GITHUB_TOKEN
+    const run = spawnSyncBudgeted('bun', [SCRIPT, '--base', 'base', '--candidate', 'candidate'], {
+      cwd: repo(BASE_CONFIG, CANDIDATE_CONFIG),
+      encoding: 'utf8',
+      env: ambient
+    })
+    expect(run.status).toBe(1)
+    expect(run.stderr).toContain('GITHUB_ACTIONS is not "true"')
   })
 })
