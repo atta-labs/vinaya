@@ -1222,9 +1222,38 @@ describe('ready tests deferred to required CI', () => {
     expect(observed.outcome).toBe('completed')
     expect(observed.world.readyDeferrals).toEqual([false])
     expect(observed.world.readyRuns).toEqual([ALL_TESTS])
-    expect(observed.world.explicitRuns).toEqual([])
+    // The hook ran the selected suite; the driver then ran the other Test Plan commands once, on the ready head.
+    const [ready] = records(observed, 'ready-push')
+    expect(observed.world.explicitRuns).toEqual([{ head: ready?.head as string, commands: EXPLICIT }])
+    expect(ready?.explicit).toEqual(EXPLICIT.map((command) => ({ command, outcome: 'passed' })))
     expect(observed.world.requiredCiReads).toEqual([])
-    expect(records(observed, 'ready-push')[0]?.requiredCi).toBeUndefined()
+    expect(ready?.requiredCi).toBeUndefined()
+  })
+
+  test('a failing explicit command on the local path goes back to the Developer with its command and output', async () => {
+    const observed = await runV2('claude', {
+      readyTests: { mode: 'local' },
+      stagedBody: PLAN_BODY,
+      explicit: (attempt, commands) =>
+        attempt === 1
+          ? {
+              outcome: 'failed',
+              results: [
+                { command: commands[0] as string, outcome: 'failed', output: 'expected 1 to be 2', exitCode: 1 }
+              ],
+              wallMs: 3
+            }
+          : {
+              outcome: 'passed',
+              results: commands.map((command) => ({ command, outcome: 'passed', output: 'ok' })),
+              wallMs: 1
+            }
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.prompts.developer[1]).toContain(`the Test Plan command \`${EXPLICIT[0]}\` failed`)
+    expect(observed.prompts.developer[1]).toContain('expected 1 to be 2')
+    expect(observed.world.explicitRuns).toHaveLength(2)
+    expect(observed.world.prsOpened).toBe(1)
   })
 
   test('a failed trusted read of the policy pauses before anything runs, never deferring', async () => {
