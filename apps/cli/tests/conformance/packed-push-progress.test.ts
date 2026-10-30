@@ -123,6 +123,6 @@ describe('progress from a packed install', () => {
     while (!(existsSync(logPath) && readFileSync(logPath, 'utf8').includes('check lint')) && Date.now() < deadline)
       await Bun.sleep(100)
     await session.end()
-    expect(readFileSync(logPath, 'utf8')).toMatch(/ {2}push progress: check lint ✓, \d+ (ms|s)/)
+    expect(readFileSync(logPath, 'utf8')).toMatch(/ {2}push progress: check lint ✓, \d+(\.\d+)? (ms|s)/)
   }, 60_000)
 })
