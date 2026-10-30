@@ -540,12 +540,19 @@ export async function readyPush(
   })
   const wallMs = gate.wallMs > 0 ? gate.wallMs : Math.max(0, now() - started)
   const deferred = gate.passed && gate.localTests === 'deferred' && gate.requiredCi !== undefined
-  // Deferred: the approved explicit Test Plan commands run now, through the driver, on the head being published.
+  // A passed local run with a non-empty selection: the hook ran the selected suite, so the explicit commands follow it.
+  const local =
+    gate.passed &&
+    !deferred &&
+    gate.localTests !== 'none' &&
+    (gate.selection?.selected.length ?? 0) > 0 &&
+    fns.runExplicitCommands !== undefined
+  // Deferred or local: the approved explicit Test Plan commands run now, through the driver, on the head being published.
   let explicit: ExplicitCommandsResult | null = null
-  if (deferred) {
+  if (deferred || local) {
     const approved = approvedTestPlanBody(fns)
     if (approved === null) {
-      const detail = `the ready push of ${head} deferred its selected tests, but the approved Test Plan (the staged pull-request body) could not be read, so its explicit commands cannot run; the live body grants no command authority. Restore the staged body, then resume.`
+      const detail = `the ready push of ${head} ${deferred ? 'deferred its selected tests' : 'ran its selected tests'}, but the approved Test Plan (the staged pull-request body) could not be read, so its explicit commands cannot run; the live body grants no command authority. Restore the staged body, then resume.`
       pauseThrough(task, 'ready-push', { reason: 'infrastructure', detail })
       return {
         exitCode: BACK,
@@ -831,7 +838,7 @@ function readyGateCommand(results: Results, worktreePath: string): { command: st
 }
 
 /** The automatic selected-suite line of a Test Plan: a bare test-run line, or a deferred head's required-CI line. */
-const isTestRunLine = (line: string): boolean => {
+export const isTestRunLine = (line: string): boolean => {
   const command = line.split('→')[0]?.trim() ?? ''
   return /^(bun\s+)?test(\s|$)/.test(command) || isReadyCiCommand(command)
 }

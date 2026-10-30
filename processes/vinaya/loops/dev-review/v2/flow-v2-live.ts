@@ -52,11 +52,15 @@ import {
 } from '../../../../../apps/cli/src/lib/push-progress'
 import {
   agentCommandEnv,
+  agentCommandText,
   buildReport,
+  commandRunsCheckAll,
   computeGroupA,
   computeGroupC,
   type DeferredGroupCDeps,
   defaultTestRunCache,
+  extractAgentCommandLines,
+  type GroupCCommandResult,
   lookupGreenRun,
   recordGreenTestRun,
   replaceEvidenceBlock,
@@ -69,6 +73,7 @@ import { readPostedReviewVerdicts } from '../../../../../apps/cli/src/lib/review
 import { detectVendoredVinaya } from '../../../../../apps/cli/src/lib/self-host'
 import {
   type ExplicitCommandsResult,
+  isTestRunLine,
   type ReadyGateResult,
   readyTestPlanCommand,
   type StagedPullRequest,
@@ -1091,30 +1096,52 @@ export async function readyGateEvidence(input: {
     return replaceEvidenceBlock(input.body, report.blockInner)
   }
   const none = gate.localTests === 'none' || gate.selection?.selected.length === 0
+  // The selected suite's entry is the persisted hook run, never a second run.
+  const hookEntry: GroupCCommandResult = {
+    command: none
+      ? 'no local tests'
+      : gate.selection
+        ? readyTestPlanCommand(gate.selection.selected, input.worktreePath)
+        : 'repository pre-push hook',
+    // The same tail every other Test Plan command keeps: a whole run's output would overflow the body.
+    output: truncateAgentOutput(none ? `No local tests ran.\n${gate.output}` : gate.output),
+    exitCode: 0,
+    timedOut: false,
+    overflowed: false,
+    // The head sits in a code span: the note renders as prose, where the body gate refuses a bare digit.
+    reusedFrom: `persisted ready-gate result at \`${input.head}\``
+  }
+  const commands: GroupCCommandResult[] = []
+  if (none || !gate.selection) commands.push(hookEntry)
+  else {
+    // One entry per Test Plan line, in order: the hook run for the selected suite, the driver's receipt for the rest.
+    const cache = input.cache ?? defaultTestRunCache()
+    const missing: string[] = []
+    let hookPlaced = false
+    for (const line of extractAgentCommandLines(input.body)) {
+      if (isTestRunLine(line)) {
+        if (!hookPlaced) commands.push(hookEntry)
+        hookPlaced = true
+        continue
+      }
+      const command = agentCommandText(line)
+      const reused = await lookupGreenRun(command, input.worktreePath, cache)
+      if (reused) commands.push(commandRunsCheckAll(command) ? { ...reused, omittedEvidenceFresh: true } : reused)
+      else missing.push(command)
+    }
+    if (missing.length > 0)
+      throw new Error(
+        `these Test Plan commands hold no green receipt at head ${input.head} and its tree: ${missing.map((m) => `\`${m}\``).join(', ')}. Only the driver runs Test Plan commands, at the ready push; a command added or changed in the live body gains no execution authority here.`
+      )
+    if (!hookPlaced) commands.unshift(hookEntry)
+  }
   const report = await buildReport({
     cwd: input.worktreePath,
     body: input.body,
     groupA,
     gradedBodySource: 'push',
     gateRunner: () => ({ failed: false, outcomes: [{ name: 'ready-gate', status: 'pass', errors: [] }] }),
-    groupC: {
-      commands: [
-        {
-          command: none
-            ? 'no local tests'
-            : gate.selection
-              ? readyTestPlanCommand(gate.selection.selected, input.worktreePath)
-              : 'repository pre-push hook',
-          // The same tail every other Test Plan command keeps: a whole run's output would overflow the body.
-          output: truncateAgentOutput(none ? `No local tests ran.\n${gate.output}` : gate.output),
-          exitCode: 0,
-          timedOut: false,
-          overflowed: false,
-          // The head sits in a code span: the note renders as prose, where the body gate refuses a bare digit.
-          reusedFrom: `persisted ready-gate result at \`${input.head}\``
-        }
-      ]
-    }
+    groupC: { commands }
   })
   return replaceEvidenceBlock(input.body, report.blockInner)
 }
