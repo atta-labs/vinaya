@@ -60,3 +60,4 @@ tests/conformance/dev-review-log-parity.test.ts
 tests/lib/dispatch/claude-sandbox-dir.test.ts
 tests/lib/pre-push-ready-policy.test.ts
 tests/lib/ready-ci-workflow.test.ts
+tests/lib/ci-config-probe.test.ts

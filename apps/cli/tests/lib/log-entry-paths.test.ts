@@ -102,6 +102,7 @@ const workflowWithoutProducers = [
   'workflow:ci.yml:test-cli:Test shard $' + "{{ matrix.shard }}'s selected files",
   'workflow:ci.yml:test-cli:Test shard $' + '{{ matrix.shard }}',
   'workflow:ci.yml:test-cli-config-anchor:Install dependencies',
+  'workflow:ci.yml:test-cli-config-anchor:Test committed configuration',
   'workflow:ci.yml:test-cli-config-anchor:Test shard $' + "{{ matrix.shard }} with the PR's config as the trust anchor",
   'workflow:ci.yml:sandbox-conformance:Install dependencies',
   'workflow:ci.yml:sandbox-conformance:Install the Linux sandbox tools',
@@ -380,7 +381,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(101)
+    expect(noProducer).toHaveLength(102)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })
