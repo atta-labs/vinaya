@@ -4,7 +4,10 @@
  * The next push from the same branch does not re-run the whole selection: it
  * runs those failed files plus the test files affected by the files changed
  * since that refused commit. CI still runs everything once on the pull
- * request, so nothing is skipped overall.
+ * request, so nothing is skipped overall. A verified passing run leaves a
+ * passing record in the same file, and the next push on the branch then runs
+ * only the hook's own selection for what changed since that pass, never the
+ * full selection; every record that does not fit gives the full selection.
  *
  * The record lives in the worktree's own git directory
  * (`git rev-parse --git-path`), never in the tree: it is a fact about this
@@ -14,6 +17,7 @@
  * without git; the IO wrappers at the bottom are thin.
  */
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 
@@ -42,21 +46,63 @@ export type FailedTestsRecord = {
   selectionCompleted?: boolean
 }
 
-/** How the selector chose this push's tests. */
-export type SelectionNote = {
-  version: 1
-  mode: 'full' | 'rerun'
+/**
+ * What a verified passing run leaves for the next push: the commit whose whole
+ * selection passed, on which branch, and the digest of the selection policy and
+ * execution context it passed under. It shares the failed-files record's file,
+ * so a refusal replaces it and a later verified pass replaces a refusal; its
+ * version differs, so a reader of the failed-files shape never takes it for one.
+ */
+export type PassingRecord = {
+  version: 2
+  kind: 'passed'
   head: string
-  /** The refused commit this re-run continues from (re-run only). */
-  rerunOf?: string
-  /** Failed files carried over from that refused push (re-run only). */
-  rerunFailed?: string[]
-  /** Files affected by the changes since the refused commit (re-run only). */
-  affectedSince?: string[]
-  /** Size of the full selection this push would otherwise have run. */
-  fullCount: number
-  selected: string[]
+  branch: string
+  /** The test files that ran and completed. */
+  selection: string[]
+  /** Only a run whose whole expected selection completed leaves a record, and the record says so. */
+  selectionCompleted: true
+  /** {@link VerificationContext.digest} the run executed under. */
+  context: string
+  recordedAt: string
 }
+
+/** The fields every selection note carries, whatever mode chose the tests. */
+type SelectionNoteBase = {
+  version: 1
+  head: string
+  selected: string[]
+  /** The verification context digest the selection was made under; absent when it was unreadable or an input was dirty, so no passing record can follow. */
+  context?: string
+}
+
+/** How the selector chose this push's tests. */
+export type SelectionNote = SelectionNoteBase &
+  (
+    | { mode: 'full'; fullCount: number }
+    | {
+        mode: 'rerun'
+        /** The refused commit this re-run continues from. */
+        rerunOf?: string
+        /** The recorded head the mode builds on (the refused commit). */
+        recordedHead?: string
+        /** Failed files carried over from that refused push. */
+        rerunFailed?: string[]
+        /** Files affected by the changes since the refused commit. */
+        affectedSince?: string[]
+        /** Size of the full selection this push would otherwise have run. */
+        fullCount: number
+      }
+    | {
+        mode: 'since-green'
+        /** The passing head this selection builds on. */
+        recordedHead: string
+        /** Files affected by the changes since that head, without the always-run files that run regardless. */
+        affectedSince: string[]
+        /** The full selection is not computed on this path, so its size is unavailable rather than invented. */
+        fullCount: null
+      }
+  )
 
 /** The last push's summary: what ran and what failed. */
 export type LastPushResult = {
@@ -175,7 +221,7 @@ export type RerunInputs = {
  */
 export function chooseTests(inputs: RerunInputs): SelectionNote {
   const { record, head, branch, fullSelection } = inputs
-  const full: SelectionNote = {
+  const full: SelectionNote & { mode: 'full' } = {
     version: 1,
     mode: 'full',
     head,
@@ -197,6 +243,7 @@ export function chooseTests(inputs: RerunInputs): SelectionNote {
     mode: 'rerun',
     head,
     rerunOf: record.head,
+    recordedHead: record.head,
     rerunFailed,
     affectedSince,
     fullCount: fullSelection.length,
@@ -226,6 +273,205 @@ export function parseRecord(text: string | null): FailedTestsRecord | null {
     return value as FailedTestsRecord
   } catch {
     return null
+  }
+}
+
+// ── Passing record and the since-green selection ────────────────────────────
+
+/** The version a passing record carries; anything else (the failed-files record's `1`, an older shape) refuses reuse. */
+export const PASSING_RECORD_VERSION = 2
+
+/**
+ * What a passing record is only valid under. Changing any of it makes an older
+ * pass say nothing about this checkout, so a changed policy or an incompatible
+ * recorded policy always gives the full selection.
+ */
+export const SELECTION_POLICY = {
+  name: 'pre-push-since-green',
+  version: 1,
+  depth: 'one',
+  testTimeoutMs: 30000,
+  /** The repository-root configuration file whose change always gives the full selection (the test selector's `ROOT_CONFIG_FILENAME`). */
+  rootConfigFile: 'vinaya.config.json'
+} as const
+
+/**
+ * Identifies the semantic selection policy, the declarations of what a test
+ * depends on, and the execution context a pass ran in — never the changed
+ * subject sources or any per-commit graph, which the incremental selection
+ * itself accounts for.
+ */
+export type VerificationContext = {
+  digest: string
+  parts: { policy: string; inputs: string; lockfile: string; runner: string; environment: string }
+}
+
+/** Files whose uncommitted edits make a recorded or reused pass unverifiable. */
+export const VERIFICATION_LOCKFILES = ['bun.lock', 'bun.lockb', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml']
+const VERIFICATION_INPUT_FILES = ['vinaya.config.json', 'package.json', 'bunfig.toml', ...VERIFICATION_LOCKFILES]
+/** The environment variables that change how a test run behaves. */
+export const VERIFICATION_ENV_KEYS = ['BUN_ENV', 'CI', 'NODE_ENV', 'NODE_OPTIONS', 'TZ']
+
+/** Reads a passing record, or `null` when missing, of another version or of another shape. */
+export function parsePassingRecord(text: string | null): PassingRecord | null {
+  if (!text) return null
+  try {
+    const value = JSON.parse(text) as Partial<PassingRecord>
+    if (value.version !== PASSING_RECORD_VERSION || value.kind !== 'passed') return null
+    if (typeof value.head !== 'string' || typeof value.branch !== 'string' || typeof value.context !== 'string')
+      return null
+    if (!Array.isArray(value.selection) || !value.selection.every((file) => typeof file === 'string')) return null
+    return value as PassingRecord
+  } catch {
+    return null
+  }
+}
+
+/** The selector's note when it parses, describes `head` and names its selected files; otherwise `null`. */
+export function parseSelectionNote(text: string | null, head: string): SelectionNote | null {
+  if (!text) return null
+  try {
+    const value = JSON.parse(text) as Partial<SelectionNote> & { selected?: unknown }
+    if (value.head !== head || !Array.isArray(value.selected)) return null
+    if (!value.selected.every((file) => typeof file === 'string')) return null
+    return { mode: 'full', ...value } as SelectionNote
+  } catch {
+    return null
+  }
+}
+
+export type PassingRunInputs = {
+  /** What the hook reported for the run. */
+  outcome: 'passed' | 'failed'
+  /** The selection note for the current head, already checked by {@link parseSelectionNote}. */
+  selection: SelectionNote | null
+  log: string
+  repoRoot: string
+  /** The head and branch now, read after the run. */
+  head: string
+  branch: string
+  /** The verification context now, read after the run (`null` when unreadable). */
+  context: string | null
+  /** Whether the verification inputs are clean now (`null` when git could not say). */
+  inputsClean: boolean | null
+  now: Date
+}
+
+/**
+ * The record a verified passing run leaves, or `null`. Verified means: the
+ * note for this very head parses and names a non-empty selection, the log
+ * shows every file of that selection completed (read WITH the expected list —
+ * without it a one-file log counts as complete), and the head, the context
+ * and the clean inputs the selection was made under are the ones still in
+ * place after the run.
+ */
+export function passingRecordFromRun(inputs: PassingRunInputs): PassingRecord | null {
+  const { selection, head, branch } = inputs
+  if (inputs.outcome !== 'passed' || !selection || selection.head !== head) return null
+  if (selection.selected.length === 0 || !head || !branch || branch === 'HEAD') return null
+  if (!selection.context || inputs.context !== selection.context || inputs.inputsClean !== true) return null
+  if (!completedTestSelection(inputs.log, inputs.repoRoot, selection.selected)) return null
+  return {
+    version: PASSING_RECORD_VERSION,
+    kind: 'passed',
+    head,
+    branch,
+    selection: [...selection.selected],
+    selectionCompleted: true,
+    context: selection.context,
+    recordedAt: inputs.now.toISOString()
+  }
+}
+
+/** What the since-green selection read: the hook's own selection for the changes since a base, and whether any git read behind it failed. */
+export type SinceGreenRead = { selected: string[]; readFailed: boolean }
+
+export type SelectionDeps<Full extends { selected: string[] }> = {
+  repoRoot: string
+  head: string
+  branch: string
+  failed: FailedTestsRecord | null
+  passing: PassingRecord | null
+  /** The verification context now; `null` when unreadable. */
+  context: string | null
+  /** Whether the verification inputs are clean; `null` when git could not say. */
+  inputsClean: boolean | null
+  /** Whether `ancestor` is an ancestor of (or equal to) the current head. */
+  isAncestor: (ancestor: string) => boolean
+  exists: (path: string) => boolean
+  /** Absolute paths changed between `from` and the head, or `null` when git could not read them. */
+  changedBetween: (from: string) => string[] | null
+  /** Whether the always-run configuration names this absolute path. */
+  isAlwaysRun: (path: string) => boolean
+  /** The hook's own selection with `from` as its base. */
+  sinceGreen: (from: string) => SinceGreenRead
+  /** Test files affected by the given changes alone — the rerun path's own selector call. */
+  affectedSince: (changed: string[]) => string[]
+  /** The full branch selection — computed only when no passing record can answer. */
+  full: () => Full
+}
+
+/**
+ * Chooses this push's tests. A usable passing record answers from the
+ * incremental selection alone and never computes the full one; anything else —
+ * including every unreadable diff — takes the full selection (or, after a
+ * refusal, the failed-files rerun), the wider, safe answer.
+ */
+export function decideSelection<Full extends { selected: string[] }>(
+  deps: SelectionDeps<Full>
+): { note: SelectionNote; full: Full | null } {
+  const context = deps.context !== null && deps.inputsClean === true ? deps.context : null
+  const withContext = (note: SelectionNote): SelectionNote => (context === null ? note : { ...note, context })
+  const sinceGreen = deps.failed === null ? sinceGreenNote(deps, context) : null
+  if (sinceGreen) return { note: withContext(sinceGreen), full: null }
+
+  const full = deps.full()
+  const record = deps.failed
+  const recordIsAncestor = record ? deps.isAncestor(record.head) : false
+  let usable = record
+  let affectedSince: string[] = []
+  if (record && record.failed !== 'all' && recordIsAncestor && record.branch === deps.branch) {
+    const changed = deps.changedBetween(record.head)
+    if (changed === null) usable = null
+    else affectedSince = deps.affectedSince(changed)
+  }
+  const note = chooseTests({
+    record: usable,
+    head: deps.head,
+    branch: deps.branch,
+    recordIsAncestor,
+    fullSelection: full.selected,
+    affectedSince,
+    exists: deps.exists
+  })
+  return { note: withContext(note), full }
+}
+
+function sinceGreenNote<Full extends { selected: string[] }>(
+  deps: SelectionDeps<Full>,
+  context: string | null
+): SelectionNote | null {
+  const passing = deps.passing
+  if (!passing || passing.selectionCompleted !== true || passing.selection.length === 0) return null
+  if (passing.branch !== deps.branch || context === null || passing.context !== context) return null
+  if (!deps.isAncestor(passing.head)) return null
+  const changed = deps.changedBetween(passing.head)
+  if (changed === null || changed.includes(join(deps.repoRoot, SELECTION_POLICY.rootConfigFile))) return null
+  const read = deps.sinceGreen(passing.head)
+  if (read.readFailed) return null
+  const selected = [...new Set(read.selected)].filter(deps.exists).sort()
+  // A change the selector cannot trace to any test selects only the always-run files; running those alone
+  // proves nothing about it, so the full selection runs instead.
+  const affectedSince = selected.filter((file) => !deps.isAlwaysRun(file) || changed.includes(file))
+  if (changed.length > 0 && affectedSince.length === 0) return null
+  return {
+    version: 1,
+    mode: 'since-green',
+    head: deps.head,
+    recordedHead: passing.head,
+    affectedSince,
+    fullCount: null,
+    selected
   }
 }
 
@@ -278,10 +524,15 @@ export function isAncestor(repoRoot: string, ancestor: string, head: string): bo
   }
 }
 
-/** Absolute paths of files added, copied, modified, renamed or deleted between two commits. */
-export function changedBetween(repoRoot: string, from: string, to: string): string[] {
-  const out = git(repoRoot, ['diff', '--name-only', '--diff-filter=ACMRD', from, to]) ?? ''
-  return out
+/**
+ * Absolute paths of files added, copied, modified, renamed or deleted between
+ * two commits, or `null` when git could not read the difference — never an
+ * empty list, which says nothing changed.
+ */
+export function changedBetween(repoRoot: string, from: string, to: string): string[] | null {
+  const read = git(repoRoot, ['diff', '--name-only', '--diff-filter=ACMRD', from, to])
+  if (read === null) return null
+  return read
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)
@@ -313,6 +564,72 @@ export function removeUnderGit(repoRoot: string, name: string): void {
 /** The record left by this worktree's last refused push, if any. */
 export function readFailedTestsRecord(repoRoot: string): FailedTestsRecord | null {
   return parseRecord(readJsonUnderGit(repoRoot, FAILED_TESTS_RECORD))
+}
+
+/** The passing record left by this worktree's last verified passing run, if any. */
+export function readPassingRecord(repoRoot: string): PassingRecord | null {
+  return parsePassingRecord(readJsonUnderGit(repoRoot, FAILED_TESTS_RECORD))
+}
+
+/** Removes the record file only when it holds `kind` (or nothing readable), leaving the other kind in place. */
+export function clearRecordOfKind(repoRoot: string, kind: 'failed' | 'passed'): void {
+  const text = readJsonUnderGit(repoRoot, FAILED_TESTS_RECORD)
+  const other = kind === 'failed' ? parsePassingRecord(text) : parseRecord(text)
+  if (text !== null && other !== null) return
+  removeUnderGit(repoRoot, FAILED_TESTS_RECORD)
+}
+
+/**
+ * The digest of the selection policy, input declarations, lockfiles, runner
+ * configuration and relevant environment a run executes under, or `null` when
+ * any of them cannot be read — an unreadable context refuses reuse.
+ */
+export function computeVerificationContext(
+  repoRoot: string,
+  env: NodeJS.ProcessEnv = process.env
+): VerificationContext | null {
+  try {
+    const sha = (data: string | Buffer) => createHash('sha256').update(data).digest('hex')
+    const read = (name: string): Buffer | null => {
+      const path = join(repoRoot, name)
+      return existsSync(path) ? readFileSync(path) : null
+    }
+    const json = (name: string): Record<string, unknown> | null => {
+      const bytes = read(name)
+      return bytes === null ? null : (JSON.parse(bytes.toString('utf8')) as Record<string, unknown>)
+    }
+    const config = json('vinaya.config.json')
+    const pkg = json('package.json')
+    const scripts = pkg?.scripts as Record<string, unknown> | undefined
+    const bunfig = read('bunfig.toml')
+    const parts = {
+      policy: sha(JSON.stringify(SELECTION_POLICY)),
+      inputs: sha(JSON.stringify({ prePush: config?.prePush ?? null, workspaces: pkg?.workspaces ?? null })),
+      lockfile: sha(
+        VERIFICATION_LOCKFILES.map((name) => {
+          const bytes = read(name)
+          return `${name}:${bytes === null ? 'absent' : sha(bytes)}`
+        }).join('\n')
+      ),
+      runner: sha(
+        JSON.stringify({
+          bunfig: bunfig === null ? null : sha(bunfig),
+          testScript: scripts?.test ?? null,
+          bun: process.versions.bun ?? null
+        })
+      ),
+      environment: sha(VERIFICATION_ENV_KEYS.map((key) => `${key}=${env[key] ?? '\u0000unset'}`).join('\n'))
+    }
+    return { digest: sha(JSON.stringify(parts)), parts }
+  } catch {
+    return null
+  }
+}
+
+/** Whether any verification input has an uncommitted change; `null` when git could not say. */
+export function verificationInputsDirty(repoRoot: string): boolean | null {
+  const out = git(repoRoot, ['status', '--porcelain', '--', ...VERIFICATION_INPUT_FILES])
+  return out === null ? null : out !== ''
 }
 
 /** The last push's summary, if any — the loop's source for its ready-push and re-run Log events. */

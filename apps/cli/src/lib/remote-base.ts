@@ -44,7 +44,15 @@ function cleanGitEnv(): NodeJS.ProcessEnv {
   return env
 }
 
-function git(repoRoot: string, args: string[]): string {
+/**
+ * An opt-in a caller passes to learn that a git diff read failed. Every reader
+ * below turns a failed read into an empty result for the callers that do not
+ * pass one; a caller that must tell "nothing changed" from "could not read what
+ * changed" passes one and checks `failed` afterwards.
+ */
+export type ReadFailure = { failed: boolean }
+
+function git(repoRoot: string, args: string[], failure?: ReadFailure): string {
   try {
     return execFileSync('git', args, {
       cwd: repoRoot,
@@ -53,6 +61,7 @@ function git(repoRoot: string, args: string[]): string {
       env: cleanGitEnv()
     }).trim()
   } catch {
+    if (failure) failure.failed = true
     return ''
   }
 }
@@ -73,8 +82,12 @@ export function resolveRemoteBase(repoRoot: string): string {
 }
 
 /** Repo-root-relative paths of every file changed between `resolveRemoteBase()` and `HEAD` — added, copied, modified, renamed; never a deleted file, which has nothing left to lint or test. */
-export function changedFilesSinceRemoteBase(repoRoot: string, base = resolveRemoteBase(repoRoot)): string[] {
-  const out = git(repoRoot, ['diff', '--name-only', '--diff-filter=ACMR', `${base}...HEAD`])
+export function changedFilesSinceRemoteBase(
+  repoRoot: string,
+  base = resolveRemoteBase(repoRoot),
+  failure?: ReadFailure
+): string[] {
+  const out = git(repoRoot, ['diff', '--name-only', '--diff-filter=ACMR', `${base}...HEAD`], failure)
   return out
     .split('\n')
     .map((s) => s.trim())
@@ -82,8 +95,12 @@ export function changedFilesSinceRemoteBase(repoRoot: string, base = resolveRemo
 }
 
 /** Absolute paths, for callers (the test selector) that walk the filesystem rather than shelling back out to git. */
-export function changedFilesSinceRemoteBaseAbsolute(repoRoot: string, base = resolveRemoteBase(repoRoot)): string[] {
-  return changedFilesSinceRemoteBase(repoRoot, base).map((f) => join(repoRoot, f))
+export function changedFilesSinceRemoteBaseAbsolute(
+  repoRoot: string,
+  base = resolveRemoteBase(repoRoot),
+  failure?: ReadFailure
+): string[] {
+  return changedFilesSinceRemoteBase(repoRoot, base, failure).map((f) => join(repoRoot, f))
 }
 
 /**
@@ -93,8 +110,12 @@ export function changedFilesSinceRemoteBaseAbsolute(repoRoot: string, base = res
  * import-graph reachability `selectAffectedTestFiles` otherwise relies on
  * can never select it on its own first push.
  */
-export function addedOrRenamedFilesSinceRemoteBase(repoRoot: string, base = resolveRemoteBase(repoRoot)): string[] {
-  const out = git(repoRoot, ['diff', '--name-only', '--diff-filter=AR', `${base}...HEAD`])
+export function addedOrRenamedFilesSinceRemoteBase(
+  repoRoot: string,
+  base = resolveRemoteBase(repoRoot),
+  failure?: ReadFailure
+): string[] {
+  const out = git(repoRoot, ['diff', '--name-only', '--diff-filter=AR', `${base}...HEAD`], failure)
   return out
     .split('\n')
     .map((s) => s.trim())
@@ -104,9 +125,10 @@ export function addedOrRenamedFilesSinceRemoteBase(repoRoot: string, base = reso
 /** Absolute paths — the O1 counterpart to `changedFilesSinceRemoteBaseAbsolute`. */
 export function addedOrRenamedFilesSinceRemoteBaseAbsolute(
   repoRoot: string,
-  base = resolveRemoteBase(repoRoot)
+  base = resolveRemoteBase(repoRoot),
+  failure?: ReadFailure
 ): string[] {
-  return addedOrRenamedFilesSinceRemoteBase(repoRoot, base).map((f) => join(repoRoot, f))
+  return addedOrRenamedFilesSinceRemoteBase(repoRoot, base, failure).map((f) => join(repoRoot, f))
 }
 
 /**
@@ -115,8 +137,12 @@ export function addedOrRenamedFilesSinceRemoteBaseAbsolute(
  * shape of a folder — every file in it listed somewhere — breaks on a removal
  * exactly as it does on an addition, so the selector needs both sides.
  */
-export function removedFilesSinceRemoteBase(repoRoot: string, base = resolveRemoteBase(repoRoot)): string[] {
-  const out = git(repoRoot, ['diff', '--name-status', '--diff-filter=DR', `${base}...HEAD`])
+export function removedFilesSinceRemoteBase(
+  repoRoot: string,
+  base = resolveRemoteBase(repoRoot),
+  failure?: ReadFailure
+): string[] {
+  const out = git(repoRoot, ['diff', '--name-status', '--diff-filter=DR', `${base}...HEAD`], failure)
   return out
     .split('\n')
     .map((line) => line.split('\t'))
@@ -126,8 +152,12 @@ export function removedFilesSinceRemoteBase(repoRoot: string, base = resolveRemo
 }
 
 /** Absolute paths — the removal counterpart to `addedOrRenamedFilesSinceRemoteBaseAbsolute`. */
-export function removedFilesSinceRemoteBaseAbsolute(repoRoot: string, base = resolveRemoteBase(repoRoot)): string[] {
-  return removedFilesSinceRemoteBase(repoRoot, base).map((f) => join(repoRoot, f))
+export function removedFilesSinceRemoteBaseAbsolute(
+  repoRoot: string,
+  base = resolveRemoteBase(repoRoot),
+  failure?: ReadFailure
+): string[] {
+  return removedFilesSinceRemoteBase(repoRoot, base, failure).map((f) => join(repoRoot, f))
 }
 
 /**
@@ -141,11 +171,15 @@ export function removedFilesSinceRemoteBaseAbsolute(repoRoot: string, base = res
  * whose old-side blob does not exist (added in this diff) reports `before` as
  * `null`, which the name attribution treats as "no old side", not as an error.
  */
-export function changedFileDiffsSinceRemoteBase(repoRoot: string, base = resolveRemoteBase(repoRoot)): FileDiff[] {
-  const mergeBase = git(repoRoot, ['merge-base', base, 'HEAD']) || base
+export function changedFileDiffsSinceRemoteBase(
+  repoRoot: string,
+  base = resolveRemoteBase(repoRoot),
+  failure?: ReadFailure
+): FileDiff[] {
+  const mergeBase = git(repoRoot, ['merge-base', base, 'HEAD'], failure) || base
   const out: FileDiff[] = []
-  for (const relative of changedFilesSinceRemoteBase(repoRoot, base)) {
-    const patch = git(repoRoot, ['diff', '-U0', `${mergeBase}..HEAD`, '--', relative])
+  for (const relative of changedFilesSinceRemoteBase(repoRoot, base, failure)) {
+    const patch = git(repoRoot, ['diff', '-U0', `${mergeBase}..HEAD`, '--', relative], failure)
     const { beforeRanges, afterRanges } = parseHunkRanges(patch)
     out.push({
       file: join(repoRoot, relative),

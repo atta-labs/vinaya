@@ -9,6 +9,7 @@ import {
   addedOrRenamedFilesSinceRemoteBaseAbsolute,
   changedFileDiffsSinceRemoteBase,
   changedFilesSinceRemoteBaseAbsolute,
+  type ReadFailure,
   removedFilesSinceRemoteBaseAbsolute,
   resolveRemoteBase
 } from './remote-base.js'
@@ -20,21 +21,24 @@ import { loadTypeScript } from './ts-module-graph.js'
  * the base the hook itself resolves (the branch's upstream, then
  * `origin/main`). `depth` defaults to the hook's own `'one'`; a pull
  * request's CI run passes `'transitive'` for the same selection walked to
- * its full closure.
+ * its full closure. A caller that must tell a failed git read from an empty
+ * change list passes `failure`: every read this selection makes reports into
+ * it, and the selection itself is unchanged.
  */
 export function prePushSelection(
   repoRoot: string,
   base = resolveRemoteBase(repoRoot),
-  depth: NonNullable<SelectionOptions['depth']> = 'one'
+  depth: NonNullable<SelectionOptions['depth']> = 'one',
+  failure?: ReadFailure
 ): SelectionResult {
-  const changed = changedFilesSinceRemoteBaseAbsolute(repoRoot, base)
-  const addedOrRenamed = addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot, base)
-  const removed = removedFilesSinceRemoteBaseAbsolute(repoRoot, base)
+  const changed = changedFilesSinceRemoteBaseAbsolute(repoRoot, base, failure)
+  const addedOrRenamed = addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot, base, failure)
+  const removed = removedFilesSinceRemoteBaseAbsolute(repoRoot, base, failure)
   const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
   // The changed NAMES and touched lines, when the compiler is there to parse
   // them; without it the selector falls back to the file-level answer on its own.
   const typescript = loadTypeScript(repoRoot)
-  const diffs = typescript ? changedFileDiffsSinceRemoteBase(repoRoot, base) : undefined
+  const diffs = typescript ? changedFileDiffsSinceRemoteBase(repoRoot, base, failure) : undefined
   const names = typescript && diffs ? affectedNames(typescript, diffs) : undefined
   const changedRanges = diffs ? new Map(diffs.map((d) => [d.file, d.afterRanges])) : undefined
   // The hook never walks the full transitive closure a push away from

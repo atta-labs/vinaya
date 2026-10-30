@@ -10,26 +10,31 @@
  * unset for today's default push).
  *
  * A refused run leaves the failed-tests record the next push re-runs from; a
- * green run clears it. Both write the last-push summary the loop reads for
+ * verified green run leaves a passing record the next push builds on, and a
+ * green run that cannot be verified leaves a refusal's record as it was. Both write the last-push summary the loop reads for
  * its Log events. Best-effort: never fails the push, and writes to STDERR
  * only, so the hook's own refusal summary stays the tail of STDOUT.
  */
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import {
+  clearRecordOfKind,
   completedTestSelection,
-  TEST_SELECTION_COMPLETE,
+  computeVerificationContext,
   currentBranch,
   currentHead,
   FAILED_TESTS_RECORD,
   LAST_PUSH_RESULT,
   type LastPushResult,
   parseFailedTestFiles,
+  parseSelectionNote,
+  passingRecordFromRun,
   readJsonUnderGit,
   recordFromRun,
-  removeUnderGit,
   SELECTION_NOTE,
   type SelectionNote,
+  TEST_SELECTION_COMPLETE,
+  verificationInputsDirty,
   writeJsonUnderGit
 } from './pre-push-failed-tests.js'
 
@@ -59,25 +64,37 @@ function main(): void {
     }
     const head = currentHead(repoRoot)
     const branch = currentBranch(repoRoot)
-    let selection: SelectionNote | null = null
-    const noteText = mode === 'storage' ? null : readJsonUnderGit(repoRoot, SELECTION_NOTE)
-    if (noteText) {
-      try {
-        const parsed = JSON.parse(noteText) as SelectionNote
-        selection = parsed.head === head ? parsed : null
-      } catch {
-        selection = null
-      }
-    }
+    const selection: SelectionNote | null =
+      mode === 'storage' ? null : parseSelectionNote(readJsonUnderGit(repoRoot, SELECTION_NOTE), head)
     const selectionCompleted =
       selection?.selected.length === 0 ||
       mode === 'storage' ||
       completedTestSelection(log, repoRoot, selection?.selected)
     const settledOutcome = outcome === 'passed' && !selectionCompleted ? 'failed' : outcome
     const failed = settledOutcome === 'failed' ? parseFailedTestFiles(log, repoRoot, true, selection?.selected) : []
-    const record = recordFromRun(settledOutcome, failed, head, branch, new Date())
+    // A refused run leaves the failed-files record. A verified pass leaves the passing record, which supersedes a
+    // refusal; the head and verification inputs are read again here so a run during which either moved records nothing.
+    // A pass that cannot be verified (no note for this head, a note that does not parse, an incomplete log) leaves a
+    // failed-files record untouched and drops any passing record, so the next push never shortcuts from it.
+    const record = outcome === 'failed' ? recordFromRun('failed', failed, head, branch, new Date()) : null
+    const passing =
+      outcome === 'passed'
+        ? passingRecordFromRun({
+            outcome,
+            selection,
+            log,
+            repoRoot,
+            head,
+            branch,
+            context: computeVerificationContext(repoRoot)?.digest ?? null,
+            inputsClean: verificationInputsDirty(repoRoot) === false,
+            now: new Date()
+          })
+        : null
     if (record) writeJsonUnderGit(repoRoot, FAILED_TESTS_RECORD, record)
-    else removeUnderGit(repoRoot, FAILED_TESTS_RECORD)
+    else if (passing) writeJsonUnderGit(repoRoot, FAILED_TESTS_RECORD, passing)
+    else if (mode === 'storage' || selection?.selected.length === 0) clearRecordOfKind(repoRoot, 'failed')
+    else clearRecordOfKind(repoRoot, 'passed')
 
     const result: LastPushResult = {
       version: 1,

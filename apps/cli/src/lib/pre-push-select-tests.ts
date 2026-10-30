@@ -11,45 +11,59 @@
  * human-facing "selected N of M" line to STDERR, so the hook's own
  * `$(...)` capture of STDOUT is never polluted by it.
  */
+import { globToRegex } from '@attalabs/aeg-core'
 import { existsSync } from 'node:fs'
+import { loadConfig } from './config.js'
 import {
   changedBetween,
-  chooseTests,
+  computeVerificationContext,
   currentBranch,
   currentHead,
+  decideSelection,
   isAncestor,
   readFailedTestsRecord,
+  readPassingRecord,
   SELECTION_NOTE,
+  verificationInputsDirty,
   writeJsonUnderGit
 } from './pre-push-failed-tests.js'
 import { prePushSelection } from './pre-push-selection.js'
-import { selectAffectedTestFiles } from './test-selector.js'
+import type { ReadFailure } from './remote-base.js'
+import { type SelectionResult, selectAffectedTestFiles } from './test-selector.js'
 
 function main(): void {
   const repoRoot = process.cwd()
   const started = performance.now()
-  const full = prePushSelection(repoRoot)
-  const { totalTestFiles, resolver, programMs } = full
-  // Re-run only what failed: a push following a refused one runs the files
-  // that failed there plus the files affected by what changed since, never
-  // the whole selection again. Any record that does not fit (another branch,
-  // a rewritten history, an unnamed failure) gives the full selection.
-  const record = readFailedTestsRecord(repoRoot)
+  // Re-run only what changed: a push after a refused one runs the files that
+  // failed there plus the files affected since; a push after a verified
+  // passing one runs the hook's own selection for the changes since that pass.
+  // Any record that does not fit (another branch, a rewritten history, an
+  // unnamed failure, another context, an unreadable diff) gives the full
+  // selection — which is computed only then.
   const head = currentHead(repoRoot)
   const branch = currentBranch(repoRoot)
-  const recordIsAncestor = record ? isAncestor(repoRoot, record.head, head) : false
-  const affectedSince =
-    record && record.failed !== 'all' && recordIsAncestor && record.branch === branch
-      ? selectAffectedTestFiles(repoRoot, changedBetween(repoRoot, record.head, head), { depth: 'one' }).selected
-      : []
-  const note = chooseTests({
-    record,
+  const alwaysRun = (loadConfig()?.prePush?.alwaysRun ?? []).map(globToRegex)
+  let sinceGreen: SelectionResult | null = null
+  const { note, full } = decideSelection({
+    repoRoot,
     head,
     branch,
-    recordIsAncestor,
-    fullSelection: full.selected,
-    affectedSince,
-    exists: existsSync
+    failed: readFailedTestsRecord(repoRoot),
+    passing: readPassingRecord(repoRoot),
+    context: computeVerificationContext(repoRoot)?.digest ?? null,
+    inputsClean: verificationInputsDirty(repoRoot) === false,
+    isAncestor: (ancestor) => isAncestor(repoRoot, ancestor, head),
+    exists: existsSync,
+    changedBetween: (from) => changedBetween(repoRoot, from, head),
+    isAlwaysRun: (path) => alwaysRun.some((re) => re.test(path.slice(repoRoot.length + 1))),
+    sinceGreen: (from) => {
+      const failure: ReadFailure = { failed: false }
+      const result = prePushSelection(repoRoot, from, 'one', failure)
+      sinceGreen = result
+      return { selected: result.selected, readFailed: failure.failed }
+    },
+    affectedSince: (changed) => selectAffectedTestFiles(repoRoot, changed, { depth: 'one' }).selected,
+    full: () => prePushSelection(repoRoot)
   })
   try {
     writeJsonUnderGit(repoRoot, SELECTION_NOTE, note)
@@ -63,15 +77,28 @@ function main(): void {
   // Selector runtime is reported on its own, and split from the compiler
   // program build inside it, so a push-time budget can be judged against the
   // selector rather than against the tests it goes on to run.
-  process.stderr.write(
-    `vinaya pre-push: selected ${selected.length} of ${totalTestFiles} test file(s) ` +
-      `[${resolver}, ${elapsed.toFixed(0)} ms selector, ${programMs.toFixed(0)} ms program]\n`
-  )
+  if (full) {
+    process.stderr.write(
+      `vinaya pre-push: selected ${selected.length} of ${full.totalTestFiles} test file(s) ` +
+        `[${full.resolver}, ${elapsed.toFixed(0)} ms selector, ${full.programMs.toFixed(0)} ms program]\n`
+    )
+  } else {
+    const read = sinceGreen as SelectionResult | null
+    process.stderr.write(
+      `vinaya pre-push: selected ${selected.length} test file(s) since the last passing run ` +
+        `[${read?.resolver ?? 'none'}, ${elapsed.toFixed(0)} ms selector, ${(read?.programMs ?? 0).toFixed(0)} ms program]\n`
+    )
+  }
   if (note.mode === 'rerun') {
     process.stderr.write(
       `vinaya pre-push: re-running only what failed at ${note.rerunOf?.slice(0, 12)} — ` +
         `${note.rerunFailed?.length ?? 0} failed file(s) + ${note.affectedSince?.length ?? 0} affected since, ` +
         `instead of the full ${note.fullCount}\n`
+    )
+  } else if (note.mode === 'since-green') {
+    process.stderr.write(
+      `vinaya pre-push: running only what changed since the passing run at ${note.recordedHead.slice(0, 12)} — ` +
+        `${note.affectedSince.length} affected file(s) plus the always-run files, instead of the full selection\n`
     )
   }
 }

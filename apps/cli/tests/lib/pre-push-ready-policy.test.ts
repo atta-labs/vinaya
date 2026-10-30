@@ -239,12 +239,14 @@ describe('the generated hook’s deferral step, executed', () => {
     expect(end).toBeGreaterThan(start)
   })
 
-  function runStep(policyAnswer: string, policyExit: number) {
+  function runStep(policyAnswer: string, policyExit: number, seededRecord?: string) {
     const dir = mkdtempSync(join(tmpdir(), 'vinaya-ready-hook-'))
     try {
       const bin = join(dir, 'bin')
       mkdirSync(bin)
-      // A stand-in `bun`: the policy entrypoint answers as told; the selector leaves a mark when it is invoked.
+      const recordPath = join(dir, 'pre-push-failed-tests.json')
+      if (seededRecord !== undefined) writeFileSync(recordPath, seededRecord)
+      // A stand-in `bun`: the policy entrypoint answers as told; the selector and the recorder leave a mark when invoked.
       writeFileSync(
         join(bin, 'bun'),
         [
@@ -252,6 +254,7 @@ describe('the generated hook’s deferral step, executed', () => {
           'case "$1" in',
           `  *pre-push-ready-policy.ts) echo "${policyAnswer}"; exit ${policyExit} ;;`,
           `  *pre-push-select-tests.ts) touch "${join(dir, 'selector-ran')}"; exit 0 ;;`,
+          `  *pre-push-record-tests.ts) touch "${join(dir, 'recorder-ran')}"; exit 0 ;;`,
           'esac',
           'exit 0'
         ].join('\n')
@@ -265,7 +268,9 @@ describe('the generated hook’s deferral step, executed', () => {
       return {
         status: result.status,
         out: `${result.stdout}${result.stderr}`,
-        selector: existsSync(join(dir, 'selector-ran'))
+        selector: existsSync(join(dir, 'selector-ran')),
+        recorder: existsSync(join(dir, 'recorder-ran')),
+        record: seededRecord === undefined ? null : readFileSync(recordPath)
       }
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -277,6 +282,15 @@ describe('the generated hook’s deferral step, executed', () => {
     expect(result.status).toBe(0)
     expect(result.out).toContain('vinaya pre-push: tests deferred to required CI')
     expect(result.selector).toBe(false)
+  })
+
+  it('deferred: a seeded passing record is left byte-identical and neither the selector nor the recorder runs', () => {
+    const passingRecord = `${JSON.stringify({ version: 2, kind: 'passed', head: HEAD, branch: 'task/issue-1', selection: ['/r/a.test.ts'], selectionCompleted: true, context: 'ctx', recordedAt: '2026-10-29T00:00:00.000Z' }, null, 2)}\n`
+    const result = runStep('deferred', 0, passingRecord)
+    expect(result.status).toBe(0)
+    expect(result.selector).toBe(false)
+    expect(result.recorder).toBe(false)
+    expect(result.record?.equals(Buffer.from(passingRecord))).toBe(true)
   })
 
   it('local: the selector runs as before', () => {
