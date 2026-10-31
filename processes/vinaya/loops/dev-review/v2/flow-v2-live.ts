@@ -32,14 +32,19 @@ import {
   selectContainmentBackend,
   stopRegistered
 } from '../../../../../apps/cli/src/lib/process-registry'
-import { ADOPTER_TEST_RUNNER, NO_LOCAL_TESTS_MARKER } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
+import {
+  ADOPTER_TEST_RUNNER,
+  NO_LOCAL_TESTS_MARKER,
+  REPOSITORY_LOCAL_RUN
+} from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import { PUSH_MODE_MARKER, storageMarkerText } from '../../../../../apps/cli/src/lib/pre-push-mode-logic'
 import {
   DEFERRAL_MARKER_TTL_MS,
   deferralMarkerText,
   READY_DEFERRAL_MARKER,
   readDeferredTestsRecord,
-  type ReadyTestsPolicy
+  type ReadyTestsPolicy,
+  type RequiredCiPolicy
 } from '../../../../../apps/cli/src/lib/pre-push-ready-policy'
 import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../apps/cli/src/lib/test-temp'
 import { appendLoopLogLine, loopLogPathFor } from '../../../../../apps/cli/src/lib/loop-log'
@@ -791,9 +796,9 @@ export async function runReadyGateLive(input: {
       }
     }
     const output = `${run.stdout}${run.stderr}${run.error ? `\n${run.error.message}` : ''}${run.signal ? `\nthe ready push was stopped by ${run.signal}` : ''}`
-    const passed = run.status === 0
+    const hookPassed = run.status === 0
     const deferred = marked ? readDeferredTestsRecord(input.worktreePath, { head: input.head, runId }) : null
-    if (passed && deferred !== null && deferred.kind === 'ready') {
+    if (hookPassed && deferred !== null && deferred.kind === 'ready') {
       log(`ready push: local checks passed; the selected tests are deferred to the required check ${deferred.check}`)
       return {
         passed: true,
@@ -807,7 +812,17 @@ export async function runReadyGateLive(input: {
     }
     const record = readLastPushResult(input.worktreePath)
     const forHead = record !== null && record.head === input.head
-    const fresh = forHead && (run.status === 0 || record.outcome === 'failed')
+    const recordedThisRun = forHead && Date.parse(record.recordedAt) >= startedAt - 1000
+    // A repository that commits its native local-run adapter passes only on the structured result that run recorded
+    // for this head: a complete native run that passed. An exit status, a log line or a progress file grants nothing.
+    const nativeUnproven =
+      hookPassed &&
+      existsSync(join(input.worktreePath, REPOSITORY_LOCAL_RUN)) &&
+      !(recordedThisRun && record.outcome === 'passed' && record.selection?.native && record.native?.completed === true)
+    const passed = hookPassed && !nativeUnproven
+    if (nativeUnproven)
+      log('ready push: the hook exited zero, but no complete native test result was recorded for this head')
+    const fresh = forHead && (run.status === 0 || record.outcome === 'failed') && !nativeUnproven
     const failed = passed ? [] : fresh ? record.failed : 'all'
     if (!passed) log(`ready push failed: ${failed === 'all' ? 'all' : failed.join(', ')}; wall time ${wallMs} ms`)
     // No runner is decided by structured facts first. A last-push record this hook run wrote for this head (bound to
@@ -816,7 +831,6 @@ export async function runReadyGateLive(input: {
     // this state — even when its best-effort record write failed while a nested fixture printed the marker. Only an
     // adopter's hook with no such record and no declared runner names the state, with its own marker line (a line of
     // its own, never a substring): that is the adopter hook's contract (`pre-push-test-runner.ts`).
-    const recordedThisRun = forHead && Date.parse(record.recordedAt) >= startedAt - 1000
     const markerLine = output.split('\n').some((line) => line.startsWith(NO_LOCAL_TESTS_MARKER))
     const noLocalTests =
       passed &&
@@ -827,7 +841,9 @@ export async function runReadyGateLive(input: {
     if (noLocalTests) log(`ready push: ${NO_LOCAL_TESTS_MARKER} (the repository declares no test runner)`)
     return {
       passed,
-      output,
+      output: nativeUnproven
+        ? `${output}\nthe hook exited zero, but no complete native test result was recorded for ${input.head}`
+        : output,
       selection: fresh ? record.selection : null,
       failed,
       wallMs,
@@ -1021,6 +1037,8 @@ export function liveV2Functions(input: {
   runId?: string
   /** The default branch's ready-tests policy; throws when the trusted read fails. */
   readyTestsPolicy?: () => ReadyTestsPolicy
+  /** The default branch's required-CI descriptor, owed wherever the tests run; throws when the trusted read fails. */
+  requiredCiPolicy?: () => RequiredCiPolicy | null
   /** The repository root the loop baseline is read from (this repository's own scenario corpus). */
   baselineRoot?: string
   /** Told as the driver's run of the approved explicit Test Plan commands starts, when there is one to run. */
@@ -1067,6 +1085,7 @@ export function liveV2Functions(input: {
     // The approvals a conflict re-entry starts from: the Principal-authored verdicts the gate itself reads.
     readPostedVerdicts: (pr) => readPostedReviewVerdicts(pr),
     ...(input.readyTestsPolicy ? { readyTestsPolicy: input.readyTestsPolicy } : {}),
+    ...(input.requiredCiPolicy ? { requiredCiPolicy: input.requiredCiPolicy } : {}),
     checkReadyBaseline: () => checkReadyBaseline(input.baselineRoot ?? input.worktreePath),
     ...(input.readyPushDeadlineMs ? { readyDeadlineMs: input.readyPushDeadlineMs } : {}),
     runExplicitCommands: ({ head, body, commands, signal, deadlineAt }) => {
@@ -1154,8 +1173,18 @@ export async function readyGateEvidence(input: {
     return replaceEvidenceBlock(input.body, report.blockInner)
   }
   const none = gate.localTests === 'none' || gate.selection?.selected.length === 0
+  // A native run's entry is the receipt its hook recorded for its aggregate command at this head, tree and context —
+  // the same recorded result `vinaya pr report` composes from — and a missing one refuses rather than re-running.
+  const nativeCommand = none ? null : (gate.selection?.native?.command ?? null)
+  const nativeEntry = nativeCommand
+    ? await lookupGreenRun(nativeCommand, input.worktreePath, input.cache ?? defaultTestRunCache())
+    : null
+  if (nativeCommand && !nativeEntry)
+    throw new Error(
+      `the ready push of ${input.head} ran its native selected suite, but no receipt for \`${nativeCommand.split(' -- ')[0]}\` matches this head, tree and verification context; the suite is never re-run to compose Evidence.`
+    )
   // The selected suite's entry is the persisted hook run, never a second run.
-  const hookEntry: GroupCCommandResult = {
+  const hookEntry: GroupCCommandResult = nativeEntry ?? {
     command: none
       ? 'no local tests'
       : gate.selection

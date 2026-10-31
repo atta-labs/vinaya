@@ -19,6 +19,8 @@ import {
   readyCiPlanCommand,
   readyTestsPolicyOf,
   readTrustedReadyTestsPolicy,
+  readTrustedRequiredCiPolicy,
+  requiredCiPolicyOf,
   resolveReadyTestsDeferral
 } from '../../src/lib/pre-push-ready-policy.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
@@ -80,11 +82,43 @@ describe('the trusted opt-in', () => {
     ).toThrow('could not read')
   })
 
-  it("this repository's own default-branch configuration opts in to required-CI ready tests", () => {
+  it("this repository's own configuration tests its ready and repair pushes locally and still owes the required check", () => {
     const config = JSON.parse(readFileSync(join(REPO_ROOT, 'vinaya.config.json'), 'utf8')) as Parameters<
       typeof readyTestsPolicyOf
     >[0]
-    expect(readyTestsPolicyOf(config)).toEqual({ mode: 'ci', workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' })
+    expect(readyTestsPolicyOf(config)).toEqual({ mode: 'local' })
+    expect(requiredCiPolicyOf(config)).toEqual({ workflow: READY_TESTS_WORKFLOW, check: READY_TESTS_CHECK })
+  })
+})
+
+describe('the required-CI descriptor, independent of where the tests run', () => {
+  const PAIR = { workflow: READY_TESTS_WORKFLOW, check: READY_TESTS_CHECK }
+
+  it('the declared field is owed with tests local; absent with no opt-in, nothing is owed', () => {
+    expect(requiredCiPolicyOf({ prePush: { requiredCi: PAIR } } as never)).toEqual(PAIR)
+    expect(readyTestsPolicyOf({ prePush: { requiredCi: PAIR } } as never)).toEqual({ mode: 'local' })
+    expect(requiredCiPolicyOf(null)).toBeNull()
+    expect(requiredCiPolicyOf({ prePush: { alwaysRun: [] } } as never)).toBeNull()
+  })
+
+  it('an existing readyTests opt-in supplies its legacy pair when the field is absent, and the same pair agrees', () => {
+    expect(requiredCiPolicyOf({ prePush: { readyTests: CI } } as never)).toEqual(PAIR)
+    expect(requiredCiPolicyOf({ prePush: { readyTests: CI, requiredCi: PAIR } } as never)).toEqual(PAIR)
+  })
+
+  it('conflicting descriptors refuse rather than choose', () => {
+    expect(() =>
+      requiredCiPolicyOf({ prePush: { readyTests: CI, requiredCi: { ...PAIR, check: 'Other' } } } as never)
+    ).toThrow('must name one required check')
+  })
+
+  it('is read from the default branch only, and a failed read throws', () => {
+    expect(readTrustedRequiredCiPolicy(() => ({ prePush: { requiredCi: PAIR } }) as never)).toEqual(PAIR)
+    expect(() =>
+      readTrustedRequiredCiPolicy(() => {
+        throw new Error('could not read the trust-anchor config from the default branch')
+      })
+    ).toThrow('could not read')
   })
 })
 
@@ -227,9 +261,10 @@ describe('the policy entrypoint, run as the hook runs it', () => {
 
 describe('the generated hook’s deferral step, executed', () => {
   const HOOK = readFileSync(join(REPO_ROOT, '.vinaya', 'hooks', 'pre-push'), 'utf8')
-  // The committed hook's own lines from the policy call through the selector call (doctor holds it equal to the generator's).
+  // The committed hook's own lines from the policy call through the generic selector call (doctor holds it equal to
+  // the generator's); the native local-run hand-off sits between them.
   const start = HOOK.indexOf('VINAYA_READY_TESTS="$(')
-  const end = HOOK.indexOf('VINAYA_SELECTED_TESTS="$(')
+  const end = HOOK.lastIndexOf('VINAYA_SELECTED_TESTS="$(')
   const step = HOOK.slice(start, HOOK.indexOf('\n', end) + 1)
 
   it('runs after the typecheck and before the test selector', () => {
@@ -239,9 +274,13 @@ describe('the generated hook’s deferral step, executed', () => {
     expect(end).toBeGreaterThan(start)
   })
 
-  function runStep(policyAnswer: string, policyExit: number, seededRecord?: string) {
+  function runStep(policyAnswer: string, policyExit: number, seededRecord?: string, localRun = false) {
     const dir = mkdtempSync(join(tmpdir(), 'vinaya-ready-hook-'))
     try {
+      if (localRun) {
+        mkdirSync(join(dir, 'scripts', 'test-suites'), { recursive: true })
+        writeFileSync(join(dir, 'scripts', 'test-suites', 'local-run.ts'), '')
+      }
       const bin = join(dir, 'bin')
       mkdirSync(bin)
       const recordPath = join(dir, 'pre-push-failed-tests.json')
@@ -255,6 +294,7 @@ describe('the generated hook’s deferral step, executed', () => {
           `  *pre-push-ready-policy.ts) echo "${policyAnswer}"; exit ${policyExit} ;;`,
           `  *pre-push-select-tests.ts) touch "${join(dir, 'selector-ran')}"; exit 0 ;;`,
           `  *pre-push-record-tests.ts) touch "${join(dir, 'recorder-ran')}"; exit 0 ;;`,
+          `  *local-run.ts) echo "$2" >> "${join(dir, 'adapter-ran')}"; exit 0 ;;`,
           'esac',
           'exit 0'
         ].join('\n')
@@ -263,13 +303,15 @@ describe('the generated hook’s deferral step, executed', () => {
       const result = spawnSyncBudgeted('sh', ['-c', step], {
         cwd: dir,
         encoding: 'utf8',
-        env: { PATH: `${bin}:/usr/bin:/bin` }
+        // The adapter step captures its run with `mktemp`, so the fixture names its own temporary directory.
+        env: { PATH: `${bin}:/usr/bin:/bin`, TMPDIR: dir }
       })
       return {
         status: result.status,
         out: `${result.stdout}${result.stderr}`,
         selector: existsSync(join(dir, 'selector-ran')),
         recorder: existsSync(join(dir, 'recorder-ran')),
+        adapter: existsSync(join(dir, 'adapter-ran')) ? readFileSync(join(dir, 'adapter-ran'), 'utf8') : null,
         record: seededRecord === undefined ? null : readFileSync(recordPath)
       }
     } finally {
@@ -298,6 +340,21 @@ describe('the generated hook’s deferral step, executed', () => {
     expect(result.status).toBe(0)
     expect(result.out).not.toContain('deferred')
     expect(result.selector).toBe(true)
+    expect(result.adapter).toBeNull()
+  })
+
+  it('local, with the native adapter committed: it selects then runs, and the generic selector never starts', () => {
+    const result = runStep('local', 0, undefined, true)
+    expect(result.status).toBe(0)
+    expect(result.adapter).toBe('select\nrun\n')
+    expect(result.selector).toBe(false)
+    expect(result.recorder).toBe(false)
+  })
+
+  it('deferred, with the native adapter committed: the adapter never starts', () => {
+    const result = runStep('deferred', 0, undefined, true)
+    expect(result.status).toBe(0)
+    expect(result.adapter).toBeNull()
   })
 
   it('a refusal stops the push before the selector', () => {

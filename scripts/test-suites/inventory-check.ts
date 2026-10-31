@@ -53,7 +53,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join, posix } from 'node:path'
 import ts from 'typescript'
-import { extractImportSpecifiers, resolveRelativeImport, testRunnerOf } from '../../apps/cli/src/lib/test-selector.ts'
+import { extractImportSpecifiers, resolveRelativeImport, testRunnerOf } from '../../apps/cli/src/lib/test-selector.js'
 import {
   declarationListProblems,
   diffTestIdentities,
@@ -73,7 +73,7 @@ import {
   stableJson,
   type TestIdentity,
   type UnknownScope
-} from '../../apps/cli/src/lib/verification/index.ts'
+} from '../../apps/cli/src/lib/verification/index.js'
 
 export {
   diffTestIdentities,
@@ -91,7 +91,7 @@ export {
   stableJson,
   type TestIdentity,
   type UnknownScope
-} from '../../apps/cli/src/lib/verification/index.ts'
+} from '../../apps/cli/src/lib/verification/index.js'
 
 /** The schema this file reads and every view it produces declares. */
 export const INVENTORY_SCHEMA = 'vinaya.test-inventory'

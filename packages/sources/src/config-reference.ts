@@ -855,11 +855,25 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     type: "{ mode: 'ci', workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' } (optional)",
     semantics: [
       "Opts a self-hosting repository's version-2 ready push, and the driver-owned repair pushes on its own open pull request, into required-CI testing: those pushes keep lint, every registered local check and the affected typecheck, and defer the automatic selected test suite to the named required check on the approved current head. The run reaches ready-for-merge only once that check, in that workflow's run for that head, completed successfully.",
-      'Read from the default branch only — never from a task branch, a local override or an environment value — and a failed read refuses rather than deferring. Absent means local tests. The one supported value is the pair shown; any other value is refused. Approved explicit Test Plan commands still run locally, through the driver, on the head being published.'
+      'Read from the default branch only — never from a task branch, a local override or an environment value — and a failed read refuses rather than deferring. Absent means local tests. The one supported value is the pair shown; any other value is refused. Approved explicit Test Plan commands still run locally, through the driver, on the head being published.',
+      'Deferral is only where the selected tests run. The required check the publication owes is `prePush.requiredCi`; when that key is absent, this opt-in supplies the same pair as it, and removing the opt-in removes that supplied obligation — so a repository that moves its tests back to local pushes and still owes the check declares `prePush.requiredCi`.'
     ],
     example: `{
   "prePush": {
     "readyTests": { "mode": "ci", "workflow": ".github/workflows/ci.yml", "check": "Vinaya CI" }
+  }
+}`
+  },
+  {
+    key: 'prePush.requiredCi',
+    type: "{ workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' } (optional)",
+    semantics: [
+      "Names the required current-head check a self-hosting repository's version-2 publication owes, independent of where its selected tests run: a ready or repair publication whose tests ran locally owes it exactly as a deferred one does. The run reaches ready-for-merge only once that check, in that workflow's latest run attempt for the current published head, completed successfully; a missing workflow or job, a skipped or neutral result, another workflow or head, a stale attempt or unrelated green checks never complete it.",
+      'Read from the default branch only, like `prePush.readyTests`; a failed read refuses completion. When absent, a `prePush.readyTests` opt-in supplies its pair; both set with different pairs is refused. Absent with no opt-in, nothing extra is owed. The one supported value is the pair shown.'
+    ],
+    example: `{
+  "prePush": {
+    "requiredCi": { "workflow": ".github/workflows/ci.yml", "check": "Vinaya CI" }
   }
 }`
   },

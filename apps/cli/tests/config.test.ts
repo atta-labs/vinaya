@@ -1334,6 +1334,22 @@ describe('VinayaConfigSchema.prePush / .report — additive-only', () => {
       expect(VinayaConfigSchema.safeParse({ prePush: { readyTests: refused } }).success).toBe(false)
   })
 
+  it('accepts prePush.requiredCi only as the one supported pair, alone or beside readyTests, and absent', () => {
+    const requiredCi = { workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' }
+    expect(VinayaConfigSchema.safeParse({ prePush: { requiredCi } }).success).toBe(true)
+    expect(
+      VinayaConfigSchema.safeParse({ prePush: { requiredCi, readyTests: { mode: 'ci', ...requiredCi } } }).success
+    ).toBe(true)
+    for (const refused of [
+      { ...requiredCi, workflow: '.github/workflows/other.yml' },
+      { ...requiredCi, check: 'Some check' },
+      { workflow: requiredCi.workflow },
+      { ...requiredCi, mode: 'ci' },
+      'Vinaya CI'
+    ])
+      expect(VinayaConfigSchema.safeParse({ prePush: { requiredCi: refused } }).success).toBe(false)
+  })
+
   it('accepts a well-formed report.commandTimeoutMs', () => {
     const parsed = VinayaConfigSchema.safeParse({ report: { commandTimeoutMs: 1_800_000 } })
     expect(parsed.success).toBe(true)

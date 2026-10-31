@@ -40,8 +40,8 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, posix } from 'node:path'
-import { CI_SHARD_COUNT, CI_SHARD_LIST_OWNER, shardFileRelPath } from '../../apps/cli/src/lib/ci-shard-membership.ts'
-import type { CiDecision } from '../../apps/cli/src/lib/ci-test-selection.ts'
+import { CI_SHARD_COUNT, CI_SHARD_LIST_OWNER, shardFileRelPath } from '../../apps/cli/src/lib/ci-shard-membership.js'
+import type { CiDecision } from '../../apps/cli/src/lib/ci-test-selection.js'
 import {
   DEFAULT_CONFIGURATION,
   type ExecutionFacts,
@@ -51,8 +51,8 @@ import {
   type NativeTestRequest,
   validateExecutedIdentities,
   type WholeSuiteRequest
-} from '../../apps/cli/src/lib/verification/index.ts'
-import { type InventoryView, readTestInventory, type TestIdentity } from './inventory-check.ts'
+} from '../../apps/cli/src/lib/verification/index.js'
+import { type InventoryView, readTestInventory, type TestIdentity } from './inventory-check.js'
 
 export type Placement = 'build' | 'shared' | `shard-${number}`
 
@@ -347,6 +347,45 @@ export function bunJunitFiles(xml: string): string[] | null {
 }
 
 /**
+ * The files a Bun JUnit report says failed: the `file` of each top-level
+ * `<testsuite>` whose `failures` or `errors` count is above zero, as written.
+ * `null` when the text is not a Bun JUnit report.
+ */
+export function bunJunitFailedFiles(xml: string): string[] | null {
+  if (!/<testsuites\b/.test(xml)) return null
+  const failed: string[] = []
+  let depth = 0
+  for (const tag of xml.matchAll(/<(\/?)(testsuites|testsuite)\b([^>]*?)(\/?)>/g)) {
+    const [, closing, name, attrs, selfClosing] = tag as unknown as [string, string, string, string, string]
+    if (name === 'testsuites') continue
+    if (closing) {
+      depth--
+      continue
+    }
+    if (depth === 0) {
+      const file = /\bfile="([^"]*)"/.exec(attrs)?.[1]
+      const count = (attr: string) => Number(new RegExp(`\\b${attr}="(\\d+)"`).exec(attrs)?.[1] ?? 0)
+      if (file !== undefined && (count('failures') > 0 || count('errors') > 0)) failed.push(xmlText(file))
+    }
+    if (!selfClosing) depth++
+  }
+  return depth === 0 ? failed : null
+}
+
+/** The files a Vitest JSON report says failed, as written; `null` when the text is not one. */
+export function vitestJsonFailedFiles(text: string): string[] | null {
+  try {
+    const report = JSON.parse(text) as { testResults?: { name?: unknown; status?: unknown }[] }
+    if (!Array.isArray(report.testResults)) return null
+    return report.testResults
+      .filter((r) => r.status === 'failed' && typeof r.name === 'string')
+      .map((r) => r.name as string)
+  } catch {
+    return null
+  }
+}
+
+/**
  * The files a Bun JUnit report names, as the execution check reads them.
  * Bun writes each entry's `file` relative to the process's working directory
  * at the moment it writes it, and starts a new top-level suite for the same
@@ -418,23 +457,47 @@ export function runnerCommand(group: NativeGroup, report: string): string[] {
   ]
 }
 
-export type RunResult = { failedRunners: string[]; problems: NativeProblem[]; executions: ExecutionFacts[] }
+export type RunResult = {
+  failedRunners: string[]
+  problems: NativeProblem[]
+  executions: ExecutionFacts[]
+  /**
+   * For each failed runner, the repository-relative tests its report says
+   * failed — or `'all'` when it names none (a crash, an error outside a file,
+   * no readable report), so a failure is never read as nothing failing.
+   */
+  failedTests: Record<string, string[] | 'all'>
+}
+
+/** The group's own test a report entry names, repository-relative, or `null`. */
+function scheduledTestOf(group: NativeGroup, written: string, repoRoot: string): string | null {
+  const resolved = bunReportedFiles(group, [written], repoRoot)?.[0] ?? written
+  const slashed = resolved.replace(/\\/g, '/')
+  const roots = [repoRoot, realpathSync(repoRoot)].map((root) => `${root.replace(/\\/g, '/').replace(/\/+$/, '')}/`)
+  const root = roots.find((r) => slashed.startsWith(r))
+  const id = root
+    ? slashed.slice(root.length)
+    : posix.normalize(group.cwd === '.' ? slashed : `${group.cwd}/${slashed}`)
+  return group.tests.includes(id) ? id : null
+}
 
 /**
  * Runs `groups` one after another, each in its own working directory under
  * its own runner, and checks every runner executed exactly its files. The
- * environment is this process's; nothing runs in parallel.
+ * environment is this process's unless `env` names one; nothing runs in
+ * parallel.
  */
 export function runGroups(
   repoRoot: string,
   groups: readonly NativeGroup[],
-  options: { log?: (line: string) => void; spawn?: typeof spawnSync } = {}
+  options: { log?: (line: string) => void; spawn?: typeof spawnSync; env?: NodeJS.ProcessEnv } = {}
 ): RunResult {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`))
   const spawn = options.spawn ?? spawnSync
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-schedule-'))
   const executions: ExecutionFacts[] = []
   const failedRunners: string[] = []
+  const failedTests: Record<string, string[] | 'all'> = {}
   try {
     groups.forEach((group, index) => {
       const report = join(dir, `${index}.${group.runner === 'bun' ? 'xml' : 'json'}`)
@@ -442,13 +505,17 @@ export function runGroups(
       log(
         `vinaya schedule: ${group.id} — ${group.owner}, ${group.runner} in ${group.cwd}, ${group.tests.length} file(s)`
       )
-      const run = spawn(command[0] as string, command.slice(1), { cwd: join(repoRoot, group.cwd), stdio: 'inherit' })
+      const run = spawn(command[0] as string, command.slice(1), {
+        cwd: join(repoRoot, group.cwd),
+        stdio: 'inherit',
+        ...(options.env ? { env: options.env } : {})
+      })
       if (run.signal) {
         executions.push({ group: group.id, outcome: 'signaled', detail: run.signal, files: [] })
         failedRunners.push(group.id)
+        failedTests[group.id] = 'all'
         return
       }
-      if (run.status !== 0) failedRunners.push(group.id)
       let text: string | null = null
       try {
         text = readFileSync(report, 'utf8')
@@ -461,6 +528,15 @@ export function runGroups(
           : group.runner === 'bun'
             ? bunReportedFiles(group, bunJunitFiles(text), repoRoot)
             : vitestJsonFiles(text)
+      if (run.status !== 0) {
+        failedRunners.push(group.id)
+        const written =
+          text === null ? null : group.runner === 'bun' ? bunJunitFailedFiles(text) : vitestJsonFailedFiles(text)
+        const named = (written ?? [])
+          .map((entry) => scheduledTestOf(group, entry, repoRoot))
+          .filter((id): id is string => id !== null)
+        failedTests[group.id] = named.length > 0 ? [...new Set(named)].sort() : 'all'
+      }
       executions.push(
         files === null
           ? { group: group.id, outcome: 'unreadable', detail: `no readable ${group.runner} report`, files: [] }
@@ -472,7 +548,7 @@ export function runGroups(
   }
   const roots = [...new Set([repoRoot, realpathSync(repoRoot)])]
   const { problems } = validateExecutedIdentities(groups, executions, { roots })
-  return { failedRunners, problems, executions }
+  return { failedRunners, problems, executions, failedTests }
 }
 
 // ── Command line ───────────────────────────────────────────────────────────

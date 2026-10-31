@@ -39,7 +39,7 @@ import { type HookDir, TRACKED_HOOK_DIR } from './init-hook-paths.js'
 import type { CreateLabelOp, Op } from './ops.js'
 import { ownVersion } from './own-version.js'
 import { REVIEW_GATE_WORKFLOW_NAME } from './review-gate-check-name.js'
-import { ADOPTER_TEST_RUNNER, NO_LOCAL_TESTS_MARKER } from './pre-push-test-runner.js'
+import { ADOPTER_TEST_RUNNER, NO_LOCAL_TESTS_MARKER, REPOSITORY_LOCAL_RUN } from './pre-push-test-runner.js'
 import { READY_TESTS_DEFERRED_LINE } from './pre-push-ready-policy.js'
 import type { VendoredVinaya } from './self-host.js'
 
@@ -1679,6 +1679,39 @@ VINAYA_READY_TESTS="$(${libBinInvocation(selfHost, 'pre-push-ready-policy.ts', '
 if [ "$VINAYA_READY_TESTS" = "deferred" ]; then
   echo "${READY_TESTS_DEFERRED_LINE} — local checks passed; the selected tests run in the required CI check on this head"
   exit 0
+fi
+# A repository that commits its native local-run adapter (${REPOSITORY_LOCAL_RUN})
+# hands the tests to it: "select" freezes this push's plan from the shared
+# selector (the base it builds on, the unresolved failed tests, every suite
+# run whole and why) and prints one selected file per line; "run" executes
+# exactly that plan, once per native runner group, one after another, checks
+# each runner executed exactly its files, and records the head-bound result,
+# the passing or failed record and the receipt of its aggregate command. Its
+# exit status is the verdict and its last lines the summary. The git
+# variables this hook was invoked with are removed first, as below, so no
+# test-owned fixture inherits them.
+if [ -f ${REPOSITORY_LOCAL_RUN} ]; then
+  for _vinaya_git_var in $(env | grep -o '^GIT_[A-Za-z0-9_]*='); do
+    unset "\${_vinaya_git_var%=*}"
+  done
+  VINAYA_SELECTED_TESTS="$(bun ${REPOSITORY_LOCAL_RUN} select)" || exit 1
+  VINAYA_TEST_LOG="$(mktemp "\${TMPDIR:-/tmp}/vinaya-tests.XXXXXX")" || exit 1
+  VINAYA_PROGRESS_COPIER=""
+  if [ -n "$VINAYA_PROGRESS" ] && [ -n "$VINAYA_SELECTED_TESTS" ]; then
+    VINAYA_PROGRESS_TOTAL=$(printf '%s\\n' "$VINAYA_SELECTED_TESTS" | grep -c .)
+    ${progress} follow "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 &
+    VINAYA_PROGRESS_COPIER=$!
+  fi
+  bun ${REPOSITORY_LOCAL_RUN} run --log "$VINAYA_TEST_LOG" > "$VINAYA_TEST_LOG" 2>&1
+  VINAYA_TEST_STATUS=$?
+  if [ -n "$VINAYA_PROGRESS_COPIER" ]; then
+    kill "$VINAYA_PROGRESS_COPIER" 2>/dev/null
+    wait "$VINAYA_PROGRESS_COPIER" 2>/dev/null
+    ${progress} finish "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 || true
+  fi
+  cat "$VINAYA_TEST_LOG"
+  rm -f "$VINAYA_TEST_LOG"
+  exit "$VINAYA_TEST_STATUS"
 fi
 VINAYA_SELECTED_TESTS="$(${libBinInvocation(selfHost, 'pre-push-select-tests.ts', 'vinaya-select-tests')})"
 if [ -n "$VINAYA_SELECTED_TESTS" ]; then

@@ -1423,11 +1423,22 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
     expect(prePush).toContain("for _vinaya_git_var in $(env | grep -o '^GIT_[A-Za-z0-9_]*='); do")
     expect(prePush).toContain('unset "${_vinaya_git_var%=*}"')
+    // The generic path: selection, then the unset, then the run.
     const selectIdx = prePush.indexOf('pre-push-select-tests.ts')
-    const unsetIdx = prePush.indexOf('_vinaya_git_var')
+    const unsetIdx = prePush.indexOf('_vinaya_git_var', selectIdx)
     const runTestsIdx = prePush.indexOf('pre-push-record-tests.ts run')
+    expect(selectIdx).toBeGreaterThan(-1)
     expect(selectIdx).toBeLessThan(unsetIdx)
     expect(unsetIdx).toBeLessThan(runTestsIdx)
+    // The native local-run hand-off, before the generic path: the unset precedes both its select and its run.
+    const nativeIdx = prePush.indexOf('if [ -f scripts/test-suites/local-run.ts ]')
+    const nativeUnsetIdx = prePush.indexOf('_vinaya_git_var', nativeIdx)
+    expect(nativeIdx).toBeGreaterThan(-1)
+    expect(nativeUnsetIdx).toBeLessThan(prePush.indexOf('local-run.ts select', nativeIdx))
+    expect(prePush.indexOf('local-run.ts select', nativeIdx)).toBeLessThan(
+      prePush.indexOf('local-run.ts run', nativeIdx)
+    )
+    expect(prePush.indexOf('local-run.ts run', nativeIdx)).toBeLessThan(selectIdx)
   })
 
   it('the GIT_* unset step really does isolate a child process from an ambient GIT_DIR/GIT_WORK_TREE — real subprocess, real env, no simulation shortcuts', async () => {

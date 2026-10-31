@@ -7,6 +7,9 @@
  * from the default branch's `vinaya.config.json` only (the trust anchor) — never from the task branch, a local
  * override or the environment. Absent means local tests. A failed trusted read refuses: it never permits deferral.
  *
+ * The required check a publication owes is a separate answer from the same trusted read (`requiredCiPolicyOf`):
+ * `prePush.requiredCi`, or the pair a `readyTests` opt-in names. Where the tests run never decides whether it is owed.
+ *
  * A push defers only when the run's driver asked for it: the driver writes a short-lived marker under the worktree's
  * git directory (`READY_DEFERRAL_MARKER`) naming its run, its task branch, its own process identity (pid and start
  * time) and either the approved head (`ready`) or its open pull request (`repair`), and removes it when the publish
@@ -98,6 +101,33 @@ export function readTrustedReadyTestsPolicy(
   load: () => VinayaConfig | null = () => loadTrustAnchorConfigOrThrow()
 ): ReadyTestsPolicy {
   return readyTestsPolicyOf(load())
+}
+
+/** The required current-head check a publication owes, independent of where its selected tests run. */
+export type RequiredCiPolicy = { workflow: string; check: string }
+
+/**
+ * The required-CI descriptor of a parsed trust-anchor config: `prePush.requiredCi`, or — when that is absent — the
+ * pair an existing `prePush.readyTests` opt-in names; `null` when neither is set (nothing extra is owed). Throws when
+ * both are set and name different pairs: two trusted answers to one question are refused, never chosen between.
+ */
+export function requiredCiPolicyOf(config: VinayaConfig | null): RequiredCiPolicy | null {
+  const declared = config?.prePush?.requiredCi
+  const ready = config?.prePush?.readyTests
+  const legacy = ready?.mode === 'ci' ? { workflow: ready.workflow, check: ready.check } : null
+  if (declared && legacy && (declared.workflow !== legacy.workflow || declared.check !== legacy.check))
+    throw new Error(
+      `prePush.requiredCi names ${declared.check} (${declared.workflow}) and prePush.readyTests names ${legacy.check} (${legacy.workflow}); the default branch must name one required check`
+    )
+  if (declared) return { workflow: declared.workflow, check: declared.check }
+  return legacy
+}
+
+/** The required-CI descriptor from the default branch's config; throws when the trusted read fails or conflicts. */
+export function readTrustedRequiredCiPolicy(
+  load: () => VinayaConfig | null = () => loadTrustAnchorConfigOrThrow()
+): RequiredCiPolicy | null {
+  return requiredCiPolicyOf(load())
 }
 
 export const deferralMarkerText = (marker: Omit<DeferralMarker, 'version'>): string =>

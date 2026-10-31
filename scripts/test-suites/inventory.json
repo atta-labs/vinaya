@@ -245,6 +245,13 @@
       "reason": "The shard lists place each CLI test in a shard; the schedule reads them to place every other shard-run test."
     },
     {
+      "id": "managed-pre-push-hook",
+      "kind": "config",
+      "paths": [".vinaya/hooks/pre-push"],
+      "readers": [{ "kind": "raw-bytes", "tests": ["apps/cli/tests/lib/local-test-runner.test.ts"] }],
+      "reason": "The native local runner's test reads the committed hook and asserts where it hands a push's tests to the adapter."
+    },
+    {
       "id": "inventory-declarations",
       "kind": "config",
       "paths": ["scripts/test-suites/inventory.json"],

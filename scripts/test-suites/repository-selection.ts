@@ -27,14 +27,15 @@
  *
  * The CI workflow consumes this adapter through its own plan
  * (`scripts/ci/impact-plan.ts`), which also keeps the always-run list as a
- * CI obligation until its inputs are modeled; the pre-push hook does not
- * use it yet.
+ * CI obligation until its inputs are modeled. The pre-push hook consumes it
+ * through the native local-run adapter (`local-run.ts`), which hands it the
+ * base the push chose and keeps the push's failed-test obligations outside it.
  *
  *   bun scripts/test-suites/repository-selection.ts --base <rev> --head <rev> [--consumer local|ci] [--depth one|transitive]
  */
 import { execFileSync } from 'node:child_process'
-import { CLI_SPAWN_BINARY } from '../../apps/cli/src/lib/cli-spawn-tests.ts'
-import { DEFAULT_CLI_ENTRYPOINT } from '../../apps/cli/src/lib/test-selector.ts'
+import { CLI_SPAWN_BINARY } from '../../apps/cli/src/lib/cli-spawn-tests.js'
+import { DEFAULT_CLI_ENTRYPOINT } from '../../apps/cli/src/lib/test-selector.js'
 import {
   gitRepository,
   type ScannerDeclaration,
@@ -44,7 +45,7 @@ import {
   type SelectionPolicy,
   type SelectTestsInput,
   selectTests
-} from '../../apps/cli/src/lib/verification/index.ts'
+} from '../../apps/cli/src/lib/verification/index.js'
 import {
   INVENTORY_PATH,
   type InventoryDeclarations,
@@ -52,7 +53,7 @@ import {
   readExportedScannerDeclarations,
   readTestInventory,
   revisionReader
-} from './inventory-check.ts'
+} from './inventory-check.js'
 
 export type SelectionConsumer = 'local' | 'ci'
 

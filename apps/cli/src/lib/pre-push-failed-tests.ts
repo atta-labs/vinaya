@@ -20,6 +20,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
+import type { NativeGroup } from './verification/index.js'
 
 /** File name of the record under the worktree's git directory. */
 export const FAILED_TESTS_RECORD = 'vinaya/pre-push-failed-tests.json'
@@ -44,6 +45,47 @@ export type FailedTestsRecord = {
   recordedAt: string
   /** Only a supervised, fully completed selection permits a narrow rerun. */
   selectionCompleted?: boolean
+  /** The native verification context ({@link NativeSelection.context}) the refused run executed under, when it was a native run. */
+  context?: string
+}
+
+/**
+ * The plan a repository's native local-run adapter froze for one push: the shared selector's answer for the base the
+ * push chose, plus the push's own obligations, grouped once per native runner start. Version 1; a reader that does
+ * not know `native` reads the note exactly as before.
+ */
+export type NativeSelection = {
+  version: 1
+  /** The selector's base commit: the merge base with the remote base, a verified passing head, or a refused head. */
+  base: string
+  baseKind: 'merge-base' | 'since-green' | 'rerun'
+  /** The selection plan's own identity. */
+  plan: string
+  /** The head inventory's semantic context identity (its schema, declarations and runner facts). */
+  inventory: string
+  /** The verification context the plan executes under: the context digest, {@link inventory} and the engine. */
+  context: string
+  /** Every expected `<test>@<configuration>`, sorted. */
+  identities: string[]
+  /** The unresolved failed tests the push added on top of the selection, repository-relative. */
+  obligations: string[]
+  /** One runner start per group, in run order, exactly as the run step starts it. */
+  groups: NativeGroup[]
+  /** Suites the push runs whole because their runner cannot be narrowed to the selected files, with why. */
+  expanded: { suite: string; reason: string }[]
+  /** The aggregate native command (`nativeRunCommand`), or null when nothing was selected. */
+  command: string | null
+}
+
+/** What the native run of a {@link NativeSelection} completed. Version 1. */
+export type NativeCompletion = {
+  version: 1
+  /** True only when every group's runner exited, left a readable report, and executed exactly its tests. */
+  completed: boolean
+  /** Every `<test>@<configuration>` the reports confirm executed once. */
+  executed: string[]
+  failedRunners: string[]
+  problems: { code: string; path: string; group?: string; detail: string }[]
 }
 
 /**
@@ -74,6 +116,8 @@ type SelectionNoteBase = {
   selected: string[]
   /** The verification context digest the selection was made under; absent when it was unreadable or an input was dirty, so no passing record can follow. */
   context?: string
+  /** The frozen native plan, when a repository's native local-run adapter made the selection. */
+  native?: NativeSelection
 }
 
 /** How the selector chose this push's tests. */
@@ -117,6 +161,8 @@ export type LastPushResult = {
   selectionCompleted?: boolean
   elapsedSeconds: number | null
   recordedAt: string
+  /** What the native run completed, when `selection.native` planned it. */
+  native?: NativeCompletion
 }
 
 /** Emitted by the supervisor only after Bun exits normally, never after a signal or native crash. */
@@ -380,6 +426,112 @@ export function passingRecordFromRun(inputs: PassingRunInputs): PassingRecord | 
     selectionCompleted: true,
     context: selection.context,
     recordedAt: inputs.now.toISOString()
+  }
+}
+
+// ── The native push: its base, its obligations and its proof ────────────────
+
+export type NativeBaseInputs = {
+  repoRoot: string
+  head: string
+  branch: string
+  /** The merge base of the head with the push's remote base: the initial base. */
+  mergeBase: string
+  failed: FailedTestsRecord | null
+  passing: PassingRecord | null
+  /** The native verification context now; `null` when unreadable. */
+  context: string | null
+  /** Whether the verification inputs are clean; `null` when git could not say. */
+  inputsClean: boolean | null
+  isAncestor: (ancestor: string) => boolean
+  exists: (path: string) => boolean
+  /** Absolute paths changed between `from` and the head, or `null` when git could not read them. */
+  changedBetween: (from: string) => string[] | null
+}
+
+export type NativeBaseChoice = {
+  /** The base the shared selector compares the head with. */
+  base: string
+  kind: NativeSelection['baseKind']
+  /** Absolute paths of the unresolved failed tests the push runs on top of the selection. */
+  obligations: string[]
+  reason: string
+}
+
+/**
+ * The base a native push hands the shared selector, and the failed tests it adds outside it. A refusal on this
+ * branch, still in its history, leaves its named failed files as obligations whatever base is chosen; it narrows the
+ * base to the refused head only when that run completed under this very context. Otherwise a verified passing head
+ * under this context narrows the base to it. Anything else — another branch, a rewritten history, an unnamed failure,
+ * another or unreadable context, dirty inputs, an unreadable diff, a changed root configuration — compares with the
+ * merge base: the wider answer.
+ */
+export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
+  const context = inputs.context !== null && inputs.inputsClean === true ? inputs.context : null
+  const full = (reason: string, obligations: string[] = []): NativeBaseChoice => ({
+    base: inputs.mergeBase,
+    kind: 'merge-base',
+    obligations,
+    reason
+  })
+  const narrowable = (from: string): boolean => {
+    const changed = inputs.changedBetween(from)
+    return changed !== null && !changed.includes(join(inputs.repoRoot, SELECTION_POLICY.rootConfigFile))
+  }
+  const record = inputs.failed
+  if (record && record.branch === inputs.branch && inputs.isAncestor(record.head)) {
+    if (record.failed === 'all') return full('the last refused push named no failing file')
+    const obligations = record.failed.filter(inputs.exists).sort()
+    if (obligations.length !== record.failed.length)
+      return full('a failed test file of the last refused push no longer exists', obligations)
+    if (record.selectionCompleted !== true || context === null || record.context !== context)
+      return full('the last refused push ran under another or unreadable verification context', obligations)
+    if (!narrowable(record.head)) return full('the changes since the refused push could not be narrowed', obligations)
+    return { base: record.head, kind: 'rerun', obligations, reason: `re-running what failed at ${record.head}` }
+  }
+  const passing = inputs.passing
+  if (!passing || passing.selectionCompleted !== true || passing.branch !== inputs.branch)
+    return full('no passing run on this branch to build on')
+  if (context === null || passing.context !== context) return full('the passing run had another verification context')
+  if (!inputs.isAncestor(passing.head)) return full('the passing head is not in this branch history')
+  if (!narrowable(passing.head)) return full('the changes since the passing run could not be narrowed')
+  return { base: passing.head, kind: 'since-green', obligations: [], reason: `building on the pass at ${passing.head}` }
+}
+
+/**
+ * The passing record a completed native run leaves, or `null`: the note froze a non-empty native plan for this very
+ * head, every runner completed and executed exactly its tests with no failure, the tracked tree held exactly that
+ * head, and the head, the context and the clean inputs it was planned under are still in place.
+ */
+export function nativePassingRecord(input: {
+  note: SelectionNote | null
+  completion: NativeCompletion
+  head: string
+  branch: string
+  context: string | null
+  inputsClean: boolean | null
+  /** Whether the tracked tree matches the head (no tracked change, staged or not); `null` when git could not say. */
+  treeClean: boolean | null
+  now: Date
+}): PassingRecord | null {
+  const { note, completion } = input
+  const native = note?.native
+  if (!note || !native || note.head !== input.head || native.identities.length === 0) return null
+  if (!input.branch || input.branch === 'HEAD' || input.treeClean !== true) return null
+  if (!completion.completed || completion.failedRunners.length > 0 || completion.problems.length > 0) return null
+  if (input.context === null || native.context !== input.context || input.inputsClean !== true) return null
+  const expected = [...native.identities].sort()
+  const executed = [...completion.executed].sort()
+  if (expected.length !== executed.length || expected.some((id, i) => id !== executed[i])) return null
+  return {
+    version: PASSING_RECORD_VERSION,
+    kind: 'passed',
+    head: input.head,
+    branch: input.branch,
+    selection: [...note.selected],
+    selectionCompleted: true,
+    context: native.context,
+    recordedAt: input.now.toISOString()
   }
 }
 

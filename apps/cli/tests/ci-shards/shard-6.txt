@@ -63,3 +63,4 @@ tests/lib/ready-ci-workflow.test.ts
 tests/lib/ci-config-probe.test.ts
 src/lib/verification/tests/selection.test.ts
 tests/lib/verification-library.test.ts
+tests/lib/local-test-runner.test.ts

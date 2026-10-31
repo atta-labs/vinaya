@@ -24,11 +24,12 @@ import {
 import type { SelectionNote } from '../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import { PROGRESS_SUMMARY_INTERVAL_MS } from '../../../../../apps/cli/src/lib/push-progress'
 import { manifestDigest } from '../../../../../apps/cli/src/lib/review-result'
-import { readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
+import { isNativeRunCommand, readyTestCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner'
 import {
   isReadyCiCommand,
   readyCiPlanCommand,
-  type ReadyTestsPolicy
+  type ReadyTestsPolicy,
+  type RequiredCiPolicy
 } from '../../../../../apps/cli/src/lib/pre-push-ready-policy'
 import { agentCommandText, extractAgentCommandLines } from '../../../../../apps/cli/src/lib/pr-report-engine'
 import {
@@ -161,6 +162,12 @@ export interface V2Functions {
   }) => Promise<ReadyGateResult> | ReadyGateResult
   /** The default branch's ready-tests policy; throws when the trusted read fails. Absent: local tests. */
   readyTestsPolicy?: () => ReadyTestsPolicy
+  /**
+   * The default branch's required-CI descriptor (`prePush.requiredCi`, or the pair a `readyTests` opt-in names), owed
+   * by a ready or repair publication wherever its tests ran; `null` when nothing extra is owed. Throws when the
+   * trusted read fails or conflicts. Absent: the pair the ready-tests policy names when it opts in, otherwise none.
+   */
+  requiredCiPolicy?: () => RequiredCiPolicy | null
   /** The read-only loop-baseline guard an opted-in publication passes before any expensive work. */
   checkReadyBaseline?: () => { ok: true } | { ok: false; reason: string }
   /** The ready push's deadline in milliseconds; the explicit-command phase shares it. */
@@ -514,6 +521,27 @@ export async function readyPush(
       }
     }
   }
+  // The required check this publication owes, read from the same trusted source and recorded with the head whatever
+  // the tests do: where they run never decides whether it is owed.
+  let owedCi: RequiredCiPolicy | null = policy.mode === 'ci' ? { workflow: policy.workflow, check: policy.check } : null
+  if (fns.requiredCiPolicy) {
+    try {
+      owedCi = fns.requiredCiPolicy()
+    } catch (error) {
+      const detail = `the default branch's required-CI policy could not be read, so the ready push of ${head} cannot tell which required check it owes: ${error instanceof Error ? error.message : String(error)}. Nothing ran; resume once the trusted read works.`
+      pauseThrough(task, 'ready-push', { reason: 'infrastructure', detail })
+      return {
+        exitCode: BACK,
+        stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+          readyPushFailures: latestRecord(results)?.readyPushFailures ?? 0,
+          decision: { type: 'pause', reason: 'infrastructure', detail },
+          outcome: 'policy-unreadable',
+          head,
+          events: []
+        })
+      }
+    }
+  }
   const deferTests = policy.mode === 'ci'
   if (deferTests) {
     // Read-only, before any expensive work: a stale loop baseline is the Developer's own reviewed refresh.
@@ -606,6 +634,8 @@ export async function readyPush(
   ]
   if (gate.passed) {
     const previous = latestRecord(results)
+    // A deferred head owes the check its hook recorded; a locally tested head owes the trusted descriptor's check.
+    const owed = deferred ? gate.requiredCi : owedCi
     return {
       exitCode: FORWARD,
       stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
@@ -616,8 +646,9 @@ export async function readyPush(
         head,
         selection: gate.selection,
         ...(gate.localTests ? { localTests: gate.localTests } : {}),
-        // The CI obligation a deferred head carries, bound to it here so a restarted run cannot forget it.
-        ...(deferred && gate.requiredCi ? { requiredCi: { ...gate.requiredCi, head } } : {}),
+        // The CI obligation the head carries, deferred or locally tested, bound to it here so a restarted run cannot
+        // forget it. `localTests` alone says whether the selected tests were deferred.
+        ...(owed ? { requiredCi: { ...owed, head } } : {}),
         ...(explicit
           ? {
               explicit: explicit.results.map(({ command, outcome, reusedFrom, wallMs: ms }) => ({
@@ -820,14 +851,21 @@ function readyGateCommand(results: Results, worktreePath: string): { command: st
   try {
     const record = JSON.parse(String(ready.stdout)) as {
       selection?: SelectionNote | null
+      localTests?: 'none' | 'deferred'
       requiredCi?: { workflow: string; check: string } | null
     }
-    // A deferred head's automatic line names the required check its selected tests run in.
-    if (record.requiredCi)
+    // Only a head whose selected tests were actually deferred names the required check as its automatic line; a
+    // required-CI obligation on a locally tested head never implies that its tests did not run.
+    if (record.localTests === 'deferred' && record.requiredCi)
       return {
         command: readyCiPlanCommand(record.requiredCi),
         observable: 'the selected tests pass in the required current-head CI check'
       }
+    // A native run names its own aggregate command: the identities, configurations and context it executed.
+    const native = record.selection?.native
+    if (native?.command)
+      return { command: native.command, observable: 'every selected test passes under its own native runner' }
+    if (native) return null
     const selected = record.selection?.selected
     return selected && selected.length > 0
       ? { command: readyTestPlanCommand(selected, worktreePath), observable: 'every selected test file passes' }
@@ -837,10 +875,13 @@ function readyGateCommand(results: Results, worktreePath: string): { command: st
   }
 }
 
-/** The automatic selected-suite line of a Test Plan: a bare test-run line, or a deferred head's required-CI line. */
+/**
+ * The automatic selected-suite line of a Test Plan: a bare test-run line, a native run's aggregate command, or a
+ * deferred head's required-CI line.
+ */
 export const isTestRunLine = (line: string): boolean => {
   const command = line.split('→')[0]?.trim() ?? ''
-  return /^(bun\s+)?test(\s|$)/.test(command) || isReadyCiCommand(command)
+  return /^(bun\s+)?test(\s|$)/.test(command) || isNativeRunCommand(command) || isReadyCiCommand(command)
 }
 
 /**
@@ -894,10 +935,26 @@ export async function readCiOnce(
   const loop = loopOf(task, results)
   const open = safeRead(fns.findOpenPullRequest)
   if (open === null) throw new Error(`read-ci-once found no open pull request for branch ${task.branch}`)
-  // A head whose ready push deferred its selected tests owes the strict required-CI read.
+  // A head that owes a required check — its tests deferred or run locally — owes the strict required-CI read; with no
+  // strict reader the run refuses to complete rather than fall back to the generic read.
   const owed = requiredCiOwed(results)
-  if (owed !== null && fns.readRequiredCi)
-    return withCiProgress(fns, (progress) => readRequiredCiStep(task, context, open.number, owed, progress))
+  if (owed !== null) {
+    if (fns.readRequiredCi)
+      return withCiProgress(fns, (progress) => readRequiredCiStep(task, context, open.number, owed, progress))
+    const detail = `the head ${owed.head} owes the required check ${owed.check} (${owed.workflow}), and this driver has no strict required-CI reader, so no CI read can complete the run; the generic check read never stands in for it. Resume under a driver that reads required CI.`
+    pauseThrough(task, 'read-ci-once', { reason: 'infrastructure', detail })
+    return {
+      exitCode: BACK,
+      stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+        decision: { type: 'pause', reason: 'infrastructure', detail },
+        head: owed.head,
+        requiredCi: owed,
+        conclusion: 'pending',
+        failingChecks: [],
+        events: []
+      })
+    }
+  }
   const now = nowOf(fns)
   const started = now()
   // The forge gates' read, given this step's own earlier record and no local gate to skip on.
@@ -950,7 +1007,7 @@ export async function readCiOnce(
   )
 }
 
-/** The required CI the ready push's record binds to its head, or null when its tests ran locally. */
+/** The required CI the ready push's record binds to its head — deferred or locally tested — or null when none is owed. */
 export function requiredCiOwed(results: Results): { workflow: string; check: string; head: string } | null {
   const ready = results['ready-push']
   if (!ready || !('stdout' in ready)) return null
@@ -972,7 +1029,7 @@ const describeFailure = (failure: ClassifiedFailure): string =>
   `${failure.job} (job ${failure.jobId}${failure.step ? `, step "${failure.step}"` : ''}${failure.url ? `, ${failure.url}` : ''}${failure.diagnostic ? `: ${failure.diagnostic}` : ''})`
 
 /**
- * The CI read of a head whose ready push deferred its selected tests (version 2 only). Polled within the gate poll
+ * The CI read of a head that owes a required check, whether its ready push deferred its selected tests or ran them locally (version 2 only). Polled within the gate poll
  * budget, each poll reads two things: the strict required-CI verdict (`readRequiredCi` — the configured workflow's
  * latest attempt for exactly this head, its required check completed `success`) and the ordinary mechanical
  * conclusion, so another required check's failure is never hidden behind a green test check. A completed failing job
@@ -1003,7 +1060,7 @@ async function readRequiredCiStep(
       task,
       results,
       'unpushed',
-      `The deferred head ${owed.head} is not the published head (worktree ${head ?? 'unreadable'}, remote ${remote ?? 'nothing'}), so its required CI cannot complete the run. Publish your work with publish_changes on this SAME branch.`,
+      `The head ${owed.head}, which owes the required check, is not the published head (worktree ${head ?? 'unreadable'}, remote ${remote ?? 'nothing'}), so its required CI cannot complete the run. Publish your work with publish_changes on this SAME branch.`,
       { ...base, conclusion: 'unpushed', failingChecks: [] }
     )
   const pause = (
@@ -1056,7 +1113,7 @@ async function readRequiredCiStep(
         task,
         results,
         'ci-red',
-        `The required check ${owed.check} is red on pull request #${pr} at ${owed.head}: the selected tests (deferred from the ready push) failed in CI. Failing job(s): ${failingChecks.join(', ')}. Fix them, commit, and publish the fix with publish_changes on this SAME branch.${failureExcerptsOnHead(task, fns, owed.head, progress?.excerpt)}`,
+        `The required check ${owed.check} is red on pull request #${pr} at ${owed.head}. Failing job(s): ${failingChecks.join(', ')}. Fix them, commit, and publish the fix with publish_changes on this SAME branch.${failureExcerptsOnHead(task, fns, owed.head, progress?.excerpt)}`,
         {
           ...base,
           conclusion: 'red',
@@ -1106,7 +1163,13 @@ async function readRequiredCiStep(
         }
       )
     }
-    if (strict.state === 'green' && generic === 'green') {
+    // A green read stands only for exactly the owed head, workflow and check; any other is not this head's proof.
+    const matches =
+      strict.state === 'green' &&
+      strict.identity.head === owed.head &&
+      strict.identity.workflow === owed.workflow &&
+      strict.identity.check === owed.check
+    if (matches && generic === 'green') {
       const previous = latestRecord(results)
       return {
         exitCode: FORWARD,
@@ -1130,7 +1193,12 @@ async function readRequiredCiStep(
         })
       }
     }
-    last = strict.state === 'green' ? `${owed.check} passed; other checks are ${generic}` : strict.detail
+    last =
+      strict.state !== 'green'
+        ? strict.detail
+        : matches
+          ? `${owed.check} passed; other checks are ${generic}`
+          : `a green read names ${strict.identity.check} (${strict.identity.workflow}) on ${strict.identity.head}, not the owed check on this head`
     if (attempt < poll.gatePollMaxAttempts) await poll.sleep(poll.gatePollIntervalMs)
   }
   return pause(
