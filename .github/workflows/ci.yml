@@ -206,6 +206,20 @@ jobs:
         if: steps.docs-only.outputs.docs_only == 'true'
         run: echo "Docs-only diff (**/*.md, .changeset/**, aeg-root/**) — lint/typecheck/test skipped." >> "$GITHUB_STEP_SUMMARY"
 
+      # The counted architecture ratchet: the head tree's process and role
+      # names in non-process code must equal the committed baseline, and that
+      # baseline may not grow against the base commit's own baseline. Never
+      # gated behind the docs-only skip: a docs-only change still runs it, and
+      # this job carries no condition that skips it
+      # (`harness/tests/architecture.test.ts` asserts both). A push to `main`
+      # has no pull-request base, so it compares with the commit it replaced.
+      - name: Test the architecture ratchet against the base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          (cd harness && bun test tests/architecture.test.ts)
+          bun harness/tests/architecture-ratchet.ts --compare-base "$BASE_SHA"
+
       # When this job failed, print its own token budgets on one line for
       # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
       # The same step ends every job in this file; the limits step after it
