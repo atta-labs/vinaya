@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -544,11 +544,17 @@ describe('the generated hook hands every test-running push to the adapter', () =
 
 describe('the real adapter, select then run, on a fixture clone of this head', () => {
   // Hermetic: a caller's git, Vinaya, push-mode or pull-request variables (a driver runs this file with its own)
-  // never reach the fixture's pushes or the tests they run.
+  // never reach the fixture's pushes or the tests they run, and the pushes keep their logs, receipts and records in
+  // the fixture's own runtime directory, never the machine's real one.
+  let runtimeDir = ''
   const env = (): NodeJS.ProcessEnv => {
     const out = stripVinayaEnv(process.env)
     for (const key of Object.keys(out)) if (key.startsWith('GIT_')) delete out[key]
     for (const key of ['BASE_SHA', 'PR_BODY', 'BRANCH', 'CI']) delete out[key]
+    if (runtimeDir) out.VINAYA_RUNTIME_DIR = runtimeDir
+    // The clone has no forge remote, so without a name of its own its tests would watch the machine-wide
+    // "unresolved" runtime directory, which any other process may write to; this name is the fixture's alone.
+    out.AEG_REPO = `native-fixture-${process.pid}/repo`
     return out
   }
   // A test the shared selector always plans, so every push here runs the same small native group.
@@ -558,7 +564,10 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
 
   const transcript: string[] = []
   function clone() {
-    const dir = join(fixtureDir('native-adapter-'), 'repo')
+    const base = fixtureDir('native-adapter-')
+    const dir = join(base, 'repo')
+    runtimeDir = join(base, 'runtime')
+    mkdirSync(runtimeDir, { recursive: true })
     execFileSync('git', ['clone', '-q', '--no-hardlinks', REPO_ROOT, dir], { env: env(), stdio: 'ignore' })
     const git = (...args: string[]) =>
       execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
