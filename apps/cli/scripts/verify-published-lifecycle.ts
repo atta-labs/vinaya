@@ -64,7 +64,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { trancheLabel } from '@attalabs/aeg-core'
+import { TASK_TOOL_NAMES, trancheLabel } from '@attalabs/aeg-core'
 import { COMMANDS } from '@attalabs/vinaya-sources'
 // Current source's registry, read to derive the expectation the published
 // artifact is measured against — the same "derive, never hand-maintain"
@@ -91,17 +91,18 @@ const PUBLISHED_VERSION = (
 ).version
 const PACKAGE_SPEC = `@attalabs/vinaya@${PUBLISHED_VERSION}`
 
-// The real repo the `archive tranche` exercise below reaches (see EXERCISES'
-// `'archive tranche'` entry) — read from THIS checkout's own `origin` remote,
+// The real repo the `archive tranche` exercise below reaches (see
+// `exerciseArchiveTranche`) — read from THIS checkout's own `origin` remote,
 // the same regex `detectGitRepo` (lib/detect.ts) uses, rather than
 // hand-maintaining an owner/repo string that would point a fork's run at the
-// upstream repo instead of itself.
-const HOST_REPO_FLAG = (() => {
+// upstream repo instead of itself. A function, not a module-level constant:
+// importing this file (the coverage test does) must run no git call.
+function hostRepoFlag(): string {
   const url = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: CLI_PKG_DIR, encoding: 'utf8' }).trim()
   const m = url.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/)
   if (!m) throw new Error(`could not parse a GitHub owner/repo from this checkout's origin remote: "${url}"`)
   return `${m[1]}/${m[2]}`
-})()
+}
 
 // What the run is actually testing — the registry spec by default, or the
 // locally packed tarball under `--local-pack`. `specLabel` is set once in
@@ -286,8 +287,8 @@ function diffSnapshots(pre: Snapshot, post: Snapshot): { added: string[]; remove
 // ---------------------------------------------------------------------------
 type RunResult = { status: number; stdout: string; stderr: string }
 
-function run(bin: string, args: string[], cwd: string): RunResult {
-  const result = spawnSync(bin, args, { cwd, encoding: 'utf8' })
+function run(bin: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): RunResult {
+  const result = spawnSync(bin, args, { cwd, encoding: 'utf8', ...(env ? { env } : {}) })
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
 }
 
@@ -327,7 +328,96 @@ async function waitForStudio(ports: number[], timeoutMs: number): Promise<{ port
 // under-covered fails loudly instead of quietly passing fewer commands.
 // ---------------------------------------------------------------------------
 type Outcome = { status: 'pass' | 'fail'; detail: string }
-type Ctx = { bin: string; fixtureDir: string }
+type Ctx = { bin: string; fixtureDir: string; homeDir: string }
+
+// The environment the offline-state exercises run under: `HOME` points into
+// the run's scratch root, so the default runtime folder, log folder and cache
+// land there and never in the machine's own Vinaya home; and the variables
+// that would change how the log destination resolves are removed — a CI host
+// (`GITHUB_ACTIONS`) turns the folder destination into none, and an
+// unattended caller (`VINAYA_HOST`, `VINAYA_ROLE`, `VINAYA_UNATTENDED`) reads
+// its destination from the default branch over the forge.
+const ISOLATED_ENV_REMOVED = ['GITHUB_ACTIONS', 'VINAYA_HOST', 'VINAYA_ROLE', 'VINAYA_UNATTENDED'] as const
+
+function isolatedEnv(homeDir: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: homeDir }
+  for (const name of ISOLATED_ENV_REMOVED) delete env[name]
+  return env
+}
+
+/**
+ * Runs `fn` with `patch` merged into the fixture's `vinaya.config.json`, then
+ * writes the file's exact original bytes back — on every path, including a
+ * throw — so the `eject` byte-identity proof sees the config `init` wrote.
+ */
+async function withConfigPatch<T>(
+  fixtureDir: string,
+  patch: (config: Record<string, unknown>) => void,
+  fn: () => T | Promise<T>
+): Promise<T> {
+  const configPath = join(fixtureDir, LOCAL_CONFIG_FILENAME)
+  const original = readFileSync(configPath)
+  try {
+    const config = JSON.parse(original.toString('utf-8')) as Record<string, unknown>
+    patch(config)
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8')
+    return await fn()
+  } finally {
+    writeFileSync(configPath, original)
+  }
+}
+
+// Declared once so the `log emit` exercise and the config patch cannot
+// disagree about the event's name or fields.
+const LOG_PROBE_EVENT = 'lifecycle.probe'
+const LOG_PROBE_FIELDS = { note: 'text' } as const
+
+const ADR_PROOF_DIR = 'docs/decisions'
+const ADR_PROOF_TITLE = 'Lifecycle proof record'
+const ADR_PROOF_RECORD = `${ADR_PROOF_DIR}/0001-lifecycle-proof-record.md`
+const ADR_PROOF_INDEX = `${ADR_PROOF_DIR}/README.md`
+
+// A tracked importer pair for the `issue surface` exercise: the draft body
+// pins the first file, and the command must report the second as the
+// importer a `## Surface` `in:` glob reaches.
+const SURFACE_PINNED = 'surface-fixture/pinned.ts'
+const SURFACE_IMPORTER = 'surface-fixture/importer.ts'
+const SURFACE_BODY_PATH = '.surface-body-fixture.md'
+const SURFACE_BODY = `Project: vinaya
+
+**Boundary** — Fixture body used only by verify-published-lifecycle.ts's \`issue surface\` exercise. Pinned files: \`${SURFACE_PINNED}\`. Out: nothing.
+
+## Surface
+
+in: surface-fixture/**
+out: docs/**
+`
+
+/** Waits for a spawned child to close, killing it at \`deadlineMs\` so a hung server cannot hang the run. */
+function collectUntilClosed(
+  child: ReturnType<typeof spawn>,
+  deadlineMs: number
+): Promise<{ stdout: string; stderr: string; timedOut: boolean }> {
+  return new Promise((resolve) => {
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    child.stdout?.on('data', (d: Buffer) => {
+      stdout += d.toString()
+    })
+    child.stderr?.on('data', (d: Buffer) => {
+      stderr += d.toString()
+    })
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, deadlineMs)
+    child.on('close', () => {
+      clearTimeout(timer)
+      resolve({ stdout, stderr, timedOut })
+    })
+  })
+}
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 const PROJECTS_REGISTRY_PATH_LOCAL = '.vinaya/projects.md'
@@ -407,7 +497,12 @@ const SCRATCH_FIXTURE_PATHS = new Set([
   'scripts/vinaya-checks/proof-check.ts',
   `vinaya/checks/${NOOP_CHECK_TARGET}.ts`,
   `vinaya/roles/${NEW_ROLE_ID}.md`,
-  PROJECTS_REGISTRY_PATH_LOCAL
+  PROJECTS_REGISTRY_PATH_LOCAL,
+  ADR_PROOF_RECORD,
+  ADR_PROOF_INDEX,
+  SURFACE_BODY_PATH,
+  SURFACE_PINNED,
+  SURFACE_IMPORTER
 ])
 
 const PR_BODY_FIXTURE = `Tier: 1
@@ -435,7 +530,7 @@ exercise; never actually opened (--validate-only, no network write).
 **Docs to keep coherent** — no-doc-surface
 `
 
-const EXEMPTIONS: Record<string, string> = {
+export const EXEMPTIONS: Record<string, string> = {
   'pr verify-evidence':
     "`pr verify-evidence` reads the target pull request's body and head via `gh pr view <n> --json body," +
     'headRefOid` UNCONDITIONALLY — there is no offline path, and the comparison is meaningless without a real ' +
@@ -504,10 +599,81 @@ const EXEMPTIONS: Record<string, string> = {
     '`milestone edit` below, whose `--validate-only` returns before any repo/forge call and are exercised for ' +
     'real. Exercising `milestone adopt` genuinely would require a real target Milestone plus real tranche labels ' +
     'and Issues on the live forge, and real `gh` credentials reaching the network beyond the npm install, which ' +
-    "this script's boundary forbids (same reasoning as `issue edit`'s exemption)."
+    "this script's boundary forbids (same reasoning as `issue edit`'s exemption).",
+  'brief render':
+    '`brief render` reads the task Issue from the forge and the default branch UNCONDITIONALLY — a FORGE READ ' +
+    'with no offline path. Its rendering and refusals are proven against injected seams in ' +
+    'tests/commands/brief-render.test.ts.',
+  'task dispatch':
+    '`task dispatch` checks the authenticated forge identity, posts the frozen brief as an Issue comment (a FORGE ' +
+    'WRITE) and can start a Developer session. Its logic is proven in tests/commands/dispatch-task.test.ts and ' +
+    'tests/lib/dispatch-task.test.ts.',
+  'task brief':
+    '`task brief` posts the frozen brief as an Issue comment — a FORGE WRITE against a real Issue. Its logic is ' +
+    'proven in tests/commands/task.test.ts.',
+  'task run':
+    '`task run` makes FORGE WRITES and starts a live Developer session on a SUBSCRIPTION LOGIN, neither of which ' +
+    "this script's credential-free boundary allows. Its logic is proven in tests/commands/task-run.test.ts, " +
+    'tests/lib/task-run.test.ts and tests/task-run-engine.test.ts.',
+  'task switch':
+    "`task switch` resolves the task on the FORGE and moves its Engine checkpoint in the machine's task runtime " +
+    'folder, outside the scratch root. Its logic is proven in tests/lib/task-switch.test.ts.',
+  'task status':
+    '`task status` lists every open task Issue on the FORGE before it prints anything — a FORGE READ with no ' +
+    'offline path. Its logic is proven in tests/commands/task-status.test.ts and tests/lib/task-status.test.ts.',
+  'task sweep':
+    "`task sweep` classifies folders by FORGE state and deletes from the machine's Vinaya home, which lies outside " +
+    "the scratch root, so a real run would delete the invoking user's own task folders. Its logic is proven in " +
+    'tests/commands/task-sweep.test.ts and tests/lib/task-sweep.test.ts.',
+  'task-tools result-proof':
+    '`task-tools result-proof` runs LIVE AGENT DISPATCHES on a SUBSCRIPTION LOGIN. Its logic is proven in ' +
+    'tests/lib/task-tools/result-proof.test.ts.',
+  'task-tools review-result-proof':
+    '`task-tools review-result-proof` runs LIVE REVIEWER DISPATCHES on a SUBSCRIPTION LOGIN. Its logic is proven in ' +
+    'tests/lib/task-tools/review-result-proof.test.ts.',
+  'pr rule':
+    '`pr rule` posts a ruling comment on a real pull request — a FORGE WRITE. Its logic is proven in ' +
+    'tests/commands/pr-rule.test.ts.',
+  'pr snapshot':
+    '`pr snapshot` reads a real pull request and its task Issue over the FORGE REST API (network destination ' +
+    'api.github.com) with a forge credential — a FORGE READ with no offline path.',
+  'issue objectives edit':
+    "`issue objectives edit` rewrites a real Issue's Objectives on the forge — a FORGE WRITE. Its logic is proven " +
+    'in tests/commands/issue-objectives.test.ts and tests/commands/issue-objectives-parts.test.ts.',
+  'milestone close':
+    "`milestone close` lists the repository's Milestones on the FORGE before its `--validate-only` branch is " +
+    'reached — a FORGE READ with no offline path, unlike `milestone create`/`milestone edit`. Its logic is proven ' +
+    'in tests/milestone.test.ts.',
+  'milestone status':
+    '`milestone status` reads a Milestone and its Issues from the FORGE — a FORGE READ. Its logic is proven in ' +
+    'tests/milestone.test.ts.',
+  'review status':
+    "`review status` reads the pull request's comments and head from the FORGE UNCONDITIONALLY — a FORGE READ. " +
+    'Its logic is proven in tests/commands/review-status.test.ts.',
+  'archive tranches':
+    '`archive tranches` reads tranche Issues and Milestones from the FORGE and writes archive state there — a ' +
+    'FORGE READ and WRITE. Same boundary as `archive` and `archive tranche`; its logic is proven in ' +
+    'tests/archive.test.ts.',
+  release:
+    '`release` needs an NPM LOGIN, a default-branch checkout equal to its remote and an IRREVERSIBLE PUBLISH to ' +
+    'the npm registry. Its logic is proven in src/commands/release.test.ts.',
+  dispatch:
+    '`dispatch` starts a HEADLESS AGENT SESSION on a SUBSCRIPTION LOGIN. Its logic is proven in ' +
+    'tests/commands/dispatch.test.ts and tests/lib/dispatch.test.ts.',
+  'dev-review-loop':
+    '`dev-review-loop` makes FORGE WRITES and runs LIVE Developer and reviewer sessions on a SUBSCRIPTION LOGIN. ' +
+    'Its logic is proven in tests/commands/dev-review-loop.test.ts and tests/lib/dev-review-loop.test.ts.',
+  'log selftest':
+    '`log selftest` passes only against a LOG SERVER (network destination: the configured `logs.url`) with an ' +
+    'INGEST credential and a READ credential; a folder destination ends in a named failure by design, so a ' +
+    'credential-free run can only assert the failure, not the command. Its logic is proven in ' +
+    'tests/commands/log-selftest.test.ts.',
+  'log send':
+    '`log send` delivers to a LOG SERVER (network destination: the configured `logs.url`) with an INGEST ' +
+    'credential; a folder destination exits 1 by design. Its logic is proven in tests/commands/log-send.test.ts.'
 }
 
-const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
+export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
   help: ({ bin, fixtureDir }) => {
     const r = run(bin, ['help'], fixtureDir)
     const ok = r.status === 0 && /vinaya/i.test(r.stdout)
@@ -930,6 +1096,145 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
     const r = run(bin, ['milestone', 'edit', '999999', '--body-file', bodyPath, '--validate-only'], fixtureDir)
     const ok = r.status === 0 && /PASS/i.test(r.stdout)
     return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim() || r.stderr.trim()}` }
+  },
+
+  'new adr': async ({ bin, fixtureDir, homeDir }) => {
+    // Decision records are opt-in: the command refuses while
+    // `decisionRecords.path` is unset, so the fixture config gets the key for
+    // the duration of this row only (`withConfigPatch` writes the original
+    // bytes back). The record and its index page land under
+    // `ADR_PROOF_DIR`, both listed in `SCRATCH_FIXTURE_PATHS`.
+    const env = isolatedEnv(homeDir)
+    const r = await withConfigPatch(
+      fixtureDir,
+      (config) => {
+        config.decisionRecords = { path: ADR_PROOF_DIR }
+      },
+      () => run(bin, ['new', 'adr', ADR_PROOF_TITLE], fixtureDir, env)
+    )
+    const recordPath = join(fixtureDir, ADR_PROOF_RECORD)
+    const indexPath = join(fixtureDir, ADR_PROOF_INDEX)
+    const recordWritten = existsSync(recordPath) && /Proposed/.test(readFileSync(recordPath, 'utf-8'))
+    const indexed = existsSync(indexPath) && readFileSync(indexPath, 'utf-8').includes('0001')
+    const ok = r.status === 0 && recordWritten && indexed
+    return {
+      status: ok ? 'pass' : 'fail',
+      detail: `exit ${r.status}, numbered record written with status Proposed: ${recordWritten}, index row added: ${indexed}${ok ? '' : ` — ${(r.stderr.trim() || r.stdout.trim()).slice(0, 200)}`}`
+    }
+  },
+
+  'issue surface': ({ bin, fixtureDir, homeDir }) => {
+    // Reads the draft body and the fixture's tracked files; writes nothing and
+    // reaches no forge. A pinned file with one tracked importer gives the
+    // report a line only the real command can produce. The pair is staged so
+    // `git ls-files` lists it; `demo break` commits everything later.
+    mkdirSync(join(fixtureDir, 'surface-fixture'), { recursive: true })
+    writeFileSync(join(fixtureDir, SURFACE_PINNED), 'export const pinned = 1\n', 'utf-8')
+    writeFileSync(
+      join(fixtureDir, SURFACE_IMPORTER),
+      "import { pinned } from './pinned'\nexport const importer = pinned\n",
+      'utf-8'
+    )
+    git(fixtureDir, ['add', SURFACE_PINNED, SURFACE_IMPORTER])
+    const bodyPath = join(fixtureDir, SURFACE_BODY_PATH)
+    writeFileSync(bodyPath, SURFACE_BODY, 'utf-8')
+    const r = run(bin, ['issue', 'surface', '--body-file', bodyPath], fixtureDir, isolatedEnv(homeDir))
+    const reportsImporter = new RegExp(`reached\\s+${SURFACE_IMPORTER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(
+      r.stdout
+    )
+    const ok = r.status === 0 && reportsImporter
+    return {
+      status: ok ? 'pass' : 'fail',
+      detail: `exit ${r.status}, pinned file's importer reported as reached: ${reportsImporter}${ok ? '' : ` — ${(r.stderr.trim() || r.stdout.trim()).slice(0, 200)}`}`
+    }
+  },
+
+  'task-tools serve': async ({ bin, fixtureDir, homeDir }) => {
+    // The MCP lifecycle over stdio: initialize request, initialized
+    // notification, tools/list request, then stdin is closed (the client's
+    // shutdown signal). The child is killed at a bounded deadline so a server
+    // that never exits cannot hang the run. The expected tool names are
+    // `TASK_TOOL_NAMES` itself, never a copy.
+    const child = spawn(bin, ['task-tools', 'serve'], {
+      cwd: fixtureDir,
+      env: isolatedEnv(homeDir),
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    const closed = collectUntilClosed(child, 20_000)
+    const messages = [
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: { name: 'verify-published-lifecycle', version: '1' }
+        }
+      },
+      { jsonrpc: '2.0', method: 'notifications/initialized' },
+      { jsonrpc: '2.0', id: 2, method: 'tools/list' }
+    ]
+    child.stdin?.write(messages.map((m) => `${JSON.stringify(m)}\n`).join(''))
+    child.stdin?.end()
+    const { stdout, timedOut } = await closed
+
+    const replies = new Map<number, { result?: Record<string, unknown> }>()
+    for (const line of stdout.split('\n')) {
+      if (!line.trim()) continue
+      try {
+        const parsed = JSON.parse(line) as { id?: number; result?: Record<string, unknown> }
+        if (typeof parsed.id === 'number') replies.set(parsed.id, parsed)
+      } catch {
+        // a non-JSON line on stdout is itself a protocol violation — the
+        // assertions below fail on the missing replies
+      }
+    }
+    const version = replies.get(1)?.result?.protocolVersion
+    const tools = replies.get(2)?.result?.tools
+    const listed = Array.isArray(tools) ? tools.map((t) => (t as { name?: unknown }).name).sort() : []
+    const expected = [...TASK_TOOL_NAMES].sort()
+    const namesMatch = listed.length === expected.length && listed.every((n, i) => n === expected[i])
+    const ok = !timedOut && version === '2025-06-18' && namesMatch
+    return {
+      status: ok ? 'pass' : 'fail',
+      detail: ok
+        ? `initialize answered protocol ${version}, tools/list named exactly the ${expected.length} task tools`
+        : `timed out: ${timedOut}, protocolVersion: ${String(version)}, listed [${listed.join(', ')}] vs expected [${expected.join(', ')}]`
+    }
+  },
+
+  'log emit': async ({ bin, fixtureDir, homeDir }) => {
+    // Records one declared event to the default local folder destination —
+    // under `HOME` in the scratch root, with no URL or credential. The
+    // declaration is added to the fixture config for this row only.
+    const env = isolatedEnv(homeDir)
+    const r = await withConfigPatch(
+      fixtureDir,
+      (config) => {
+        const logs = typeof config.logs === 'object' && config.logs !== null ? (config.logs as object) : {}
+        config.logs = { ...logs, events: { [LOG_PROBE_EVENT]: { fields: LOG_PROBE_FIELDS } } }
+      },
+      () => run(bin, ['log', 'emit', LOG_PROBE_EVENT, '--json', JSON.stringify({ note: 'lifecycle' })], fixtureDir, env)
+    )
+    const ok = r.status === 0 && r.stdout.includes(LOG_PROBE_EVENT) && /folder/.test(r.stdout)
+    return {
+      status: ok ? 'pass' : 'fail',
+      detail: `exit ${r.status}: ${(r.stdout.trim() || r.stderr.trim()).slice(0, 200)}`
+    }
+  },
+
+  sync: ({ bin, fixtureDir, homeDir }) => {
+    // Reads the folder `log emit` just wrote into the local cache under the
+    // scratch `HOME`. Run after `log emit` (see `RUN_ORDER`); at least one
+    // stored row proves it read an event rather than an empty folder.
+    const r = run(bin, ['sync'], fixtureDir, isolatedEnv(homeDir))
+    const stored = Number(/Rows stored:\s*(\d+)/.exec(r.stdout)?.[1] ?? Number.NaN)
+    const ok = r.status === 0 && stored >= 1
+    return {
+      status: ok ? 'pass' : 'fail',
+      detail: `exit ${r.status}, rows stored: ${Number.isNaN(stored) ? 'n/a' : stored}${ok ? '' : ` — ${(r.stderr.trim() || r.stdout.trim()).slice(0, 200)}`}`
+    }
   }
 }
 
@@ -943,8 +1248,8 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
  * its own scratch git directory carrying a real `origin` remote (a plain
  * git-config trick — `detectGitRepo` only ever reads that string, never
  * dials it, so no clone is needed) and its own create → run → verify →
- * cleanup sequence, against THIS checkout's own repo (`HOST_REPO_FLAG`,
- * derived above) rather than a hand-maintained one, so a fork exercises
+ * cleanup sequence, against THIS checkout's own repo (`hostRepo`,
+ * derived by `hostRepoFlag`) rather than a hand-maintained one, so a fork exercises
  * itself instead of reaching upstream.
  *
  * Every object created here — label, Issue, Milestone — is removed in the
@@ -956,11 +1261,12 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
  * not merely that the command printed a success-shaped line.
  */
 async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
+  const hostRepo = hostRepoFlag()
   const slug = `vlt-${Date.now().toString(36)}${process.pid.toString(36)}`
   const label = trancheLabel(slug)
   const scratchDir = mkdtempSync(join(tmpdir(), 'vinaya-verify-archive-tranche-'))
   git(scratchDir, ['init', '-q', '-b', 'main'])
-  git(scratchDir, ['remote', 'add', 'origin', `https://github.com/${HOST_REPO_FLAG}.git`])
+  git(scratchDir, ['remote', 'add', 'origin', `https://github.com/${hostRepo}.git`])
 
   let issueNumber: number | null = null
   let milestoneNumber: number | null = null
@@ -972,7 +1278,7 @@ async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
         'create',
         label,
         '-R',
-        HOST_REPO_FLAG,
+        hostRepo,
         '--color',
         'ededed',
         '--description',
@@ -983,7 +1289,7 @@ async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
     if (labelRun.status !== 0)
       throw new Error(`\`gh label create\` failed: ${labelRun.stderr.trim() || labelRun.stdout.trim()}`)
 
-    const milestoneRun = run('gh', ['api', `repos/${HOST_REPO_FLAG}/milestones`, '-f', `title=${slug}`], scratchDir)
+    const milestoneRun = run('gh', ['api', `repos/${hostRepo}/milestones`, '-f', `title=${slug}`], scratchDir)
     if (milestoneRun.status !== 0)
       throw new Error(
         `\`gh api .../milestones\` (create) failed: ${milestoneRun.stderr.trim() || milestoneRun.stdout.trim()}`
@@ -996,7 +1302,7 @@ async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
         'issue',
         'create',
         '-R',
-        HOST_REPO_FLAG,
+        hostRepo,
         '--title',
         `Scratch — ${slug}`,
         '--body',
@@ -1011,7 +1317,7 @@ async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
       throw new Error(`\`gh issue create\` failed: ${issueRun.stderr.trim() || issueRun.stdout.trim()}`)
     issueNumber = Number(issueMatch[1])
 
-    const closeRun = run('gh', ['issue', 'close', String(issueNumber), '-R', HOST_REPO_FLAG], scratchDir)
+    const closeRun = run('gh', ['issue', 'close', String(issueNumber), '-R', hostRepo], scratchDir)
     if (closeRun.status !== 0)
       throw new Error(`\`gh issue close\` failed: ${closeRun.stderr.trim() || closeRun.stdout.trim()}`)
 
@@ -1026,20 +1332,7 @@ async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
     for (let attempt = 0; attempt < 5; attempt++) {
       const indexed = run(
         'gh',
-        [
-          'issue',
-          'list',
-          '-R',
-          HOST_REPO_FLAG,
-          '--state',
-          'all',
-          '--label',
-          label,
-          '--json',
-          'number',
-          '--limit',
-          '200'
-        ],
+        ['issue', 'list', '-R', hostRepo, '--state', 'all', '--label', label, '--json', 'number', '--limit', '200'],
         scratchDir
       )
       if (indexed.stdout.trim() !== '[]') break
@@ -1049,7 +1342,7 @@ async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
     const r = run(bin, ['archive', 'tranche', slug, '--yes'], scratchDir)
     const claimsClosed = new RegExp(`closed \\(Milestone #${milestoneNumber}\\)`).test(r.stdout)
 
-    const reread = run('gh', ['api', `repos/${HOST_REPO_FLAG}/milestones/${milestoneNumber}`], scratchDir)
+    const reread = run('gh', ['api', `repos/${hostRepo}/milestones/${milestoneNumber}`], scratchDir)
     let closedForReal = false
     try {
       closedForReal = reread.status === 0 && (JSON.parse(reread.stdout) as { state: string }).state === 'closed'
@@ -1061,7 +1354,7 @@ async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
     return {
       status: ok ? 'pass' : 'fail',
       detail: ok
-        ? `exit ${r.status}, real Milestone #${milestoneNumber} created then closed via \`archive tranche ${slug} --yes\` against ${HOST_REPO_FLAG}, confirmed closed via an independent \`gh api\` re-read`
+        ? `exit ${r.status}, real Milestone #${milestoneNumber} created then closed via \`archive tranche ${slug} --yes\` against ${hostRepo}, confirmed closed via an independent \`gh api\` re-read`
         : `exit ${r.status}, stdout claims closed: ${claimsClosed}, gh api confirms closed: ${closedForReal} — ${(r.stdout.trim() || r.stderr.trim()).slice(0, 200)}`
     }
   } catch (err) {
@@ -1071,10 +1364,9 @@ async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
     }
   } finally {
     if (milestoneNumber !== null)
-      run('gh', ['api', '-X', 'DELETE', `repos/${HOST_REPO_FLAG}/milestones/${milestoneNumber}`], scratchDir)
-    if (issueNumber !== null)
-      run('gh', ['issue', 'delete', String(issueNumber), '-R', HOST_REPO_FLAG, '--yes'], scratchDir)
-    run('gh', ['label', 'delete', label, '-R', HOST_REPO_FLAG, '--yes'], scratchDir)
+      run('gh', ['api', '-X', 'DELETE', `repos/${hostRepo}/milestones/${milestoneNumber}`], scratchDir)
+    if (issueNumber !== null) run('gh', ['issue', 'delete', String(issueNumber), '-R', hostRepo, '--yes'], scratchDir)
+    run('gh', ['label', 'delete', label, '-R', hostRepo, '--yes'], scratchDir)
     rmSync(scratchDir, { recursive: true, force: true })
   }
 }
@@ -1086,15 +1378,70 @@ async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
 // `exerciseArchiveTranche` above): it is the only exercise that reaches a
 // real forge repo instead of the isolated `fixtureDir`. Named here purely so
 // `coverageCheck` sees all three as covered.
-const HANDLED_INLINE = new Set(['init', 'eject', 'archive tranche'])
+export const HANDLED_INLINE = new Set(['init', 'eject', 'archive tranche'])
+
+/**
+ * The order `main` runs the generic exercises in, after `init` (run
+ * separately, because it gates every other exercise) and before the inline
+ * `archive tranche` and `eject`. An exercise that is not listed here is never
+ * run: `unaccountedCommands` reports it after a run, and the coverage test
+ * reports it before any run. `new adr`, `issue surface` and `task-tools
+ * serve` need no other row; `sync` must follow `log emit`, whose folder it
+ * reads.
+ */
+export const RUN_ORDER = [
+  'help',
+  'version',
+  'init product',
+  'check',
+  'new check',
+  'new noop-check',
+  'new role',
+  'pr create',
+  'pr edit',
+  'pr report',
+  'issue create',
+  'milestone create',
+  'milestone edit',
+  'new adr',
+  'issue surface',
+  'task-tools serve',
+  'log emit',
+  'sync',
+  'doctor',
+  'upgrade',
+  'doctrine',
+  'commit-msg',
+  'demo break',
+  'studio',
+  'waiver'
+] as const
+
+export type RegistryEntry = { name: string; status: string }
+
+/**
+ * The shipped commands that have no exercise, no inline handling and no
+ * exemption. Pure over the registry passed in (default: the current one), so
+ * a test can hand it a synthetic shipped command.
+ */
+export function uncoveredShippedCommands(registry: readonly RegistryEntry[] = COMMANDS): string[] {
+  return registry
+    .filter(
+      (c) => c.status === 'shipped' && !(c.name in EXERCISES) && !(c.name in EXEMPTIONS) && !HANDLED_INLINE.has(c.name)
+    )
+    .map((c) => c.name)
+}
+
+/** Every name this script gives an exercise, an exemption or inline handling — for the stale-key check. */
+export function declaredCommandNames(): string[] {
+  return [...Object.keys(EXERCISES), ...Object.keys(EXEMPTIONS), ...HANDLED_INLINE]
+}
 
 function coverageCheck(): void {
-  const missing = COMMANDS.filter(
-    (c) => c.status === 'shipped' && !(c.name in EXERCISES) && !(c.name in EXEMPTIONS) && !HANDLED_INLINE.has(c.name)
-  )
+  const missing = uncoveredShippedCommands()
   if (missing.length > 0) {
     throw new Error(
-      `coverage gap: ${missing.map((c) => `"${c.name}"`).join(', ')} — shipped in the current COMMANDS registry ` +
+      `coverage gap: ${missing.map((n) => `"${n}"`).join(', ')} — shipped in the current COMMANDS registry ` +
         'but has neither an exercise nor a stated exemption in this script. Add one before running.'
     )
   }
@@ -1160,7 +1507,11 @@ async function main(): Promise<void> {
     git(fixtureDir, ['commit', '-q', '-m', 'Chore: initial commit'])
     // No `origin` remote is ever added (§11) — the whole run stays credential-free.
 
-    const ctx: Ctx = { bin, fixtureDir }
+    // Home of the offline-state exercises — inside the scratch root, so their
+    // runtime folder, log folder and cache never touch the machine's own.
+    const homeDir = join(root, 'home')
+    mkdirSync(homeDir, { recursive: true })
+    const ctx: Ctx = { bin, fixtureDir, homeDir }
     const results = new Map<string, Outcome>()
 
     // Part 4's byte-identity proof: snapshot BEFORE `init` runs, diff against
@@ -1177,7 +1528,7 @@ async function main(): Promise<void> {
     // endorse it.
     expectedHookDir = resolveHookDir(fixtureDir)
 
-    const initOutcome = EXERCISES.init?.(ctx)
+    const initOutcome = await EXERCISES.init?.(ctx)
     const coreArtifacts = deriveCoreInitArtifacts(fixtureDir)
     const coreArtifactsOk =
       coreArtifacts.length > 0 &&
@@ -1190,34 +1541,13 @@ async function main(): Promise<void> {
     }
     results.set('init', initOutcome)
 
-    for (const name of [
-      'help',
-      'version',
-      'init product',
-      'check',
-      'new check',
-      'new noop-check',
-      'new role',
-      'pr create',
-      'pr edit',
-      'pr report',
-      'issue create',
-      'milestone create',
-      'milestone edit',
-      'doctor',
-      'upgrade',
-      'doctrine',
-      'commit-msg',
-      'demo break',
-      'studio',
-      'waiver'
-    ]) {
+    for (const name of RUN_ORDER) {
       const exercise = EXERCISES[name]
       if (!exercise) continue
       results.set(name, await exercise(ctx))
     }
 
-    // Reaches the real forge (`HOST_REPO_FLAG`), not `fixtureDir` — see
+    // Reaches the real forge (`hostRepo`), not `fixtureDir` — see
     // `exerciseArchiveTranche` for why it runs here instead of through the
     // generic loop above.
     results.set('archive tranche', await exerciseArchiveTranche(bin))
@@ -1283,7 +1613,12 @@ function printReport(results: Map<string, Outcome>): void {
   )
 }
 
-main().catch((err) => {
-  console.error(`verify-published-lifecycle: ${err instanceof Error ? err.message : String(err)}`)
-  process.exitCode = 1
-})
+// Runs only when the file is executed directly — the coverage test imports it
+// for `uncoveredShippedCommands` and `RUN_ORDER`, and an import must install
+// nothing, pack nothing and call neither git nor the forge.
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error(`verify-published-lifecycle: ${err instanceof Error ? err.message : String(err)}`)
+    process.exitCode = 1
+  })
+}

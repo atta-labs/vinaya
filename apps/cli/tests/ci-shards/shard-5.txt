@@ -51,3 +51,4 @@ tests/lib/pre-push-failed-tests.test.ts
 tests/lib/test-temp.test.ts
 tests/lib/process-registry.test.ts
 tests/lib/follow-view.test.ts
+tests/verify-published-lifecycle-coverage.test.ts
