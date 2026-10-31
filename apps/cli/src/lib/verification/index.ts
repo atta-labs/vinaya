@@ -1,8 +1,11 @@
 /**
  * The selection library's public entrypoint — the one contract its consumers
  * import. {@link selectTests} answers which tests a change between two
- * committed revisions requires; the rest is what a consumer needs to call it:
- * repository readers, inventory validation, and the public types.
+ * committed revisions requires; {@link groupNativeTests} and
+ * {@link validateExecutedIdentities} group an explicit set of tests by how
+ * their runner starts and check what each runner executed; the rest is what a
+ * consumer needs to call them: repository readers, inventory validation, and
+ * the public types.
  *
  * See `README.md` beside this file for usage and dependencies.
  */
@@ -19,6 +22,19 @@ export {
   validateInventory,
   validateInventoryView
 } from './inventory.js'
+export {
+  DEFAULT_CONFIGURATION,
+  type ExecutedValidation,
+  type ExecutionFacts,
+  type GroupNativeTestsInput,
+  groupNativeTests,
+  type NativeGroup,
+  type NativeGrouping,
+  type NativeProblem,
+  type NativeTestRequest,
+  validateExecutedIdentities,
+  type WholeSuiteRequest
+} from './native.js'
 export { globRegex, globToRegex, inputCovers, underDeclaredRoot } from './path-pattern.js'
 export { type ScannerDeclaration, type ScannerTrigger, scannerTriggered } from './scanner-inputs.js'
 export {

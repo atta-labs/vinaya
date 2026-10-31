@@ -303,4 +303,68 @@ describe('eligibility follows the workspace members discovery finds', () => {
       expect.objectContaining({ test: 'packages/a/tests/a.test.ts', kind: 'direct-dependency' })
     ])
   }, 60_000)
+
+  it('--decision writes the selected Bun files and, apart, the selected tests another native runner owns', () => {
+    const root = fixtureDir('ci-decision-')
+    const write = (path: string, text: string) => {
+      mkdirSync(dirname(join(root, path)), { recursive: true })
+      writeFileSync(join(root, path), text)
+    }
+    write('package.json', JSON.stringify({ workspaces: ['packages/*'] }))
+    write('packages/a/package.json', JSON.stringify({ name: '@fx/a', scripts: { test: 'bun test' } }))
+    write('packages/a/src/a.ts', 'export const a = 1\n')
+    write('packages/a/tests/a.test.ts', "import { a } from '../src/a'\nexport const t = a\n")
+    write('packages/v/package.json', JSON.stringify({ name: '@fx/v', scripts: { test: 'vitest run' } }))
+    write('packages/v/src/v.test.ts', "import { a } from '../../a/src/a'\nexport const t = a\n")
+    write('packages/v/src/unrelated.test.ts', 'export const t = 0\n')
+    const git = (...args: string[]) =>
+      spawnSyncBudgeted('git', ['-c', 'user.email=f@x', '-c', 'user.name=f', ...args], {
+        cwd: root,
+        encoding: 'utf8',
+        env: stripVinayaEnv()
+      })
+    git('init', '-q')
+    git('add', '-A')
+    git('commit', '-qm', 'base')
+    const base = git('rev-parse', 'HEAD').stdout.trim()
+    const decide = () => {
+      const out = join(root, '.git', 'decision.json')
+      const run = spawnSyncBudgeted(
+        'bun',
+        [join(REPO_ROOT, 'apps/cli/src/lib/ci-test-selection.ts'), '--base', base, '--decision', out],
+        { cwd: root, encoding: 'utf8', env: stripVinayaEnv() },
+        60_000
+      )
+      expect(run.status).toBe(0)
+      return { stdout: run.stdout, written: JSON.parse(readFileSync(out, 'utf8')) as unknown }
+    }
+    write('packages/a/src/a.ts', 'export const a = 2\n')
+    git('commit', '-qam', 'change')
+    expect(decide()).toEqual({
+      stdout: 'selected\n',
+      written: { scope: 'selected', selected: ['packages/a/tests/a.test.ts'], native: ['packages/v/src/v.test.ts'] }
+    })
+    // A path the selector cannot judge runs everything, and says why.
+    write('packages/v/vitest.config.ts', 'export default {}\n')
+    git('add', '-A')
+    git('commit', '-qm', 'config')
+    const all = decide()
+    expect(all.stdout).toBe('all\n')
+    expect(all.written).toEqual({
+      scope: 'all',
+      reason: 'the selector cannot judge 1 changed path(s), first packages/v/vitest.config.ts'
+    })
+  }, 60_000)
+
+  it('a decision carries the native selection only when the facts report one', () => {
+    expect(decideCiSelection(facts())).toEqual({
+      scope: 'selected',
+      selected: [`${ROOT}/apps/cli/tests/widget.test.ts`]
+    })
+    expect(decideCiSelection(facts({ native: () => [`${ROOT}/packages/v/src/v.test.ts`] }))).toEqual({
+      scope: 'selected',
+      selected: [`${ROOT}/apps/cli/tests/widget.test.ts`],
+      native: [`${ROOT}/packages/v/src/v.test.ts`]
+    })
+  })
 })

@@ -21,6 +21,11 @@
  *     empty when nothing in that shard is selected.
  *   bun apps/cli/src/lib/ci-test-selection.ts --base <sha> --packages
  *     prints `affected` when the shared-packages job may narrow, else `all`.
+ *   bun apps/cli/src/lib/ci-test-selection.ts --base <sha> --decision <file>
+ *     writes the decision to <file> as JSON, every path repository-relative —
+ *     the selected `bun test` files and, apart, the selected tests another
+ *     native runner owns — for the test schedule
+ *     (`scripts/test-suites/schedule.ts`) to place; prints `all` or `selected`.
  *
  * Two optional flags change nothing on STDOUT: `--layout <file>` reads a
  * {@link WorkspaceLayout} JSON a repository's own adapter wrote (the source
@@ -170,8 +175,14 @@ export function discoveredLayout(repoRoot: string): WorkspaceLayout {
   return { packageDirs, preloads: [...preloads].sort() }
 }
 
-/** What a pull request's selection decided: everything, with the reason, or a narrowed run. */
-export type CiDecision = { scope: 'all'; reason: string } | { scope: 'selected'; selected: readonly string[] }
+/**
+ * What a pull request's selection decided: everything, with the reason, or a
+ * narrowed run — `selected` the files `bun test` runs and, when the facts
+ * report them, `native` the selected tests another native runner owns.
+ */
+export type CiDecision =
+  | { scope: 'all'; reason: string }
+  | { scope: 'selected'; selected: readonly string[]; native?: readonly string[] }
 
 /** The facts a decision is made from, each read by {@link readCiFacts}. */
 export type CiFacts = {
@@ -187,6 +198,8 @@ export type CiFacts = {
   layout?: WorkspaceLayout
   /** Why each test the last `select` call picked was picked — a separate output, empty before `select` ran. */
   explanations?: () => readonly SelectionExplanation[]
+  /** The tests another native runner owns that the last `select` call picked, empty before it ran. */
+  native?: () => readonly string[]
 }
 
 /** Decides from the facts whether a pull request may run fewer tests than everything. */
@@ -200,7 +213,8 @@ export function decideCiSelection(facts: CiFacts): CiDecision {
     return { scope: 'all', reason: 'the selection saw no changed file while git diff lists some' }
   }
   try {
-    return { scope: 'selected', selected: facts.select() }
+    const selected = facts.select()
+    return facts.native ? { scope: 'selected', selected, native: facts.native() } : { scope: 'selected', selected }
   } catch (err) {
     return { scope: 'all', reason: `the selection failed: ${(err as Error).message}` }
   }
@@ -215,6 +229,17 @@ export function shardFilesToRun(repoRoot: string, shardList: readonly string[], 
   if (decision.scope === 'all') return [...shardList]
   const picked = new Set(decision.selected.map((file) => relative(join(repoRoot, CLI_DIR), file)))
   return shardList.filter((entry) => picked.has(entry))
+}
+
+/**
+ * A decision with every path repository-relative and sorted — what
+ * `--decision <file>` writes for the test schedule
+ * (`scripts/test-suites/schedule.ts`) to read.
+ */
+export function repositoryDecision(repoRoot: string, decision: CiDecision): CiDecision {
+  if (decision.scope === 'all') return decision
+  const rel = (files: readonly string[]) => files.map((file) => relative(repoRoot, file).replace(/\\/g, '/')).sort()
+  return { scope: 'selected', selected: rel(decision.selected), native: rel(decision.native ?? []) }
 }
 
 function git(repoRoot: string, args: string[]): string {
@@ -246,17 +271,20 @@ export function readCiFacts(
   }
   if (!baseResolves) return { baseResolves, gitDiff: [], selectionChanged: [], select: () => [], layout }
   let explanations: readonly SelectionExplanation[] = []
+  let native: readonly string[] = []
   return {
     baseResolves,
     gitDiff: lines(git(repoRoot, ['diff', '--name-only', '--no-renames', `${base}...HEAD`])),
     selectionChanged: [...changedFilesSinceRemoteBase(repoRoot, base), ...removedFilesSinceRemoteBase(repoRoot, base)],
     select: () => {
-      const result = prePushSelection(repoRoot, base, 'transitive')
+      const result = prePushSelection(repoRoot, base, 'transitive', undefined, 'expose')
       explanations = result.explanations
+      native = result.native.map((entry) => entry.test)
       return result.selected
     },
     layout,
-    explanations: () => explanations
+    explanations: () => explanations,
+    native: () => native
   }
 }
 
@@ -282,8 +310,11 @@ function main(argv: readonly string[]): void {
   const base = argValue(argv, '--base')
   const shardListPath = argValue(argv, '--shard-list')
   const packages = argv.includes('--packages')
-  if (!base || (!shardListPath && !packages)) {
-    process.stderr.write('usage: ci-test-selection.ts --base <sha> (--shard-list <file> | --packages)\n')
+  const decisionPath = argValue(argv, '--decision')
+  if (!base || (!shardListPath && !packages && !decisionPath)) {
+    process.stderr.write(
+      'usage: ci-test-selection.ts --base <sha> (--shard-list <file> | --packages | --decision <file>)\n'
+    )
     process.exit(2)
   }
   const started = performance.now()
@@ -296,6 +327,12 @@ function main(argv: readonly string[]): void {
   if (explainPath) {
     const explanations = decision.scope === 'selected' ? (facts.explanations?.() ?? []) : []
     writeFileSync(explainPath, `${JSON.stringify({ decision, explanations }, null, 2)}\n`)
+  }
+  if (decisionPath) {
+    writeFileSync(decisionPath, `${JSON.stringify(repositoryDecision(repoRoot, decision), null, 2)}\n`)
+    process.stdout.write(`${decision.scope}\n`)
+    process.stderr.write(`vinaya ci: the selection runs ${why} [${elapsed} ms]\n`)
+    return
   }
   if (packages) {
     process.stdout.write(`${decision.scope === 'all' ? 'all' : 'affected'}\n`)

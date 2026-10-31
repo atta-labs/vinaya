@@ -23,13 +23,17 @@ import { loadTypeScript } from './ts-module-graph.js'
  * request's CI run passes `'transitive'` for the same selection walked to
  * its full closure. A caller that must tell a failed git read from an empty
  * change list passes `failure`: every read this selection makes reports into
- * it, and the selection itself is unchanged.
+ * it, and the selection itself is unchanged. `nativeRunners: 'expose'` also
+ * reports, apart from the file list, the selected tests of packages another
+ * native runner owns, for a caller that runs them under that runner; the hook
+ * keeps the default.
  */
 export function prePushSelection(
   repoRoot: string,
   base = resolveRemoteBase(repoRoot),
   depth: NonNullable<SelectionOptions['depth']> = 'one',
-  failure?: ReadFailure
+  failure?: ReadFailure,
+  nativeRunners: NonNullable<SelectionOptions['nativeRunners']> = 'exclude'
 ): SelectionResult {
   const changed = changedFilesSinceRemoteBaseAbsolute(repoRoot, base, failure)
   const addedOrRenamed = addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot, base, failure)
@@ -53,6 +57,7 @@ export function prePushSelection(
     removed,
     changedRanges,
     affectedNames: names,
-    depth
+    depth,
+    nativeRunners
   })
 }

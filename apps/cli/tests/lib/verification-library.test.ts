@@ -201,7 +201,7 @@ function noSymlinks(dir: string): string[] {
 /** A tiny selection the copy and this checkout both compute: its plan identity proves where the library sits never matters. */
 const ENTRY_SCRIPT = (
   lib: string
-) => `import { memoryRepository, selectTests, stableHash, validateInventory } from './${lib}/index.ts'
+) => `import { groupNativeTests, memoryRepository, selectTests, stableHash, validateExecutedIdentities, validateInventory } from './${lib}/index.ts'
 const files = (body) => ({
   'package.json': '{ "name": "copy-fixture" }\\n',
   'src/greet.ts': body,
@@ -219,7 +219,19 @@ const view = (revision, tree) => ({
 const inventory = { head: view('h', head), base: view('b', base) }
 if (validateInventory(inventory).length > 0) throw new Error('invalid')
 const plan = selectTests({ repo: memoryRepository({ b: base, h: head }), base: 'b', head: 'h', inventory, policy: { depth: 'transitive' } })
-process.stdout.write(JSON.stringify({ identity: plan.identity, required: plan.required.map((t) => t.test), resolver: plan.context.resolver }))
+// Native grouping and the execution check over the same identities: a root obligation, a second configuration of one file, a mismatch, an empty set.
+const [greet] = inventory.head.tests
+const rootTest = { ...greet, id: 'scripts/check.test.ts', suite: 'repository', owner: 'repository', kind: 'repository' }
+const grouped = groupNativeTests({ tests: [greet, { ...greet, configuration: 'probe' }, rootTest, { ...rootTest, id: 'scripts/odd.test.ts', preload: 'p.ts' }] })
+const report = (group, files) => ({ group, outcome: 'completed', files })
+const exact = validateExecutedIdentities(grouped.groups, [report('root@default', ['tests/greet.test.ts']), report('root@probe', ['./tests/greet.test.ts']), report('repository@default', ['scripts/check.test.ts'])], { roots: ['/r'] })
+const mismatched = validateExecutedIdentities(grouped.groups, [report('root@default', ['tests/other.test.ts']), report('root@probe', []), report('repository@default', ['/elsewhere/scripts/check.test.ts'])], { roots: ['/r'] })
+const empty = [groupNativeTests({ tests: [] }), validateExecutedIdentities([], [], { roots: ['/r'] })]
+process.stdout.write(JSON.stringify({
+  identity: plan.identity, required: plan.required.map((t) => t.test), resolver: plan.context.resolver,
+  groups: grouped.groups.map((g) => g.id + ' ' + g.args.join(',')), groupProblems: grouped.problems.map((p) => p.code),
+  exact: exact.problems.length, executed: exact.executed, mismatched: mismatched.problems.map((p) => p.code + ' ' + p.path), empty
+}))
 `
 
 /**
@@ -254,6 +266,29 @@ describe('a copy of only the library directory runs in unrelated repositories', 
     const answer = JSON.parse(expected.stdout) as { identity: string; required: string[]; resolver: string }
     expect(answer.required).toEqual(['tests/greet.test.ts'])
     expect(answer.resolver).toBe('compiler')
+    // Grouping keeps the root obligation and both configurations, refuses the mismatched member; the check
+    // accepts exactly the scheduled files and fails extra, missing and outside-root ones; an empty set is empty.
+    expect(answer).toMatchObject({
+      groups: [
+        'repository@default ./scripts/check.test.ts',
+        'root@default ./tests/greet.test.ts',
+        'root@probe ./tests/greet.test.ts'
+      ],
+      groupProblems: ['configuration-mismatch'],
+      exact: 0,
+      executed: ['scripts/check.test.ts@default', 'tests/greet.test.ts@default', 'tests/greet.test.ts@probe'],
+      mismatched: [
+        'outside-root /elsewhere/scripts/check.test.ts',
+        'missing scripts/check.test.ts',
+        'extra tests/other.test.ts',
+        'missing tests/greet.test.ts',
+        'missing tests/greet.test.ts'
+      ],
+      empty: [
+        { groups: [], problems: [] },
+        { executed: [], problems: [] }
+      ]
+    })
     rmSync(local, { recursive: true, force: true })
 
     for (const layout of ['lib/verification', 'vendor/tools/select']) {
@@ -280,7 +315,7 @@ describe('a copy of only the library directory runs in unrelated repositories', 
 
         const tests = spawnSyncBudgeted(
           'bun',
-          ['test', '--timeout=30000', `./${layout}/tests/selection.test.ts`],
+          ['test', '--timeout=30000', `./${layout}/tests/selection.test.ts`, `./${layout}/tests/native.test.ts`],
           { cwd: repo, encoding: 'utf8', env: bareEnv(repo) },
           120_000
         )
@@ -559,7 +594,10 @@ describe('the existing paths forward to the library', () => {
     const owned = view.tests
       .filter((t) => t.id.startsWith('apps/cli/src/lib/verification/'))
       .map((t) => `${t.id} ${t.suite}`)
-    expect(owned).toEqual(['apps/cli/src/lib/verification/tests/selection.test.ts cli'])
+    expect(owned).toEqual([
+      'apps/cli/src/lib/verification/tests/native.test.ts cli',
+      'apps/cli/src/lib/verification/tests/selection.test.ts cli'
+    ])
     const fixtures = view.edges.find((e) => e.input === 'apps/cli/src/lib/verification/tests/fixtures/')
     expect(fixtures?.readers).toEqual([
       'apps/cli/src/lib/verification/tests/selection.test.ts',

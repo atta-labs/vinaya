@@ -3,22 +3,29 @@
 # The four vinaya-*.yml workflows in this directory run `vinaya check` /
 # `archive` / `audit`; none of them ever ran a test or a typecheck (#933).
 #
-# A push to `main` runs everything: every shard's whole list, every package
-# and sandbox conformance, so a test a pull request's selection missed still
-# runs once the pull request merges. A pull request runs only what its diff
-# can affect: each `test-cli` shard runs the files in its list that the
-# repository's test selector picks for the diff against the base, and the
-# shared-packages job runs the packages `turbo --affected` picks plus
-# `@attalabs/aeg-core`. The selector sees TypeScript imports and declared
-# folder scans only, so a pull request that changes anything outside the
-# portal and `.changeset/` other than a TypeScript file in a package's own
-# `src/` or `tests/` — a spec, a fixture, JSON, a workflow, a script, the test
-# preload — runs everything as `main` does
-# (`apps/cli/src/lib/ci-test-selection.ts`). The root-config probe job always
-# runs whole shard lists.
+# Every test the inventory (`scripts/test-suites/inventory.json`) records runs
+# from one explicit schedule of files (`scripts/test-suites/schedule.ts`),
+# each under its own native runner, working directory, preload and
+# environment, in one place: a repository-owned test in the build job's
+# inventory step, a CLI, kernel or process Bun test in one `test-cli` shard,
+# every other suite in the shared-packages job. Each runner's own report must
+# name exactly the files it was given.
 #
-# The apps/cli suite (by far the largest — 123 files, on
-# the order of 2000 tests) is sharded across six jobs (`test-cli`, a
+# A push to `main` runs everything: every shard's whole schedule, every
+# package and sandbox conformance, so a test a pull request's selection
+# missed still runs once the pull request merges. A pull request runs only
+# what its diff can affect: the repository's test selector picks the tests
+# for the diff against the base, and each place runs the picked files it
+# holds, plus `@attalabs/aeg-core` whole. The selector sees TypeScript imports
+# and declared folder scans only, so a pull request that changes anything
+# outside the portal and `.changeset/` other than a TypeScript file in a
+# package's own `src/` or `tests/` — a spec, a fixture, JSON, a workflow, a
+# script, the test preload — runs everything as `main` does, with the reason
+# printed (`apps/cli/src/lib/ci-test-selection.ts`). The root-config probe job
+# always runs whole shard lists.
+#
+# The apps/cli suite (by far the largest — on the order of 350 files and
+# several thousand tests) is sharded across six jobs (`test-cli`, a
 # `matrix.shard` of 1..6), each running an explicit, pre-measured-balanced
 # file list (`apps/cli/tests/ci-shards/shard-<n>.txt`, one path per line,
 # `apps/cli/tests/ci-shards.test.ts` proving the six lists union to
@@ -26,7 +33,8 @@
 # split, which would concentrate this suite's few genuinely slow files
 # (`dispatch.test.ts`, `quickstart.test.ts`, `demo.test.ts`) whichever
 # directory happens to hold them, defeating the balance a shard exists to
-# provide. `aggregate` is the one job branch protection should require: it
+# provide. The kernel's and the process's Bun tests join the same six jobs,
+# each assigned by its identity to the shard with the fewest files. `aggregate` is the one job branch protection should require: it
 # depends on every other job here and is the sole "Vinaya CI" name, so
 # sharding the work never means sharding the required check.
 name: CI
@@ -233,7 +241,7 @@ jobs:
       - name: Check the test inventory and run the repository suite
         run: |
           bun scripts/test-suites/inventory-check.ts
-          bun test ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts
+          bun test ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts
 
       # When this job failed, print its own token budgets on one line for
       # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
@@ -293,14 +301,13 @@ jobs:
           echo "vinaya-limits: $gql | $rest"
           exit 0
 
-  # Every workspace package except `@attalabs/vinaya` (apps/cli) — that one
-  # is by far the largest and is sharded below (O3). `--concurrency=1`
-  # carries forward from this job's own pre-shard history (`#438`): running
-  # every package's own test task at once starved shared subprocess-spawning
-  # tests of resources, five distinct tests each failing once with an
-  # identical empty-stderr signature, each passing standalone. That finding
-  # was about CROSS-PACKAGE concurrency, not about sharding apps/cli's own
-  # suite by file — unrelated axis, left exactly as it was.
+  # Every workspace suite the shards below do not run: the Vitest packages,
+  # whose native configuration, plugins and environment stay their own, and
+  # the Bun suites of the sources package and the portal. The suites run one
+  # after another, never at once: running every package's own test task at
+  # once starved shared subprocess-spawning tests of resources, five distinct
+  # tests each failing once with an identical empty-stderr signature, each
+  # passing standalone.
   #
   # No docs-only skip: a documentation-only pull request runs this job too
   # (its selection decides what that costs), so `aggregate` can require it to
@@ -329,34 +336,40 @@ jobs:
             bun-${{ runner.os }}-
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      # On a pull request, the packages the diff affects (`turbo --affected`
-      # against the pull request's base) plus `@attalabs/aeg-core`, whose tests
-      # read files across the whole repository and which the CLI's selector
-      # never picks. The same fallback as the CLI shards decides it
-      # (`apps/cli/src/lib/ci-test-selection.ts`): any changed path the
-      # selector cannot judge, an unresolved base or a failed selection runs
-      # every package. `--affected` intersects with the filters, so
-      # `@attalabs/aeg-core` is left out of it and run once on its own. A push
-      # to `main` skips this step and runs every package in the next one.
+      # The test schedule's `shared` place (`scripts/test-suites/schedule.ts`):
+      # every Vitest suite (`@attalabs/aeg-core`, `@attalabs/aeg-forge-state`,
+      # the log server) and every Bun suite the shards do not run (the sources
+      # package, the portal), each started under its own runner from its own
+      # package folder, one after another — the ordering `--concurrency=1`
+      # gave this job before, since running suites at once starved
+      # subprocess-spawning tests. On a pull request, only the files the
+      # repository's test selector picks for the diff against the base
+      # (`apps/cli/src/lib/ci-test-selection.ts --decision`), plus
+      # `@attalabs/aeg-core` whole, since its tests read files across the
+      # whole repository and the selector does not model them. Any changed
+      # path the selector cannot judge, an unresolved base or a failed
+      # selection runs everything, with the reason printed. A push to `main`
+      # skips this step and runs everything in the next one. Each runner's
+      # own report must name exactly the files it was given.
       - name: Test the packages the pull request affects
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
+          DECISION="$RUNNER_TEMP/selection.json"
           # The selection reads only local git, so it runs without the job token.
-          SCOPE=$(env -u GH_TOKEN bun apps/cli/src/lib/ci-test-selection.ts --base "$PULL_REQUEST_BASE" --packages) || SCOPE=all
-          if [ "$SCOPE" = "affected" ]; then
-            TURBO_SCM_BASE="$PULL_REQUEST_BASE" bunx turbo test --affected --filter='!@attalabs/vinaya' --filter='!@attalabs/aeg-core' --concurrency=1
-            bunx turbo test --filter=@attalabs/aeg-core --concurrency=1
-          else
-            bunx turbo test --filter='!@attalabs/vinaya' --concurrency=1
+          if ! env -u GH_TOKEN bun apps/cli/src/lib/ci-test-selection.ts --base "$PULL_REQUEST_BASE" --decision "$DECISION"; then
+            echo "The selection failed; every shared package runs every test." >&2
+            echo '{ "scope": "all", "reason": "the selection failed" }' > "$DECISION"
           fi
+          unset PULL_REQUEST_BASE
+          bun scripts/test-suites/schedule.ts --run --placement shared --decision "$DECISION"
       - name: Test
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bunx turbo test --filter='!@attalabs/vinaya' --concurrency=1
+        run: bun scripts/test-suites/schedule.ts --run --placement shared --full --reason "a push to the default branch runs every test"
       - name: Report this job's GitHub token budget
         if: failure()
         env:
@@ -364,16 +377,18 @@ jobs:
         run: |
           gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
-  # apps/cli's own suite, split across six jobs by an
-  # explicit, pre-measured-balanced file list — see this file's header
-  # comment and `apps/cli/tests/ci-shards.test.ts`. Bypasses `turbo`/the
-  # package's own `test` script (which has no notion of a file subset) and
-  # calls `bun test` directly with that shard's file list, from `apps/cli`
-  # — the same cwd `turbo` would have run it from, and the same
-  # `--timeout=30000` the package's own script passes (`apps/cli/
-  # package.json`), so a shard enforces the identical per-test ceiling the
-  # unsharded suite always did. Like the shared-packages job, it runs on a
-  # documentation-only pull request too: `aggregate` requires it to succeed.
+  # apps/cli's own suite, split across six jobs by an explicit,
+  # pre-measured-balanced file list, with the kernel's and the process's Bun
+  # tests assigned among them — see this file's header comment and
+  # `apps/cli/tests/ci-shards.test.ts`. The job keeps its name for the readers
+  # that key on it; each step summary names the owners and folders it ran.
+  # Bypasses `turbo`/each package's own `test` script (which has no notion of
+  # a file subset) and calls `bun test` directly with the group's files, from
+  # the package's own folder — the same cwd `turbo` would have run it from,
+  # and the same `--timeout=30000` the package's own script passes, so a
+  # shard enforces the identical per-test ceiling the unsharded suite always
+  # did. Like the shared-packages job, it runs on a documentation-only pull
+  # request too: `aggregate` requires it to succeed.
   test-cli:
     name: Test (apps/cli, shard ${{ matrix.shard }})
     needs: build
@@ -401,44 +416,44 @@ jobs:
             bun-${{ runner.os }}-
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      # On a pull request, only this shard's files the repository's test
-      # selector picks for the diff against the base, walked to its full
-      # transitive depth (`apps/cli/src/lib/ci-test-selection.ts`). A changed
-      # path the selector cannot judge, an unresolved base or a failed
-      # selection runs the whole list instead. Never `bun test` with no file
-      # argument: in `apps/cli` that runs the whole tree, so a shard with
-      # nothing selected runs nothing and passes. A push to `main` skips this
-      # step and runs the whole list in the next one.
+      # The test schedule's `shard-<n>` place (`scripts/test-suites/schedule.ts`):
+      # this shard's CLI files, as its list names them, and the kernel's and
+      # the process's Bun tests the schedule assigns it, each group started
+      # under its own runner from its own package folder — its `bunfig.toml`
+      # preload and the `--timeout=30000` its package's script passes — one
+      # group after another, never Bun's parallel workers. The step summary
+      # names each group's owner and folder. On a pull request, only the
+      # files the repository's test selector picks for the diff against the
+      # base, walked to its full transitive depth
+      # (`apps/cli/src/lib/ci-test-selection.ts --decision`). A changed path
+      # the selector cannot judge, an unresolved base or a failed selection
+      # runs this shard's whole schedule instead, with the reason printed. A
+      # group with nothing selected starts no runner, and a shard with
+      # nothing selected runs nothing and passes. Each runner's own report
+      # must name exactly the files it was given. A push to `main` skips this
+      # step and runs the whole schedule in the next one.
       - name: Test shard ${{ matrix.shard }}'s selected files
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
-          SHARD_LIST: tests/ci-shards/shard-${{ matrix.shard }}.txt
-        working-directory: apps/cli
         run: |
-          SELECTED="$RUNNER_TEMP/selected-tests.txt"
+          DECISION="$RUNNER_TEMP/selection.json"
           # The selection reads only local git, so it runs without the job token.
-          if ! (cd ../.. && env -u GH_TOKEN bun apps/cli/src/lib/ci-test-selection.ts --base "$PULL_REQUEST_BASE" --shard-list "apps/cli/$SHARD_LIST") > "$SELECTED"; then
+          if ! env -u GH_TOKEN bun apps/cli/src/lib/ci-test-selection.ts --base "$PULL_REQUEST_BASE" --decision "$DECISION"; then
             echo "The selection failed; this shard runs its whole list." >&2
-            cp "$SHARD_LIST" "$SELECTED"
-          fi
-          if ! grep -q . "$SELECTED"; then
-            echo "No file in shard ${{ matrix.shard }} is selected for this pull request; no test ran." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo '{ "scope": "all", "reason": "the selection failed" }' > "$DECISION"
           fi
           # The tests run under the same environment as on `main`, the job
           # token included: several read a base-commit override from the
           # environment, so the selection's own variables never reach them.
-          FILES=$(tr '\n' ' ' < "$SELECTED")
-          unset PULL_REQUEST_BASE SHARD_LIST
-          bun test --timeout=30000 $FILES
+          unset PULL_REQUEST_BASE
+          bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --decision "$DECISION"
       - name: Test shard ${{ matrix.shard }}
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        working-directory: apps/cli
-        run: bun test --timeout=30000 $(tr '\n' ' ' < tests/ci-shards/shard-${{ matrix.shard }}.txt)
+        run: bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --full --reason "a push to the default branch runs every test"
       - name: Report this job's GitHub token budget
         if: failure()
         env:

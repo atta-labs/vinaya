@@ -19,6 +19,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse } from 'yaml'
 import { CI_SHARD_COUNT, isCliTestFile } from '../src/lib/ci-shard-membership'
 import { spawnSyncBudgeted, stripVinayaEnv } from './lib/process-fixture'
 
@@ -78,7 +79,76 @@ describe('CI shard file lists (task-run-v1 20, O3)', () => {
   })
 })
 
+// The shard lists name only the CLI's files; the schedule
+// (`scripts/test-suites/schedule.ts`) places every other owner's tests. This
+// is the same exactly-once check over every owner: run as its own process so
+// the CLI's tests import nothing from the repository's scripts.
+describe('the CI test schedule covers every owner', () => {
+  const SCHEDULE = join(CLI_ROOT, '..', '..', 'scripts', 'test-suites', 'schedule.ts')
+
+  it('places every inventory test exactly once, CLI tests in the shard their list names', () => {
+    const run = spawnSyncBudgeted('bun', [SCHEDULE, '--json', '--full'], {
+      cwd: join(CLI_ROOT, '..', '..'),
+      encoding: 'utf8',
+      env: stripVinayaEnv()
+    })
+    expect(run.stderr).toBe('')
+    expect(run.status).toBe(0)
+    const schedule = JSON.parse(run.stdout) as {
+      problems: unknown[]
+      accounting: { test: string; placement: string }[]
+      assignments: Record<string, number>
+    }
+    expect(schedule.problems).toEqual([])
+    const tests = schedule.accounting.map((e) => e.test)
+    expect(new Set(tests).size).toBe(tests.length)
+    // Every owner is in it, not only the CLI: the kernel, the process, a Vitest package and the root suite.
+    for (const dir of ['apps/cli/', 'harness/', 'processes/vinaya/', 'packages/aeg-core/', 'scripts/'])
+      expect(`${dir} ${tests.some((t) => t.startsWith(dir))}`).toBe(`${dir} true`)
+    for (let n = 1; n <= SHARD_COUNT; n++)
+      for (const f of shardFiles(n)) {
+        expect(schedule.assignments[`apps/cli/${f}`]).toBe(n)
+        expect(schedule.accounting.find((e) => e.test === `apps/cli/${f}`)?.placement).toBe(`shard-${n}`)
+      }
+  })
+})
+
 describe('the repository CI workflow', () => {
+  type Job = {
+    name?: string
+    needs?: string | string[]
+    steps?: { name?: string; run?: string; 'working-directory'?: string }[]
+  }
+  const jobs = (parse(CI_WORKFLOW) as { jobs: Record<string, Job> }).jobs
+
+  it('keeps every test job name and its dependency on the build job alone', () => {
+    expect(jobs['test-cli']?.name).toBe(`Test (apps/cli, shard ${GITHUB_EXPRESSION} matrix.shard }})`)
+    expect(jobs['test-shared-packages']?.name).toBe('Test (shared packages)')
+    expect(jobs.build?.name).toBe('Build, lint & typecheck')
+    for (const job of ['test-cli', 'test-shared-packages', 'test-cli-config-anchor'])
+      expect(jobs[job]?.needs).toBe('build')
+  })
+
+  it('runs each place of the schedule from the repository root, selected on a pull request and whole on main', () => {
+    const run = (job: string, step: string) => jobs[job]?.steps?.find((s) => s.name === step)?.run ?? ''
+    const shard = `--placement shard-${GITHUB_EXPRESSION} matrix.shard }}`
+    const prShard = run('test-cli', `Test shard ${GITHUB_EXPRESSION} matrix.shard }}'s selected files`)
+    expect(prShard).toContain('ci-test-selection.ts --base "$PULL_REQUEST_BASE" --decision "$DECISION"')
+    expect(prShard).toContain(`schedule.ts --run ${shard} --decision "$DECISION"`)
+    expect(run('test-cli', `Test shard ${GITHUB_EXPRESSION} matrix.shard }}`)).toContain(
+      `schedule.ts --run ${shard} --full`
+    )
+    const prShared = run('test-shared-packages', 'Test the packages the pull request affects')
+    expect(prShared).toContain('schedule.ts --run --placement shared --decision "$DECISION"')
+    expect(run('test-shared-packages', 'Test')).toContain('schedule.ts --run --placement shared --full')
+    for (const job of ['test-cli', 'test-shared-packages'])
+      for (const step of jobs[job]?.steps ?? []) {
+        expect(step['working-directory']).toBeUndefined()
+        expect(step.run ?? '').not.toContain('--parallel')
+        expect(step.run ?? '').not.toContain('turbo test')
+      }
+  })
+
   it('runs every default-branch commit in full without cancelling an earlier merge', () => {
     expect(CI_WORKFLOW).toContain('push:\n    branches: [main]')
     expect(CI_WORKFLOW).toContain(`group: ci-${GITHUB_EXPRESSION} github.event.pull_request.number || github.sha }}`)
@@ -219,6 +289,43 @@ describe('ci-shard-coverage — hook-specific membership', () => {
     git(dir, ['commit', '-m', 'list test'])
     git(dir, ['branch', '-f', 'main', 'HEAD'])
     expect(run(dir, false, { BASE_SHA: 'missing-ref' }).status).toBe(0)
+  })
+
+  /** A repo whose base commit lists `tests/driver.test.ts` in shard 1, on a work branch. */
+  function repoWithListedTest(): string {
+    const dir = repoStagingCliFile('tests/driver.test.ts', 'test("x", () => {})\n')
+    stageShardLine(dir, 1, 'tests/driver.test.ts')
+    git(dir, ['commit', '-m', 'listed test'])
+    git(dir, ['branch', '-f', 'main', 'HEAD'])
+    return dir
+  }
+
+  /** Moves the listed CLI test to another owner, staged. */
+  function moveToProcess(dir: string): void {
+    mkdirSync(join(dir, 'processes', 'vinaya', 'tests'), { recursive: true })
+    git(dir, ['mv', 'apps/cli/tests/driver.test.ts', 'processes/vinaya/tests/driver.test.ts'])
+  }
+
+  it('refuses a CLI test moved to another owner while its shard line stays, at commit and at push', () => {
+    const dir = repoWithListedTest()
+    moveToProcess(dir)
+    const staged = run(dir)
+    expect(staged.status).toBe(1)
+    expect(staged.stderr).toContain('apps/cli/tests/driver.test.ts is listed in a CI shard')
+    expect(staged.stdout).toContain('1 listed but no longer there')
+    git(dir, ['commit', '-m', 'move without the list'])
+    expect(run(dir, false).status).toBe(1)
+  })
+
+  it('passes the move once its shard line leaves in the same change', () => {
+    const dir = repoWithListedTest()
+    moveToProcess(dir)
+    stageShardLine(dir, 1, '')
+    const staged = run(dir)
+    expect(staged.status).toBe(0)
+    expect(staged.stdout).toContain('0 listed but no longer there')
+    git(dir, ['commit', '-m', 'move with the list'])
+    expect(run(dir, false).status).toBe(0)
   })
 
   it('judges tracked tests when candidate history has no merge base', () => {
