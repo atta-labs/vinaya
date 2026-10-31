@@ -1,0 +1,249 @@
+{
+  "schema": "vinaya.ci-replay",
+  "schemaVersion": 1,
+  "base": "e32f6d370a27b74048af90ed1bc081b6f11926ab",
+  "cases": [
+    {
+      "id": "cli-source",
+      "category": "build",
+      "about": "A CLI module with its own test: the build job's mandatory duties stay, the CLI package is typechecked, the file is linted and its test runs.",
+      "changes": { "apps/cli/src/lib/push-progress-observer.ts": { "append": "// replay: a source edit" } },
+      "expect": {
+        "scope": "selected",
+        "jobs": { "build": true, "test-cli": true, "test-shared-packages": true, "test-cli-config-anchor": false },
+        "typecheck": ["@attalabs/vinaya"],
+        "lint": ["apps/cli/src/lib/push-progress-observer.ts"],
+        "tests": ["apps/cli/tests/lib/push-progress-observer.test.ts"],
+        "obligations": ["managed-files-match-generator", "architecture-ratchet", "inventory-gate", "required-check"]
+      },
+      "mutants": [
+        "job:build",
+        "job:test-cli",
+        "typecheck:@attalabs/vinaya",
+        "lint:apps/cli/src/lib/push-progress-observer.ts",
+        "test:apps/cli/tests/lib/push-progress-observer.test.ts",
+        "obligation:managed-files-match-generator"
+      ]
+    },
+    {
+      "id": "shared-types",
+      "category": "type-only",
+      "about": "A shared type package with no tests: every package that depends on it, directly or through another, is typechecked; its folder is a sandbox suite input.",
+      "changes": { "packages/aeg-types/src/index.ts": { "append": "export type ReplayOnly = never" } },
+      "expect": {
+        "scope": "selected",
+        "jobs": { "sandbox-conformance": true, "test-cli-config-anchor": false },
+        "typecheck": [
+          "@attalabs/aeg-types",
+          "@attalabs/aeg-forge-state",
+          "@attalabs/aeg-core",
+          "@attalabs/vinaya-sources",
+          "@attalabs/vinaya",
+          "@attalabs/harness",
+          "@attalabs/log-server",
+          "@attalabs/process-vinaya",
+          "@vinaya/portal"
+        ],
+        "lint": ["packages/aeg-types/src/index.ts"]
+      },
+      "mutants": [
+        "typecheck:@attalabs/aeg-types",
+        "typecheck:@attalabs/log-server",
+        "typecheck:@vinaya/portal",
+        "job:sandbox-conformance"
+      ]
+    },
+    {
+      "id": "schema-data",
+      "category": "lint",
+      "about": "A JSON schema a loader test reads by declaration, not by import: the file is linted and its schema-policy reader runs.",
+      "changes": {
+        "harness/dev-process/contract/process.schema.json": { "append": " " }
+      },
+      "expect": {
+        "scope": "selected",
+        "lint": ["harness/dev-process/contract/process.schema.json"],
+        "tests": ["harness/dev-process/loader/load-process.test.ts"]
+      },
+      "mutants": [
+        "lint:harness/dev-process/contract/process.schema.json",
+        "test:harness/dev-process/loader/load-process.test.ts"
+      ]
+    },
+    {
+      "id": "golden-fixture",
+      "category": "doc-data-reader",
+      "about": "A Markdown fixture one sources test reads raw: that test runs while nothing is typechecked or linted. The selection also treats any non-source file of a package as an input of every test resolving through it, so it runs more than this reader; only the reader is the expectation.",
+      "changes": {
+        "packages/sources/tests/fixtures/golden-tranche-snapshot.md": { "append": "replay: a fixture edit" }
+      },
+      "expect": {
+        "scope": "selected",
+        "jobs": { "test-cli-config-anchor": false },
+        "typecheck": "skip",
+        "lint": "skip",
+        "tests": ["packages/sources/src/golden-forge-vs-file.test.ts"]
+      },
+      "mutants": ["test:packages/sources/src/golden-forge-vs-file.test.ts"]
+    },
+    {
+      "id": "forge-state-source",
+      "category": "native-suite",
+      "about": "A source of a Vitest package: its own native test runs and every dependent package is typechecked.",
+      "changes": { "packages/aeg-forge-state/src/labels.ts": { "append": "// replay: a source edit" } },
+      "expect": {
+        "scope": "selected",
+        "typecheck": [
+          "@attalabs/aeg-forge-state",
+          "@attalabs/aeg-core",
+          "@attalabs/vinaya-sources",
+          "@attalabs/vinaya",
+          "@attalabs/log-server",
+          "@attalabs/process-vinaya",
+          "@vinaya/portal"
+        ],
+        "tests": ["packages/aeg-forge-state/src/labels.test.ts"]
+      },
+      "mutants": ["test:packages/aeg-forge-state/src/labels.test.ts", "typecheck:@attalabs/aeg-core"]
+    },
+    {
+      "id": "root-config-guarded",
+      "category": "configuration-context",
+      "about": "The root configuration is a planning input the base guard protects: everything runs, the committed-config probe included.",
+      "changes": { "vinaya.config.json": { "append": " " } },
+      "expect": {
+        "scope": "full",
+        "jobs": { "test-cli-config-anchor": true, "sandbox-conformance": true, "build": true }
+      },
+      "mutants": ["job:test-cli-config-anchor", "job:sandbox-conformance"]
+    },
+    {
+      "id": "root-config-planned",
+      "category": "configuration-context",
+      "about": "The same root configuration change planned past the guard: the probe job is still required, because the committed configuration changed.",
+      "changes": { "vinaya.config.json": { "append": " " } },
+      "guard": "plan",
+      "expect": {
+        "scope": "selected",
+        "jobs": { "test-cli-config-anchor": true },
+        "lint": ["vinaya.config.json"]
+      },
+      "mutants": ["job:test-cli-config-anchor", "lint:vinaya.config.json"]
+    },
+    {
+      "id": "agent-adapter",
+      "category": "sandbox-input",
+      "about": "A file under a folder the sandbox suite's SUITE_INPUTS names: the Linux sandbox job runs and the kernel package is typechecked.",
+      "changes": { "harness/adapters/agents/codex/auth.ts": { "append": "// replay: a sandbox input" } },
+      "expect": {
+        "scope": "selected",
+        "jobs": { "sandbox-conformance": true },
+        "typecheck": ["@attalabs/harness"],
+        "tests": ["harness/adapters/agents/codex/auth.test.ts"]
+      },
+      "mutants": [
+        "job:sandbox-conformance",
+        "typecheck:@attalabs/harness",
+        "test:harness/adapters/agents/codex/auth.test.ts"
+      ]
+    },
+    {
+      "id": "readme-only",
+      "category": "empty-with-governance",
+      "about": "A root README edit no test reads: no typecheck, no lint, no sandbox, yet every mandatory duty and the always-run list stay.",
+      "changes": { "README.md": { "append": "replay: a documentation edit" } },
+      "expect": {
+        "scope": "selected",
+        "jobs": {
+          "build": true,
+          "test-cli": true,
+          "test-shared-packages": true,
+          "sandbox-conformance": false,
+          "test-cli-config-anchor": false
+        },
+        "typecheck": "skip",
+        "lint": "skip",
+        "tests": [
+          "apps/cli/tests/lib/log-callers.test.ts",
+          "apps/cli/tests/ci-shards.test.ts",
+          "scripts/test-suites/inventory-check.test.ts"
+        ],
+        "obligations": [
+          "inventory-gate",
+          "architecture-ratchet",
+          "managed-files-match-generator",
+          "pre-push-always-run"
+        ]
+      },
+      "mutants": [
+        "obligation:pre-push-always-run",
+        "obligation:architecture-ratchet",
+        "obligation:inventory-gate",
+        "test:apps/cli/tests/lib/log-callers.test.ts",
+        "job:build"
+      ]
+    },
+    {
+      "id": "doctrine",
+      "category": "unknown-fallback",
+      "about": "A doctrine file, whose readers are not enumerated: a named fallback selects every test, and the sandbox suite runs because doctrine is among its inputs.",
+      "changes": { "aeg-root/roles/developer.md": { "append": "replay: a doctrine edit" } },
+      "expect": {
+        "scope": "selected",
+        "jobs": { "sandbox-conformance": true },
+        "tests": [
+          "apps/cli/tests/lib/push-progress-observer.test.ts",
+          "apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts",
+          "packages/aeg-forge-state/src/labels.test.ts"
+        ]
+      },
+      "mutants": ["job:sandbox-conformance", "test:apps/cli/tests/lib/push-progress-observer.test.ts"]
+    },
+    {
+      "id": "test-relocation",
+      "category": "relocation",
+      "about": "A CLI test moved to a new name with its shard line: the moved test runs at its new path and the schedule stays whole.",
+      "changes": {
+        "apps/cli/tests/lib/push-progress-observer.test.ts": {
+          "renameTo": "apps/cli/tests/lib/push-progress-observer-moved.test.ts"
+        },
+        "apps/cli/tests/ci-shards/shard-2.txt": {
+          "replace": ["tests/lib/push-progress-observer.test.ts", "tests/lib/push-progress-observer-moved.test.ts"]
+        }
+      },
+      "guard": "plan",
+      "expect": {
+        "scope": "selected",
+        "tests": ["apps/cli/tests/lib/push-progress-observer-moved.test.ts"]
+      },
+      "mutants": ["test:apps/cli/tests/lib/push-progress-observer-moved.test.ts"]
+    },
+    {
+      "id": "new-log-writer",
+      "category": "build",
+      "about": "A new module that appends to the log outbox and that no test imports: the outbox scanner still runs, kept by the always-run list.",
+      "changes": {
+        "apps/cli/src/lib/replay-outbox-writer.ts": {
+          "content": "import { appendFileSync } from 'node:fs'\nimport { join } from 'node:path'\n\nexport function writeAround(runtimeDir: string, line: string): void {\n  appendFileSync(join(runtimeDir, 'logs', 'outbox.ndjson'), `${line}\\n`)\n}\n"
+        }
+      },
+      "expect": {
+        "scope": "selected",
+        "tests": ["apps/cli/tests/lib/log-callers.test.ts"],
+        "obligations": ["pre-push-always-run"]
+      },
+      "mutants": ["test:apps/cli/tests/lib/log-callers.test.ts", "obligation:pre-push-always-run"]
+    },
+    {
+      "id": "workflow-edit",
+      "category": "build",
+      "about": "The workflow itself: the base guard runs everything.",
+      "changes": { ".github/workflows/ci.yml": { "append": "# replay: a workflow edit" } },
+      "expect": {
+        "scope": "full",
+        "jobs": { "sandbox-conformance": true, "test-cli": true }
+      },
+      "mutants": ["job:sandbox-conformance"]
+    }
+  ]
+}

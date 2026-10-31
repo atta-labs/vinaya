@@ -21,10 +21,14 @@
  * commits and depth they require the same tests. Their obligations are
  * stated additions: a local push adds the inventory's always-run policies
  * (the `prePush.alwaysRun` list); CI adds the inventory gate's repository
- * suite and the sandbox conformance suite its Linux job runs.
+ * suite. The Linux sandbox conformance suite is no obligation: it runs when
+ * the change reaches it — through its imports or the paths its
+ * `SUITE_INPUTS` provider names — like any other test.
  *
- * Nothing here is wired into the pre-push hook or the CI workflow yet; each
- * integration opts in on its own.
+ * The CI workflow consumes this adapter through its own plan
+ * (`scripts/ci/impact-plan.ts`), which also keeps the always-run list as a
+ * CI obligation until its inputs are modeled; the pre-push hook does not
+ * use it yet.
  *
  *   bun scripts/test-suites/repository-selection.ts --base <rev> --head <rev> [--consumer local|ci] [--depth one|transitive]
  */
@@ -38,6 +42,7 @@ import {
   type SelectionObligation,
   type SelectionPlan,
   type SelectionPolicy,
+  type SelectTestsInput,
   selectTests
 } from '../../apps/cli/src/lib/verification/index.ts'
 import {
@@ -61,8 +66,6 @@ export type RepositorySelectionOptions = {
 
 /** The repository suite the inventory gate runs on every pull request. */
 const INVENTORY_GATE = { policy: 'inventory-gate', suite: 'repository' }
-/** The suite the Linux sandbox conformance job runs on every pull request. */
-const SANDBOX_CONFORMANCE_TESTS = ['apps/cli/tests/sandbox-conformance/**']
 const SCANNER_TRIGGERS: ReadonlySet<string> = new Set(['tree-shape', 'process-start', 'listed-files', 'content'])
 
 /** The commit a revision names, resolved once, so the plan is pinned to an object id rather than a moving name. */
@@ -105,6 +108,18 @@ function committedList(repoRoot: string, head: string, entry: string): string[] 
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
 }
 
+/** The inventory's always-run policies, each with the tests its list names at the head commit. */
+export function alwaysRunObligations(repoRoot: string, head: string, view: InventoryView): SelectionObligation[] {
+  return view.policies
+    .filter((policy) => policy.kind === 'always-run')
+    .map((policy) => ({
+      id: policy.id,
+      kind: 'policy' as const,
+      reason: policy.duty,
+      tests: policy.inputs.flatMap((entry) => committedList(repoRoot, head, entry))
+    }))
+}
+
 /** What each consumer adds on top of what the change requires. */
 function obligationsOf(
   repoRoot: string,
@@ -112,25 +127,9 @@ function obligationsOf(
   view: InventoryView,
   consumer: SelectionConsumer
 ): SelectionObligation[] {
-  if (consumer === 'local')
-    return view.policies
-      .filter((policy) => policy.kind === 'always-run')
-      .map((policy) => ({
-        id: policy.id,
-        kind: 'policy' as const,
-        reason: policy.duty,
-        tests: policy.inputs.flatMap((entry) => committedList(repoRoot, head, entry))
-      }))
+  if (consumer === 'local') return alwaysRunObligations(repoRoot, head, view)
   const gate = view.policies.find((policy) => policy.id === INVENTORY_GATE.policy)
-  return [
-    ...(gate ? [{ id: gate.id, kind: 'policy' as const, reason: gate.duty, suites: [INVENTORY_GATE.suite] }] : []),
-    {
-      id: 'sandbox-conformance',
-      kind: 'platform',
-      reason: 'the Linux sandbox conformance job runs its suite on every pull request',
-      tests: SANDBOX_CONFORMANCE_TESTS
-    }
-  ]
+  return gate ? [{ id: gate.id, kind: 'policy' as const, reason: gate.duty, suites: [INVENTORY_GATE.suite] }] : []
 }
 
 /** This repository's selection policy for one consumer, read from the head commit. */
@@ -150,19 +149,24 @@ export function repositoryPolicy(
   }
 }
 
-/** The plan of the tests the change from `base` to `head` requires, for `consumer`. */
-export function repositorySelection(repoRoot: string, options: RepositorySelectionOptions): SelectionPlan {
+/** The selection's whole input for `consumer`: both commits resolved, both inventory views, the policy. */
+export function repositorySelectionInput(repoRoot: string, options: RepositorySelectionOptions): SelectTestsInput {
   const base = resolveCommit(repoRoot, options.base)
   const head = resolveCommit(repoRoot, options.head)
   const inventory = readTestInventory(repoRoot, { base, head })
   const depth = options.depth ?? (options.consumer === 'local' ? 'one' : 'transitive')
-  return selectTests({
+  return {
     repo: gitRepository(repoRoot),
     base,
     head,
     inventory: { head: inventory.head, base: inventory.base },
     policy: repositoryPolicy(repoRoot, head, inventory.head, options.consumer, depth)
-  })
+  }
+}
+
+/** The plan of the tests the change from `base` to `head` requires, for `consumer`. */
+export function repositorySelection(repoRoot: string, options: RepositorySelectionOptions): SelectionPlan {
+  return selectTests(repositorySelectionInput(repoRoot, options))
 }
 
 function argValue(argv: readonly string[], flag: string): string | undefined {

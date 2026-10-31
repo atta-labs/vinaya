@@ -90,6 +90,7 @@ const workflowRoutes: Record<string, Route> = {
 const workflowWithoutProducers = [
   'workflow:ci.yml:build:Detect docs-only diff',
   'workflow:ci.yml:build:Install dependencies',
+  "workflow:ci.yml:build:Build this pull request's CI plan",
   'workflow:ci.yml:build:Build the Vinaya CLI',
   "workflow:ci.yml:build:Arm this checkout's git hooks routing",
   'workflow:ci.yml:build:Lint and format',
@@ -110,10 +111,11 @@ const workflowWithoutProducers = [
   'workflow:ci.yml:sandbox-conformance:Install the Linux sandbox tools',
   "workflow:ci.yml:sandbox-conformance:Install the checks' own tools",
   'workflow:ci.yml:sandbox-conformance:Run the suite under both sandboxes',
-  'workflow:ci.yml:sandbox-conformance-macos:Install dependencies',
-  "workflow:ci.yml:sandbox-conformance-macos:Install the checks' own tool",
-  'workflow:ci.yml:sandbox-conformance-macos:Run the suite under both sandboxes',
-  'workflow:ci.yml:aggregate:Every mandatory job succeeded and the root-config probe succeeded or was skipped',
+  'workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Install dependencies',
+  "workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Install the checks' own tool",
+  'workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Run the suite under both sandboxes',
+  'workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Record the advisory suite result',
+  'workflow:ci.yml:aggregate:Every mandatory job succeeded and every job the CI plan requires succeeded',
   'workflow:published-lifecycle.yml:verify-published-lifecycle:Check published version',
   'workflow:published-lifecycle.yml:verify-published-lifecycle:Install dependencies',
   'workflow:published-lifecycle.yml:verify-published-lifecycle:Verify published lifecycle',
@@ -138,11 +140,11 @@ const workflowWithoutProducers = [
   "workflow:ci.yml:test-cli:Report this job's GitHub token budget",
   "workflow:ci.yml:test-cli-config-anchor:Report this job's GitHub token budget",
   "workflow:ci.yml:sandbox-conformance:Report this job's GitHub token budget",
-  "workflow:ci.yml:sandbox-conformance-macos:Report this job's GitHub token budget",
+  "workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Report this job's GitHub token budget",
   "workflow:ci.yml:aggregate:Report this job's GitHub token budget",
   "workflow:ci.yml:build:Print the limits of this job's GitHub reads",
   "workflow:ci.yml:sandbox-conformance:Print the limits of this job's GitHub reads",
-  "workflow:ci.yml:sandbox-conformance-macos:Print the limits of this job's GitHub reads",
+  "workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Print the limits of this job's GitHub reads",
   "workflow:vinaya-archivist.yml:post-merge:Report this job's GitHub token budget",
   "workflow:vinaya-archivist.yml:issue-closed:Report this job's GitHub token budget",
   "workflow:vinaya-archivist.yml:daily-drift:Report this job's GitHub token budget",
@@ -383,7 +385,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(104)
+    expect(noProducer).toHaveLength(106)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })

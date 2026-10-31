@@ -161,6 +161,7 @@
           "tests": [
             "apps/cli/tests/ci-limits-diagnostic.test.ts",
             "apps/cli/tests/ci-shards.test.ts",
+            "apps/cli/tests/lib/ci-impact-plan.test.ts",
             "apps/cli/tests/lib/log-entry-paths.test.ts",
             "apps/cli/tests/lib/ready-ci-workflow.test.ts",
             "harness/tests/architecture.test.ts",
@@ -170,6 +171,61 @@
         }
       ],
       "reason": "Each reads the workflow file from disk and asserts its jobs and steps."
+    },
+    {
+      "id": "ci-macos-workflow",
+      "kind": "config",
+      "paths": [".github/workflows/sandbox-conformance-macos.yml"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": [
+            "apps/cli/tests/ci-limits-diagnostic.test.ts",
+            "apps/cli/tests/lib/log-entry-paths.test.ts",
+            "apps/cli/tests/lib/ready-ci-workflow.test.ts"
+          ]
+        }
+      ],
+      "reason": "Each reads the advisory macOS sandbox workflow from disk and asserts its job and steps."
+    },
+    {
+      "id": "ci-impact-replay",
+      "kind": "fixture",
+      "paths": ["apps/cli/tests/fixtures/ci-impact/"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["apps/cli/tests/lib/ci-impact-plan.test.ts", "apps/cli/tests/lib/ci-job-oracle.test.ts"]
+        }
+      ],
+      "reason": "The CI plan's hand-written replay table and its pinned base commit, read from disk by the job oracle and the plan's own test."
+    },
+    {
+      "id": "ci-plan-scripts",
+      "kind": "spawn",
+      "paths": [
+        "scripts/ci/base-guard.ts",
+        "scripts/ci/governance-obligations.ts",
+        "scripts/ci/impact-plan.ts",
+        "scripts/ci/replay.ts",
+        "scripts/test-suites/inventory-check.ts",
+        "scripts/test-suites/repository-selection.ts",
+        "scripts/test-suites/schedule.ts"
+      ],
+      "readers": [
+        {
+          "kind": "code",
+          "tests": ["apps/cli/tests/lib/ci-impact-plan.test.ts", "apps/cli/tests/lib/ci-job-oracle.test.ts"]
+        }
+      ],
+      "reason": "Both tests load the CI plan's scripts by path at run time, outside the CLI's type program, so no import edge reaches them."
+    },
+    {
+      "id": "task-graph",
+      "kind": "config",
+      "paths": ["turbo.json"],
+      "readers": [{ "kind": "raw-bytes", "tests": ["apps/cli/tests/lib/ci-job-oracle.test.ts"] }],
+      "reason": "The job oracle derives each package's typecheck prerequisites from turbo's own dry-run task graph."
     },
     {
       "id": "ci-shard-lists",

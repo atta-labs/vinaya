@@ -11,13 +11,20 @@ import { isRateLimitedJobLog } from '../src/lib/dev-review-loop/round-assess'
 import { spawnSyncBudgeted, stripVinayaEnv } from './lib/process-fixture'
 
 const CI_PATH = join(import.meta.dir, '..', '..', '..', '.github', 'workflows', 'ci.yml')
+// The macOS sandbox job runs in its own advisory workflow; its steps keep the same ending.
+const MACOS_PATH = join(import.meta.dir, '..', '..', '..', '.github', 'workflows', 'sandbox-conformance-macos.yml')
 const STEP_NAME = "Print the limits of this job's GitHub reads"
 const LOOP_WORDING = /api rate limit (?:already )?exceeded|secondary rate limit|rate limit exceeded/i
 
 type Step = { name?: string; if?: string; env?: Record<string, string>; run?: string }
 type Workflow = { jobs: Record<string, { steps: Step[] }> }
 
-const workflow = parse(readFileSync(CI_PATH, 'utf8')) as Workflow
+const workflow: Workflow = {
+  jobs: {
+    ...(parse(readFileSync(CI_PATH, 'utf8')) as Workflow).jobs,
+    ...(parse(readFileSync(MACOS_PATH, 'utf8')) as Workflow).jobs
+  }
+}
 
 function limitsSteps(job: string): Step[] {
   return workflow.jobs[job]!.steps.filter((step) => step.name === STEP_NAME)
