@@ -1,0 +1,287 @@
+{
+  "description": "A workspaces repository: a library package re-exported through a barrel, an app package whose tests import it by name, read configuration, fixtures and documents from disk, start a program, scan a folder and load a preload.",
+  "files": {
+    "package.json": "{ \"name\": \"fixture-workspaces\", \"private\": true, \"workspaces\": [\"packages/*\"] }\n",
+    "packages/core/package.json": "{ \"name\": \"@fx/core\", \"exports\": { \".\": \"./src/index.ts\" } }\n",
+    "packages/core/src/index.ts": "export { add } from './add.js'\nexport { mul, square } from './mul.js'\n",
+    "packages/core/src/add.ts": "export function add(a: number, b: number): number {\n  return a + b\n}\n",
+    "packages/core/src/mul.ts": "import { add } from './add.js'\n\nexport function mul(a: number, b: number): number {\n  let out = 0\n  for (let i = 0; i < b; i++) out = add(out, a)\n  return out\n}\n\nexport function square(a: number): number {\n  return a * a\n}\n",
+    "packages/app/package.json": "{ \"name\": \"@fx/app\", \"scripts\": { \"test\": \"bun test\" } }\n",
+    "packages/app/settings.json": "{ \"theme\": \"dark\", \"lang\": \"en\" }\n",
+    "packages/app/tests/setup.ts": "import { configure } from './env.js'\n\nconfigure()\n",
+    "packages/app/tests/env.ts": "export function configure(): void {\n  process.env.FIXTURE = '1'\n}\n",
+    "packages/app/tests/add.test.ts": "import { expect, test } from 'bun:test'\nimport { add } from '@fx/core'\n\ntest('add', () => expect(add(1, 2)).toBe(3))\n",
+    "packages/app/tests/mul.test.ts": "import { expect, test } from 'bun:test'\nimport { mul } from '@fx/core'\n\ntest('mul', () => expect(mul(2, 3)).toBe(6))\n",
+    "packages/app/tests/square.test.ts": "import { expect, test } from 'bun:test'\nimport { square } from '@fx/core'\n\ntest('square', () => expect(square(3)).toBe(9))\n",
+    "packages/app/tests/settings.test.ts": "import { expect, test } from 'bun:test'\nimport { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst SETTINGS = join(import.meta.dir, '../settings.json')\n\ntest('settings parse', () => expect(typeof JSON.parse(readFileSync(SETTINGS, 'utf8'))).toBe('object'))\n",
+    "packages/app/tests/theme.test.ts": "import { expect, test } from 'bun:test'\nimport { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst SETTINGS = join(import.meta.dir, '../settings.json')\n\ntest('theme', () => expect(JSON.parse(readFileSync(SETTINGS, 'utf8')).theme).toBe('dark'))\n",
+    "packages/app/tests/bytes.test.ts": "import { expect, test } from 'bun:test'\nimport { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst SETTINGS = join(import.meta.dir, '../settings.json')\n\ntest('bytes', () => expect(readFileSync(SETTINGS, 'utf8').endsWith('\\n')).toBe(true))\n",
+    "packages/app/tests/data.test.ts": "import { expect, test } from 'bun:test'\nimport { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst TABLE = join(import.meta.dir, 'fixtures/table.txt')\n\ntest('table', () => expect(readFileSync(TABLE, 'utf8').length).toBeGreaterThan(0))\n",
+    "packages/app/tests/fixtures/table.txt": "a,1\nb,2\n",
+    "packages/app/tests/docs.test.ts": "import { expect, test } from 'bun:test'\nimport { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst GUIDE = join(import.meta.dir, '../../../docs/guide.md')\n\ntest('guide', () => expect(readFileSync(GUIDE, 'utf8')).toContain('# Guide'))\n",
+    "packages/app/tests/cli.test.ts": "import { expect, test } from 'bun:test'\nimport { spawnSync } from 'node:child_process'\nimport { join } from 'node:path'\n\nconst ENTRY = join(import.meta.dir, '../../../tools/cli.ts')\n\ntest('cli', () => expect(spawnSync('bun', [ENTRY, 'run']).status).toBe(0))\n",
+    "packages/app/tests/tree.test.ts": "import { expect, test } from 'bun:test'\nimport { readdirSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst CORE = join(import.meta.dir, '../../core/src')\n\ntest('every core module is listed', () => expect(readdirSync(CORE).length).toBe(3))\n",
+    "packages/app/tests/opaque.test.ts": "import { expect, test } from 'bun:test'\nimport { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst name = ['opaque', 'input.json'].join('/')\n\ntest('opaque', () => expect(readFileSync(join(import.meta.dir, '../../..', name), 'utf8').length).toBeGreaterThan(0))\n",
+    "opaque/input.json": "{ \"value\": 1 }\n",
+    "docs/guide.md": "# Guide\n\nHow to use the fixture.\n",
+    "tools/cli.ts": "import { format } from './format.js'\n\nconsole.log(format(process.argv.slice(2)))\n",
+    "tools/format.ts": "export function format(args: string[]): string {\n  return args.join(' ')\n}\n",
+    "scratch/notes.txt": "notes nothing models\n"
+  },
+  "inventory": {
+    "suites": [{ "id": "app", "dir": "packages/app", "runner": "bun", "preload": "packages/app/tests/setup.ts" }],
+    "edges": [
+      {
+        "input": "packages/app/tests/setup.ts",
+        "kind": "preload",
+        "readerKind": "code",
+        "readers": ["suite:app"],
+        "source": "suite:app"
+      },
+      {
+        "input": "packages/app/package.json",
+        "kind": "runner-config",
+        "readerKind": "semantic",
+        "format": "json",
+        "readers": ["suite:app"],
+        "source": "suite:app"
+      },
+      {
+        "input": "packages/app/settings.json",
+        "kind": "config",
+        "readerKind": "semantic",
+        "format": "json",
+        "readers": ["packages/app/tests/settings.test.ts"],
+        "source": "settings"
+      },
+      {
+        "input": "packages/app/settings.json",
+        "kind": "config",
+        "readerKind": "parsed-keys",
+        "keys": ["theme"],
+        "format": "json",
+        "readers": ["packages/app/tests/theme.test.ts"],
+        "source": "settings-theme"
+      },
+      {
+        "input": "packages/app/settings.json",
+        "kind": "config",
+        "readerKind": "raw-bytes",
+        "readers": ["packages/app/tests/bytes.test.ts"],
+        "source": "settings-bytes"
+      },
+      {
+        "input": "packages/app/tests/fixtures/",
+        "kind": "fixture",
+        "readerKind": "raw-bytes",
+        "readers": ["packages/app/tests/data.test.ts"],
+        "source": "table"
+      },
+      {
+        "input": "docs/",
+        "kind": "doc",
+        "readerKind": "raw-bytes",
+        "readers": ["packages/app/tests/docs.test.ts"],
+        "source": "guide"
+      },
+      {
+        "input": "tools/cli.ts",
+        "kind": "spawn",
+        "readerKind": "code",
+        "readers": ["packages/app/tests/cli.test.ts"],
+        "source": "cli-program"
+      },
+      {
+        "input": "packages/core/src/",
+        "kind": "scan",
+        "readerKind": "raw-bytes",
+        "readers": ["packages/app/tests/tree.test.ts"],
+        "source": "provider:scanners"
+      }
+    ],
+    "unknowns": [{ "scope": "opaque/", "reason": "a test reads this folder through a computed path" }],
+    "policies": [
+      {
+        "id": "settings-secrets",
+        "kind": "security",
+        "inputs": ["packages/app/settings.json"],
+        "duty": "the secret scan reads every configuration file",
+        "source": "fixture"
+      }
+    ]
+  },
+  "policy": {
+    "scanners": [
+      { "test": "packages/app/tests/tree.test.ts", "roots": ["packages/core/src/"], "trigger": "tree-shape" }
+    ],
+    "spawnPrograms": [{ "binary": "bun", "entrypoint": "tools/cli.ts" }]
+  },
+  "scenarios": [
+    {
+      "name": "a change to one name selects only its users",
+      "depth": "one",
+      "change": {
+        "packages/core/src/mul.ts": "import { add } from './add.js'\n\nexport function mul(a: number, b: number): number {\n  let out = 0\n  for (let i = 0; i < b; i++) out = add(out, a)\n  return out\n}\n\nexport function square(a: number): number {\n  return a ** 2\n}\n"
+      },
+      "required": ["packages/app/tests/square.test.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "the transitive walk follows a changed helper into every user, and the scan edge reads its folder",
+      "depth": "transitive",
+      "change": {
+        "packages/core/src/add.ts": "export function add(a: number, b: number): number {\n  return b + a\n}\n"
+      },
+      "required": [
+        "packages/app/tests/add.test.ts",
+        "packages/app/tests/mul.test.ts",
+        "packages/app/tests/square.test.ts",
+        "packages/app/tests/tree.test.ts"
+      ],
+      "fallbacks": []
+    },
+    {
+      "name": "a formatting-only configuration change reaches raw-bytes readers alone",
+      "depth": "one",
+      "change": { "packages/app/settings.json": "{\n  \"theme\": \"dark\",\n  \"lang\": \"en\"\n}\n" },
+      "required": ["packages/app/tests/bytes.test.ts"],
+      "fallbacks": [],
+      "policies": ["settings-secrets"]
+    },
+    {
+      "name": "a changed key reaches its parsed-key reader, the whole-config reader and the raw-bytes reader",
+      "depth": "one",
+      "change": { "packages/app/settings.json": "{ \"theme\": \"light\", \"lang\": \"en\" }\n" },
+      "required": [
+        "packages/app/tests/bytes.test.ts",
+        "packages/app/tests/settings.test.ts",
+        "packages/app/tests/theme.test.ts"
+      ],
+      "fallbacks": [],
+      "policies": ["settings-secrets"]
+    },
+    {
+      "name": "a key outside a parsed-key domain leaves that reader out",
+      "depth": "one",
+      "change": { "packages/app/settings.json": "{ \"theme\": \"dark\", \"lang\": \"fr\" }\n" },
+      "required": ["packages/app/tests/bytes.test.ts", "packages/app/tests/settings.test.ts"],
+      "fallbacks": [],
+      "policies": ["settings-secrets"]
+    },
+    {
+      "name": "a fixture under a data folder selects its declared reader",
+      "depth": "one",
+      "change": { "packages/app/tests/fixtures/table.txt": "a,1\nb,2\nc,3\n" },
+      "required": ["packages/app/tests/data.test.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "a document selects its declared reader",
+      "depth": "one",
+      "change": { "docs/guide.md": "# Guide\n\nHow to use the fixture, again.\n" },
+      "required": ["packages/app/tests/docs.test.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "a spawned program's own import selects the test that starts it",
+      "depth": "transitive",
+      "change": { "tools/format.ts": "export function format(args: string[]): string {\n  return args.join(',')\n}\n" },
+      "required": ["packages/app/tests/cli.test.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "a spawn edge the head inventory removed still selects through the base graph",
+      "depth": "transitive",
+      "change": { "tools/format.ts": "export function format(args: string[]): string {\n  return args.join(';')\n}\n" },
+      "headInventory": { "dropEdges": ["cli-program"] },
+      "policy": { "spawnPrograms": [] },
+      "required": ["packages/app/tests/cli.test.ts"],
+      "requiredRevision": { "packages/app/tests/cli.test.ts": "base" },
+      "fallbacks": []
+    },
+    {
+      "name": "a document edge the head inventory removed still names its reader",
+      "depth": "one",
+      "change": { "docs/guide.md": "# Guide\n\nRewritten.\n" },
+      "headInventory": { "dropEdges": ["guide"] },
+      "required": ["packages/app/tests/docs.test.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "a preload's own import selects every test of its suite",
+      "depth": "transitive",
+      "change": {
+        "packages/app/tests/env.ts": "export function configure(): void {\n  process.env.FIXTURE = '2'\n}\n"
+      },
+      "required": [
+        "packages/app/tests/add.test.ts",
+        "packages/app/tests/bytes.test.ts",
+        "packages/app/tests/cli.test.ts",
+        "packages/app/tests/data.test.ts",
+        "packages/app/tests/docs.test.ts",
+        "packages/app/tests/mul.test.ts",
+        "packages/app/tests/opaque.test.ts",
+        "packages/app/tests/settings.test.ts",
+        "packages/app/tests/square.test.ts",
+        "packages/app/tests/theme.test.ts",
+        "packages/app/tests/tree.test.ts"
+      ],
+      "fallbacks": []
+    },
+    {
+      "name": "a renamed test is selected under its new identity",
+      "depth": "one",
+      "rename": { "packages/app/tests/add.test.ts": "packages/app/tests/plus.test.ts" },
+      "required": ["packages/app/tests/plus.test.ts"],
+      "renamedTests": [{ "from": "packages/app/tests/add.test.ts", "to": "packages/app/tests/plus.test.ts" }],
+      "fallbacks": []
+    },
+    {
+      "name": "a deleted test is reported removed, never planned",
+      "depth": "one",
+      "change": { "packages/app/tests/square.test.ts": null },
+      "required": [],
+      "removedTests": ["packages/app/tests/square.test.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "an added test is selected with nothing importing it",
+      "depth": "one",
+      "change": {
+        "packages/app/tests/extra.test.ts": "import { expect, test } from 'bun:test'\n\ntest('extra', () => expect(1).toBe(1))\n"
+      },
+      "required": ["packages/app/tests/extra.test.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "a module added under a scanned folder triggers its tree-shape scanner",
+      "depth": "one",
+      "change": {
+        "packages/core/src/div.ts": "export function div(a: number, b: number): number {\n  return a / b\n}\n"
+      },
+      "required": ["packages/app/tests/tree.test.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "a path nothing models falls back to every test, named",
+      "depth": "one",
+      "change": { "scratch/notes.txt": "notes nothing models, edited\n" },
+      "required": [],
+      "fallbacks": ["unattributed"]
+    },
+    {
+      "name": "a path under an unknown scope falls back to every test, named",
+      "depth": "one",
+      "change": { "opaque/input.json": "{ \"value\": 2 }\n" },
+      "required": [],
+      "fallbacks": ["unknown:opaque/"]
+    },
+    {
+      "name": "a source file no test reaches is not modeled by the graph",
+      "depth": "one",
+      "change": { "tools/unused.ts": "export const unused = 1\n" },
+      "required": [],
+      "fallbacks": ["unattributed"]
+    }
+  ]
+}

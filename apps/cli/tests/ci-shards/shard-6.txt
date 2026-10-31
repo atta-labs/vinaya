@@ -61,3 +61,5 @@ tests/lib/dispatch/claude-sandbox-dir.test.ts
 tests/lib/pre-push-ready-policy.test.ts
 tests/lib/ready-ci-workflow.test.ts
 tests/lib/ci-config-probe.test.ts
+src/lib/verification/tests/selection.test.ts
+tests/lib/verification-library.test.ts

@@ -193,7 +193,6 @@
   "apps/cli/src/lib/task-tools/server.ts": 4,
   "apps/cli/src/lib/task-tools/start.ts": 34,
   "apps/cli/src/lib/task-tools/tool-catalog.ts": 11,
-  "apps/cli/src/lib/test-selector.ts": 1,
   "apps/cli/src/lib/worker-boundary.ts": 135,
   "apps/cli/src/roles/contract.ts": 1,
   "apps/cli/src/roles/plan.ts": 7,

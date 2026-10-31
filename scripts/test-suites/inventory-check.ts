@@ -37,6 +37,12 @@
  * import the head removed — still name their readers. No forge is read, no
  * candidate code is run, and nothing here records whether a test passed.
  *
+ * What is generic about a view — its types, its shape validation, and which
+ * readers a changed input reaches — is the selection library's, imported from
+ * its public entrypoint (`apps/cli/src/lib/verification/index.ts`) and
+ * re-exported here. What stays here is this repository's own: where the
+ * declarations live, how each suite's runner is configured, and the tree.
+ *
  *   bun scripts/test-suites/inventory-check.ts             check the working tree; exit 1 on any problem
  *   bun scripts/test-suites/inventory-check.ts --base <rev>  also build and report the base view
  *   bun scripts/test-suites/inventory-check.ts --root-tests  print the repository suite's tests, one per line
@@ -44,11 +50,48 @@
  *   bun scripts/test-suites/inventory-check.ts --json        print the validated inventory as JSON
  */
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join, posix } from 'node:path'
 import ts from 'typescript'
 import { extractImportSpecifiers, resolveRelativeImport, testRunnerOf } from '../../apps/cli/src/lib/test-selector.ts'
+import {
+  declarationListProblems,
+  diffTestIdentities,
+  type EdgeKind,
+  globRegex,
+  type InputChange,
+  type InputImpact,
+  type InventoryProblem,
+  type InventoryView,
+  changedInputReaders as libraryChangedInputReaders,
+  type NativeRunner,
+  type PolicyDeclaration,
+  type ReaderKind,
+  type ResolvedEdge,
+  type SuiteFacts,
+  stableHash,
+  stableJson,
+  type TestIdentity,
+  type UnknownScope
+} from '../../apps/cli/src/lib/verification/index.ts'
+
+export {
+  diffTestIdentities,
+  type EdgeKind,
+  globRegex,
+  type InputChange,
+  type InputImpact,
+  type InventoryProblem,
+  type InventoryView,
+  type NativeRunner,
+  type PolicyDeclaration,
+  type ReaderKind,
+  type ResolvedEdge,
+  type SuiteFacts,
+  stableJson,
+  type TestIdentity,
+  type UnknownScope
+} from '../../apps/cli/src/lib/verification/index.ts'
 
 /** The schema this file reads and every view it produces declares. */
 export const INVENTORY_SCHEMA = 'vinaya.test-inventory'
@@ -57,21 +100,6 @@ export const INVENTORY_SCHEMA_VERSION = 1
 export const INVENTORY_PATH = 'scripts/test-suites/inventory.json'
 
 // ── Declarations (what `inventory.json` holds) ─────────────────────────────
-
-export type NativeRunner = 'bun' | 'vitest'
-export type ReaderKind = 'code' | 'raw-bytes' | 'semantic' | 'parsed-keys' | 'schema-policy'
-export type EdgeKind =
-  | 'import'
-  | 'preload'
-  | 'runner-config'
-  | 'lockfile'
-  | 'fixture'
-  | 'schema'
-  | 'doc'
-  | 'config'
-  | 'spawn'
-  | 'scan'
-  | 'provider'
 
 export type SuiteDeclaration = {
   id: string
@@ -130,15 +158,6 @@ export type ProviderDeclaration = {
   reason: string
 }
 
-export type PolicyDeclaration = {
-  id: string
-  kind: 'always-run' | 'mandatory' | 'security' | 'oracle'
-  /** Repository paths, folders ending in `/`, or `path#key.path` configuration domains. */
-  inputs: string[]
-  duty: string
-  source: string
-}
-
 export type InventoryDeclarations = {
   schema: string
   schemaVersion: number
@@ -150,90 +169,6 @@ export type InventoryDeclarations = {
   providers: ProviderDeclaration[]
   policies: PolicyDeclaration[]
   unknowns: { scope: string; reason: string }[]
-}
-
-// ── Views (what a reader gets back) ────────────────────────────────────────
-
-export type SuiteFacts = {
-  id: string
-  owner: string
-  kind: SuiteDeclaration['kind']
-  dir: string
-  cwd: string
-  runner: NativeRunner
-  preload: string | null
-  environment: Record<string, string | number | boolean>
-  /** Repository-relative files the runner facts were read from. */
-  configFiles: string[]
-  include: string[]
-  exclude: string[]
-  /** The member's folders the selector models, when the suite declares them. */
-  sourceRoots?: string[]
-}
-
-export type TestIdentity = {
-  /** Repository-relative path: the stable identity. */
-  id: string
-  suite: string
-  owner: string
-  kind: SuiteDeclaration['kind']
-  runner: NativeRunner
-  cwd: string
-  preload: string | null
-  environment: SuiteFacts['environment']
-}
-
-export type ResolvedEdge = {
-  /** Repository-relative file, or folder ending in `/`. */
-  input: string
-  kind: EdgeKind
-  readerKind: ReaderKind
-  /** For `parsed-keys`. */
-  keys?: string[]
-  format?: InputDeclaration['format']
-  /** Test identities. */
-  readers: string[]
-  /** The declaration, provider or suite the edge came from. */
-  source: string
-}
-
-export type InventoryProblem = {
-  code:
-    | 'unmodeled'
-    | 'schema'
-    | 'missing'
-    | 'unclassified'
-    | 'duplicate'
-    | 'runner-mismatch'
-    | 'unreadable'
-    | 'unproven-no-reader'
-  path: string
-  detail: string
-}
-
-export type UnknownScope = { scope: string; reason: string }
-
-export type InventoryView = {
-  revision: string
-  /** Whether this revision carries its own inventory declarations. */
-  modeled: boolean
-  schemaIdentity: string
-  declarationVersion: number | null
-  /** Hash of this revision's declarations, or `null` when it has none. */
-  declarationIdentity: string | null
-  /** The semantic verification context: schema, declarations and runner facts — not the file listing. */
-  contextIdentity: string
-  /** The generated graph for this revision: tests, edges and unknowns as resolved. */
-  graphIdentity: string
-  workspaces: string[]
-  suites: SuiteFacts[]
-  tests: TestIdentity[]
-  exclusions: { path: string; reason: string }[]
-  typeInputs: { path: string; role: string }[]
-  edges: ResolvedEdge[]
-  unknowns: UnknownScope[]
-  policies: PolicyDeclaration[]
-  problems: InventoryProblem[]
 }
 
 export type TestInventory = {
@@ -320,37 +255,6 @@ export function memoryReader(revision: string, files: Readonly<Record<string, st
 
 // ── Small readers ──────────────────────────────────────────────────────────
 
-/** A glob as a regular expression: `**​/` any folders (or none), `*` within one segment, `?`, `{a,b}`. */
-export function globRegex(glob: string): RegExp {
-  let re = '^'
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i] as string
-    if (c === '*' && glob[i + 1] === '*') {
-      if (glob[i + 2] === '/') {
-        re += '(?:.*/)?'
-        i += 2
-      } else {
-        re += '.*'
-        i += 1
-      }
-    } else if (c === '*') re += '[^/]*'
-    else if (c === '?') re += '[^/]'
-    else if (c === '{') {
-      const close = glob.indexOf('}', i)
-      if (close < 0) re += '\\{'
-      else {
-        re += `(?:${glob
-          .slice(i + 1, close)
-          .split(',')
-          .map((alt) => globRegex(alt).source.slice(1, -1))
-          .join('|')})`
-        i = close
-      }
-    } else re += /[.+^$|()[\]\\]/.test(c) ? `\\${c}` : c
-  }
-  return new RegExp(`${re}$`)
-}
-
 /** File names `bun test` collects by default. */
 const BUN_TEST_NAME = /(\.|_)(test|spec)\.(js|jsx|ts|tsx|mjs|cjs|mts|cts)$/
 /** The union of every native runner's test-shaped names: the universe the check classifies. */
@@ -378,56 +282,12 @@ function resolveIn(dir: string, written: string): string {
   return posix.normalize(posix.join(dir, written)).replace(/^\.\//, '')
 }
 
-function matchesInput(input: string, path: string): boolean {
-  return input.endsWith('/') ? path.startsWith(input) : path === input
-}
-
-/**
- * Whether an edge's input covers `path`. A scan root is a prefix as its
- * declaration writes it — a folder, a file, or a file-name prefix — and `.`
- * is the whole repository.
- */
-function edgeCovers(edge: ResolvedEdge, path: string): boolean {
-  if (edge.kind === 'scan') return edge.input === '.' || path.startsWith(edge.input)
-  return matchesInput(edge.input, path)
-}
-
-function hash(value: unknown): string {
-  return createHash('sha256').update(stableJson(value)).digest('hex')
-}
-
-/** JSON with object keys sorted, so equal values hash equally. */
-export function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
-  if (value && typeof value === 'object')
-    return `{${Object.keys(value as Record<string, unknown>)
-      .sort()
-      .map((k) => `${JSON.stringify(k)}:${stableJson((value as Record<string, unknown>)[k])}`)
-      .join(',')}}`
-  return JSON.stringify(value) ?? 'null'
-}
-
 function parseToml(text: string): Record<string, unknown> | null {
   try {
     return Bun.TOML.parse(text) as Record<string, unknown>
   } catch {
     return null
   }
-}
-
-function parseByFormat(text: string, format: InputDeclaration['format']): { ok: true; value: unknown } | { ok: false } {
-  if (format === 'json') {
-    try {
-      return { ok: true, value: JSON.parse(text) }
-    } catch {
-      return { ok: false }
-    }
-  }
-  if (format === 'toml') {
-    const parsed = parseToml(text)
-    return parsed ? { ok: true, value: parsed } : { ok: false }
-  }
-  return { ok: true, value: text }
 }
 
 /** The script's own `--timeout=N` / `--preload <p>` flags, read as text. */
@@ -550,7 +410,7 @@ function staticString(node: ts.Expression): string | null {
 }
 
 /** The `{ test, roots, trigger }` objects an exported constant holds, read from syntax; `null` on any unprovable shape. */
-function readExportedScannerDeclarations(
+export function readExportedScannerDeclarations(
   text: string,
   file: string,
   name: string
@@ -643,8 +503,8 @@ function emptyView(tree: TreeReader, problems: InventoryProblem[], unknowns: Unk
     policies: [],
     problems
   }
-  view.contextIdentity = hash({ schema: view.schemaIdentity, declarations: null })
-  view.graphIdentity = hash({ unknowns })
+  view.contextIdentity = stableHash({ schema: view.schemaIdentity, declarations: null })
+  view.graphIdentity = stableHash({ unknowns })
   return view
 }
 
@@ -693,11 +553,11 @@ export function buildInventoryView(tree: TreeReader, options: ViewOptions = {}):
       [{ scope: '.', reason: 'the inventory declares a schema this reader does not read' }]
     )
   }
-  for (const key of ['suites', 'typeInputs', 'exclusions', 'inputs', 'providers', 'policies', 'unknowns'] as const) {
-    if (!Array.isArray(declarations[key])) {
-      problem('schema', INVENTORY_PATH, `${key} is not a list`)
-      ;(declarations as Record<string, unknown>)[key] = []
-    }
+  // The generic shape check is the selection library's; a list that is not
+  // one is read as empty so the rest of the check still reports.
+  for (const listProblem of declarationListProblems(declarations as Record<string, unknown>, INVENTORY_PATH)) {
+    problems.push(listProblem)
+    ;(declarations as Record<string, unknown>)[listProblem.detail.split(' ')[0] as string] = []
   }
   unknowns.push(...declarations.unknowns)
 
@@ -1133,8 +993,8 @@ export function buildInventoryView(tree: TreeReader, options: ViewOptions = {}):
   const finalEdges = [...merged.values()].sort((a, b) => stableJson(a).localeCompare(stableJson(b)))
 
   const schemaIdentity = `${INVENTORY_SCHEMA}@${INVENTORY_SCHEMA_VERSION}`
-  const declarationIdentity = hash(declarations)
-  const contextIdentity = hash({
+  const declarationIdentity = stableHash(declarations)
+  const contextIdentity = stableHash({
     schemaIdentity,
     declarationIdentity,
     suites: suites.map(({ id, runner, cwd, preload, environment, include, exclude }) => ({
@@ -1147,7 +1007,7 @@ export function buildInventoryView(tree: TreeReader, options: ViewOptions = {}):
       exclude
     }))
   })
-  const graphIdentity = hash({ contextIdentity, tests, edges: finalEdges, unknowns, exclusions })
+  const graphIdentity = stableHash({ contextIdentity, tests, edges: finalEdges, unknowns, exclusions })
   return {
     revision: tree.revision,
     modeled: true,
@@ -1306,183 +1166,16 @@ export function nativeGroups(view: InventoryView): {
   }))
 }
 
-/** Test identities added, removed and renamed between two views; `renames` maps an old path to its new one, as `git diff -M` reports it. */
-export function diffTestIdentities(
-  base: InventoryView,
-  head: InventoryView,
-  renames: ReadonlyMap<string, string> = new Map()
-): { added: string[]; removed: string[]; renamed: { from: string; to: string }[] } {
-  const before = new Set(base.tests.map((t) => t.id))
-  const after = new Set(head.tests.map((t) => t.id))
-  const renamed = [...renames]
-    .filter(([from, to]) => before.has(from) && after.has(to))
-    .map(([from, to]) => ({ from, to }))
-  const renamedFrom = new Set(renamed.map((r) => r.from))
-  const renamedTo = new Set(renamed.map((r) => r.to))
-  return {
-    added: [...after].filter((id) => !before.has(id) && !renamedTo.has(id)).sort(),
-    removed: [...before].filter((id) => !after.has(id) && !renamedFrom.has(id)).sort(),
-    renamed
-  }
-}
-
 // ── Which readers a changed input reaches ──────────────────────────────────
 
-export type InputChange = {
-  /** The path at the head; for a deletion, the path that was deleted. */
-  path: string
-  /** For a rename, the path at the base. */
-  from?: string
-  /** The bytes at the base, `null` when absent there. */
-  before: string | null
-  /** The bytes at the head, `null` when absent there. */
-  after: string | null
-}
-
-export type InputImpact = {
-  readers: { test: string; readerKind: ReaderKind; edge: string; reason: string }[]
-  policies: { id: string; kind: PolicyDeclaration['kind']; duty: string }[]
-  unknown: UnknownScope[]
-}
-
-/** Every leaf key path whose value differs between two parsed values. */
-function changedKeyPaths(a: unknown, b: unknown, prefix = ''): string[] {
-  const isObject = (v: unknown): v is Record<string, unknown> =>
-    Boolean(v) && typeof v === 'object' && !Array.isArray(v)
-  if (isObject(a) && isObject(b)) {
-    const keys = new Set([...Object.keys(a), ...Object.keys(b)])
-    return [...keys].flatMap((k) => changedKeyPaths(a[k], b[k], prefix ? `${prefix}.${k}` : k))
-  }
-  return stableJson(a) === stableJson(b) ? [] : [prefix]
-}
-
-function keyCovered(changed: string, domain: string): boolean {
-  return changed === domain || changed.startsWith(`${domain}.`) || domain.startsWith(`${changed}.`) || changed === ''
-}
-
 /**
- * The tests a changed input reaches, by how each reads it, looked up on both
- * the base view (at the change's old path) and the head view — so an edge
- * the head removed, or an input it deleted, still names its readers.
- *
- * A raw-bytes or code reader is reached by any byte change; a schema or
- * policy consumer, and every security or mandatory policy over the input, by
- * any byte change too. A semantic reader is reached only when the parsed
- * value differs, and a parsed-keys reader only when a key in its domain
- * does — so formatting alone reaches neither. A changed key no declared
- * domain covers, a side that is malformed, absent or deleted, an unmodeled
- * base, an unknown scope over the path, or a path no edge names keeps the
- * conservative answer: every reader of the input, and an unknown naming why.
+ * The tests a changed input reaches, by how each reads it, on both the base
+ * and the head view — the selection library's `changedInputReaders`, given
+ * this repository's TOML parser so a `bunfig.toml` reader is judged by its
+ * parsed value like a JSON one.
  */
 export function changedInputReaders(base: InventoryView | null, head: InventoryView, change: InputChange): InputImpact {
-  const impact: InputImpact = { readers: [], policies: [], unknown: [] }
-  const reached = new Map<string, InputImpact['readers'][number]>()
-  const reach = (test: string, readerKind: ReaderKind, edge: string, reason: string) => {
-    const key = `${test}\0${readerKind}\0${edge}`
-    if (!reached.has(key)) reached.set(key, { test, readerKind, edge, reason })
-  }
-  const basePath = change.from ?? change.path
-  const candidates: { edge: ResolvedEdge; side: 'base' | 'head' }[] = []
-  if (base?.modeled)
-    for (const edge of base.edges) if (edgeCovers(edge, basePath)) candidates.push({ edge, side: 'base' })
-  for (const edge of head.edges) if (edgeCovers(edge, change.path)) candidates.push({ edge, side: 'head' })
-
-  if (base && !base.modeled)
-    impact.unknown.push({
-      scope: basePath,
-      reason: 'the base revision is not modeled, so its readers of this path are unknown'
-    })
-  for (const view of [base, head]) {
-    for (const scope of view?.unknowns ?? [])
-      if (scope.scope === '.' || matchesInput(scope.scope, change.path) || matchesInput(scope.scope, basePath))
-        impact.unknown.push(scope)
-  }
-  if (candidates.length === 0)
-    impact.unknown.push({ scope: change.path, reason: 'no declared edge names this path, so its readers are unknown' })
-
-  const bytesChanged = change.before !== change.after
-  const conservative = (reason: string) => {
-    for (const { edge } of candidates)
-      for (const test of edge.readers) reach(test, edge.readerKind, edge.source, reason)
-  }
-
-  if (change.before === null || change.after === null) {
-    if (bytesChanged) {
-      const why = change.after === null ? 'the input was deleted' : 'the input was added'
-      impact.unknown.push({ scope: change.path, reason: `${why}, so every reader of it is reached` })
-      conservative(why)
-    }
-  } else if (bytesChanged) {
-    // Key domains declared over this input, across both views.
-    const domains = candidates
-      .filter(({ edge }) => edge.readerKind === 'parsed-keys')
-      .flatMap(({ edge }) => edge.keys ?? [])
-    const hasSemantic = candidates.some(({ edge }) => edge.readerKind === 'semantic')
-    let parsedFallback = false
-    for (const { edge } of candidates) {
-      if (edge.readerKind === 'code' || edge.readerKind === 'raw-bytes' || edge.readerKind === 'schema-policy') {
-        for (const test of edge.readers) reach(test, edge.readerKind, edge.source, 'its bytes changed')
-        continue
-      }
-      const before = parseByFormat(change.before, edge.format)
-      const after = parseByFormat(change.after, edge.format)
-      if (!before.ok || !after.ok) {
-        parsedFallback = true
-        continue
-      }
-      const keys = changedKeyPaths(before.value, after.value)
-      if (keys.length === 0) continue // formatting only: the parsed value is the same.
-      if (edge.readerKind === 'semantic') {
-        for (const test of edge.readers)
-          reach(test, 'semantic', edge.source, `its parsed value changed (${keys.join(', ')})`)
-        continue
-      }
-      const relevant = keys.filter((k) => (edge.keys ?? []).some((domain) => keyCovered(k, domain)))
-      if (relevant.length > 0)
-        for (const test of edge.readers)
-          reach(test, 'parsed-keys', edge.source, `a key it reads changed (${relevant.join(', ')})`)
-      const unclaimed = keys.filter((k) => !domains.some((domain) => keyCovered(k, domain)))
-      if (unclaimed.length > 0 && !hasSemantic) {
-        for (const key of unclaimed)
-          impact.unknown.push({
-            scope: `${change.path}#${key}`,
-            reason: 'a changed key belongs to no declared key domain'
-          })
-        parsedFallback = true
-      }
-    }
-    if (parsedFallback) {
-      if (!impact.unknown.some((u) => u.scope.startsWith(change.path)))
-        impact.unknown.push({
-          scope: change.path,
-          reason: 'the input does not parse on one side, so it is read conservatively'
-        })
-      conservative('the change could not be confined to declared keys')
-    }
-  }
-
-  if (bytesChanged) {
-    for (const view of [base, head]) {
-      for (const policy of view?.policies ?? []) {
-        if (policy.kind !== 'security' && policy.kind !== 'mandatory') continue
-        const covers = policy.inputs.some((entry) => {
-          const target = entry.split('#')[0] as string
-          return matchesInput(target, change.path) || matchesInput(target, basePath)
-        })
-        if (covers && !impact.policies.some((p) => p.id === policy.id))
-          impact.policies.push({ id: policy.id, kind: policy.kind, duty: policy.duty })
-      }
-    }
-  }
-  impact.readers = [...reached.values()].sort((a, b) => a.test.localeCompare(b.test) || a.edge.localeCompare(b.edge))
-  const seenUnknown = new Set<string>()
-  impact.unknown = impact.unknown.filter((u) => {
-    const key = `${u.scope}\0${u.reason}`
-    if (seenUnknown.has(key)) return false
-    seenUnknown.add(key)
-    return true
-  })
-  return impact
+  return libraryChangedInputReaders(base, head, change, { toml: (text) => Bun.TOML.parse(text) })
 }
 
 /**
