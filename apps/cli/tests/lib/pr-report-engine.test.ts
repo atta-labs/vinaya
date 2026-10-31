@@ -13,6 +13,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -32,13 +33,16 @@ import {
   type GateRunResult,
   type GroupC,
   groupCFailed,
+  recordGreenTestRun,
   renderGroupC,
   resolveDeferredGroupC,
   runReportForOpenPr,
   spliceIntoLiveBody,
-  type TestRunCacheRecord
+  type TestRunCacheRecord,
+  testRunCacheKey
 } from '../../src/lib/pr-report-engine'
 import { readyCiPlanCommand } from '../../src/lib/pre-push-ready-policy'
+import { isNativeRunCommand, nativeRunCommand, REPOSITORY_LOCAL_RUN } from '../../src/lib/pre-push-test-runner'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const ALWAYS_REFUSE_BODY_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', 'fake-always-refuse-body-check.cjs')
@@ -566,5 +570,81 @@ describe('the report engine on a head whose tests are deferred to required CI', 
     await expect(
       resolveDeferredGroupC([ciLine, 'cd apps/cli && bun test tests/x.test.ts'], undefined, store(), deps())
     ).rejects.toThrow(DeferredEvidenceError)
+  })
+})
+
+describe('the native selected suite: composed only from its context-bound receipt', () => {
+  const CONTEXT = 'e'.repeat(64)
+  const command = nativeRunCommand(CONTEXT, ['apps/cli/tests/a.test.ts@default', 'packages/x/b.test.ts@default'])
+  const body = ['## Test Plan', '', '```', `${command} → every selected test passes`, '```', ''].join('\n')
+  const store = () => {
+    const records = new Map<string, TestRunCacheRecord>()
+    return {
+      get: (key: string) => records.get(key),
+      set: (key: string, record: TestRunCacheRecord) => void records.set(key, record)
+    }
+  }
+  function repo(): string {
+    const dir = tempCwd()
+    const env = { ...process.env }
+    for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, env, stdio: 'ignore' })
+    writeFileSync(join(dir, 'f.txt'), 'x\n')
+    git('init', '-q', '-b', 'task/x/1')
+    git('add', '.')
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'base')
+    return dir
+  }
+
+  it('the aggregate command names its context and identities, and parses back', () => {
+    expect(isNativeRunCommand(command)).toBe(true)
+    expect(isNativeRunCommand('bun test --timeout=30000 -- ./a.test.ts')).toBe(false)
+    expect(isNativeRunCommand(nativeRunCommand('short', ['a@default']))).toBe(false)
+    expect(isNativeRunCommand(`bun ${REPOSITORY_LOCAL_RUN} exact --context ${CONTEXT} --`)).toBe(false)
+  })
+
+  it('a receipt recorded under the command’s own context composes; nothing runs', async () => {
+    const dir = repo()
+    const cache = store()
+    expect(await recordGreenTestRun(command, ' 2 pass', dir, 'pre-push', cache, { context: CONTEXT })).toBe(true)
+    const groupC = await computeGroupC(body, dir, {}, cache)
+    expect(groupC.commands).toHaveLength(1)
+    expect(groupC.commands[0]).toMatchObject({ command, exitCode: 0, output: ' 2 pass' })
+    expect(groupC.commands[0]?.reusedFrom).toBeDefined()
+    expect(groupCFailed(groupC)).toBe(false)
+  })
+
+  it('no receipt, an unqualified one, or one filed under another context is reported not run, never a pass', async () => {
+    const dir = repo()
+    // An entry written before contexts were recorded: the exact key, no context.
+    const legacy = store()
+    legacy.set((await testRunCacheKey(command, dir)) as string, {
+      output: ' 2 pass',
+      exitCode: 0,
+      timedOut: false,
+      overflowed: false,
+      recordedAt: '2026-10-01T00:00:00.000Z',
+      source: 'pre-push'
+    })
+    expect(await recordGreenTestRun(command, ' 2 pass', dir, 'pre-push', store())).toBe(false)
+    for (const cache of [store(), legacy]) {
+      const groupC = await computeGroupC(body, dir, {}, cache)
+      expect(groupC.commands[0]).toMatchObject({ command, exitCode: null, receiptMissing: true })
+      expect(groupCFailed(groupC)).toBe(true)
+      expect(renderGroupC(groupC)).toContain('[not run: no matching receipt]')
+    }
+    const other = store()
+    expect(await recordGreenTestRun(command, ' 2 pass', dir, 'pre-push', other, { context: 'f'.repeat(64) })).toBe(
+      false
+    )
+    expect((await computeGroupC(body, dir, {}, other)).commands[0]?.receiptMissing).toBe(true)
+  })
+
+  it('a receipt for one state never stands for another tree', async () => {
+    const dir = repo()
+    const cache = store()
+    await recordGreenTestRun(command, ' 2 pass', dir, 'pre-push', cache, { context: CONTEXT })
+    writeFileSync(join(dir, 'f.txt'), 'changed\n')
+    expect((await computeGroupC(body, dir, {}, cache)).commands[0]?.receiptMissing).toBe(true)
   })
 })

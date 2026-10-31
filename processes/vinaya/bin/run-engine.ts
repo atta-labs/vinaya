@@ -290,7 +290,10 @@ import {
 import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../loops/dev-review/v2/v2-actions'
 import { runCli } from '../../../harness/gates/run-checks'
 import { checkReadyBaseline } from '../loops/dev-review/v2/ready-baseline'
-import { readTrustedReadyTestsPolicy } from '../../../apps/cli/src/lib/pre-push-ready-policy'
+import {
+  readTrustedReadyTestsPolicy,
+  readTrustedRequiredCiPolicy
+} from '../../../apps/cli/src/lib/pre-push-ready-policy'
 import {
   endReadyDeferral,
   endStoragePushes,
@@ -3069,9 +3072,13 @@ async function runLive(
     // The ready-tests policy (local tests, or deferral to required CI) is the default branch's own opt-in, read on
     // each push for the ready push and the driver-owned repair pushes alike; nothing else decides it.
     const readyTestsPolicy = () => readTrustedReadyTestsPolicy()
+    // The required check a ready or repair publication owes, from the same trusted read and independent of where its
+    // tests run: a locally tested head owes it exactly as a deferred one does.
+    const requiredCiPolicy = () => readTrustedRequiredCiPolicy()
     taskInput.v2 = liveV2Functions({
       runId: loopId,
       readyTestsPolicy,
+      requiredCiPolicy,
       worktreePath: taskInput.worktreePath,
       branch: taskInput.branch,
       store,

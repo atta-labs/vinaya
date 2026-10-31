@@ -108,6 +108,13 @@ export interface Scenario {
   settledCi?: 'green' | 'red' | 'pending'
   /** The default branch's ready-tests policy (`unreadable` throws); absent: no policy is wired, local tests. */
   readyTests?: { mode: 'local' } | { mode: 'ci'; workflow: string; check: string } | 'unreadable'
+  /**
+   * The default branch's required-CI descriptor, independent of `readyTests` (`unreadable` throws); absent: none is
+   * wired, so the ready-tests opt-in's own pair is owed. Read only with `readyTests` set.
+   */
+  requiredCiPolicy?: { workflow: string; check: string } | null | 'unreadable'
+  /** Whether the driver has its strict required-CI reader; default it does. Read only with `readyTests` set. */
+  strictReader?: boolean
   /** The staged body the Developer's open_pull_request saves; default `Closes #<task>`. */
   stagedBody?: string
   /** The explicit-command phase of each deferred ready push (1-based); default every command passes. */
@@ -594,6 +601,15 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
               if (scenario.readyTests === 'unreadable') throw new Error('the default branch could not be read')
               return scenario.readyTests as { mode: 'local' } | { mode: 'ci'; workflow: string; check: string }
             },
+            ...(scenario.requiredCiPolicy !== undefined
+              ? {
+                  requiredCiPolicy: () => {
+                    if (scenario.requiredCiPolicy === 'unreadable')
+                      throw new Error('the default branch could not be read')
+                    return scenario.requiredCiPolicy as { workflow: string; check: string } | null
+                  }
+                }
+              : {}),
             checkReadyBaseline: () => {
               world.baselineChecks += 1
               return scenario.baseline?.(world.baselineChecks) ?? { ok: true }
@@ -608,25 +624,29 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
                 }
               )
             },
-            readRequiredCi: ({ head }) => {
-              world.requiredCiReads.push(head)
-              const all = scenario.requiredCi ?? []
-              const entry = all[Math.min(world.requiredCiReads.length - 1, all.length - 1)]
-              if (entry === undefined)
-                return {
-                  state: 'green' as const,
-                  identity: {
-                    head,
-                    workflow: '.github/workflows/ci.yml',
-                    check: 'Vinaya CI',
-                    runId: 1,
-                    runAttempt: 1,
-                    checkRunId: 2,
-                    url: null
+            ...(scenario.strictReader === false
+              ? {}
+              : {
+                  readRequiredCi: ({ head }: { head: string }) => {
+                    world.requiredCiReads.push(head)
+                    const all = scenario.requiredCi ?? []
+                    const entry = all[Math.min(world.requiredCiReads.length - 1, all.length - 1)]
+                    if (entry === undefined)
+                      return {
+                        state: 'green' as const,
+                        identity: {
+                          head,
+                          workflow: '.github/workflows/ci.yml',
+                          check: 'Vinaya CI',
+                          runId: 1,
+                          runAttempt: 1,
+                          checkRunId: 2,
+                          url: null
+                        }
+                      }
+                    return typeof entry === 'function' ? entry(head) : entry
                   }
-                }
-              return typeof entry === 'function' ? entry(head) : entry
-            }
+                })
           }
         : {}),
       runReadyGate: ({ head, signal, deferTests }) => {

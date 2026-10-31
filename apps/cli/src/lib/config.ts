@@ -802,12 +802,27 @@ const VinayaConfigObjectSchema = z.object({
   // absent means local tests. The one supported pair is this repository's
   // own CI workflow and its aggregate check — any other value is refused
   // rather than read as an adopter CI protocol.
+  //
+  // `requiredCi` names the required current-head check a version-2 run's
+  // publication owes whether its selected tests ran locally or were deferred:
+  // test execution policy (`readyTests`) never removes it. Read from the
+  // default branch only, like `readyTests`; the same one supported pair. An
+  // existing `readyTests` opt-in supplies it when this field is absent, and a
+  // differing pair in both is refused. Absent with no opt-in, nothing extra is
+  // owed.
   prePush: z
     .object({
       alwaysRun: z.array(z.string()).optional(),
       readyTests: z
         .object({
           mode: z.literal('ci'),
+          workflow: z.literal('.github/workflows/ci.yml'),
+          check: z.literal('Vinaya CI')
+        })
+        .strict()
+        .optional(),
+      requiredCi: z
+        .object({
           workflow: z.literal('.github/workflows/ci.yml'),
           check: z.literal('Vinaya CI')
         })
