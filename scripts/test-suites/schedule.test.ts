@@ -24,6 +24,7 @@ import {
   assignShards,
   buildTestSchedule,
   bunJunitFiles,
+  bunReportedFiles,
   checkSchedule,
   ciScheduleInput,
   readShardLists,
@@ -333,6 +334,16 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
     'pkg/bun/moved/tests/a.test.ts': bunTest,
     'pkg/bun/tests/kill.test.ts':
       "import { test } from 'bun:test'\ntest('killed', () => { process.kill(process.pid, 'SIGTERM'); return new Promise((r) => setTimeout(r, 5000)) })\n",
+    // A test that changes directory, as several CLI tests do: Bun then names its file a second time, from the new folder.
+    'pkg/bun/tests/chdir.test.ts': [
+      "import { describe, expect, test } from 'bun:test'",
+      "describe('before', () => { test('a', () => expect(1).toBe(1)) })",
+      "test('moves to the repository root', () => { process.chdir('../..') })",
+      "describe('after', () => { test('b', () => expect(1).toBe(1)) })",
+      "test('moves out of the repository', () => { process.chdir('/') })",
+      "describe('outside', () => { test('c', () => expect(1).toBe(1)) })",
+      ''
+    ].join('\n'),
     'pkg/vt/package.json': '{ "name": "@fx/vt", "scripts": { "test": "vitest run" } }\n',
     'pkg/vt/vitest.config.mjs': "export default { test: { include: ['**/*.test.ts'] } }\n",
     'pkg/vt/src/run.test.ts': vitestTest,
@@ -371,6 +382,7 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
       bun('pkg/bun/tests/a.test.ts'),
       bun('pkg/bun/moved/tests/a.test.ts'),
       bun('pkg/bun/tests/kill.test.ts'),
+      bun('pkg/bun/tests/chdir.test.ts'),
       vt('pkg/vt/src/run.test.ts'),
       vt('pkg/vt/legacy/src/run.test.ts')
     ]
@@ -438,6 +450,33 @@ describe('real runners execute exactly their group', () => {
     })
     expect(silent.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['unreadable bun@default'])
   }, 60_000)
+
+  test('a test that changes directory is still one execution of its own file', () => {
+    const moving = groupsFor(['pkg/bun/tests/chdir.test.ts', 'pkg/bun/tests/a.test.ts'])
+    const result = runGroups(root, moving, quiet)
+    expect(result.failedRunners).toEqual([])
+    expect(result.problems).toEqual([])
+    // Bun named the moving file more than once, from different folders; the check counts it once.
+    const reported = result.executions[0]?.files ?? []
+    expect(reported.filter((f) => f.endsWith('pkg/bun/tests/chdir.test.ts'))).toHaveLength(1)
+  }, 60_000)
+
+  test('a reported path is matched to a scheduled test from the group folder, the root or a climbed-out path', () => {
+    const group = groupsFor(['pkg/bun/tests/a.test.ts'])[0] as NativeGroup
+    expect(
+      bunReportedFiles(
+        group,
+        [
+          'tests/a.test.ts',
+          'pkg/bun/tests/a.test.ts',
+          '../../work/repo/pkg/bun/tests/a.test.ts',
+          'moved/tests/a.test.ts'
+        ],
+        '/r'
+      )
+    ).toEqual(['/r/pkg/bun/tests/a.test.ts', 'moved/tests/a.test.ts'])
+    expect(bunReportedFiles(group, null, '/r')).toBeNull()
+  })
 
   test('an empty group list starts no runner', () => {
     let started = 0

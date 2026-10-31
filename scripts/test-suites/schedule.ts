@@ -39,7 +39,7 @@
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 import { CI_SHARD_COUNT, CI_SHARD_LIST_OWNER, shardFileRelPath } from '../../apps/cli/src/lib/ci-shard-membership.ts'
 import type { CiDecision } from '../../apps/cli/src/lib/ci-test-selection.ts'
 import {
@@ -346,6 +346,39 @@ export function bunJunitFiles(xml: string): string[] | null {
   return depth === 0 ? files : null
 }
 
+/**
+ * The files a Bun JUnit report names, as the execution check reads them.
+ * Bun writes each entry's `file` relative to the process's working directory
+ * at the moment it writes it, and starts a new top-level suite for the same
+ * file once a test changes directory — so one file can appear twice, the
+ * second time relative to wherever the test moved (the repository root, or an
+ * absolute path). Each relative entry is matched to a scheduled test of the
+ * group read from the group's folder, from the repository root, or as the
+ * tail of a path that climbed out of either; one that matches none is kept as
+ * written, and the check refuses it as extra. Entries naming the same file
+ * within this one report are one execution; a second runner start of the
+ * group is still a second report, which the check refuses.
+ */
+export function bunReportedFiles(
+  group: NativeGroup,
+  written: readonly string[] | null,
+  repoRoot: string
+): string[] | null {
+  if (written === null) return null
+  const resolved = written.map((entry) => {
+    const slashed = entry.replace(/\\/g, '/')
+    if (slashed.startsWith('/') || /^[A-Za-z]:\//.test(slashed)) return slashed
+    const fromCwd = posix.normalize(group.cwd === '.' ? slashed : `${group.cwd}/${slashed}`)
+    const fromRoot = posix.normalize(slashed)
+    const climbed = fromRoot.replace(/^(\.\.\/)+/, '')
+    const match = group.tests.find(
+      (id) => id === fromCwd || id === fromRoot || climbed === id || climbed.endsWith(`/${id}`)
+    )
+    return match ? join(repoRoot, match) : slashed
+  })
+  return [...new Set(resolved)]
+}
+
 /** The files a Vitest JSON report says executed, as written; `null` when the text is not one. */
 export function vitestJsonFiles(text: string): string[] | null {
   try {
@@ -422,7 +455,12 @@ export function runGroups(
       } catch {
         text = null
       }
-      const files = text === null ? null : group.runner === 'bun' ? bunJunitFiles(text) : vitestJsonFiles(text)
+      const files =
+        text === null
+          ? null
+          : group.runner === 'bun'
+            ? bunReportedFiles(group, bunJunitFiles(text), repoRoot)
+            : vitestJsonFiles(text)
       executions.push(
         files === null
           ? { group: group.id, outcome: 'unreadable', detail: `no readable ${group.runner} report`, files: [] }
