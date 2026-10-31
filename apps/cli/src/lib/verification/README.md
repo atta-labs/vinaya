@@ -42,6 +42,13 @@ remote, runs no test and writes nothing. The plan states:
 - `removedTests`, `renamedTests`, `configurations` and the `context` that
   reproduces the plan. `profile` holds timings and is not part of `identity`.
 
+A test that resolves an import through another package is also required when
+a non-source file of that package changes — its `package.json`, its
+`tsconfig.json`, an asset it ships — since no such file is a graph node. A
+non-source file under the package's own `tests`, `test`, `__tests__`, `specs`
+or `fixtures` folder does not count: it is the package's test data, required
+only by the tests that import it or that the inventory declares as reading it.
+
 The inventory is the caller's: `validateInventory` checks the shape every
 selection relies on, and `selectTests` refuses views built for other
 revisions. A repository's own declarations — its folder-scanning tests, the

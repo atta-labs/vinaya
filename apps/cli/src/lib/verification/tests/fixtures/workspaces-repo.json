@@ -18,6 +18,8 @@
     "packages/app/tests/bytes.test.ts": "import { expect, test } from 'bun:test'\nimport { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst SETTINGS = join(import.meta.dir, '../settings.json')\n\ntest('bytes', () => expect(readFileSync(SETTINGS, 'utf8').endsWith('\\n')).toBe(true))\n",
     "packages/app/tests/data.test.ts": "import { expect, test } from 'bun:test'\nimport { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst TABLE = join(import.meta.dir, 'fixtures/table.txt')\n\ntest('table', () => expect(readFileSync(TABLE, 'utf8').length).toBeGreaterThan(0))\n",
     "packages/app/tests/fixtures/table.txt": "a,1\nb,2\n",
+    "packages/app/tests/sample.test.ts": "import { expect, test } from 'bun:test'\nimport { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst SAMPLE = join(import.meta.dir, '../../core/tests/fixtures/sample.json')\n\ntest('sample', () => expect(JSON.parse(readFileSync(SAMPLE, 'utf8')).cases).toBe(2))\n",
+    "packages/core/tests/fixtures/sample.json": "{ \"cases\": 2 }\n",
     "packages/app/tests/docs.test.ts": "import { expect, test } from 'bun:test'\nimport { readFileSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst GUIDE = join(import.meta.dir, '../../../docs/guide.md')\n\ntest('guide', () => expect(readFileSync(GUIDE, 'utf8')).toContain('# Guide'))\n",
     "packages/app/tests/cli.test.ts": "import { expect, test } from 'bun:test'\nimport { spawnSync } from 'node:child_process'\nimport { join } from 'node:path'\n\nconst ENTRY = join(import.meta.dir, '../../../tools/cli.ts')\n\ntest('cli', () => expect(spawnSync('bun', [ENTRY, 'run']).status).toBe(0))\n",
     "packages/app/tests/tree.test.ts": "import { expect, test } from 'bun:test'\nimport { readdirSync } from 'node:fs'\nimport { join } from 'node:path'\n\nconst CORE = join(import.meta.dir, '../../core/src')\n\ntest('every core module is listed', () => expect(readdirSync(CORE).length).toBe(3))\n",
@@ -76,6 +78,13 @@
         "readerKind": "raw-bytes",
         "readers": ["packages/app/tests/data.test.ts"],
         "source": "table"
+      },
+      {
+        "input": "packages/core/tests/fixtures/",
+        "kind": "fixture",
+        "readerKind": "raw-bytes",
+        "readers": ["packages/app/tests/sample.test.ts"],
+        "source": "core-sample"
       },
       {
         "input": "docs/",
@@ -176,6 +185,26 @@
       "fallbacks": []
     },
     {
+      "name": "a data file under an imported package's tests folder selects only its declared reader, not the package's importers",
+      "depth": "transitive",
+      "change": { "packages/core/tests/fixtures/sample.json": "{ \"cases\": 2, \"note\": \"edited\" }\n" },
+      "required": ["packages/app/tests/sample.test.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "a manifest change in the same imported package still selects every importer",
+      "depth": "transitive",
+      "change": {
+        "packages/core/package.json": "{ \"name\": \"@fx/core\", \"version\": \"1.0.1\", \"exports\": { \".\": \"./src/index.ts\" } }\n"
+      },
+      "required": [
+        "packages/app/tests/add.test.ts",
+        "packages/app/tests/mul.test.ts",
+        "packages/app/tests/square.test.ts"
+      ],
+      "fallbacks": ["unattributed"]
+    },
+    {
       "name": "a document selects its declared reader",
       "depth": "one",
       "change": { "docs/guide.md": "# Guide\n\nHow to use the fixture, again.\n" },
@@ -221,6 +250,7 @@
         "packages/app/tests/docs.test.ts",
         "packages/app/tests/mul.test.ts",
         "packages/app/tests/opaque.test.ts",
+        "packages/app/tests/sample.test.ts",
         "packages/app/tests/settings.test.ts",
         "packages/app/tests/square.test.ts",
         "packages/app/tests/theme.test.ts",
