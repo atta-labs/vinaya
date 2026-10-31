@@ -1,5 +1,14 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { beyondSurfacePaths, redact, withBeyondSurfaceBlock } from '@attalabs/aeg-core'
@@ -16,7 +25,7 @@ import { startDevToolsHost } from '../task-tools/dev-tools-host'
 import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
 import { buildWorkerEnv, containerClaudeLogin, stageCodexPolicyHome } from '../worker-boundary'
 import { prepareGradingCopy, testContamination, type Attribution, type HiddenInputs } from './contamination'
-import { ENGINE_SPAWN, runEngineRoleStep, type SpawnFn } from './engine-role-step'
+import { ENGINE_SPAWN, runEngineRoleStep, type SpawnFn, usageOfStream } from './engine-role-step'
 import { suiteMean, type BootstrapMethod } from './estimators'
 import { GENERIC_GRADERS } from './generic-graders'
 import type { NeutralCase } from './neutral-case'
@@ -207,14 +216,35 @@ async function traceOf(adapter: StepOneAdapter, lines: readonly string[]): Promi
 export const CLAUDE_HARNESS_INTERNAL_TOOLS: readonly string[] = ['StructuredOutput', 'ToolSearch', 'TodoWrite']
 
 /**
+ * Claude Code's task-list and subagent built-ins, which exercise no neutral
+ * capability of their own: the agent's task list, and the start, read and stop
+ * of a subagent or background task. A subagent's own tool calls are in the
+ * same stream and are traced as calls of their own. A layer-`G` trial
+ * record's trace leaves these out too.
+ */
+export const CLAUDE_COORDINATION_TOOLS: readonly string[] = [
+  'TaskCreate',
+  'TaskGet',
+  'TaskList',
+  'TaskUpdate',
+  'Agent',
+  'Task',
+  'TaskOutput',
+  'TaskStop',
+  'Workflow'
+]
+
+/**
  * The trace a layer-`G` trial record carries: `trace` without Claude Code's
- * harness-internal tools on the `claude-code` adapter, unchanged on Codex.
- * None of the dropped tools performs an effect, so the effects step one counts
- * are the same with or without them.
+ * harness-internal and coordination tools on the `claude-code` adapter,
+ * unchanged on Codex. None of the dropped tools performs an effect, so the
+ * effects step one counts are the same with or without them.
  */
 export function layerGTrace(adapter: StepOneAdapter, trace: readonly TraceCall[]): TraceCall[] {
   return adapter === 'claude-code'
-    ? trace.filter((call) => !CLAUDE_HARNESS_INTERNAL_TOOLS.includes(call.tool))
+    ? trace.filter(
+        (call) => !CLAUDE_HARNESS_INTERNAL_TOOLS.includes(call.tool) && !CLAUDE_COORDINATION_TOOLS.includes(call.tool)
+      )
     : [...trace]
 }
 
@@ -784,6 +814,26 @@ export interface StepOneContainer {
    * Engine backend; `runStepOne` refuses it on the host.
    */
   backend?: StepOneBackend
+  /**
+   * Where the run appends the role's agent stream, one line as each arrives,
+   * so a trial stopped before it records anything still leaves its stream.
+   * Absent, the stream is kept in memory only. An `answer` turn's stream is
+   * appended once the turn returns, since that turn hands back its whole
+   * output at its end.
+   */
+  streamPath?: string
+}
+
+/**
+ * A container trial's stream-line observer: keeps each line in `transcript`
+ * and, when the container names a stream file, appends it there at once.
+ */
+function streamObserver(transcript: string[], container: StepOneContainer | undefined): (line: string) => void {
+  const path = container?.streamPath
+  return (line) => {
+    transcript.push(line)
+    if (path !== undefined) appendFileSync(path, `${line}\n`)
+  }
 }
 
 /** The backends a container trial's role step runs on. */
@@ -1079,7 +1129,13 @@ function tokensOf(
   }
 }
 
-function trialUsage(
+/**
+ * A trial's usage. Its tokens are read from the role's own stream
+ * (`usageOfStream`), which counts every assistant message even when the run
+ * was stopped, or threw, before the stream's closing event; a stream with no
+ * usage falls back to the dispatch handle's.
+ */
+export function trialUsage(
   adapter: StepOneAdapter,
   handle: {
     durationMs: number
@@ -1088,11 +1144,14 @@ function trialUsage(
   } | null,
   transcript: readonly string[]
 ): StepOneUsage {
+  const streamed = usageOfStream(adapter, transcript)
   return {
     wallTimeMs: handle?.durationMs ?? 0,
-    ...(handle === null
-      ? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }
-      : tokensOf(adapter, handle)),
+    ...(streamed.usage !== null
+      ? tokensOf(adapter, streamed)
+      : handle === null
+        ? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }
+        : tokensOf(adapter, handle)),
     subscriptionQuota: handle === null ? 0 : subscriptionQuotaOf(adapter, transcript),
     estimatedCostUsd: 0
   }
@@ -1461,7 +1520,7 @@ async function runDeveloperInTree(
         outputSchema: developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: [...requiredSources] }),
         devToolsBridge,
         spawnFn: steps.engineSpawn,
-        observeStdoutLine: (line) => transcript.push(line)
+        observeStdoutLine: streamObserver(transcript, container)
       })
     } else {
       handle = await steps.dispatch('developer', adapterVendor(input.adapter), prompt, {
@@ -1472,7 +1531,7 @@ async function runDeveloperInTree(
         ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
         turnResultKnownFindingIds: [],
         devToolsBridge,
-        observeStdoutLine: (line) => transcript.push(line)
+        observeStdoutLine: streamObserver(transcript, container)
       })
     }
     const trace = await traceOf(input.adapter, transcript)
@@ -1610,7 +1669,7 @@ async function runEngineReviewer(
       outputSchema: reviewResultJsonSchema(item.role),
       devToolsBridge: driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts')),
       spawnFn: steps.engineSpawn,
-      observeStdoutLine: (line) => transcript.push(line)
+      observeStdoutLine: streamObserver(transcript, container)
     })
   } finally {
     await toolHost.close()
@@ -1659,7 +1718,7 @@ async function runReviewerTrial<T>(
         unattended: true,
         containerMode: true,
         ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
-        observeStdoutLine: (line) => transcript.push(line)
+        observeStdoutLine: streamObserver(transcript, context.container)
       })
       return await finish(handle, transcript)
     } finally {
@@ -2134,6 +2193,8 @@ async function runAnswerCase(
     const stdout = await runTurn(prompt, null)
     const wallTimeMs = Date.now() - started
     const transcript = stdout.split('\n').filter(Boolean)
+    if (container?.streamPath !== undefined && transcript.length > 0)
+      appendFileSync(container.streamPath, `${transcript.join('\n')}\n`)
     const turn = trial.adapter === 'claude-code' ? readClaudeTurnOutput(stdout) : readCodexTurnOutput(stdout)
     const tokens = tools.usageOf(trial.adapter, transcript)
     const trace = await layerGTraceOf(trial.adapter, transcript)

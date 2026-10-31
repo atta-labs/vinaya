@@ -600,7 +600,8 @@ function runnerCommand(checkout: string, root: string, files: readonly string[],
 
 /**
  * Runs `files` (repository-relative) from their packages' own directories with their own runners, as continuous integration does.
- * `isolate` wraps each runner's launch; each run's report directory is created under `reportParent`.
+ * `isolate` wraps each runner's launch; each run's report directory is created under `reportParent`;
+ * `onOutput` receives each runner's standard output and standard error once it exits.
  */
 export async function runTests(
   checkout: string,
@@ -614,7 +615,8 @@ export async function runTests(
     command: string[]
     env: NodeJS.ProcessEnv
   },
-  reportParent: string = tmpdir()
+  reportParent: string = tmpdir(),
+  onOutput?: (output: { packageRoot: string; stdout: string; stderr: string }) => void
 ): Promise<TestResult[]> {
   const byPackage = new Map<string, string[]>()
   for (const file of files) {
@@ -633,6 +635,7 @@ export async function runTests(
       budgetMs,
       'test runner'
     )
+    onOutput?.({ packageRoot: root, stdout: run.stdout, stderr: run.stderr })
     // bun writes no report when no test case ran at all — every file failed to
     // load — and says so in its summary: nothing passed. Anything else is a
     // runner failure.

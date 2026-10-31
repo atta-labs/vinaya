@@ -770,7 +770,7 @@ describe("a change trial's publishing instruction and its pull request", () => {
         backend: 'standalone',
         adapter: 'claude-code',
         model: 'claude-test-model',
-        timeoutMs: 1000
+        timeoutMs: 60_000
       },
       fakeDeveloper(opensPullRequest, prompts)
     )

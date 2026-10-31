@@ -212,13 +212,23 @@ function teeStdout(spawnFn: SpawnFn, line: (text: string) => void): SpawnFn {
   }
 }
 
-/** The stream's own token counts, in the standalone dispatch's handle shape. */
-function usageOfStream(adapter: EngineRoleStepRequest['adapter'], lines: readonly string[]) {
+/**
+ * The stream's own token counts, in the standalone dispatch's handle shape.
+ * On Claude Code they are the sum of each assistant message's usage, each
+ * message counted once however many events carry it, so a session cut off
+ * before its closing `result` event still counts every message it made; a
+ * stream whose assistant messages carry no usage falls back to its `result`
+ * events. On Codex they are the sum of its `turn.completed` events. A stream
+ * with none of these has no usage.
+ */
+export function usageOfStream(adapter: 'claude-code' | 'codex', lines: readonly string[]) {
   let input = 0
   let output = 0
   let read = 0
   let creation = 0
   let seen = false
+  const messages = new Map<string, Record<string, unknown>>()
+  const results: Record<string, unknown>[] = []
   for (const text of lines) {
     let event: Record<string, unknown>
     try {
@@ -226,21 +236,34 @@ function usageOfStream(adapter: EngineRoleStepRequest['adapter'], lines: readonl
     } catch {
       continue
     }
+    if (event === null || typeof event !== 'object') continue
     const usage = (event.usage ?? {}) as Record<string, unknown>
     const count = (key: string) => (typeof usage[key] === 'number' ? (usage[key] as number) : 0)
-    if (adapter === 'claude-code' && event.type === 'result') {
-      seen = true
-      input += count('input_tokens')
-      output += count('output_tokens')
-      read += count('cache_read_input_tokens')
-      creation += count('cache_creation_input_tokens')
+    if (adapter === 'claude-code' && event.type === 'assistant') {
+      const message = (event.message ?? {}) as Record<string, unknown>
+      if (message.usage !== null && typeof message.usage === 'object') {
+        // One message can stream as several events, one per content block, each carrying its usage; the last counts.
+        const id = typeof message.id === 'string' ? message.id : `event-${messages.size}`
+        messages.set(id, message.usage as Record<string, unknown>)
+      }
     }
+    if (adapter === 'claude-code' && event.type === 'result') results.push(usage)
     if (adapter === 'codex' && event.type === 'turn.completed') {
       seen = true
       // Codex counts cached input inside its input, as the standalone dispatch's handle keeps it.
       input += count('input_tokens')
       output += count('output_tokens')
       read += count('cached_input_tokens')
+    }
+  }
+  if (adapter === 'claude-code') {
+    for (const usage of messages.size > 0 ? messages.values() : results) {
+      const count = (key: string) => (typeof usage[key] === 'number' ? (usage[key] as number) : 0)
+      seen = true
+      input += count('input_tokens')
+      output += count('output_tokens')
+      read += count('cache_read_input_tokens')
+      creation += count('cache_creation_input_tokens')
     }
   }
   return seen ? { usage: { input, output }, cacheUsage: { read, creation } } : { usage: null, cacheUsage: null }
@@ -299,6 +322,8 @@ export async function runEngineRoleStep(request: EngineRoleStepRequest): Promise
   const adapter =
     request.adapter === 'claude-code' ? ('claude --json-schema' as const) : ('codex --output-schema' as const)
   const completed = outcome.reason === 'completed'
+  // The executor stops the agent at the launcher's time limit; a step that ends there unfinished timed out.
+  const timedOut = !completed && durationMs >= request.timeoutMs
   return {
     exitCode: completed ? 0 : 1,
     // The run's own account of a step that did not complete; the caller redacts it before publication.
@@ -306,8 +331,8 @@ export async function runEngineRoleStep(request: EngineRoleStepRequest): Promise
     durationMs,
     ...usageOfStream(request.adapter, transcript),
     resumeId: read.sessionId,
-    timedOut: false,
-    ...(completed ? {} : { failureReason: 'crash' as const }),
+    timedOut,
+    ...(completed ? {} : { failureReason: timedOut ? ('timeout' as const) : ('crash' as const) }),
     ...(request.role === 'developer'
       ? { turnOutput: { adapter, raw: read.raw, event: read.event } }
       : { reviewOutput: { adapter, raw: read.raw, event: read.event, terminal: read.terminal, errors: read.errors } })

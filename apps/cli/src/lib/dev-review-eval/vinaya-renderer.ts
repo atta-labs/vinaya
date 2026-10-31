@@ -60,14 +60,28 @@ import type { CheckResult, Fact, NeutralOutcomes, Review, SourceReceipt, TestRes
  * it maps to `read_web`, a capability no case grants and no role grant holds:
  * a trace that reaches the web fails the granted-capabilities grader instead
  * of making the outcome `invalid`.
+ *
+ * Every built-in Claude Code's capability table (`CLAUDE_CAPABILITY_TOOLS`)
+ * can allow is either here or left out of a layer-`G` trace as a tool with no
+ * effect of its own (`CLAUDE_HARNESS_INTERNAL_TOOLS` and
+ * `CLAUDE_COORDINATION_TOOLS` in `step-one.ts`), so an allowed call never
+ * makes the outcome `invalid`. A Codex trace names each item type other than
+ * an MCP tool call or a command by its type: a `file_change` writes files and
+ * a `web_search` reads the web.
  */
 export const TOOL_CAPABILITIES: Readonly<Record<string, string>> = {
   Read: 'read_file',
   Grep: 'read_file',
   Glob: 'read_file',
+  LSP: 'read_file',
+  Skill: 'read_file',
   Edit: 'write_file',
   Write: 'write_file',
+  NotebookEdit: 'write_file',
+  file_change: 'write_file',
   shell: 'run_commands',
+  KillShell: 'run_commands',
+  Monitor: 'run_commands',
   fetch_documentation: 'read_document',
   read_source: 'read_document',
   run_checks: 'run_checks',
@@ -77,7 +91,8 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, string>> = {
   refresh_evidence: 'refresh_evidence',
   read_pull_request: 'read_change_request',
   WebFetch: 'read_web',
-  WebSearch: 'read_web'
+  WebSearch: 'read_web',
+  web_search: 'read_web'
 }
 
 /**

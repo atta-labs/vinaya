@@ -16,7 +16,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
   outcomeKey,
@@ -41,6 +41,39 @@ export const AGENT_USAGE_FILE = 'vinaya-usage.json'
 
 /** The longest the hidden test files of one trial may run. */
 export const HIDDEN_TEST_BUDGET_MS = 1_200_000
+
+/** The hidden-test runners' standard output, kept in Harbor's verifier log directory, `/logs/verifier`. */
+export const HIDDEN_TEST_STDOUT_FILE = 'hidden-tests-stdout.txt'
+
+/** The hidden-test runners' standard error, beside their standard output. */
+export const HIDDEN_TEST_STDERR_FILE = 'hidden-tests-stderr.txt'
+
+/** Receives one hidden-test runner's output once it exits, with the test file it ran. */
+export type RunnerOutputSink = (file: string, output: { stdout: string; stderr: string }) => void
+
+/**
+ * A sink that keeps each runner's output, headed by its test file, in the two
+ * files of `directory`, emptied first, and prints the standard output and the
+ * standard error with `print`; the verifier prints to its own standard output,
+ * which Harbor writes to `test-stdout.txt`.
+ */
+export function runnerOutputLog(
+  directory: string,
+  print: (text: string) => void = (text) => process.stdout.write(text)
+): RunnerOutputSink {
+  mkdirSync(directory, { recursive: true })
+  const stdoutPath = join(directory, HIDDEN_TEST_STDOUT_FILE)
+  const stderrPath = join(directory, HIDDEN_TEST_STDERR_FILE)
+  writeFileSync(stdoutPath, '')
+  writeFileSync(stderrPath, '')
+  const block = (file: string, text: string) => `== ${file}\n${text}${text === '' || text.endsWith('\n') ? '' : '\n'}`
+  return (file, { stdout, stderr }) => {
+    appendFileSync(stdoutPath, block(file, stdout))
+    appendFileSync(stderrPath, block(file, stderr))
+    print(block(`${file} (stdout)`, stdout))
+    print(block(`${file} (stderr)`, stderr))
+  }
+}
 
 /** What the verifier reads from the task's `tests/` folder besides the hidden test files under `tests/hidden/`. */
 export interface GradingSpec {
@@ -138,13 +171,15 @@ export function isTestFile(path: string): boolean {
  * runner of its own, with its package's own runner as the host grading copy
  * does, within what is left of the budget, and maps the joined results as the
  * host maps them. One runner per file keeps one file's state, and a runner
- * that loads no file, from deciding another file's results.
+ * that loads no file, from deciding another file's results. Each runner's
+ * output goes to `output` when given.
  */
 export async function runHiddenTests(
   tree: string,
   testsDirectory: string,
   spec: GradingSpec,
-  budgetMs = HIDDEN_TEST_BUDGET_MS
+  budgetMs = HIDDEN_TEST_BUDGET_MS,
+  output?: RunnerOutputSink
 ): Promise<NonNullable<VinayaTrialRecord['hiddenTests']>> {
   for (const path of spec.testFiles) {
     const target = join(tree, path)
@@ -159,10 +194,17 @@ export async function runHiddenTests(
     const left = deadline - Date.now()
     if (left <= 0) throw new Error(`the hidden tests ran past their ${budgetMs} ms budget`)
     results.push(
-      ...(await runTests(tree, [path], left, (command) => ({
-        command: underNode(command),
-        env: stripVinayaEnv()
-      })))
+      ...(await runTests(
+        tree,
+        [path],
+        left,
+        (command) => ({
+          command: underNode(command),
+          env: stripVinayaEnv()
+        }),
+        undefined,
+        output === undefined ? undefined : ({ stdout, stderr }) => output(path, { stdout, stderr })
+      ))
     )
   }
   return {
@@ -172,10 +214,18 @@ export async function runHiddenTests(
 }
 
 /** The measured part of a trial: a producing case's change and hidden-test results; nothing for any other kind. */
-export async function measureTrial(tree: string, testsDirectory: string, spec: GradingSpec): Promise<MeasuredPart> {
+export async function measureTrial(
+  tree: string,
+  testsDirectory: string,
+  spec: GradingSpec,
+  output?: RunnerOutputSink
+): Promise<MeasuredPart> {
   if (!producing(spec.case)) return { measuredChange: null, hiddenTests: null }
   const measuredChange = measureChange(tree, spec.case.baseRevision)
-  return { measuredChange, hiddenTests: await runHiddenTests(tree, testsDirectory, spec) }
+  return {
+    measuredChange,
+    hiddenTests: await runHiddenTests(tree, testsDirectory, spec, HIDDEN_TEST_BUDGET_MS, output)
+  }
 }
 
 /**
@@ -288,7 +338,7 @@ export async function harborGradeCommand(argv: readonly string[]): Promise<numbe
       const tests = flag(argv, 'tests')
       const spec = JSON.parse(readFileSync(join(tests, 'grading.json'), 'utf8')) as GradingSpec
       const agent = readAgentRecord(flag(argv, 'agent'))
-      const measured = await measureTrial(flag(argv, 'app'), tests, spec)
+      const measured = await measureTrial(flag(argv, 'app'), tests, spec, runnerOutputLog(out))
       grade = await gradeTrial(spec, agent, measured)
     } catch (error) {
       grade = {

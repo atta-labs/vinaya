@@ -26,9 +26,13 @@ import { join, relative } from 'node:path'
 import {
   gradeTrial,
   type GradingSpec,
+  HIDDEN_TEST_STDERR_FILE,
+  HIDDEN_TEST_STDOUT_FILE,
   measureChange,
   type OracleSpec,
   oracleAgentPart,
+  runHiddenTests,
+  runnerOutputLog,
   splitRecord,
   underNode,
   writeGrade
@@ -36,6 +40,7 @@ import {
 import { QUARANTINE_METADATA, quarantineAdjudicationDigest } from '../../src/lib/dev-review-eval/harbor-results'
 import {
   AGENT_ALLOWED_HOSTS,
+  AGENT_TIMEOUT_SEC,
   CHANGE_CASE_INSTALL,
   CLAUDE_BIN_DIRECTORY,
   CLAUDE_CODE_PACKAGE,
@@ -52,12 +57,20 @@ import {
   PREPARE_REPOSITORY_SCRIPT,
   REPOSITORY_ROOT,
   suiteName,
+  TEST_SCRIPT,
+  TRIAL_TIMEOUT_ENV,
+  TRIAL_TIMEOUT_SEC,
   writeArchive
 } from '../../src/lib/dev-review-eval/harbor-tasks'
 import { EventEmitter } from 'node:events'
 import type { SpawnFn } from '@atta/executor-agent-spawn'
 import { ENGINE_DEV_TOOLS_SERVER } from '../../src/lib/dev-review-eval/engine-role-step'
-import { HARBOR_TRIAL_BACKENDS, type HarborCaseFile, runHarborTrial } from '../../src/lib/dev-review-eval/harbor-trial'
+import {
+  HARBOR_TRIAL_BACKENDS,
+  type HarborCaseFile,
+  harborTrialCommand,
+  runHarborTrial
+} from '../../src/lib/dev-review-eval/harbor-trial'
 import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import {
   type ContainerTrialRecord,
@@ -232,6 +245,135 @@ describe('the converter', () => {
       }
     }
   })
+
+  it('passes the trial a limit 300 seconds below the agent limit, read in the container from the task environment', () => {
+    for (const { dir } of folders()) {
+      const toml = Bun.TOML.parse(readFileSync(join(dir, 'task.toml'), 'utf8')) as {
+        agent: { timeout_sec: number }
+        environment: { env: Record<string, string> }
+      }
+      expect(toml.agent.timeout_sec).toBe(AGENT_TIMEOUT_SEC)
+      expect(toml.environment.env[TRIAL_TIMEOUT_ENV]).toBe(String(AGENT_TIMEOUT_SEC - 300))
+    }
+    expect(TRIAL_TIMEOUT_SEC).toBe(AGENT_TIMEOUT_SEC - 300)
+    // The agent's run command names the variable for the container's shell; the Python process never reads it.
+    const printed = run(
+      'python3',
+      [
+        '-c',
+        [
+          'import sys, types',
+          "for name in ['harbor', 'harbor.agents', 'harbor.agents.installed', 'harbor.agents.installed.base', 'harbor.environments', 'harbor.environments.base', 'harbor.models', 'harbor.models.agent', 'harbor.models.agent.context']: sys.modules[name] = types.ModuleType(name)",
+          "sys.modules['harbor.agents.installed.base'].BaseInstalledAgent = object",
+          "sys.modules['harbor.environments.base'].BaseEnvironment = object",
+          "sys.modules['harbor.models.agent.context'].AgentContext = object",
+          'import asyncio, json, os',
+          'from pathlib import PurePosixPath',
+          'sys.path.insert(0, sys.argv[1])',
+          'import vinaya_harbor_agent as module',
+          'agent = object.__new__(module.VinayaAgent)',
+          'agent.model_name = "claude-test-model"',
+          'agent.environment_logs_dir = PurePosixPath("/logs/agent")',
+          'calls = []',
+          'async def run_agent(environment, command, env=None): calls.append({"command": command, "env": env})',
+          'agent.exec_as_agent = run_agent',
+          'asyncio.run(agent.run("instruction", None, None))',
+          'print(json.dumps({"calls": calls, "hostHasLimit": module.TRIAL_TIMEOUT_ENV in os.environ}))'
+        ].join('\n'),
+        join(REPOSITORY_ROOT, 'apps/cli/src/lib/dev-review-eval')
+      ],
+      { env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', CLAUDE_CODE_OAUTH_TOKEN: 'test-subscription-token' } }
+    )
+    expect(printed.stderr).toBe('')
+    const result = JSON.parse(printed.stdout) as {
+      calls: { command: string; env: Record<string, string> }[]
+      hostHasLimit: boolean
+    }
+    expect(result.hostHasLimit).toBe(false)
+    const [call] = result.calls as [{ command: string; env: Record<string, string> }]
+    expect(call.command).toContain(`--timeout-sec "$${TRIAL_TIMEOUT_ENV}"`)
+    expect(call.command).toContain('--stream /logs/agent/vinaya-trial.txt')
+    expect(call.env).not.toHaveProperty(TRIAL_TIMEOUT_ENV)
+    // The container's shell expands the variable from the task environment into the limit the trial honours;
+    // `run` strips every Vinaya variable, so this shell gets the task environment directly.
+    const expanded = spawnSync('sh', ['-c', `printf '%s' "$${TRIAL_TIMEOUT_ENV}"`], {
+      env: { PATH: process.env.PATH, [TRIAL_TIMEOUT_ENV]: String(TRIAL_TIMEOUT_SEC) },
+      encoding: 'utf8',
+      timeout: 30_000,
+      killSignal: 'SIGKILL'
+    })
+    expect(expanded.stdout).toBe(String(TRIAL_TIMEOUT_SEC))
+  })
+
+  it('refuses a trial whose limit the task does not name, before reading the case', async () => {
+    const argv = (limit: string[]) => [
+      '--case',
+      '/nonexistent/case.json',
+      '--tree',
+      '/app',
+      '--record',
+      '/r.json',
+      '--usage',
+      '/u.json',
+      '--backend',
+      'standalone',
+      '--adapter',
+      'claude-code',
+      '--model',
+      'm',
+      ...limit
+    ]
+    expect(await harborTrialCommand(argv([]))).toBe(2)
+    // The run command's expansion of an unset variable is an empty value.
+    expect(await harborTrialCommand(argv(['--timeout-sec', '']))).toBe(2)
+  })
+
+  it('keeps the hidden-test runner output in the verifier log directory and prints it for test-stdout.txt', async () => {
+    const tree = tempDir('harbor-verifier-tree-')
+    writeFileSync(join(tree, 'package.json'), '{"name":"verifier-fixture","private":true}\n')
+    const tests = tempDir('harbor-verifier-tests-')
+    mkdirSync(join(tests, 'hidden'), { recursive: true })
+    writeFileSync(
+      join(tests, 'hidden', 'marker.test.ts'),
+      [
+        "import { expect, it } from 'bun:test'",
+        "it('prints', () => {",
+        "  console.log('runner-stdout-marker')",
+        "  console.error('runner-stderr-marker')",
+        '  expect(1).toBe(1)',
+        '})',
+        ''
+      ].join('\n')
+    )
+    run('git', ['init', '--quiet'], { cwd: tree })
+    run('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '--allow-empty', '-m', 'base'], {
+      cwd: tree
+    })
+    const answer = folders().find((f) => f.caseFile.case.kind === 'answer') as ReturnType<typeof folders>[number]
+    const spec: GradingSpec = {
+      schemaVersion: 1,
+      suite: answer.suite,
+      case: answer.caseFile.case,
+      testFiles: ['marker.test.ts']
+    }
+    const verifier = tempDir('harbor-verifier-logs-')
+    const printed: string[] = []
+    await runHiddenTests(
+      tree,
+      tests,
+      spec,
+      120_000,
+      runnerOutputLog(verifier, (text) => printed.push(text))
+    )
+    const kept = `${readFileSync(join(verifier, HIDDEN_TEST_STDOUT_FILE), 'utf8')}${readFileSync(join(verifier, HIDDEN_TEST_STDERR_FILE), 'utf8')}`
+    expect(kept).toContain('== marker.test.ts')
+    expect(kept).toContain('runner-stdout-marker')
+    expect(kept).toContain('runner-stderr-marker')
+    expect(printed.join('')).toContain('runner-stdout-marker')
+    expect(printed.join('')).toContain('runner-stderr-marker')
+    // The verifier script joins the grading script's standard error to the standard output Harbor keeps.
+    expect(TEST_SCRIPT).toContain('--out /logs/verifier 2>&1')
+  }, 120_000)
 
   it('converts Codex tasks with only the subscription hosts, installing and checking both pinned CLIs', async () => {
     const out = tempDir('harbor-tasks-codex-')
@@ -666,7 +808,7 @@ describe('the case repository built from a local mirror', () => {
           backend: 'standalone',
           adapter: 'claude-code',
           model: 'claude-test-model',
-          timeoutMs: 1000
+          timeoutMs: 60_000
         },
         fakeSteps(kind, dispatched)
       ).finally(() => {
@@ -737,7 +879,7 @@ describe('the case repository built from a local mirror', () => {
         backend: 'standalone',
         adapter: 'codex',
         model: 'codex-test-model',
-        timeoutMs: 1000
+        timeoutMs: 60_000
       },
       {
         ...steps,
@@ -922,11 +1064,13 @@ describe('the case repository built from a local mirror', () => {
           backend,
           adapter: 'claude-code',
           model: 'claude-test-model',
-          timeoutMs: 1000
+          timeoutMs: 60_000
         },
         { ...fakeSteps('change', dispatched), engineSpawn: stubAgent('change', 'claude-code', () => null, launches) }
       )
-      await expect(trial).rejects.toThrow('step one runs no loop case')
+      // The refusal is the run's failure, and the run still leaves its usage file, with no usage.
+      expect(await trial).toMatchObject({ ok: false, reason: expect.stringContaining('step one runs no loop case') })
+      expect(readJson<{ inputTokens: number }>(join(work, 'usage.json')).inputTokens).toBe(0)
       expect(dispatched).toEqual([])
       expect(launches).toEqual([])
       expect(existsSync(join(work, 'record.json'))).toBe(false)

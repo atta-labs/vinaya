@@ -8,9 +8,12 @@
  * host and its fake forge and a `review` case's reviewer, each through
  * `dispatchRole` on `standalone` or as the role's one-step Flow on the Atta
  * Engine runtime on `engine`, and an `answer` case's read-only turn. It writes
- * the agent part of the Vinaya trial record, naming its backend, and the run's
- * usage to Harbor's agent log directory; the task's
- * verifier measures and grades the rest.
+ * the agent part of the Vinaya trial record, naming its backend, the run's
+ * usage and the role's agent stream to Harbor's agent log directory; the
+ * task's verifier measures and grades the rest. The trial stops its role at
+ * its own time limit (`--timeout-sec`), which the task sets below Harbor's
+ * agent limit, so it still records what the role left; the stream is written
+ * as it arrives and the usage even when the run throws.
  *
  * The case file holds the neutral case and only what the run needs from the
  * layer-`P` case of the same id. The neutral case carries fields only grading
@@ -19,7 +22,7 @@
  * the role starts.
  */
 
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { DeveloperCapabilityCase } from '../../../tests/eval/developer-capability-suite'
 import type { PatchRecord, ReviewCase } from '../../../tests/eval/reviewer-quality-suite'
@@ -35,6 +38,7 @@ import {
   type StepOneRunSuite,
   STEP_ONE_SUITE_LAYERS,
   type StepOneUsage,
+  trialUsage,
   type VinayaProcessSteps,
   vinayaProcess
 } from './step-one'
@@ -76,11 +80,93 @@ export interface HarborTrialOptions {
   adapter: string
   /** The exact model id; an alias is not resolved. */
   model: string
+  /** The trial's own time limit: when it is reached the role is stopped, and the run records what it has. */
   timeoutMs: number
+  /** Where the role's agent stream is appended as it arrives; absent, `STREAM_FILE` beside the record. */
+  streamPath?: string
+  /**
+   * Stops the role at the time limit. The command entry passes
+   * `stopDescendants`; absent, the limit only marks the trial timed out.
+   */
+  stopRole?: () => void
 }
 
+/**
+ * The role's agent stream in Harbor's agent log directory, one line as each
+ * arrives: what is left of a trial stopped before it records anything.
+ */
+export const STREAM_FILE = 'vinaya-trial.txt'
+
+/** The usage file's content: the run's `StepOneUsage`, and whether the trial reached its time limit. */
+export type HarborTrialUsage = StepOneUsage & { timedOut: boolean }
+
 /** A refused option is `refused`; any other failure is a run the Vinaya process could not record. */
-export type HarborTrialOutcome = { ok: true } | { ok: false; reason: string; refused?: true }
+export type HarborTrialOutcome =
+  | { ok: true; timedOut?: true }
+  | { ok: false; reason: string; refused?: true; timedOut?: true }
+
+/** How long a stopped role has to exit after `SIGTERM` before it is sent `SIGKILL`. */
+export const STOP_GRACE_MS = 10_000
+
+/**
+ * A process's fields from Linux's `/proc/<pid>/stat` after its command name,
+ * which may hold spaces and parentheses: the state first, then the parent's
+ * process id; its start time is the twentieth. `null` once it is gone.
+ */
+function statFields(pid: number | string, procRoot: string): string[] | null {
+  try {
+    const stat = readFileSync(join(procRoot, String(pid), 'stat'), 'utf8')
+    return stat.slice(stat.lastIndexOf(')') + 2).split(' ')
+  } catch {
+    return null
+  }
+}
+
+/** Each live process below `root`, read from Linux's `/proc`; none where there is no `/proc`. */
+export function descendantsOf(root: number, procRoot = '/proc'): number[] {
+  if (!existsSync(procRoot)) return []
+  const children = new Map<number, number[]>()
+  for (const entry of readdirSync(procRoot)) {
+    if (!/^\d+$/.test(entry)) continue
+    const parent = Number(statFields(entry, procRoot)?.[1])
+    if (!Number.isInteger(parent)) continue
+    children.set(parent, [...(children.get(parent) ?? []), Number(entry)])
+  }
+  const found: number[] = []
+  const pending = [root]
+  while (pending.length > 0) {
+    for (const child of children.get(pending.pop() as number) ?? []) {
+      found.push(child)
+      pending.push(child)
+    }
+  }
+  return found
+}
+
+/**
+ * Stops the role: sends `SIGTERM` to every process below this one, and
+ * `SIGKILL` after `STOP_GRACE_MS` to those of them still running. The
+ * standalone dispatch takes no time limit of its own, so the trial stops its
+ * agent this way. A process is sent `SIGKILL` only while its start time is
+ * the one it had when it was sent `SIGTERM`, so a process the run starts
+ * afterwards to record the trial is never stopped, even on a reused id.
+ */
+export function stopDescendants(procRoot = '/proc'): void {
+  const stopped = descendantsOf(process.pid, procRoot).map((pid) => ({ pid, start: statFields(pid, procRoot)?.[19] }))
+  const signal = (pid: number, name: NodeJS.Signals) => {
+    try {
+      process.kill(pid, name)
+    } catch {
+      // Already gone.
+    }
+  }
+  for (const { pid } of stopped) signal(pid, 'SIGTERM')
+  setTimeout(() => {
+    for (const { pid, start } of stopped) {
+      if (start !== undefined && statFields(pid, procRoot)?.[19] === start) signal(pid, 'SIGKILL')
+    }
+  }, STOP_GRACE_MS).unref()
+}
 
 /** The development inputs one container trial runs on: its case and its layer-`P` counterpart alone. */
 export function loadedFor(file: HarborCaseFile): LoadedDevelopment {
@@ -148,6 +234,7 @@ export async function runHarborTrial(
     return { ok: false, reason: `the Vinaya renderer refused the case: ${code} at ${field}: ${detail}` }
   }
   const adapter = options.adapter as StepOneAdapter
+  const streamPath = options.streamPath ?? join(dirname(options.recordPath), STREAM_FILE)
   const context: StepOneCommandContext = {
     repository: options.tree,
     developerBriefs: new Map(),
@@ -157,17 +244,31 @@ export async function runHarborTrial(
     container: {
       workingTree: options.tree,
       recordPath: options.recordPath,
-      backend: options.backend as StepOneBackend
+      backend: options.backend as StepOneBackend,
+      streamPath
     }
   }
   mkdirSync(dirname(options.recordPath), { recursive: true })
   mkdirSync(dirname(options.usagePath), { recursive: true })
+  mkdirSync(dirname(streamPath), { recursive: true })
+  writeFileSync(streamPath, '')
+  let timedOut = false
+  const writeUsage = (usage: StepOneUsage) =>
+    writeFileSync(options.usagePath, `${JSON.stringify({ ...usage, timedOut } satisfies HarborTrialUsage, null, 2)}\n`)
+  const limited = (outcome: HarborTrialOutcome): HarborTrialOutcome =>
+    timedOut ? { ...outcome, timedOut: true } : outcome
+  // The role is stopped at the trial's limit; the run then records what the role left.
+  const deadline = setTimeout(() => {
+    timedOut = true
+    options.stopRole?.()
+  }, options.timeoutMs)
   // The reviewer suite reads a change under review from its own repository
   // root, which in the container is the unpacked Vinaya CLI with no history;
   // `GIT_DIR` points those reads at the case repository. The harness's own git
   // processes start from a fixed environment without it.
   const priorGitDir = process.env.GIT_DIR
   process.env.GIT_DIR = join(options.tree, '.git')
+  const started = Date.now()
   try {
     const ran = await vinayaProcess(steps)(
       {
@@ -177,9 +278,18 @@ export async function runHarborTrial(
       },
       context
     )
-    writeFileSync(options.usagePath, `${JSON.stringify(ran.usage satisfies StepOneUsage, null, 2)}\n`)
-    return ran.ok ? { ok: true } : { ok: false, reason: ran.unavailableReason }
+    writeUsage(ran.usage)
+    return limited(ran.ok ? { ok: true } : { ok: false, reason: ran.unavailableReason })
+  } catch (error) {
+    // A run that throws still leaves its usage, read from the stream it appended.
+    const lines = readFileSync(streamPath, 'utf8').split('\n').filter(Boolean)
+    writeUsage({ ...trialUsage(adapter, null, lines), wallTimeMs: Date.now() - started })
+    return limited({
+      ok: false,
+      reason: `the Vinaya process run failed: ${error instanceof Error ? error.message : String(error)}`
+    })
   } finally {
+    clearTimeout(deadline)
     if (priorGitDir === undefined) delete process.env.GIT_DIR
     else process.env.GIT_DIR = priorGitDir
   }
@@ -191,25 +301,27 @@ const flag = (argv: readonly string[], name: string): string | undefined => {
 }
 
 export const HARBOR_TRIAL_USAGE =
-  'usage: harbor-trial.ts --case <case.json> --tree <dir> --record <file> --usage <file> --backend standalone|engine --adapter claude-code|codex --model <exact model id> [--timeout-sec <n>]'
+  'usage: harbor-trial.ts --case <case.json> --tree <dir> --record <file> --usage <file> --backend standalone|engine --adapter claude-code|codex --model <exact model id> --timeout-sec <n> [--stream <file>]'
 
 /** The command entry: exit 0 when the run recorded its trial, 1 when it is unavailable, 2 on a refused option. */
 export async function harborTrialCommand(
   argv: readonly string[],
   steps: VinayaProcessSteps = PRODUCTION_VINAYA_PROCESS_STEPS
 ): Promise<number> {
-  const required = ['case', 'tree', 'record', 'usage', 'backend', 'adapter', 'model'] as const
+  const required = ['case', 'tree', 'record', 'usage', 'backend', 'adapter', 'model', 'timeout-sec'] as const
   const values = Object.fromEntries(required.map((name) => [name, flag(argv, name)]))
   const missing = required.filter((name) => values[name] === undefined)
   if (missing.length > 0) {
     process.stderr.write(`${HARBOR_TRIAL_USAGE}\nmissing: ${missing.map((name) => `--${name}`).join(', ')}\n`)
     return 2
   }
-  const timeoutSec = Number(flag(argv, 'timeout-sec') ?? '1800')
+  // An empty value is what the agent's run command passes when the task names no trial limit.
+  const timeoutSec = Number(values['timeout-sec'] || Number.NaN)
   if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) {
     process.stderr.write(`${HARBOR_TRIAL_USAGE}\n--timeout-sec is not a positive number\n`)
     return 2
   }
+  const stream = flag(argv, 'stream')
   const outcome = await runHarborTrial(
     {
       casePath: values.case as string,
@@ -219,10 +331,14 @@ export async function harborTrialCommand(
       backend: values.backend as string,
       adapter: values.adapter as string,
       model: values.model as string,
-      timeoutMs: timeoutSec * 1000
+      timeoutMs: timeoutSec * 1000,
+      ...(stream === undefined ? {} : { streamPath: stream }),
+      stopRole: stopDescendants
     },
     steps
   )
+  if (outcome.timedOut === true)
+    process.stderr.write(`the role reached the trial's ${timeoutSec} s limit and was stopped\n`)
   if (outcome.ok) return 0
   process.stderr.write(`${outcome.reason}\n`)
   return outcome.refused === true ? 2 : 1

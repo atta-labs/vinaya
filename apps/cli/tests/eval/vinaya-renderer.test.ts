@@ -6,7 +6,13 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { parseIssueSurface } from '@attalabs/aeg-core'
 import { KIND_FIELDS, type NeutralCase, NEUTRAL_CASE_KINDS } from '../../src/lib/dev-review-eval/neutral-case'
+import { CLAUDE_CAPABILITY_TOOLS } from '../../../../harness/adapters/agents/claude-code/capabilities'
 import { OUTCOME_NAMES } from '../../src/lib/dev-review-eval/neutral-outcomes'
+import {
+  CLAUDE_COORDINATION_TOOLS,
+  CLAUDE_HARNESS_INTERNAL_TOOLS,
+  layerGTrace
+} from '../../src/lib/dev-review-eval/step-one'
 import {
   extractOutcomes,
   FIELD_DISPOSITIONS,
@@ -25,6 +31,7 @@ import {
 import { REVIEWER_ROLES, REVIEWER_SEVERITIES } from '../../src/lib/review-result'
 import { ROLE_TOOL_GRANTS } from '../../src/lib/task-tools/role-grants'
 import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
+import { codexTrace } from './tool-selection-suite'
 import {
   type FixtureEntry,
   loadFixture,
@@ -111,9 +118,15 @@ describe('render', () => {
       'Edit',
       'Glob',
       'Grep',
+      'KillShell',
+      'LSP',
+      'Monitor',
+      'NotebookEdit',
       'Read',
+      'Skill',
       'Write',
       'fetch_documentation',
+      'file_change',
       'open_pull_request',
       'publish_changes',
       'shell'
@@ -282,6 +295,46 @@ describe('the mapping tables', () => {
   it('names a neutral capability for every tool any role is granted', () => {
     for (const tool of Object.values(ROLE_TOOL_GRANTS).flat()) expect(TOOL_CAPABILITIES[tool]).toBeDefined()
   })
+
+  it('scores every built-in the Claude Code capability table can allow, or leaves it out of the trace', () => {
+    const leftOut = [...CLAUDE_HARNESS_INTERNAL_TOOLS, ...CLAUDE_COORDINATION_TOOLS]
+    const allowable = Object.values(CLAUDE_CAPABILITY_TOOLS).flat() as string[]
+    // A trace names Claude Code's Bash as `shell`, every other built-in by its own name.
+    const traced = allowable.map((tool) => (tool === 'Bash' ? 'shell' : tool))
+    const unscored = traced.filter((tool) => TOOL_CAPABILITIES[tool] === undefined && !leftOut.includes(tool))
+    expect(unscored).toEqual([])
+    // Neither list holds a name the capability table no longer allows, so a removal drifts too.
+    expect(leftOut.filter((tool) => !['StructuredOutput', ...traced].includes(tool))).toEqual([])
+    expect(leftOut.filter((tool) => TOOL_CAPABILITIES[tool] !== undefined)).toEqual([])
+    expect(
+      layerGTrace(
+        'claude-code',
+        leftOut.map((tool) => ({ tool, args: {} }))
+      )
+    ).toEqual([])
+    // An allowed call in a trace never makes the capability outcome invalid.
+    const record = reference(changeEntry)
+    const calls = traced.filter((tool) => !leftOut.includes(tool)).map((tool) => ({ tool }))
+    const capability = outcomesOf({ ...record, trace: [...(record.trace ?? []), ...calls] })['O-capability']
+    expect(capability.status).toBe('known')
+  })
+
+  it('scores the Codex item types a trace names besides an MCP tool call and a command', () => {
+    expect(TOOL_CAPABILITIES.file_change).toBe('write_file')
+    expect(TOOL_CAPABILITIES.web_search).toBe('read_web')
+    const trace = codexTrace(
+      [
+        { id: 'f1', type: 'file_change', changes: [{ path: 'a.ts', kind: 'update' }], status: 'completed' },
+        { id: 'w1', type: 'web_search', query: 'q' }
+      ].map((item) => JSON.stringify({ type: 'item.completed', item }))
+    )
+    expect(trace.map((call) => call.tool)).toEqual(['file_change', 'web_search'])
+    const record = reference(changeEntry)
+    expect(outcomesOf({ ...record, trace: trace.map((call) => ({ tool: call.tool })) })['O-capability']).toEqual({
+      status: 'known',
+      value: { used: ['write_file', 'read_web'] }
+    })
+  })
 })
 
 describe('extract', () => {
@@ -416,7 +469,7 @@ describe('extract', () => {
         used: ['read_file', 'read_document', 'write_file', 'run_commands', 'publish_change', 'open_change_request']
       }
     })
-    expect(outcomesOf({ ...record, trace: [{ tool: 'NotebookEdit' }] })['O-capability'].status).toBe('invalid')
+    expect(outcomesOf({ ...record, trace: [{ tool: 'UnscoredTool' }] })['O-capability'].status).toBe('invalid')
     // A web fetch or search reads an undelivered source: the capability no case grants, never an invalid outcome.
     expect(outcomesOf({ ...record, trace: [{ tool: 'WebFetch' }, { tool: 'WebSearch' }] })['O-capability']).toEqual({
       status: 'known',
