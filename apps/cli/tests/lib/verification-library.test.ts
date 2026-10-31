@@ -222,11 +222,21 @@ const plan = selectTests({ repo: memoryRepository({ b: base, h: head }), base: '
 process.stdout.write(JSON.stringify({ identity: plan.identity, required: plan.required.map((t) => t.test), resolver: plan.context.resolver }))
 `
 
+/**
+ * A child's environment: no Vinaya, Bun, git or Node settings of this process,
+ * its own `HOME`, and only this test process's private runtime directory, so
+ * nothing a child does can reach the real one.
+ */
 function bareEnv(home: string): NodeJS.ProcessEnv {
   const env = stripVinayaEnv()
   for (const key of Object.keys(env))
     if (key.startsWith('BUN_') || key.startsWith('GIT_') || key.startsWith('NODE_')) delete env[key]
-  return { ...env, HOME: home }
+  return { ...env, HOME: home, ...privateRuntime() }
+}
+
+/** The private runtime directory the test preload set, when it set one. */
+function privateRuntime(): NodeJS.ProcessEnv {
+  return process.env.VINAYA_RUNTIME_DIR ? { VINAYA_RUNTIME_DIR: process.env.VINAYA_RUNTIME_DIR } : {}
 }
 
 describe('a copy of only the library directory runs in unrelated repositories', () => {
@@ -541,7 +551,7 @@ describe('the existing paths forward to the library', () => {
     const run = spawnSyncBudgeted(
       'bun',
       [INVENTORY_CHECK, '--json'],
-      { cwd: REPO_ROOT, encoding: 'utf8', env: stripVinayaEnv() },
+      { cwd: REPO_ROOT, encoding: 'utf8', env: { ...stripVinayaEnv(), ...privateRuntime() } },
       60_000
     )
     expect(run.stderr).toBe('')
