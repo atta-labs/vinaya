@@ -1533,6 +1533,44 @@ describe('a locally tested publication that still owes required CI', () => {
     expect(observed.world.requiredCiReads).toEqual(heads)
   })
 
+  // What the strict reader answers for a required check it cannot count: never green, so never complete.
+  const notComplete = (detail: string) => ({ state: 'pending' as const, detail })
+  test.each([
+    ['a missing workflow run or required job', notComplete('no run of .github/workflows/ci.yml has the job Vinaya CI')],
+    ['a skipped required job', notComplete('the job Vinaya CI completed skipped')],
+    ['a neutral required job', notComplete('the job Vinaya CI completed neutral')],
+    ['an older run attempt', notComplete('run 1 attempt 1 is superseded by attempt 2, still in progress')]
+  ])('%s with every other check green never completes the locally tested run', async (_name, read) => {
+    const observed = await runV2('claude', {
+      readyTests: { mode: 'local' },
+      requiredCiPolicy: REQUIRED,
+      stagedBody: PLAN_BODY,
+      requiredCi: [read],
+      ci: ['green']
+    })
+    expect(observed.outcome).toBe('pause:infrastructure')
+    const reads = records(observed, 'read-ci-once')
+    expect(reads.map((r) => r.conclusion)).not.toContain('green')
+    expect(reads.at(-1)?.decision?.detail).toContain('pending never counts as the tests passing')
+  })
+
+  test.each([
+    ['another head', () => ({ head: 'e'.repeat(40) })],
+    ['another workflow', () => ({ workflow: '.github/workflows/other.yml' })],
+    ['another check', () => ({ check: 'Unrelated' })]
+  ])('a green read for %s never completes the locally tested run', async (_name, over) => {
+    const observed = await runV2('claude', {
+      readyTests: { mode: 'local' },
+      requiredCiPolicy: REQUIRED,
+      stagedBody: PLAN_BODY,
+      requiredCi: [(head: string) => ({ ...greenRead(head), identity: { ...greenRead(head).identity, ...over() } })],
+      ci: ['green']
+    })
+    expect(observed.outcome).toBe('pause:infrastructure')
+    expect(records(observed, 'read-ci-once').map((r) => r.conclusion)).not.toContain('green')
+    expect(records(observed, 'read-ci-once').at(-1)?.decision?.detail).toContain('not the owed check on this head')
+  })
+
   test('no descriptor and no opt-in owes nothing beyond the ordinary CI read', async () => {
     const observed = await runV2('claude', {
       readyTests: { mode: 'local' },

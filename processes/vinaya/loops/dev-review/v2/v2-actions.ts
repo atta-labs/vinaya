@@ -1163,7 +1163,13 @@ async function readRequiredCiStep(
         }
       )
     }
-    if (strict.state === 'green' && generic === 'green') {
+    // A green read stands only for exactly the owed head, workflow and check; any other is not this head's proof.
+    const matches =
+      strict.state === 'green' &&
+      strict.identity.head === owed.head &&
+      strict.identity.workflow === owed.workflow &&
+      strict.identity.check === owed.check
+    if (matches && generic === 'green') {
       const previous = latestRecord(results)
       return {
         exitCode: FORWARD,
@@ -1187,7 +1193,12 @@ async function readRequiredCiStep(
         })
       }
     }
-    last = strict.state === 'green' ? `${owed.check} passed; other checks are ${generic}` : strict.detail
+    last =
+      strict.state !== 'green'
+        ? strict.detail
+        : matches
+          ? `${owed.check} passed; other checks are ${generic}`
+          : `a green read names ${strict.identity.check} (${strict.identity.workflow}) on ${strict.identity.head}, not the owed check on this head`
     if (attempt < poll.gatePollMaxAttempts) await poll.sleep(poll.gatePollIntervalMs)
   }
   return pause(
