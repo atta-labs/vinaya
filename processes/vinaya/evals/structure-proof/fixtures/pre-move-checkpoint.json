@@ -1,0 +1,657 @@
+{
+  "writerCommand": "VINAYA_WRITE_PRE_MOVE_CHECKPOINT=1 bun test evals/structure-proof/pre-move-checkpoint.test.ts",
+  "writerCommit": "b97f51bfb60315a353f1a56484398e3c0df1fa05",
+  "process": {
+    "id": "vinaya",
+    "version": "0.2.10",
+    "flowKey": "v1",
+    "digest": "e0aaed54dc233c0325c6522de595290c3f908ba84f604b718567e4fc78f7ed5e"
+  },
+  "task": 7,
+  "runs": [
+    {
+      "agent": "claude",
+      "threadId": "agent-spawn-run:engine-task-7",
+      "provenance": {
+        "revision": "b97f51bfb60315a353f1a56484398e3c0df1fa05",
+        "model": "",
+        "formatVersion": 1,
+        "runtimeVersion": "@atta/engine@0.0.1 @atta/executor-agent-spawn@0.1.1"
+      },
+      "flow": "v1",
+      "rows": [
+        {
+          "checkpointNs": "",
+          "checkpointId": "1f1d4d5f-84e9-6c60-ffff-7b14148d2f89",
+          "parentId": null,
+          "checkpoint": {
+            "v": 1,
+            "id": "1f1d4d5f-84e9-6c60-ffff-7b14148d2f89",
+            "ts": "2026-10-31T02:51:28.422Z",
+            "channel_values": {
+              "results": {},
+              "sessions": {},
+              "revisionCounts": {},
+              "__start__": {
+                "runId": "engine-task-7",
+                "results": {},
+                "sessions": {},
+                "revisionCounts": {}
+              }
+            },
+            "channel_versions": {
+              "__start__": 1
+            },
+            "versions_seen": {
+              "__input__": {}
+            }
+          },
+          "metadata": {
+            "source": "input",
+            "writes": {
+              "__start__": {
+                "runId": "engine-task-7",
+                "results": {},
+                "sessions": {},
+                "revisionCounts": {}
+              }
+            },
+            "step": -1,
+            "parents": {}
+          },
+          "pendingWrites": [
+            ["8b128491-6563-568f-8721-2e2a97120d75", "runId", "engine-task-7"],
+            ["8b128491-6563-568f-8721-2e2a97120d75", "results", {}],
+            ["8b128491-6563-568f-8721-2e2a97120d75", "sessions", {}],
+            ["8b128491-6563-568f-8721-2e2a97120d75", "revisionCounts", {}],
+            ["8b128491-6563-568f-8721-2e2a97120d75", "outcome", null],
+            ["8b128491-6563-568f-8721-2e2a97120d75", "branch:to:prepare-run", null]
+          ]
+        },
+        {
+          "checkpointNs": "",
+          "checkpointId": "1f1d4d5f-84f5-6fb0-8000-6a5dbd432dcb",
+          "parentId": "1f1d4d5f-84e9-6c60-ffff-7b14148d2f89",
+          "checkpoint": {
+            "v": 1,
+            "id": "1f1d4d5f-84f5-6fb0-8000-6a5dbd432dcb",
+            "ts": "2026-10-31T02:51:28.427Z",
+            "channel_values": {
+              "runId": "engine-task-7",
+              "results": {},
+              "sessions": {},
+              "revisionCounts": {},
+              "branch:to:prepare-run": null
+            },
+            "channel_versions": {
+              "__start__": 2,
+              "runId": 2,
+              "results": 2,
+              "sessions": 2,
+              "revisionCounts": 2,
+              "outcome": 2,
+              "branch:to:prepare-run": 2
+            },
+            "versions_seen": {
+              "__input__": {},
+              "__start__": {
+                "__start__": 1
+              }
+            }
+          },
+          "metadata": {
+            "source": "loop",
+            "writes": null,
+            "step": 0,
+            "parents": {}
+          },
+          "pendingWrites": [
+            [
+              "98e084f3-4568-5ec1-bbdb-aa13b2cc3813",
+              "results",
+              {
+                "prepare-run": {
+                  "nodeId": "prepare-run",
+                  "kind": "mechanical",
+                  "action": "vinaya.prepare-run",
+                  "command": "in-process:vinaya.prepare-run",
+                  "exitCode": 0,
+                  "stdout": "",
+                  "stderr": "",
+                  "durationMs": 1
+                }
+              }
+            ],
+            [
+              "98e084f3-4568-5ec1-bbdb-aa13b2cc3813",
+              "revisionCounts",
+              {
+                "prepare-run": 1
+              }
+            ],
+            ["98e084f3-4568-5ec1-bbdb-aa13b2cc3813", "branch:to:reconcile-external-state", null]
+          ]
+        },
+        {
+          "checkpointNs": "",
+          "checkpointId": "1f1d4d5f-84fa-6dd0-8001-0db2e833f30b",
+          "parentId": "1f1d4d5f-84f5-6fb0-8000-6a5dbd432dcb",
+          "checkpoint": {
+            "v": 1,
+            "id": "1f1d4d5f-84fa-6dd0-8001-0db2e833f30b",
+            "ts": "2026-10-31T02:51:28.429Z",
+            "channel_values": {
+              "runId": "engine-task-7",
+              "results": {
+                "prepare-run": {
+                  "nodeId": "prepare-run",
+                  "kind": "mechanical",
+                  "action": "vinaya.prepare-run",
+                  "command": "in-process:vinaya.prepare-run",
+                  "exitCode": 0,
+                  "stdout": "",
+                  "stderr": "",
+                  "durationMs": 1
+                }
+              },
+              "sessions": {},
+              "revisionCounts": {
+                "prepare-run": 1
+              },
+              "branch:to:reconcile-external-state": null
+            },
+            "channel_versions": {
+              "__start__": 2,
+              "runId": 2,
+              "results": 3,
+              "sessions": 2,
+              "revisionCounts": 3,
+              "outcome": 2,
+              "branch:to:prepare-run": 3,
+              "branch:to:reconcile-external-state": 3
+            },
+            "versions_seen": {
+              "__input__": {},
+              "__start__": {
+                "__start__": 1
+              },
+              "prepare-run": {
+                "branch:to:prepare-run": 2
+              }
+            }
+          },
+          "metadata": {
+            "source": "loop",
+            "writes": {
+              "prepare-run": {
+                "results": {
+                  "prepare-run": {
+                    "nodeId": "prepare-run",
+                    "kind": "mechanical",
+                    "action": "vinaya.prepare-run",
+                    "command": "in-process:vinaya.prepare-run",
+                    "exitCode": 0,
+                    "stdout": "",
+                    "stderr": "",
+                    "durationMs": 1
+                  }
+                },
+                "revisionCounts": {
+                  "prepare-run": 1
+                }
+              }
+            },
+            "step": 1,
+            "parents": {}
+          },
+          "pendingWrites": [
+            [
+              "514d8e43-89e5-57b1-933d-d918248e9a72",
+              "results",
+              {
+                "reconcile-external-state": {
+                  "nodeId": "reconcile-external-state",
+                  "kind": "mechanical",
+                  "action": "vinaya.reconcile-external-state",
+                  "command": "in-process:vinaya.reconcile-external-state",
+                  "exitCode": 0,
+                  "stdout": "",
+                  "stderr": "",
+                  "durationMs": 0
+                }
+              }
+            ],
+            [
+              "514d8e43-89e5-57b1-933d-d918248e9a72",
+              "revisionCounts",
+              {
+                "reconcile-external-state": 1
+              }
+            ],
+            ["514d8e43-89e5-57b1-933d-d918248e9a72", "branch:to:prepare-sources", null]
+          ]
+        },
+        {
+          "checkpointNs": "",
+          "checkpointId": "1f1d4d5f-84fd-64e0-8002-c879656b6e93",
+          "parentId": "1f1d4d5f-84fa-6dd0-8001-0db2e833f30b",
+          "checkpoint": {
+            "v": 1,
+            "id": "1f1d4d5f-84fd-64e0-8002-c879656b6e93",
+            "ts": "2026-10-31T02:51:28.430Z",
+            "channel_values": {
+              "runId": "engine-task-7",
+              "results": {
+                "prepare-run": {
+                  "nodeId": "prepare-run",
+                  "kind": "mechanical",
+                  "action": "vinaya.prepare-run",
+                  "command": "in-process:vinaya.prepare-run",
+                  "exitCode": 0,
+                  "stdout": "",
+                  "stderr": "",
+                  "durationMs": 1
+                },
+                "reconcile-external-state": {
+                  "nodeId": "reconcile-external-state",
+                  "kind": "mechanical",
+                  "action": "vinaya.reconcile-external-state",
+                  "command": "in-process:vinaya.reconcile-external-state",
+                  "exitCode": 0,
+                  "stdout": "",
+                  "stderr": "",
+                  "durationMs": 0
+                }
+              },
+              "sessions": {},
+              "revisionCounts": {
+                "prepare-run": 1,
+                "reconcile-external-state": 1
+              },
+              "branch:to:prepare-sources": null
+            },
+            "channel_versions": {
+              "__start__": 2,
+              "runId": 2,
+              "results": 4,
+              "sessions": 2,
+              "revisionCounts": 4,
+              "outcome": 2,
+              "branch:to:prepare-run": 3,
+              "branch:to:reconcile-external-state": 4,
+              "branch:to:prepare-sources": 4
+            },
+            "versions_seen": {
+              "__input__": {},
+              "__start__": {
+                "__start__": 1
+              },
+              "prepare-run": {
+                "branch:to:prepare-run": 2
+              },
+              "reconcile-external-state": {
+                "branch:to:reconcile-external-state": 3
+              }
+            }
+          },
+          "metadata": {
+            "source": "loop",
+            "writes": {
+              "reconcile-external-state": {
+                "results": {
+                  "reconcile-external-state": {
+                    "nodeId": "reconcile-external-state",
+                    "kind": "mechanical",
+                    "action": "vinaya.reconcile-external-state",
+                    "command": "in-process:vinaya.reconcile-external-state",
+                    "exitCode": 0,
+                    "stdout": "",
+                    "stderr": "",
+                    "durationMs": 0
+                  }
+                },
+                "revisionCounts": {
+                  "reconcile-external-state": 1
+                }
+              }
+            },
+            "step": 2,
+            "parents": {}
+          },
+          "pendingWrites": [
+            [
+              "7a33845b-d130-555f-b2b4-87bb16e44673",
+              "__error__",
+              {
+                "message": "Run halted before node 'prepare-sources' started: handoff:missing_source. No completed node's work is lost — the last checkpoint holds it, and resuming continues from this node.",
+                "name": "RunHaltedError"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "agent": "codex",
+      "threadId": "agent-spawn-run:engine-task-7",
+      "provenance": {
+        "revision": "b97f51bfb60315a353f1a56484398e3c0df1fa05",
+        "model": "",
+        "formatVersion": 1,
+        "runtimeVersion": "@atta/engine@0.0.1 @atta/executor-agent-spawn@0.1.1"
+      },
+      "flow": "v1",
+      "rows": [
+        {
+          "checkpointNs": "",
+          "checkpointId": "1f1d4d5f-8548-6fd1-ffff-bd649fa40f0f",
+          "parentId": null,
+          "checkpoint": {
+            "v": 1,
+            "id": "1f1d4d5f-8548-6fd1-ffff-bd649fa40f0f",
+            "ts": "2026-10-31T02:51:28.461Z",
+            "channel_values": {
+              "results": {},
+              "sessions": {},
+              "revisionCounts": {},
+              "__start__": {
+                "runId": "engine-task-7",
+                "results": {},
+                "sessions": {},
+                "revisionCounts": {}
+              }
+            },
+            "channel_versions": {
+              "__start__": 1
+            },
+            "versions_seen": {
+              "__input__": {}
+            }
+          },
+          "metadata": {
+            "source": "input",
+            "writes": {
+              "__start__": {
+                "runId": "engine-task-7",
+                "results": {},
+                "sessions": {},
+                "revisionCounts": {}
+              }
+            },
+            "step": -1,
+            "parents": {}
+          },
+          "pendingWrites": [
+            ["b4989ef4-d92e-56de-ae0d-7fd0ed18733d", "runId", "engine-task-7"],
+            ["b4989ef4-d92e-56de-ae0d-7fd0ed18733d", "results", {}],
+            ["b4989ef4-d92e-56de-ae0d-7fd0ed18733d", "sessions", {}],
+            ["b4989ef4-d92e-56de-ae0d-7fd0ed18733d", "revisionCounts", {}],
+            ["b4989ef4-d92e-56de-ae0d-7fd0ed18733d", "outcome", null],
+            ["b4989ef4-d92e-56de-ae0d-7fd0ed18733d", "branch:to:prepare-run", null]
+          ]
+        },
+        {
+          "checkpointNs": "",
+          "checkpointId": "1f1d4d5f-854b-66e0-8000-5e791fb1c573",
+          "parentId": "1f1d4d5f-8548-6fd1-ffff-bd649fa40f0f",
+          "checkpoint": {
+            "v": 1,
+            "id": "1f1d4d5f-854b-66e0-8000-5e791fb1c573",
+            "ts": "2026-10-31T02:51:28.462Z",
+            "channel_values": {
+              "runId": "engine-task-7",
+              "results": {},
+              "sessions": {},
+              "revisionCounts": {},
+              "branch:to:prepare-run": null
+            },
+            "channel_versions": {
+              "__start__": 2,
+              "runId": 2,
+              "results": 2,
+              "sessions": 2,
+              "revisionCounts": 2,
+              "outcome": 2,
+              "branch:to:prepare-run": 2
+            },
+            "versions_seen": {
+              "__input__": {},
+              "__start__": {
+                "__start__": 1
+              }
+            }
+          },
+          "metadata": {
+            "source": "loop",
+            "writes": null,
+            "step": 0,
+            "parents": {}
+          },
+          "pendingWrites": [
+            [
+              "6ca8bcb3-4c30-54ec-b093-fcff258887cb",
+              "results",
+              {
+                "prepare-run": {
+                  "nodeId": "prepare-run",
+                  "kind": "mechanical",
+                  "action": "vinaya.prepare-run",
+                  "command": "in-process:vinaya.prepare-run",
+                  "exitCode": 0,
+                  "stdout": "",
+                  "stderr": "",
+                  "durationMs": 0
+                }
+              }
+            ],
+            [
+              "6ca8bcb3-4c30-54ec-b093-fcff258887cb",
+              "revisionCounts",
+              {
+                "prepare-run": 1
+              }
+            ],
+            ["6ca8bcb3-4c30-54ec-b093-fcff258887cb", "branch:to:reconcile-external-state", null]
+          ]
+        },
+        {
+          "checkpointNs": "",
+          "checkpointId": "1f1d4d5f-8550-6500-8001-9eb95617d8a6",
+          "parentId": "1f1d4d5f-854b-66e0-8000-5e791fb1c573",
+          "checkpoint": {
+            "v": 1,
+            "id": "1f1d4d5f-8550-6500-8001-9eb95617d8a6",
+            "ts": "2026-10-31T02:51:28.464Z",
+            "channel_values": {
+              "runId": "engine-task-7",
+              "results": {
+                "prepare-run": {
+                  "nodeId": "prepare-run",
+                  "kind": "mechanical",
+                  "action": "vinaya.prepare-run",
+                  "command": "in-process:vinaya.prepare-run",
+                  "exitCode": 0,
+                  "stdout": "",
+                  "stderr": "",
+                  "durationMs": 0
+                }
+              },
+              "sessions": {},
+              "revisionCounts": {
+                "prepare-run": 1
+              },
+              "branch:to:reconcile-external-state": null
+            },
+            "channel_versions": {
+              "__start__": 2,
+              "runId": 2,
+              "results": 3,
+              "sessions": 2,
+              "revisionCounts": 3,
+              "outcome": 2,
+              "branch:to:prepare-run": 3,
+              "branch:to:reconcile-external-state": 3
+            },
+            "versions_seen": {
+              "__input__": {},
+              "__start__": {
+                "__start__": 1
+              },
+              "prepare-run": {
+                "branch:to:prepare-run": 2
+              }
+            }
+          },
+          "metadata": {
+            "source": "loop",
+            "writes": {
+              "prepare-run": {
+                "results": {
+                  "prepare-run": {
+                    "nodeId": "prepare-run",
+                    "kind": "mechanical",
+                    "action": "vinaya.prepare-run",
+                    "command": "in-process:vinaya.prepare-run",
+                    "exitCode": 0,
+                    "stdout": "",
+                    "stderr": "",
+                    "durationMs": 0
+                  }
+                },
+                "revisionCounts": {
+                  "prepare-run": 1
+                }
+              }
+            },
+            "step": 1,
+            "parents": {}
+          },
+          "pendingWrites": [
+            [
+              "425a9ff3-355a-5563-a699-444741174bd5",
+              "results",
+              {
+                "reconcile-external-state": {
+                  "nodeId": "reconcile-external-state",
+                  "kind": "mechanical",
+                  "action": "vinaya.reconcile-external-state",
+                  "command": "in-process:vinaya.reconcile-external-state",
+                  "exitCode": 0,
+                  "stdout": "",
+                  "stderr": "",
+                  "durationMs": 0
+                }
+              }
+            ],
+            [
+              "425a9ff3-355a-5563-a699-444741174bd5",
+              "revisionCounts",
+              {
+                "reconcile-external-state": 1
+              }
+            ],
+            ["425a9ff3-355a-5563-a699-444741174bd5", "branch:to:prepare-sources", null]
+          ]
+        },
+        {
+          "checkpointNs": "",
+          "checkpointId": "1f1d4d5f-8552-6c10-8002-e69186550e33",
+          "parentId": "1f1d4d5f-8550-6500-8001-9eb95617d8a6",
+          "checkpoint": {
+            "v": 1,
+            "id": "1f1d4d5f-8552-6c10-8002-e69186550e33",
+            "ts": "2026-10-31T02:51:28.465Z",
+            "channel_values": {
+              "runId": "engine-task-7",
+              "results": {
+                "prepare-run": {
+                  "nodeId": "prepare-run",
+                  "kind": "mechanical",
+                  "action": "vinaya.prepare-run",
+                  "command": "in-process:vinaya.prepare-run",
+                  "exitCode": 0,
+                  "stdout": "",
+                  "stderr": "",
+                  "durationMs": 0
+                },
+                "reconcile-external-state": {
+                  "nodeId": "reconcile-external-state",
+                  "kind": "mechanical",
+                  "action": "vinaya.reconcile-external-state",
+                  "command": "in-process:vinaya.reconcile-external-state",
+                  "exitCode": 0,
+                  "stdout": "",
+                  "stderr": "",
+                  "durationMs": 0
+                }
+              },
+              "sessions": {},
+              "revisionCounts": {
+                "prepare-run": 1,
+                "reconcile-external-state": 1
+              },
+              "branch:to:prepare-sources": null
+            },
+            "channel_versions": {
+              "__start__": 2,
+              "runId": 2,
+              "results": 4,
+              "sessions": 2,
+              "revisionCounts": 4,
+              "outcome": 2,
+              "branch:to:prepare-run": 3,
+              "branch:to:reconcile-external-state": 4,
+              "branch:to:prepare-sources": 4
+            },
+            "versions_seen": {
+              "__input__": {},
+              "__start__": {
+                "__start__": 1
+              },
+              "prepare-run": {
+                "branch:to:prepare-run": 2
+              },
+              "reconcile-external-state": {
+                "branch:to:reconcile-external-state": 3
+              }
+            }
+          },
+          "metadata": {
+            "source": "loop",
+            "writes": {
+              "reconcile-external-state": {
+                "results": {
+                  "reconcile-external-state": {
+                    "nodeId": "reconcile-external-state",
+                    "kind": "mechanical",
+                    "action": "vinaya.reconcile-external-state",
+                    "command": "in-process:vinaya.reconcile-external-state",
+                    "exitCode": 0,
+                    "stdout": "",
+                    "stderr": "",
+                    "durationMs": 0
+                  }
+                },
+                "revisionCounts": {
+                  "reconcile-external-state": 1
+                }
+              }
+            },
+            "step": 2,
+            "parents": {}
+          },
+          "pendingWrites": [
+            [
+              "70f2dacd-9ed8-551d-9cf3-d0cfb289abac",
+              "__error__",
+              {
+                "message": "Run halted before node 'prepare-sources' started: handoff:missing_source. No completed node's work is lost — the last checkpoint holds it, and resuming continues from this node.",
+                "name": "RunHaltedError"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}
