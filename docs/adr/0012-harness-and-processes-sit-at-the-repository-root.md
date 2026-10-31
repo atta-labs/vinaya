@@ -1,6 +1,6 @@
 # 0012. Harness and processes sit at the repository root
 
-**Status:** Accepted
+**Status:** Superseded by [0014](0014-the-kernel-and-the-process-sit-under-harness.md)
 
 **Date:** 2026-10-21
 
