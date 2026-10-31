@@ -389,6 +389,14 @@ export type TrancheMilestoneIndex = {
    * rather than every active slug.
    */
   legacySlugs: Set<string>
+  /**
+   * Tranche slug → the `vinaya/tranche:<slug>`-labeled Issues the index read
+   * to derive that slug's facts, exactly as `gh issue list` returned them. A
+   * reader that needs a tranche's tasks or open Issues takes them from here
+   * instead of listing the same label again. Absent from an index built
+   * without them.
+   */
+  issuesBySlug?: Map<string, GhIssue[]>
 }
 
 /**
@@ -489,15 +497,25 @@ export function listArchivedTrancheSlugs(owner: string, repo: string): ActiveTra
  * All fetches run concurrently (`Promise.all`), not one after another — the
  * same discipline `verify-coherence.ts`'s sweep already applies to its own
  * per-slug fetches.
+ *
+ * `retryFailedReads` makes each of those reads once more when it fails, so a
+ * single transient failure among the many label reads does not fail the
+ * whole index; a read that fails twice still rejects. Off by default, so a
+ * reader that does not ask keeps one attempt per read.
  */
-export async function indexTrancheMilestonesAsync(owner: string, repo: string): Promise<TrancheMilestoneIndex> {
+export async function indexTrancheMilestonesAsync(
+  owner: string,
+  repo: string,
+  options: { retryFailedReads?: boolean } = {}
+): Promise<TrancheMilestoneIndex> {
+  const read = <T>(fetch: () => Promise<T>): Promise<T> => (options.retryFailedReads ? retryOnce(fetch) : fetch())
   // Paginated: Milestones and labels are both append-only in practice
   // (labels are rarely deleted; closed Milestones never are), so a single
   // 100-item page is a countdown, not a bound, for the same reason
   // documented at `ghApiGetAllPagesAsync`'s own definition.
   const [milestones, labels] = await Promise.all([
-    ghApiGetAllPagesAsync<GhMilestone>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`),
-    ghApiGetAllPagesAsync<GhLabel>(`repos/${owner}/${repo}/labels?per_page=100`)
+    read(() => ghApiGetAllPagesAsync<GhMilestone>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`)),
+    read(() => ghApiGetAllPagesAsync<GhLabel>(`repos/${owner}/${repo}/labels?per_page=100`))
   ])
 
   const active: ActiveTrancheRef[] = []
@@ -513,9 +531,17 @@ export async function indexTrancheMilestonesAsync(owner: string, repo: string): 
 
   const uniqueLegacySlugs = [...legacySlugs]
   const [legacyIssuesBySlug, newPathIssuesBySlug] = await Promise.all([
-    Promise.all(uniqueLegacySlugs.map((slug) => ghIssueListByLabelAsync(owner, repo, trancheLabel(slug)))),
-    Promise.all(uniqueNewPathSlugs.map((slug) => ghIssueListByLabelAsync(owner, repo, trancheLabel(slug))))
+    Promise.all(uniqueLegacySlugs.map((slug) => read(() => ghIssueListByLabelAsync(owner, repo, trancheLabel(slug))))),
+    Promise.all(uniqueNewPathSlugs.map((slug) => read(() => ghIssueListByLabelAsync(owner, repo, trancheLabel(slug)))))
   ])
+
+  const issuesBySlug = new Map<string, GhIssue[]>()
+  uniqueLegacySlugs.forEach((slug, i) => {
+    issuesBySlug.set(slug, legacyIssuesBySlug[i] ?? [])
+  })
+  uniqueNewPathSlugs.forEach((slug, i) => {
+    issuesBySlug.set(slug, newPathIssuesBySlug[i] ?? [])
+  })
 
   uniqueLegacySlugs.forEach((slug, i) => {
     const m = legacyMilestoneBySlug.get(slug)
@@ -538,7 +564,16 @@ export async function indexTrancheMilestonesAsync(owner: string, repo: string): 
     // before this task, when a slug with no Milestone appeared in neither.
   })
 
-  return { active, archived, facts, legacySlugs }
+  return { active, archived, facts, legacySlugs, issuesBySlug }
+}
+
+/** `fetch`, made once more if it rejects; the second rejection is the one returned. */
+async function retryOnce<T>(fetch: () => Promise<T>): Promise<T> {
+  try {
+    return await fetch()
+  } catch {
+    return fetch()
+  }
 }
 
 /**

@@ -33,7 +33,7 @@ export type { GhIssue } from './gh'
 export { fetchProvenance } from './fetch-provenance'
 export { buildBranchName, fetchForgeFacts, fetchForgeFactsByIssue, fetchForgeTasksByLabel } from './fetch-forge-facts'
 export { defaultPriorTrancheArchivalDeps, resolvePriorTrancheArchival } from './prior-tranche-archival'
-export type { PriorTrancheArchivalDeps, PriorTrancheArchivalFact } from './prior-tranche-archival'
+export type { ActiveTrancheIssues, PriorTrancheArchivalDeps, PriorTrancheArchivalFact } from './prior-tranche-archival'
 export { fetchOpenIssuesByLabel } from './fetch-open-issues'
 export { fetchTaskIssueRefs } from './fetch-task-issue-refs'
 export {

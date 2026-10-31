@@ -102,6 +102,23 @@ describe('the strict required-CI read', () => {
     }
   )
 
+  test('a required check completed success on a run not yet completed reads pending, and green once the run completes', () => {
+    const jobs = [job('Test (apps/cli, shard 1)'), job(CHECK)]
+    for (const status of ['in_progress', 'queued']) {
+      const read = judge(run({ status, conclusion: null }), jobs)
+      expect(read.state).toBe('pending')
+      if (read.state === 'pending') expect(read.detail).not.toContain('never counts as the tests passing')
+    }
+    expect(judge(run({ status: 'completed', conclusion: 'success' }), jobs).state).toBe('green')
+  })
+
+  test.each(['skipped', 'neutral', 'cancelled', 'failure'])(
+    'a required check that completed %s on a run not yet completed still reads red',
+    (conclusion) => {
+      expect(judge(run({ status: 'in_progress', conclusion: null }), [job(CHECK, { conclusion })]).state).toBe('red')
+    }
+  )
+
   test('a stale-head, wrong-workflow or unrelated successful run does not satisfy the head', () => {
     const runs = [
       run({ id: 1, head_sha: OTHER, status: 'completed', conclusion: 'success' }),
