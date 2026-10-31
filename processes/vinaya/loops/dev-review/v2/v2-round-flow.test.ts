@@ -1428,6 +1428,131 @@ describe('ready tests deferred to required CI', () => {
   })
 })
 
+describe('a locally tested publication that still owes required CI', () => {
+  const REQUIRED = { workflow: READY_CI.workflow, check: READY_CI.check }
+  // The fake reader repeats its last entry, so a scenario that recovers ends on this later attempt's success.
+  const greenRead = (head: string) => ({
+    state: 'green' as const,
+    identity: { head, ...REQUIRED, runId: 9, runAttempt: 2, checkRunId: 99, url: null }
+  })
+
+  test('the hook runs the selected suite locally, the plan keeps its real test command, and only the strict green read completes', async () => {
+    const observed = await runV2('claude', {
+      readyTests: { mode: 'local' },
+      requiredCiPolicy: REQUIRED,
+      stagedBody: PLAN_BODY
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.world.readyDeferrals).toEqual([false])
+    expect(observed.world.readyRuns).toEqual([ALL_TESTS])
+    const [ready] = records(observed, 'ready-push')
+    expect(ready?.localTests).toBeUndefined()
+    expect(ready?.requiredCi).toMatchObject({ ...REQUIRED, head: ready?.head })
+    expect(observed.world.explicitRuns).toEqual([{ head: ready?.head as string, commands: EXPLICIT }])
+    const opened = observed.world.openedBodies[0] ?? ''
+    expect(opened).not.toContain('required-ci')
+    expect(opened).toContain('bun test --timeout=30000 -- ')
+    expect(observed.world.requiredCiReads).toEqual([ready?.head])
+    const [ci] = records(observed, 'read-ci-once')
+    expect(ci?.conclusion).toBe('green')
+    expect(ci?.requiredCiIdentity).toMatchObject({ head: ready?.head })
+  })
+
+  test('pending is never green and a code failure goes back to the Developer; only a later green completes', async () => {
+    const observed = await runV2('claude', {
+      readyTests: { mode: 'local' },
+      requiredCiPolicy: REQUIRED,
+      stagedBody: PLAN_BODY,
+      requiredCi: [pendingRead, codeRed, pendingRead, greenRead]
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.spawns.developer).toBe(2)
+    expect(observed.prompts.developer[1]).toContain('The required check Vinaya CI is red')
+    expect(records(observed, 'read-ci-once').map((r) => r.conclusion)).toEqual(['red', 'green'])
+  })
+
+  test('another required check failing is sent back even when the required test check passed', async () => {
+    const observed = await runV2('claude', {
+      readyTests: { mode: 'local' },
+      requiredCiPolicy: REQUIRED,
+      stagedBody: PLAN_BODY,
+      ci: ['red', 'green']
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.prompts.developer[1]).toContain(`CI is red on pull request #${PR}`)
+  })
+
+  test('with no strict required-CI reader the run refuses to complete rather than read the generic checks', async () => {
+    const observed = await runV2('claude', {
+      readyTests: { mode: 'local' },
+      requiredCiPolicy: REQUIRED,
+      strictReader: false,
+      stagedBody: PLAN_BODY
+    })
+    expect(observed.outcome).toBe('pause:infrastructure')
+    expect(observed.world.requiredCiReads).toEqual([])
+    const [ci] = records(observed, 'read-ci-once')
+    expect(ci?.decision?.detail).toContain('no strict required-CI reader')
+    expect(ci?.conclusion).toBe('pending')
+  })
+
+  test('a failed trusted read of the required-CI policy pauses before the hook runs', async () => {
+    const observed = await runV2('claude', {
+      readyTests: { mode: 'local' },
+      requiredCiPolicy: 'unreadable',
+      stagedBody: PLAN_BODY
+    })
+    expect(observed.outcome).toBe('pause:infrastructure')
+    expect(observed.world.readyRuns).toEqual([])
+    expect(records(observed, 'ready-push')[0]?.outcome).toBe('policy-unreadable')
+  })
+
+  test('a restart after the locally tested ready push keeps its obligation: no second ready push, the strict read completes it', async () => {
+    const observed = await runV2('claude', {
+      readyTests: { mode: 'local' },
+      requiredCiPolicy: REQUIRED,
+      stagedBody: PLAN_BODY,
+      restartAfter: { step: 'ready-push', beforeResume: () => {} }
+    })
+    expect(observed.driverLegs).toBe(2)
+    expect(observed.outcome).toBe('completed')
+    expect(observed.world.readyRuns).toEqual([ALL_TESTS])
+    expect(observed.world.requiredCiReads).toHaveLength(1)
+  })
+
+  test('a repair after red CI is read on the new head, never the earlier ready head', async () => {
+    const observed = await runV2('claude', {
+      readyTests: { mode: 'local' },
+      requiredCiPolicy: REQUIRED,
+      stagedBody: PLAN_BODY,
+      requiredCi: [codeRed, greenRead]
+    })
+    const heads = records(observed, 'ready-push').map((r) => r.head)
+    expect(heads).toHaveLength(2)
+    expect(heads[0]).not.toBe(heads[1])
+    expect(observed.world.requiredCiReads).toEqual(heads)
+  })
+
+  test('no descriptor and no opt-in owes nothing beyond the ordinary CI read', async () => {
+    const observed = await runV2('claude', {
+      readyTests: { mode: 'local' },
+      requiredCiPolicy: null,
+      stagedBody: PLAN_BODY
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.world.requiredCiReads).toEqual([])
+    expect(records(observed, 'ready-push')[0]?.requiredCi).toBeUndefined()
+  })
+
+  test('test deferral with the same declared descriptor still names the CI-pending line only for the deferred head', async () => {
+    const observed = await runV2('claude', { readyTests: READY_CI, requiredCiPolicy: REQUIRED, stagedBody: PLAN_BODY })
+    expect(observed.outcome).toBe('completed')
+    const [ready] = records(observed, 'ready-push')
+    expect(ready?.localTests).toBe('deferred')
+    expect(observed.world.openedBodies[0]).toContain('required-ci "Vinaya CI" .github/workflows/ci.yml')
+  })
+})
+
 describe('a carried-approval merge on a deferred run', () => {
   test('the driver obtains the explicit-command receipts on the merge head itself, with no Developer receipt turn, and the suite stays deferred', async () => {
     const { scenario, merged } = approvedThenConflicting(KEPT_BOTH, {

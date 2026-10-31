@@ -34,6 +34,7 @@ import {
   type ReadyTestsPolicy,
   readTrustedReadyTestsPolicy
 } from './pre-push-ready-policy.js'
+import { isNativeRunCommand, parseNativeRunCommand } from './pre-push-test-runner.js'
 
 /**
  * The `AEG:EVIDENCE` engine — every function that computes, or writes, the
@@ -526,6 +527,11 @@ export type GroupCCommandResult = {
    * the required check named here decides it. Never a pass: `exitCode` stays `null`, and the block says pending.
    */
   pendingCi?: { workflow: string; check: string; head: string }
+  /**
+   * Set only for a command composed solely from a receipt (the automatic native selected suite) when no receipt at
+   * this head, tree and verification context matches: it was never run here and is never a pass.
+   */
+  receiptMissing?: true
 }
 export type GroupC = { commands: GroupCCommandResult[] }
 
@@ -575,6 +581,13 @@ export type TestRunCacheRecord = {
    * file the command asks for, never a composite no run actually produced.
    */
   runs?: FileCoverageRun[]
+  /**
+   * The verification context the run executed under, when its recorder named
+   * one — set on a native local run's record (`nativeRunCommand`). A native
+   * command reuses only a record carrying its own context: an unqualified
+   * record, written before contexts were recorded, never stands for it.
+   */
+  context?: string
 }
 
 /** One entry in a file-coverage record's own `runs` history — the minimal shape {@link findCoveringRun} matches a request against. */
@@ -1143,6 +1156,19 @@ export async function lookupGreenRun(
 ): Promise<GroupCCommandResult | null> {
   const cacheKey = await testRunCacheKey(command, cwd)
   const hit = cacheKey ? cache.get(cacheKey) : undefined
+  // A native command stands only for a run recorded under its own verification context.
+  const native = parseNativeRunCommand(command)
+  if (native) {
+    if (!hit || hit.context !== native.context) return null
+    return {
+      command,
+      output: hit.output,
+      exitCode: 0,
+      timedOut: false,
+      overflowed: false,
+      reusedFrom: describeReuse(hit)
+    }
+  }
   if (hit) {
     return {
       command,
@@ -1239,13 +1265,25 @@ export async function recordGreenTestRun(
   output: string,
   cwd: string | undefined,
   source: 'pre-push' | 'pr-report',
-  cache: TestRunCache = defaultTestRunCache()
+  cache: TestRunCache = defaultTestRunCache(),
+  /** The verification context the run executed under; a native command's record must carry its own. */
+  options: { context?: string } = {}
 ): Promise<boolean> {
+  const native = parseNativeRunCommand(command)
+  if (native && options.context !== native.context) return false
   const key = await testRunCacheKey(command, cwd)
   if (!key) return false
   const truncated = truncateAgentOutput(output)
   const recordedAt = new Date().toISOString()
-  cache.set(key, { output: truncated, exitCode: 0, timedOut: false, overflowed: false, recordedAt, source })
+  cache.set(key, {
+    output: truncated,
+    exitCode: 0,
+    timedOut: false,
+    overflowed: false,
+    recordedAt,
+    source,
+    ...(options.context ? { context: options.context } : {})
+  })
   // The pre-push hook always calls this with the exact
   // `bun test <files>` command it just ran green — this is what makes that
   // run reusable per-file by a LATER Test-plan command naming only some of
@@ -1389,6 +1427,23 @@ export async function computeGroupC(
   const commands: GroupCCommandResult[] = []
   for (const line of extractAgentCommandLines(prBody)) {
     const command = agentCommandText(line)
+    // The automatic native selected suite is the push's own run: composed from its receipt at this head, tree and
+    // context, never executed here — a missing or incompatible receipt is reported as not run, never as a pass.
+    if (isNativeRunCommand(command)) {
+      const reused = cache ? await lookupGreenRun(command, cwd, cache) : null
+      commands.push(
+        reused ?? {
+          command,
+          output:
+            'Not run: the native selected suite is composed only from the local push receipt recorded at this head, tree and verification context, and none matches. Push the head again so the hook runs and records it.',
+          exitCode: null,
+          timedOut: false,
+          overflowed: false,
+          receiptMissing: true
+        }
+      )
+      continue
+    }
     // A Group C `check --all` run grades `evidence-fresh` against the
     // PRE-write AEG:EVIDENCE block — this report writes the new block only
     // AFTER Group C runs — so left alone it can only ever record that command
@@ -1409,7 +1464,9 @@ export async function computeGroupC(
 /** True when any Group C command timed out, overflowed its output budget, or exited non-zero — folded into this command's overall exit code exactly like a failing Group B gate. */
 export function groupCFailed(groupC: GroupC): boolean {
   return groupC.commands.some(
-    (c) => c.pendingCi === undefined && (c.timedOut || c.overflowed || (c.exitCode !== null && c.exitCode !== 0))
+    (c) =>
+      c.receiptMissing === true ||
+      (c.pendingCi === undefined && (c.timedOut || c.overflowed || (c.exitCode !== null && c.exitCode !== 0)))
   )
 }
 
@@ -1433,13 +1490,15 @@ export function renderGroupC(groupC: GroupC): string {
   const blocks = groupC.commands.map((c, i) => {
     const status = c.pendingCi
       ? '[pending in required CI]'
-      : c.overflowed
-        ? '[output overflow]'
-        : c.timedOut
-          ? '[timeout]'
-          : c.exitCode !== 0
-            ? `[exit ${c.exitCode}]`
-            : null
+      : c.receiptMissing
+        ? '[not run: no matching receipt]'
+        : c.overflowed
+          ? '[output overflow]'
+          : c.timedOut
+            ? '[timeout]'
+            : c.exitCode !== 0
+              ? `[exit ${c.exitCode}]`
+              : null
     // Status FIRST (task 5): the one fact a reviewer reads is
     // pass/fail, and a tail-truncated 600-char block should never bury it
     // below output text — put it at the top of the fence, not the bottom.

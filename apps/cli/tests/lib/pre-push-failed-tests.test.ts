@@ -11,8 +11,11 @@ import {
   completedTestSelection,
   TEST_SELECTION_COMPLETE,
   changedBetween,
+  chooseNativeBase,
   chooseTests,
   computeVerificationContext,
+  type NativeBaseInputs,
+  nativePassingRecord,
   decideSelection,
   type FailedTestsRecord,
   parseFailedTestFiles,
@@ -825,5 +828,172 @@ describe('failed git reads are never an empty change list (real git repository)'
     const fine: ReadFailure = { failed: false }
     prePushSelection(fx.dir, 'HEAD~1', 'one', fine)
     expect(fine.failed).toBe(false)
+  })
+})
+
+describe('the native push: its base, its obligations and its proof', () => {
+  const ROOT = '/repo'
+  const CTX = 'ctx-1'
+  const failedAt = (over: Partial<FailedTestsRecord> = {}): FailedTestsRecord => ({
+    version: 1,
+    head: 'r'.repeat(40),
+    branch: 'task/x/1',
+    failed: ['/repo/apps/cli/tests/a.test.ts'],
+    recordedAt: '2026-10-30T00:00:00.000Z',
+    selectionCompleted: true,
+    context: CTX,
+    ...over
+  })
+  const passingAt = (over: Partial<PassingRecord> = {}): PassingRecord => ({
+    version: 2,
+    kind: 'passed',
+    head: 'p'.repeat(40),
+    branch: 'task/x/1',
+    selection: ['/repo/apps/cli/tests/a.test.ts'],
+    selectionCompleted: true,
+    context: CTX,
+    recordedAt: '2026-10-30T00:00:00.000Z',
+    ...over
+  })
+  const inputs = (over: Partial<NativeBaseInputs> = {}): NativeBaseInputs => ({
+    repoRoot: ROOT,
+    head: 'h'.repeat(40),
+    branch: 'task/x/1',
+    mergeBase: 'm'.repeat(40),
+    failed: null,
+    passing: null,
+    context: CTX,
+    inputsClean: true,
+    isAncestor: () => true,
+    exists: () => true,
+    changedBetween: () => ['/repo/apps/cli/src/x.ts'],
+    ...over
+  })
+
+  it('with no record the selector compares with the merge base', () => {
+    expect(chooseNativeBase(inputs())).toMatchObject({ base: 'm'.repeat(40), kind: 'merge-base', obligations: [] })
+  })
+
+  it('a verified pass under this context narrows the base to it; any mismatch widens to the merge base', () => {
+    expect(chooseNativeBase(inputs({ passing: passingAt() }))).toMatchObject({
+      base: 'p'.repeat(40),
+      kind: 'since-green'
+    })
+    for (const over of [
+      { passing: passingAt({ context: 'other' }) },
+      { passing: passingAt({ branch: 'task/x/2' }) },
+      { passing: passingAt(), context: null },
+      { passing: passingAt(), inputsClean: false },
+      { passing: passingAt(), isAncestor: () => false },
+      { passing: passingAt(), changedBetween: () => null },
+      { passing: passingAt(), changedBetween: () => ['/repo/vinaya.config.json'] }
+    ])
+      expect(chooseNativeBase(inputs(over)).kind).toBe('merge-base')
+  })
+
+  it('a completed refusal under this context narrows to its head and keeps its failed tests as obligations', () => {
+    expect(chooseNativeBase(inputs({ failed: failedAt(), passing: passingAt() }))).toMatchObject({
+      base: 'r'.repeat(40),
+      kind: 'rerun',
+      obligations: ['/repo/apps/cli/tests/a.test.ts']
+    })
+  })
+
+  it('an unresolved failure stays an obligation even when the base widens; an unnamed one widens with none', () => {
+    for (const over of [
+      { context: 'other' },
+      { inputsClean: false },
+      { changedBetween: () => ['/repo/vinaya.config.json'] }
+    ])
+      expect(chooseNativeBase(inputs({ failed: failedAt(), ...over }))).toMatchObject({
+        kind: 'merge-base',
+        obligations: ['/repo/apps/cli/tests/a.test.ts']
+      })
+    expect(chooseNativeBase(inputs({ failed: failedAt({ selectionCompleted: false }) })).obligations).toEqual([
+      '/repo/apps/cli/tests/a.test.ts'
+    ])
+    expect(chooseNativeBase(inputs({ failed: failedAt({ failed: 'all' }) }))).toMatchObject({
+      kind: 'merge-base',
+      obligations: []
+    })
+    expect(chooseNativeBase(inputs({ failed: failedAt(), exists: () => false }))).toMatchObject({
+      kind: 'merge-base',
+      obligations: []
+    })
+  })
+
+  it('a refusal on another branch or outside this history is ignored', () => {
+    expect(chooseNativeBase(inputs({ failed: failedAt({ branch: 'task/x/2' }) })).obligations).toEqual([])
+    expect(chooseNativeBase(inputs({ failed: failedAt(), isAncestor: () => false })).obligations).toEqual([])
+  })
+
+  const native = (identities: string[]): NonNullable<SelectionNote['native']> => ({
+    version: 1,
+    base: 'm'.repeat(40),
+    baseKind: 'merge-base',
+    plan: 'plan',
+    inventory: 'inv',
+    context: CTX,
+    identities,
+    obligations: [],
+    groups: [],
+    expanded: [],
+    command: null
+  })
+  const note = (identities: string[]): SelectionNote => ({
+    version: 1,
+    mode: 'full',
+    head: 'h'.repeat(40),
+    fullCount: identities.length,
+    selected: identities.map((id) => `/repo/${id.split('@')[0]}`),
+    native: native(identities)
+  })
+  const complete = (executed: string[]) => ({
+    version: 1 as const,
+    completed: true,
+    executed,
+    failedRunners: [],
+    problems: []
+  })
+  const proof = (over: Partial<Parameters<typeof nativePassingRecord>[0]> = {}) =>
+    nativePassingRecord({
+      note: note(['a.test.ts@default']),
+      completion: complete(['a.test.ts@default']),
+      head: 'h'.repeat(40),
+      branch: 'task/x/1',
+      context: CTX,
+      inputsClean: true,
+      treeClean: true,
+      now: new Date('2026-10-31T00:00:00Z'),
+      ...over
+    })
+
+  it('a complete green native run of exactly the plan, on an unchanged head, tree and context, is proof', () => {
+    expect(proof()).toMatchObject({ version: 2, kind: 'passed', head: 'h'.repeat(40), context: CTX })
+  })
+
+  it('anything short of that is no proof', () => {
+    for (const over of [
+      { completion: { ...complete(['a.test.ts@default']), completed: false } },
+      { completion: { ...complete(['a.test.ts@default']), failedRunners: ['cli@default'] } },
+      { completion: complete([]) },
+      { completion: complete(['a.test.ts@default', 'b.test.ts@default']) },
+      {
+        completion: {
+          ...complete(['a.test.ts@default']),
+          problems: [{ code: 'extra', path: 'b.test.ts', detail: 'executed but not scheduled' }]
+        }
+      },
+      { head: 'x'.repeat(40) },
+      { context: 'other' },
+      { context: null },
+      { inputsClean: false },
+      { treeClean: false },
+      { treeClean: null },
+      { branch: 'HEAD' },
+      { note: note([]) },
+      { note: { ...note(['a.test.ts@default']), native: undefined } }
+    ])
+      expect(proof(over as never)).toBeNull()
   })
 })
