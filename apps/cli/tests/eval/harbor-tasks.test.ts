@@ -354,12 +354,13 @@ describe('the converter', () => {
   })
 
   it('writes every quarantined developer folder, with its quarantine in task.toml', () => {
+    const BROKEN_TASKS = ['pr-1268', 'pr-1299']
     const developer = summary.find((s) => s.suite === suiteName('developer')) as ConvertedSuite
     expect(developer.converted.length).toBe(28)
     expect(readdirSync(join(first, developer.suite)).length).toBe(28)
     const record = loadHarborQuarantine()
     const quarantines = record.get(developer.suite) ?? []
-    expect(quarantines.map((q) => q.taskId).sort()).toEqual(['pr-1002', 'pr-1077', 'pr-1271'])
+    expect(quarantines.map((q) => q.taskId).sort()).toEqual(['pr-1002', 'pr-1077', 'pr-1268', 'pr-1271', 'pr-1299'])
     expect([...record.keys()]).toEqual([developer.suite])
     const withMetadata: string[] = []
     for (const { suite, dir, caseFile } of folders()) {
@@ -372,7 +373,8 @@ describe('the converter', () => {
         continue
       }
       withMetadata.push(caseFile.case.id)
-      expect(quarantine.cause).toBe('environment')
+      // A case no solution written from its inputs can pass is a broken task; the rest fail only on the image.
+      expect(quarantine.cause).toBe(BROKEN_TASKS.includes(caseFile.case.id) ? 'broken-task' : 'environment')
       expect(quarantine.reasonVersion).toBe(1)
       expect(metadata).toMatchObject({
         quarantine_cause: quarantine.cause,
@@ -382,7 +384,7 @@ describe('the converter', () => {
       })
       expect(walk(dir)).toEqual(expect.arrayContaining(REQUIRED_FILES))
     }
-    expect(withMetadata.sort()).toEqual(['pr-1002', 'pr-1077', 'pr-1271'])
+    expect(withMetadata.sort()).toEqual(['pr-1002', 'pr-1077', 'pr-1268', 'pr-1271', 'pr-1299'])
   })
 
   it('refuses a quarantine record with a stale digest or naming a case its suite does not hold, writing no folder', async () => {

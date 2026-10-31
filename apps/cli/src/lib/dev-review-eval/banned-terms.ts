@@ -67,9 +67,51 @@ export interface BannedTermHit {
 /** The marker an Interface block opens with. */
 const INTERFACE_MARKER = ' Interface: '
 
-/** A whole Interface block: items `<kind> `<text>`` separated by `; `, ending the statement with a full stop. */
-const INTERFACE_BLOCK =
-  /^ Interface: (?:export|file|env|flag|event|field|string) `[^`]*`(?:; (?:export|file|env|flag|event|field|string) `[^`]*`)*\.$/
+/** The kinds an Interface item is labelled with, in the order the block lists them. */
+export const INTERFACE_ITEM_KINDS = ['export', 'file', 'env', 'flag', 'event', 'field', 'key', 'string'] as const
+
+/**
+ * An item's text as an Interface code span: fenced by one backtick more than
+ * the longest run of backticks the text holds, so the text cannot close its
+ * own span, and padded with a space on each side when it starts or ends with
+ * a backtick, as a Markdown code span is written.
+ */
+export function interfaceCodeSpan(text: string): string {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length))
+  const fence = '`'.repeat(longest + 1)
+  const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : ''
+  return `${fence}${pad}${text}${pad}${fence}`
+}
+
+/**
+ * Where the text of each code span of a whole Interface block lies, between
+ * its fences: the block is the marker, then items `<kind> <code span>`
+ * separated by `; `, and a full stop that ends the statement. A span closes at
+ * the first run of exactly as many backticks as opened it. `null` when the
+ * block is not well formed.
+ */
+function interfaceSpans(block: string): { from: number; to: number }[] | null {
+  if (!block.startsWith(INTERFACE_MARKER)) return null
+  const spans: { from: number; to: number }[] = []
+  let at = INTERFACE_MARKER.length
+  for (;;) {
+    const kind = INTERFACE_ITEM_KINDS.find((k) => block.startsWith(`${k} \``, at))
+    if (kind === undefined) return null
+    at += kind.length + 1
+    const fence = (/^`+/.exec(block.slice(at)) as RegExpExecArray)[0]
+    const from = at + fence.length
+    const runs = /`+/g
+    runs.lastIndex = from
+    let close: RegExpExecArray | null = runs.exec(block)
+    while (close !== null && close[0].length !== fence.length) close = runs.exec(block)
+    if (close === null || close.index === from) return null
+    spans.push({ from, to: close.index })
+    at = close.index + fence.length
+    if (at === block.length - 1 && block[at] === '.') return spans
+    if (!block.startsWith('; ', at)) return null
+    at += 2
+  }
+}
 
 /**
  * The statement with the code spans of a closing Interface block blanked out:
@@ -82,8 +124,11 @@ function withoutInterfaceSpans(statement: string): string {
   const at = statement.lastIndexOf(INTERFACE_MARKER)
   if (at < 0) return statement
   const block = statement.slice(at)
-  if (!INTERFACE_BLOCK.test(block)) return statement
-  return statement.slice(0, at) + block.replace(/`[^`]*`/g, (span) => `\`${' '.repeat(span.length - 2)}\``)
+  const spans = interfaceSpans(block)
+  if (spans === null) return statement
+  let blanked = block
+  for (const { from, to } of spans) blanked = blanked.slice(0, from) + ' '.repeat(to - from) + blanked.slice(to)
+  return statement.slice(0, at) + blanked
 }
 
 /** Every banned term the statement contains, in the order the list names them. */

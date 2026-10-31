@@ -1,7 +1,12 @@
 // The banned-terms checker: a neutral task statement carries no process term,
 // and a refusal names the term it found.
 import { describe, expect, it } from 'bun:test'
-import { BANNED_TERMS, checkTaskStatement, findBannedTerms } from '../../src/lib/dev-review-eval/banned-terms'
+import {
+  BANNED_TERMS,
+  checkTaskStatement,
+  findBannedTerms,
+  interfaceCodeSpan
+} from '../../src/lib/dev-review-eval/banned-terms'
 import { REVIEWER_SEVERITIES } from '../../src/lib/review-result'
 
 const NEUTRAL =
@@ -86,6 +91,21 @@ describe('banned-terms checker', () => {
     expect(findBannedTerms(`Use \`--surface\`.${' Interface: env `PATH`.'}`).map((hit) => hit.term)).toEqual([
       'Surface'
     ])
+  })
+
+  it('parses an Interface block whose items hold backticks, fenced by a longer run, and blanks each whole span', () => {
+    const items = ['the `brief` is ready', '`--surface`', 'plain reviewer']
+    expect(items.map(interfaceCodeSpan)).toEqual(['``the `brief` is ready``', '`` `--surface` ``', '`plain reviewer`'])
+    const block = ` Interface: string ${interfaceCodeSpan(items[0] as string)}; flag ${interfaceCodeSpan(
+      items[1] as string
+    )}; key ${interfaceCodeSpan(items[2] as string)}.`
+    expect(findBannedTerms(`${NEUTRAL}${block}`)).toEqual([])
+    // A span the block never closes, or closes with a shorter run, leaves the block unparsed, so every span is checked.
+    expect(
+      findBannedTerms(`${NEUTRAL} Interface: string \`\`the \`brief\` is ready\`.`).map((hit) => hit.term)
+    ).toEqual(['brief'])
+    // The prose before the block is still checked.
+    expect(findBannedTerms(`Ask the operator.${block}`).map((hit) => hit.term)).toEqual(['operator'])
   })
 
   it('names each term once', () => {
