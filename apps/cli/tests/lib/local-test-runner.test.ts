@@ -586,7 +586,13 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     const step = (sub: 'select' | 'run') => {
       const args =
         sub === 'select' ? [REPOSITORY_LOCAL_RUN, 'select'] : [REPOSITORY_LOCAL_RUN, 'run', '--log', '/dev/null']
-      const run = spawnSync('bun', args, { cwd: dir, env: env(), encoding: 'utf8', timeout: 240_000 })
+      const run = spawnSync('bun', args, {
+        cwd: dir,
+        env: env(),
+        encoding: 'utf8',
+        timeout: 240_000,
+        killSignal: 'SIGKILL'
+      })
       const out = `${run.stdout}${run.stderr}`
       // Every step's output is kept, so a failing assertion names what the adapter printed.
       transcript.push(`$ local-run ${sub} → ${run.status ?? run.signal}\n${out.slice(-4000)}`)
