@@ -174,6 +174,21 @@
       "format": "json",
       "readers": [{ "kind": "raw-bytes", "tests": ["scripts/test-suites/inventory-check.test.ts"] }],
       "reason": "The inventory check's test validates the committed declarations against the tree."
+    },
+    {
+      "id": "selection-library-fixtures",
+      "kind": "fixture",
+      "paths": ["apps/cli/src/lib/verification/tests/fixtures/"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": [
+            "apps/cli/src/lib/verification/tests/selection.test.ts",
+            "apps/cli/tests/lib/verification-library.test.ts"
+          ]
+        }
+      ],
+      "reason": "The selection library's committed fixture repositories, read from disk by its own tests and by the repository-side library test."
     }
   ],
   "providers": [
@@ -229,6 +244,7 @@
         "apps/cli/src/lib/ts-module-graph.ts",
         "apps/cli/src/lib/repo-scanner-tests.ts",
         "apps/cli/src/lib/cli-spawn-tests.ts",
+        "apps/cli/src/lib/verification/",
         "scripts/test-suites/inventory.json"
       ],
       "duty": "the bundler oracle in apps/cli/tests/lib/test-selector.test.ts runs when the selection logic, its inputs or the inventory change, and on every default-branch run",

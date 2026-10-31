@@ -1,0 +1,94 @@
+{
+  "description": "A flat repository with no workspaces: one package at the root, sources under lib/, Vitest specs under spec/, a schema and a template read from disk.",
+  "files": {
+    "package.json": "{ \"name\": \"fixture-flat\", \"scripts\": { \"test\": \"vitest run\" } }\n",
+    "lib/strings.ts": "export function upper(text: string): string {\n  return text.toUpperCase()\n}\n\nexport function lower(text: string): string {\n  return text.toLowerCase()\n}\n",
+    "lib/index.ts": "export * from './strings.js'\n",
+    "spec/upper.spec.ts": "import { expect, it } from 'vitest'\nimport { upper } from '../lib/strings.js'\n\nit('upper', () => expect(upper('a')).toBe('A'))\n",
+    "spec/lower.spec.ts": "import { expect, it } from 'vitest'\nimport { lower } from '../lib/strings.js'\n\nit('lower', () => expect(lower('A')).toBe('a'))\n",
+    "spec/all.spec.ts": "import { expect, it } from 'vitest'\nimport * as lib from '../lib/index.js'\n\nit('exports', () => expect(Object.keys(lib).length).toBe(2))\n",
+    "spec/schema.spec.ts": "import { expect, it } from 'vitest'\nimport { readFileSync } from 'node:fs'\n\nit('schema', () => expect(JSON.parse(readFileSync('schema/config.schema.json', 'utf8')).type).toBe('object'))\n",
+    "spec/template.spec.ts": "import { expect, it } from 'vitest'\nimport { readFileSync } from 'node:fs'\n\nit('template', () => expect(readFileSync('templates/email.html', 'utf8')).toContain('<p>'))\n",
+    "schema/config.schema.json": "{ \"type\": \"object\" }\n",
+    "templates/email.html": "<p>Hello</p>\n",
+    "README.md": "# Flat fixture\n"
+  },
+  "inventory": {
+    "suites": [{ "id": "root", "dir": ".", "runner": "vitest", "preload": null }],
+    "edges": [
+      {
+        "input": "package.json",
+        "kind": "runner-config",
+        "readerKind": "semantic",
+        "format": "json",
+        "readers": ["suite:root"],
+        "source": "suite:root"
+      },
+      {
+        "input": "schema/config.schema.json",
+        "kind": "schema",
+        "readerKind": "schema-policy",
+        "format": "json",
+        "readers": ["spec/schema.spec.ts"],
+        "source": "config-schema"
+      },
+      {
+        "input": "templates/",
+        "kind": "doc",
+        "readerKind": "raw-bytes",
+        "readers": ["spec/template.spec.ts"],
+        "source": "templates"
+      }
+    ],
+    "unknowns": [],
+    "policies": []
+  },
+  "policy": { "scanners": [], "spawnPrograms": [] },
+  "scenarios": [
+    {
+      "name": "a changed name selects its importer and the namespace importer of the barrel, never the sibling",
+      "depth": "transitive",
+      "change": {
+        "lib/strings.ts": "export function upper(text: string): string {\n  return text.toLocaleUpperCase()\n}\n\nexport function lower(text: string): string {\n  return text.toLowerCase()\n}\n"
+      },
+      "required": ["spec/all.spec.ts", "spec/upper.spec.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "a formatting-only schema change still reaches its schema-policy reader",
+      "depth": "one",
+      "change": { "schema/config.schema.json": "{\n  \"type\": \"object\"\n}\n" },
+      "required": ["spec/schema.spec.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "a template selects its declared reader",
+      "depth": "one",
+      "change": { "templates/email.html": "<p>Hello again</p>\n" },
+      "required": ["spec/template.spec.ts"],
+      "fallbacks": []
+    },
+    {
+      "name": "a runner configuration change reaches every test of the suite",
+      "depth": "one",
+      "change": {
+        "package.json": "{ \"name\": \"fixture-flat\", \"scripts\": { \"test\": \"vitest run --reporter=dot\" } }\n"
+      },
+      "required": [
+        "spec/all.spec.ts",
+        "spec/lower.spec.ts",
+        "spec/schema.spec.ts",
+        "spec/template.spec.ts",
+        "spec/upper.spec.ts"
+      ],
+      "fallbacks": []
+    },
+    {
+      "name": "an unmodeled document falls back to every test, named",
+      "depth": "one",
+      "change": { "README.md": "# Flat fixture, edited\n" },
+      "required": [],
+      "fallbacks": ["unattributed"]
+    }
+  ]
+}

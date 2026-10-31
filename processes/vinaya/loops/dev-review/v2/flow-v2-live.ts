@@ -11,6 +11,8 @@ import {
   writeFileSync
 } from 'node:fs'
 import { basename, dirname, isAbsolute, join } from 'node:path'
+import type { Readable, Writable } from 'node:stream'
+import { fileURLToPath } from 'node:url'
 import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
 import { type DevToolContext, devToolError } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { storagePushEvent } from '../../../../../apps/cli/src/lib/flow-v2-events'
@@ -81,6 +83,7 @@ import {
 } from './v2-actions'
 import { checkReadyBaseline } from './ready-baseline'
 import { readRequiredCiLive } from './ci-recovery'
+import { CONTROL_FD, parseSupervisedCommandResult, RESULT_FD } from './supervised-command'
 
 // The live wiring of review locally, push once (version 2 of the developer-review Flow) for the Engine runner: the
 // staged pull request the Developer's `open_pull_request` saves, the storage-push marker its worktree's pre-push hook
@@ -455,7 +458,7 @@ const STOP_GRACE_MS = 5000
 export { NO_LOCAL_TESTS_MARKER }
 
 /** What one supervised child reported. */
-interface SupervisedRun {
+export interface SupervisedRun {
   status: number | null
   signal: NodeJS.Signals | null
   error?: Error
@@ -465,14 +468,23 @@ interface SupervisedRun {
   interrupted: 'cancel' | 'deadline' | null
 }
 
+/** The wrapper every supervised command runs under, as the live leader of its process group. */
+export const SUPERVISED_COMMAND_WRAPPER = fileURLToPath(new URL('./supervised-command.ts', import.meta.url))
+
+/** How long a stopped group's output pipes may stay open before they are closed from this side. */
+const OUTPUT_DRAIN_MS = 2000
+
 /**
  * Runs `argv` as an awaited child in its own process group, registered (and the registration acknowledged) before
- * it does any work. A cancel (`signal`) or the deadline stops the whole registered group and reports which; a child
- * that exits on its own still has any undetached descendants of its group stopped. A registration failure stops the
- * blocked shell and rethrows. Shared by the ready push's hook and the driver's explicit Test Plan commands, so both
- * phases are covered by the same deadline, cancellation and process-tree cleanup.
+ * it does any work. The command runs under a wrapper (`supervised-command.ts`) that leads the group and stays alive
+ * after the command exits: it reports the command's exit code or terminating signal on a result channel of its own,
+ * so the command's end is known even while a descendant still holds its output open, and the group's leftover
+ * descendants are then stopped through that live, verified leader. A cancel (`signal`) or the deadline stops the
+ * whole registered group and reports which. A registration failure stops the waiting wrapper and rethrows. Shared by
+ * the ready push's hook and the driver's explicit Test Plan commands, so both phases are covered by the same
+ * deadline, cancellation and process-tree cleanup.
  */
-async function superviseChild(input: {
+export async function superviseChild(input: {
   argv: string[]
   cwd: string
   env: NodeJS.ProcessEnv
@@ -488,13 +500,16 @@ async function superviseChild(input: {
   /** Shown each chunk of output as it arrives (progress only); anything it throws is ignored. */
   onOutput?: (chunk: string) => void
 }): Promise<SupervisedRun> {
-  // The child waits for one acknowledgement line before it becomes the command, so no work starts unregistered.
-  const child = spawn('sh', ['-c', 'IFS= read -r _vinaya_ack || exit 1; exec "$0" "$@"', ...input.argv], {
+  // The wrapper waits for one acknowledgement line on its control pipe before it starts the command, so no work starts
+  // unregistered, and never reads stdin, which reaches the command untouched.
+  const child = spawn(process.execPath, [SUPERVISED_COMMAND_WRAPPER, ...input.argv], {
     cwd: input.cwd,
     env: input.env,
     detached: true,
-    stdio: ['pipe', 'pipe', 'pipe']
+    stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe']
   })
+  const control = child.stdio[CONTROL_FD] as Writable | null | undefined
+  const resultChannel = child.stdio[RESULT_FD] as Readable | null | undefined
   let stdout = ''
   let stderr = ''
   const show = (chunk: string) => {
@@ -513,16 +528,39 @@ async function superviseChild(input: {
     show(chunk)
   })
   child.stdin?.on('error', () => {})
-  const exited = new Promise<{ status: number | null; signal: NodeJS.Signals | null; error?: Error }>((resolve) => {
-    child.on('error', (error) => resolve({ status: null, signal: null, error }))
-    child.on('close', (code, sig) => resolve({ status: code, signal: sig }))
+  control?.on('error', () => {})
+  let resultText = ''
+  resultChannel?.setEncoding('utf8').on('data', (chunk: string) => {
+    resultText += chunk
   })
-  const leaderExited = new Promise<void>((resolve) => {
+  // Only the wrapper holds the result channel, so it ends once the wrapper has reported or is gone.
+  const finished = new Promise<void>((resolve) => {
     child.on('error', () => resolve())
-    child.on('exit', () => resolve())
+    if (!resultChannel) return resolve()
+    resultChannel.on('end', () => resolve())
+    resultChannel.on('close', () => resolve())
+    resultChannel.on('error', () => resolve())
+  })
+  const wrapperExited = new Promise<{ status: number | null; signal: NodeJS.Signals | null; error?: Error }>(
+    (resolve) => {
+      child.on('error', (error) => resolve({ status: null, signal: null, error }))
+      child.on('exit', (code, sig) => resolve({ status: code, signal: sig }))
+    }
+  )
+  const outputClosed = new Promise<void>((resolve) => {
+    child.on('error', () => resolve())
+    child.on('close', () => resolve())
   })
   const stop = async () => {
     await stopRegistered(input.runToken, { graceMs: STOP_GRACE_MS, ...input.registry })
+  }
+  // End-of-file on the control pipe releases the wrapper, which ends its own group, itself included.
+  const release = () => control?.end()
+  const closeOutput = () => {
+    child.stdin?.destroy()
+    child.stdout?.destroy()
+    child.stderr?.destroy()
+    resultChannel?.destroy()
   }
   let interrupted: 'cancel' | 'deadline' | null = null
   let cancelDeadline: (() => void) | undefined
@@ -538,40 +576,60 @@ async function superviseChild(input: {
         { ...identity, runToken: input.runToken, label: input.label, processGroup: true },
         input.registry
       )
-      child.stdin?.write('ack\n')
+      control?.write('ack\n')
       child.stdin?.end(input.stdin ?? '')
     } else {
+      // Unregistered, the wrapper is released before it starts anything and exits on its own.
+      release()
       child.stdin?.end()
     }
-    const outcome = await Promise.race([exited, interruption])
+    const outcome = await Promise.race([finished, interruption])
     if (typeof outcome === 'string') {
       interrupted = outcome
       await stop()
+      release()
       // A detached, unregistered descendant may still own a pipe. It cannot extend this run's deadline.
-      child.stdin?.destroy()
-      child.stdout?.destroy()
-      child.stderr?.destroy()
-      await leaderExited
+      closeOutput()
+      await wrapperExited
+      return { status: null, signal: null, stdout, stderr, interrupted }
     }
-    // A finished child can leave undetached descendants in its group: they stop with the run.
+    // A finished child can leave undetached descendants in its group: they stop with the run, through the wrapper
+    // that still leads the group.
     await stop()
-    if (interrupted !== null) return { status: null, signal: null, stdout, stderr, interrupted }
-    const run = await exited
-    return { ...run, stdout, stderr, interrupted: null }
+    release()
+    const wrapper = await wrapperExited
+    // The stopped group no longer holds the output; only a detached, unregistered descendant could, briefly.
+    let drainTimer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      outputClosed,
+      new Promise<void>((resolve) => (drainTimer = setTimeout(resolve, OUTPUT_DRAIN_MS)))
+    ])
+    clearTimeout(drainTimer)
+    closeOutput()
+    const result = parseSupervisedCommandResult(resultText)
+    if (result === null) return { ...wrapper, stdout, stderr, interrupted: null }
+    return {
+      status: result.code,
+      signal: result.signal,
+      ...(result.error !== undefined ? { error: new Error(result.error) } : {}),
+      stdout,
+      stderr,
+      interrupted: null
+    }
   } catch (error) {
-    // Registration can fail before the acknowledgement: the blocked shell still belongs to this driver.
+    // Registration can fail before the acknowledgement: the waiting wrapper still belongs to this driver.
+    control?.destroy()
     child.stdin?.destroy()
     child.kill('SIGTERM')
     const killTimer = setTimeout(() => child.kill('SIGKILL'), STOP_GRACE_MS)
     try {
-      await leaderExited
+      await wrapperExited
       await stop()
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], `${input.label} failed and process cleanup also failed`)
     } finally {
       clearTimeout(killTimer)
-      child.stdout?.destroy()
-      child.stderr?.destroy()
+      closeOutput()
     }
     throw error
   } finally {

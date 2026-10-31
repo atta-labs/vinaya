@@ -139,6 +139,61 @@ describe('process registry', () => {
     }
   })
 
+  test('a group whose leader exited leaving no member reads already gone, with no error', async () => {
+    const dir = registryDir()
+    const child = spawn('sh', ['-c', 'read acknowledgement; exit 0'], {
+      detached: true,
+      stdio: ['pipe', 'ignore', 'ignore'],
+      env: stripVinayaEnv()
+    })
+    const budget = setTimeout(() => child.kill('SIGKILL'), PROCESS_FIXTURE_BUDGET_MS)
+    try {
+      const identity = identityOf(child.pid!)!
+      await registerProcess({ ...identity, runToken: 'empty', label: 'empty group', processGroup: true }, { dir })
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+      child.stdin!.end('ack\n')
+      await exited
+      const report = await stopRegistered('empty', { dir, graceMs: 200 })
+      expect(report.alreadyGone).toEqual([identity])
+      expect(report.terminated).toEqual([])
+      expect(report.killed).toEqual([])
+    } finally {
+      clearTimeout(budget)
+      child.kill('SIGKILL')
+    }
+  })
+
+  test('a leaderless group no recorded member verifies is refused and never signalled', async () => {
+    const dir = registryDir()
+    const pidFile = join(dir, 'descendant.pid')
+    const child = spawn(
+      'sh',
+      ['-c', `read acknowledgement; sleep 37 >/dev/null 2>&1 </dev/null & echo $! > '${pidFile}'; exit 0`],
+      { detached: true, stdio: ['pipe', 'ignore', 'ignore'], env: stripVinayaEnv() }
+    )
+    const budget = setTimeout(() => child.kill('SIGKILL'), PROCESS_FIXTURE_BUDGET_MS)
+    let descendant = 0
+    try {
+      // Registered while the group holds only the waiting leader: no member is recorded.
+      const identity = identityOf(child.pid!)!
+      await registerProcess({ ...identity, runToken: 'unowned', label: 'leaderless', processGroup: true }, { dir })
+      expect(registeredProcesses('unowned', { dir })[0]?.members).toEqual([])
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+      child.stdin!.end('ack\n')
+      await exited
+      while (!existsSync(pidFile)) await new Promise((resolve) => setTimeout(resolve, 10))
+      descendant = Number(readFileSync(pidFile, 'utf8'))
+      await expect(stopRegistered('unowned', { dir, graceMs: 200 })).rejects.toThrow(
+        `process registry: group ${identity.pid} has no verifiable recorded member; refusing to signal an unowned group`
+      )
+      expect(identityOf(descendant)).not.toBeNull()
+    } finally {
+      clearTimeout(budget)
+      child.kill('SIGKILL')
+      if (descendant > 0 && identityOf(descendant) !== null) process.kill(descendant, 'SIGKILL')
+    }
+  })
+
   test('a reused pid (same pid, another start time) is never signalled', async () => {
     const dir = registryDir()
     const self = identityOf(process.pid) as { pid: number; startTime: string }
