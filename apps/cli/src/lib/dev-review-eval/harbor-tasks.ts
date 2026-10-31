@@ -340,12 +340,19 @@ fi
 test "$(git rev-parse HEAD)" = "$head"
 `
 
-/** The verifier: measures and grades the trial with the bundled script, and always leaves a reward. */
+/**
+ * The verifier: measures and grades the trial with the bundled script, and
+ * always leaves a reward. Harbor writes the script's standard output to
+ * `/logs/verifier/test-stdout.txt`; the grading script prints each hidden-test
+ * runner's output there, its standard error joined to it, and also keeps the
+ * runners' output in files of its own in `/logs/verifier`
+ * (`HIDDEN_TEST_STDOUT_FILE`, `HIDDEN_TEST_STDERR_FILE` in `harbor-grade.ts`).
+ */
 export const TEST_SCRIPT = `#!/bin/sh
 # Measures the trial in the container and grades it with the generic graders.
 set -u
 mkdir -p /logs/verifier
-bun /tests/grade.js grade --tests /tests --app /app --agent /logs/agent --out /logs/verifier
+bun /tests/grade.js grade --tests /tests --app /app --agent /logs/agent --out /logs/verifier 2>&1
 if [ ! -s /logs/verifier/reward.txt ]; then
   printf 0 > /logs/verifier/reward.txt
 fi
@@ -360,6 +367,24 @@ exit 0
  * nothing.
  */
 export const CHANGE_CASE_INSTALL = 'bun install --frozen-lockfile'
+
+/** The agent phase's limit in a task's `[agent]` table: Harbor cancels the agent's run when it is reached. */
+export const AGENT_TIMEOUT_SEC = 3600
+
+/** How long before Harbor's agent limit a trial stops its role, so it still writes its record and usage. */
+export const TRIAL_TIMEOUT_MARGIN_SEC = 300
+
+/**
+ * The trial's own time limit, written into the task's `[environment.env]` as
+ * `VINAYA_TRIAL_TIMEOUT_SEC`, which the `vinaya` agent's run command passes
+ * to the trial as `--timeout-sec`. Harbor hands an installed agent no timeout,
+ * so the task carries it. A run started with an agent-timeout multiplier
+ * raises Harbor's limit but not this one.
+ */
+export const TRIAL_TIMEOUT_SEC = AGENT_TIMEOUT_SEC - TRIAL_TIMEOUT_MARGIN_SEC
+
+/** The task environment variable the trial's time limit travels in. */
+export const TRIAL_TIMEOUT_ENV = 'VINAYA_TRIAL_TIMEOUT_SEC'
 
 /** Where a task image unpacks the Vinaya CLI archive and installs its workspace dependencies. */
 export const VINAYA_HOME = '/opt/vinaya'
@@ -517,7 +542,7 @@ function taskToml(suite: string, c: NeutralCase, quarantine: Quarantine | null, 
     'network_mode = "no-network"',
     '',
     '[agent]',
-    'timeout_sec = 3600.0',
+    `timeout_sec = ${AGENT_TIMEOUT_SEC.toFixed(1)}`,
     'network_mode = "allowlist"',
     `allowed_hosts = [${(adapter === 'codex' ? CODEX_ALLOWED_HOSTS : AGENT_ALLOWED_HOSTS).map(tomlString).join(', ')}]`,
     '',
@@ -527,6 +552,7 @@ function taskToml(suite: string, c: NeutralCase, quarantine: Quarantine | null, 
     '',
     '[environment.env]',
     'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"',
+    `${TRIAL_TIMEOUT_ENV} = ${tomlString(String(TRIAL_TIMEOUT_SEC))}`,
     ''
   ].join('\n')
 }

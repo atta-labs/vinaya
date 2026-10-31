@@ -20,9 +20,11 @@ CLI it was given. With adapter=codex it also stages the subscription login
 through stdin in the container's tester-owned Codex home. `run` runs
 `harbor-trial.ts` on the task's case in container mode, on the requested
 backend (`standalone` by default, or `engine`), which runs the Vinaya role and
-writes the agent part of the Vinaya trial record and the run's
-usage to the agent log directory, where the task's verifier and this agent read
-them.
+writes the agent part of the Vinaya trial record, the run's usage and the
+role's agent stream to the agent log directory, where the task's verifier and
+this agent read them. The trial's time limit is `VINAYA_TRIAL_TIMEOUT_SEC`
+from the task environment, the task's agent limit less a margin, so the trial
+stops its role and records what it left before Harbor cancels the run.
 
 The Claude login is the subscription token alone: `CLAUDE_CODE_OAUTH_TOKEN` and
 `CLAUDE_FORCE_OAUTH`, read from the environment of the `harbor run` process,
@@ -58,7 +60,15 @@ CODEX_HOME = AGENT_HOME / ".codex"
 TRIAL_ENTRY = "apps/cli/src/lib/dev-review-eval/harbor-trial.ts"
 RECORD_FILE = "vinaya-trial-record.json"
 USAGE_FILE = "vinaya-usage.json"
-TRANSCRIPT_FILE = "vinaya-trial.txt"
+# The role's agent stream, which the trial appends one line as each arrives; see STREAM_FILE in harbor-trial.ts.
+STREAM_FILE = "vinaya-trial.txt"
+# What the trial itself prints: its refusals, failures and time-limit notice.
+OUTPUT_FILE = "vinaya-trial-output.txt"
+# The task environment variable holding the trial's time limit in seconds, the
+# task's agent limit less a margin; see TRIAL_TIMEOUT_SEC in harbor-tasks.ts.
+# Harbor hands an installed agent no timeout, so the run command reads it in
+# the container; this process never has it.
+TRIAL_TIMEOUT_ENV = "VINAYA_TRIAL_TIMEOUT_SEC"
 # The backends `harbor-trial.ts` runs a role step on; see HARBOR_TRIAL_BACKENDS there.
 BACKENDS = ("standalone", "engine")
 
@@ -212,7 +222,11 @@ class VinayaAgent(BaseInstalledAgent):
                 f"--backend {self._backend} --adapter {self._adapter}",
                 "--model",
                 shlex.quote(self.model_name),
-                f"2>&1 | tee {shlex.quote(f'{logs}/{TRANSCRIPT_FILE}')}",
+                # Expanded by the container's shell from the task environment.
+                f'--timeout-sec "${TRIAL_TIMEOUT_ENV}"',
+                "--stream",
+                shlex.quote(f"{logs}/{STREAM_FILE}"),
+                f"2>&1 | tee {shlex.quote(f'{logs}/{OUTPUT_FILE}')}",
             ]
         )
         if self._adapter == "codex":
