@@ -195,13 +195,15 @@ export function classifyFailedJob(
 
 /**
  * Pure: the strict required-CI read from the configured workflow's latest run attempt for `head` and that attempt's
- * jobs. Green only when the attempt's job named `check` completed `success` and no job of the attempt failed. A
- * completed failing job reads red at once, while others still run (the required check's own job is classified only
- * when it is the attempt's one failure). A mandatory job queued with no runner reads `stalled` once it waited
- * `QUEUE_BOUND_MS` from when it became eligible — its creation or its dependencies' completion, whichever is later,
- * never while a dependency has not completed; a running mandatory test job reads `stalled` past
- * `EXECUTION_CEILING_MS`. Everything else is pending:
- * no run, a queued or running attempt, or a required check that completed skipped, neutral or anything but success.
+ * jobs. Green only when the attempt's job named `check` completed `success`, the run itself completed, and no job of
+ * the attempt failed. A completed failing job reads red at once, while others still run (the required check's own job
+ * is classified only when it is the attempt's one failure). A required check that completed with any conclusion but
+ * success — skipped and neutral included — reads red, since it never counts as the tests passing; one that completed
+ * success while the run is not yet completed reads pending until the run completes. A mandatory job queued with no
+ * runner reads `stalled` once it waited `QUEUE_BOUND_MS` from when it became eligible — its creation or its
+ * dependencies' completion, whichever is later, never while a dependency has not completed; a running mandatory test
+ * job reads `stalled` past `EXECUTION_CEILING_MS`. Everything else is pending: no run, a queued or running attempt, or a
+ * required check not yet completed.
  */
 export function judgeRequiredCi(input: {
   head: string
@@ -237,6 +239,13 @@ export function judgeRequiredCi(input: {
         checkRunId: required.id,
         url: required.html_url
       }
+    }
+  // The provider reports a run's jobs completed shortly before the run's own status turns `completed`, so a required
+  // check that passed on a run still finishing waits for the run rather than reading red.
+  if (required?.status === 'completed' && required.conclusion === 'success')
+    return {
+      state: 'pending',
+      detail: `${input.check} completed success; run ${run.id} attempt ${attempt} of ${input.workflow} is ${run.status}, not yet completed`
     }
   if (required?.status === 'completed')
     return {

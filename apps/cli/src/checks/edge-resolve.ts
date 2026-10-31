@@ -17,7 +17,8 @@
  * than being found in production months later.
  */
 
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import type { DispatchDependsOnFact } from '@attalabs/aeg-core'
 import { execErrorText } from '../lib/github-rate-limit'
 import { deriveTrancheFromForge, fetchForgeFacts, splitSlugQualifiedEdge } from '@attalabs/aeg-forge-state'
@@ -84,8 +85,11 @@ type IssueStateJson = {
 
 /** Keyed by `owner/repo#number`, not by number. A bare number is only unique
  * within one repository, and a cache that assumes otherwise is a trap waiting
- * for the first caller that evaluates two. */
-const issueCache = new Map<string, IssueRead>()
+ * for the first caller that evaluates two. It holds the read in flight, so
+ * edges resolved concurrently that name one Issue share a single read. */
+const issueCache = new Map<string, Promise<IssueRead>>()
+
+const execFileAsync = promisify(execFile)
 
 /** What one `gh issue view` returned: the JSON, or `null` with whether the read itself failed. */
 type IssueRead = { json: IssueStateJson | null; readFailed: boolean }
@@ -106,14 +110,26 @@ const ISSUE_NOT_FOUND = /could not resolve to an issue/i
  * for the case where the answer was one query away. `readFailed` separates
  * the two kinds of `null`: it is `false` only for an Issue the forge says it
  * does not have.
+ *
+ * The read is asynchronous, so the callers' `Promise.all` over their edges
+ * runs the reads side by side rather than one after another. A failed read is
+ * made once more before its result is cached, so one transient failure is not
+ * remembered for the rest of the run; a read that fails twice is cached as a
+ * failed read. A not-found answer is never read again: it is an answer.
  */
-function fetchIssueState(num: number, repo: EdgeRepo): IssueRead {
+function fetchIssueState(num: number, repo: EdgeRepo): Promise<IssueRead> {
   const key = `${repo.owner}/${repo.repo}#${num}`
   const cached = issueCache.get(key)
   if (cached) return cached
-  let out: IssueRead
+  const out = readIssueOnce(num, repo).then((first) => (first.readFailed ? readIssueOnce(num, repo) : first))
+  issueCache.set(key, out)
+  return out
+}
+
+/** One `gh issue view`, with no retry and no cache. */
+async function readIssueOnce(num: number, repo: EdgeRepo): Promise<IssueRead> {
   try {
-    const raw = execFileSync(
+    const { stdout } = await execFileAsync(
       'gh',
       [
         'issue',
@@ -124,14 +140,12 @@ function fetchIssueState(num: number, repo: EdgeRepo): IssueRead {
         '--json',
         'state,stateReason,closedByPullRequestsReferences'
       ],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+      { encoding: 'utf8' }
     )
-    out = { json: JSON.parse(raw) as IssueStateJson, readFailed: false }
+    return { json: JSON.parse(stdout) as IssueStateJson, readFailed: false }
   } catch (err) {
-    out = { json: null, readFailed: !ISSUE_NOT_FOUND.test(execErrorText(err)) }
+    return { json: null, readFailed: !ISSUE_NOT_FOUND.test(execErrorText(err)) }
   }
-  issueCache.set(key, out)
-  return out
 }
 
 /** One sibling tranche's tasks + forge facts — everything a slug-qualified
@@ -255,7 +269,7 @@ export async function resolveEdge(
   const direct = id.match(DIRECT_ISSUE_REF)
   if (direct) {
     const num = Number(direct[1])
-    const read = fetchIssueState(num, repo)
+    const read = await fetchIssueState(num, repo)
     return edgeFromIssueJson(num, read.json, read.readFailed)
   }
   const qualified = splitSlugQualifiedEdge(id)

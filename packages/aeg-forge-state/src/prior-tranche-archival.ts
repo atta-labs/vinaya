@@ -12,10 +12,9 @@
  * carries an explicit repository target.
  */
 
-import type { Tranche } from '@attalabs/aeg-types'
-import { deriveTrancheFromForge } from './derive-from-forge'
-import { indexTrancheMilestonesAsync, type MilestoneFacts } from './fetch-milestone'
-import { fetchTrancheIssuesAsync } from './list-tasks'
+import type { GhIssue } from './gh'
+import { indexTrancheMilestonesAsync } from './fetch-milestone'
+import { tasksFromIssues } from './list-tasks'
 import type { RepoRef } from './resolve-repo'
 
 /** One entry per project a task names: its first active, all-Issues-closed prior tranche, or none. */
@@ -26,35 +25,36 @@ export type PriorTrancheArchivalFact = {
   archived: boolean
 }
 
+/** One active tranche and every Issue carrying its `vinaya/tranche:<slug>` label. */
+export type ActiveTrancheIssues = { slug: string; issues: GhIssue[] }
+
 /**
- * The forge reads `resolvePriorTrancheArchival` makes — injectable so a test
- * can fail one. A read that cannot answer rejects (or, for `openIssues`, may
- * resolve `null`); neither is ever treated as an empty answer.
+ * The forge read `resolvePriorTrancheArchival` makes — injectable so a test
+ * can fail it or count it. A read that cannot answer rejects; a rejection is
+ * never treated as an empty answer.
  */
 export type PriorTrancheArchivalDeps = {
-  activeTrancheSlugs: (excludeSlug: string, repo: RepoRef) => Promise<string[]>
-  deriveTranche: (slug: string, repo: RepoRef) => Promise<Tranche>
-  openIssues: (slug: string, repo: RepoRef) => Promise<Array<{ number: number }> | null>
+  activeTranches: (excludeSlug: string, repo: RepoRef) => Promise<ActiveTrancheIssues[]>
 }
 
 /**
- * The default reads. The active list comes from the async Milestone index; its
- * per-slug facts are handed to `deriveTrancheFromForge` as `known`, so no
- * derivation re-fetches the Milestone list.
+ * The default read: the async Milestone index, which lists every tranche
+ * label's Issues once to decide which tranches are active, and hands those
+ * same lists back so no candidate's label is listed a second time. Each of its
+ * reads is made once more when it fails.
  */
 export function defaultPriorTrancheArchivalDeps(): PriorTrancheArchivalDeps {
-  let facts = new Map<string, MilestoneFacts>()
   return {
-    activeTrancheSlugs: async (excludeSlug, repo) => {
-      const index = await indexTrancheMilestonesAsync(repo.owner, repo.repo)
-      facts = index.facts
-      return index.active.map((m) => m.slug).filter((slug) => slug !== excludeSlug)
-    },
-    deriveTranche: (slug, repo) => deriveTrancheFromForge(repo.owner, repo.repo, slug, facts.get(slug)),
-    openIssues: async (slug, repo) =>
-      (await fetchTrancheIssuesAsync(repo.owner, repo.repo, slug))
-        .filter((issue) => issue.state === 'OPEN')
-        .map((issue) => ({ number: issue.number }))
+    activeTranches: async (excludeSlug, repo) => {
+      const index = await indexTrancheMilestonesAsync(repo.owner, repo.repo, { retryFailedReads: true })
+      return index.active
+        .filter((m) => m.slug !== excludeSlug)
+        .map((m) => {
+          const issues = index.issuesBySlug?.get(m.slug)
+          if (!issues) throw new Error(`the Milestone index holds no Issue list for tranche \`${m.slug}\``)
+          return { slug: m.slug, issues }
+        })
+    }
   }
 }
 
@@ -63,14 +63,14 @@ function reason(err: unknown): string {
 }
 
 /**
- * The prior-tranche archival facts, and whether any of them could not be
- * read. `facts` holds one entry per project whose answer is known: the first
- * active, all-Issues-closed prior tranche found, or a null-slug pass-through
- * when none is found. A project whose tranche derivation or open-Issues query
- * failed for a candidate has no entry — its fact is unknown, so it never reads
- * as an unarchived prior tranche — and a failed active-tranche read leaves no
- * entry at all. `infraFailure` names every failed read as a `severity:infra`
- * blocker. With no projects there is nothing to resolve and nothing is read.
+ * The prior-tranche archival facts, and whether they could not be read.
+ * `facts` holds one entry per project: the first active, all-Issues-closed
+ * prior tranche found, or a null-slug pass-through when none is found. A
+ * candidate's tasks and open Issues both come from the one Issue list the
+ * active-tranche read returned for it. A failed active-tranche read leaves no
+ * entry at all — every fact is unknown, so none reads as an unarchived prior
+ * tranche — and `infraFailure` names it as a `severity:infra` blocker. With no
+ * projects there is nothing to resolve and nothing is read.
  */
 export async function resolvePriorTrancheArchival(
   projects: string[],
@@ -80,9 +80,9 @@ export async function resolvePriorTrancheArchival(
 ): Promise<{ facts: PriorTrancheArchivalFact[]; infraFailure: string | null }> {
   if (projects.length === 0) return { facts: [], infraFailure: null }
 
-  let candidates: string[]
+  let candidates: ActiveTrancheIssues[]
   try {
-    candidates = await deps.activeTrancheSlugs(excludeSlug, repo)
+    candidates = await deps.activeTranches(excludeSlug, repo)
   } catch (err) {
     return {
       facts: [],
@@ -90,56 +90,19 @@ export async function resolvePriorTrancheArchival(
     }
   }
 
+  const tasksBySlug = new Map(candidates.map((c) => [c.slug, tasksFromIssues(c.issues)]))
   const facts: PriorTrancheArchivalFact[] = []
-  const unreadable: string[] = []
-  const derived = new Map<string, Promise<Tranche>>()
-  const derive = (slug: string): Promise<Tranche> => {
-    let p = derived.get(slug)
-    if (!p) {
-      p = deps.deriveTranche(slug, repo)
-      derived.set(slug, p)
-    }
-    return p
-  }
-
   for (const project of projects) {
     let found: PriorTrancheArchivalFact | null = null
-    let unknown = false
-    for (const slug of candidates) {
-      let candidateTranche: Tranche
-      try {
-        candidateTranche = await derive(slug)
-      } catch {
-        unknown = true
-        unreadable.push(`the tasks of tranche \`${slug}\` (project \`${project}\`)`)
-        break
-      }
-      if (!candidateTranche.tasks.some((t) => t.projects.includes(project))) continue
-
-      let openIssues: Array<{ number: number }> | null
-      try {
-        openIssues = await deps.openIssues(slug, repo)
-      } catch {
-        openIssues = null
-      }
-      if (openIssues === null) {
-        unknown = true
-        unreadable.push(`the open Issues of tranche \`${slug}\` (project \`${project}\`)`)
-        break
-      }
-      if (openIssues.length === 0) {
+    for (const { slug, issues } of candidates) {
+      if (!(tasksBySlug.get(slug) ?? []).some((t) => t.projects.includes(project))) continue
+      if (!issues.some((issue) => issue.state === 'OPEN')) {
         found = { project, priorTrancheSlug: slug, archived: false }
         break
       }
     }
-    if (!unknown) facts.push(found ?? { project, priorTrancheSlug: null, archived: false })
+    facts.push(found ?? { project, priorTrancheSlug: null, archived: false })
   }
 
-  return {
-    facts,
-    infraFailure:
-      unreadable.length === 0
-        ? null
-        : `severity:infra — could not read ${unreadable.join(', ')}; whether a prior tranche is archived is unknown.`
-  }
+  return { facts, infraFailure: null }
 }
