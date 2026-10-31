@@ -428,10 +428,11 @@ describe('runReadyGateLive', () => {
     const dir = repo()
     const head = headOf(dir)
     const registry = join(dir, 'registry')
-    // The hook reports whether a registration for its own pid existed when it started, and its group.
+    // The hook reports whether a registration for its process group's leader (the live wrapper) existed when it
+    // started, and its group. The wrapper stays group leader, so the hook runs inside the wrapper's registered group.
     withHook(
       dir,
-      `found=$(grep -l "pid.:$$," "${registry}"/*/*.json 2>/dev/null | head -1); echo "registered=\${found:+yes} pgid=$(ps -o pgid= -p $$ | tr -d ' ') pid=$$"; exit 0`
+      `pg=$(ps -o pgid= -p $$ | tr -d ' '); found=$(grep -l "pid.:$pg," "${registry}"/*/*.json 2>/dev/null | head -1); echo "registered=\${found:+yes} pgid=$pg pid=$$"; exit 0`
     )
     const result = await runReadyGateLive({
       worktreePath: dir,
@@ -442,7 +443,10 @@ describe('runReadyGateLive', () => {
     })
     expect(result.output).toContain('registered=yes')
     const match = /pgid=(\d+) pid=(\d+)/.exec(result.output)
-    expect(match?.[1]).toBe(match?.[2])
+    // Its own process group: led by the wrapper, never the test runner's group.
+    const runnerGroup = execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], { encoding: 'utf8' }).trim()
+    expect(match?.[1]).toBeDefined()
+    expect(match?.[1]).not.toBe(runnerGroup)
     // The run's registrations are removed once it ends.
     expect(existsSync(registry) ? readdirSync(registry) : []).toEqual([])
   })

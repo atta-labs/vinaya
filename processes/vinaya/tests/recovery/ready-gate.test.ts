@@ -172,8 +172,11 @@ describe.each(READY_GATE_RUNNERS)('%s', () => {
       if (identityOf(pid) !== null) process.kill(-pid, 'SIGKILL')
       await run
     }
+    // The run settles within the bound instead of hanging on the held pipe. The live wrapper reports the hook's own
+    // exit through its result channel, so the hook's real outcome is reported rather than a timeout.
     expect(result).not.toBeNull()
-    expect(result?.timedOut).toBe(true)
+    expect(result?.timedOut).toBeUndefined()
+    expect(result?.passed).toBe(true)
   })
 
   for (const code of ['ENOSPC', 'EACCES'])
