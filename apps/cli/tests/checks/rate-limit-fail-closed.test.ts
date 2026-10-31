@@ -6,7 +6,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
@@ -265,6 +265,137 @@ describe('resolveEdge: a rate-limited read keeps every field and adds only readF
     const e = await resolveWithGh(binDir, `#${MISSING_DEP}`)
     expect(e).toStrictEqual(edgeFromIssueJson(MISSING_DEP, null))
     expect('readFailed' in e).toBe(false)
+  })
+})
+
+describe('resolveEdge: Issue reads run side by side and a failed read is made once more', () => {
+  const REPO = { owner: 'atta-labs', repo: 'vinaya-fixture' }
+  const CONNECTION_RESET = 'Post "https://api.github.com/graphql": read tcp: connection reset by peer'
+  const NOT_FOUND = 'GraphQL: Could not resolve to an issue or pull request with the number of'
+
+  /** How one Issue answers: its first `failFirst` reads fail with `stderr`, every later read prints `stdout`. */
+  type IssueReply = { failFirst?: number; stdout?: string; stderr?: string }
+
+  /**
+   * A fake `gh issue view` that counts each read per Issue number and waits
+   * `delaySeconds` before answering it as `reply` says.
+   */
+  function countingGh(
+    delaySeconds: number,
+    nums: number[],
+    reply: (n: number) => IssueReply
+  ): { binDir: string; calls: (n: number) => number } {
+    const binDir = tempDir('edge-read-fake-gh-')
+    const callsDir = join(binDir, 'calls')
+    mkdirSync(callsDir)
+    const arms = nums.map((n) => {
+      const r = reply(n)
+      const fail = `printf '%s\\n' ${quote(r.stderr ?? 'failed')} >&2; exit 1`
+      const ok = r.stdout === undefined ? fail : `printf '%s' ${quote(r.stdout)}; exit 0`
+      return `  ${n}) if [ "$count" -le ${r.failFirst ?? 0} ]; then ${fail}; else ${ok}; fi ;;`
+    })
+    // `gh issue view <n> -R <repo> --json <fields>`: the Issue number is `$3`.
+    const log = `${quote(callsDir)}/calls-$3`
+    writeFileSync(
+      join(binDir, 'gh'),
+      `#!/bin/sh\nprintf 'x\\n' >> ${log}\ncount=$(wc -l < ${log})\nsleep ${delaySeconds}\ncase "$3" in\n${arms.join('\n')}\n  *) echo "unhandled fake gh call: $*" >&2; exit 1 ;;\nesac\n`
+    )
+    chmodSync(join(binDir, 'gh'), 0o755)
+    const calls = (n: number): number => {
+      const path = join(callsDir, `calls-${n}`)
+      return existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean).length : 0
+    }
+    return { binDir, calls }
+  }
+
+  async function withGhOnPath<T>(binDir: string, fn: () => Promise<T>): Promise<T> {
+    const savedPath = process.env.PATH
+    process.env.PATH = `${binDir}:${savedPath}`
+    try {
+      return await fn()
+    } finally {
+      process.env.PATH = savedPath
+    }
+  }
+
+  it('seventeen #NNN edges against a forge whose every read takes one second finish in under five seconds, each with its one-at-a-time verdict', async () => {
+    const nums = Array.from({ length: 17 }, (_, i) => 900 + i)
+    const jsonFor = (n: number) =>
+      n % 3 === 0
+        ? { state: 'CLOSED', stateReason: 'COMPLETED', closedByPullRequestsReferences: [{ number: n + 1000 }] }
+        : n % 3 === 1
+          ? { state: 'CLOSED', stateReason: 'NOT_PLANNED', closedByPullRequestsReferences: [] }
+          : { state: 'OPEN', closedByPullRequestsReferences: [] }
+    const gh = countingGh(1, nums, (n) => ({ stdout: JSON.stringify(jsonFor(n)) }))
+    clearEdgeCache()
+    const started = Date.now()
+    const edges = await withGhOnPath(gh.binDir, () =>
+      Promise.all(nums.map((n) => resolveEdge(`#${n}`, new Map(), new Map(), REPO)))
+    )
+    const elapsed = Date.now() - started
+    expect(elapsed).toBeLessThan(5000)
+    edges.forEach((edge, i) => {
+      const n = nums[i] as number
+      expect(edge).toStrictEqual(edgeFromIssueJson(n, jsonFor(n)))
+      expect(gh.calls(n)).toBe(1)
+    })
+    expect(edges.filter((e) => e.merged)).toHaveLength(nums.filter((n) => n % 3 === 0).length)
+  }, 15_000)
+
+  it('a read that fails once is made again, and the second answer is the one resolved and cached', async () => {
+    const json = { state: 'CLOSED', stateReason: 'COMPLETED', closedByPullRequestsReferences: [{ number: 5 }] }
+    const gh = countingGh(0, [RATE_LIMITED_DEP], () => ({
+      failFirst: 1,
+      stderr: CONNECTION_RESET,
+      stdout: JSON.stringify(json)
+    }))
+    clearEdgeCache()
+    const first = await withGhOnPath(gh.binDir, () => resolveEdge(`#${RATE_LIMITED_DEP}`, new Map(), new Map(), REPO))
+    expect(first).toStrictEqual(edgeFromIssueJson(RATE_LIMITED_DEP, json))
+    expect(first.merged).toBe(true)
+    expect(gh.calls(RATE_LIMITED_DEP)).toBe(2)
+    const again = await withGhOnPath(gh.binDir, () => resolveEdge(`#${RATE_LIMITED_DEP}`, new Map(), new Map(), REPO))
+    expect(again).toStrictEqual(first)
+    expect(gh.calls(RATE_LIMITED_DEP)).toBe(2)
+  })
+
+  it('a read that fails twice stays a failed read, cached as one, and never passes', async () => {
+    const gh = countingGh(0, [RATE_LIMITED_DEP], () => ({ failFirst: 99, stderr: CONNECTION_RESET }))
+    clearEdgeCache()
+    const edge = await withGhOnPath(gh.binDir, () => resolveEdge(`#${RATE_LIMITED_DEP}`, new Map(), new Map(), REPO))
+    expect(edge).toStrictEqual({ ...edgeFromIssueJson(RATE_LIMITED_DEP, null), readFailed: true })
+    expect(gh.calls(RATE_LIMITED_DEP)).toBe(2)
+    const again = await withGhOnPath(gh.binDir, () => resolveEdge(`#${RATE_LIMITED_DEP}`, new Map(), new Map(), REPO))
+    expect(again).toStrictEqual(edge)
+    expect(gh.calls(RATE_LIMITED_DEP)).toBe(2)
+    const classes = checkDispatchReadiness({
+      trancheSlug: `issue-${TASK_ISSUE}`,
+      task: {
+        id: String(TASK_ISSUE),
+        title: '',
+        issue: TASK_ISSUE,
+        projects: [],
+        dependsOn: [`#${RATE_LIMITED_DEP}`],
+        conflictsWith: [],
+        rationaleMarkdown: ''
+      },
+      issue: { number: TASK_ISSUE, state: 'open' },
+      issueRationalePass: true,
+      dependsOn: [dependsOnFactFromEdge(`#${RATE_LIMITED_DEP}`, edge)],
+      conflictsWith: [],
+      priorTask: null,
+      priorTrancheArchival: [],
+      principalAllowlist: []
+    }).blockerDetails.map((d) => d.class)
+    expect(classes).toEqual(['depends-on-read-failed'])
+  })
+
+  it('a not-found answer is read once and never again', async () => {
+    const gh = countingGh(0, [MISSING_DEP], (n) => ({ failFirst: 99, stderr: `${NOT_FOUND} ${n}.` }))
+    clearEdgeCache()
+    const edge = await withGhOnPath(gh.binDir, () => resolveEdge(`#${MISSING_DEP}`, new Map(), new Map(), REPO))
+    expect(edge).toStrictEqual(edgeFromIssueJson(MISSING_DEP, null))
+    expect(gh.calls(MISSING_DEP)).toBe(1)
   })
 })
 

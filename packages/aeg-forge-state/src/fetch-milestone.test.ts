@@ -662,6 +662,68 @@ describe('indexTrancheMilestonesAsync', () => {
     expect(index.facts.get('brand-new-v1')).toEqual({ goal: '', lifecycle: 'planned' })
   })
 
+  it('hands back each slug’s Issue list as read, and every other field is unchanged by it', async () => {
+    mockPages(MILESTONES, [{ name: 'vinaya/tranche:label-only-v1' }])
+    const labelOnly = [issue('OPEN'), issue('CLOSED')]
+    vi.mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) =>
+      label === 'vinaya/tranche:label-only-v1' ? labelOnly : []
+    )
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.issuesBySlug?.get('label-only-v1')).toBe(labelOnly)
+    expect(index.issuesBySlug?.get('vinaya-cli-v1')).toEqual([])
+    expect([...(index.issuesBySlug?.keys() ?? [])].sort()).toEqual(
+      ['aeg-forge-state-v1', 'herald-hardening-v1', 'label-only-v1', 'vinaya-cli-v1'].sort()
+    )
+    const { issuesBySlug: _issues, ...rest } = index
+    const retried = await indexTrancheMilestonesAsync(OWNER, REPO, { retryFailedReads: true })
+    const { issuesBySlug: _again, ...restRetried } = retried
+    expect(restRetried).toEqual(rest)
+    expect(rest.active).toContainEqual({ slug: 'label-only-v1', goal: '' })
+  })
+
+  it('with retryFailedReads, a label read that fails once is made once more and the index still answers', async () => {
+    mockPages(MILESTONES, [{ name: 'vinaya/tranche:label-only-v1' }])
+    vi.mocked(ghIssueListByLabelAsync).mockReset()
+    let failed = false
+    vi.mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) => {
+      if (label === 'vinaya/tranche:label-only-v1' && !failed) {
+        failed = true
+        throw new Error('read: connection reset by peer')
+      }
+      return label === 'vinaya/tranche:label-only-v1' ? [issue('OPEN')] : []
+    })
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO, { retryFailedReads: true })
+
+    expect(index.active).toContainEqual({ slug: 'label-only-v1', goal: '' })
+    const calls = vi
+      .mocked(ghIssueListByLabelAsync)
+      .mock.calls.filter(([, , label]) => label === 'vinaya/tranche:label-only-v1')
+    expect(calls).toHaveLength(2)
+  })
+
+  it('with retryFailedReads, a read that fails twice still rejects; without it, one failure rejects', async () => {
+    mockPages(MILESTONES, [{ name: 'vinaya/tranche:label-only-v1' }])
+    vi.mocked(ghIssueListByLabelAsync).mockReset()
+    vi.mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) => {
+      if (label === 'vinaya/tranche:label-only-v1') throw new Error('read: connection reset by peer')
+      return []
+    })
+    const labelOnlyCalls = () =>
+      vi.mocked(ghIssueListByLabelAsync).mock.calls.filter(([, , label]) => label === 'vinaya/tranche:label-only-v1')
+
+    await expect(indexTrancheMilestonesAsync(OWNER, REPO, { retryFailedReads: true })).rejects.toThrow(
+      'connection reset'
+    )
+    expect(labelOnlyCalls()).toHaveLength(2)
+
+    vi.mocked(ghIssueListByLabelAsync).mockClear()
+    await expect(indexTrancheMilestonesAsync(OWNER, REPO)).rejects.toThrow('connection reset')
+    expect(labelOnlyCalls()).toHaveLength(1)
+  })
+
   it('returns empty lists and no facts when the repo has no milestones or labels', async () => {
     mockPages(emptyMilestones, [])
 
