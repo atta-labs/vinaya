@@ -308,7 +308,7 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
     ...obligations.map((test) => `vinaya pre-push: re-running unresolved failed test ${test}`),
     ...local.expanded.map((e) => `vinaya pre-push: ${e.suite} runs whole: ${e.reason}`),
     ...(context === null
-      ? ['vinaya pre-push: the verification context is unreadable; this run proves nothing for reuse']
+      ? ['vinaya pre-push: the verification context is unreadable; the run will be refused even if every runner passes']
       : [])
   ]
   return { note, summary }
