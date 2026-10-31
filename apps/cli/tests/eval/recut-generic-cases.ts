@@ -17,7 +17,8 @@
  *    seeded critical or high security defect; its objectives are dropped. A
  *    case whose defect kind only the Vinaya process can state stays layer `P`.
  *  - A source-citation case becomes an `answer` case: no change, every
- *    source a delivered document pinned by the SHA-256 of its content.
+ *    source a delivered document pinned by the SHA-256 of its content,
+ *    granting the read of each way its documents are delivered.
  *  - A developer case also becomes a whole-loop `loop` case: its `change`
  *    case's fields and task statement unchanged, granting what the
  *    developer, both reviewers and the publication need. The suite's entry
@@ -39,7 +40,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join, posix } from 'node:path'
 import ts from 'typescript'
-import { findBannedTerms } from '../../src/lib/dev-review-eval/banned-terms'
+import { findBannedTerms, INTERFACE_ITEM_KINDS, interfaceCodeSpan } from '../../src/lib/dev-review-eval/banned-terms'
 import { canonicalJson } from '../../src/lib/dev-review-eval/neutral-case'
 import { renderCase } from '../../src/lib/dev-review-eval/vinaya-renderer'
 import { REVIEWER_SEVERITIES, type ReviewerRole } from '../../src/lib/review-result'
@@ -383,21 +384,33 @@ export function deriveSourceCitationCase(repositoryCommit: string, c: SourceCita
       contentDigest: sha256(s.content),
       relevant: s.relevant
     })),
-    grantedCapabilities: c.sources.some((s) => s.deliveryMode === 'retrieval_tool') ? ['read_document'] : []
+    grantedCapabilities: answerCapabilities(c)
   }
+}
+
+/**
+ * What an answer case grants to reach its documents: `read_file` when one is
+ * injected into the worktree, `read_document` when one is fetched through the
+ * retrieval tool, and nothing when it delivers none.
+ */
+export function answerCapabilities(c: Pick<SourceCitationCase, 'sources'>): string[] {
+  const modes = new Set(c.sources.map((s) => s.deliveryMode))
+  return [...(modes.has('injected') ? ['read_file'] : []), ...(modes.has('retrieval_tool') ? ['read_document'] : [])]
 }
 
 // ── Interface blocks ────────────────────────────────────────────────────────
 //
 // A withheld test can fail a correct solution that only names things
 // differently, so a developer case's statement ends with what its
-// fail-to-pass tests import from the reference change, and the literals both
-// they and the reference solution use. Each source file is read by its pinned
+// fail-to-pass tests import from the reference change, the literals both
+// they and the reference solution use, and the values and keys their
+// assertions expect that the reference writes or builds and the tests never
+// pass in themselves. Each source file is read by its pinned
 // blob, or at the base revision, and parsed with the TypeScript compiler API;
 // an item the base revision already holds is left out.
 
 /** The kinds an Interface item is labelled with, in the order the block lists them. */
-export const INTERFACE_KINDS = ['export', 'file', 'env', 'flag', 'event', 'field', 'string'] as const
+export const INTERFACE_KINDS = INTERFACE_ITEM_KINDS
 export type InterfaceKind = (typeof INTERFACE_KINDS)[number]
 
 export interface InterfaceItem {
@@ -405,10 +418,15 @@ export interface InterfaceItem {
   text: string
 }
 
-/** The block a statement ends with: ` Interface: <kind> `<text>`; …` and a full stop; empty for no item. */
+/**
+ * The block a statement ends with: ` Interface: <kind> <code span>; …` and a
+ * full stop; empty for no item. Each text is fenced by more backticks than it
+ * holds in a row (`interfaceCodeSpan`), so a text holding a backtick is named
+ * whole.
+ */
 export function interfaceBlock(items: readonly InterfaceItem[]): string {
   if (items.length === 0) return ''
-  return ` Interface: ${items.map((item) => `${item.kind} \`${item.text}\``).join('; ')}.`
+  return ` Interface: ${items.map((item) => `${item.kind} ${interfaceCodeSpan(item.text)}`).join('; ')}.`
 }
 
 /** The statement with its Interface block appended, or unchanged when the case has no item. */
@@ -713,8 +731,380 @@ const isEnvObject = (node: ts.Expression) => {
   return written === 'env' || written.endsWith('.env')
 }
 
-/** A string an assertion expects that is no numeric value: it holds a letter, and no backtick or line break. */
-const assertable = (value: string) => /\p{L}/u.test(value) && !/[`\r\n]/.test(value)
+/**
+ * A string an assertion expects that is no numeric value: it holds a letter,
+ * and no line break, since a statement is written on one line. A backtick is
+ * allowed: the block fences each text with more backticks than it holds.
+ */
+const assertable = (value: string) => /\p{L}/u.test(value) && !/[\r\n]/.test(value)
+
+/** The names that open a test or a group of tests, whose first argument is a title. */
+const TEST_CALLS = new Set(['it', 'test', 'describe'])
+
+/** Whether a call opens a test or a group: `it(...)`, `describe.skip(...)`, `it.each(table)(...)`. */
+function isTestCall(call: ts.CallExpression): boolean {
+  let callee: ts.Expression = call.expression
+  for (;;) {
+    if (ts.isIdentifier(callee)) return TEST_CALLS.has(callee.text)
+    if (ts.isPropertyAccessExpression(callee)) callee = callee.expression
+    else if (ts.isCallExpression(callee)) callee = callee.expression
+    else return false
+  }
+}
+
+/** Whether an assertion's chain holds `.not`, so its matcher checks that a value is absent. */
+function isNegated(call: ts.CallExpression): boolean {
+  let callee: ts.Expression = call.expression
+  for (;;) {
+    if (ts.isPropertyAccessExpression(callee)) {
+      if (callee.name.text === 'not') return true
+      callee = callee.expression
+    } else if (ts.isCallExpression(callee)) callee = callee.expression
+    else return false
+  }
+}
+
+/**
+ * The side of a test a node is on: `expected`, inside what a matcher compares
+ * the actual value with; `input`, anything the test passes to the code under
+ * test or computes the actual value from; `neutral`, a test title, a module
+ * specifier, an assertion's message, or what a negated matcher checks is
+ * absent.
+ */
+type TestSide = 'expected' | 'input' | 'neutral'
+
+/** Strips the wrappers a table or an expected value may be written in: parentheses, `as const`, `satisfies`. */
+function unwrapped(node: ts.Expression): ts.Expression {
+  let at = node
+  while (ts.isParenthesizedExpression(at) || ts.isAsExpression(at) || ts.isSatisfiesExpression(at)) at = at.expression
+  return at
+}
+
+/**
+ * Which side of a test each node is on. An assertion's matcher arguments are
+ * expected, and so is a constant every use of which is expected, and a column
+ * of a parameter table — rows a `for … of`, `.forEach`, `.map` or `.each`
+ * destructures — every use of which inside the loop is expected. A value that
+ * is used anywhere else is an input.
+ */
+function testSides(file: ts.SourceFile): (node: ts.Node) => TestSide {
+  const declarations = new Map<string, ts.VariableDeclaration[]>()
+  eachNode(file, (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined)
+      declarations.set(node.name.text, [...(declarations.get(node.name.text) ?? []), node])
+  })
+  // Every use of a name: an identifier that is neither a declared name nor a property name.
+  const uses = new Map<string, ts.Identifier[]>()
+  eachNode(file, (node) => {
+    if (!ts.isIdentifier(node)) return
+    const parent = node.parent
+    if (ts.isPropertyAccessExpression(parent) && parent.name === node) return
+    if (ts.isBindingElement(parent) && parent.propertyName === node) return
+    if (ts.isPropertyAssignment(parent) && parent.name === node) return
+    if (
+      (ts.isVariableDeclaration(parent) || ts.isBindingElement(parent) || ts.isParameter(parent)) &&
+      parent.name === node
+    )
+      return
+    uses.set(node.text, [...(uses.get(node.text) ?? []), node])
+  })
+
+  // Each table cell, with the uses of the binding that destructures its column, inside the loop's body.
+  const cells = new Map<ts.Node, { name: string; body: ts.Node }>()
+  const tableRows = (expression: ts.Expression): readonly ts.Expression[] | null => {
+    const at = unwrapped(expression)
+    if (ts.isArrayLiteralExpression(at)) return at.elements
+    if (!ts.isIdentifier(at)) return null
+    const [only, ...more] = declarations.get(at.text) ?? []
+    if (only === undefined || more.length > 0 || only.initializer === undefined) return null
+    const initializer = unwrapped(only.initializer)
+    return ts.isArrayLiteralExpression(initializer) ? initializer.elements : null
+  }
+  // Binds one value — a whole row, or one cell of it — to the name or pattern that destructures it.
+  const bind = (value: ts.Expression, binding: ts.BindingName, body: ts.Node): void => {
+    const at = unwrapped(value)
+    if (ts.isIdentifier(binding)) cells.set(value, { name: binding.text, body })
+    else if (ts.isArrayBindingPattern(binding) && ts.isArrayLiteralExpression(at)) {
+      binding.elements.forEach((element, index) => {
+        const cell = at.elements[index]
+        if (cell !== undefined && ts.isBindingElement(element) && element.dotDotDotToken === undefined)
+          bind(cell, element.name, body)
+      })
+    } else if (ts.isObjectBindingPattern(binding) && ts.isObjectLiteralExpression(at)) {
+      for (const element of binding.elements) {
+        const key = (element.propertyName ?? element.name).getText(file)
+        const cell = at.properties.find(
+          (p): p is ts.PropertyAssignment =>
+            ts.isPropertyAssignment(p) && p.name.getText(file).replace(/^['"]|['"]$/g, '') === key
+        )
+        if (cell !== undefined) bind(cell.initializer, element.name, body)
+      }
+    }
+  }
+  // Binds each row to its loop's binding; `spread` binds each cell of a row to its own parameter, as `.each` calls.
+  const columns = (
+    rows: readonly ts.Expression[],
+    bindings: readonly ts.ParameterDeclaration[] | readonly [ts.BindingName],
+    body: ts.Node,
+    spread = false
+  ) => {
+    for (const row of rows) {
+      if (!spread) {
+        const [binding] = bindings
+        if (binding !== undefined) bind(row, ts.isParameter(binding) ? binding.name : binding, body)
+        continue
+      }
+      const at = unwrapped(row)
+      if (!ts.isArrayLiteralExpression(at)) continue
+      bindings.forEach((binding, index) => {
+        const cell = at.elements[index]
+        if (cell !== undefined && ts.isParameter(binding)) bind(cell, binding.name, body)
+      })
+    }
+  }
+  eachNode(file, (node) => {
+    if (ts.isForOfStatement(node) && ts.isVariableDeclarationList(node.initializer)) {
+      const [declaration] = node.initializer.declarations
+      const rows = tableRows(node.expression)
+      if (declaration !== undefined && rows !== null) columns(rows, [declaration.name], node.statement)
+    } else if (ts.isCallExpression(node)) {
+      const callee = node.expression
+      // `rows.forEach(([a, b]) => …)` and `rows.map(…)`; `it.each(rows)(title, (a, b) => …)`.
+      if (ts.isPropertyAccessExpression(callee) && ['forEach', 'map'].includes(callee.name.text)) {
+        const [callback] = node.arguments
+        const rows = tableRows(callee.expression)
+        if (
+          rows !== null &&
+          callback !== undefined &&
+          (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))
+        )
+          columns(rows, callback.parameters.slice(0, 1), callback.body)
+      } else if (
+        ts.isCallExpression(callee) &&
+        ts.isPropertyAccessExpression(callee.expression) &&
+        callee.expression.name.text === 'each' &&
+        isTestCall(callee)
+      ) {
+        const [table] = callee.arguments
+        const callback = node.arguments[1]
+        const rows = table === undefined ? null : tableRows(table)
+        if (
+          rows !== null &&
+          callback !== undefined &&
+          (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))
+        ) {
+          // `.each` spreads an array row across the parameters, and passes any other row whole.
+          const spread = rows.every((r) => ts.isArrayLiteralExpression(unwrapped(r)))
+          columns(rows, spread ? callback.parameters : callback.parameters.slice(0, 1), callback.body, spread)
+        }
+      }
+    }
+  })
+
+  const declared = new Map<ts.VariableDeclaration, TestSide>()
+  const columnSides = new Map<ts.Node, TestSide>()
+  // A value is expected when at least one use is expected and none is an input.
+  const sideOfUses = (found: readonly ts.Node[]): TestSide => {
+    const sides = found.map(side)
+    if (sides.includes('input')) return 'input'
+    return sides.includes('expected') ? 'expected' : 'neutral'
+  }
+  function side(node: ts.Node): TestSide {
+    for (let at: ts.Node = node; !ts.isSourceFile(at); at = at.parent) {
+      const cell = cells.get(at)
+      if (cell !== undefined) {
+        if (!columnSides.has(at)) {
+          columnSides.set(at, 'neutral')
+          const inBody = (uses.get(cell.name) ?? []).filter((u) => u.pos >= cell.body.pos && u.end <= cell.body.end)
+          columnSides.set(at, sideOfUses(inBody))
+        }
+        return columnSides.get(at) as TestSide
+      }
+      const parent = at.parent
+      if (ts.isImportDeclaration(parent)) return 'neutral'
+      if (ts.isVariableDeclaration(parent) && parent.initializer === at && ts.isIdentifier(parent.name)) {
+        if (!declared.has(parent)) {
+          declared.set(parent, 'neutral')
+          const name = parent.name.text
+          const own = (uses.get(name) ?? []).filter(
+            (u) => (declarations.get(name) ?? []).length === 1 || u.pos > parent.pos
+          )
+          declared.set(parent, sideOfUses(own))
+        }
+        return declared.get(parent) as TestSide
+      }
+      if (!ts.isCallExpression(parent) || !parent.arguments.includes(at as ts.Expression)) continue
+      if (isAssertion(parent)) {
+        if (!ts.isIdentifier(parent.expression)) return isNegated(parent) ? 'neutral' : 'expected'
+        if (parent.arguments[0] !== at) return 'neutral'
+        // Inside the actual value, a literal the code's output is compared with is expected: `c.code === 'x'`.
+        const compared = node.parent
+        return ts.isBinaryExpression(compared) &&
+          [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.EqualsEqualsToken].includes(
+            compared.operatorToken.kind
+          ) &&
+          ts.isStringLiteralLike(node)
+          ? 'expected'
+          : 'input'
+      }
+      if (isTestCall(parent) && parent.arguments[0] === at) return 'neutral'
+    }
+    return 'input'
+  }
+  return side
+}
+
+/** What the fail-to-pass tests check. */
+interface Expectations {
+  /**
+   * Each string, or literal piece of a template, on the expected side of an
+   * assertion, unless the same test file also uses it as an input.
+   */
+  strings: Set<string>
+  /** Each key of an expected object, and each property an assertion reads from its actual value. */
+  keys: Set<string>
+}
+
+function expectationsOf(tests: readonly ts.SourceFile[]): Expectations {
+  const found: Expectations = { strings: new Set(), keys: new Set() }
+  for (const file of tests) {
+    const side = testSides(file)
+    const strings = new Set<string>()
+    const inputs = new Set<string>()
+    const literal = (node: ts.Node, value: string) => {
+      const at = side(node)
+      if (at === 'expected' && assertable(value.trim())) strings.add(value.trim())
+      else if (at === 'input') inputs.add(value.trim())
+    }
+    eachNode(file, (node) => {
+      if (ts.isStringLiteralLike(node)) {
+        if (!ts.isImportDeclaration(node.parent) && !ts.isExternalModuleReference(node.parent)) literal(node, node.text)
+      } else if (ts.isTemplateExpression(node)) {
+        literal(node, node.head.text)
+        for (const span of node.templateSpans) literal(node, span.literal.text)
+      } else if (
+        (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) &&
+        ts.isObjectLiteralExpression(node.parent) &&
+        (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
+        side(node) === 'expected'
+      ) {
+        found.keys.add(node.name.text)
+      } else if (ts.isCallExpression(node) && isAssertion(node) && ts.isIdentifier(node.expression)) {
+        // The properties an assertion reads from the value it checks: `expect(result.mode)`.
+        const [actual] = node.arguments
+        if (actual === undefined) return
+        const read = (at: ts.Node): void => {
+          if (ts.isPropertyAccessExpression(at)) found.keys.add(at.name.text)
+          if (!ts.isFunctionLike(at)) ts.forEachChild(at, read)
+        }
+        read(actual)
+      }
+    })
+    for (const value of strings) if (!inputs.has(value)) found.strings.add(value)
+  }
+  return found
+}
+
+/** Most characters of a template's outer pieces a match may start or end inside, so its pattern stays small. */
+const TEMPLATE_PIECE_LIMIT = 120
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** An alternation of every suffix (or prefix) of `piece`, longest first, the empty one included. */
+function partsOf(piece: string, end: 'suffix' | 'prefix'): string {
+  const kept = end === 'suffix' ? piece.slice(-TEMPLATE_PIECE_LIMIT) : piece.slice(0, TEMPLATE_PIECE_LIMIT)
+  const options: string[] = []
+  for (let n = kept.length; n > 0; n--) options.push(escapeRegExp(end === 'suffix' ? kept.slice(-n) : kept.slice(0, n)))
+  return `(?:${[...options, ''].join('|')})`
+}
+
+/**
+ * The literal pieces of each text a file builds: a template literal with
+ * substitutions, or a `+` concatenation holding a string literal, each
+ * substitution standing between two pieces.
+ */
+function templatesIn(file: ts.SourceFile): string[][] {
+  const templates: string[][] = []
+  eachNode(file, (node) => {
+    if (ts.isTemplateExpression(node)) {
+      templates.push([node.head.text, ...node.templateSpans.map((s) => s.literal.text)])
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+      !(ts.isBinaryExpression(node.parent) && node.parent.operatorToken.kind === ts.SyntaxKind.PlusToken)
+    ) {
+      const operands: ts.Expression[] = []
+      const flatten = (e: ts.Expression): void => {
+        const at = unwrapped(e)
+        if (ts.isBinaryExpression(at) && at.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+          flatten(at.left)
+          flatten(at.right)
+        } else operands.push(at)
+      }
+      flatten(node)
+      if (!operands.some(ts.isStringLiteralLike)) return
+      const pieces = ['']
+      for (const operand of operands) {
+        if (ts.isStringLiteralLike(operand)) pieces[pieces.length - 1] += operand.text
+        else pieces.push('')
+      }
+      if (pieces.length > 1) templates.push(pieces)
+    }
+  })
+  return templates
+}
+
+/**
+ * Whether a value is text some template builds: some run of its pieces, the
+ * first entered at any point and the last left at any point, with anything
+ * in each substitution between them, spells the value, and the pieces it
+ * matched hold a letter and at least half of its characters.
+ */
+function builtBy(templates: readonly string[][]): (value: string) => boolean {
+  // One run of pieces: its outer pieces, the pieces it must hold whole, and its pattern, compiled on first use.
+  const windows: { first: string; last: string; middle: string[]; pattern: () => RegExp }[] = []
+  for (const pieces of templates) {
+    for (let first = 0; first < pieces.length - 1; first++) {
+      for (let last = first + 1; last < pieces.length; last++) {
+        const middle = pieces.slice(first + 1, last)
+        let compiled: RegExp | undefined
+        const pattern = () => {
+          compiled ??= new RegExp(
+            `^${partsOf(pieces[first] as string, 'suffix')}${middle
+              .map((p) => `([\\s\\S]*?)${escapeRegExp(p)}`)
+              .join('')}([\\s\\S]*?)${partsOf(pieces[last] as string, 'prefix')}$`,
+            'd'
+          )
+          return compiled
+        }
+        windows.push({ first: pieces[first] as string, last: pieces[last] as string, middle, pattern })
+      }
+    }
+  }
+  const enough = (literal: string, value: string) => /\p{L}/u.test(literal) && literal.length * 2 >= value.length
+  return (value) =>
+    windows.some(({ first, last, middle, pattern }) => {
+      if (middle.length === 0) {
+        // One substitution between the two pieces: the longest end of the first the value opens with, then the
+        // longest start of the last it closes with in what is left — what the pattern would match, found directly.
+        const head = first.slice(-TEMPLATE_PIECE_LIMIT)
+        let a = Math.min(head.length, value.length)
+        while (a > 0 && !value.startsWith(head.slice(-a))) a--
+        const tail = last.slice(0, TEMPLATE_PIECE_LIMIT)
+        let b = Math.min(tail.length, value.length - a)
+        while (b > 0 && !value.endsWith(tail.slice(0, b))) b--
+        return enough(value.slice(0, a) + value.slice(value.length - b), value)
+      }
+      if (!middle.every((piece) => value.includes(piece))) return false
+      const match = pattern().exec(value)
+      if (match === null) return false
+      let literal = value
+      const groups = (match.indices ?? []).slice(1).filter((g): g is [number, number] => g !== undefined)
+      for (const [from, to] of [...groups].sort((a, b) => b[0] - a[0]))
+        literal = literal.slice(0, from) + literal.slice(to)
+      return enough(literal, value)
+    })
+}
 
 /** A command-line flag a string literal names: its leading `--name`, before any `=` value. */
 function flagIn(value: string): string | null {
@@ -837,11 +1227,29 @@ function baseMatches(git: Git, commit: string, literals: readonly string[], skip
 /**
  * A case's Interface items: each export its fail-to-pass tests import from
  * the reference change with its declared signature, each new file they
- * import, and each environment variable, flag, event, field and asserted
- * string both they and the reference solution contain — less every item the
- * base revision already holds. Items are listed by kind, then by text.
+ * import, each environment variable, flag, event and field both they and the
+ * reference solution contain, and each expected string the reference writes
+ * or builds and expected or read key it names, that the tests do not pass in
+ * themselves — less every item the base revision already holds. Items are
+ * listed by kind, then by text.
  */
 export function interfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceItem[] {
+  // A case's items depend only on its pinned blobs and base, so each is derived once per git that reads them.
+  const known = derivedItems.get(git) ?? new Map<string, InterfaceItem[]>()
+  derivedItems.set(git, known)
+  const key = canonicalJson([c.id, c.baseCommit, c.referenceSolution, c.hiddenTests, c.failToPass])
+  let items = known.get(key)
+  if (items === undefined) {
+    items = deriveInterfaceItems(git, c)
+    known.set(key, items)
+  }
+  return items.map((item) => ({ ...item }))
+}
+
+/** Each case's derived items, by the git that read them. */
+const derivedItems = new WeakMap<Git, Map<string, InterfaceItem[]>>()
+
+function deriveInterfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceItem[] {
   const memo = <T>(compute: (path: string) => T) => {
     const cache = new Map<string, T>()
     return (path: string) => {
@@ -881,7 +1289,7 @@ export function interfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceI
 
   const items = new Map<string, InterfaceItem>()
   const add = (kind: InterfaceKind, text: string) => {
-    if (!text.includes('`')) items.set(`${kind}\0${text}`, { kind, text })
+    items.set(`${kind}\0${text}`, { kind, text })
   }
 
   // Exports and new files, from each test's imports.
@@ -948,17 +1356,39 @@ export function interfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceI
       }
     })
   }
-  const asserted = new Set<string>()
-  for (const test of tests) {
-    eachNode(test, (node) => {
-      if (!ts.isCallExpression(node) || !isAssertion(node)) return
-      for (const argument of node.arguments) {
-        if (ts.isStringLiteralLike(argument) && assertable(argument.text)) asserted.add(argument.text)
-      }
+  // What the tests check: an expected string the reference writes, or builds from a template, and an expected
+  // or read key the reference names — never a value the tests themselves pass to the code under test.
+  const expected = expectationsOf(tests)
+  const referenceCode = referenceFiles.filter((f) => CODE_FILE.test(f.path)).map((f) => parse(f.path, f.source))
+  const builtByReference = builtBy(referenceCode.flatMap(templatesIn))
+  const templated = new Set<string>()
+  for (const value of expected.strings) {
+    if (referenceFiles.some((f) => f.source.includes(value))) literal('string', value)
+    else if (builtByReference(value)) {
+      templated.add(value)
+      literal('string', value)
+    }
+  }
+  const referenceNames = new Set<string>()
+  const referenceKeys = new Set<string>()
+  const fieldNames = new Set(referenceCode.flatMap((file) => declaredFields(file).map((field) => field.name)))
+  for (const file of referenceCode) {
+    eachNode(file, (node) => {
+      if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) referenceNames.add(node.text)
+      // An object literal's keys, a schema's among them: `{ name: … }`, `z.object({ name: … })`.
+      if (
+        (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node) || ts.isMethodDeclaration(node)) &&
+        ts.isObjectLiteralExpression(node.parent) &&
+        (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name))
+      )
+        referenceKeys.add(node.name.text)
     })
   }
-  for (const value of asserted) {
-    if (referenceFiles.some((f) => f.source.includes(value))) literal('string', value)
+  const imported = new Set(tests.flatMap((test) => importsOf(test).flatMap((i) => i.names)))
+  const keys = new Set([...expected.keys, ...[...referenceKeys].filter((key) => tokens.has(key))])
+  for (const key of keys) {
+    if (!referenceNames.has(key) || fieldNames.has(key) || imported.has(key) || !/\p{L}/u.test(key)) continue
+    literal('key', key)
   }
 
   // A literal any base file outside the fail-to-pass tests already holds is left out. The
@@ -966,21 +1396,23 @@ export function interfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceI
   // of them declares with the same owner, name and type is held, compared as parsed so a
   // type written across lines is found too, and every other literal none of their texts
   // holds is looked for by a fixed-string search of the base revision.
-  const candidates = literals.filter(({ kind, text }) => kind === 'field' || kind === 'string' || tokens.has(text))
+  const candidates = literals.filter(
+    ({ kind, text }) => kind === 'field' || kind === 'string' || kind === 'key' || tokens.has(text)
+  )
   const changedAtBase = c.referenceSolution.files.flatMap((f) => {
     const source = failToPass.includes(f.path) ? null : base.read(f.path)
     return source === null ? [] : [{ path: f.path, source }]
   })
-  const baseFields = new Set(
-    changedAtBase
-      .filter((f) => CODE_FILE.test(f.path))
-      .flatMap((f) => declaredFields(parse(f.path, f.source)).map((field) => field.text))
-  )
+  const baseCode = changedAtBase.filter((f) => CODE_FILE.test(f.path)).map((f) => parse(f.path, f.source))
+  const baseFields = new Set(baseCode.flatMap((file) => declaredFields(file).map((field) => field.text)))
+  // A string the reference builds from a template is held when the base copy of a changed file builds it too.
+  const builtByBase = builtBy(baseCode.flatMap(templatesIn))
   const held = (probe: string) => changedAtBase.some((f) => f.source.includes(probe))
   const unseen = [...new Set(candidates.flatMap((l) => (l.probe === null || held(l.probe) ? [] : [l.probe])))]
   const searched = baseMatches(git, c.baseCommit, unseen, failToPass)
   for (const { kind, text, probe } of candidates) {
     if (kind === 'field' && baseFields.has(text)) continue
+    if (kind === 'string' && templated.has(text) && builtByBase(text)) continue
     if (probe !== null && (held(probe) || searched.has(probe))) continue
     add(kind, text)
   }
@@ -1222,7 +1654,13 @@ export function recutHeldOut(
   git: Git = repositoryGit
 ): Recut {
   const developerFile = loadDeveloperCaseFile()
+  // Every approval is checked, by opening its held-out cases, before any case is derived, so a wrong one is
+  // refused before the run spends any work.
   const developerHeld = loadDeveloperHeldOut(developerFile, approvals.developer)
+  const codeReviewerHeld = loadReviewerHeldOut('code-reviewer', approvals.reviewer)
+  const securityReviewerHeld = loadReviewerHeldOut('security-reviewer', approvals.reviewer)
+  const citationFile = loadSourceCitationCaseFile()
+  const citationHeld = loadSourceCitationHeldOut(citationFile, approvals.sourceCitation)
   // Derived only here, once the approval has opened the held-out cases, and never printed.
   const developerStatement = new Map(
     developerHeld.map((c) => [c.id, withInterface(generatedDeveloperStatement(c), interfaceItems(git, c))])
@@ -1247,12 +1685,12 @@ export function recutHeldOut(
       {
         role: 'code-reviewer',
         suite: GENERIC_SUITE_IDS.codeReviewer,
-        cases: loadReviewerHeldOut('code-reviewer', approvals.reviewer)
+        cases: codeReviewerHeld
       },
       {
         role: 'security-reviewer',
         suite: GENERIC_SUITE_IDS.securityReviewer,
-        cases: loadReviewerHeldOut('security-reviewer', approvals.reviewer)
+        cases: securityReviewerHeld
       }
     ],
     generatedReviewerStatement
@@ -1264,8 +1702,7 @@ export function recutHeldOut(
     reviewerSuitesHeld,
     0
   )
-  const citationFile = loadSourceCitationCaseFile()
-  const citationCases = loadSourceCitationHeldOut(citationFile, approvals.sourceCitation).map((c) =>
+  const citationCases = citationHeld.map((c) =>
     deriveSourceCitationCase(citationFile.repositoryCommit, c, generatedSourceCitationStatement(c))
   )
   const citation = derivedFile(

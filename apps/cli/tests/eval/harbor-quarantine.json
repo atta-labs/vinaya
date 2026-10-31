@@ -22,6 +22,20 @@
         "reason": "The hidden test apps/cli/tests/conformance/dev-review-engine-architecture-exit.test.ts 6a4dc500b240 still fails in the task container with the base commit's history present (Harbor oracle job 2026-10-20__18-04-10); its cause is not yet diagnosed.",
         "reasonVersion": 1,
         "adjudicationDigest": "ef26b9e62b6fc89afcf556c61371d63d43f569082027145bc9d459dbeea8ab03"
+      },
+      {
+        "taskId": "pr-1268",
+        "cause": "broken-task",
+        "reason": "Its fail-to-pass hidden test requires exactly the 29 placeholder keys of a hidden fill map, 21 of which no base file holds, so no solution written from the case inputs can pass it.",
+        "reasonVersion": 1,
+        "adjudicationDigest": "1c210c79a89bc3e735917ccbc720796749565c5f6f5d62a3223a60d61cd4acb4"
+      },
+      {
+        "taskId": "pr-1299",
+        "cause": "broken-task",
+        "reason": "Its fail-to-pass hidden tests check two GitHub comment ids and a title-to-path map that no delivered document or allowed network source holds, so no solution written from the case inputs can pass them.",
+        "reasonVersion": 1,
+        "adjudicationDigest": "19a0eff69d483a09be763257fcc2d0c64c6a2cdd252dccc2a76b77ff22a8ad5b"
       }
     ]
   }

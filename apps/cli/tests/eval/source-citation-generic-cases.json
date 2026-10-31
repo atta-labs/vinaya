@@ -76,7 +76,7 @@
               "relevant": true
             }
           ],
-          "grantedCapabilities": []
+          "grantedCapabilities": ["read_file"]
         },
         {
           "id": "dev-irrelevant-source",

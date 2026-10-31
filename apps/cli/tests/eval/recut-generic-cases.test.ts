@@ -10,6 +10,7 @@ import { findBannedTerms } from '../../src/lib/dev-review-eval/banned-terms'
 import { validateNeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import { type DeveloperCapabilityCase, loadCaseFile as loadDeveloperCaseFile } from './developer-capability-suite'
 import {
+  answerCapabilities,
   DERIVED_FILES,
   DEVELOPER_CAPABILITIES,
   deriveDeveloperCase,
@@ -61,34 +62,56 @@ const approvals = {
 const statements = JSON.parse(readFileSync(STATEMENTS_PATH, 'utf8')) as Record<string, string>
 const caseById = <T extends { id: string }>(cases: readonly T[], id: string) => cases.find((c) => c.id === id) as T
 
+/**
+ * Longest a test that derives a whole split may run: it reads every pinned
+ * blob of the split's cases through git and searches each case's base, which
+ * exceeds the default per-test budget on a slow or loaded host.
+ */
+const RECUT_BUDGET_MS = 300_000
+
+/**
+ * The held-out files the current derivation writes differently from their
+ * committed bytes — the Interface blocks and the injected-source grant — and
+ * that only the held-out re-cut, run under the three approvals, may rewrite.
+ */
+const HELD_OUT_AWAITING_RECUT: readonly string[] = [
+  DERIVED_FILES.developer.heldOut,
+  DERIVED_FILES.sourceCitation.heldOut,
+  DERIVED_FILES.wholeLoop.heldOut
+]
+
 describe('the development task statements', () => {
-  it('name every development case that has a G form, each free of process terms and verbatim in the derived case', () => {
-    const gForm = [
-      ...developerCases.map((c) => c.id),
-      ...reviewerCases
-        .filter((c) => c.expected === null || !LAYER_P_ONLY_DEFECT_KINDS.includes(c.expected.kind))
-        .map((c) => c.id),
-      ...citationFile.cases.map((c) => c.id)
-    ]
-    expect(Object.keys(statements).sort()).toEqual([...gForm].sort())
-    for (const [id, statement] of Object.entries(statements)) {
-      expect({ id, banned: findBannedTerms(statement) }).toEqual({ id, banned: [] })
-    }
-    const derived = recutDevelopment().files.flatMap(
-      (f) => (JSON.parse(f.text) as { suites: { cases: { id: string; taskStatement: string }[] }[] }).suites
-    )
-    // A developer case and its loop case end the statement with the case's Interface block; any other is verbatim.
-    const developerIds = new Set(developerCases.map((c) => c.id))
-    const blocks = new Map(developerCases.map((c) => [c.id, interfaceBlock(interfaceItems(repositoryGit, c))]))
-    for (const c of derived.flatMap((s) => s.cases)) {
-      const block = developerIds.has(c.id) ? (blocks.get(c.id) as string) : ''
-      expect({ id: c.id, statement: c.taskStatement }).toEqual({
-        id: c.id,
-        statement: `${statements[c.id] as string}${block}`
-      })
-      expect({ id: c.id, lineBreak: /[\r\n]/.test(c.taskStatement) }).toEqual({ id: c.id, lineBreak: false })
-    }
-  })
+  it(
+    'name every development case that has a G form, each free of process terms and verbatim in the derived case',
+    () => {
+      const gForm = [
+        ...developerCases.map((c) => c.id),
+        ...reviewerCases
+          .filter((c) => c.expected === null || !LAYER_P_ONLY_DEFECT_KINDS.includes(c.expected.kind))
+          .map((c) => c.id),
+        ...citationFile.cases.map((c) => c.id)
+      ]
+      expect(Object.keys(statements).sort()).toEqual([...gForm].sort())
+      for (const [id, statement] of Object.entries(statements)) {
+        expect({ id, banned: findBannedTerms(statement) }).toEqual({ id, banned: [] })
+      }
+      const derived = recutDevelopment().files.flatMap(
+        (f) => (JSON.parse(f.text) as { suites: { cases: { id: string; taskStatement: string }[] }[] }).suites
+      )
+      // A developer case and its loop case end the statement with the case's Interface block; any other is verbatim.
+      const developerIds = new Set(developerCases.map((c) => c.id))
+      const blocks = new Map(developerCases.map((c) => [c.id, interfaceBlock(interfaceItems(repositoryGit, c))]))
+      for (const c of derived.flatMap((s) => s.cases)) {
+        const block = developerIds.has(c.id) ? (blocks.get(c.id) as string) : ''
+        expect({ id: c.id, statement: c.taskStatement }).toEqual({
+          id: c.id,
+          statement: `${statements[c.id] as string}${block}`
+        })
+        expect({ id: c.id, lineBreak: /[\r\n]/.test(c.taskStatement) }).toEqual({ id: c.id, lineBreak: false })
+      }
+    },
+    RECUT_BUDGET_MS
+  )
 })
 
 /** A git that serves a fixture case's blobs and base tree, and searches the base tree as `git grep -F -o -h` does. */
@@ -234,6 +257,73 @@ const fixture = fixtureGit(
   }
 )
 
+const EXPECTATION_TEST = `import { expect, it } from 'bun:test'
+import { report, ReportSchema } from './report'
+
+const CASES: [string, string][] = [
+  ['alpha-input', 'alpha is ready'],
+  ['beta-input', 'beta is ready']
+]
+
+it('reports', () => {
+  for (const [name, line] of CASES) expect(report(name).line).toBe(line)
+  expect(report('gamma')).toEqual({ status: 'report-done', counts: { totalWidgets: 3 }, tags: ['tag-new'] })
+  expect(report('delta').summary).toBe('Found 3 widgets in delta')
+  expect(report('echo').note).toBe('use \`widget\` now')
+  expect(report('foxtrot').echo).toBe('foxtrot')
+  expect(report('golf').detail).not.toBe('never-said')
+  expect(report('hotel').items.some((i) => i.code === 'code-picked')).toBe(true)
+  expect(report('india').legacy).toBe('Old 2 things')
+  expect(ReportSchema.parse({ schemaOnlyKey: 'x' })).toBeDefined()
+})
+`
+
+const EXPECTATION_REPORT = `import { z } from 'zod'
+
+export const ReportSchema = z.object({ schemaOnlyKey: z.string() })
+
+export function report(name: string) {
+  return {
+    line: \`\${name.split('-')[0]} is ready\`,
+    status: 'report-done',
+    counts: { totalWidgets: 3 },
+    tags: ['tag-new'],
+    summary: 'Found ' + 3 + ' widgets in ' + name,
+    note: 'use \`widget\` now',
+    echo: name,
+    detail: '',
+    items: [{ code: 'code-picked' }]
+  }
+}
+`
+
+const EXPECTATION_OLD = `export const legacy = (n: number) => \`Old \${n} things\`
+`
+
+const expectationCase = {
+  ...fixtureCase,
+  id: 'fixture-report',
+  hiddenTests: { files: [{ path: 'src/report.test.ts', blob: 'report-test-blob' }], deleted: [] },
+  referenceSolution: {
+    ...fixtureCase.referenceSolution,
+    files: [
+      { path: 'src/report.ts', blob: 'report-blob' },
+      { path: 'src/old.ts', blob: 'old-blob' }
+    ]
+  },
+  failToPass: { 'src/report.test.ts': ['reports'] }
+} as unknown as DeveloperCapabilityCase
+
+const expectationFixture = fixtureGit(
+  {
+    'report-test-blob': EXPECTATION_TEST,
+    'report-blob': EXPECTATION_REPORT,
+    'old-blob': EXPECTATION_OLD,
+    'base-readme-blob': 'status counts tags line summary note echo detail items code legacy\n'
+  },
+  { 'src/old.ts': 'old-blob', 'README.md': 'base-readme-blob' }
+)
+
 describe('the Interface block', () => {
   it('names what the fail-to-pass tests import and assert from the reference change, less what the base holds', () => {
     const items = interfaceItems(fixture, fixtureCase)
@@ -270,6 +360,36 @@ describe('the Interface block', () => {
     expect(items.some((item) => item.text.startsWith('WidgetDeps.'))).toBe(false)
   })
 
+  it('names the expected side of each assertion: nested values, table columns, template-built and backtick text, and keys', () => {
+    const items = interfaceItems(expectationFixture, expectationCase)
+    expect(items).toEqual([
+      { kind: 'export', text: 'src/report.ts: const ReportSchema' },
+      { kind: 'export', text: 'src/report.ts: function report(name: string)' },
+      { kind: 'file', text: 'src/report.ts' },
+      // A schema key the test passes in, and a key of a nested expected object; the other keys the README holds.
+      { kind: 'key', text: 'schemaOnlyKey' },
+      { kind: 'key', text: 'totalWidgets' },
+      // Built by a `+` concatenation, and, below, by a template literal from the expected column of a table.
+      { kind: 'string', text: 'Found 3 widgets in delta' },
+      { kind: 'string', text: 'alpha is ready' },
+      { kind: 'string', text: 'beta is ready' },
+      // Compared with the actual value inside `expect(...)`.
+      { kind: 'string', text: 'code-picked' },
+      // Inside an expected object, and an expected array inside it.
+      { kind: 'string', text: 'report-done' },
+      { kind: 'string', text: 'tag-new' },
+      { kind: 'string', text: 'use `widget` now' }
+    ])
+    // An input the test passes to the code — a table's input column, a value echoed back — is never named; nor
+    // is what a negated matcher checks is absent, nor text the base copy of a changed file builds too.
+    const statement = withInterface('Make the report.', items)
+    for (const left of ['alpha-input', 'foxtrot', 'never-said', 'Old 2 things'])
+      expect({ left, named: statement.includes(left) }).toEqual({ left, named: false })
+    // A text holding a backtick is fenced by a longer run, and the block still parses as one.
+    expect(statement.endsWith('; string ``use `widget` now``.')).toBe(true)
+    expect(findBannedTerms(statement)).toEqual([])
+  })
+
   it('refuses the re-cut when the base search fails for any reason but finding nothing', () => {
     const failing: Git = (args, options) => {
       if (args[0] === 'grep') throw new RecutRefused('git grep failed')
@@ -286,6 +406,13 @@ describe('the Interface block', () => {
         { kind: 'flag', text: '--b' }
       ])
     ).toBe(' Interface: env `A`; flag `--b`.')
+    // A text holding backticks is fenced by one more than its longest run, padded when it starts or ends with one.
+    expect(
+      interfaceBlock([
+        { kind: 'string', text: 'run `a` or ``b``' },
+        { kind: 'string', text: '`edge`' }
+      ])
+    ).toBe(' Interface: string ``` run `a` or ``b`` ```; string `` `edge` ``.')
   })
 
   it('names the error the pr-1091 tests import from the module they import it from', () => {
@@ -461,7 +588,7 @@ describe('the reviewer mapping', () => {
 })
 
 describe('the source-citation mapping', () => {
-  it('derives an answer case with an empty scope, each source pinned by its content, read_document only for retrieval', () => {
+  it('derives an answer case with an empty scope, each source pinned by its content, read_file for an injected source and read_document for retrieval', () => {
     for (const p of citationFile.cases) {
       const g = deriveSourceCitationCase(citationFile.repositoryCommit, p, statements[p.id] as string)
       expect(g.kind).toBe('answer')
@@ -470,35 +597,48 @@ describe('the source-citation mapping', () => {
       expect(g.deliveredDocuments).toEqual(
         p.sources.map((s) => ({ id: s.sourceId, contentDigest: sha256(s.content), relevant: s.relevant }))
       )
+      const injected = p.sources.some((s) => s.deliveryMode === 'injected')
       const retrieval = p.sources.some((s) => s.deliveryMode === 'retrieval_tool')
       expect({ id: p.id, granted: g.grantedCapabilities }).toEqual({
         id: p.id,
-        granted: retrieval ? ['read_document'] : []
+        granted: [...(injected ? ['read_file'] : []), ...(retrieval ? ['read_document'] : [])]
       })
       expect(validateNeutralCase(g).ok).toBe(true)
     }
-    expect(citationFile.cases.some((p) => p.sources.every((s) => s.deliveryMode === 'injected'))).toBe(true)
+    // The case whose one document is injected into the worktree grants the read of that file.
+    const undelivered = caseById(citationFile.cases, 'dev-undelivered-source')
+    expect(undelivered.sources.map((s) => s.deliveryMode)).toEqual(['injected'])
+    expect(deriveSourceCitationCase(citationFile.repositoryCommit, undelivered, '').grantedCapabilities).toEqual([
+      'read_file'
+    ])
+    expect(answerCapabilities({ sources: [] })).toEqual([])
+    const both = [{ deliveryMode: 'retrieval_tool' }, { deliveryMode: 'injected' }] as SourceCitationCase['sources']
+    expect(answerCapabilities({ sources: both })).toEqual(['read_file', 'read_document'])
   })
 })
 
 describe('re-running the re-cut', () => {
-  it('reproduces every development file byte for byte', () => {
-    const recut = recutDevelopment()
-    expect(recut.files.map((f) => f.path)).toEqual([
-      DERIVED_FILES.developer.development,
-      DERIVED_FILES.reviewer.development,
-      DERIVED_FILES.sourceCitation.development,
-      DERIVED_FILES.wholeLoop.development
-    ])
-    for (const file of recut.files) {
-      expect({ file: file.path, sha256: sha256(file.text) }).toEqual({
-        file: file.path,
-        sha256: sha256(readFileSync(file.path))
-      })
-    }
-    expect(Object.keys(recut.summary)).toEqual(['files'])
-    expect(JSON.stringify(recut.summary)).not.toMatch(/Interface:|`/)
-  })
+  it(
+    'reproduces every development file byte for byte',
+    () => {
+      const recut = recutDevelopment()
+      expect(recut.files.map((f) => f.path)).toEqual([
+        DERIVED_FILES.developer.development,
+        DERIVED_FILES.reviewer.development,
+        DERIVED_FILES.sourceCitation.development,
+        DERIVED_FILES.wholeLoop.development
+      ])
+      for (const file of recut.files) {
+        expect({ file: file.path, sha256: sha256(file.text) }).toEqual({
+          file: file.path,
+          sha256: sha256(readFileSync(file.path))
+        })
+      }
+      expect(Object.keys(recut.summary)).toEqual(['files'])
+      expect(JSON.stringify(recut.summary)).not.toMatch(/Interface:|`/)
+    },
+    RECUT_BUDGET_MS
+  )
 
   it('reads no held-out case, and derives no Interface block for one, before the developer approval opens them', () => {
     const calls: string[] = []
@@ -510,35 +650,44 @@ describe('re-running the re-cut', () => {
     expect(calls).toEqual([])
   })
 
-  it('reproduces every held-out file byte for byte, compared by digest only', () => {
-    const recut = recutHeldOut(approvals)
-    expect(recut.files.map((f) => f.path)).toEqual([
-      DERIVED_FILES.developer.heldOut,
-      DERIVED_FILES.reviewer.heldOut,
-      DERIVED_FILES.sourceCitation.heldOut,
-      DERIVED_FILES.wholeLoop.heldOut
-    ])
-    for (const file of recut.files) {
-      expect({ file: file.path, sha256: sha256(file.text) }).toEqual({
-        file: file.path,
-        sha256: sha256(readFileSync(file.path))
-      })
-    }
-    // Its summary carries counts, ids and digests only: no Interface block, nor any part of one.
-    expect(Object.keys(recut.summary).sort()).toEqual(['files', 'heldOutIds'])
-    expect(JSON.stringify(recut.summary)).not.toMatch(/Interface:|`/)
-    for (const entry of recut.summary.files) {
-      expect(Object.keys(entry).sort()).toEqual(['cases', 'file', 'layerPOnly', 'sha256', 'undeliverableSources'])
-    }
-    // The source-citation file holds one answer case per pinned held-out index entry, listed by id alone.
-    const ids = recut.summary.heldOutIds?.[GENERIC_SUITE_IDS.sourceCitation]
-    expect(ids).toEqual(citationFile.splits.heldOut.index.map((entry) => entry.id))
-    expect(recut.summary.files.at(-2)?.cases).toEqual({ [GENERIC_SUITE_IDS.sourceCitation]: ids?.length ?? 0 })
-    // The whole-loop file holds one loop case per developer held-out index entry, cut under the developer approval.
-    const loopIds = recut.summary.heldOutIds?.[GENERIC_SUITE_IDS.wholeLoop]
-    expect(loopIds).toEqual(developerFile.splits.heldOut.index.map((entry) => entry.id))
-    expect(recut.summary.files.at(-1)?.cases).toEqual({ [GENERIC_SUITE_IDS.wholeLoop]: loopIds?.length ?? 0 })
-  })
+  it(
+    'reproduces every held-out file byte for byte, compared by digest only, but those awaiting their approved re-cut',
+    () => {
+      const recut = recutHeldOut(approvals)
+      expect(recut.files.map((f) => f.path)).toEqual([
+        DERIVED_FILES.developer.heldOut,
+        DERIVED_FILES.reviewer.heldOut,
+        DERIVED_FILES.sourceCitation.heldOut,
+        DERIVED_FILES.wholeLoop.heldOut
+      ])
+      for (const file of recut.files) {
+        const committed = sha256(readFileSync(file.path))
+        // A file awaiting its re-cut still holds the bytes it was pinned with, and the current derivation no longer
+        // writes them; once the re-cut is run and committed, the file leaves the list and is reproduced again.
+        const awaiting = HELD_OUT_AWAITING_RECUT.includes(file.path)
+        expect({ file: file.path, awaiting, reproduced: sha256(file.text) === committed }).toEqual({
+          file: file.path,
+          awaiting,
+          reproduced: !awaiting
+        })
+      }
+      // Its summary carries counts, ids and digests only: no Interface block, nor any part of one.
+      expect(Object.keys(recut.summary).sort()).toEqual(['files', 'heldOutIds'])
+      expect(JSON.stringify(recut.summary)).not.toMatch(/Interface:|`/)
+      for (const entry of recut.summary.files) {
+        expect(Object.keys(entry).sort()).toEqual(['cases', 'file', 'layerPOnly', 'sha256', 'undeliverableSources'])
+      }
+      // The source-citation file holds one answer case per pinned held-out index entry, listed by id alone.
+      const ids = recut.summary.heldOutIds?.[GENERIC_SUITE_IDS.sourceCitation]
+      expect(ids).toEqual(citationFile.splits.heldOut.index.map((entry) => entry.id))
+      expect(recut.summary.files.at(-2)?.cases).toEqual({ [GENERIC_SUITE_IDS.sourceCitation]: ids?.length ?? 0 })
+      // The whole-loop file holds one loop case per developer held-out index entry, cut under the developer approval.
+      const loopIds = recut.summary.heldOutIds?.[GENERIC_SUITE_IDS.wholeLoop]
+      expect(loopIds).toEqual(developerFile.splits.heldOut.index.map((entry) => entry.id))
+      expect(recut.summary.files.at(-1)?.cases).toEqual({ [GENERIC_SUITE_IDS.wholeLoop]: loopIds?.length ?? 0 })
+    },
+    RECUT_BUDGET_MS
+  )
 
   it('opens no source-citation held-out file for a wrong approval, and the run writes and prints no case content', () => {
     const wrong = { ...approvals, sourceCitation: 'f'.repeat(64) }
