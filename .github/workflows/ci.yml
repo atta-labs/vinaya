@@ -370,12 +370,12 @@ jobs:
             echo '{ "scope": "all", "reason": "the selection failed" }' > "$DECISION"
           fi
           unset PULL_REQUEST_BASE
-          bun scripts/test-suites/schedule.ts --run --placement shared --decision "$DECISION"
+          bun scripts/test-suites/schedule.ts --run --placement shared --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY"
       - name: Test
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun scripts/test-suites/schedule.ts --run --placement shared --full --reason "a push to the default branch runs every test"
+        run: bun scripts/test-suites/schedule.ts --run --placement shared --full --reason "a push to the default branch runs every test" --summary "$GITHUB_STEP_SUMMARY"
       - name: Report this job's GitHub token budget
         if: failure()
         env:
@@ -454,12 +454,12 @@ jobs:
           # token included: several read a base-commit override from the
           # environment, so the selection's own variables never reach them.
           unset PULL_REQUEST_BASE
-          bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --decision "$DECISION"
+          bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY"
       - name: Test shard ${{ matrix.shard }}
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --full --reason "a push to the default branch runs every test"
+        run: bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --full --reason "a push to the default branch runs every test" --summary "$GITHUB_STEP_SUMMARY"
       - name: Report this job's GitHub token budget
         if: failure()
         env:

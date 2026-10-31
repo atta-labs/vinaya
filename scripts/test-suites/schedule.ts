@@ -448,18 +448,18 @@ function repositoryRoot(): string {
   return spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).stdout.trim()
 }
 
-function summary(lines: readonly string[]): void {
-  const file = process.env.GITHUB_STEP_SUMMARY
-  if (file) writeFileSync(file, `${lines.join('\n')}\n`, { flag: 'a' })
-}
-
 function main(argv: readonly string[]): number {
+  // The step summary file the workflow names (`--summary "$GITHUB_STEP_SUMMARY"`); none outside CI.
+  const summaryFile = argValue(argv, '--summary')
+  const summary = (lines: readonly string[]): void => {
+    if (summaryFile) writeFileSync(summaryFile, `${lines.join('\n')}\n`, { flag: 'a' })
+  }
   const repoRoot = repositoryRoot()
   const full = argv.includes('--full')
   const decisionPath = argValue(argv, '--decision')
   if (!full && !decisionPath) {
     process.stderr.write(
-      'usage: schedule.ts (--dry-run | --json | --run --placement <shard-N|shared>) (--full [--reason <text>] | --decision <file>)\n'
+      'usage: schedule.ts (--dry-run | --json | --run --placement <shard-N|shared> [--summary <file>]) (--full [--reason <text>] | --decision <file>)\n'
     )
     return 2
   }
