@@ -1234,6 +1234,22 @@ function baseMatches(git: Git, commit: string, literals: readonly string[], skip
  * listed by kind, then by text.
  */
 export function interfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceItem[] {
+  // A case's items depend only on its pinned blobs and base, so each is derived once per git that reads them.
+  const known = derivedItems.get(git) ?? new Map<string, InterfaceItem[]>()
+  derivedItems.set(git, known)
+  const key = canonicalJson([c.id, c.baseCommit, c.referenceSolution, c.hiddenTests, c.failToPass])
+  let items = known.get(key)
+  if (items === undefined) {
+    items = deriveInterfaceItems(git, c)
+    known.set(key, items)
+  }
+  return items.map((item) => ({ ...item }))
+}
+
+/** Each case's derived items, by the git that read them. */
+const derivedItems = new WeakMap<Git, Map<string, InterfaceItem[]>>()
+
+function deriveInterfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceItem[] {
   const memo = <T>(compute: (path: string) => T) => {
     const cache = new Map<string, T>()
     return (path: string) => {
@@ -1638,7 +1654,13 @@ export function recutHeldOut(
   git: Git = repositoryGit
 ): Recut {
   const developerFile = loadDeveloperCaseFile()
+  // Every approval is checked, by opening its held-out cases, before any case is derived, so a wrong one is
+  // refused before the run spends any work.
   const developerHeld = loadDeveloperHeldOut(developerFile, approvals.developer)
+  const codeReviewerHeld = loadReviewerHeldOut('code-reviewer', approvals.reviewer)
+  const securityReviewerHeld = loadReviewerHeldOut('security-reviewer', approvals.reviewer)
+  const citationFile = loadSourceCitationCaseFile()
+  const citationHeld = loadSourceCitationHeldOut(citationFile, approvals.sourceCitation)
   // Derived only here, once the approval has opened the held-out cases, and never printed.
   const developerStatement = new Map(
     developerHeld.map((c) => [c.id, withInterface(generatedDeveloperStatement(c), interfaceItems(git, c))])
@@ -1663,12 +1685,12 @@ export function recutHeldOut(
       {
         role: 'code-reviewer',
         suite: GENERIC_SUITE_IDS.codeReviewer,
-        cases: loadReviewerHeldOut('code-reviewer', approvals.reviewer)
+        cases: codeReviewerHeld
       },
       {
         role: 'security-reviewer',
         suite: GENERIC_SUITE_IDS.securityReviewer,
-        cases: loadReviewerHeldOut('security-reviewer', approvals.reviewer)
+        cases: securityReviewerHeld
       }
     ],
     generatedReviewerStatement
@@ -1680,8 +1702,7 @@ export function recutHeldOut(
     reviewerSuitesHeld,
     0
   )
-  const citationFile = loadSourceCitationCaseFile()
-  const citationCases = loadSourceCitationHeldOut(citationFile, approvals.sourceCitation).map((c) =>
+  const citationCases = citationHeld.map((c) =>
     deriveSourceCitationCase(citationFile.repositoryCommit, c, generatedSourceCitationStatement(c))
   )
   const citation = derivedFile(
