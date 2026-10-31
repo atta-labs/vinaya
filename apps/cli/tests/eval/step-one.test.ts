@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { type CloneStaging, git } from '../../src/lib/dev-review-eval/staging'
@@ -38,7 +39,13 @@ import {
   type VinayaProcessSteps
 } from '../../src/lib/dev-review-eval/step-one'
 import { LIVE_SUITE_LAYERS } from '../../src/lib/dev-review-eval/freeze-record'
-import { HARBOR_TRIAL_BACKENDS } from '../../src/lib/dev-review-eval/harbor-trial'
+import {
+  HARBOR_TRIAL_BACKENDS,
+  type HarborCaseFile,
+  type HarborTrialUsage,
+  runHarborTrial
+} from '../../src/lib/dev-review-eval/harbor-trial'
+import { runEngineRoleStep, type SpawnFn } from '../../src/lib/dev-review-eval/engine-role-step'
 import {
   renderCase,
   VINAYA_RENDERER_VERSION,
@@ -1369,5 +1376,250 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
       )
     ).rejects.toThrow('an answer case runs only on the standalone backend')
     expect(recording.calls).toEqual([])
+  })
+
+  describe('a trial that times out or crashes', () => {
+    /**
+     * A Claude Code session cut off before its closing `result` event: three
+     * assistant events, the first two one message streamed as two content
+     * blocks, each carrying that message's usage.
+     */
+    const cutOffStream = [
+      { type: 'system', subtype: 'init', session_id: 'cut-off' },
+      {
+        type: 'assistant',
+        message: {
+          id: 'msg-1',
+          content: [{ type: 'text', text: 'Reading.' }],
+          usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 100, cache_creation_input_tokens: 7 }
+        }
+      },
+      {
+        type: 'assistant',
+        message: {
+          id: 'msg-1',
+          content: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'a.ts' } }],
+          usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 100, cache_creation_input_tokens: 7 }
+        }
+      },
+      {
+        type: 'assistant',
+        message: {
+          id: 'msg-2',
+          content: [{ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'bun test' } }],
+          usage: { input_tokens: 5, output_tokens: 3, cache_read_input_tokens: 110, cache_creation_input_tokens: 0 }
+        }
+      }
+    ].map((event) => JSON.stringify(event))
+    const CUT_OFF_TOKENS = { inputTokens: 15, outputTokens: 7, cacheReadTokens: 210, cacheCreationTokens: 7 }
+
+    /** The case file of a change case for the trial entry, its tree a clone of the case's fixture repository. */
+    async function changeTrialFiles() {
+      const c = await caseOf('developer-capability-neutral.l5', 'change')
+      const fixture = await changeFixture(c)
+      const tree = tempDir('step-one-timeout-app-')
+      git(tree, ['clone', '--quiet', fixture.source, '.'])
+      const work = tempDir('step-one-timeout-files-')
+      const casePath = join(work, 'case.json')
+      const file: HarborCaseFile = {
+        schemaVersion: 1,
+        suite: 'developer-capability-neutral.l5',
+        case: c,
+        counterpart: { kind: 'change', id: c.id, pullRequest: fixture.issue }
+      }
+      writeFileSync(casePath, JSON.stringify(file))
+      return {
+        c,
+        fixture,
+        tree,
+        casePath,
+        recordPath: join(work, 'agent', 'vinaya-trial-record.json'),
+        usagePath: join(work, 'agent', 'vinaya-usage.json'),
+        streamPath: join(work, 'agent', 'vinaya-trial.txt')
+      }
+    }
+
+    it('keeps each stream line in the stream file as it arrives, and sums its usage from each assistant message', async () => {
+      const c = await caseOf('developer-capability-neutral.l5', 'change')
+      const rendered = renderCase(c)
+      if (!rendered.ok) throw new Error('the case does not render')
+      const fixture = await changeFixture(c)
+      const tree = tempDir('step-one-stream-app-')
+      git(tree, ['clone', '--quiet', fixture.source, '.'])
+      const streamPath = join(tempDir('step-one-stream-agent-'), 'vinaya-trial.txt')
+      writeFileSync(streamPath, '')
+      const keptOnArrival: number[] = []
+      const recording = recordingSteps('change', fixture.issue)
+      const run = await vinayaProcess({
+        ...recording.steps,
+        dispatch: async (_role, _agent, _prompt, opts) => {
+          for (const line of cutOffStream) {
+            opts.observeStdoutLine?.(line)
+            keptOnArrival.push(readFileSync(streamPath, 'utf8').split('\n').filter(Boolean).length)
+          }
+          // The dispatch's own limit stopped the agent: no `result` event, so the handle has no usage.
+          return {
+            exitCode: 1,
+            durationMs: 9,
+            usage: null,
+            resumeId: null,
+            timedOut: true,
+            failureReason: 'timeout',
+            turnOutput: { raw: null }
+          } as never
+        }
+      })(
+        {
+          trial: { suite: 'developer-capability-neutral.l5', adapter: 'claude-code', taskId: c.id, attempt: 1 },
+          neutralCase: c,
+          input: rendered.input
+        },
+        {
+          repository: fixture.source,
+          developerBriefs: new Map(),
+          models: {},
+          timeoutMs: 1000,
+          loaded: fixture.loaded,
+          container: {
+            workingTree: tree,
+            recordPath: join(tempDir('step-one-stream-record-'), 'record.json'),
+            streamPath
+          }
+        }
+      )
+      expect(keptOnArrival).toEqual([1, 2, 3, 4])
+      expect(readFileSync(streamPath, 'utf8')).toBe(`${cutOffStream.join('\n')}\n`)
+      expect(run.usage).toMatchObject({ ...CUT_OFF_TOKENS, wallTimeMs: 9 })
+    }, 60_000)
+
+    it('stops the role at the trial limit and reports the trial timed out, with its stream and summed usage', async () => {
+      const files = await changeTrialFiles()
+      let stopped = 0
+      let release: () => void = () => {}
+      const outcome = await runHarborTrial(
+        {
+          casePath: files.casePath,
+          tree: files.tree,
+          recordPath: files.recordPath,
+          usagePath: files.usagePath,
+          backend: 'standalone',
+          adapter: 'claude-code',
+          model: 'claude-test-model',
+          timeoutMs: 200,
+          streamPath: files.streamPath,
+          stopRole: () => {
+            stopped++
+            release()
+          }
+        },
+        {
+          ...recordingSteps('change', files.fixture.issue).steps,
+          dispatch: async (_role, _agent, _prompt, opts) => {
+            for (const line of cutOffStream) opts.observeStdoutLine?.(line)
+            // The agent works until the trial stops it.
+            await new Promise<void>((resolve) => {
+              release = resolve
+            })
+            return {
+              exitCode: 1,
+              durationMs: 200,
+              usage: null,
+              resumeId: null,
+              timedOut: false,
+              failureReason: 'signal',
+              turnOutput: { raw: null }
+            } as never
+          }
+        }
+      )
+      expect(stopped).toBe(1)
+      expect(outcome.timedOut).toBe(true)
+      const usage = JSON.parse(readFileSync(files.usagePath, 'utf8')) as HarborTrialUsage
+      expect(usage).toMatchObject({ ...CUT_OFF_TOKENS, timedOut: true })
+      expect(readFileSync(files.streamPath, 'utf8')).toBe(`${cutOffStream.join('\n')}\n`)
+    }, 60_000)
+
+    it('writes the usage from the stream when the run throws', async () => {
+      const files = await changeTrialFiles()
+      const outcome = await runHarborTrial(
+        {
+          casePath: files.casePath,
+          tree: files.tree,
+          recordPath: files.recordPath,
+          usagePath: files.usagePath,
+          backend: 'standalone',
+          adapter: 'claude-code',
+          model: 'claude-test-model',
+          timeoutMs: 60_000
+        },
+        {
+          ...recordingSteps('change', files.fixture.issue).steps,
+          dispatch: async (_role, _agent, _prompt, opts) => {
+            for (const line of cutOffStream) opts.observeStdoutLine?.(line)
+            throw new Error('the agent process crashed')
+          }
+        }
+      )
+      expect(outcome).toMatchObject({ ok: false, reason: expect.stringContaining('the agent process crashed') })
+      expect(outcome.timedOut).toBeUndefined()
+      // With no stream path named, the stream file sits beside the record.
+      expect(readFileSync(files.streamPath, 'utf8')).toBe(`${cutOffStream.join('\n')}\n`)
+      const usage = JSON.parse(readFileSync(files.usagePath, 'utf8')) as HarborTrialUsage
+      expect(usage).toMatchObject({ ...CUT_OFF_TOKENS, timedOut: false })
+      expect(usage.wallTimeMs).toBeGreaterThanOrEqual(0)
+    }, 60_000)
+
+    it('reports an Engine role step its limit stopped as timed out, with usage from its stream', async () => {
+      const tree = tempDir('step-one-engine-timeout-app-')
+      git(tree, ['init', '--quiet'])
+      commitAll(tree, 'base')
+      const priorToken = process.env.CLAUDE_CODE_OAUTH_TOKEN
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'test-subscription-token'
+      const observed: string[] = []
+      // A stub agent that streams a cut-off session and runs until the executor kills it.
+      const spawnFn = (() => {
+        const stdout = new EventEmitter()
+        const lifecycle = new EventEmitter()
+        return {
+          stdin: {
+            write: () => {},
+            end: () => {
+              setTimeout(() => {
+                for (const line of cutOffStream) stdout.emit('data', `${line}\n`)
+              }, 0)
+            }
+          },
+          stdout: { on: (event: 'data', listener: (chunk: Buffer | string) => void) => stdout.on(event, listener) },
+          stderr: { on: () => {} },
+          on: (event: string, listener: (...args: unknown[]) => void) => lifecycle.on(event, listener),
+          kill: () => {
+            setTimeout(() => lifecycle.emit('close', null), 0)
+          }
+        }
+      }) as unknown as SpawnFn
+      try {
+        const handle = await runEngineRoleStep({
+          role: 'developer',
+          adapter: 'claude-code',
+          prompt: 'Do the task.',
+          workingTree: tree,
+          scratch: tempDir('step-one-engine-timeout-scratch-'),
+          model: 'claude-test-model',
+          timeoutMs: 300,
+          outputSchema: { type: 'object' },
+          devToolsBridge: { command: 'true', args: [] },
+          spawnFn,
+          observeStdoutLine: (line) => observed.push(line)
+        })
+        expect(handle.timedOut).toBe(true)
+        expect(handle.failureReason).toBe('timeout')
+        expect(handle.usage).toEqual({ input: 15, output: 7 })
+        expect(handle.cacheUsage).toEqual({ read: 210, creation: 7 })
+        expect(observed).toEqual(cutOffStream)
+      } finally {
+        if (priorToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+        else process.env.CLAUDE_CODE_OAUTH_TOKEN = priorToken
+      }
+    }, 60_000)
   })
 })
