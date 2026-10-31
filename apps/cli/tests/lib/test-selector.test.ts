@@ -12,7 +12,9 @@ import { ALL_NAMES, affectedNamesForFile, type LineRange, parseHunkRanges } from
 import { loadConfig } from '../../src/lib/config'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 import {
+  discoverWorkspaceDirs,
   discoverWorkspacePackages,
+  expandWorkspacePatterns,
   extractImportSpecifiers,
   isTestFile,
   ROOT_CONFIG_FILENAME,
@@ -214,6 +216,123 @@ describe('discoverWorkspacePackages', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  /** A tree in both layouts at once: today's `harness` and `processes/*`, and the target's nested members. */
+  function layoutsRepo(workspaces: string[]): string {
+    const root = fixtureDir('selector-layouts-')
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces }))
+    const member = (dir: string, name: string, test?: string) => {
+      mkdirSync(join(root, dir, 'src'), { recursive: true })
+      writeFileSync(join(root, dir, 'package.json'), JSON.stringify({ name, ...(test ? { scripts: { test } } : {}) }))
+      writeFileSync(join(root, dir, 'src', 'index.ts'), 'export const x = 1\n')
+    }
+    member('apps/cli', '@fx/cli', 'bun test')
+    member('harness', '@fx/harness', 'bun test')
+    member('harness/kernel', '@fx/kernel', 'bun test')
+    member('harness/processes/strict', '@fx/strict', 'vitest run')
+    member('processes/vinaya', '@fx/vinaya')
+    mkdirSync(join(root, 'deep', 'a', 'b'), { recursive: true })
+    writeFileSync(join(root, 'deep', 'a', 'b', 'package.json'), JSON.stringify({ name: '@fx/deep' }))
+    return root
+  }
+
+  it("finds today's literal and globbed members from the manifest, not a fixed folder list", () => {
+    const root = layoutsRepo(['apps/*', 'harness', 'processes/*'])
+    expect(discoverWorkspaceDirs(root)).toEqual(['apps/cli', 'harness', 'processes/vinaya'])
+  })
+
+  it("finds the target tree's nested members, and a nested member's files are its own, never its parent's too", () => {
+    const root = layoutsRepo(['apps/*', 'harness', 'harness/kernel', 'harness/processes/*'])
+    const packages = discoverWorkspacePackages(root)
+    expect(packages.map((p) => p.dir.slice(root.length + 1))).toEqual([
+      'apps/cli',
+      'harness',
+      'harness/kernel',
+      'harness/processes/strict'
+    ])
+    const harness = packages.find((p) => p.name === '@fx/harness')
+    expect(harness?.sourceFiles.map((f) => f.slice(root.length + 1))).toEqual(['harness/src/index.ts'])
+    expect(packages.find((p) => p.name === '@fx/strict')?.testRunner).toBe('vitest')
+    expect(packages.find((p) => p.name === '@fx/strict')?.bunTestCompatible).toBe(false)
+  })
+
+  it('never expands a ** pattern, and a negated pattern removes what it names', () => {
+    const root = layoutsRepo(['deep/**', 'apps/*', 'harness/processes/*', '!harness/processes/strict'])
+    expect(discoverWorkspaceDirs(root)).toEqual(['apps/cli'])
+    expect(expandWorkspacePatterns(root, ['harness/*'])).toEqual(['harness/kernel', 'harness/processes', 'harness/src'])
+  })
+})
+
+describe('the selection explains each selected test, as a separate output', () => {
+  it('names a direct, transitive, always-run, added and conservative-fallback reason; the file list is unchanged', () => {
+    const root = fixtureRepo()
+    try {
+      const target = join(root, 'packages/a/src/target.ts')
+      const other = join(root, 'packages/b/src/other.ts')
+      const result = selectAffectedTestFiles(root, [target, other], {
+        alwaysRun: ['packages/a/src/unrelated.test.ts'],
+        addedOrRenamed: [join(root, 'packages/b/src/other.test.ts')]
+      })
+      expect(result.explanations.map((e) => join(root, e.test))).toEqual(result.selected)
+      const kinds = Object.fromEntries(result.explanations.map((e) => [e.test, e.kind]))
+      expect(kinds).toEqual({
+        'packages/a/src/direct.test.ts': 'direct-dependency',
+        'packages/a/src/transitive.test.ts': 'direct-dependency',
+        'packages/a/src/unrelated.test.ts': 'always-run',
+        'packages/a/src/consumes-b.test.ts': 'conservative-fallback',
+        'packages/b/src/other.test.ts': 'direct-dependency'
+      })
+      const fallback = result.explanations.find((e) => e.kind === 'conservative-fallback')
+      expect(fallback?.via).toBe('@fixture/b')
+      // The same call without the explanation's consumers returns the same files.
+      expect(
+        selectAffectedTestFiles(root, [target, other], {
+          alwaysRun: ['packages/a/src/unrelated.test.ts'],
+          addedOrRenamed: [join(root, 'packages/b/src/other.test.ts')]
+        }).selected
+      ).toEqual(result.selected)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a test reaching the change through a second file is transitive; a scanner trigger is a declared input', () => {
+    const root = fixtureDir('selector-explain-')
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }))
+    const pkg = join(root, 'packages', 'a')
+    mkdirSync(join(pkg, 'src'), { recursive: true })
+    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@fx/a' }))
+    writeFileSync(join(pkg, 'src', 'leaf.ts'), 'export const leaf = 1\n')
+    writeFileSync(join(pkg, 'src', 'mid.ts'), "import { leaf } from './leaf'\nexport const mid = () => leaf\n")
+    writeFileSync(join(pkg, 'src', 'far.test.ts'), "import { mid } from './mid'\nexport const t = mid\n")
+    writeFileSync(join(pkg, 'src', 'shape.test.ts'), 'export const t = 1\n')
+    const result = selectAffectedTestFiles(root, [join(pkg, 'src', 'leaf.ts')], {
+      addedOrRenamed: [join(pkg, 'src', 'new.ts')],
+      scannerDeclarations: [{ test: 'packages/a/src/shape.test.ts', roots: ['packages/a/src/'], trigger: 'tree-shape' }]
+    })
+    const byTest = new Map(result.explanations.map((e) => [e.test, e]))
+    expect(byTest.get('packages/a/src/far.test.ts')).toMatchObject({
+      kind: 'transitive-dependency',
+      via: 'packages/a/src/leaf.ts'
+    })
+    expect(byTest.get('packages/a/src/shape.test.ts')?.kind).toBe('declared-input')
+  })
+
+  it('a package another runner owns never reaches the file list; asked for, it is exposed with its runner', () => {
+    const root = fixtureDir('selector-native-')
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }))
+    const pkg = join(root, 'packages', 'v')
+    mkdirSync(join(pkg, 'src'), { recursive: true })
+    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@fx/v', scripts: { test: 'vitest run' } }))
+    writeFileSync(join(pkg, 'src', 'a.ts'), 'export const a = 1\n')
+    writeFileSync(join(pkg, 'src', 'a.test.ts'), "import { a } from './a'\nexport const t = a\n")
+    const changed = [join(pkg, 'src', 'a.ts')]
+    expect(selectAffectedTestFiles(root, changed).selected).toEqual([])
+    expect(selectAffectedTestFiles(root, changed).native).toEqual([])
+    const exposed = selectAffectedTestFiles(root, changed, { nativeRunners: 'expose' })
+    expect(exposed.selected).toEqual([])
+    expect(exposed.native).toEqual([{ test: join(pkg, 'src', 'a.test.ts'), runner: 'vitest' }])
   })
 })
 

@@ -1,0 +1,251 @@
+{
+  "schema": "vinaya.test-inventory",
+  "schemaVersion": 1,
+  "declarationVersion": 1,
+  "suites": [
+    {
+      "id": "cli",
+      "owner": "@attalabs/vinaya",
+      "kind": "workspace",
+      "dir": "apps/cli",
+      "runner": "bun",
+      "preload": "apps/cli/tests/lib/test-env-preload.ts"
+    },
+    {
+      "id": "log-server",
+      "owner": "@attalabs/log-server",
+      "kind": "workspace",
+      "dir": "apps/log-server",
+      "runner": "vitest",
+      "preload": null
+    },
+    {
+      "id": "portal",
+      "owner": "@vinaya/portal",
+      "kind": "workspace",
+      "dir": "apps/vinaya-portal",
+      "runner": "bun",
+      "preload": null
+    },
+    {
+      "id": "aeg-core",
+      "owner": "@attalabs/aeg-core",
+      "kind": "workspace",
+      "dir": "packages/aeg-core",
+      "runner": "vitest",
+      "preload": null,
+      "fixtureExecutables": ["packages/aeg-core/src/log/fixtures/executions.test.ts"]
+    },
+    {
+      "id": "aeg-forge-state",
+      "owner": "@attalabs/aeg-forge-state",
+      "kind": "workspace",
+      "dir": "packages/aeg-forge-state",
+      "runner": "vitest",
+      "preload": null
+    },
+    {
+      "id": "sources",
+      "owner": "@attalabs/vinaya-sources",
+      "kind": "workspace",
+      "dir": "packages/sources",
+      "runner": "bun",
+      "preload": null
+    },
+    {
+      "id": "kernel",
+      "owner": "@attalabs/harness",
+      "kind": "workspace",
+      "dir": "harness",
+      "runner": "bun",
+      "preload": null
+    },
+    {
+      "id": "process-vinaya",
+      "owner": "@attalabs/process-vinaya",
+      "kind": "workspace",
+      "dir": "processes/vinaya",
+      "runner": "bun",
+      "preload": "apps/cli/tests/lib/test-env-preload.ts"
+    },
+    {
+      "id": "repository",
+      "owner": "repository",
+      "kind": "repository",
+      "dir": ".",
+      "runner": "bun",
+      "preload": "apps/cli/tests/lib/test-env-preload.ts",
+      "tests": [
+        "scripts/vinaya-checks/ui-rules.test.ts",
+        "scripts/vinaya-checks/process-version-bump.test.ts",
+        "scripts/test-suites/inventory-check.test.ts",
+        "scripts/test-suites/relocation-fixture.test.ts"
+      ]
+    }
+  ],
+  "typeInputs": [
+    {
+      "path": "packages/aeg-types",
+      "role": "shared type package with no tests; an input to every package's typecheck task"
+    },
+    { "path": "packages/typescript-config", "role": "shared TypeScript configuration package with no tests" },
+    {
+      "path": "packages/typescript-config/base.json",
+      "role": "the TypeScript base configuration every package extends"
+    },
+    { "path": "tsconfig.json", "role": "the repository-root TypeScript configuration" }
+  ],
+  "exclusions": [],
+  "inputs": [
+    {
+      "id": "root-config",
+      "kind": "config",
+      "paths": ["vinaya.config.json"],
+      "format": "json",
+      "readers": [{ "kind": "semantic", "suites": ["cli"] }],
+      "reason": "Every CLI command a CLI test starts reads the parsed repository configuration; the selector forces the CLI suite on its change for the same reason."
+    },
+    {
+      "id": "lockfile",
+      "kind": "lockfile",
+      "paths": ["bun.lock"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "suites": [
+            "cli",
+            "log-server",
+            "portal",
+            "aeg-core",
+            "aeg-forge-state",
+            "sources",
+            "kernel",
+            "process-vinaya",
+            "repository"
+          ]
+        }
+      ],
+      "reason": "The lockfile decides every installed dependency every suite runs against."
+    },
+    {
+      "id": "config-probe-program",
+      "kind": "spawn",
+      "paths": ["scripts/ci/config-probe.ts"],
+      "readers": [{ "kind": "code", "tests": ["apps/cli/tests/lib/ci-config-probe.test.ts"] }],
+      "reason": "The test starts the probe as its own process, outside any import."
+    },
+    {
+      "id": "process-contract-schema",
+      "kind": "schema",
+      "paths": ["harness/dev-process/contract/process.schema.json"],
+      "format": "json",
+      "readers": [{ "kind": "schema-policy", "tests": ["harness/dev-process/loader/load-process.test.ts"] }],
+      "reason": "The loader test validates every process folder against the contract schema it reads from disk."
+    },
+    {
+      "id": "golden-tranche-fixture",
+      "kind": "fixture",
+      "paths": ["packages/sources/tests/fixtures/golden-tranche-snapshot.md"],
+      "readers": [{ "kind": "raw-bytes", "tests": ["packages/sources/src/golden-forge-vs-file.test.ts"] }],
+      "reason": "The golden comparison reads the snapshot's bytes from disk."
+    },
+    {
+      "id": "ci-workflow",
+      "kind": "config",
+      "paths": [".github/workflows/ci.yml"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": [
+            "apps/cli/tests/ci-limits-diagnostic.test.ts",
+            "apps/cli/tests/lib/log-entry-paths.test.ts",
+            "apps/cli/tests/lib/ready-ci-workflow.test.ts",
+            "harness/tests/architecture.test.ts",
+            "scripts/test-suites/inventory-check.test.ts"
+          ]
+        }
+      ],
+      "reason": "Each reads the workflow file from disk and asserts its jobs and steps."
+    },
+    {
+      "id": "inventory-declarations",
+      "kind": "config",
+      "paths": ["scripts/test-suites/inventory.json"],
+      "format": "json",
+      "readers": [{ "kind": "raw-bytes", "tests": ["scripts/test-suites/inventory-check.test.ts"] }],
+      "reason": "The inventory check's test validates the committed declarations against the tree."
+    }
+  ],
+  "providers": [
+    {
+      "id": "sandbox-suite-inputs",
+      "kind": "provider",
+      "file": "apps/cli/tests/sandbox-conformance/command-sources.ts",
+      "export": "SUITE_INPUTS",
+      "shape": "path-list",
+      "readers": [{ "kind": "raw-bytes", "tests": ["apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts"] }],
+      "reason": "The sandbox suite skips itself unless a pull request changes one of these paths, so each is an input of that suite."
+    },
+    {
+      "id": "folder-scanning-tests",
+      "kind": "provider",
+      "file": "apps/cli/src/lib/repo-scanner-tests.ts",
+      "export": "SCANNER_DECLARATIONS",
+      "shape": "scanner-declarations",
+      "reason": "Each folder-scanning test reads the roots it declares from disk."
+    }
+  ],
+  "policies": [
+    {
+      "id": "pre-push-always-run",
+      "kind": "always-run",
+      "inputs": ["vinaya.config.json#prePush.alwaysRun"],
+      "duty": "the tests this list names run on every push, whatever changed",
+      "source": "vinaya.config.json"
+    },
+    {
+      "id": "default-branch-full-run",
+      "kind": "mandatory",
+      "inputs": [".github/workflows/ci.yml"],
+      "duty": "a push to the default branch runs every suite's every test",
+      "source": ".github/workflows/ci.yml"
+    },
+    {
+      "id": "secret-scan",
+      "kind": "security",
+      "inputs": [
+        "vinaya.config.json#checks",
+        "vinaya.config.json#securityScan",
+        "scripts/vinaya-checks/secret-scan.ts"
+      ],
+      "duty": "the atta-labs/secret-scan check scans the whole tree on every change",
+      "source": "vinaya.config.json"
+    },
+    {
+      "id": "selector-oracle",
+      "kind": "oracle",
+      "inputs": [
+        "apps/cli/src/lib/test-selector.ts",
+        "apps/cli/src/lib/ts-module-graph.ts",
+        "apps/cli/src/lib/repo-scanner-tests.ts",
+        "apps/cli/src/lib/cli-spawn-tests.ts",
+        "scripts/test-suites/inventory.json"
+      ],
+      "duty": "the bundler oracle in apps/cli/tests/lib/test-selector.test.ts runs when the selection logic, its inputs or the inventory change, and on every default-branch run",
+      "source": "apps/cli/tests/lib/test-selector.test.ts"
+    },
+    {
+      "id": "inventory-gate",
+      "kind": "mandatory",
+      "inputs": ["scripts/test-suites/"],
+      "duty": "the build job checks the inventory and runs the repository suite on every pull request, documentation-only ones included",
+      "source": ".github/workflows/ci.yml"
+    }
+  ],
+  "unknowns": [
+    {
+      "scope": "aeg-root/",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    }
+  ]
+}

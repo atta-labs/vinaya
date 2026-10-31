@@ -1,6 +1,7 @@
 /**
  * This repository's hand-written CI, as the required check a deferred version-2 run waits on: both test jobs run on
- * documentation-only pull requests too, and the `Vinaya CI` aggregate's own shell — executed here, not read — refuses
+ * documentation-only pull requests too, as does the build job's inventory check and repository suite, and the
+ * `Vinaya CI` aggregate's own shell — executed here, not read — refuses
  * any failed, cancelled or skipped mandatory job while the root-config probe alone may be skipped.
  */
 import { describe, expect, it } from 'bun:test'
@@ -46,6 +47,26 @@ describe('the required CI check a deferred run waits on', () => {
     const cliSteps = workflow.jobs['test-cli']?.steps?.map((s) => s.run ?? '').join('\n') ?? ''
     expect(cliSteps).toContain('ci-test-selection.ts')
     expect(cliSteps).toContain('this shard runs its whole list')
+  })
+
+  it('the build job checks the test inventory and runs the repository suite on every pull request, docs-only included', () => {
+    const build = workflow.jobs.build
+    expect(build?.if).toBeUndefined()
+    const steps = build?.steps ?? []
+    const at = steps.findIndex((s) => s.name === 'Check the test inventory and run the repository suite')
+    expect(at).toBeGreaterThan(-1)
+    const step = steps[at] as { if?: string; run?: string }
+    expect(step.if).toBeUndefined()
+    expect(step.run).toContain('bun scripts/test-suites/inventory-check.ts')
+    for (const test of [
+      'scripts/vinaya-checks/ui-rules.test.ts',
+      'scripts/vinaya-checks/process-version-bump.test.ts',
+      'scripts/test-suites/inventory-check.test.ts',
+      'scripts/test-suites/relocation-fixture.test.ts'
+    ])
+      expect(step.run).toContain(`./${test}`)
+    // It runs before the job's failure-only reports, which must stay last.
+    expect(at).toBeLessThan(steps.findIndex((s) => s.name === "Report this job's GitHub token budget"))
   })
 
   it('passes when every mandatory job succeeded, with the probe run or skipped', () => {

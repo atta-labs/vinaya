@@ -220,6 +220,21 @@ jobs:
           (cd harness && bun test tests/architecture.test.ts)
           bun harness/tests/architecture-ratchet.ts --compare-base "$BASE_SHA"
 
+      # The test inventory (`scripts/test-suites/inventory.json`): every
+      # tracked test-shaped file must be owned by exactly one suite's native
+      # runner or excluded with a reason, and the repository suite — the root
+      # tests no workspace runs, the inventory's own tests and the relocation
+      # proof among them — runs here, from the root, under the root
+      # `bunfig.toml`. The list is the inventory's repository suite, written
+      # out (`scripts/test-suites/inventory-check.test.ts` keeps the two
+      # equal), never a discovery that could pick up fixture data. Never gated
+      # behind the docs-only skip: a documentation-only pull request runs it,
+      # and a failure fails this job and so the required check.
+      - name: Check the test inventory and run the repository suite
+        run: |
+          bun scripts/test-suites/inventory-check.ts
+          bun test ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts
+
       # When this job failed, print its own token budgets on one line for
       # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
       # The same step ends every job in this file; the limits step after it
