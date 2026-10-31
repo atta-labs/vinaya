@@ -1,5 +1,34 @@
 # @atta/vinaya-sources
 
+## 0.41.0
+
+### Minor Changes
+
+- e2bdc8b: Add `task run --rollback`, which ends a task's in-flight Engine run, reconciles its prepared and uncertain effects by identity and restarts it on the standalone runner, keeping a rehearsal record in the task's runtime directory. A start on a pause another runner holds is now refused with a typed reason; its text is unchanged.
+- fb0a8d7: Add runner configuration and a task run --runner override for the workspace Engine subprocess, with a standalone fallback when its script is unavailable. Support logs: false for all recording and restrict Engine Log events to local folders.
+- da5f276: A gitignored `vinaya.config.local.json` at the primary checkout's root overrides `reviewPolicy.maxRounds` and `reviewPolicy.maxTaskMinutes` for local runs. Every other key in it is ignored with one warning, and a role process, a CI job, a task worktree or a symlinked file never honours it. The review thresholds and the merge gate stay on the default branch's policy, and `vinaya doctor` reports when an override is in effect.
+- d5230ca: The version 2 ready push's test-run limit is now `reviewPolicy.readyPushTimeoutMinutes` (default 20, a positive integer), read from the default branch like `maxRounds` and overridable in the gitignored local configuration file. A run stopped at its limit pauses for a person, naming the limit and the number of selected test files, instead of being sent back to the Developer as a test failure. The setting is not part of the policy digest.
+- 8ec463b: Add the `./commands` and `./config-reference` subpath exports, each loading only its data module.
+- 5d080a4: `vinaya task switch` changes the agent or model a task continues on: it refuses while the task's driver is alive, moves the Engine checkpoint aside into a timestamped folder without deleting it, leaves the branch and pull request untouched, and writes one driver-log line naming the from and to agent and model. The Engine's refusal of another agent now names this command.
+
+### Patch Changes
+
+- 5d56718: State in the config reference that the `runner` default is `standalone`, quote the one fallback notice `task run` prints when the Engine runner script is absent, and say that a run with no recorded runner is a standalone run.
+- 5149eeb: A self-hosting repository's version-2 publication can owe its required CI check whether its selected tests ran locally or were deferred: `prePush.requiredCi` on the default branch names the check, and an existing `prePush.readyTests` opt-in still supplies the same pair when the new key is absent. A locally tested head keeps its real test command in the Test Plan and Evidence, and the run completes only once the strict required-CI read succeeds on its current head; a driver with no strict reader pauses instead of falling back to the generic check read. In a repository that commits a native local-run adapter, the generated pre-push hook hands every test-running push to it, and the Test Plan line and Evidence of such a run come only from its own receipt at the same head, tree and verification context: a missing or unqualified receipt reads as not run, never as a pass.
+- b12ee94: A self-hosting repository can opt its version-2 ready push, and the driver-owned repair pushes on its own open pull request, into required-CI testing with `prePush.readyTests` on its default branch. Those pushes keep Biome, every registered local check and the affected typecheck, then defer the selected test suite to the named required check instead of running it locally. The driver still runs the approved explicit Test Plan commands on the published head and records their receipts. The Evidence block and `vinaya pr report` show the deferred suite as pending in required CI, never as a pass. The run completes only once that check succeeds on the approved head. A CI setup or provider failure, or a stalled queue or run, pauses for the Operator; a code failure goes back to the Developer. Absent the setting, every push tests locally as before.
+- Updated dependencies [946f290]
+- Updated dependencies [ae83db5]
+- Updated dependencies [e245323]
+- Updated dependencies [7844c73]
+- Updated dependencies [d5230ca]
+- Updated dependencies [5f7b9c5]
+- Updated dependencies [d4b97e7]
+- Updated dependencies [ca981c2]
+- Updated dependencies [18ecf9b]
+  - @attalabs/aeg-types@0.41.0
+  - @attalabs/aeg-forge-state@0.41.0
+  - @attalabs/aeg-core@0.41.0
+
 ## 0.40.0
 
 ### Minor Changes
