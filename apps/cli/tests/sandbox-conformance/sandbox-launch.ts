@@ -76,13 +76,20 @@ export const COMMAND_BUDGET_MS = 600_000
 
 export type CommandResult = { exitCode: number; output: string }
 
+/**
+ * The two mount-setup failures bwrap reports before the command starts when a protected path under a shared
+ * folder (`/tmp`, a cache) appears or vanishes between the policy's read and the mount — the suite's concurrent
+ * workers share those folders. Each is the whole output: nothing of the command ran.
+ */
+const MOUNT_SETUP_RACE = [
+  /^bwrap: Can't mount tmpfs on [^\n]+: No such file or directory$/,
+  /^bwrap: Can't remount readonly on [^\n]+: Unable to find "[^"\n]+" in mount table$/
+]
+
 /** A failed mount setup never started the command; retry it once with the identical sandbox. */
 export async function retrySandboxMountSetup(run: () => Promise<CommandResult>): Promise<CommandResult> {
   const result = await run()
-  if (
-    result.exitCode !== 0 &&
-    /^bwrap: Can't mount tmpfs on [^\n]+: No such file or directory$/.test(result.output.trim())
-  ) {
+  if (result.exitCode !== 0 && MOUNT_SETUP_RACE.some((pattern) => pattern.test(result.output.trim()))) {
     console.warn('Sandbox mount setup failed before command launch; retrying once with the same configuration.')
     return run()
   }

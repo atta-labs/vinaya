@@ -118,6 +118,25 @@ describe('sandbox mount setup retry', () => {
     expect(calls).toBe(2)
   })
 
+  it('retries a read-only remount of a protected path that vanished during setup once', async () => {
+    const vanished = {
+      exitCode: 1,
+      output:
+        'bwrap: Can\'t remount readonly on /newroot/tmp/.agents: Unable to find "/newroot/tmp/.agents" in mount table\n'
+    }
+    let calls = 0
+    const success = { exitCode: 0, output: 'command ran' }
+    expect(await retrySandboxMountSetup(async () => (++calls === 1 ? vanished : success))).toEqual(success)
+    expect(calls).toBe(2)
+    calls = 0
+    const twice = await retrySandboxMountSetup(async () => {
+      calls++
+      return vanished
+    })
+    expect(twice).toEqual(vanished)
+    expect(calls).toBe(2)
+  })
+
   it('still fails when mount setup fails twice', async () => {
     let calls = 0
     expect(
