@@ -9,10 +9,12 @@
  * sees TypeScript imports and declared folder scans only, so the answer
  * narrows nothing unless every changed path is a kind it can see — a path
  * under the portal, under `.changeset/`, or a TypeScript source under a
- * workspace package's own `src/` or `tests/` outside a fixture folder and other than the test
- * preload, which no test imports. Any other changed path, a base commit that
- * does not resolve, a selection that throws, or a selection that saw no
- * changed file while git did means the whole shard and every package.
+ * source folder of a workspace member the selector itself models (found from
+ * the root manifest's `workspaces`, never a fixed folder list), outside a
+ * fixture folder and other than a test preload, which no test imports. Any
+ * other changed path, a base commit that does not resolve, a selection that
+ * throws, or a selection that saw no changed file while git did means the
+ * whole shard and every package.
  *
  *   bun apps/cli/src/lib/ci-test-selection.ts --base <sha> --shard-list <file>
  *     prints the shard's paths to run, relative to `apps/cli`, one per line —
@@ -20,14 +22,21 @@
  *   bun apps/cli/src/lib/ci-test-selection.ts --base <sha> --packages
  *     prints `affected` when the shared-packages job may narrow, else `all`.
  *
+ * Two optional flags change nothing on STDOUT: `--layout <file>` reads a
+ * {@link WorkspaceLayout} JSON a repository's own adapter wrote (the source
+ * folders and preloads its inventory declares) in place of the discovered
+ * default, and `--explain <file>` writes the decision and, when it narrowed,
+ * why each selected test was selected.
+ *
  * The reason for the answer goes to STDERR, so the STDOUT a workflow captures
  * holds nothing else. Run from the repository root.
  */
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join, posix, relative } from 'node:path'
 import { prePushSelection } from './pre-push-selection.js'
 import { changedFilesSinceRemoteBase, removedFilesSinceRemoteBase } from './remote-base.js'
+import { discoverWorkspaceDirs, type SelectionExplanation } from './test-selector.js'
 
 /** The test preload every `apps/cli` test runs under, which no test imports. */
 const TEST_PRELOAD = 'apps/cli/tests/lib/test-env-preload.ts'
@@ -35,20 +44,130 @@ const TEST_PRELOAD = 'apps/cli/tests/lib/test-env-preload.ts'
 /** The package folder a shard list's paths are relative to. */
 const CLI_DIR = 'apps/cli'
 
+/** The folders of a workspace member whose TypeScript the selector models when a layout names none. */
+export const DEFAULT_SOURCE_ROOTS: readonly string[] = ['src', 'tests']
+
+/**
+ * Where the selector can see: the workspace members it models and, per
+ * member, the folders whose TypeScript its graph covers. Paths are
+ * repository-relative.
+ */
+export type WorkspaceLayout = {
+  /**
+   * The modeled workspace members' directories (`apps/cli`,
+   * `harness/kernel`). A `*` inside a segment matches any one directory name,
+   * so a layout can name members by the manifest's own pattern.
+   */
+  packageDirs: readonly string[]
+  /**
+   * Per member directory, the folders inside it the selector models;
+   * {@link DEFAULT_SOURCE_ROOTS} for a member not named here. `.` is every
+   * folder of the member except `bin/` and `scripts/`, never a file at the
+   * member's top level (its configuration).
+   */
+  sourceRoots?: Readonly<Record<string, readonly string[]>>
+  /** Test preloads: TypeScript every test of a suite runs under that no test imports. */
+  preloads?: readonly string[]
+  /**
+   * Paths, or folder prefixes ending in `/`, read without an import — a
+   * program a test spawns, data a test reads — which keep the conservative
+   * answer even under a modeled source folder.
+   */
+  opaque?: readonly string[]
+}
+
+/**
+ * The layout of a caller that discovered none: members directly under
+ * `apps/` or `packages/`, their `src/` and `tests/` folders, and the CLI's
+ * test preload. Every CI run discovers its own ({@link discoveredLayout}).
+ */
+export const CONVENTIONAL_LAYOUT: WorkspaceLayout = { packageDirs: ['apps/*', 'packages/*'], preloads: [TEST_PRELOAD] }
+
+/** The member directory of `layout` that contains `path` — the longest, so a nested member wins over its parent. */
+function memberDirOf(path: string, layout: WorkspaceLayout): string | null {
+  const segments = path.split('/')
+  for (let n = segments.length - 1; n >= 1; n--) {
+    const prefix = segments.slice(0, n)
+    const hit = layout.packageDirs.find((dir) => {
+      const parts = dir.split('/')
+      return (
+        parts.length === n &&
+        parts.every((part, i) =>
+          part.includes('*')
+            ? new RegExp(
+                `^${part
+                  .split('*')
+                  .map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+                  .join('[^/]*')}$`
+              ).test(prefix[i] as string)
+            : part === prefix[i]
+        )
+      )
+    })
+    if (hit) return prefix.join('/')
+  }
+  return null
+}
+
 /**
  * Whether a changed path, repository-root-relative, is one the selector can
  * judge: a path under the portal or under `.changeset/`, or a `.ts`/`.tsx`
- * file under a workspace package's own `src/` or `tests/`
- * (`apps/<name>/src/`, `packages/<name>/tests/`, ...) that is neither under a
- * `fixtures/` folder nor the test preload. A script or bin outside those
- * folders is often spawned as a process the import graph cannot see, so it
- * runs everything.
+ * file inside a source folder of a member `layout` models (by default
+ * `apps/<name>/src/`, `packages/<name>/tests/`, ...) that is neither under a
+ * `fixtures/` folder, a test preload, nor a path the layout declares opaque.
+ * A script or bin outside those folders is often spawned as a process the
+ * import graph cannot see, so it runs everything — as does any path under a
+ * folder no modeled member owns, because its dependencies are not modeled.
  */
-export function isSelectablePath(path: string): boolean {
+export function isSelectablePath(path: string, layout: WorkspaceLayout = CONVENTIONAL_LAYOUT): boolean {
   if (path.startsWith('apps/vinaya-portal/') || path.startsWith('.changeset/')) return true
-  if (!/^(apps|packages)\/[^/]+\/(src|tests)\/.+\.tsx?$/.test(path)) return false
+  if (!/\.tsx?$/.test(path)) return false
   if (/(^|\/)fixtures\//.test(path)) return false
-  return path !== TEST_PRELOAD
+  if ((layout.preloads ?? []).includes(path)) return false
+  if ((layout.opaque ?? []).some((entry) => (entry.endsWith('/') ? path.startsWith(entry) : path === entry)))
+    return false
+  const member = memberDirOf(path, layout)
+  if (!member) return false
+  const inside = path.slice(member.length + 1)
+  const roots = layout.sourceRoots?.[member] ?? DEFAULT_SOURCE_ROOTS
+  return roots.some((root) =>
+    root === '.'
+      ? inside.includes('/') && !/^(bin|scripts)\//.test(inside)
+      : inside.startsWith(`${posix.normalize(root).replace(/\/$/, '')}/`)
+  )
+}
+
+/**
+ * Every `preload` a `bunfig.toml`'s `[test]` table names, as written — read
+ * as text, never executed. An unreadable file names none.
+ */
+function bunfigPreloads(text: string): string[] {
+  const table = /^\[test\]\s*$([\s\S]*?)(?=^\[|$(?![\s\S]))/m.exec(text)?.[1] ?? ''
+  const value = /^\s*preload\s*=\s*(\[[^\]]*\]|"[^"]*"|'[^']*')/m.exec(table)?.[1]
+  if (!value) return []
+  return [...value.matchAll(/["']([^"']+)["']/g)].map((m) => m[1] as string)
+}
+
+/**
+ * The layout this repository's selector models: every workspace member its
+ * own discovery finds from the root manifest (so a member moved under a new
+ * parent is found the moment the manifest names it), each member's default
+ * source folders, and every test preload the root's or a member's
+ * `bunfig.toml` names.
+ */
+export function discoveredLayout(repoRoot: string): WorkspaceLayout {
+  const packageDirs = discoverWorkspaceDirs(repoRoot)
+  const preloads = new Set<string>([TEST_PRELOAD])
+  for (const dir of ['', ...packageDirs]) {
+    let text: string
+    try {
+      text = readFileSync(join(repoRoot, dir, 'bunfig.toml'), 'utf8')
+    } catch {
+      continue
+    }
+    for (const preload of bunfigPreloads(text)) preloads.add(posix.normalize(posix.join(dir || '.', preload)))
+  }
+  return { packageDirs, preloads: [...preloads].sort() }
 }
 
 /** What a pull request's selection decided: everything, with the reason, or a narrowed run. */
@@ -64,12 +183,16 @@ export type CiFacts = {
   selectionChanged: readonly string[]
   /** The selection, run only when every other fact allows narrowing. Throws on any failure. */
   select: () => readonly string[]
+  /** Where the selector can see; {@link CONVENTIONAL_LAYOUT} when absent. */
+  layout?: WorkspaceLayout
+  /** Why each test the last `select` call picked was picked — a separate output, empty before `select` ran. */
+  explanations?: () => readonly SelectionExplanation[]
 }
 
 /** Decides from the facts whether a pull request may run fewer tests than everything. */
 export function decideCiSelection(facts: CiFacts): CiDecision {
   if (!facts.baseResolves) return { scope: 'all', reason: 'the base commit does not resolve' }
-  const unseen = facts.gitDiff.filter((path) => !isSelectablePath(path))
+  const unseen = facts.gitDiff.filter((path) => !isSelectablePath(path, facts.layout))
   if (unseen.length > 0) {
     return { scope: 'all', reason: `the selector cannot judge ${unseen.length} changed path(s), first ${unseen[0]}` }
   }
@@ -105,21 +228,48 @@ function lines(text: string): string[] {
     .filter(Boolean)
 }
 
-/** Reads the facts for `base` from the repository. Unlike the hook's own git helpers, a git error here is never an empty answer. */
-export function readCiFacts(repoRoot: string, base: string): CiFacts {
+/**
+ * Reads the facts for `base` from the repository. Unlike the hook's own git
+ * helpers, a git error here is never an empty answer. The layout is the
+ * repository's discovered one unless the caller supplies its own.
+ */
+export function readCiFacts(
+  repoRoot: string,
+  base: string,
+  layout: WorkspaceLayout = discoveredLayout(repoRoot)
+): CiFacts {
   let baseResolves = true
   try {
     git(repoRoot, ['cat-file', '-e', `${base}^{commit}`])
   } catch {
     baseResolves = false
   }
-  if (!baseResolves) return { baseResolves, gitDiff: [], selectionChanged: [], select: () => [] }
+  if (!baseResolves) return { baseResolves, gitDiff: [], selectionChanged: [], select: () => [], layout }
+  let explanations: readonly SelectionExplanation[] = []
   return {
     baseResolves,
     gitDiff: lines(git(repoRoot, ['diff', '--name-only', '--no-renames', `${base}...HEAD`])),
     selectionChanged: [...changedFilesSinceRemoteBase(repoRoot, base), ...removedFilesSinceRemoteBase(repoRoot, base)],
-    select: () => prePushSelection(repoRoot, base, 'transitive').selected
+    select: () => {
+      const result = prePushSelection(repoRoot, base, 'transitive')
+      explanations = result.explanations
+      return result.selected
+    },
+    layout,
+    explanations: () => explanations
   }
+}
+
+/** Reads a {@link WorkspaceLayout} JSON file, refusing one whose shape is not a layout. */
+export function readLayoutFile(path: string): WorkspaceLayout {
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<WorkspaceLayout>
+  const strings = (value: unknown) => Array.isArray(value) && value.every((v) => typeof v === 'string')
+  if (!strings(parsed.packageDirs)) throw new Error(`${path}: packageDirs is not a list of directories`)
+  if (parsed.preloads !== undefined && !strings(parsed.preloads)) throw new Error(`${path}: preloads is not a list`)
+  if (parsed.opaque !== undefined && !strings(parsed.opaque)) throw new Error(`${path}: opaque is not a list`)
+  if (parsed.sourceRoots !== undefined && !Object.values(parsed.sourceRoots).every(strings))
+    throw new Error(`${path}: sourceRoots is not a map of folder lists`)
+  return parsed as WorkspaceLayout
 }
 
 function argValue(argv: readonly string[], flag: string): string | undefined {
@@ -137,9 +287,16 @@ function main(argv: readonly string[]): void {
     process.exit(2)
   }
   const started = performance.now()
-  const decision = decideCiSelection(readCiFacts(repoRoot, base))
+  const layoutPath = argValue(argv, '--layout')
+  const explainPath = argValue(argv, '--explain')
+  const facts = readCiFacts(repoRoot, base, layoutPath ? readLayoutFile(layoutPath) : undefined)
+  const decision = decideCiSelection(facts)
   const elapsed = (performance.now() - started).toFixed(0)
   const why = decision.scope === 'all' ? `everything: ${decision.reason}` : 'selected'
+  if (explainPath) {
+    const explanations = decision.scope === 'selected' ? (facts.explanations?.() ?? []) : []
+    writeFileSync(explainPath, `${JSON.stringify({ decision, explanations }, null, 2)}\n`)
+  }
   if (packages) {
     process.stdout.write(`${decision.scope === 'all' ? 'all' : 'affected'}\n`)
     process.stderr.write(`vinaya ci: shared packages run ${why} [${elapsed} ms]\n`)

@@ -413,6 +413,15 @@ export type WorkspacePackage = {
    */
   bunTestCompatible: boolean
   /**
+   * The native runner this package's own declared `test` script invokes, read
+   * from the script text: `bun` (`bun test`), `vitest`, `other` for any other
+   * command, `none` when no `test` script is declared. Only a `bun` or `none`
+   * package's tests ever reach {@link SelectionResult.selected}; a caller
+   * that asks for the others gets them, runner named, in
+   * {@link SelectionResult.native}.
+   */
+  testRunner?: TestRunner
+  /**
    * `exports`/`main` subpath → absolute entrypoint source file, e.g. `.` →
    * `<dir>/src/index.ts` and `./docs` → `<dir>/src/docs/index.ts`. Derived
    * purely from the package manifest (never a folder guess); a package with
@@ -428,6 +437,17 @@ export type WorkspacePackage = {
 function isBunTestScript(script: string | undefined): boolean {
   if (!script) return true
   return /(^|[\s;&|])bun\s+test\b/.test(script)
+}
+
+/** A package's native test runner, as {@link WorkspacePackage.testRunner} names it. */
+export type TestRunner = 'bun' | 'vitest' | 'other' | 'none'
+
+/** Reads the native runner a `test` script invokes ({@link WorkspacePackage.testRunner}). */
+export function testRunnerOf(script: string | undefined): TestRunner {
+  if (!script) return 'none'
+  if (isBunTestScript(script)) return 'bun'
+  if (/(^|[\s;&|])vitest(\s|$)/.test(script)) return 'vitest'
+  return 'other'
 }
 
 type PackageManifest = {
@@ -496,47 +516,137 @@ function deriveEntrypoints(dir: string, pkg: PackageManifest, knownFiles: Set<st
   return out
 }
 
-/** Reads `<repoRoot>/package.json`'s `workspaces` globs (`apps/*`, `packages/*` shape only — no other glob forms are in use in this repo) and returns every member with a real `package.json`. */
-export function discoverWorkspacePackages(repoRoot: string): WorkspacePackage[] {
-  const rootPkgPath = join(repoRoot, 'package.json')
-  let workspaces: string[] = []
+/**
+ * The root manifest's `workspaces` entries — the array form, or the `packages`
+ * array of the object form — or `null` when the manifest is missing or not
+ * JSON.
+ */
+export function readWorkspacePatterns(repoRoot: string): string[] | null {
   try {
-    const rootPkg = JSON.parse(readFileSync(rootPkgPath, 'utf8')) as { workspaces?: string[] }
-    workspaces = rootPkg.workspaces ?? []
+    const rootPkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as {
+      workspaces?: string[] | { packages?: string[] }
+    }
+    const declared = Array.isArray(rootPkg.workspaces) ? rootPkg.workspaces : (rootPkg.workspaces?.packages ?? [])
+    return declared.filter((entry): entry is string => typeof entry === 'string')
   } catch {
-    return []
+    return null
   }
-  const out: WorkspacePackage[] = []
-  for (const glob of workspaces) {
-    const m = /^([^*]+)\*$/.exec(glob)
-    if (!m) continue
-    const parentDir = join(repoRoot, (m[1] as string).replace(/\/$/, ''))
-    let entries: string[]
+}
+
+/** One workspace-pattern segment as a matcher: `*` inside a segment matches any run of characters except `/`. */
+function segmentMatcher(segment: string): (entry: string) => boolean {
+  if (!segment.includes('*')) return (entry) => entry === segment
+  const re = new RegExp(`^${segment.split('*').map(escapeForRegex).join('[^/]*')}$`)
+  return (entry) => re.test(entry)
+}
+
+function escapeForRegex(text: string): string {
+  return text.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Expands workspace patterns to the repository-relative directories they
+ * name, in declaration order and each once: a literal directory (`harness`),
+ * a glob in the last segment (`apps/*`) or in any segment
+ * (`harness/processes/*`). A `!`-prefixed pattern removes what it matches. A
+ * `**` segment is never expanded: the directories it would name stay absent,
+ * so nothing under them is modeled and every path there keeps the
+ * conservative answer.
+ */
+export function expandWorkspacePatterns(repoRoot: string, patterns: readonly string[]): string[] {
+  const expand = (pattern: string): string[] => {
+    const segments = pattern.replace(/^\.\//, '').replace(/\/+$/, '').split('/').filter(Boolean)
+    if (segments.length === 0 || segments.includes('**')) return []
+    let dirs = ['']
+    for (const segment of segments) {
+      const matches = segmentMatcher(segment)
+      const next: string[] = []
+      for (const dir of dirs) {
+        if (!segment.includes('*')) {
+          next.push(dir ? `${dir}/${segment}` : segment)
+          continue
+        }
+        let entries: string[]
+        try {
+          entries = readdirSync(join(repoRoot, dir)).sort()
+        } catch {
+          continue
+        }
+        for (const entry of entries) {
+          if (SKIP_DIRS.has(entry) || !matches(entry)) continue
+          const child = dir ? `${dir}/${entry}` : entry
+          try {
+            if (statSync(join(repoRoot, child)).isDirectory()) next.push(child)
+          } catch {}
+        }
+      }
+      dirs = next
+    }
+    return dirs
+  }
+  const out: string[] = []
+  for (const pattern of patterns) {
+    if (pattern.startsWith('!')) {
+      const removed = new Set(expand(pattern.slice(1)))
+      for (let i = out.length - 1; i >= 0; i--) if (removed.has(out[i] as string)) out.splice(i, 1)
+      continue
+    }
+    for (const dir of expand(pattern)) if (!out.includes(dir)) out.push(dir)
+  }
+  return out
+}
+
+/**
+ * The repository-relative directories of every workspace member with a real,
+ * named `package.json`, found from the root manifest's own `workspaces`
+ * entries ({@link expandWorkspacePatterns}) — never a fixed list of folders,
+ * so a member moved under a new parent (`harness/kernel`,
+ * `harness/processes/<name>`) is found the moment the manifest names it.
+ */
+export function discoverWorkspaceDirs(repoRoot: string): string[] {
+  const patterns = readWorkspacePatterns(repoRoot)
+  if (!patterns) return []
+  return expandWorkspacePatterns(repoRoot, patterns).filter((dir) => {
     try {
-      entries = readdirSync(parentDir)
+      const pkg = JSON.parse(readFileSync(join(repoRoot, dir, 'package.json'), 'utf8')) as PackageManifest
+      return typeof pkg.name === 'string' && pkg.name.length > 0
+    } catch {
+      return false
+    }
+  })
+}
+
+/**
+ * Reads `<repoRoot>/package.json`'s `workspaces` entries and returns every
+ * member with a real `package.json` ({@link discoverWorkspaceDirs}). A member
+ * nested inside another (`harness/kernel` inside `harness`) owns its own
+ * files: they are left out of the enclosing member's `sourceFiles`, so no file
+ * belongs to two packages.
+ */
+export function discoverWorkspacePackages(repoRoot: string): WorkspacePackage[] {
+  const dirs = discoverWorkspaceDirs(repoRoot).map((dir) => join(repoRoot, dir))
+  const out: WorkspacePackage[] = []
+  for (const dir of dirs) {
+    let pkg: PackageManifest
+    try {
+      pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as PackageManifest
     } catch {
       continue
     }
-    for (const entry of entries) {
-      const dir = join(parentDir, entry)
-      const pkgPath = join(dir, 'package.json')
-      let pkg: PackageManifest
-      try {
-        pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as PackageManifest
-      } catch {
-        continue
-      }
-      if (!pkg.name) continue
-      const sourceFiles = walkFiles(dir).filter((f) => SOURCE_EXTENSIONS.includes(extname(f)))
-      const knownFiles = new Set(sourceFiles)
-      out.push({
-        dir,
-        name: pkg.name,
-        bunTestCompatible: isBunTestScript(pkg.scripts?.test),
-        entrypoints: deriveEntrypoints(dir, pkg, knownFiles),
-        sourceFiles
-      })
-    }
+    if (!pkg.name) continue
+    const nested = dirs.filter((other) => other !== dir && other.startsWith(`${dir}/`))
+    const sourceFiles = walkFiles(dir).filter(
+      (f) => SOURCE_EXTENSIONS.includes(extname(f)) && !nested.some((other) => f.startsWith(`${other}/`))
+    )
+    const knownFiles = new Set(sourceFiles)
+    out.push({
+      dir,
+      name: pkg.name,
+      bunTestCompatible: isBunTestScript(pkg.scripts?.test),
+      testRunner: testRunnerOf(pkg.scripts?.test),
+      entrypoints: deriveEntrypoints(dir, pkg, knownFiles),
+      sourceFiles
+    })
   }
   return out
 }
@@ -916,6 +1026,51 @@ export type SelectionResult = {
   resolver: 'compiler' | 'text-scan'
   /** Milliseconds the compiler program build took, `0` under the text scan — reported separately because it dominates selector runtime and is the figure a push-time budget is judged against. */
   programMs: number
+  /**
+   * Why each test in {@link selected} was selected, one entry per selected
+   * file, in the same order — a separate output, so a caller of the file list
+   * reads exactly what it always read.
+   */
+  explanations: SelectionExplanation[]
+  /**
+   * Tests of packages whose native runner is not `bun test` that this diff
+   * selects, each with its runner — filled only under
+   * `nativeRunners: 'expose'`, otherwise empty. Never part of
+   * {@link selected}: a `bun test` caller never receives a file another
+   * runner owns.
+   */
+  native: { test: string; runner: TestRunner }[]
+}
+
+/**
+ * The kind of reason a test was selected:
+ *
+ * - `direct-dependency` — the test file itself changed, was added or
+ *   renamed, or one of its own imports reaches the change.
+ * - `transitive-dependency` — the change is reached through a file the test
+ *   imports only indirectly.
+ * - `declared-input` — a non-import input reached it: a scanned folder, a
+ *   scanner's declared trigger, a package's manifest, or the
+ *   repository-root configuration file.
+ * - `always-run` — `alwaysRun` names it, whatever changed.
+ * - `conservative-fallback` — an import shape the graph cannot narrow kept
+ *   the whole-package edge, and the change is somewhere in that package.
+ */
+export type SelectionReasonKind =
+  | 'direct-dependency'
+  | 'transitive-dependency'
+  | 'declared-input'
+  | 'always-run'
+  | 'conservative-fallback'
+
+/** One selected test's reason, machine-readable. Paths are repository-relative. */
+export type SelectionExplanation = {
+  test: string
+  kind: SelectionReasonKind
+  /** What fired, in words: the edge, glob or declaration. */
+  detail: string
+  /** The changed path, scanned root, package or glob the reason points at. */
+  via: string
 }
 
 export type SelectionOptions = {
@@ -1026,6 +1181,14 @@ export type SelectionOptions = {
    * full-suite CI shards and every other caller keep the default.
    */
   depth?: 'one' | 'transitive'
+  /**
+   * Whether tests of a package whose native runner is not `bun test` are
+   * also judged and reported, with their runner, in
+   * {@link SelectionResult.native} (`'expose'`), or skipped as before
+   * (`'exclude'`, the default). Either way {@link SelectionResult.selected}
+   * holds only files `bun test` can run.
+   */
+  nativeRunners?: 'exclude' | 'expose'
 }
 
 /** This repository's real CLI entrypoint, repo-root-relative — {@link SelectionOptions.cliEntrypoint}'s default. */
@@ -1383,32 +1546,75 @@ export function selectAffectedTestFiles(
 
   const anythingChanged = absChanged.size > 0 || changedPackageNames.size > 0
   const selected: string[] = []
+  const explanations: SelectionExplanation[] = []
+  const native: SelectionResult['native'] = []
   let totalTestFiles = 0
+  const rootConfig = ROOT_CONFIG_FILENAME
+
+  // Why a test is selected, or `null` when it is not. The forced reasons are
+  // tried in the order the selection always tested them, and the walk only
+  // after them, so the answer to "selected or not" is unchanged.
+  const reasonFor = (
+    pkg: WorkspacePackage,
+    test: string,
+    maxDepth: number
+  ): Omit<SelectionExplanation, 'test'> | null => {
+    const rel = test.slice(repoRoot.length + 1)
+    const glob = (options.alwaysRun ?? []).find((_, i) => alwaysRunRegexes[i]?.test(rel))
+    if (glob !== undefined) return { kind: 'always-run', detail: 'alwaysRun names this test', via: glob }
+    if (addedOrRenamed.has(test))
+      return { kind: 'direct-dependency', detail: 'the test file itself was added or renamed', via: rel }
+    if (triggeredScanners.has(test))
+      return { kind: 'declared-input', detail: "the diff is this folder-scanning test's declared trigger", via: rel }
+    if (rootConfigChanged && pkg === cliPackage) {
+      if (options.depth !== 'one')
+        return { kind: 'declared-input', detail: 'the repository-root configuration file changed', via: rootConfig }
+      const loader = reaches(`${ALL_PREFIX}${test}`, edges, configLoaderFacts, 1)
+      if (loader)
+        return {
+          kind: 'declared-input',
+          detail: 'the repository-root configuration file changed and this test reaches its loader',
+          via: rootConfig
+        }
+    }
+    if (!anythingChanged) return null
+    const reach = reaches(`${ALL_PREFIX}${test}`, edges, changeFacts, maxDepth)
+    return reach
+      ? { ...reach, via: reach.via.startsWith(`${repoRoot}/`) ? reach.via.slice(repoRoot.length + 1) : reach.via }
+      : null
+  }
 
   for (const pkg of packages) {
     const testFiles = (pkgFiles.get(pkg) as string[]).filter(isTestFile)
     totalTestFiles += testFiles.length
+    const maxDepth = options.depth === 'one' ? 1 : Number.POSITIVE_INFINITY
     // A non-bun-test-compatible package (e.g. a vitest-only package) never has
     // one of its OWN files pushed into `selected` — even a forced one, kept
-    // symmetric with the reachability path.
-    if (!pkg.bunTestCompatible) continue
+    // symmetric with the reachability path. A caller that asked for them
+    // gets them in `native`, with the runner that owns them.
+    if (!pkg.bunTestCompatible) {
+      if (options.nativeRunners !== 'expose') continue
+      const runner = pkg.testRunner ?? 'other'
+      for (const test of testFiles) if (reasonFor(pkg, test, maxDepth)) native.push({ test, runner })
+      continue
+    }
 
-    const maxDepth = options.depth === 'one' ? 1 : Number.POSITIVE_INFINITY
     for (const test of testFiles) {
-      const forced =
-        alwaysRunRegexes.some((re) => re.test(test.slice(repoRoot.length + 1))) ||
-        addedOrRenamed.has(test) ||
-        triggeredScanners.has(test) ||
-        (rootConfigChanged &&
-          pkg === cliPackage &&
-          (options.depth !== 'one' || reaches(`${ALL_PREFIX}${test}`, edges, configLoaderFacts, 1)))
-      if (forced || (anythingChanged && reaches(`${ALL_PREFIX}${test}`, edges, changeFacts, maxDepth))) {
-        selected.push(test)
-      }
+      const reason = reasonFor(pkg, test, maxDepth)
+      if (!reason) continue
+      selected.push(test)
+      explanations.push({ test: test.slice(repoRoot.length + 1), ...reason })
     }
   }
 
-  return { selected, totalTestFiles, resolver: graphTypescript ? 'compiler' : 'text-scan', programMs }
+  return {
+    selected,
+    totalTestFiles,
+    resolver: graphTypescript ? 'compiler' : 'text-scan',
+    programMs,
+    explanations,
+    native
+  }
 }
 
 /**
@@ -1443,15 +1649,22 @@ type ChangeFacts = {
  * so nothing past it is reachable. `Number.POSITIVE_INFINITY` (every caller
  * before this option existed) never trips that gate, so the walk is
  * unbounded exactly as before.
+ *
+ * The answer is the first hit's reason, or `null` when nothing is reached —
+ * truthy exactly where the walk answered `true` before it reported why. A
+ * hit among the test's own direct edges, or on a file it imports directly,
+ * is a direct dependency; one further away is transitive.
  */
 function reaches(
   start: NodeKey,
   edges: Map<NodeKey, NodeKey[]>,
   changed: ChangeFacts,
   maxDepth: number = Number.POSITIVE_INFINITY
-): boolean {
+): { kind: SelectionReasonKind; detail: string; via: string } | null {
   const visited = new Set<NodeKey>()
   const stack: Array<[NodeKey, number]> = [[start, 0]]
+  const importKind = (depth: number): SelectionReasonKind =>
+    depth === 0 ? 'direct-dependency' : 'transitive-dependency'
   while (stack.length > 0) {
     const [current, depth] = stack.pop() as [NodeKey, number]
     if (visited.has(current)) continue
@@ -1464,7 +1677,12 @@ function reaches(
       : current.startsWith(OWN_PREFIX)
         ? current.slice(OWN_PREFIX.length)
         : null
-    if (current.startsWith(ALL_PREFIX) && currentFile && changed.files.has(currentFile)) return true
+    if (current.startsWith(ALL_PREFIX) && currentFile && changed.files.has(currentFile))
+      return {
+        kind: importKind(Math.max(0, depth - 1)),
+        detail: depth === 0 ? 'the test file itself changed' : 'imports the changed file',
+        via: currentFile
+      }
     if (depth >= maxDepth) continue
     const ownPackage = currentFile ? changed.packageOfFile(currentFile) : null
     for (const dep of edges.get(current) ?? []) {
@@ -1472,30 +1690,45 @@ function reaches(
         const body = dep.slice(NAME_PREFIX.length)
         const cut = body.lastIndexOf(NAME_SEPARATOR)
         const file = body.slice(0, cut)
-        if (changed.files.has(file) && changed.affects(file, body.slice(cut + 1))) return true
+        if (changed.files.has(file) && changed.affects(file, body.slice(cut + 1)))
+          return { kind: importKind(depth), detail: `uses the changed name ${body.slice(cut + 1)}`, via: file }
         continue
       }
       if (dep.startsWith(TOUCH_PREFIX)) {
-        if (changed.files.has(dep.slice(TOUCH_PREFIX.length))) return true
+        const file = dep.slice(TOUCH_PREFIX.length)
+        if (changed.files.has(file))
+          return { kind: importKind(depth), detail: 'resolves through the changed file', via: file }
         continue
       }
       if (dep.startsWith(SCAN_PREFIX)) {
         const root = dep.slice(SCAN_PREFIX.length)
-        for (const f of changed.files) if (f === root || f.startsWith(`${root}/`)) return true
+        for (const f of changed.files)
+          if (f === root || f.startsWith(`${root}/`))
+            return { kind: 'declared-input', detail: `reads the folder ${root} from disk`, via: f }
         continue
       }
       if (dep.startsWith(EXTERNAL_PREFIX)) {
         const pkg = dep.slice(EXTERNAL_PREFIX.length)
-        if (changed.packages.has(pkg) && pkg !== ownPackage) return true
+        if (changed.packages.has(pkg) && pkg !== ownPackage)
+          return {
+            kind: 'conservative-fallback',
+            detail: 'an import shape the graph cannot narrow keeps the whole-package edge',
+            via: pkg
+          }
         continue
       }
       if (dep.startsWith(PKGMETA_PREFIX)) {
         const pkg = dep.slice(PKGMETA_PREFIX.length)
-        if (changed.nonSourcePackages.has(pkg) && pkg !== ownPackage) return true
+        if (changed.nonSourcePackages.has(pkg) && pkg !== ownPackage)
+          return {
+            kind: 'declared-input',
+            detail: 'a non-source file of a package it resolves through changed',
+            via: pkg
+          }
         continue
       }
       if (!visited.has(dep)) stack.push([dep, depth + 1])
     }
   }
-  return false
+  return null
 }
