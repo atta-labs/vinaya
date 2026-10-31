@@ -4,8 +4,8 @@
  * leaves. The runner groups below start real Bun processes; the plan and the verdicts are checked on fixtures.
  */
 import { describe, expect, it } from 'bun:test'
-import { execFileSync } from 'node:child_process'
-import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { appendFileSync, existsSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -27,7 +27,7 @@ import {
   writeJsonUnderGit
 } from '../../src/lib/pre-push-failed-tests'
 import { lookupGreenRun, type TestRunCacheRecord } from '../../src/lib/pr-report-engine'
-import { nativeRunCommand, REPOSITORY_LOCAL_RUN } from '../../src/lib/pre-push-test-runner'
+import { nativeRunCommand, parseNativeRunCommand, REPOSITORY_LOCAL_RUN } from '../../src/lib/pre-push-test-runner'
 import type { InventoryView, NativeGroup, SelectionPlan, TestIdentity } from '../../src/lib/verification/index'
 import { fixtureDir } from './test-temp-fixture'
 
@@ -537,4 +537,96 @@ describe('the generated hook hands every test-running push to the adapter', () =
     expect(run).toBeGreaterThan(select)
     expect(hook.slice(run, hook.indexOf('\nfi\n', run))).toContain('exit "$VINAYA_TEST_STATUS"')
   })
+})
+
+// ── The real adapter on a fixture clone ──────────────────────────────────────
+
+describe('the real adapter, select then run, on a fixture clone of this head', () => {
+  const env = (): NodeJS.ProcessEnv => {
+    const out: NodeJS.ProcessEnv = { ...process.env }
+    for (const key of Object.keys(out)) if (key.startsWith('GIT_')) delete out[key]
+    return out
+  }
+  // A test the shared selector always plans, so every push here runs the same small native group.
+  const BOUNDARY = 'apps/cli/tests/import-boundary.test.ts'
+  const INJECTED =
+    "import { test as injectedTest } from 'bun:test'\ninjectedTest('injected failure', () => { throw new Error('injected') })\n"
+
+  function clone() {
+    const dir = join(fixtureDir('native-adapter-'), 'repo')
+    execFileSync('git', ['clone', '-q', '--no-hardlinks', REPO_ROOT, dir], { env: env(), stdio: 'ignore' })
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+        cwd: dir,
+        env: env(),
+        encoding: 'utf8'
+      }).trim()
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    git('checkout', '-q', '-b', 'task/x/1')
+    // The clone shares this checkout's installed dependencies.
+    for (const pkg of ['.', 'apps/cli', 'packages/sources', 'packages/aeg-core', 'processes/vinaya']) {
+      const from = join(REPO_ROOT, pkg, 'node_modules')
+      if (existsSync(from) && !existsSync(join(dir, pkg, 'node_modules')))
+        symlinkSync(from, join(dir, pkg, 'node_modules'))
+    }
+    const step = (sub: 'select' | 'run') => {
+      const args =
+        sub === 'select' ? [REPOSITORY_LOCAL_RUN, 'select'] : [REPOSITORY_LOCAL_RUN, 'run', '--log', '/dev/null']
+      const run = spawnSync('bun', args, { cwd: dir, env: env(), encoding: 'utf8', timeout: 240_000 })
+      return { status: run.status ?? -1, out: `${run.stdout}${run.stderr}` }
+    }
+    return { dir, git, step }
+  }
+  const json = (dir: string, file: string) =>
+    JSON.parse(readJsonUnderGit(dir, file) as string) as Record<string, unknown> & {
+      native?: { executed: string[] }
+      selection?: { native?: NativeSelection }
+    }
+
+  it('initial green, unchanged head, refused failure and its repair: each push runs exactly its frozen native plan and records it', () => {
+    const { dir, git, step } = clone()
+    // Initial: compared with the merge base; every planned identity executed once; a passing record.
+    appendFileSync(join(dir, BOUNDARY), '// initial\n')
+    git('commit', '-qam', 'initial')
+    const select = step('select')
+    expect(select.status).toBe(0)
+    expect(select.out).toContain('compared with merge-base')
+    expect(select.out.split('\n').some((line) => line.endsWith(`/${BOUNDARY}`))).toBe(true)
+    expect(step('run').status).toBe(0)
+    const green = json(dir, LAST_PUSH_RESULT)
+    expect(green).toMatchObject({ outcome: 'passed', selectionCompleted: true, native: { completed: true } })
+    const plan = green.selection?.native as NativeSelection
+    expect([...(green.native?.executed ?? [])].sort()).toEqual([...plan.identities].sort())
+    expect(parseNativeRunCommand(plan.command as string)?.identities).toEqual(plan.identities)
+    expect(json(dir, FAILED_TESTS_RECORD)).toMatchObject({ kind: 'passed', head: git('rev-parse', 'HEAD') })
+
+    // Unchanged head: builds on the pass; only the mandatory tests remain, each run once.
+    expect(step('select').out).toContain('compared with since-green')
+    expect(step('run').status).toBe(0)
+    const again = json(dir, LAST_PUSH_RESULT)
+    const mandatory = again.selection?.native as NativeSelection
+    expect(mandatory.baseKind).toBe('since-green')
+    expect([...(again.native?.executed ?? [])].sort()).toEqual([...mandatory.identities].sort())
+
+    // A failure: refused, the failing file named and kept as the next push's obligation.
+    appendFileSync(join(dir, BOUNDARY), INJECTED)
+    git('commit', '-qam', 'break')
+    expect(step('select').status).toBe(0)
+    const refused = step('run')
+    expect(refused.status).toBe(1)
+    expect(refused.out).toContain(`failing: ${BOUNDARY}`)
+    expect(json(dir, FAILED_TESTS_RECORD)).toMatchObject({
+      failed: [expect.stringMatching(/\/apps\/cli\/tests\/import-boundary\.test\.ts$/)],
+      selectionCompleted: true
+    })
+
+    // The repair: compared with the refused head, the failed test re-run as an obligation, green again.
+    writeFileSync(join(dir, BOUNDARY), readFileSync(join(dir, BOUNDARY), 'utf8').replace(INJECTED, ''))
+    git('commit', '-qam', 'repair')
+    const repair = step('select')
+    expect(repair.out).toContain('compared with rerun')
+    expect(repair.out).toContain(`re-running unresolved failed test ${BOUNDARY}`)
+    expect(step('run').status).toBe(0)
+    expect(json(dir, LAST_PUSH_RESULT)).toMatchObject({ outcome: 'passed', native: { completed: true } })
+  }, 600_000)
 })
