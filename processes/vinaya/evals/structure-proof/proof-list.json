@@ -1,0 +1,179 @@
+{
+  "about": "The frozen halt, inspect, resume and cancel proof every structural move reruns. Each entry names one test by its file, relative to the repository root, and its full name: its describe blocks and its own name joined by ' > '. An agent-parameterized test has one entry per agent; `agent` is null for a test of the packed runtime, which drives no agent. A move that relocates or renames a listed test updates its entry here and nowhere else.",
+  "tests": [
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on claude > a refused step runs again on resume; a step that completed normally does not",
+      "agent": "claude",
+      "proves": "halt: the run stops at its missing-source pause, and the resume runs the refused step again"
+    },
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on codex > a refused step runs again on resume; a step that completed normally does not",
+      "agent": "codex",
+      "proves": "halt: the run stops at its missing-source pause, and the resume runs the refused step again"
+    },
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on claude > a poll that finds no ruling resumes nothing, and the watch ends when it is stopped",
+      "agent": "claude",
+      "proves": "inspect: the held pause state is read, and no ruling resumes nothing"
+    },
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on codex > a poll that finds no ruling resumes nothing, and the watch ends when it is stopped",
+      "agent": "codex",
+      "proves": "inspect: the held pause state is read, and no ruling resumes nothing"
+    },
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on claude > a ruling at the pause’s own ordinal is not new: only a later one resumes",
+      "agent": "claude",
+      "proves": "inspect: the pause's ruling ordinal is read, and only a later ruling resumes"
+    },
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on codex > a ruling at the pause’s own ordinal is not new: only a later one resumes",
+      "agent": "codex",
+      "proves": "inspect: the pause's ruling ordinal is read, and only a later ruling resumes"
+    },
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on claude > a ruling posted to the forge resumes the run once, from its checkpoint",
+      "agent": "claude",
+      "proves": "resume: a ruling resumes the run once, from its checkpoint"
+    },
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on codex > a ruling posted to the forge resumes the run once, from its checkpoint",
+      "agent": "codex",
+      "proves": "resume: a ruling resumes the run once, from its checkpoint"
+    },
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on claude > resuming after the code revision moved continues at the next step and records the move",
+      "agent": "claude",
+      "proves": "resume: a checkpoint written on an older revision continues at its next step"
+    },
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on codex > resuming after the code revision moved continues at the next step and records the move",
+      "agent": "codex",
+      "proves": "resume: a checkpoint written on an older revision continues at its next step"
+    },
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on claude > a cancel ends the watch with no resume",
+      "agent": "claude",
+      "proves": "cancel: a cancel ends the halted run with no resume"
+    },
+    {
+      "file": "processes/vinaya/tests/resume.test.ts",
+      "name": "a halted Engine run on codex > a cancel ends the watch with no resume",
+      "agent": "codex",
+      "proves": "cancel: a cancel ends the halted run with no resume"
+    },
+    {
+      "file": "processes/vinaya/tests/fault-injection.test.ts",
+      "name": "run control on the Engine runner, stub claude vendor > fault-attack:03-controller-process-death — a runner killed by SIGKILL at each checkpoint boundary restarts from its last checkpoint, repeating no completed step",
+      "agent": "claude",
+      "proves": "resume: a killed runner restarts from its last checkpoint and repeats no completed step"
+    },
+    {
+      "file": "processes/vinaya/tests/fault-injection.test.ts",
+      "name": "run control on the Engine runner, stub codex vendor > fault-attack:03-controller-process-death — a runner killed by SIGKILL at each checkpoint boundary restarts from its last checkpoint, repeating no completed step",
+      "agent": "codex",
+      "proves": "resume: a killed runner restarts from its last checkpoint and repeats no completed step"
+    },
+    {
+      "file": "processes/vinaya/tests/fault-injection.test.ts",
+      "name": "run control on the Engine runner, stub claude vendor > fault-attack:10-cancellation-races — a cancel and a newer ruling that arrive together end the run once, cancelled, with no resume",
+      "agent": "claude",
+      "proves": "cancel: a cancel racing a ruling ends the run once, cancelled"
+    },
+    {
+      "file": "processes/vinaya/tests/fault-injection.test.ts",
+      "name": "run control on the Engine runner, stub codex vendor > fault-attack:10-cancellation-races — a cancel and a newer ruling that arrive together end the run once, cancelled, with no resume",
+      "agent": "codex",
+      "proves": "cancel: a cancel racing a ruling ends the run once, cancelled"
+    },
+    {
+      "file": "processes/vinaya/tests/fault-injection.test.ts",
+      "name": "run control on the Engine runner, stub claude vendor > fault-attack:10-cancellation-races — a ruling whose resolution another process claimed first as a cancel resumes nothing",
+      "agent": "claude",
+      "proves": "cancel: a resolution already claimed as a cancel resumes nothing"
+    },
+    {
+      "file": "processes/vinaya/tests/fault-injection.test.ts",
+      "name": "run control on the Engine runner, stub codex vendor > fault-attack:10-cancellation-races — a ruling whose resolution another process claimed first as a cancel resumes nothing",
+      "agent": "codex",
+      "proves": "cancel: a resolution already claimed as a cancel resumes nothing"
+    },
+    {
+      "file": "processes/vinaya/tests/fault-injection.test.ts",
+      "name": "run control on the Engine runner, stub claude vendor > fault-attack:10-cancellation-races — a second SIGTERM racing the first ends the runner once and leaves no agent process",
+      "agent": "claude",
+      "proves": "cancel: a second run is cancelled while its agent works, once, and leaves no agent process"
+    },
+    {
+      "file": "processes/vinaya/tests/fault-injection.test.ts",
+      "name": "run control on the Engine runner, stub codex vendor > fault-attack:10-cancellation-races — a second SIGTERM racing the first ends the runner once and leaves no agent process",
+      "agent": "codex",
+      "proves": "cancel: a second run is cancelled while its agent works, once, and leaves no agent process"
+    },
+    {
+      "file": "apps/cli/tests/conformance/packed-runtime-public-run-control.test.ts",
+      "name": "the packed Atta runtime public run control with a caller-supplied executor > cutover-gate:gate-16 — public start runs the caller executor, halts, reads its checkpoint, and public resume continues without re-running a finished step",
+      "agent": null,
+      "proves": "halt, inspect and resume through the packed runtime's public exports"
+    },
+    {
+      "file": "apps/cli/tests/conformance/packed-runtime-public-run-control.test.ts",
+      "name": "the packed Atta runtime public run control with a caller-supplied executor > public run control cancels a second run while the caller executor is working, and no later step runs",
+      "agent": null,
+      "proves": "cancel through the packed runtime's public exports"
+    },
+    {
+      "file": "processes/vinaya/evals/structure-proof/pre-move-checkpoint.test.ts",
+      "name": "the pre-move checkpoint fixture > names the command that wrote it, and a writer commit in the history of this head",
+      "agent": null,
+      "proves": "the pre-move checkpoint's writer commit is in the history of the head"
+    },
+    {
+      "file": "processes/vinaya/evals/structure-proof/pre-move-checkpoint.test.ts",
+      "name": "the pre-move checkpoint fixture > a writer commit that is not an ancestor of the head is refused",
+      "agent": null,
+      "proves": "a fixture whose writer commit left the default branch's history is refused"
+    },
+    {
+      "file": "processes/vinaya/evals/structure-proof/pre-move-checkpoint.test.ts",
+      "name": "the pre-move checkpoint fixture > records the process and the Engine runtime it was written under, and no machine path",
+      "agent": null,
+      "proves": "the pre-move checkpoint carries its process identity and no machine path"
+    },
+    {
+      "file": "processes/vinaya/evals/structure-proof/pre-move-checkpoint.test.ts",
+      "name": "the pre-move checkpoint on claude > its rows rebuild through the runtime’s checkpointer and read back unchanged",
+      "agent": "claude",
+      "proves": "inspect: the committed checkpoint rows round-trip through the runtime's checkpointer"
+    },
+    {
+      "file": "processes/vinaya/evals/structure-proof/pre-move-checkpoint.test.ts",
+      "name": "the pre-move checkpoint on codex > its rows rebuild through the runtime’s checkpointer and read back unchanged",
+      "agent": "codex",
+      "proves": "inspect: the committed checkpoint rows round-trip through the runtime's checkpointer"
+    },
+    {
+      "file": "processes/vinaya/evals/structure-proof/pre-move-checkpoint.test.ts",
+      "name": "the pre-move checkpoint on claude > resumed with the current tree, the run continues at its next step and runs no completed step again",
+      "agent": "claude",
+      "proves": "resume: a checkpoint written before any move resumes on the current tree"
+    },
+    {
+      "file": "processes/vinaya/evals/structure-proof/pre-move-checkpoint.test.ts",
+      "name": "the pre-move checkpoint on codex > resumed with the current tree, the run continues at its next step and runs no completed step again",
+      "agent": "codex",
+      "proves": "resume: a checkpoint written before any move resumes on the current tree"
+    }
+  ]
+}
