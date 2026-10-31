@@ -29,6 +29,7 @@ import {
 import { lookupGreenRun, type TestRunCacheRecord } from '../../src/lib/pr-report-engine'
 import { nativeRunCommand, parseNativeRunCommand, REPOSITORY_LOCAL_RUN } from '../../src/lib/pre-push-test-runner'
 import type { InventoryView, NativeGroup, SelectionPlan, TestIdentity } from '../../src/lib/verification/index'
+import { stripVinayaEnv } from './process-fixture'
 import { fixtureDir } from './test-temp-fixture'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..')
@@ -542,9 +543,12 @@ describe('the generated hook hands every test-running push to the adapter', () =
 // ── The real adapter on a fixture clone ──────────────────────────────────────
 
 describe('the real adapter, select then run, on a fixture clone of this head', () => {
+  // Hermetic: a caller's git, Vinaya, push-mode or pull-request variables (a driver runs this file with its own)
+  // never reach the fixture's pushes or the tests they run.
   const env = (): NodeJS.ProcessEnv => {
-    const out: NodeJS.ProcessEnv = { ...process.env }
+    const out = stripVinayaEnv(process.env)
     for (const key of Object.keys(out)) if (key.startsWith('GIT_')) delete out[key]
+    for (const key of ['BASE_SHA', 'PR_BODY', 'BRANCH', 'CI']) delete out[key]
     return out
   }
   // A test the shared selector always plans, so every push here runs the same small native group.
@@ -552,6 +556,7 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
   const INJECTED =
     "import { test as injectedTest } from 'bun:test'\ninjectedTest('injected failure', () => { throw new Error('injected') })\n"
 
+  const transcript: string[] = []
   function clone() {
     const dir = join(fixtureDir('native-adapter-'), 'repo')
     execFileSync('git', ['clone', '-q', '--no-hardlinks', REPO_ROOT, dir], { env: env(), stdio: 'ignore' })
@@ -573,7 +578,10 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
       const args =
         sub === 'select' ? [REPOSITORY_LOCAL_RUN, 'select'] : [REPOSITORY_LOCAL_RUN, 'run', '--log', '/dev/null']
       const run = spawnSync('bun', args, { cwd: dir, env: env(), encoding: 'utf8', timeout: 240_000 })
-      return { status: run.status ?? -1, out: `${run.stdout}${run.stderr}` }
+      const out = `${run.stdout}${run.stderr}`
+      // Every step's output is kept, so a failing assertion names what the adapter printed.
+      transcript.push(`$ local-run ${sub} → ${run.status ?? run.signal}\n${out.slice(-4000)}`)
+      return { status: run.status ?? -1, out }
     }
     return { dir, git, step }
   }
@@ -584,6 +592,14 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     }
 
   it('initial green, unchanged head, refused failure and its repair: each push runs exactly its frozen native plan and records it', () => {
+    try {
+      publications()
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n\n${transcript.join('\n\n')}`)
+    }
+  }, 600_000)
+
+  function publications() {
     const { dir, git, step } = clone()
     // Initial: compared with the merge base; every planned identity executed once; a passing record.
     appendFileSync(join(dir, BOUNDARY), '// initial\n')
@@ -628,5 +644,5 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     expect(repair.out).toContain(`re-running unresolved failed test ${BOUNDARY}`)
     expect(step('run').status).toBe(0)
     expect(json(dir, LAST_PUSH_RESULT)).toMatchObject({ outcome: 'passed', native: { completed: true } })
-  }, 600_000)
+  }
 })
