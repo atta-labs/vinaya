@@ -159,15 +159,20 @@ export function groupNativeTests(input: GroupNativeTestsInput): NativeGrouping {
       return
     }
     const key = `${id}\0${configuration}`
-    if (seen.has(key) && origin === 'request') {
-      problems.push({ code: 'duplicate', path: id, detail: `requested twice under configuration ${configuration}` })
+    // A repeat is a problem wherever it came from: a request, a whole suite, or one overlapping the other.
+    if (seen.has(key)) {
+      problems.push({
+        code: 'duplicate',
+        path: id,
+        detail: `${origin === 'whole' ? 'a whole suite repeats a test' : 'requested twice'} under configuration ${configuration}`
+      })
       return
     }
-    seen.add(key)
     const groupId = `${request.suite}@${configuration}`
     const identity: TestIdentity = { ...request, id, cwd: cwd || '.' }
     const group = building.get(groupId)
     if (!group) {
+      seen.add(key)
       building.set(groupId, { first: identity, configuration, tests: new Set([id]), whole: reason ?? null })
       return
     }
@@ -180,6 +185,7 @@ export function groupNativeTests(input: GroupNativeTestsInput): NativeGrouping {
       })
       return
     }
+    seen.add(key)
     group.tests.add(id)
     if (reason && group.whole === null) group.whole = reason
   }

@@ -100,6 +100,21 @@ describe('groupNativeTests', () => {
     })
   })
 
+  test('a whole suite repeating a request, or a second whole suite, is a duplicate; a refused member is not seen', () => {
+    const whole = { suite: 'core', reason: 'reads the whole tree', identities: [CORE_A, CORE_OLD_A] }
+    const { groups, problems } = groupNativeTests({ tests: [CORE_A], wholeSuites: [whole, whole] })
+    expect(groups.map((g) => g.tests)).toEqual([['packages/core/src/a.test.ts', 'packages/core/src/old/a.test.ts']])
+    expect(problems.map((p) => `${p.code} ${p.path}`)).toEqual([
+      'duplicate packages/core/src/a.test.ts',
+      'duplicate packages/core/src/a.test.ts',
+      'duplicate packages/core/src/old/a.test.ts'
+    ])
+    const mismatched = { ...APP_B, preload: 'other.ts' }
+    const retried = groupNativeTests({ tests: [APP_A, mismatched, APP_B] })
+    expect(retried.problems.map((p) => p.code)).toEqual(['configuration-mismatch'])
+    expect(retried.groups[0]?.tests).toEqual(['packages/app/tests/a.test.ts', 'packages/app/tests/b.test.ts'])
+  })
+
   test('excludes an unselected Vitest sibling whose path contains a file argument', () => {
     const { groups } = groupNativeTests({ tests: [CORE_A], universe: [CORE_A, CORE_OLD_A, CORE_XA] })
     expect(groups[0]?.args).toEqual(['src/a.test.ts'])

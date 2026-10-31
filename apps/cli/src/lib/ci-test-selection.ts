@@ -23,8 +23,8 @@
  *     prints `affected` when the shared-packages job may narrow, else `all`.
  *   bun apps/cli/src/lib/ci-test-selection.ts --base <sha> --decision <file>
  *     writes the decision to <file> as JSON, every path repository-relative —
- *     the selected `bun test` files and, apart, the selected tests another
- *     native runner owns — for the test schedule
+ *     the selected `bun test` files, apart the selected tests another
+ *     native runner owns, and the changed paths — for the test schedule
  *     (`scripts/test-suites/schedule.ts`) to place; prints `all` or `selected`.
  *
  * Two optional flags change nothing on STDOUT: `--layout <file>` reads a
@@ -182,7 +182,7 @@ export function discoveredLayout(repoRoot: string): WorkspaceLayout {
  */
 export type CiDecision =
   | { scope: 'all'; reason: string }
-  | { scope: 'selected'; selected: readonly string[]; native?: readonly string[] }
+  | { scope: 'selected'; selected: readonly string[]; native?: readonly string[]; changed?: readonly string[] }
 
 /** The facts a decision is made from, each read by {@link readCiFacts}. */
 export type CiFacts = {
@@ -234,12 +234,23 @@ export function shardFilesToRun(repoRoot: string, shardList: readonly string[], 
 /**
  * A decision with every path repository-relative and sorted — what
  * `--decision <file>` writes for the test schedule
- * (`scripts/test-suites/schedule.ts`) to read.
+ * (`scripts/test-suites/schedule.ts`) to read. A narrowed decision also
+ * carries the changed paths, `changed`, so the schedule can run whole a
+ * suite whose own changes the selector narrows without modeling (the portal).
  */
-export function repositoryDecision(repoRoot: string, decision: CiDecision): CiDecision {
+export function repositoryDecision(
+  repoRoot: string,
+  decision: CiDecision,
+  changed: readonly string[] = []
+): CiDecision {
   if (decision.scope === 'all') return decision
   const rel = (files: readonly string[]) => files.map((file) => relative(repoRoot, file).replace(/\\/g, '/')).sort()
-  return { scope: 'selected', selected: rel(decision.selected), native: rel(decision.native ?? []) }
+  return {
+    scope: 'selected',
+    selected: rel(decision.selected),
+    native: rel(decision.native ?? []),
+    changed: [...new Set(changed)].sort()
+  }
 }
 
 function git(repoRoot: string, args: string[]): string {
@@ -329,7 +340,7 @@ function main(argv: readonly string[]): void {
     writeFileSync(explainPath, `${JSON.stringify({ decision, explanations }, null, 2)}\n`)
   }
   if (decisionPath) {
-    writeFileSync(decisionPath, `${JSON.stringify(repositoryDecision(repoRoot, decision), null, 2)}\n`)
+    writeFileSync(decisionPath, `${JSON.stringify(repositoryDecision(repoRoot, decision, facts.gitDiff), null, 2)}\n`)
     process.stdout.write(`${decision.scope}\n`)
     process.stderr.write(`vinaya ci: the selection runs ${why} [${elapsed} ms]\n`)
     return

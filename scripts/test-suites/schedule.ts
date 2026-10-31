@@ -69,6 +69,18 @@ export const WHOLE_SUITE_OWNERS: Readonly<Record<string, string>> = {
     'its tests read files across the whole repository, which the selection does not model, so it runs whole'
 }
 
+/**
+ * Suites that run whole on a pull request that changes any path under their
+ * folder, by owner, and why: the selection narrows every portal path without
+ * modeling the portal's non-TypeScript inputs (its JSON fixtures, styles,
+ * manifest and configuration), so a portal change runs the portal's whole
+ * suite, as `turbo --affected` did before this schedule.
+ */
+export const WHOLE_ON_CHANGE_OWNERS: Readonly<Record<string, string>> = {
+  '@vinaya/portal':
+    'the pull request changes a path under its folder, and the selection does not model the portal inputs, so it runs whole'
+}
+
 export type ScheduleEntry = { test: string; configuration: string; placement: Placement }
 
 export type TestSchedule = {
@@ -158,22 +170,29 @@ export function assignShards(
 export function buildTestSchedule(input: BuildTestScheduleInput): TestSchedule {
   const { view } = input
   const { assignments, problems } = assignShards(view, input.shardLists)
+  const known = new Set(view.tests.map((t) => t.id))
+  // A test the view does not hold has no owner-decided place: reported, never defaulted to a shard.
+  const held = (identity: TestIdentity): boolean => {
+    if (known.has(identity.id)) return true
+    problems.push({ code: 'extra', path: identity.id, detail: 'selected but not a test the inventory holds' })
+    return false
+  }
   const placeOf = (identity: TestIdentity): Placement => {
     if (identity.kind === 'repository') return 'build'
-    if (isShardRun(identity)) return `shard-${assignments[identity.id] ?? 1}`
+    if (isShardRun(identity)) return `shard-${assignments[identity.id] as number}`
     return 'shared'
   }
   const requests = new Map<Placement, NativeTestRequest[]>()
   const wholes = new Map<Placement, WholeSuiteRequest[]>()
   const push = <T>(map: Map<Placement, T[]>, place: Placement, value: T) =>
     map.set(place, [...(map.get(place) ?? []), value])
-  for (const request of input.selected) push(requests, placeOf(request), request)
+  for (const request of input.selected) if (held(request)) push(requests, placeOf(request), request)
   for (const whole of input.wholeSuites ?? []) {
-    const shardRun = whole.identities.filter(isShardRun)
+    const shardRun = whole.identities.filter((identity) => isShardRun(identity) && held(identity))
     // Bun takes exact file arguments, so a shard-run suite is never run whole: it is split like any selection.
     for (const identity of shardRun)
       push(requests, placeOf(identity), { ...identity, configuration: whole.configuration ?? DEFAULT_CONFIGURATION })
-    const rest = whole.identities.filter((identity) => !isShardRun(identity))
+    const rest = whole.identities.filter((identity) => !isShardRun(identity) && held(identity))
     if (rest.length > 0) push(wholes, placeOf(rest[0] as TestIdentity), { ...whole, identities: rest })
   }
 
@@ -217,7 +236,12 @@ export function checkSchedule(schedule: TestSchedule, expected: readonly NativeT
   const placed = new Map<string, number>()
   for (const entry of schedule.accounting)
     placed.set(key(entry.test, entry.configuration), (placed.get(key(entry.test, entry.configuration)) ?? 0) + 1)
-  const wanted = new Set(expected.map((r) => key(r.id, r.configuration ?? DEFAULT_CONFIGURATION)))
+  const wanted = new Set<string>()
+  for (const r of expected) {
+    const k = key(r.id, r.configuration ?? DEFAULT_CONFIGURATION)
+    if (wanted.has(k)) problems.push({ code: 'duplicate', path: k, detail: 'expected twice' })
+    wanted.add(k)
+  }
   for (const [k, count] of placed) {
     if (!wanted.has(k)) problems.push({ code: 'extra', path: k, detail: 'scheduled but not expected' })
     else if (count > 1) problems.push({ code: 'duplicate', path: k, detail: `scheduled ${count} times` })
@@ -267,7 +291,16 @@ export function ciScheduleInput(
   const ids = [...new Set([...decision.selected, ...(decision.native ?? [])])].sort()
   const unknown = ids.find((id) => !byId.has(id))
   if (unknown) return everything(`the selection names ${unknown}, which the test inventory does not hold`)
-  const whole = wholeSuites((owner) => WHOLE_SUITE_OWNERS[owner])
+  const changed = decision.changed ?? []
+  const whole = [
+    ...wholeSuites((owner) => WHOLE_SUITE_OWNERS[owner]),
+    ...view.suites.flatMap((suite) => {
+      const why = WHOLE_ON_CHANGE_OWNERS[suite.owner]
+      const prefix = suite.dir === '.' ? '' : `${suite.dir}/`
+      if (why === undefined || !changed.some((path) => path.startsWith(prefix))) return []
+      return [{ suite: suite.id, reason: why, identities: view.tests.filter((t) => t.suite === suite.id) }]
+    })
+  ]
   const wholeIds = new Set(whole.flatMap((w) => w.identities.map((t) => t.id)))
   const roots = view.tests.filter((t) => t.kind === 'repository')
   const selected = [...new Set([...ids.map((id) => byId.get(id) as TestIdentity), ...roots])].filter(
@@ -339,7 +372,9 @@ export function runnerCommand(group: NativeGroup, report: string): string[] {
     ]
   }
   return [
+    // The installed, lockfile-pinned Vitest only: a folder that cannot resolve one fails, never downloads one.
     'bunx',
+    '--no-install',
     'vitest',
     'run',
     '--reporter=default',

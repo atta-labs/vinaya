@@ -227,6 +227,18 @@ describe('local grouping and CI placement take the same identity set', () => {
     expect(checkSchedule(schedule, requests).map((p) => p.code)).toEqual(['missing', 'missing'])
     const doubled = buildTestSchedule({ view, selected: [...requests, cliTest], shardLists })
     expect(doubled.problems.map((p) => `${p.code} ${p.path}`)).toEqual([`duplicate ${cliTest.id}`])
+    // An expectation listing a test twice is itself a repeat, never folded into one.
+    const once = buildTestSchedule({ view, selected: requests, shardLists })
+    expect(checkSchedule(once, [...requests, cliTest]).map((p) => `${p.code} ${p.path}`)).toEqual([
+      `duplicate ${cliTest.id}@default`
+    ])
+  })
+
+  test('a selected identity the inventory does not hold is reported, never defaulted to a shard', () => {
+    const stray: TestIdentity = { ...cliTest, id: 'apps/cli/tests/not-in-the-inventory.test.ts' }
+    const schedule = buildTestSchedule({ view, selected: [stray], shardLists })
+    expect(schedule.problems.map((p) => `${p.code} ${p.path}`)).toEqual([`extra ${stray.id}`])
+    expect(schedule.accounting).toEqual([])
   })
 })
 
@@ -242,6 +254,30 @@ describe('what a CI run schedules', () => {
     )
     expect(input.wholeSuites.map((w) => [w.suite, w.reason.includes('whole repository')])).toEqual([['aeg-core', true]])
     expect(input.wholeSuites[0]?.identities).toHaveLength(view.tests.filter((t) => t.suite === 'aeg-core').length)
+  })
+
+  test('a non-TypeScript portal change runs the whole portal suite, which a selection there never narrows', () => {
+    const portal = view.tests.filter((t) => t.owner === '@vinaya/portal').map((t) => t.id)
+    expect(portal.length).toBeGreaterThan(0)
+    const decision = {
+      scope: 'selected' as const,
+      selected: [],
+      native: [],
+      changed: ['apps/vinaya-portal/src/cms/utils/theme-corpus.fixture.json']
+    }
+    const input = ciScheduleInput(view, decision)
+    const whole = input.wholeSuites.find((w) => w.suite === 'portal')
+    expect(whole?.reason).toContain('changes a path under its folder')
+    expect(whole?.identities.map((t) => t.id).sort()).toEqual([...portal].sort())
+    const schedule = buildTestSchedule({ view, shardLists, ...input })
+    expect(checkSchedule(schedule, expectedOf(input))).toEqual([])
+    expect(schedule.placements.shared?.find((g) => g.suite === 'portal')).toMatchObject({ scope: 'suite', args: [] })
+    expect(schedule.accounting.filter((e) => portal.includes(e.test)).map((e) => e.placement)).toEqual(
+      portal.map(() => 'shared')
+    )
+    // A change outside the portal leaves it to the selection.
+    const elsewhere = ciScheduleInput(view, { ...decision, changed: ['apps/cli/src/lib/config.ts'] })
+    expect(elsewhere.wholeSuites.map((w) => w.suite)).toEqual(['aeg-core'])
   })
 
   test('an unknown input runs everything, with its reason; so does a selected path the inventory does not hold', () => {
@@ -355,6 +391,8 @@ describe('real runners execute exactly their group', () => {
     expect(vitestGroup.exclude).toEqual(['legacy/src/run.test.ts'])
     expect(runnerCommand(bunGroup, 'r.xml')).toContain('--timeout=30000')
     expect(runnerCommand(bunGroup, 'r.xml')).not.toContain('--parallel')
+    // Only the installed Vitest: a folder that cannot resolve one fails rather than downloading one.
+    expect(runnerCommand(vitestGroup, 'r.json').slice(0, 3)).toEqual(['bunx', '--no-install', 'vitest'])
     const result = runGroups(root, exact, quiet)
     expect(result.failedRunners).toEqual([])
     expect(result.problems).toEqual([])

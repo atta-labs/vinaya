@@ -218,21 +218,36 @@ describe('the CI selection after the move', () => {
 
   test('a relevant CLI change still selects the moved driver test, in its process-owned shard', () => {
     const decision = repo.decide({ 'apps/cli/src/lib/shared.ts': 'export const shared = () => 10\n' })
-    expect(decision).toEqual({ scope: 'selected', selected: [NEW_TEST], native: [] })
+    expect(decision).toEqual({
+      scope: 'selected',
+      selected: [NEW_TEST],
+      native: [],
+      changed: ['apps/cli/src/lib/shared.ts']
+    })
     const schedule = scheduleOf(files, decision)
     expect(placeOf(schedule, NEW_TEST)).toBe(`shard-${schedule.assignments[NEW_TEST]}`)
   }, 60_000)
 
   test('a relevant kernel change selects it with the kernel test', () => {
     const decision = repo.decide({ 'harness/src/gate.ts': 'export const gate = () => 30\n' })
-    expect(decision).toEqual({ scope: 'selected', selected: ['harness/tests/gate.test.ts', NEW_TEST], native: [] })
+    expect(decision).toEqual({
+      scope: 'selected',
+      selected: ['harness/tests/gate.test.ts', NEW_TEST],
+      native: [],
+      changed: ['harness/src/gate.ts']
+    })
     const schedule = scheduleOf(files, decision)
     expect(schedule.accounting.map((e) => e.test)).toEqual(['harness/tests/gate.test.ts', NEW_TEST])
   }, 60_000)
 
   test('an unrelated CLI change does not run the process suite for its development dependency', () => {
     const decision = repo.decide({ 'apps/cli/src/lib/other.ts': 'export const other = () => 20\n' })
-    expect(decision).toEqual({ scope: 'selected', selected: ['apps/cli/tests/other.test.ts'], native: [] })
+    expect(decision).toEqual({
+      scope: 'selected',
+      selected: ['apps/cli/tests/other.test.ts'],
+      native: [],
+      changed: ['apps/cli/src/lib/other.ts']
+    })
     const schedule = scheduleOf(files, decision)
     const owners = Object.values(schedule.placements).flatMap((groups) => (groups ?? []).map((g) => g.owner))
     expect(owners).toEqual(['@attalabs/vinaya'])

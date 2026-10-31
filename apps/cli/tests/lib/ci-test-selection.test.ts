@@ -342,7 +342,12 @@ describe('eligibility follows the workspace members discovery finds', () => {
     git('commit', '-qam', 'change')
     expect(decide()).toEqual({
       stdout: 'selected\n',
-      written: { scope: 'selected', selected: ['packages/a/tests/a.test.ts'], native: ['packages/v/src/v.test.ts'] }
+      written: {
+        scope: 'selected',
+        selected: ['packages/a/tests/a.test.ts'],
+        native: ['packages/v/src/v.test.ts'],
+        changed: ['packages/a/src/a.ts']
+      }
     })
     // A path the selector cannot judge runs everything, and says why.
     write('packages/v/vitest.config.ts', 'export default {}\n')

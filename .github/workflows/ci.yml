@@ -21,22 +21,27 @@
 # outside the portal and `.changeset/` other than a TypeScript file in a
 # package's own `src/` or `tests/` — a spec, a fixture, JSON, a workflow, a
 # script, the test preload — runs everything as `main` does, with the reason
-# printed (`apps/cli/src/lib/ci-test-selection.ts`). The root-config probe job
-# always runs whole shard lists.
+# printed (`apps/cli/src/lib/ci-test-selection.ts`). A pull request that
+# changes any portal path runs the portal's whole suite, since the selector
+# does not model the portal's non-TypeScript inputs. The root-config probe
+# job always runs whole shard lists.
 #
 # The apps/cli suite (by far the largest — on the order of 350 files and
 # several thousand tests) is sharded across six jobs (`test-cli`, a
-# `matrix.shard` of 1..6), each running an explicit, pre-measured-balanced
-# file list (`apps/cli/tests/ci-shards/shard-<n>.txt`, one path per line,
-# `apps/cli/tests/ci-shards.test.ts` proving the six lists union to
-# exactly the files on disk, none dropped or duplicated) — never a directory
-# split, which would concentrate this suite's few genuinely slow files
-# (`dispatch.test.ts`, `quickstart.test.ts`, `demo.test.ts`) whichever
+# `matrix.shard` of 1..6), each running an explicit file list, balanced by
+# hand when it was measured (`apps/cli/tests/ci-shards/shard-<n>.txt`, one
+# path per line, `apps/cli/tests/ci-shards.test.ts` proving the six lists
+# union to exactly the files on disk, none dropped or duplicated) — never a
+# directory split, which would concentrate this suite's few genuinely slow
+# files (`dispatch.test.ts`, `quickstart.test.ts`, `demo.test.ts`) whichever
 # directory happens to hold them, defeating the balance a shard exists to
 # provide. The kernel's and the process's Bun tests join the same six jobs,
-# each assigned by its identity to the shard with the fewest files. `aggregate` is the one job branch protection should require: it
-# depends on every other job here and is the sole "Vinaya CI" name, so
-# sharding the work never means sharding the required check.
+# balanced by file count, not by duration: each, in identity order, goes to
+# the shard with the fewest files.
+#
+# `aggregate` is the one job branch protection should require: it depends on
+# every other job here and is the sole "Vinaya CI" name, so sharding the work
+# never means sharding the required check.
 name: CI
 
 on:
@@ -346,7 +351,8 @@ jobs:
       # repository's test selector picks for the diff against the base
       # (`apps/cli/src/lib/ci-test-selection.ts --decision`), plus
       # `@attalabs/aeg-core` whole, since its tests read files across the
-      # whole repository and the selector does not model them. Any changed
+      # whole repository and the selector does not model them, and the
+      # portal whole when the diff changes any path under it. Any changed
       # path the selector cannot judge, an unresolved base or a failed
       # selection runs everything, with the reason printed. A push to `main`
       # skips this step and runs everything in the next one. Each runner's
