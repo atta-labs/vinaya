@@ -53,3 +53,4 @@ tests/backend-rollback.test.ts
 tests/conformance/dev-review-backend-selection.test.ts
 tests/lib/pre-push-test-runner.test.ts
 src/lib/verification/tests/native.test.ts
+tests/lib/ci-job-oracle.test.ts

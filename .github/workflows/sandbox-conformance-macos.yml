@@ -1,0 +1,121 @@
+# The sandbox conformance suite on a macOS runner — advisory. Hand-written,
+# like `ci.yml`, whose Linux job runs the same suite: confinement is
+# platform-specific security behavior, and the Linux job cannot exercise the
+# macOS sandbox (Seatbelt).
+#
+# It runs exactly as it did inside `ci.yml`: on every pull request and every
+# push to `main`, the same steps, the suite's own skip rule — on a pull
+# request whose diff changes none of the suite's inputs it runs no command in
+# either sandbox and passes in seconds. It is advisory, outside the CI plan
+# (`scripts/ci/impact-plan.ts`) and the `Vinaya CI` aggregate: in its own
+# workflow, so the CI run the review loop reads completes without it while a
+# macOS runner queues, and its suite's failure is recorded in the job summary
+# without failing the job (`apps/cli/specs/self-hosting.md`).
+name: Sandbox conformance (macOS)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+# Like `ci.yml`: a superseded pull-request push's run is cancelled; each
+# default-branch commit keeps its own.
+concurrency:
+  group: sandbox-macos-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  sandbox-conformance-macos:
+    name: Sandbox conformance (macOS)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      # The repository's own checks need gitleaks, as on a Developer's Mac.
+      - name: Install the checks' own tool
+        run: brew install gitleaks
+      - name: Run the suite under both sandboxes
+        id: macos-suite
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VINAYA_SANDBOX_CONFORMANCE: '1'
+        working-directory: apps/cli
+        run: bun test --timeout=900000 tests/sandbox-conformance/sandbox-conformance.test.ts
+      - name: Record the advisory suite result
+        if: ${{ !cancelled() }}
+        env:
+          OUTCOME: ${{ steps.macos-suite.outcome }}
+        run: |
+          echo "vinaya-advisory: Sandbox conformance (macOS) ended $OUTCOME; advisory, outside the CI plan and Vinaya CI"
+          echo "Sandbox conformance (macOS) — advisory: the suite ended \`$OUTCOME\`; it never blocks \`Vinaya CI\`." >> "$GITHUB_STEP_SUMMARY"
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
+      # Temporary: shows which limit refused a read, from the response headers.
+      - name: Print the limits of this job's GitHub reads
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          probe() {
+            label=$1
+            shift
+            code=0
+            raw=$("$@" 2>/dev/null) || code=$?
+            printf '%s\n' "$raw" | tr -d '\r' | awk -v label="$label" -v code="$code" '
+              NR == 1 && /^HTTP/ { status = $2; next }
+              inbody { body = body $0; next }
+              $0 == "" { inbody = 1; next }
+              {
+                i = index($0, ":")
+                if (i > 0) {
+                  v = substr($0, i + 1)
+                  gsub(/[^A-Za-z0-9_.,-]/, "", v)
+                  h[tolower(substr($0, 1, i - 1))] = v
+                }
+              }
+              function val(k) { return (k in h && h[k] != "") ? h[k] : "-" }
+              END {
+                types = ""
+                rest = body
+                if (body ~ /"errors"/) {
+                  while (match(rest, /"type":"[A-Z_]+"/)) {
+                    types = (types == "" ? "" : types ",") substr(rest, RSTART + 8, RLENGTH - 9)
+                    rest = substr(rest, RSTART + RLENGTH)
+                  }
+                }
+                refused = (code != 0 || types ~ /RATE_LIMITED/) ? "yes" : "no"
+                out = label " exit=" code " status=" (status == "" ? "-" : status)
+                out = out " limit=" val("x-ratelimit-limit") " used=" val("x-ratelimit-used")
+                out = out " remaining=" val("x-ratelimit-remaining") " reset=" val("x-ratelimit-reset")
+                out = out " resource=" val("x-ratelimit-resource")
+                if ("retry-after" in h) out = out " retry_after=" val("retry-after")
+                if (label == "graphql") out = out " errors=" (types == "" ? "-" : types)
+                print out " refused=" refused
+              }'
+          }
+          gql=$(probe graphql gh api -i graphql -f query='query { rateLimit { limit cost used remaining resetAt } }') || true
+          rest=$(probe rest gh api -i "repos/$GITHUB_REPOSITORY") || true
+          echo "vinaya-limits: $gql | $rest"
+          exit 0

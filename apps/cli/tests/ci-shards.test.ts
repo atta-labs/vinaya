@@ -133,7 +133,8 @@ describe('the repository CI workflow', () => {
     const run = (job: string, step: string) => jobs[job]?.steps?.find((s) => s.name === step)?.run ?? ''
     const shard = `--placement shard-${GITHUB_EXPRESSION} matrix.shard }}`
     const prShard = run('test-cli', `Test shard ${GITHUB_EXPRESSION} matrix.shard }}'s selected files`)
-    expect(prShard).toContain('ci-test-selection.ts --base "$PULL_REQUEST_BASE" --decision "$DECISION"')
+    // The decision is the build job's CI plan, never a selection the shard runs itself.
+    expect(prShard).toContain('printf \'%s\\n\' "$CI_PLAN_DECISION" > "$DECISION"')
     expect(prShard).toContain(`schedule.ts --run ${shard} --decision "$DECISION"`)
     expect(run('test-cli', `Test shard ${GITHUB_EXPRESSION} matrix.shard }}`)).toContain(
       `schedule.ts --run ${shard} --full`

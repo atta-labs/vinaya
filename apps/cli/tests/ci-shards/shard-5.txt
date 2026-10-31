@@ -52,3 +52,4 @@ tests/lib/test-temp.test.ts
 tests/lib/process-registry.test.ts
 tests/lib/follow-view.test.ts
 tests/verify-published-lifecycle-coverage.test.ts
+tests/lib/ci-impact-plan.test.ts

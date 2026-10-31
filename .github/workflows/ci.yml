@@ -13,18 +13,22 @@
 #
 # A push to `main` runs everything: every shard's whole schedule, every
 # package and sandbox conformance, so a test a pull request's selection
-# missed still runs once the pull request merges. A pull request runs only
-# what its diff can affect: the repository's test selector picks the tests
-# for the diff against the base, and each place runs the picked files it
-# holds, plus `@attalabs/aeg-core` whole. The selector sees TypeScript imports
-# and declared folder scans only, so a pull request that changes anything
-# outside the portal and `.changeset/` other than a TypeScript file in a
-# package's own `src/` or `tests/` — a spec, a fixture, JSON, a workflow, a
-# script, the test preload — runs everything as `main` does, with the reason
-# printed (`apps/cli/src/lib/ci-test-selection.ts`). A pull request that
-# changes any portal path runs the portal's whole suite, since the selector
-# does not model the portal's non-TypeScript inputs. The root-config probe
-# job always runs whole shard lists.
+# missed still runs once the pull request merges. A pull request runs what
+# its change requires, decided once by one CI plan the build job computes
+# (`scripts/ci/impact-plan.ts`, `apps/cli/specs/self-hosting.md`): the tests
+# the shared selection library requires for the diff between the base and
+# the tested merge commit, over the canonical test inventory — imports,
+# declared inputs (fixtures, docs, configuration, workflow), folder scans,
+# spawned programs, preloads, runner and lockfile inputs, with a named
+# fallback for an input it cannot model — plus the always-run list and the
+# repository suite as stated obligations. The same plan decides which
+# packages to typecheck, which files to lint, and whether the root-config
+# probe and the Linux sandbox suite run; each place runs the planned files it
+# holds, plus `@attalabs/aeg-core` whole and the portal whole when the change
+# touches it. The base commit's own guard (`scripts/ci/base-guard.ts`) runs
+# everything when the change touches the planner, the inventory, the
+# selection library, the schedule, a runner configuration or this workflow.
+# The root-config probe job always runs whole shard lists.
 #
 # The apps/cli suite (by far the largest — on the order of 350 files and
 # several thousand tests) is sharded across six jobs (`test-cli`, a
@@ -74,9 +78,21 @@ jobs:
   build:
     name: Build, lint & typecheck
     runs-on: ubuntu-latest
+    # The CI plan's decisions, read by every later job and by `aggregate`.
     outputs:
       docs_only: ${{ steps.docs-only.outputs.docs_only }}
-      config_changed: ${{ steps.docs-only.outputs.config_changed }}
+      config_changed: ${{ steps.plan.outputs.config_changed }}
+      plan_identity: ${{ steps.plan.outputs.plan_identity }}
+      plan_valid: ${{ steps.plan.outputs.plan_valid }}
+      plan_scope: ${{ steps.plan.outputs.plan_scope }}
+      plan_head: ${{ steps.plan.outputs.plan_head }}
+      plan_tested: ${{ steps.plan.outputs.plan_tested }}
+      guard_verdict: ${{ steps.plan.outputs.guard_verdict }}
+      required_jobs: ${{ steps.plan.outputs.required_jobs }}
+      sandbox: ${{ steps.plan.outputs.sandbox }}
+      decision: ${{ steps.plan.outputs.decision }}
+      shadow_state: ${{ steps.plan.outputs.shadow_state }}
+      shadow_jobs: ${{ steps.plan.outputs.shadow_jobs }}
     permissions:
       contents: read
       issues: read
@@ -95,11 +111,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # O4: a diff touching only `**/*.md`, `.changeset/**`, and
-      # `aeg-root/**` doc files skips lint/typecheck/test below (never the
-      # CLI build/upload two steps down, which every PR's `vinaya-checks.yml`
-      # depends on regardless). Reports a real "true" on this job's own check
-      # run rather than a `skipped` job — this job's `if:` is never false.
+      # Whether a diff touches only `**/*.md`, `.changeset/**`, and
+      # `aeg-root/**` doc files — reported in this job's summary. What lint
+      # and typecheck run is the CI plan's, below. Reports a real "true" on
+      # this job's own check run rather than a `skipped` job — this job's
+      # `if:` is never false.
       - name: Detect docs-only diff
         id: docs-only
         env:
@@ -111,7 +127,6 @@ jobs:
           # lint, typecheck, every test shard, and sandbox conformance.
           if [ "${{ github.event_name }}" = "push" ]; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
-            echo "config_changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD)
@@ -120,17 +135,6 @@ jobs:
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           else
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
-          fi
-          # O1/O3: whether this PR's diff touches the ROOT vinaya.config.json
-          # exactly — never a `vinaya.config.json` written inside a fixture
-          # directory, the same one-path discrimination the pre-push test
-          # selector applies (apps/cli/specs/self-hosting.md). Gates the
-          # `test-cli-config-anchor` job below; false for every other PR, so
-          # those run exactly as before.
-          if echo "$CHANGED" | grep -qxF 'vinaya.config.json'; then
-            echo "config_changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "config_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
       # The doctor step below runs the built CLI with `node` on the runner's
@@ -156,6 +160,48 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # The CI plan (`scripts/ci/impact-plan.ts`): one plan bound to the base,
+      # the approved pull-request head and the tested merge commit, deciding
+      # what lint, typecheck, every test job and the conditional jobs run, and
+      # checking with the real schedule that every planned test is placed
+      # exactly once. Inside this job, so no job waits on another stage.
+      #
+      # The guard is the BASE commit's own `scripts/ci/base-guard.ts`, never
+      # this pull request's: a change to the planner, the inventory, the
+      # selection library, the schedule, a runner configuration or this
+      # workflow runs everything, and no candidate code can exempt itself.
+      # A base with no guard, or a guard that fails, gives no verdict, and no
+      # verdict runs everything. This workflow is the pull request's own file,
+      # so it cannot authenticate itself: the backstops for an edit to it are
+      # the independent review, the full run of every default-branch commit
+      # and the review loop's head-bound read of `Vinaya CI`. A push to
+      # `main` plans everything, and also a shadow pull-request plan for
+      # `aggregate` to compare failures against.
+      - name: Build this pull request's CI plan
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TESTED_SHA: ${{ github.sha }}
+        run: |
+          PLAN_DIR="$RUNNER_TEMP/ci-plan"
+          mkdir -p "$PLAN_DIR"
+          GUARD="$PLAN_DIR/guard.json"
+          SHADOW=""
+          if [ "$EVENT" = "pull_request" ]; then
+            if git show "$BASE_SHA:scripts/ci/base-guard.ts" > "$PLAN_DIR/base-guard.ts" 2>/dev/null; then
+              # From its own folder, so no configuration the pull request commits
+              # (a `bunfig.toml` preload) loads into the process that judges it.
+              (cd "$PLAN_DIR" && bun ./base-guard.ts --repo "$GITHUB_WORKSPACE" --base "$BASE_SHA" --head "$TESTED_SHA") > "$GUARD" || rm -f "$GUARD"
+            else
+              echo "The base commit holds no guard; everything runs." >&2
+            fi
+          else
+            SHADOW="--shadow"
+          fi
+          bun scripts/ci/impact-plan.ts --event "$EVENT" --base "$BASE_SHA" --head "$HEAD_SHA" --tested "$TESTED_SHA" --guard "$GUARD" $SHADOW --out-dir "$PLAN_DIR" --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Build the Vinaya CLI
         run: bun run --cwd apps/cli build
@@ -207,13 +253,36 @@ jobs:
       # No `--write` here. CI reports; the contributor fixes with
       # `bunx biome check --write .` locally. A CI job that rewrites the tree
       # would be pushing to a PR branch, which is not this gate's job.
+      #
+      # The plan decides the scope: the changed files Biome checks, every file
+      # when its configuration or installation changed, none when no changed
+      # file is one it checks.
       - name: Lint and format
-        if: steps.docs-only.outputs.docs_only != 'true'
-        run: bunx biome check .
+        if: steps.plan.outputs.lint_scope != 'skip'
+        env:
+          LINT_SCOPE: ${{ steps.plan.outputs.lint_scope }}
+        run: |
+          if [ "$LINT_SCOPE" = "all" ]; then
+            bunx biome check .
+          else
+            xargs -d '\n' bunx biome check --files-ignore-unknown=true --no-errors-on-unmatched < "$RUNNER_TEMP/ci-plan/lint-files.txt"
+          fi
 
+      # The plan decides the packages: each one whose type program can see a
+      # changed file, through a manifest dependency or a relative import
+      # across its folder; `turbo` adds each one's `^typecheck`
+      # prerequisites. Every package when a root manifest, the lockfile, the
+      # task graph or a root compiler configuration changed.
       - name: Typecheck
-        if: steps.docs-only.outputs.docs_only != 'true'
-        run: bunx turbo typecheck
+        if: steps.plan.outputs.typecheck_scope != 'skip'
+        env:
+          TYPECHECK_SCOPE: ${{ steps.plan.outputs.typecheck_scope }}
+        run: |
+          if [ "$TYPECHECK_SCOPE" = "all" ]; then
+            bunx turbo typecheck
+          else
+            bunx turbo typecheck $(sed 's/^/--filter=/' "$RUNNER_TEMP/ci-plan/typecheck-packages.txt")
+          fi
 
       - name: Docs-only skip report
         if: steps.docs-only.outputs.docs_only == 'true'
@@ -251,7 +320,8 @@ jobs:
       # When this job failed, print its own token budgets on one line for
       # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
       # The same step ends every job in this file; the limits step after it
-      # follows it in the build and sandbox jobs.
+      # follows it in the build and Linux sandbox jobs, and in the advisory
+      # macOS workflow (`sandbox-conformance-macos.yml`).
       - name: Report this job's GitHub token budget
         if: failure()
         env:
@@ -348,28 +418,27 @@ jobs:
       # package folder, one after another — the ordering `--concurrency=1`
       # gave this job before, since running suites at once starved
       # subprocess-spawning tests. On a pull request, only the files the
-      # repository's test selector picks for the diff against the base
-      # (`apps/cli/src/lib/ci-test-selection.ts --decision`), plus
-      # `@attalabs/aeg-core` whole, since its tests read files across the
-      # whole repository and the selector does not model them, and the
-      # portal whole when the diff changes any path under it. Any changed
-      # path the selector cannot judge, an unresolved base or a failed
-      # selection runs everything, with the reason printed. A push to `main`
-      # skips this step and runs everything in the next one. Each runner's
-      # own report must name exactly the files it was given.
+      # build job's CI plan requires, plus `@attalabs/aeg-core` whole, since
+      # its tests read files across the whole repository and the selection
+      # does not model them, and the portal whole when the diff changes any
+      # path under it. A plan that runs everything says why. A job given no
+      # plan, or a plan for another tree, refuses. A push to `main` skips this
+      # step and runs everything in the next one. Each runner's own report
+      # must name exactly the files it was given.
       - name: Test the packages the pull request affects
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+          CI_PLAN_DECISION: ${{ needs.build.outputs.decision }}
+          CI_PLAN_TESTED: ${{ needs.build.outputs.plan_tested }}
         run: |
-          DECISION="$RUNNER_TEMP/selection.json"
-          # The selection reads only local git, so it runs without the job token.
-          if ! env -u GH_TOKEN bun apps/cli/src/lib/ci-test-selection.ts --base "$PULL_REQUEST_BASE" --decision "$DECISION"; then
-            echo "The selection failed; every shared package runs every test." >&2
-            echo '{ "scope": "all", "reason": "the selection failed" }' > "$DECISION"
+          DECISION="$RUNNER_TEMP/decision.json"
+          if [ -z "$CI_PLAN_DECISION" ] || [ "$CI_PLAN_TESTED" != "$(git rev-parse HEAD)" ]; then
+            echo "This job has no CI plan for the tree it checked out; it refuses." >&2
+            exit 1
           fi
-          unset PULL_REQUEST_BASE
+          printf '%s\n' "$CI_PLAN_DECISION" > "$DECISION"
+          unset CI_PLAN_DECISION CI_PLAN_TESTED
           bun scripts/test-suites/schedule.ts --run --placement shared --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY"
       - name: Test
         if: github.event_name != 'pull_request'
@@ -429,31 +498,30 @@ jobs:
       # preload and the `--timeout=30000` its package's script passes — one
       # group after another, never Bun's parallel workers. The step summary
       # names each group's owner and folder. On a pull request, only the
-      # files the repository's test selector picks for the diff against the
-      # base, walked to its full transitive depth
-      # (`apps/cli/src/lib/ci-test-selection.ts --decision`). A changed path
-      # the selector cannot judge, an unresolved base or a failed selection
-      # runs this shard's whole schedule instead, with the reason printed. A
-      # group with nothing selected starts no runner, and a shard with
-      # nothing selected runs nothing and passes. Each runner's own report
-      # must name exactly the files it was given. A push to `main` skips this
-      # step and runs the whole schedule in the next one.
+      # files the build job's CI plan requires, walked to the selection's
+      # full transitive depth; a plan that runs everything runs this shard's
+      # whole schedule, with the reason printed. A job given no plan, or a
+      # plan for another tree, refuses. A group with nothing selected starts
+      # no runner, and a shard with nothing selected runs nothing and passes.
+      # Each runner's own report must name exactly the files it was given. A
+      # push to `main` skips this step and runs the whole schedule in the
+      # next one.
       - name: Test shard ${{ matrix.shard }}'s selected files
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+          CI_PLAN_DECISION: ${{ needs.build.outputs.decision }}
+          CI_PLAN_TESTED: ${{ needs.build.outputs.plan_tested }}
         run: |
-          DECISION="$RUNNER_TEMP/selection.json"
-          # The selection reads only local git, so it runs without the job token.
-          if ! env -u GH_TOKEN bun apps/cli/src/lib/ci-test-selection.ts --base "$PULL_REQUEST_BASE" --decision "$DECISION"; then
-            echo "The selection failed; this shard runs its whole list." >&2
-            echo '{ "scope": "all", "reason": "the selection failed" }' > "$DECISION"
+          DECISION="$RUNNER_TEMP/decision.json"
+          if [ -z "$CI_PLAN_DECISION" ] || [ "$CI_PLAN_TESTED" != "$(git rev-parse HEAD)" ]; then
+            echo "This job has no CI plan for the tree it checked out; it refuses." >&2
+            exit 1
           fi
+          printf '%s\n' "$CI_PLAN_DECISION" > "$DECISION"
           # The tests run under the same environment as on `main`, the job
-          # token included: several read a base-commit override from the
-          # environment, so the selection's own variables never reach them.
-          unset PULL_REQUEST_BASE
+          # token included; the plan's own variable never reaches them.
+          unset CI_PLAN_DECISION CI_PLAN_TESTED
           bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY"
       - name: Test shard ${{ matrix.shard }}
         if: github.event_name != 'pull_request'
@@ -553,13 +621,18 @@ jobs:
   # the driver sets up a confined dispatch. A command either exits 0 under
   # both or is in the suite's known-failures list, which only shrinks.
   #
-  # Every pull request, docs-only included, runs the job; the suite itself
-  # skips its live runs when the diff touches none of its inputs
-  # (`SUITE_INPUTS`), a doctrine or brief-template edit being among them. No agent login — both
-  # runtimes run a single command under their policy; the job token only
-  # serves the suite's read-only `gh` lines.
+  # The CI plan decides whether a pull request runs it: when the change
+  # reaches the suite through its imports or one of the paths its own
+  # `SUITE_INPUTS` names — read through the test inventory's reference to
+  # that list, never a copy — a doctrine or brief-template edit among them.
+  # Otherwise the job is skipped, and `aggregate` accepts that skip only
+  # because the plan says why. Every push to `main` runs it. No agent login —
+  # both runtimes run a single command under their policy; the job token
+  # only serves the suite's read-only `gh` lines.
   sandbox-conformance:
     name: Sandbox conformance (Linux)
+    needs: build
+    if: needs.build.outputs.sandbox == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -657,98 +730,6 @@ jobs:
           echo "vinaya-limits: $gql | $rest"
           exit 0
 
-  # The same suite on a macOS runner: confinement is platform-specific
-  # security behavior, and the Linux job cannot exercise the macOS sandbox
-  # (Seatbelt). The skip rule is the suite's own, not this file's: on a pull
-  # request whose diff changes none of the suite's inputs it runs no command
-  # in either sandbox and passes in seconds, so the macOS minutes are spent
-  # only when the inputs change. Its result is its own check; the `aggregate`
-  # job's list is unchanged.
-  sandbox-conformance-macos:
-    name: Sandbox conformance (macOS)
-    runs-on: macos-latest
-    permissions:
-      contents: read
-      issues: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-      - name: Restore Bun install cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
-          restore-keys: |
-            bun-${{ runner.os }}-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-      # The repository's own checks need gitleaks, as on a Developer's Mac.
-      - name: Install the checks' own tool
-        run: brew install gitleaks
-      - name: Run the suite under both sandboxes
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VINAYA_SANDBOX_CONFORMANCE: '1'
-        working-directory: apps/cli
-        run: bun test --timeout=900000 tests/sandbox-conformance/sandbox-conformance.test.ts
-      - name: Report this job's GitHub token budget
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
-      # Temporary: shows which limit refused a read, from the response headers.
-      - name: Print the limits of this job's GitHub reads
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          probe() {
-            label=$1
-            shift
-            code=0
-            raw=$("$@" 2>/dev/null) || code=$?
-            printf '%s\n' "$raw" | tr -d '\r' | awk -v label="$label" -v code="$code" '
-              NR == 1 && /^HTTP/ { status = $2; next }
-              inbody { body = body $0; next }
-              $0 == "" { inbody = 1; next }
-              {
-                i = index($0, ":")
-                if (i > 0) {
-                  v = substr($0, i + 1)
-                  gsub(/[^A-Za-z0-9_.,-]/, "", v)
-                  h[tolower(substr($0, 1, i - 1))] = v
-                }
-              }
-              function val(k) { return (k in h && h[k] != "") ? h[k] : "-" }
-              END {
-                types = ""
-                rest = body
-                if (body ~ /"errors"/) {
-                  while (match(rest, /"type":"[A-Z_]+"/)) {
-                    types = (types == "" ? "" : types ",") substr(rest, RSTART + 8, RLENGTH - 9)
-                    rest = substr(rest, RSTART + RLENGTH)
-                  }
-                }
-                refused = (code != 0 || types ~ /RATE_LIMITED/) ? "yes" : "no"
-                out = label " exit=" code " status=" (status == "" ? "-" : status)
-                out = out " limit=" val("x-ratelimit-limit") " used=" val("x-ratelimit-used")
-                out = out " remaining=" val("x-ratelimit-remaining") " reset=" val("x-ratelimit-reset")
-                out = out " resource=" val("x-ratelimit-resource")
-                if ("retry-after" in h) out = out " retry_after=" val("retry-after")
-                if (label == "graphql") out = out " errors=" (types == "" ? "-" : types)
-                print out " refused=" refused
-              }'
-          }
-          gql=$(probe graphql gh api -i graphql -f query='query { rateLimit { limit cost used remaining resetAt } }') || true
-          rest=$(probe rest gh api -i "repos/$GITHUB_REPOSITORY") || true
-          echo "vinaya-limits: $gql | $rest"
-          exit 0
-
   # The one job branch protection should require. Depends on every job
   # above and reports under the historical "Vinaya CI" name (`run-name`
   # left unset — the JOB name is what a required-check setting matches),
@@ -756,9 +737,16 @@ jobs:
   # multiplying the required check every adopter's branch protection
   # already keys on. `if: always()` — this must still run (and
   # fail loudly) when an upstream job fails, never be skipped alongside it.
-  # Every mandatory job — the build, both test jobs and sandbox conformance —
-  # must succeed: failed, cancelled or skipped all refuse. Only the
-  # root-config probe is conditional, so it alone may be skipped.
+  # The build and both test jobs must succeed: failed, cancelled or skipped
+  # all refuse. Then the build job's CI plan must exist, be valid, be bound
+  # to this pull request's head and to the tree this run tested, and run
+  # everything whenever the base guard asked it to. The root-config probe and
+  # the Linux sandbox suite must succeed when the plan requires them; a skip
+  # is accepted only when the plan does not. The macOS sandbox suite runs
+  # in its own advisory workflow, never among `needs`. On a push to
+  # `main`, a failed job is also compared with the shadow pull-request plan:
+  # one outside it is flagged for investigation — a lead, never proof the
+  # selection missed it.
   aggregate:
     name: Vinaya CI
     needs: [build, test-shared-packages, test-cli, test-cli-config-anchor, sandbox-conformance]
@@ -770,9 +758,47 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Every mandatory job succeeded and the root-config probe succeeded or was skipped
+      - name: Every mandatory job succeeded and every job the CI plan requires succeeded
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TESTED_SHA: ${{ github.sha }}
+          PLAN_IDENTITY: ${{ needs.build.outputs.plan_identity }}
+          PLAN_VALID: ${{ needs.build.outputs.plan_valid }}
+          PLAN_SCOPE: ${{ needs.build.outputs.plan_scope }}
+          PLAN_HEAD: ${{ needs.build.outputs.plan_head }}
+          PLAN_TESTED: ${{ needs.build.outputs.plan_tested }}
+          GUARD_VERDICT: ${{ needs.build.outputs.guard_verdict }}
+          REQUIRED_JOBS: ${{ needs.build.outputs.required_jobs }}
+          SHADOW_STATE: ${{ needs.build.outputs.shadow_state }}
+          SHADOW_JOBS: ${{ needs.build.outputs.shadow_jobs }}
+          BUILD: ${{ needs.build.result }}
+          TEST_SHARED_PACKAGES: ${{ needs.test-shared-packages.result }}
+          TEST_CLI: ${{ needs.test-cli.result }}
+          TEST_CLI_CONFIG_ANCHOR: ${{ needs.test-cli-config-anchor.result }}
+          SANDBOX_CONFORMANCE: ${{ needs.sandbox-conformance.result }}
         run: |
-          for result in "${{ needs.build.result }}" "${{ needs.test-shared-packages.result }}" "${{ needs.test-cli.result }}" "${{ needs.sandbox-conformance.result }}"; do
+          refuse() {
+            echo "$1" >&2
+            echo "vinaya-needs: $2"
+            exit 1
+          }
+          if [ "$EVENT" = "push" ]; then
+            for pair in "build=$BUILD" "test-shared-packages=$TEST_SHARED_PACKAGES" "test-cli=$TEST_CLI" "test-cli-config-anchor=$TEST_CLI_CONFIG_ANCHOR" "sandbox-conformance=$SANDBOX_CONFORMANCE"; do
+              job=${pair%%=*}
+              ended=${pair#*=}
+              if [ "$ended" != "success" ] && [ "$ended" != "skipped" ]; then
+                if [ "$SHADOW_STATE" != "available" ]; then
+                  echo "vinaya-shadow: $job ended $ended; no shadow plan to compare, inconclusive"
+                elif [ -n "$(echo " $SHADOW_JOBS " | grep -F " $job ")" ]; then
+                  echo "vinaya-shadow: $job ended $ended inside the shadow pull-request plan"
+                else
+                  echo "vinaya-shadow: $job ended $ended outside the shadow pull-request plan; investigate whether the selection would have missed it"
+                fi
+              fi
+            done
+          fi
+          for result in "$BUILD" "$TEST_SHARED_PACKAGES" "$TEST_CLI"; do
             if [ "$result" != "success" ]; then
               echo "A mandatory job did not succeed: $result" >&2
               # The review loop reads this line: this job's only failure is
@@ -781,12 +807,36 @@ jobs:
               exit 1
             fi
           done
-          probe="${{ needs.test-cli-config-anchor.result }}"
-          if [ "$probe" != "success" ] && [ "$probe" != "skipped" ]; then
-            echo "The root-config probe did not succeed: $probe" >&2
-            echo "vinaya-needs: a required job ended $probe"
-            exit 1
+          if [ -z "$PLAN_IDENTITY" ] || [ "$PLAN_VALID" != "true" ]; then
+            refuse "The build job's CI plan is missing or invalid." "the CI plan is missing or invalid"
           fi
+          if [ "$PLAN_HEAD" != "$HEAD_SHA" ] || [ "$PLAN_TESTED" != "$TESTED_SHA" ]; then
+            refuse "The CI plan is for head $PLAN_HEAD and tree $PLAN_TESTED, not $HEAD_SHA and $TESTED_SHA." "the CI plan is bound to another head or tree"
+          fi
+          if [ "$GUARD_VERDICT" != "plan" ] && [ "$PLAN_SCOPE" != "full" ]; then
+            refuse "The base guard asked for everything, yet the plan narrowed." "the CI plan narrowed against the base guard"
+          fi
+          for job in build test-cli test-shared-packages aggregate; do
+            if [ -z "$(echo " $REQUIRED_JOBS " | grep -F " $job ")" ]; then
+              refuse "The CI plan does not require $job, which every run requires." "the CI plan drops a mandatory job"
+            fi
+          done
+          for pair in "test-cli-config-anchor=$TEST_CLI_CONFIG_ANCHOR" "sandbox-conformance=$SANDBOX_CONFORMANCE"; do
+            job=${pair%%=*}
+            result=${pair#*=}
+            if [ -n "$(echo " $REQUIRED_JOBS " | grep -F " $job ")" ]; then
+              if [ "$result" != "success" ]; then
+                echo "The CI plan requires $job, which ended $result." >&2
+                echo "vinaya-needs: a required job ended $result"
+                exit 1
+              fi
+            elif [ "$result" != "skipped" ] && [ "$result" != "success" ]; then
+              echo "$job, which the CI plan does not require, ended $result." >&2
+              echo "vinaya-needs: a required job ended $result"
+              exit 1
+            fi
+          done
+          echo "The CI plan $PLAN_IDENTITY ($PLAN_SCOPE) is valid for this head and tree, and every job it requires succeeded."
       - name: Report this job's GitHub token budget
         if: failure()
         env:
