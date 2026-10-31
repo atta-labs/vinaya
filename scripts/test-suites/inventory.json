@@ -79,7 +79,9 @@
         "scripts/vinaya-checks/ui-rules.test.ts",
         "scripts/vinaya-checks/process-version-bump.test.ts",
         "scripts/test-suites/inventory-check.test.ts",
-        "scripts/test-suites/relocation-fixture.test.ts"
+        "scripts/test-suites/relocation-fixture.test.ts",
+        "scripts/test-suites/schedule.test.ts",
+        "scripts/test-suites/staged-driver-move.test.ts"
       ]
     }
   ],
@@ -158,22 +160,50 @@
           "kind": "raw-bytes",
           "tests": [
             "apps/cli/tests/ci-limits-diagnostic.test.ts",
+            "apps/cli/tests/ci-shards.test.ts",
             "apps/cli/tests/lib/log-entry-paths.test.ts",
             "apps/cli/tests/lib/ready-ci-workflow.test.ts",
             "harness/tests/architecture.test.ts",
-            "scripts/test-suites/inventory-check.test.ts"
+            "scripts/test-suites/inventory-check.test.ts",
+            "scripts/test-suites/schedule.test.ts"
           ]
         }
       ],
       "reason": "Each reads the workflow file from disk and asserts its jobs and steps."
     },
     {
+      "id": "ci-shard-lists",
+      "kind": "config",
+      "paths": ["apps/cli/tests/ci-shards/"],
+      "format": "text",
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": [
+            "apps/cli/tests/ci-shards.test.ts",
+            "scripts/test-suites/schedule.test.ts",
+            "scripts/test-suites/staged-driver-move.test.ts"
+          ]
+        }
+      ],
+      "reason": "The shard lists place each CLI test in a shard; the schedule reads them to place every other shard-run test."
+    },
+    {
       "id": "inventory-declarations",
       "kind": "config",
       "paths": ["scripts/test-suites/inventory.json"],
       "format": "json",
-      "readers": [{ "kind": "raw-bytes", "tests": ["scripts/test-suites/inventory-check.test.ts"] }],
-      "reason": "The inventory check's test validates the committed declarations against the tree."
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": [
+            "scripts/test-suites/inventory-check.test.ts",
+            "scripts/test-suites/schedule.test.ts",
+            "scripts/test-suites/staged-driver-move.test.ts"
+          ]
+        }
+      ],
+      "reason": "The inventory check's test validates the committed declarations against the tree; the schedule tests place the tests they declare."
     },
     {
       "id": "selection-library-fixtures",

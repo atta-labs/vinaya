@@ -52,3 +52,4 @@ tests/lib/pre-push-mode.test.ts
 tests/backend-rollback.test.ts
 tests/conformance/dev-review-backend-selection.test.ts
 tests/lib/pre-push-test-runner.test.ts
+src/lib/verification/tests/native.test.ts

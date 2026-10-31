@@ -8,6 +8,16 @@
  * just for this task's own check.
  */
 
+/**
+ * The owner whose test paths the shard files list, by package name, each
+ * relative to that suite's working directory — so the lists follow the suite
+ * if it moves. The shard jobs also run the Bun tests of the other owners the
+ * repository's test schedule names (`scripts/test-suites/schedule.ts`); those
+ * are never listed here but assigned when the schedule is built, each to the
+ * least-populated shard, so every owner's test is placed exactly once.
+ */
+export const CI_SHARD_LIST_OWNER = '@attalabs/vinaya'
+
 /** Number of `shard-N.txt` files under `CI_SHARD_DIR_REL`. */
 export const CI_SHARD_COUNT = 6
 

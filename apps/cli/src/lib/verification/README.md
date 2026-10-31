@@ -48,6 +48,40 @@ revisions. A repository's own declarations — its folder-scanning tests, the
 programs its tests start, its always-run lists — reach the library only as
 policy.
 
+## Running what a plan names
+
+```ts
+import { groupNativeTests, validateExecutedIdentities } from './verification/index.ts'
+
+const { groups, problems } = groupNativeTests({
+  tests: required, // explicit TestIdentity values, each with an optional configuration name
+  wholeSuites: [{ suite: 'core', reason: 'its tests read the whole tree', identities: coreTests }],
+  universe: view.tests // finds a sibling a Vitest file argument would also match
+})
+// … start each group's runner in its cwd with group.args, leaving out group.exclude …
+const check = validateExecutedIdentities(groups, executions, { roots: [repoRoot, realRepoRoot] })
+```
+
+`groupNativeTests` groups an explicit set of test identities by suite and
+configuration — the unit one runner start serves — and states each group's
+runner, working directory, preload, environment and file arguments (Bun's
+`./`-prefixed, so a path is never a substring filter). Every identity it is
+given stays in a group, repository-owned ones included; a repeat under the same
+configuration, a member whose runner facts differ from its group's, or a path
+outside the repository or its suite's working directory is a problem. The same
+file under two configurations is two groups. A whole-suite request expands to
+the identities it lists, and its group runs with no file filter. An empty set
+yields no group.
+
+`validateExecutedIdentities` takes, per group, the files the runner's own
+report says executed — parsed by the caller — and fails on a missing, extra or
+repeated file, a report for an unscheduled group, a group with no report or two,
+an interrupted run or an unreadable report. Platform aliases of the repository
+root are the caller's to list; a path outside all of them is refused.
+
+Neither selects, places or launches anything, and neither knows a job, a branch
+or a record of a past run.
+
 ## Files
 
 | File | Holds |
@@ -56,6 +90,7 @@ policy.
 | `types.ts` | the public types |
 | `inventory.ts` | inventory validation, and which readers a changed input reaches |
 | `selector.ts` | trees, repository readers, the graph walk and `selectTests` |
+| `native.ts` | native test groups, and the check of what each runner executed |
 | `compiler-graph.ts` | the compiler-resolved import graph and its read-only source seam |
 | `changed-names.ts` | changed-name attribution and the line diff |
 | `scanner-inputs.ts` | tests that read the tree, and their declared triggers |
@@ -76,6 +111,11 @@ The standalone tests also use:
 - `bun:test` — the test runner (`bun test tests/`)
 
 No preload, global, configuration file or environment variable is read.
+
+The grouping and the execution check need no runner installed: they read the
+data the caller passes. The fixtures that start real Bun and Vitest runs
+against them are this repository's own (`scripts/test-suites/schedule.test.ts`),
+not part of the copyable directory, and need `bun` and an installed `vitest`.
 
 ## License
 
