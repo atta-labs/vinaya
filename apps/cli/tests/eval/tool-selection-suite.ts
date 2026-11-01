@@ -58,6 +58,7 @@ import {
 } from '../../src/lib/dev-review-eval/estimators'
 import { unwrapShell } from '../../src/lib/loop-narration-codex'
 import { READ_ONLY_COMMANDS, READ_ONLY_FORBIDDEN } from '../../../../harness/adapters/agents/manifest'
+import { stripVinayaEnv } from '../lib/process-fixture'
 import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host'
 import {
   CLAUDE_DEV_TOOLS_ENV,
@@ -729,6 +730,7 @@ export const READING_COMMAND_TOOL = 'shell_read'
  * a redirect, a separator, a background or `&&`, a substitution or expansion,
  * a subshell or group, an escape, or a second line.
  */
+// Written with escapes, not as literal backtick and brace characters, so a source scanner reads the regex as code.
 const SHELL_OPERATORS = /[|&;<>`$(){}\\\n\r]/
 
 /** A command's words, its quotes removed; `null` when a quote is left open. */
@@ -1116,19 +1118,25 @@ function runProcess(
   options: { cwd: string; env: NodeJS.ProcessEnv; timeoutSec: number }
 ): Promise<{ stdout: string; code: number | null; timedOut: boolean }> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'pipe'] })
+    // No `VINAYA_*` variable of the suite's own run reaches the live CLI.
+    const env = stripVinayaEnv(options.env)
+    const child = spawn(command, args, { cwd: options.cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let timedOut = false
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk)
     })
     child.stderr.on('data', () => {})
+    let killTimer: ReturnType<typeof setTimeout> | undefined
     const timer = setTimeout(() => {
       timedOut = true
       child.kill('SIGTERM')
+      // A CLI that ignores SIGTERM is killed outright, so a timed-out trial always ends.
+      killTimer = setTimeout(() => child.kill('SIGKILL'), 10_000)
     }, options.timeoutSec * 1000)
     child.on('close', (code) => {
       clearTimeout(timer)
+      clearTimeout(killTimer)
       resolve({ stdout, code, timedOut })
     })
   })
