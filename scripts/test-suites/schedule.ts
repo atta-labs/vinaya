@@ -11,9 +11,10 @@
  * places each group in one of the workflow's existing jobs
  * (`.github/workflows/ci.yml`):
  *
- * - `build` — a repository-owned test. The build job's unconditional
- *   inventory step runs every one of them, so no later job runs them again;
- *   they stay in the schedule's accounting all the same.
+ * - `build` — a root suite's test: the repository suite, which the build
+ *   job's unconditional inventory step runs, and the package-compatibility
+ *   suite, which its unconditional compatibility step runs. No later job
+ *   runs them again; they stay in the schedule's accounting all the same.
  * - `shard-<n>` — a Bun test of an owner the shard jobs run
  *   ({@link SHARD_OWNERS}). A CLI
  *   test keeps the shard its list (`apps/cli/tests/ci-shards/shard-<n>.txt`)
@@ -179,7 +180,7 @@ export function buildTestSchedule(input: BuildTestScheduleInput): TestSchedule {
     return false
   }
   const placeOf = (identity: TestIdentity): Placement => {
-    if (identity.kind === 'repository') return 'build'
+    if (identity.kind !== 'workspace') return 'build'
     if (isShardRun(identity)) return `shard-${assignments[identity.id] as number}`
     return 'shared'
   }
@@ -303,7 +304,8 @@ export function ciScheduleInput(
     })
   ]
   const wholeIds = new Set(whole.flatMap((w) => w.identities.map((t) => t.id)))
-  const roots = view.tests.filter((t) => t.kind === 'repository')
+  // Root suites — the repository suite and the package-compatibility suite — run whatever the change selects.
+  const roots = view.tests.filter((t) => t.kind !== 'workspace')
   const selected = [...new Set([...ids.map((id) => byId.get(id) as TestIdentity), ...roots])].filter(
     (t) => !wholeIds.has(t.id)
   )
