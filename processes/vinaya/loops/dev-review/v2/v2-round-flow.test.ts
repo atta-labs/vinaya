@@ -1446,6 +1446,19 @@ describe('a conflict while waiting on required CI', () => {
         : undefined
   const conflictWaitRecord = (observed: Awaited<ReturnType<typeof runV2>>) =>
     records(observed, 'read-ci-once').find((record) => record.sendBack?.kind === 'conflict')
+  // The fake reader repeats its last entry, so each scenario's wait ends green once it reaches it.
+  const greenRead = (head: string) => ({
+    state: 'green' as const,
+    identity: {
+      head,
+      workflow: READY_CI.workflow,
+      check: READY_CI.check,
+      runId: 1,
+      runAttempt: 1,
+      checkRunId: 2,
+      url: null
+    }
+  })
 
   test('a conflict read before the wait sends the Developer back with its files, before any required-CI read', async () => {
     const atRepair: number[] = []
@@ -1453,7 +1466,8 @@ describe('a conflict while waiting on required CI', () => {
     const observed = await runV2('claude', {
       readyTests: READY_CI,
       stagedBody: PLAN_BODY,
-      requiredCi: [pendingRead],
+      // No read before the conflict; the repaired head's wait reads pending, then green.
+      requiredCi: [pendingRead, greenRead],
       mergeable: (fromGit, world) => {
         if (!world.prOpen || moved) return fromGit
         moved = true
@@ -1476,7 +1490,8 @@ describe('a conflict while waiting on required CI', () => {
     const observed = await runV2('claude', {
       readyTests: READY_CI,
       stagedBody: PLAN_BODY,
-      requiredCi: [pendingRead],
+      // One pending read before the conflict; the repaired head's wait reads pending, then green.
+      requiredCi: [pendingRead, pendingRead, greenRead],
       mergeable: (fromGit, world) => {
         if (!world.prOpen || moved || world.requiredCiReads.length === 0) return fromGit
         moved = true
@@ -1485,6 +1500,7 @@ describe('a conflict while waiting on required CI', () => {
       },
       developer: repairTurn(atRepair)
     })
+    expect(observed.outcome).toBe('completed')
     expect(observed.spawns.developer).toBe(2)
     expect(atRepair).toEqual([1])
     expect(conflictWaitRecord(observed)?.sendBack).toMatchObject({ kind: 'conflict', files: ['sample.ts'] })
@@ -1495,21 +1511,7 @@ describe('a conflict while waiting on required CI', () => {
     const observed = await runV2('claude', {
       readyTests: READY_CI,
       stagedBody: PLAN_BODY,
-      requiredCi: [
-        pendingRead,
-        (head) => ({
-          state: 'green',
-          identity: {
-            head,
-            workflow: READY_CI.workflow,
-            check: READY_CI.check,
-            runId: 1,
-            runAttempt: 1,
-            checkRunId: 2,
-            url: null
-          }
-        })
-      ],
+      requiredCi: [pendingRead, greenRead],
       // Unknown through the wait; the publication step's own mergeability poll then reads the forge's answer.
       mergeable: (fromGit, world) => (world.prOpen && world.requiredCiReads.length < 2 ? 'UNKNOWN' : fromGit)
     })
