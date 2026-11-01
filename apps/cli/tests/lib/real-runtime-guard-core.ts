@@ -15,6 +15,15 @@
  * A task whose `tasks-execution/<task>/driver.pid.json` names a running process
  * is live too: its folder and its `logs/<task>.ndjson` are exempt, since another
  * loop on this host writes them. A dead pid is not live and stays flagged.
+ *
+ * Liveness is read twice: once when this module loads, before any test writes,
+ * and again at the check; a task live at either is exempt. A loop that is live
+ * when this process starts and ends before the check (its lock removed, or left
+ * naming a dead pid) wrote its folders during the run, so it stays exempt.
+ * Known limits: a task live at start stays exempt for the whole run, even after
+ * its loop ends; a loop that both starts and ends inside one run is live at
+ * neither read and stays flagged; and a stale lock whose pid now names an
+ * unrelated process, or a lock naming this process's own pid, reads as live.
  */
 import { execFileSync } from 'node:child_process'
 import { lstatSync, readdirSync, readFileSync } from 'node:fs'
@@ -22,6 +31,10 @@ import { homedir } from 'node:os'
 import { join, relative } from 'node:path'
 
 export const PROCESS_START_MS = Date.now() - process.uptime() * 1000 - 1000
+
+/** The real runtime directory, and its live tasks' exempt prefixes, taken when this module loads. */
+const START_ROOT = realRuntimeDir()
+const LIVE_AT_START = liveTaskPrefixes(START_ROOT)
 
 /**
  * The real runtime directory, `~/.vinaya/runtime/<owner>-<repo>`, resolved from
@@ -106,10 +119,19 @@ export function liveTaskPrefixes(root: string): string[] {
   return out
 }
 
-/** Paths (relative to `root`) touched since `sinceMs`; `[]` when the directory does not exist. */
-export function touchedSince(root: string, sinceMs: number, exempt: string[]): string[] {
+/**
+ * Paths (relative to `root`) touched since `sinceMs`; `[]` when the directory does not exist.
+ * `liveAtStart` is the live tasks' exempt prefixes read at start: by default the set this
+ * module took when it loaded, when `root` is the directory it was taken from, else none.
+ */
+export function touchedSince(
+  root: string,
+  sinceMs: number,
+  exempt: string[],
+  liveAtStart: string[] = root === START_ROOT ? LIVE_AT_START : []
+): string[] {
   const touched: string[] = []
-  const exemptAll = [...exempt, ...liveTaskPrefixes(root)]
+  const exemptAll = [...exempt, ...liveAtStart, ...liveTaskPrefixes(root)]
   const walk = (dir: string): void => {
     let names: string[]
     try {
