@@ -1428,6 +1428,99 @@ describe('ready tests deferred to required CI', () => {
   })
 })
 
+// No pull-request workflow starts on a head that conflicts with its base, so the required-CI wait reads the forge's
+// mergeable state itself: a conflict goes back to the Developer, never waited out as pending.
+describe('a conflict while waiting on required CI', () => {
+  // The Developer's second turn answers the conflict by merging the default branch; the time it starts is recorded.
+  const repairTurn =
+    (atRepair: number[]): Scenario['developer'] =>
+    (attempt, world) =>
+      attempt === 2
+        ? {
+            output: confident(90),
+            act: () => {
+              atRepair.push(world.requiredCiReads.length)
+              world.mergeMain(true)
+            }
+          }
+        : undefined
+  const conflictWaitRecord = (observed: Awaited<ReturnType<typeof runV2>>) =>
+    records(observed, 'read-ci-once').find((record) => record.sendBack?.kind === 'conflict')
+
+  test('a conflict read before the wait sends the Developer back with its files, before any required-CI read', async () => {
+    const atRepair: number[] = []
+    let moved = false
+    const observed = await runV2('claude', {
+      readyTests: READY_CI,
+      stagedBody: PLAN_BODY,
+      requiredCi: [pendingRead],
+      mergeable: (fromGit, world) => {
+        if (!world.prOpen || moved) return fromGit
+        moved = true
+        world.moveMain()
+        return 'CONFLICTING'
+      },
+      developer: repairTurn(atRepair)
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.spawns.developer).toBe(2)
+    expect(atRepair).toEqual([0])
+    expect(observed.prompts.developer[1]).toContain('- sample.ts')
+    expect(conflictWaitRecord(observed)?.sendBack).toMatchObject({ kind: 'conflict', files: ['sample.ts'] })
+    expect(proofOutcomes(observed)).toEqual(['proven'])
+  })
+
+  test('a conflict read on a pending poll ends the wait after one required-CI read, not the whole budget', async () => {
+    const atRepair: number[] = []
+    let moved = false
+    const observed = await runV2('claude', {
+      readyTests: READY_CI,
+      stagedBody: PLAN_BODY,
+      requiredCi: [pendingRead],
+      mergeable: (fromGit, world) => {
+        if (!world.prOpen || moved || world.requiredCiReads.length === 0) return fromGit
+        moved = true
+        world.moveMain()
+        return 'CONFLICTING'
+      },
+      developer: repairTurn(atRepair)
+    })
+    expect(observed.spawns.developer).toBe(2)
+    expect(atRepair).toEqual([1])
+    expect(conflictWaitRecord(observed)?.sendBack).toMatchObject({ kind: 'conflict', files: ['sample.ts'] })
+    expect(proofOutcomes(observed)).toEqual(['proven'])
+  })
+
+  test('an UNKNOWN mergeable state keeps polling the required CI to green', async () => {
+    const observed = await runV2('claude', {
+      readyTests: READY_CI,
+      stagedBody: PLAN_BODY,
+      requiredCi: [
+        pendingRead,
+        (head) => ({
+          state: 'green',
+          identity: {
+            head,
+            workflow: READY_CI.workflow,
+            check: READY_CI.check,
+            runId: 1,
+            runAttempt: 1,
+            checkRunId: 2,
+            url: null
+          }
+        })
+      ],
+      // Unknown through the wait; the publication step's own mergeability poll then reads the forge's answer.
+      mergeable: (fromGit, world) => (world.prOpen && world.requiredCiReads.length < 2 ? 'UNKNOWN' : fromGit)
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.spawns.developer).toBe(1)
+    expect(observed.world.requiredCiReads).toHaveLength(2)
+    expect(observed.world.mergeableReads.filter((read) => read === 'UNKNOWN').length).toBeGreaterThanOrEqual(2)
+    expect(records(observed, 'read-ci-once').map((record) => record.conclusion)).toEqual(['green'])
+  })
+})
+
 describe('a locally tested publication that still owes required CI', () => {
   const REQUIRED = { workflow: READY_CI.workflow, check: READY_CI.check }
   // The fake reader repeats its last entry, so a scenario that recovers ends on this later attempt's success.
