@@ -8,7 +8,7 @@
     },
     {
       "file": "apps/cli/tests/eval/generic-task-statements.json",
-      "sha256": "65f676a3de2ed52b2b17407cc3e72569298f1cddc0d22be324566d9f33c550f6"
+      "sha256": "4ec06b291d744f91e102846993ade42157e3631ec13cc363d5cdf720c935c465"
     }
   ],
   "suites": [
