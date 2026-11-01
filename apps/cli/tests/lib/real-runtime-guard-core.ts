@@ -80,13 +80,25 @@ export function liveTaskPrefixes(root: string): string[] {
   } catch {
     return []
   }
+  // A live driver's Log lands in `logs/<owner>-<repo>/<task>.ndjson`, one folder per repository.
+  let logFolders: string[]
+  try {
+    logFolders = readdirSync(join(root, 'logs')).filter((name) => !name.endsWith('.ndjson'))
+  } catch {
+    logFolders = []
+  }
   const out: string[] = []
   for (const task of tasks) {
     try {
       const lock = JSON.parse(readFileSync(join(root, 'tasks-execution', task, 'driver.pid.json'), 'utf-8'))
       // A live Engine run also writes its checkpoints under `engine-runs/<task>`.
       if (pidRunning(lock?.pid))
-        out.push(join('tasks-execution', task), join('engine-runs', task), join('logs', `${task}.ndjson`))
+        out.push(
+          join('tasks-execution', task),
+          join('engine-runs', task),
+          join('logs', `${task}.ndjson`),
+          ...logFolders.map((folder) => join('logs', folder, `${task}.ndjson`))
+        )
     } catch {
       // no readable lock — not live
     }

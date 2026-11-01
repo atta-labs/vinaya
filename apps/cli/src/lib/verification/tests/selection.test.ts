@@ -185,6 +185,68 @@ describe('selectTests refuses inputs it cannot answer for', () => {
   })
 })
 
+// ── Tests that start a script ──────────────────────────────────────────────
+
+describe('a test that starts a script is linked to that script, not to the whole program folder', () => {
+  const fx = fixture('workspaces-repo.json')
+  const startTest = (name: string, body: string[]) => [
+    `packages/app/tests/${name}.test.ts`,
+    [
+      "import { expect, test } from 'bun:test'",
+      "import { readFileSync } from 'node:fs'",
+      "import { spawnSync } from 'node:child_process'",
+      "import { join } from 'node:path'",
+      '',
+      "const TOOLS = join(import.meta.dir, '../../../tools')",
+      ...body,
+      ''
+    ].join('\n')
+  ]
+  const files: Record<string, string> = {
+    ...fx.files,
+    'tools/build.ts': "import { format } from './format.js'\n\nconsole.log(format(['build']))\n",
+    'tools/lone.ts': 'export const lone = 1\n',
+    'tools/relay.ts': "import { spawnSync } from 'node:child_process'\n\nspawnSync('bun', ['--version'])\n",
+    ...Object.fromEntries([
+      startTest('build', [
+        "test('build', () => expect(spawnSync('bun', [join(TOOLS, 'build.ts'), 'tools/lone.ts']).status).toBe(0))"
+      ]),
+      startTest('hash', [
+        "test('build', () => expect(spawnSync('bun', [join(TOOLS, 'build.ts')]).status).toBe(0))",
+        "test('hash', () => expect(readFileSync(join(TOOLS, 'cli.ts'), 'utf8').length).toBeGreaterThan(0))"
+      ]),
+      startTest('relay', ["test('relay', () => expect(spawnSync('bun', [join(TOOLS, 'relay.ts')]).status).toBe(0))"])
+    ])
+  }
+  const required = (path: string, text: string): string[] => {
+    const head = { ...files, [path]: text }
+    const plan = selectTests({
+      repo: memoryRepository({ base: files, head }),
+      base: 'base',
+      head: 'head',
+      inventory: { head: viewOf('head', head, fx.inventory), base: viewOf('base', files, fx.inventory) },
+      policy: { depth: 'transitive', ...fx.policy }
+    })
+    return plan.required.map((t) => t.test)
+  }
+  const FORMAT = "export function format(args: string[]): string {\n  return args.join('+')\n}\n"
+
+  it('a `bun <script>` start is selected by a change the script imports, and not by one it does not', () => {
+    expect(required('tools/format.ts', FORMAT)).toContain('packages/app/tests/build.test.ts')
+    // `tools/lone.ts` is only an argument after the script — never linked.
+    expect(required('tools/lone.ts', 'export const lone = 2\n')).not.toContain('packages/app/tests/build.test.ts')
+  })
+
+  it('a test that also names a program path without `bun` on the same call keeps the coarse folder edge', () => {
+    expect(required('tools/lone.ts', 'export const lone = 2\n')).toContain('packages/app/tests/hash.test.ts')
+  })
+
+  it('a test starting a script that itself starts `bun` keeps the coarse folder edge', () => {
+    expect(required('tools/lone.ts', 'export const lone = 2\n')).toContain('packages/app/tests/relay.test.ts')
+    expect(required('tools/format.ts', FORMAT)).toContain('packages/app/tests/relay.test.ts')
+  })
+})
+
 // ── An independent oracle ──────────────────────────────────────────────────
 
 /**
