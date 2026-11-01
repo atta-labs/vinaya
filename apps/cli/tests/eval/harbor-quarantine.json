@@ -31,6 +31,13 @@
         "adjudicationDigest": "1c210c79a89bc3e735917ccbc720796749565c5f6f5d62a3223a60d61cd4acb4"
       },
       {
+        "taskId": "pr-1277",
+        "cause": "broken-task",
+        "reason": "Its fail-to-pass hidden tests require that no doctrine page but the tranche model names the retired plan-on-disk layout, and its reference solution meets that by editing doctrine files under aeg-root/roles and aeg-root/contracts, paths the case excludes from its scope, so no solution that keeps to the scope can pass them.",
+        "reasonVersion": 1,
+        "adjudicationDigest": "20562a322ee8a575063872055dedecf2f41018715948a2f4af0c8e421eb4c158"
+      },
+      {
         "taskId": "pr-1299",
         "cause": "broken-task",
         "reason": "Its fail-to-pass hidden tests check two GitHub comment ids and a title-to-path map that no delivered document or allowed network source holds, so no solution written from the case inputs can pass them.",

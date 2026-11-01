@@ -1158,12 +1158,10 @@ function fieldType(file: ts.SourceFile, type: ts.TypeNode): string {
   return written
 }
 
-/** One field a named type declares: the item text it is named by, and its written form when that is one line. */
+/** One field a named type declares: its name, and the item text it is named by. */
 interface DeclaredField {
   name: string
   text: string
-  /** `name: type` as the source writes it, for the base search; `null` when the type spans lines. */
-  probe: string | null
 }
 
 /** Every field a direct member of a named interface, class or object type alias declares in `file`. */
@@ -1176,12 +1174,7 @@ function declaredFields(file: ts.SourceFile): DeclaredField[] {
     const owner = ownerOf(node)
     if (owner === null) return
     const name = node.name.text
-    const written = node.type.getText(file)
-    fields.push({
-      name,
-      text: `${owner}.${name}: ${oneLine(fieldType(file, node.type))}`,
-      probe: /[\r\n]/.test(written) ? null : `${name}: ${written}`
-    })
+    fields.push({ name, text: `${owner}.${name}: ${oneLine(fieldType(file, node.type))}` })
   })
   return fields
 }
@@ -1315,14 +1308,14 @@ function deriveInterfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceIt
     const source = reference.read(f.path)
     return source === null ? [] : [{ path: f.path, source }]
   })
-  // Each literal with the text the base search looks for: a field as the source writes it, without its owner,
-  // or `null` for a field whose type spans lines, which only the structural check below can find.
+  // Each literal with the text the base search looks for, or `null` for a field: its text without its owner
+  // sits on unrelated types across the base revision, so only the structural check below can hold it.
   const literals: (InterfaceItem & { probe: string | null })[] = []
   const literal = (kind: InterfaceKind, text: string, probe: string | null = text) =>
     literals.push({ kind, text, probe })
   for (const { path, source } of referenceFiles.filter((f) => CODE_FILE.test(f.path))) {
     const file = parse(path, source)
-    for (const field of declaredFields(file)) if (tokens.has(field.name)) literal('field', field.text, field.probe)
+    for (const field of declaredFields(file)) if (tokens.has(field.name)) literal('field', field.text, null)
     eachNode(file, (node) => {
       if (ts.isPropertyAccessExpression(node) && isEnvObject(node.expression)) {
         literal('env', node.name.text)
@@ -1391,11 +1384,11 @@ function deriveInterfaceItems(git: Git, c: DeveloperCapabilityCase): InterfaceIt
     literal('key', key)
   }
 
-  // A literal any base file outside the fail-to-pass tests already holds is left out. The
-  // base copies of the files the reference solution changes are read already: a field any
-  // of them declares with the same owner, name and type is held, compared as parsed so a
-  // type written across lines is found too, and every other literal none of their texts
-  // holds is looked for by a fixed-string search of the base revision.
+  // A literal the base revision already holds is left out. A field is held only when the base
+  // copy of a file the reference solution changes declares it with the same owner, name and
+  // type, compared as parsed; no text search holds a field. Every other literal is held when
+  // the base copy of a changed file contains it, or else when a fixed-string search of the
+  // base revision outside the fail-to-pass tests finds it.
   const candidates = literals.filter(
     ({ kind, text }) => kind === 'field' || kind === 'string' || kind === 'key' || tokens.has(text)
   )
