@@ -275,7 +275,7 @@ export function startedScriptsOf(
     ts.isSpreadElement(node) ? null : evaluateExpression(ts, node, file, fileDir, repoRoot, bindings)
 
   // The script the argv after the binary starts, or `null` when it does not
-  // read as `(run,) <absolute source file>`.
+  // read as an absolute source file, after an optional `run`.
   const scriptOf = (argv: readonly import('typescript').Expression[]): string | null => {
     const first = argv[0]
     const element = first && evaluate(first) === 'run' ? argv[1] : first
