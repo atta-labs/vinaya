@@ -31,6 +31,7 @@ import {
   stepOneRuntime,
   subscriptionQuotaOf,
   TRIAL_COMMIT_SCRIPT,
+  trialUsage,
   unavailableReason,
   verifyTrialCommit,
   vinayaProcess,
@@ -1491,6 +1492,83 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
       expect(readFileSync(streamPath, 'utf8')).toBe(`${cutOffStream.join('\n')}\n`)
       expect(run.usage).toMatchObject({ ...CUT_OFF_TOKENS, wallTimeMs: 9 })
     }, 60_000)
+
+    it("records a completed Claude Code session's `result` usage, and its message sum only once it is cut off before that event", () => {
+      /**
+       * A completed Claude Code session's stream-json lines: each assistant event
+       * carries the output tokens counted at the start of its message, and only
+       * the closing `result` event the session's real output total.
+       */
+      const assistant = (id: string, content: unknown[], usage: Record<string, number>) => ({
+        type: 'assistant',
+        message: {
+          id,
+          type: 'message',
+          role: 'assistant',
+          model: 'claude-opus-5-5',
+          content,
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { ...usage, service_tier: 'standard' }
+        },
+        parent_tool_use_id: null,
+        session_id: 'completed'
+      })
+      const completedStream = [
+        { type: 'system', subtype: 'init', session_id: 'completed', model: 'claude-opus-5-5' },
+        assistant('msg_01', [{ type: 'tool_use', id: 'toolu_01', name: 'Read', input: { file_path: 'a.ts' } }], {
+          input_tokens: 6,
+          cache_creation_input_tokens: 1200,
+          cache_read_input_tokens: 18000,
+          output_tokens: 8
+        }),
+        {
+          type: 'user',
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_01', content: 'ok' }] },
+          session_id: 'completed'
+        },
+        assistant('msg_02', [{ type: 'text', text: 'Done.' }], {
+          input_tokens: 4,
+          cache_creation_input_tokens: 300,
+          cache_read_input_tokens: 19200,
+          output_tokens: 3
+        }),
+        {
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          duration_ms: 61234,
+          num_turns: 2,
+          result: 'Done.',
+          session_id: 'completed',
+          total_cost_usd: 0.42,
+          usage: {
+            input_tokens: 10,
+            cache_creation_input_tokens: 1500,
+            cache_read_input_tokens: 37200,
+            output_tokens: 4168,
+            server_tool_use: { web_search_requests: 0 },
+            service_tier: 'standard'
+          }
+        }
+      ].map((event) => JSON.stringify(event))
+      expect(trialUsage('claude-code', null, completedStream)).toMatchObject({
+        inputTokens: 10,
+        outputTokens: 4168,
+        cacheReadTokens: 37200,
+        cacheCreationTokens: 1500
+      })
+      // Two invocations in one stream, one `result` event each: their totals summed.
+      expect(trialUsage('claude-code', null, [...completedStream, ...completedStream]).outputTokens).toBe(8336)
+      // The same session cut off before its `result` event: the message sum, an undercount of its output tokens.
+      expect(trialUsage('claude-code', null, completedStream.slice(0, -1))).toMatchObject({
+        inputTokens: 10,
+        outputTokens: 11,
+        cacheReadTokens: 37200,
+        cacheCreationTokens: 1500
+      })
+      expect(trialUsage('claude-code', null, cutOffStream)).toMatchObject(CUT_OFF_TOKENS)
+    })
 
     it('stops the role at the trial limit and reports the trial timed out, with its stream and summed usage', async () => {
       const files = await changeTrialFiles()
