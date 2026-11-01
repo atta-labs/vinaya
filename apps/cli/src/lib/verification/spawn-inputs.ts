@@ -43,6 +43,14 @@
  * *something* (a different script), and the entrypoint path alone could be
  * handed to a binary this file never proves is the expected one. Both
  * together, on the SAME call, is the one shape earning the precise edge.
+ *
+ * ## A started script, read precisely
+ *
+ * A `'fallback'` file often starts not the entrypoint but a script of its own
+ * (`spawnSync('bun', [SCRIPT, …])`). `startedScriptsOf` reads that case: when
+ * every call carrying a signal is a `bun <script>` start of a known source
+ * file that itself starts nothing, it names those scripts, and the selector
+ * links each script's own import graph instead of the coarse folder edge.
  */
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import type { TypeScriptApi } from './compiler-graph.js'
@@ -217,4 +225,117 @@ export function spawnEdgeOf(
   }
   visit(sourceFile)
   return classification
+}
+
+/**
+ * The scripts a `'fallback'` file starts, when every start in it reads as
+ * `<binary> <script>` — so the selector links the file to those scripts' own
+ * import graphs instead of the entrypoint's whole source folder.
+ *
+ * A call carries a start signal when one of its arguments, or one element of
+ * an array-literal argument, evaluates to the binary or to the entrypoint —
+ * the same two signals {@link spawnEdgeOf} reads. Every such call must have
+ * one of two shapes, `(binary, [script, …])` or `([binary, script, …])`,
+ * where `script` is the first element after the binary (after an optional
+ * `run`) and evaluates to an absolute path `isSourceFile` knows: the
+ * selection graph's own file set, never the file system, since both commits
+ * are read from snapshots. Only that position is a script — a later element
+ * (`bun run scripts/x.ts <fixture>`) is the script's own argument, not
+ * something the test starts.
+ *
+ * Each script is judged by its own text alone: it must carry no string
+ * literal equal to the binary, and {@link spawnEdgeOf} must answer `null` for
+ * it — otherwise it may itself start a program no import graph reaches.
+ *
+ * `null` — the file is not `'fallback'`; or some start-signal call has
+ * another shape (a hook string or a hash read naming the entrypoint without
+ * the binary on the same call, `bun test …`, `bun -e …`, a relative path, an
+ * argv built at run time); or some script fails its own check. Each keeps the
+ * coarse edge.
+ */
+export function startedScriptsOf(
+  ts: TypeScriptApi,
+  file: string,
+  source: string,
+  repoRoot: string,
+  program: SpawnProgram,
+  isSourceFile: (path: string) => boolean,
+  readSource: (path: string) => string
+): string[] | null {
+  if (spawnEdgeOf(ts, file, source, repoRoot, program) !== 'fallback') return null
+  const fileDir = dirname(file)
+  let sourceFile: import('typescript').SourceFile
+  try {
+    sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true)
+  } catch {
+    return null
+  }
+  const bindings = collectTopLevelBindings(ts, sourceFile, file, fileDir, repoRoot)
+  const evaluate = (node: import('typescript').Node): string | null =>
+    ts.isSpreadElement(node) ? null : evaluateExpression(ts, node, file, fileDir, repoRoot, bindings)
+
+  // The script the argv after the binary starts, or `null` when it does not
+  // read as `(run,) <absolute source file>`.
+  const scriptOf = (argv: readonly import('typescript').Expression[]): string | null => {
+    const first = argv[0]
+    const element = first && evaluate(first) === 'run' ? argv[1] : first
+    const value = element ? evaluate(element) : null
+    return value !== null && isAbsolute(value) && isSourceFile(value) ? value : null
+  }
+
+  const scripts = new Set<string>()
+  let readable = true
+  const visit = (node: import('typescript').Node): void => {
+    if (!readable) return
+    if (ts.isCallExpression(node)) {
+      const signal = node.arguments.some((arg) =>
+        (ts.isArrayLiteralExpression(arg) ? [...arg.elements] : [arg]).some((candidate) => {
+          const value = evaluate(candidate)
+          return value === program.binary || value === program.entrypoint
+        })
+      )
+      if (signal) {
+        const [first, second] = node.arguments
+        let script: string | null = null
+        if (first && ts.isArrayLiteralExpression(first)) {
+          const [binary, ...argv] = first.elements
+          if (binary && evaluate(binary) === program.binary) script = scriptOf(argv)
+        } else if (first && evaluate(first) === program.binary && second && ts.isArrayLiteralExpression(second)) {
+          script = scriptOf(second.elements)
+        }
+        if (script === null) readable = false
+        else scripts.add(script)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  if (!readable || scripts.size === 0) return null
+  for (const script of scripts) if (mayStartProgram(ts, script, readSource(script), repoRoot, program)) return null
+  return [...scripts].sort()
+}
+
+/** Whether a started script's own text may start a program: a string literal equal to the binary, or any spawn signal. */
+function mayStartProgram(
+  ts: TypeScriptApi,
+  script: string,
+  text: string,
+  repoRoot: string,
+  program: SpawnProgram
+): boolean {
+  let sourceFile: import('typescript').SourceFile
+  try {
+    sourceFile = ts.createSourceFile(script, text, ts.ScriptTarget.ES2022, true)
+  } catch {
+    return true
+  }
+  let found = false
+  const visit = (node: import('typescript').Node): void => {
+    if (found) return
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && node.text === program.binary)
+      found = true
+    else ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return found || spawnEdgeOf(ts, script, text, repoRoot, program) !== null
 }
