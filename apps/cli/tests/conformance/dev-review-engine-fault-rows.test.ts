@@ -13,8 +13,8 @@ import {
   readEscalationRecord,
   readPauseState,
   type PauseState
-} from '../../src/lib/dev-review-loop/pause-resume.js'
-import { MAX_INFRASTRUCTURE_RETRIES } from '../../src/lib/dev-review-loop/round-assess.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 import { taskEscalationReadHandler } from '../../src/lib/task-tools/handlers.js'
 import { readEscalationPacket, readTaskLoopStateObserved } from '../../src/lib/task-tools/read.js'
 import type { Observation } from './dev-review-current-loop-adapter.js'

@@ -17,8 +17,8 @@ import {
 } from '@attalabs/aeg-core'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import { createTaskCancelHandler } from '../../../src/lib/task-tools/cancel.js'
-import type { CancelInput } from '../../../src/lib/dev-review-loop.js'
-import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import type { CancelInput } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
+import { writePauseState } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { isolatedConfigFixture } from '../process-fixture'
 
 /**
@@ -283,7 +283,9 @@ describe('task_cancel handler', () => {
   it('reports the same truthful outcome again on a replayed cancel — never an error', async () => {
     writePause()
     writeEscalationFixture({ host: 'test-host' })
-    const { ReplayedResolutionError } = await import('../../../src/lib/dev-review-loop/pause-resume.js')
+    const { ReplayedResolutionError } = await import(
+      '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+    )
     const err = new ReplayedResolutionError(ISSUE, ESCALATION_ID, {
       version: 1,
       kind: 'resolution',
@@ -305,7 +307,9 @@ describe('task_cancel handler', () => {
   it('refuses a cancel against an escalation already resolved as resume', async () => {
     writePause()
     writeEscalationFixture({ host: 'test-host' })
-    const { ReplayedResolutionError } = await import('../../../src/lib/dev-review-loop/pause-resume.js')
+    const { ReplayedResolutionError } = await import(
+      '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+    )
     const err = new ReplayedResolutionError(ISSUE, ESCALATION_ID, {
       version: 1,
       kind: 'resolution',
@@ -385,7 +389,9 @@ describe('task_cancel handler', () => {
   it('names `task run` when a stale-driver pause has no durable escalation record', async () => {
     writePause({ reason: 'stale_driver' })
     writeEscalationFixture({ host: 'test-host' })
-    const { StaleEscalationError } = await import('../../../src/lib/dev-review-loop/pause-resume.js')
+    const { StaleEscalationError } = await import(
+      '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+    )
     const err = new StaleEscalationError(ISSUE, ESCALATION_ID, 'no escalation record was ever written for it')
     const { handler } = harness({ hostname: 'test-host', cancelError: err })
     const result = await handler({ task: { issue: ISSUE }, reason: 'superseded' }, CALLER)
@@ -460,9 +466,9 @@ describe('cancelDevReviewLoop — real subprocess, real control store (security 
     const scriptPath = join(import.meta.dir, `.cancel-integration-fixture-${process.pid}-${Date.now()}.ts`)
     const script = `
 import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '@attalabs/aeg-core'
-import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
-import { cancelDevReviewLoop, ReplayedResolutionError } from '../../../src/lib/dev-review-loop.js'
-import { runtimeDir } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
+import { writePauseState } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { cancelDevReviewLoop, ReplayedResolutionError } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
+import { runtimeDir } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
 import { controlStoreRoot } from '../../../src/lib/effects.js'
 
 const ISSUE = 558
@@ -572,9 +578,9 @@ try {
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '@attalabs/aeg-core'
-import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
-import { cancelDevReviewLoop } from '../../../src/lib/dev-review-loop.js'
-import { runtimeDir } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
+import { writePauseState } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { cancelDevReviewLoop } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
+import { runtimeDir } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
 import { controlStoreRoot } from '../../../src/lib/effects.js'
 import { log } from '../../../src/lib/log-sink.js'
 import { createTaskResumeHandler } from '../../../src/lib/task-tools/resume.js'

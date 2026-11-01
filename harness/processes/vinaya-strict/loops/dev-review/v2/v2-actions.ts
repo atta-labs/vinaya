@@ -6,14 +6,14 @@ import {
   prOpenedEvent,
   readyPushEvent
 } from '../../../../../../apps/cli/src/lib/flow-v2-events'
-import { discardHeldVerdicts } from '../../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import { discardHeldVerdicts } from '../standalone/dev-review-loop/reviewer-dispatch'
 import {
   checkPremiseAtHead,
   describeFailingCheckRun,
   fetchCiConclusion,
   fetchFailingCheckRuns,
   fetchSettledCiConclusion
-} from '../../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+} from '../standalone/dev-review-loop/gate-reading'
 import {
   MAX_FAILURE_EXCERPT_CHARS,
   MAX_FAILURE_EXCERPT_TOTAL_CHARS,
@@ -39,7 +39,7 @@ import {
   type RequiredCiRead,
   type RequiredCiView
 } from './ci-recovery'
-import { readUnpushedWorkDetail } from '../../../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
+import { readUnpushedWorkDetail } from '../standalone/dev-review-loop/unpushed-work'
 import { spawnSync } from 'node:child_process'
 import { relative, resolve, sep } from 'node:path'
 import {
@@ -58,8 +58,8 @@ import {
   fetchMergeableState,
   parseMergeTreeConflictFiles,
   pollMergeableState
-} from '../../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
-import { findOpenPrForBranch } from '../../../../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
+} from '../standalone/dev-review-loop/gate-reading'
+import { findOpenPrForBranch } from '../standalone/dev-review-loop/developer-dispatch'
 import {
   BACK,
   carriedApprovals,

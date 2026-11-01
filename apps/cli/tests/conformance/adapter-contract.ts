@@ -3,15 +3,18 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { briefHash, redact } from '@attalabs/aeg-core'
-import type { LoopDeps, LoopResult } from '../../src/lib/dev-review-loop.js'
-import { DeveloperTurnResultPause } from '../../src/lib/dev-review-loop/turn-result.js'
+import type {
+  LoopDeps,
+  LoopResult
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
+import { DeveloperTurnResultPause } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import {
   readClaudeTurnOutput,
   readCodexTurnOutput,
   type TurnRead,
   type TurnResultAdapter,
   type TurnResultRecord
-} from '../../src/lib/dev-review-loop/turn-result.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import {
   classifyRoleAttemptOutcome,
   type DispatchFailureReason,
@@ -65,7 +68,7 @@ import {
   makeWorld,
   outboxLines,
   runLoopInProcess
-} from '../lib/dev-review-loop-harness.js'
+} from '../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 
 /**
  * The shared adapter-conformance suite (evaluation layer L4): one case list,

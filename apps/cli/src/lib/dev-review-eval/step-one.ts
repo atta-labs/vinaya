@@ -19,7 +19,7 @@ import {
   dispatchRole,
   type AgentVendor
 } from '../dispatch'
-import { publishingInstructionLine } from '../dev-review-loop'
+import { publishingInstructionLine } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop'
 import { runtimeDirForThisRepo } from '../run-paths'
 import { startDevToolsHost } from '../task-tools/dev-tools-host'
 import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
@@ -2181,7 +2181,9 @@ async function runAnswerCase(
   })
   try {
     const { developerTurnResultJsonSchema } = await import('../developer-turn-result')
-    const { readClaudeTurnOutput, readCodexTurnOutput } = await import('../dev-review-loop/turn-result')
+    const { readClaudeTurnOutput, readCodexTurnOutput } = await import(
+      '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result'
+    )
     const tools = await import('../../../tests/eval/tool-selection-suite')
     // The read-only turn the source-citation suite's live trial runs, launched
     // from its role's capabilities narrowed to what the case grants:

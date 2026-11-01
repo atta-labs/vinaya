@@ -58,7 +58,7 @@ import { loadConfig, loadTaskRunner, type TaskRunner } from '../lib/config.js'
 import { runTask, type RunTaskResult, type RunTaskOutcome } from '../lib/task-run.js'
 import { startBackgroundRun } from '../lib/task-run-background.js'
 import { resumeCommandFor } from '../lib/task-status.js'
-import { noPushResumeCommandFor } from '../lib/dev-review-loop/pause-resume.js'
+import { noPushResumeCommandFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
 const TASK_RUN_FAILURE_EXIT_CODE = 3

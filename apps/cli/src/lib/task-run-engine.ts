@@ -2,7 +2,10 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import type { AgentVendor } from './dispatch.js'
-import { isDriverPidAlive, readDriverLock } from './dev-review-loop/pause-resume.js'
+import {
+  isDriverPidAlive,
+  readDriverLock
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { packageRoot } from './package-root.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from './run-paths.js'
 import type { TaskRunner } from './config.js'

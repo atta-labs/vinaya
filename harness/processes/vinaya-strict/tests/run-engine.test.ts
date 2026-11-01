@@ -1,7 +1,7 @@
 import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { PAUSE_REASON_PROFILE } from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
-import { usageLimitPauseDetail } from '../../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import { PAUSE_REASON_PROFILE } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
+import { usageLimitPauseDetail } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 import { newestStage, PAUSED_STAGE_ACTOR, parseDriverLogLine, STAGES } from '../../../../apps/cli/src/lib/follow-view'
 import { createStageNarrator, stageOfPause, V2_NODE_STAGES } from '../bin/run-engine'
 import {
@@ -29,7 +29,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { failedCheckLogsOnHead } from '../../../../apps/cli/src/lib/dev-review-loop'
+import { failedCheckLogsOnHead } from '../loops/dev-review/standalone/dev-review-loop'
 import { gitObjectReader, prepareSources } from '../../../../apps/cli/src/lib/source-provider'
 import { sourceReceiptsPath } from '../../../../apps/cli/src/lib/source-manifest'
 import type { FetchDocumentationDeps } from '../../../../apps/cli/src/lib/task-tools/fetch-documentation'
@@ -59,12 +59,12 @@ import {
   dispatchReviewers,
   type TaskInput
 } from '../executing/actions'
-import { heldVerdictPath, writeHeldVerdict } from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import { heldVerdictPath, writeHeldVerdict } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import {
   ciRedReentryBoundDetail,
   MAX_AUTOMATIC_CONFLICT_REENTRIES
-} from '../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
-import { readPauseState } from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+} from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
+import { readPauseState } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { loopLogPathFor } from '../../../../apps/cli/src/lib/loop-log'
 import { SqliteCheckpointer } from '../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import { currentRunGeneration, runIdentityOfTask } from '../bin/run-lifecycle'

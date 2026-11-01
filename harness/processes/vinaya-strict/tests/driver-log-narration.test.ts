@@ -12,7 +12,7 @@ import {
   makeWorld,
   runLoopInProcess,
   taskRunDir
-} from '../../../../apps/cli/tests/lib/dev-review-loop-harness'
+} from './standalone/lib/dev-review-loop-harness'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
 import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import {

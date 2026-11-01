@@ -17,13 +17,13 @@ import {
   readDriverLock,
   readPauseState,
   ReplayedResolutionError
-} from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+} from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import {
   isUsageLimitPauseDetail,
   MAX_AUTOMATIC_RATE_LIMIT_RESUMES,
   usageLimitResetFromDetail,
   usageLimitWaitMs
-} from '../../../../apps/cli/src/lib/dev-review-loop/round-assess'
+} from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 import { loopLogPathFor } from '../../../../apps/cli/src/lib/loop-log'
 import {
   BRANCH,

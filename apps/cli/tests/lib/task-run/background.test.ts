@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { type ControlStoreDeps, readCurrentOwnership, readEffect, readRun, writeEffect } from '@attalabs/aeg-core'
 import type { ProcessSnapshot } from '../../../src/lib/dispatch.js'
-import { fenceStartedEffectsAsUncertain } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { fenceStartedEffectsAsUncertain } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import {
   BackgroundUnsupportedError,
   ControllerConflictError,

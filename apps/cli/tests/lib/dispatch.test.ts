@@ -85,7 +85,7 @@ import {
   findCredentialPatterns,
   resolveOpenedAgentConfigPaths
 } from '../../src/lib/worker-boundary.js'
-import { surfaceOpenedAgentConfigPaths } from '../../src/lib/dev-review-loop.js'
+import { surfaceOpenedAgentConfigPaths } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import { devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
 
 import {
@@ -5302,7 +5302,7 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
         `await dispatchRole('developer', 'claude', 'Fix the reported finding.', { promptFile: ${JSON.stringify(resumedPrompt)}, cwd: ${JSON.stringify(cwd)}, resumeId: 'session-1', turnResultKnownFindingIds: [] })`,
         // the driver's own check, run on a second-turn result reporting both sources
         `import { deliveredDocumentation } from ${JSON.stringify(dispatchLib)}`,
-        `import { judgeTurnOutput } from ${JSON.stringify(join(CLI_ROOT, 'src', 'lib', 'dev-review-loop', 'turn-result.ts'))}`,
+        `import { judgeTurnOutput } from ${JSON.stringify(join(CLI_ROOT, '..', '..', 'harness', 'processes', 'vinaya-strict', 'loops', 'dev-review', 'standalone', 'dev-review-loop', 'turn-result.ts'))}`,
         `import { writeFileSync, mkdirSync } from 'node:fs'`,
         `const hooksDir = ${JSON.stringify(join(home, '.vinaya', 'runtime', 'unresolved', 'tasks-execution', 'unscoped', 'hooks', 'developer'))}`,
         `const store = ${JSON.stringify(join(cwd, 'source-store'))}`,

@@ -36,7 +36,7 @@ import {
   type TaskToolRef
 } from '@attalabs/aeg-core'
 import { findTrancheSlug, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
-import { runtimeDir } from '../dev-review-loop.js'
+import { runtimeDir } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import {
   gatherTaskStatusList,
   taskStatusIdentityMatches,

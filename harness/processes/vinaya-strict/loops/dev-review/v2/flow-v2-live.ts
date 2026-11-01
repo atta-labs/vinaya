@@ -75,7 +75,7 @@ import {
   type TestRunCache,
   truncateAgentOutput
 } from '../../../../../../apps/cli/src/lib/pr-report-engine'
-import { defaultReadDefaultBranchTip } from '../../../../../../apps/cli/src/lib/dev-review-loop'
+import { defaultReadDefaultBranchTip } from '../standalone/dev-review-loop'
 import { readPostedReviewVerdicts } from '../../../../../../apps/cli/src/lib/review-gate-input'
 import { detectVendoredVinaya } from '../../../../../../apps/cli/src/lib/self-host'
 import {

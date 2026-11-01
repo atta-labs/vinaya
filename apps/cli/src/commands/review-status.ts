@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { deriveReviewStatus, renderReviewStatus } from '@attalabs/aeg-core'
 import { resolveTrustedPrincipals } from '../lib/config'
-import { reviewPolicy } from '../lib/dev-review-loop/developer-dispatch.js'
+import { reviewPolicy } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 
 /**
  * `vinaya review status <pr>` — the review loop's own state, printed.

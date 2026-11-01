@@ -1,4 +1,4 @@
-import { prReportRefreshArgs } from '../../../../apps/cli/src/lib/dev-review-loop'
+import { prReportRefreshArgs } from '../loops/dev-review/standalone/dev-review-loop'
 import type { CliRun } from '../../../../harness/kernel/gates/checks/run-checks'
 
 /**

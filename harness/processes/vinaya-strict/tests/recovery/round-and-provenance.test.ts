@@ -5,8 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type EffectRecord, readExecutionRoundMirror, writeExecutionRoundMirror } from '@attalabs/aeg-core'
-import { clearDriverLock } from '../../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
-import { controlStoreRootFor } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import { clearDriverLock } from '../../loops/dev-review/standalone/dev-review-loop/pause-resume'
+import { controlStoreRootFor } from '../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import {
   encodeExecutionRound,
   readAgentProvenance,

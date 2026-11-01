@@ -95,7 +95,7 @@ import {
   type TurnResultAdapter,
   readClaudeTurnOutput,
   readCodexTurnOutput
-} from './dev-review-loop/turn-result.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import { loadConfig } from './config.js'
 import {
   RUN_AREA_DIRNAMES,

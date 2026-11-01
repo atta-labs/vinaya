@@ -18,12 +18,12 @@ import {
   createTaskWorktree,
   fetchSourceRevision,
   findOpenPrForBranch
-} from '../../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
-import { publishRound } from '../../../../apps/cli/src/lib/dev-review-loop/publication'
-import { cleanupAllReviewerIsolationArtifacts } from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
+} from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import { publishRound } from '../loops/dev-review/standalone/dev-review-loop/publication'
+import { cleanupAllReviewerIsolationArtifacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
 import { enforcementControlsActive } from '../../../../apps/cli/src/lib/enforcement-controls'
 import { probeAgentSandbox } from '../../../../apps/cli/src/lib/worker-boundary'
-import { handoffFindings } from '../../../../apps/cli/src/lib/dev-review-loop'
+import { handoffFindings } from '../loops/dev-review/standalone/dev-review-loop'
 import { runCliChecks } from '../../../../harness/kernel/gates/checks/run-checks'
 import { validateDeveloperTurnResult } from '../../../../apps/cli/src/lib/developer-turn-result'
 import { classifyReviewOutcome } from '../../../../apps/cli/src/lib/review-result'

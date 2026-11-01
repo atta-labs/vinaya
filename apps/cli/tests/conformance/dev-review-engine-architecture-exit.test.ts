@@ -4,8 +4,8 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { cleanupWorlds } from '../lib/dev-review-loop-harness.js'
-import { NODE_CONTRACTS } from '../lib/dev-review-loop/dev-review-engine-state-contract.fixture.js'
+import { cleanupWorlds } from '../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
+import { NODE_CONTRACTS } from '../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture.js'
 import { SCANNER_DECLARATIONS, underDeclaredRoot } from '../../src/lib/repo-scanner-tests.js'
 import { REFRESH_COMMAND, refreshLoopBaseline } from '../../scripts/refresh-loop-baseline.js'
 import { type Observation, SCENARIO_DRIVERS } from './dev-review-current-loop-adapter.js'
@@ -628,7 +628,9 @@ function loopSurface(): string[] {
   return [
     ...baseline.implementationModules,
     ...baseline.addedSinceBaseline.filter((a) => a.kind === 'implementation').map((a) => a.path),
-    ...supportFiles.map((s) => s.path).filter((p) => !p.startsWith('apps/cli/tests/'))
+    ...supportFiles
+      .map((s) => s.path)
+      .filter((p) => !p.startsWith('apps/cli/tests/') && !p.startsWith('harness/processes/vinaya-strict/tests/'))
   ]
     .filter((p) => existsSync(join(REPO_ROOT, p)))
     .sort()

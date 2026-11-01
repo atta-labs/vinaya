@@ -358,7 +358,7 @@ type RunResult = { status: number; stdout: string; stderr: string }
  * exactly like the nine sibling fixtures already hardened this task, but
  * spread unstripped `process.env` into the spawned child with no `VINAYA_*`
  * stripping and no subprocess-level timeout/diagnostic. Same fix as
- * `apps/cli/tests/lib/dev-review-loop.test.ts`'s `fixtureChildEnv`, adapted
+ * `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-test-support.ts`'s `fixtureChildEnv`, adapted
  * to `Bun.spawn`'s async API (no built-in `timeout`/`killSignal` option like
  * `spawnSync`/`execFileSync`): a manual timer kills the child and the
  * already-captured stdout/stderr ride the thrown diagnostic. Below both

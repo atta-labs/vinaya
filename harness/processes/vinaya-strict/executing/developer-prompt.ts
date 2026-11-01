@@ -6,14 +6,14 @@ import {
   renderContextPacket,
   type EvidenceEntry
 } from '../../../../apps/cli/src/lib/context-packet'
-import { publishingInstructionLine } from '../../../../apps/cli/src/lib/dev-review-loop'
-import { renderDeveloperDoctrineBlock } from '../../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
-import { renderConflictPrompt } from '../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { publishingInstructionLine } from '../loops/dev-review/standalone/dev-review-loop'
+import { renderDeveloperDoctrineBlock } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import { renderConflictPrompt } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import { commitAndPushPrompt } from '../../../../apps/cli/src/lib/task-tools/live-developer-context'
 import {
   turnResultCorrectionPrompt,
   turnResultInstruction
-} from '../../../../apps/cli/src/lib/dev-review-loop/turn-result'
+} from '../loops/dev-review/standalone/dev-review-loop/turn-result'
 import { latestRecord, recordedForgeCi, type SendBack } from './actions'
 
 // What today's review loop sends its Developer each round, built from the same exported functions

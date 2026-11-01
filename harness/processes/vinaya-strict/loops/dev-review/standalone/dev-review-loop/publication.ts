@@ -1,0 +1,321 @@
+/**
+ * `dev-review-loop`'s publication concern — posting a round's already-held verdicts and published marker to the
+ * forge, idempotently, with a policy self-check before either verdict counts
+ * as publishable (O3: a reviewer's own APPROVE/PASS never overrides the
+ * evaluator). Moved out of `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts` verbatim;
+ * `dev-review-loop.ts` stays the composition root, re-exporting every name
+ * below under the same path it always had.
+ */
+
+import { randomUUID } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import {
+  compareManifest,
+  consequentialFindings,
+  defaultControlStoreDeps,
+  type EchoedManifest,
+  evaluateCodeReview,
+  evaluateSecurityReview,
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict,
+  type Journal,
+  type ManifestBindingResult,
+  renderPublishedMarker,
+  type ReviewInputManifest,
+  type ReviewPolicy,
+  type VerdictExtraction
+} from '@attalabs/aeg-core'
+import { principalBodies } from '../../../../../../../apps/cli/src/commands/review-post.js'
+import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../../../../../../../apps/cli/src/lib/effects.js'
+import { type DeferredFindingsIssueRef, reconcileGhComment } from '../../../../../../../apps/cli/src/lib/forge-write.js'
+import { sh } from './gate-reading.js'
+import { markerComments, principalAllowlist } from './developer-dispatch.js'
+import { heldVerdictPath, readIfExists } from './reviewer-dispatch.js'
+import { ensureRunDir, runPath } from '../../../../../../../apps/cli/src/lib/run-paths.js'
+
+type ForgeEffectRecord = { effectId: string; status: 'started' | 'posted'; url?: string }
+
+function forgeEffectPath(root: string, task: number, key: string): string {
+  return runPath(root, task, { area: 'control', file: `effect-${key}.json` })
+}
+
+function readForgeEffect(path: string): ForgeEffectRecord | null {
+  const raw = readIfExists(path)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as ForgeEffectRecord
+  } catch {
+    return null
+  }
+}
+
+function writeForgeEffect(root: string, path: string, record: ForgeEffectRecord): void {
+  ensureRunDir(dirname(path), root)
+  writeFileSync(path, JSON.stringify(record), 'utf8')
+}
+
+/**
+ * Posts through `poster` at most once per `key`: an effect id is recorded in
+ * the outbox as `started` before `poster` runs, then overwritten as `posted`
+ * (with the URL `poster` returned) right after — mirroring `dispatch.ts`'s
+ * own effect-id-before/checked-after discipline (its doc comment,
+ * `hasOwnDispatchLine`), adapted here to a comment post rather than a
+ * process spawn since `DevReviewLoopEvent` carries no `effect_id` field to
+ * key on (`hasOwnLoopLine`'s own doc comment, above). A rerun that finds an
+ * already-`posted` record returns its recorded URL without calling `poster`
+ * again — O1's "nothing is posted twice on a rerun."
+ */
+export function postForgeEffectOnce(root: string, task: number, key: string, poster: () => string): string {
+  const path = forgeEffectPath(root, task, key)
+  const existing = readForgeEffect(path)
+  if (existing?.status === 'posted' && existing.url) return existing.url
+  const effectId = existing?.effectId ?? randomUUID()
+  writeForgeEffect(root, path, { effectId, status: 'started' })
+  const url = poster()
+  writeForgeEffect(root, path, { effectId, status: 'posted', url })
+  return url
+}
+
+/**
+ * Posts `body` on `prNumber` through the shared `EffectExecutor`,
+ * keyed by `key` — O1's "persist the effect identity before the
+ * write," O2's "reconcile against the remote before a retry," in place of
+ * `postForgeEffectOnce`'s own local `'posted'` flag, which cannot tell a
+ * confirmed post apart from one whose confirmation was lost to a crash.
+ * `inputVersion` is this round: a rerun of the SAME round posting the SAME
+ * body reduces to the SAME identity, so a genuine rerun still posts nothing
+ * twice, exactly as `postForgeEffectOnce` guaranteed.
+ */
+function postPrCommentOnce(task: number, round: number, key: string, prNumber: number, body: string): string {
+  const deps = defaultControlStoreDeps(controlStoreRoot)
+  const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
+  return executor.execute({
+    key,
+    identity: {
+      operation: 'pr-comment',
+      target: `pr:${prNumber}`,
+      inputVersion: round,
+      payloadDigest: sha256Hex(body)
+    },
+    poster: () => postPrComment(prNumber, body),
+    reconcile: reconcileGhComment('pr', String(prNumber))
+  })
+}
+
+/**
+ * Raw `gh pr comment`, no marker line — deliberately NOT `postMarkedComment`
+ * (`./forge-write.js`): that function forces a marker onto line 1, which
+ * shifts every line of a rendered verdict down by one and pushes a present
+ * `Objectives version:` line outside `extractCodeReviewVerdict`/
+ * `extractSecurityReviewVerdict`'s five-line read window
+ * (`verdict-extraction.ts`'s own `firstFiveLines`). Same temp-file-then-`gh
+ * comment` shape `postMarkedComment` and `review-post.ts`'s own (unexported)
+ * `postComment` both use.
+ */
+function postPrComment(pr: number, body: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-dev-review-loop-comment-'))
+  const tmp = join(dir, 'comment.md')
+  writeFileSync(tmp, body, 'utf8')
+  try {
+    return execFileSync('gh', ['pr', 'comment', String(pr), '--body-file', tmp], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Attributed bodies only — a comment whose author does not resolve as a
+ * principal is not evidence that THIS run's own post landed (a security
+ * review finding: this is the same untrusted-comment class a related finding
+ * closed for `fetchRulings`/`fetchFrozenBrief`, reintroduced here). Reuses
+ * `review-post.ts`'s `principalBodies` — the exact filter `checkReviewGate`
+ * itself applies before calling either extractor — rather than a second,
+ * parallel derivation.
+ */
+function fetchAllPrCommentBodies(pr: number): string[] {
+  const out = sh('gh', ['pr', 'view', String(pr), '--json', 'comments'])
+  return principalBodies(markerComments(out), principalAllowlist())
+}
+
+export type PublishInput = {
+  task: number
+  round: number
+  prNumber: number
+  /** The round's judged head — every posted verdict is expected to bind to this, re-verified after each post. */
+  expectedHead: string
+  /** Version 2 may publish another approved head without advancing the review round. */
+  headScopedEffects?: boolean
+  journal: Journal
+  /** Which severities block is repository policy — the SAME resolved value `buildVerdictFromReview` derived this round's held verdicts under. */
+  policy: ReviewPolicy
+  /**
+   * The manifest this round was dispatched against (task 5,
+   * O3) — `compareManifest`, the SAME comparison the merge gate and
+   * the driver's own pre-hold self-check call, is applied here too against
+   * each posted verdict's echoed lines, so publication binds on EVERY field
+   * (base, brief, objectives, ruling, policy), not just the head it already
+   * re-checked. A posted verdict that does not fully bind is refused, never
+   * published — the same "nothing published against state it never covered"
+   * invariant, now field-complete rather than head-only.
+   */
+  manifest: ReviewInputManifest
+  /**
+   * O1: the backlog Issue this pull request's deferred findings were tracked
+   * in, linked from the publication comment so the loop's readers can find the durable
+   * record. `undefined` when nothing was deferred (O3) — the comment then
+   * carries no link.
+   */
+  deferredIssue?: DeferredFindingsIssueRef
+}
+
+/** Publication identity keeps a later approved head separate while preserving legacy keys by default. */
+export function publicationEffectKey(
+  input: Pick<PublishInput, 'round' | 'expectedHead' | 'headScopedEffects'>,
+  kind: 'reviewer-verdict' | 'security-verdict' | 'summary'
+): string {
+  return `${input.round}${input.headScopedEffects ? `-${input.expectedHead}` : ''}-${kind}`
+}
+
+/** The field names `compareManifest` reports as unbound — `[]` when everything binds. */
+export function unboundFields(binding: ManifestBindingResult): string[] {
+  const unbound: string[] = []
+  if (!binding.head) unbound.push('head')
+  if (!binding.base) unbound.push('base')
+  if (!binding.briefHash) unbound.push('brief hash')
+  if (!binding.objectivesVersion) unbound.push('objectives version')
+  if (!binding.rulingOrdinal) unbound.push('ruling ordinal')
+  if (!binding.policyDigest) unbound.push('policy digest')
+  return unbound
+}
+
+/**
+ * The echoed manifest a posted verdict re-parses to, compared against the
+ * round's own manifest with the SAME `compareManifest` the gate uses
+ * (O3). Never trusts the echo as provenance — it is read back from the posted
+ * text only to confirm the comment still covers the manifest the round was
+ * dispatched with (`patchIdOf` is deliberately not supplied here: a
+ * just-posted verdict must bind by exact identity, never rely on a rebase
+ * tolerance that only makes sense across a real head move at the gate).
+ */
+export function bindingOfPosted(posted: VerdictExtraction, manifest: ReviewInputManifest): ManifestBindingResult {
+  const echoed: EchoedManifest = {
+    headSha: posted.headSha,
+    baseSha: posted.baseSha,
+    briefHash: posted.briefHash,
+    objectivesVersion: posted.objectivesVersion,
+    rulingOrdinal: posted.rulingOrdinal,
+    policyDigest: posted.policyDigest
+  }
+  return compareManifest(echoed, manifest)
+}
+
+/**
+ * The text of the publication comment: the hidden published marker
+ * (`renderPublishedMarker`) and nothing else, plus one plain sentence linking
+ * the deferred-findings Issue only when this publication opened or updated one.
+ */
+export function publicationComment(
+  journal: Journal,
+  expectedHead: string,
+  deferredIssue?: DeferredFindingsIssueRef
+): string {
+  const marker = renderPublishedMarker(journal, expectedHead)
+  return deferredIssue
+    ? `${marker}\n\nDeferred findings that no longer block a round are tracked in #${deferredIssue.issue}.`
+    : marker
+}
+
+/**
+ * O1: at green, posts the two verdicts `writeHeldVerdict` already wrote for
+ * `round`, then one publication comment from `renderPublishedMarker` — each through
+ * `postForgeEffectOnce`'s idempotent forge-write, each re-read afterward
+ * through the SAME extractors the merge gate calls (`extractCodeReviewVerdict`/
+ * `extractSecurityReviewVerdict`), confirming the posted comment resolves
+ * cleanly to `expectedHead`. The comment is checked BEFORE it is posted,
+ * never after: `renderPublishedMarker`'s own doc comment guarantees no `VERDICT:`/
+ * `Judged head:`/`Objectives version:` line, but this is re-verified live
+ * against the two real extractors rather than trusted from that comment
+ * alone (Traps to avoid) — a comment that parses as a verdict is refused,
+ * not posted.
+ */
+export function publishRound(root: string, input: PublishInput): void {
+  const { task, round, prNumber, expectedHead, policy, manifest } = input
+  const reviewerBody = readIfExists(heldVerdictPath(root, task, round, 'reviewer'))
+  const securityBody = readIfExists(heldVerdictPath(root, task, round, 'security'))
+  if (!reviewerBody || !securityBody) {
+    throw new Error(
+      `publishRound: missing held verdict file(s) for task ${task} round ${round} — writeHeldVerdict should have written both before assessRound ever returned 'publish'.`
+    )
+  }
+
+  postPrCommentOnce(task, round, publicationEffectKey(input, 'reviewer-verdict'), prNumber, reviewerBody)
+  const postedReviewer = extractCodeReviewVerdict(fetchAllPrCommentBodies(prNumber))
+  if (postedReviewer.danglingNote || postedReviewer.headSha !== expectedHead) {
+    throw new Error(
+      `publishRound: posted reviewer verdict does not re-parse clean through extractCodeReviewVerdict bound to ${expectedHead}: ${postedReviewer.danglingNote ?? `headSha read back as ${String(postedReviewer.headSha)}`}`
+    )
+  }
+  // O3: the SAME `compareManifest` binding the gate applies — the posted
+  // comment must cover every field of the round's manifest (base included),
+  // not merely its head.
+  const reviewerUnbound = unboundFields(bindingOfPosted(postedReviewer, manifest))
+  if (reviewerUnbound.length > 0) {
+    throw new Error(
+      `publishRound: posted reviewer verdict does not bind to the round's manifest on: ${reviewerUnbound.join(', ')} — refusing to publish a verdict that does not cover the state it was dispatched against.`
+    )
+  }
+  // O3: the reviewer's own posted APPROVE never overrides the evaluator —
+  // re-evaluate the posted comment's own CONSEQUENTIAL findings against policy
+  // before treating this round as publishable, mirroring the merge gate's
+  // identical check (`checkReviewGate`) — the SAME `consequentialFindings`
+  // filter, so a finding the reviewer marked `resolved` no longer refuses a
+  // round the gate would pass, and a non-resolved blocker still does.
+  const postedReviewerPolicy = evaluateCodeReview(consequentialFindings(postedReviewer.findingSeverities), policy)
+  if (postedReviewer.value === 'APPROVE' && postedReviewerPolicy.outcome === 'blocked') {
+    throw new Error(
+      `publishRound: posted reviewer verdict says APPROVE but carries a finding (${postedReviewerPolicy.blockingFindings.map((f) => f.severity).join(', ')}) at or above this repository's code-review policy threshold (${policy.codeReviewThreshold}) — refusing to publish.`
+    )
+  }
+
+  postPrCommentOnce(task, round, publicationEffectKey(input, 'security-verdict'), prNumber, securityBody)
+  const postedSecurity = extractSecurityReviewVerdict(fetchAllPrCommentBodies(prNumber))
+  if (postedSecurity.danglingNote || postedSecurity.headSha !== expectedHead) {
+    throw new Error(
+      `publishRound: posted security verdict does not re-parse clean through extractSecurityReviewVerdict bound to ${expectedHead}: ${postedSecurity.danglingNote ?? `headSha read back as ${String(postedSecurity.headSha)}`}`
+    )
+  }
+  const securityUnbound = unboundFields(bindingOfPosted(postedSecurity, manifest))
+  if (securityUnbound.length > 0) {
+    throw new Error(
+      `publishRound: posted security verdict does not bind to the round's manifest on: ${securityUnbound.join(', ')} — refusing to publish a verdict that does not cover the state it was dispatched against.`
+    )
+  }
+  const postedSecurityPolicy = evaluateSecurityReview(consequentialFindings(postedSecurity.findingSeverities), policy)
+  if (postedSecurity.value === 'PASS' && postedSecurityPolicy.outcome === 'blocked') {
+    throw new Error(
+      `publishRound: posted security verdict says PASS but carries a finding (${postedSecurityPolicy.blockingFindings.map((f) => f.severity).join(', ')}) at or above this repository's security policy threshold (${policy.securityThreshold}) — refusing to publish.`
+    )
+  }
+
+  // The publication comment: one hidden marker line (`renderPublishedMarker`) —
+  // that the loop published, the head, each round's confidence — never a round
+  // table; the Vinaya Log holds each round. When this publication opened or
+  // updated a deferred-findings Issue, one plain trailing sentence links it.
+  // Neither is a `VERDICT:`/`Judged head:`/`Objectives version:` line, and the
+  // re-parses-as-a-verdict guard below runs over the full text, link included.
+  const summary = publicationComment(input.journal, expectedHead, input.deferredIssue)
+  const summaryAsCodeReview = extractCodeReviewVerdict([summary])
+  const summaryAsSecurity = extractSecurityReviewVerdict([summary])
+  if (summaryAsCodeReview.danglingNote === null || summaryAsSecurity.danglingNote === null) {
+    throw new Error(
+      "publishRound: the published marker comment re-parses as a real verdict through the gate's own extractors — refusing to post it (a summary mistaken for a verdict decides a merge)."
+    )
+  }
+  postPrCommentOnce(task, round, publicationEffectKey(input, 'summary'), prNumber, summary)
+}

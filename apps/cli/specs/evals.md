@@ -138,7 +138,7 @@ The first shard, `typed-sources.json`, covers the kinds a typed repository sourc
 | Kind | Universe | Typed source |
 | -- | -- | -- |
 | `port` | `ports` | `apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json` |
-| `node` | `ENGINE_STATES` and `NODE_CONTRACTS` | `apps/cli/tests/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts` |
+| `node` | `ENGINE_STATES` and `NODE_CONTRACTS` | `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts` |
 | `transition` | `ENGINE_TRANSITIONS` | the same fixture |
 | `product-guarantee` | register entries classified `product-guarantee` with `product` scope | `apps/cli/tests/fixtures/dev-review-architecture-invariants.json`, re-pinned to Engine revision 17 |
 
@@ -545,7 +545,7 @@ does not carry, and each kind of case runs its own way:
   real loop's brief does; the fake forge refuses a body whose first line closes
   any other number. The prompt ends with the review loop's
   own publishing instruction, `publishingInstructionLine` imported from
-  `apps/cli/src/lib/dev-review-loop.ts`, so the trial tells the Developer
+  `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts`, so the trial tells the Developer
   exactly what the loop tells it: publish and open its own pull request through
   the driver-run tools. Its hidden tests are that case's, run in the sandbox on
   the trial's commit. The pull request the Developer opened through

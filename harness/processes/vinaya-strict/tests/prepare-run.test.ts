@@ -12,8 +12,8 @@ import {
   type ProcessAction,
   type ProcessRunOptions
 } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
-import { isHostRepairPause, readPauseState } from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
-import { DispatchSandboxRefused } from '../../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import { isHostRepairPause, readPauseState } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
+import { DispatchSandboxRefused } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 import type { EnforcementControl } from '../../../../apps/cli/src/lib/enforcement-controls'
 import type { PreparedSource, RequiredSourceManifest } from '../../../../apps/cli/src/lib/source-manifest'
 import { sourceReceiptsPath } from '../../../../apps/cli/src/lib/source-manifest'

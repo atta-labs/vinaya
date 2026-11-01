@@ -46,7 +46,7 @@ import {
   findOpenPrForBranch,
   findOpenPrForBranchStrict,
   type reviewPolicyForLoop
-} from '../../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
+} from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import {
   developerRoundMarker,
   DispatchSandboxRefused,
@@ -54,14 +54,14 @@ import {
   MAX_GATE_STALLED_TURNS,
   pollUntil,
   renderDeveloperRoundComment
-} from '../../../../apps/cli/src/lib/dev-review-loop/round-assess'
-import { cleanupAllReviewerIsolationArtifacts } from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
+} from '../loops/dev-review/standalone/dev-review-loop/round-assess'
+import { cleanupAllReviewerIsolationArtifacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
 import {
   DeveloperTurnResultPause,
   normalizeSourceIdentity,
   PERMISSIBLE_RULING_DECISIONS,
   pauseForAcceptedResult
-} from '../../../../apps/cli/src/lib/dev-review-loop/turn-result'
+} from '../loops/dev-review/standalone/dev-review-loop/turn-result'
 import {
   describeInactiveControls,
   enforcementControlsActive,
@@ -86,7 +86,7 @@ import {
   postForgeEffectOnce,
   publishRound,
   type PublishInput
-} from '../../../../apps/cli/src/lib/dev-review-loop/publication'
+} from '../loops/dev-review/standalone/dev-review-loop/publication'
 import {
   defaultDeps,
   defaultRunSecurityScanSubprocess,
@@ -95,7 +95,7 @@ import {
   deriveVerdictPauseDetail,
   describeConfidencePauseDetail,
   handoffFindings
-} from '../../../../apps/cli/src/lib/dev-review-loop'
+} from '../loops/dev-review/standalone/dev-review-loop'
 import { loadTrustAnchorConfig } from '../../../../apps/cli/src/lib/config'
 import {
   checkPremiseAtHead,
@@ -110,7 +110,7 @@ import {
   readWorktreeHead,
   rerunFailedWorkflowJobs,
   type GatePoll
-} from '../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+} from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import {
   buildManifestRecord,
   decideSecurityScan,
@@ -122,14 +122,14 @@ import {
   type RoundVerdictParse,
   type SecurityScanOutcome,
   type SecurityScanRun
-} from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+} from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import {
   noPushPauseDetail,
   readUnpushedWorkDetail,
   unpushedFailureMessage,
   unpushedWorkResumeDetail,
   type UnpushedWork
-} from '../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
+} from '../loops/dev-review/standalone/dev-review-loop/unpushed-work'
 import {
   LIVE_RUN_TIMEOUT_MS,
   livePassedAtHead,
@@ -143,10 +143,10 @@ import {
   type LiveCheckoutPreparer,
   type LiveFailure,
   type LiveRunner
-} from '../../../../apps/cli/src/lib/dev-review-loop/live-check'
-import { routeCompletionEvents } from '../../../../apps/cli/src/lib/dev-review-loop/round-assess'
-import { resolveTrustAnchorSecurityScanCommand } from '../../../../apps/cli/src/lib/dev-review-loop/security-scan-command'
-import { fetchPrBody } from '../../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
+} from '../loops/dev-review/standalone/dev-review-loop/live-check'
+import { routeCompletionEvents } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
+import { resolveTrustAnchorSecurityScanCommand } from '../loops/dev-review/standalone/dev-review-loop/security-scan-command'
+import { fetchPrBody } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import {
   postMarkedComment,
   upsertDeferredFindingsIssue,

@@ -1,8 +1,8 @@
 /**
  * A process the runner's own commands start (a check run, an evidence
  * refresh) ends when the runner does. This reproduces, inside the harness,
- * the CLI's tool guard (apps/cli/src/lib/driver-tool-guard.ts), which the
- * harness may not import.
+ * the standalone driver's tool guard (`driver-tool-guard.ts`, beside the driver), which
+ * the harness may not import.
  *
  * A synchronous call blocks the caller's event loop, so a signal handler in
  * the caller cannot run until the child finishes, and a caller killed outright

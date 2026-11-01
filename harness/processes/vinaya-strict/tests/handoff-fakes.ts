@@ -4,7 +4,7 @@ import {
   readPauseState,
   writePauseState,
   type PauseCommentPostResult
-} from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+} from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import type { HandoffDeps } from '../executing/handoff'
 
 // The handoff's writers and posts for a test: the pause record is the real one in the run's own folder,

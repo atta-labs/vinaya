@@ -6,10 +6,10 @@ import {
   buildDeveloperFullPacket,
   renderContextPacket
 } from '../../../../apps/cli/src/lib/context-packet'
-import { developerContinuationFacts, publishingInstructionLine } from '../../../../apps/cli/src/lib/dev-review-loop'
-import { renderDeveloperDoctrineBlock } from '../../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
-import { renderConflictPrompt } from '../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
-import { turnResultInstruction } from '../../../../apps/cli/src/lib/dev-review-loop/turn-result'
+import { developerContinuationFacts, publishingInstructionLine } from '../loops/dev-review/standalone/dev-review-loop'
+import { renderDeveloperDoctrineBlock } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import { renderConflictPrompt } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
+import { turnResultInstruction } from '../loops/dev-review/standalone/dev-review-loop/turn-result'
 import { encodeLoopState } from '../executing/actions'
 import {
   conflictMergeText,

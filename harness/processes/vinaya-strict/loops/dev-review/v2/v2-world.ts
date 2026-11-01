@@ -17,9 +17,9 @@ import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-
 import { loadProcess } from '../../../../../../harness/kernel/dev-process-socket/loader/load-process'
 import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, useRuntimeDir } from '../../../tests/round-fakes'
 import type { ActionRegistry } from '../../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
-import { pauseMarker, writePauseState } from '../../../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
-import { cleanupAllReviewerIsolationArtifacts } from '../../../../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
-import { parseMergeTreeConflictFiles } from '../../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { pauseMarker, writePauseState } from '../standalone/dev-review-loop/pause-resume'
+import { cleanupAllReviewerIsolationArtifacts } from '../standalone/dev-review-loop/reviewer-isolation'
+import { parseMergeTreeConflictFiles } from '../standalone/dev-review-loop/gate-reading'
 import {
   liveTaskInput,
   runEngine,

@@ -15,7 +15,10 @@
 import { cliEntryPath } from './cli-entry.js'
 import { type ChildProcess, spawn, type StdioOptions } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { isDriverPidAlive, readDriverLock } from './dev-review-loop/pause-resume.js'
+import {
+  isDriverPidAlive,
+  readDriverLock
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 
 /** Starts `program` detached, in its own process group, with `stdio` as given. The caller closes any descriptor it opened for `stdio` once this returns. */
 export function launchDetached(program: string, args: string[], stdio: StdioOptions): ChildProcess {

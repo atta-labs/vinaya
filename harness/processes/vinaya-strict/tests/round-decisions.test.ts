@@ -15,12 +15,12 @@ import {
   pauseMarker,
   readPauseState,
   writePauseState
-} from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
-import { controlStoreRootFor, heldVerdictPath } from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
-import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../apps/cli/src/lib/dev-review-loop/round-assess'
-import { cleanupAllReviewerIsolationArtifacts } from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
-import { readUnpushedWorkDetail } from '../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
-import { defaultDeps } from '../../../../apps/cli/src/lib/dev-review-loop'
+} from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
+import { controlStoreRootFor, heldVerdictPath } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
+import { MAX_INFRASTRUCTURE_RETRIES } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
+import { cleanupAllReviewerIsolationArtifacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
+import { readUnpushedWorkDetail } from '../loops/dev-review/standalone/dev-review-loop/unpushed-work'
+import { defaultDeps } from '../loops/dev-review/standalone/dev-review-loop'
 import {
   liveTaskInput,
   readUnpublishedWork,

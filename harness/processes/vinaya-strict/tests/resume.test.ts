@@ -11,7 +11,7 @@ import {
   ReplayedResolutionError,
   writePauseState,
   type PauseState
-} from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+} from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { loopLogPathFor } from '../../../../apps/cli/src/lib/loop-log'
 import { ACTION_BINDINGS, classifyGateResult, dispatchReviewers, type TaskInput } from '../executing/actions'
 import {

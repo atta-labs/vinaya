@@ -44,7 +44,7 @@ import {
   findOpenPrForBranch as realFindOpenPrForBranch,
   type LoopInput,
   runDriverLoop as realRunDriverLoop
-} from './dev-review-loop.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import {
   escalationIdFor,
   isDriverPidAlive,
@@ -56,9 +56,12 @@ import {
   readEscalationRecord,
   readPauseState,
   resolveEscalation
-} from './dev-review-loop/pause-resume.js'
-import { runtimeDir } from './dev-review-loop/reviewer-dispatch.js'
-import { readTurnResultRecords, type TurnResultRecord } from './dev-review-loop/turn-result.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { runtimeDir } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
+import {
+  readTurnResultRecords,
+  type TurnResultRecord
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import { markProcessUnattended, tasksExecutionRoot } from './run-paths.js'
 import {
   assignIssueAtRunStart as realAssignIssueAtRunStart,

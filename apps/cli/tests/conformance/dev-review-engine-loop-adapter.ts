@@ -50,7 +50,7 @@ import {
   resolveEscalation,
   writeDriverLock,
   writeEscalationRecord
-} from '../../src/lib/dev-review-loop/pause-resume.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { liveHandoffDeps, type HandoffDeps } from '../../../../harness/processes/vinaya-strict/executing/handoff.js'
 import {
   abortableSleep,
@@ -58,7 +58,10 @@ import {
   type ResumeDeps,
   type RulingWatch
 } from '../../../../harness/processes/vinaya-strict/bin/run-lifecycle.js'
-import { cancelDevReviewLoop, taskFromPrBody } from '../../src/lib/dev-review-loop.js'
+import {
+  cancelDevReviewLoop,
+  taskFromPrBody
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import {
   createLogSink,
   drainLogSink,
@@ -70,9 +73,12 @@ import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, tasksExecutionRoot } from '.
 import { createEffectExecutor, type EffectIdentity, type EffectReconciler, sha256Hex } from '../../src/lib/effects.js'
 import { createTaskCancelHandler } from '../../src/lib/task-tools/cancel.js'
 import { readTaskRunner } from '../../src/lib/task-run-engine.js'
-import { cleanupAllReviewerIsolationArtifacts } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
-import { heldVerdictPath } from '../../src/lib/dev-review-loop/reviewer-dispatch.js'
-import { handoffIdsInPrompt, OWNED_ENV_KEYS } from '../lib/dev-review-loop-harness.js'
+import { cleanupAllReviewerIsolationArtifacts } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.js'
+import { heldVerdictPath } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
+import {
+  handoffIdsInPrompt,
+  OWNED_ENV_KEYS
+} from '../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 import { FIXTURE_REPO } from '../lib/process-fixture.js'
 import type { Observation } from './dev-review-current-loop-adapter.js'
 

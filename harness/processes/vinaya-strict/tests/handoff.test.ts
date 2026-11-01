@@ -9,12 +9,15 @@ import {
   escalationPrOf,
   pauseGrantsBareResume,
   readPauseState
-} from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+} from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import {
   DispatchSignInRefused,
   MAX_INFRASTRUCTURE_RETRIES
-} from '../../../../apps/cli/src/lib/dev-review-loop/round-assess'
-import { renderNoPushStopComment, renderPauseComment } from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+} from '../loops/dev-review/standalone/dev-review-loop/round-assess'
+import {
+  renderNoPushStopComment,
+  renderPauseComment
+} from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { createActions, type TaskInput } from '../executing/actions'
 import { createHandoff, type Handoff, type HandoffRun } from '../executing/handoff'
 import { handoffHaltReason } from '../executing/log-events'

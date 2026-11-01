@@ -30,12 +30,17 @@ import ts from 'typescript'
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
 const SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
 const DISPATCH_PATH = 'apps/cli/src/lib/dispatch.ts'
-const DEV_REVIEW_LOOP_PATH = 'apps/cli/src/lib/dev-review-loop.ts'
-const DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH = 'apps/cli/src/lib/dev-review-loop/driver-lifecycle.ts'
-const DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH = 'apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts'
-const DEV_REVIEW_LOOP_PUBLICATION_PATH = 'apps/cli/src/lib/dev-review-loop/publication.ts'
-const DEV_REVIEW_LOOP_PAUSE_RESUME_PATH = 'apps/cli/src/lib/dev-review-loop/pause-resume.ts'
-const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH = 'apps/cli/src/lib/dev-review-loop/journal-history.ts'
+const DEV_REVIEW_LOOP_PATH = 'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts'
+const DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts'
+const DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts'
+const DEV_REVIEW_LOOP_PUBLICATION_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts'
+const DEV_REVIEW_LOOP_PAUSE_RESUME_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts'
+const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/journal-history.ts'
 const LOG_SYNC_FOLDER_SOURCE_PATH = 'apps/cli/src/lib/log-sync-folder-source.ts'
 const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
@@ -248,9 +253,15 @@ function sourceFiles(dir: string, prefix: string): [string, string][] {
   return out
 }
 
-/** Every non-test `.ts`/`.tsx` file under `apps/cli/src` and each `packages/<name>/src`, repo-relative. */
+/** The standalone driver's own source, moved out of `apps/cli/src` into the process. */
+const STANDALONE_DRIVER_SRC = 'harness/processes/vinaya-strict/loops/dev-review/standalone'
+
+/** Every non-test `.ts`/`.tsx` file under `apps/cli/src`, the standalone driver and each `packages/<name>/src`, repo-relative. */
 function allSourceFiles(): [string, string][] {
-  const out: [string, string][] = [...sourceFiles(join(REPO_ROOT, 'apps/cli/src'), 'apps/cli/src')]
+  const out: [string, string][] = [
+    ...sourceFiles(join(REPO_ROOT, 'apps/cli/src'), 'apps/cli/src'),
+    ...sourceFiles(join(REPO_ROOT, STANDALONE_DRIVER_SRC), STANDALONE_DRIVER_SRC)
+  ]
   const packagesDir = join(REPO_ROOT, 'packages')
   for (const pkg of readdirSync(packagesDir, { withFileTypes: true })) {
     if (!pkg.isDirectory()) continue

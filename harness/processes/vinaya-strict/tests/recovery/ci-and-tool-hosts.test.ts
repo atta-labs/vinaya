@@ -16,7 +16,7 @@ import {
   startDevToolsHost,
   startReplaceableDevToolsHost
 } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-host'
-import { readPauseState } from '../../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+import { readPauseState } from '../../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { devToolsSocketPath } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import { READ_SOURCE_NOTICE } from '../../../../../apps/cli/src/lib/task-tools/read-source'
 import {

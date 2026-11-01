@@ -13,7 +13,10 @@ import {
   readIssueComments
 } from '../../src/lib/forge-read'
 import { fetchIssueComments } from '../../src/lib/dispatch-task'
-import { fetchFrozenBrief, resolveIssueObjectives } from '../../src/lib/dev-review-loop/developer-dispatch'
+import {
+  fetchFrozenBrief,
+  resolveIssueObjectives
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import { fetchForgeIssueContext } from '../../src/lib/forge-write'
 
 const COUNT = 250

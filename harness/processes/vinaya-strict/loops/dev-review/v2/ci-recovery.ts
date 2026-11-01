@@ -1,4 +1,4 @@
-import { sh } from '../../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { sh } from '../standalone/dev-review-loop/gate-reading'
 import {
   ciJobLine,
   ciStateLine,

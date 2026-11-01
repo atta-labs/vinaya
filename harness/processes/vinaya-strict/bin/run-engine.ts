@@ -44,7 +44,7 @@ import {
   DispatchUsageLimit,
   isUsageLimitPauseDetail,
   usageLimitPauseDetail
-} from '../../../../apps/cli/src/lib/dev-review-loop/round-assess'
+} from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 import {
   mirrorExecutionRoundOnCommit,
   readEffectiveResumedStateFrom
@@ -81,10 +81,10 @@ import {
   readWorktreeHead,
   rerunFailedWorkflowJobs,
   resolveHead
-} from '../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+} from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import { postMarkedComment } from '../../../../apps/cli/src/lib/forge-write'
-import { developerBranchFor } from '../../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
-import { publishRound } from '../../../../apps/cli/src/lib/dev-review-loop/publication'
+import { developerBranchFor } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import { publishRound } from '../loops/dev-review/standalone/dev-review-loop/publication'
 import {
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
   linuxUnixSocketFilterOptIn,
@@ -163,13 +163,13 @@ import {
   DRIVER_HEARTBEAT_INTERVAL_MS,
   defaultSetHeartbeat,
   emitDriverHeartbeat
-} from '../../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
+} from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
 import {
   clearDriverLock,
   isDriverPidAlive,
   PAUSE_REASON_PROFILE,
   readPauseState
-} from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+} from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { formatAgentLine } from '../../../../apps/cli/src/lib/agent-line'
 import { formatStageLine, type Stage, type StageChange } from '../../../../apps/cli/src/lib/follow-view'
 import {
@@ -181,7 +181,7 @@ import {
 } from '../../../../apps/cli/src/lib/loop-log'
 import { type AgentStreamRenderer, createAgentStreamRenderer } from '../../../../apps/cli/src/lib/agent-stream'
 import { CLI_ENTRY_ENV } from '../../../../apps/cli/src/lib/cli-entry'
-import { pollMergeableState } from '../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { pollMergeableState } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import { developerTurnResultJsonSchema } from '../../../../apps/cli/src/lib/developer-turn-result'
 import {
   getProcessSnapshot,
@@ -232,15 +232,15 @@ import {
   resolveIssueObjectives,
   reviewPolicyForLoop,
   freshDispatchLogLine
-} from '../../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
-import { fetchLoopHistory } from '../../../../apps/cli/src/lib/dev-review-loop/journal-history'
+} from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import { fetchLoopHistory } from '../loops/dev-review/standalone/dev-review-loop/journal-history'
 import {
   buildVerdictFromReview,
   controlStoreRootFor,
   heldVerdictPath,
   latestHeldCleanVerdict,
   persistManifestRecord
-} from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+} from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import {
   RUNTIME_DIR_ENV_KEY,
   resetRuntimeDirCache,
@@ -252,9 +252,9 @@ import {
   defaultPatchIdOf,
   ownChangesRangeBase,
   worktreeCheckEnv
-} from '../../../../apps/cli/src/lib/dev-review-loop'
+} from '../loops/dev-review/standalone/dev-review-loop'
 import { parseReviewResult, type ReviewResult } from '../../../../apps/cli/src/lib/review-result'
-import type { ReviewerPromptFacts } from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import type { ReviewerPromptFacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { agentEnvAllowlist } from '../../../../harness/kernel/adapters/agents/launch-env'
 import { grantVariables } from '../../../../harness/kernel/adapters/agents/variables'
 import { ghPullRequestView } from '../executing/pull-request-env'
@@ -308,7 +308,7 @@ import {
   storagePushLogEvent,
   withV2DevTools
 } from '../loops/dev-review/v2/flow-v2-live'
-import { readUnpushedWorkDetail, type UnpushedWork } from '../../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
+import { readUnpushedWorkDetail, type UnpushedWork } from '../loops/dev-review/standalone/dev-review-loop/unpushed-work'
 import { hookRoutingRepairLine, repairLocalGateControl } from '../../../../apps/cli/src/lib/local-gate-control'
 import {
   createShadowRecorder,

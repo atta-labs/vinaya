@@ -67,7 +67,7 @@ import {
   developerPublishesViaToolsDeps,
   makeWorld,
   runLoopInProcess
-} from '../dev-review-loop-harness.js'
+} from '../../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture'
 
 const tempDirs: string[] = []

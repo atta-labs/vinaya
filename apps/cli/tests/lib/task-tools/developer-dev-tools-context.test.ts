@@ -3,7 +3,7 @@ import {
   type DeveloperDevToolDeps,
   createDeveloperDevToolContext
 } from '../../../src/lib/task-tools/developer-dev-tools-context.js'
-import type { PublicationCheckInput } from '../../../src/lib/dev-review-loop/developer-publication.js'
+import type { PublicationCheckInput } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-publication.js'
 import { devToolError } from '../../../src/lib/task-tools/dev-tools-server.js'
 
 /**

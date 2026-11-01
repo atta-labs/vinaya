@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { policyDigest } from '@attalabs/aeg-core'
 import { diagnoseLocalOverride } from '../../src/commands/doctor.js'
 import { LOCAL_OVERRIDABLE_KEYS, resolveLocalPacingOverride, type VinayaConfig } from '../../src/lib/config.js'
-import { reviewPolicyForLoop } from '../../src/lib/dev-review-loop/developer-dispatch.js'
+import { reviewPolicyForLoop } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' })
 

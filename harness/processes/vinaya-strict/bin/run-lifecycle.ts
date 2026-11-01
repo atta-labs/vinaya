@@ -59,12 +59,12 @@ import {
   taskFromPrBody,
   type LaunchReconciliation,
   type ReconcileLaunchDeps
-} from '../../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
+} from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import {
   keepDriverLock,
   seedLoopHistory,
   type DriverLockExit
-} from '../../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
+} from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
 import {
   acquireDriverLockAtomic,
   bindPauseToPullRequest,
@@ -86,23 +86,23 @@ import {
   WrongTargetResolutionError,
   writeDriverLock,
   type PauseState
-} from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+} from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import {
   fetchPrState,
   type MergeableState,
   type PrOpenState,
   type PublishedPullRequestRead,
   readPublishedPullRequest
-} from '../../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+} from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import {
   isUsageLimitPauseDetail,
   MAX_AUTOMATIC_RATE_LIMIT_RESUMES,
   MAX_INFRASTRUCTURE_RETRIES,
   usageLimitResetFromDetail,
   usageLimitWaitMs
-} from '../../../../apps/cli/src/lib/dev-review-loop/round-assess'
+} from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 import { crossRunnerRefusal } from '../../../../apps/cli/src/lib/task-run-engine'
-import type { HeldCleanVerdict } from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import type { HeldCleanVerdict } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import type { ParsedLaunch } from '../../../../apps/cli/src/lib/dispatch'
 import type { LegExit } from '../executing/log-events'
 

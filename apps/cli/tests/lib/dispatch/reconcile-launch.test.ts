@@ -3,7 +3,7 @@ import {
   classifyChildLiveness,
   reconcileLaunch,
   type ReconcileLaunchDeps
-} from '../../../src/lib/dev-review-loop/developer-dispatch'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import type { LaunchRecord, ParsedLaunch, ProcessSnapshot } from '../../../src/lib/dispatch'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -497,7 +497,19 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
     const orphanPid = orphanPidRaw.length > 0 ? Number(orphanPidRaw) : null
 
     try {
-      const developerDispatchLib = join(CLI_ROOT, 'src', 'lib', 'dev-review-loop', 'developer-dispatch.ts')
+      const developerDispatchLib = join(
+        CLI_ROOT,
+        '..',
+        '..',
+        'harness',
+        'processes',
+        'vinaya-strict',
+        'loops',
+        'dev-review',
+        'standalone',
+        'dev-review-loop',
+        'developer-dispatch.ts'
+      )
       const reaperScript = join(cwd, 'reap-attempt.ts')
       const resultPath = join(cwd, 'result.json')
       writeFileSync(

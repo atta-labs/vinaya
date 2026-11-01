@@ -39,7 +39,7 @@ import {
   readEscalationRecord,
   readPauseState,
   type PauseState
-} from '../dev-review-loop/pause-resume.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import {
   deriveLoopState,
   lastRoundVerdictLines,
@@ -56,7 +56,7 @@ import {
 import { tasksExecutionRoot } from '../run-paths.js'
 import { widenSurfaceContinuationFor } from '../task-run.js'
 import { engineContinuationCommand, readTaskRunner } from '../task-run-engine.js'
-import { describeUsageLimitPause } from '../dev-review-loop/round-assess.js'
+import { describeUsageLimitPause } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 
 // --- Observed<T> -------------------------------------------------------------
 

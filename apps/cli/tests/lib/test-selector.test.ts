@@ -412,11 +412,11 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'apps/cli/specs/log.md',
     'apps/cli/specs/loop.md',
     'apps/cli/src/lib/config.ts',
-    'apps/cli/src/lib/dev-review-loop.ts',
-    'apps/cli/src/lib/dev-review-loop/pause-resume.ts',
-    'apps/cli/src/lib/dev-review-loop/publication.ts',
-    'apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts',
-    'apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.ts',
     'apps/cli/src/lib/dispatch.ts',
     'apps/cli/src/lib/effects.ts',
     'apps/cli/src/lib/log-sink.ts',
@@ -432,8 +432,8 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'apps/cli/src/lib/worker-boundary.ts',
     'apps/cli/tests/ci-shards/shard-2.txt',
     'apps/cli/tests/ci-shards/shard-3.txt',
-    'apps/cli/tests/lib/dev-review-loop.test.ts',
-    'apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts',
+    'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts',
+    'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/reviewer-dispatch.test.ts',
     'apps/cli/tests/lib/dispatch.test.ts',
     'apps/cli/tests/lib/dispatch/launch-intent.test.ts',
     'apps/cli/tests/lib/dispatch/worker-boundary.test.ts',
@@ -2451,7 +2451,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // never a fake filesystem — so a `log-sink.ts` change now selects that one
 // extra suite too. Same rule.
 //
-// Raised 27 → 28 (`log-portable-v1` 7): `apps/cli/tests/lib/dev-review-loop/pause-resume.test.ts`
+// Raised 27 → 28 (`log-portable-v1` 7): `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/pause-resume.test.ts`
 // newly imports `log-sink.ts` directly (`drainLogSink`, to flush its own
 // `writeEscalationRecord`/`resolveEscalation` handoff-event tests before
 // reading the real logged lines back), so a `log-sink.ts` change now selects
@@ -2469,7 +2469,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // Principal list throws) — one new file, so a change to `config.ts` now
 // selects that one extra suite, never two. Same rule.
 //
-// Raised 32 → 33: `apps/cli/tests/lib/dev-review-loop/security-scan-command.test.ts`
+// Raised 32 → 33: `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/security-scan-command.test.ts`
 // tests the shared scan-command resolver, which imports `config.ts` — one new
 // file, so a change to `config.ts` now selects that one extra suite, never two.
 // Same rule.

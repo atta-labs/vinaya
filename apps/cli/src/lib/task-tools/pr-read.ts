@@ -47,8 +47,11 @@ import {
   taskToolError,
   type TaskToolRef
 } from '@attalabs/aeg-core'
-import { markerComments, principalAllowlist } from '../dev-review-loop/developer-dispatch.js'
-import { sh } from '../dev-review-loop/gate-reading.js'
+import {
+  markerComments,
+  principalAllowlist
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
+import { sh } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/gate-reading.js'
 import { resolveRowForRef, type TaskToolCallResult } from './handlers.js'
 import {
   buildReviewRecord,
