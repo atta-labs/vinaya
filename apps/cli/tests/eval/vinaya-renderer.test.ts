@@ -13,7 +13,11 @@ import {
   CLAUDE_HARNESS_INTERNAL_TOOLS,
   layerGTrace
 } from '../../src/lib/dev-review-eval/step-one'
+import { loadRoleContract } from '../../../../harness/adapters/agents/manifest'
+import { ENGINE_ROLE_GRANTS_ROOT } from '../../src/lib/dev-review-eval/engine-role-step'
 import {
+  CASE_ROLE_CAPABILITIES,
+  capabilitiesForCase,
   extractOutcomes,
   FIELD_DISPOSITIONS,
   MAPPING_LOGIC,
@@ -31,7 +35,13 @@ import {
 import { REVIEWER_ROLES, REVIEWER_SEVERITIES } from '../../src/lib/review-result'
 import { ROLE_TOOL_GRANTS } from '../../src/lib/task-tools/role-grants'
 import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
-import { codexTrace } from './tool-selection-suite'
+import {
+  claudeTrace,
+  codexTrace,
+  isReadingCommand,
+  renderClaudeStream,
+  renderCodexStream
+} from './tool-selection-suite'
 import {
   type FixtureEntry,
   loadFixture,
@@ -129,12 +139,14 @@ describe('render', () => {
       'file_change',
       'open_pull_request',
       'publish_changes',
-      'shell'
+      'shell',
+      'shell_read'
     ])
     const review = renderOrThrow(reviewEntry.case)
+    // A reviewer reads with a single reading command too, which scores `read_file`.
     expect(review.roleToolGrants).toEqual({
-      'code-reviewer': ['Glob', 'Grep', 'Read', 'read_source'],
-      security: ['Glob', 'Grep', 'Read', 'read_source']
+      'code-reviewer': ['Glob', 'Grep', 'Read', 'read_source', 'shell_read'],
+      security: ['Glob', 'Grep', 'Read', 'read_source', 'shell_read']
     })
     const loop = renderOrThrow(loopEntry.case)
     expect(Object.keys(loop.roleToolGrants)).toEqual(['developer', 'code-reviewer', 'security'])
@@ -317,6 +329,108 @@ describe('the mapping tables', () => {
     const calls = traced.filter((tool) => !leftOut.includes(tool)).map((tool) => ({ tool }))
     const capability = outcomesOf({ ...record, trace: [...(record.trace ?? []), ...calls] })['O-capability']
     expect(capability.status).toBe('known')
+  })
+
+  it('scores a single reading command as read_file on both adapters, and every other shell call as run_commands', () => {
+    const claudeLines = (command: string) => [
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command } }] }
+      })
+    ]
+    const codexLines = (command: string) => [
+      JSON.stringify({
+        type: 'item.completed',
+        item: { id: 'c1', type: 'command_execution', command: `/bin/zsh -lc ${JSON.stringify(command)}` }
+      })
+    ]
+    const used = (trace: { tool: string }[]) => {
+      const capability = outcomesOf({ ...reference(changeEntry), trace: trace.map((call) => ({ tool: call.tool })) })[
+        'O-capability'
+      ]
+      if (capability.status !== 'known') throw new Error(`capability outcome is ${capability.status}`)
+      return capability.value.used
+    }
+    const reading = ['cat apps/cli/specs/retry-policy.md', 'rg -n retry src', 'git diff HEAD~1', 'head -n 5 a.ts']
+    const notReading = [
+      'cat a > b',
+      'cat a >> b',
+      'cat a; bun test',
+      'cat a && bun test',
+      'cat a | sh',
+      'cat $(echo a)',
+      'cat a\nrm -rf b',
+      'git diff --output=x',
+      'git diff --output x',
+      'git log --ext-diff',
+      'find . -exec rm x',
+      'find . -name a -execdir sh',
+      'find . -delete',
+      'rg --pre sh x',
+      'git -c core.pager=sh diff',
+      'sed -n 1p a',
+      'bun test',
+      'FOO=1 cat a'
+    ]
+    for (const command of reading) {
+      expect(isReadingCommand(command)).toBe(true)
+      expect(used(claudeTrace(claudeLines(command)))).toEqual(['read_file'])
+      expect(used(codexTrace(codexLines(command)))).toEqual(['read_file'])
+    }
+    for (const command of notReading) {
+      expect(isReadingCommand(command)).toBe(false)
+      expect(used(claudeTrace(claudeLines(command)))).toEqual(['run_commands'])
+      expect(used(codexTrace(codexLines(command)))).toEqual(['run_commands'])
+    }
+    // A reading call keeps its command and renders back as the same shell call on both adapters.
+    const traced = claudeTrace(claudeLines('cat a'))
+    expect(traced).toEqual([{ tool: 'shell_read', args: { command: 'cat a' } }])
+    expect(claudeTrace(renderClaudeStream(traced))).toEqual(traced)
+    expect(codexTrace(renderCodexStream(traced))).toEqual(traced)
+  })
+
+  it('narrows a role to the capabilities its case grants, never widening it', () => {
+    const contract = loadRoleContract(join(ENGINE_ROLE_GRANTS_ROOT, 'developer', 'grants.yaml'))
+    const narrowed = capabilitiesForCase(contract, ['read_file', 'run_commands', 'read_document', 'publish_change'])
+    expect(narrowed.capabilities).toEqual({
+      ...contract.capabilities,
+      write_files: 'deny',
+      web_fetch: 'deny',
+      web_search: 'deny',
+      subagents: 'deny'
+    })
+    // The role's own command rules and decisions it keeps; only the driver-run tools of a granted capability stay.
+    expect(narrowed.capabilities.run_commands).toEqual(contract.capabilities.run_commands)
+    expect(narrowed.mcp_tools).toEqual({ vinaya_dev_tools: ['fetch_documentation', 'publish_changes'] })
+    // Every grant together keeps the role as it is, except its subagents.
+    const all = capabilitiesForCase(contract, [...new Set(Object.values(TOOL_CAPABILITIES))])
+    expect(all).toEqual({
+      ...contract,
+      capabilities: { ...contract.capabilities, subagents: 'deny' }
+    })
+    // No grant leaves the role nothing a grader judges, and no MCP server.
+    const none = capabilitiesForCase(contract, [])
+    expect(none.capabilities).toEqual({
+      ...contract.capabilities,
+      read_files: 'deny',
+      run_commands: 'deny',
+      write_files: 'deny',
+      web_fetch: 'deny',
+      web_search: 'deny',
+      subagents: 'deny'
+    })
+    expect(none.mcp_tools).toEqual({})
+    // A reviewer whose case grants commands and writes still runs none and writes nothing.
+    const reviewer = loadRoleContract(join(ENGINE_ROLE_GRANTS_ROOT, 'code-reviewer', 'grants.yaml'))
+    const wider = capabilitiesForCase(reviewer, ['read_file', 'run_commands', 'write_file', 'read_web'])
+    expect(wider.capabilities.run_commands).toBe('deny')
+    expect(wider.capabilities.write_files).toBe('deny')
+    expect(wider.capabilities.web_search).toBe('deny')
+    expect(wider.capabilities.web_fetch).toBe(reviewer.capabilities.web_fetch)
+    expect(wider.mcp_tools).toEqual({})
+    // Every case capability the table names is one a trace can score.
+    for (const capability of Object.keys(CASE_ROLE_CAPABILITIES))
+      expect(Object.values(TOOL_CAPABILITIES)).toContain(capability)
   })
 
   it('scores the Codex item types a trace names besides an MCP tool call and a command', () => {

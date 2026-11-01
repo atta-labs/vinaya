@@ -13,7 +13,9 @@ import {
   mcpRule,
   type RoleCapabilities,
   type RoleContract,
+  READ_ONLY_COMMANDS,
   resolveRoleGrants,
+  type RoleGrants,
   ROLE_NAMES,
   type Decision
 } from './manifest'
@@ -62,7 +64,13 @@ function embeddedHookPolicy(config: GeneratedAgentConfig): { tools: Record<strin
 
 function claudeEffective(config: GeneratedAgentConfig): Record<string, Decision> {
   const settings = JSON.parse(generatedFile(config, 'role-settings.json'))
-  const allow = new Set<string>(settings.permissions.allow)
+  // A built-in the launch does not offer is unusable whatever the settings allow.
+  const offered = new Set(claudeOffered(config))
+  const allow = new Set<string>(
+    (settings.permissions.allow as string[]).filter(
+      (rule) => rule.startsWith('mcp__') || offered.has(rule.replace(/\(.*$/, ''))
+    )
+  )
   const deny = new Set<string>(settings.permissions.deny)
   return {
     // Claude reads files with Read (Grep and Glob alongside it).
@@ -122,22 +130,41 @@ function codexEffective(config: GeneratedAgentConfig): Record<string, Decision> 
   }
 }
 
+/** The built-ins a Claude launch offers: the names its `--tools` flag lists. A launch without the flag offers the default set. */
+function claudeOffered(config: GeneratedAgentConfig): string[] {
+  const at = config.launch.indexOf('--tools')
+  if (at < 0) throw new Error('the Claude launch offers the default built-in set: it names no --tools')
+  const value = config.launch[at + 1]
+  if (value === undefined) throw new Error('--tools has no value')
+  return value === '' ? [] : value.split(',')
+}
+
+/** The built-ins a Claude launch offers that its grants do not allow. */
+function offeredBeyondGrants(config: GeneratedAgentConfig, grants: RoleGrants): string[] {
+  return claudeOffered(config).filter(
+    (name) => (grants.tools.claude as Record<string, Decision | undefined>)[name] !== 'allow'
+  )
+}
+
 function claudeBuiltins(config: GeneratedAgentConfig): Record<string, Decision> {
   const settings = JSON.parse(generatedFile(config, 'role-settings.json'))
   const allow = new Set<string>(settings.permissions.allow)
   const deny = new Set<string>(settings.permissions.deny)
+  const offered = new Set(claudeOffered(config))
   return Object.fromEntries(
     CLAUDE_BUILTINS.map((name) => [
       name,
-      name === 'Bash'
-        ? deny.has('Bash')
-          ? 'deny'
-          : [...allow].some((rule) => rule.startsWith('Bash('))
+      !offered.has(name)
+        ? 'deny'
+        : name === 'Bash'
+          ? deny.has('Bash')
+            ? 'deny'
+            : [...allow].some((rule) => rule.startsWith('Bash('))
+              ? 'allow'
+              : 'deny'
+          : allow.has(name) && !deny.has(name)
             ? 'allow'
             : 'deny'
-        : allow.has(name) && !deny.has(name)
-          ? 'allow'
-          : 'deny'
     ])
   )
 }
@@ -270,6 +297,83 @@ describe('the capability contract gives both vendors the same effective permissi
         }
 })
 
+describe('a Claude launch offers only the built-ins its capabilities allow', () => {
+  const contract = (
+    capabilities: Partial<RoleCapabilities>,
+    mcp_tools: Record<string, string[]> = {}
+  ): RoleContract => ({
+    role: 'developer',
+    models: { claude: 'process-supplied', codex: 'process-supplied' },
+    capabilities: {
+      read_files: 'deny',
+      run_commands: 'deny',
+      write_files: 'deny',
+      network: [],
+      web_fetch: 'deny',
+      web_search: 'deny',
+      subagents: 'deny',
+      plan_tool: 'deny',
+      view_image: 'deny',
+      ...capabilities
+    },
+    mcp_tools,
+    hooks: {
+      background_shell: true,
+      force_push: true,
+      no_verify: true,
+      default_branch_commit: true,
+      write_scope: true
+    },
+    sandbox: 'enabled'
+  })
+  const paths = { generatedDir: '/tmp/generated/offered', outputSchemaPath: '/x.json', outputSchema: {}, variables: {} }
+
+  for (const role of ROLE_NAMES)
+    test(`${role}: --tools names exactly its allowed built-ins`, () => {
+      const grants = loadRoleGrants(join(processRoot, role, 'grants.yaml'))
+      const claude = generateClaudeSettings(grants, paths)
+      const allowedBuiltins = CLAUDE_BUILTINS.filter((name) => grants.tools.claude[name] === 'allow')
+      expect(claudeOffered(claude)).toEqual([...allowedBuiltins])
+      expect(offeredBeyondGrants(claude, grants)).toEqual([])
+    })
+
+  test('an empty set is --tools "", never the flag left out', () => {
+    const claude = generateClaudeSettings(resolveRoleGrants(contract({})), paths)
+    const at = claude.launch.indexOf('--tools')
+    expect(at).toBeGreaterThan(0)
+    expect(claude.launch[at + 1]).toBe('')
+    expect(claudeOffered(claude)).toEqual([])
+  })
+
+  test('a capability set denying run_commands offers no Bash on Claude and only the read-only shell on Codex', () => {
+    const grants = resolveRoleGrants(contract({ read_files: 'allow' }, { vinaya_dev_tools: ['fetch_documentation'] }))
+    const claude = generateClaudeSettings(grants, paths)
+    const codex = generateCodexConfig(grants, paths)
+    expect(claudeOffered(claude)).not.toContain('Bash')
+    expect(claudeOffered(claude)).toContain('Read')
+    expect(claudeEffective(claude).run_commands).toBe('deny')
+    expect(codexEffective(codex).read_files).toBe('allow')
+    expect(codexEffective(codex).run_commands).toBe('deny')
+    const policy = embeddedHookPolicy(codex) as unknown as { shellAllow: string[]; shellDefaultAllow?: boolean }
+    expect(policy.shellAllow).toEqual(READ_ONLY_COMMANDS.map(claudeShellRule))
+    expect(policy.shellDefaultAllow).not.toBe(true)
+    expect(generatedFile(codex, 'config.toml')).toContain('sandbox_mode = "read-only"')
+  })
+
+  test('a launch offering a built-in its capabilities do not allow fails the check', () => {
+    const grants = loadRoleGrants(join(processRoot, 'code-reviewer', 'grants.yaml'))
+    const claude = generateClaudeSettings(grants, paths)
+    const at = claude.launch.indexOf('--tools')
+    const widened = {
+      ...claude,
+      launch: claude.launch.map((arg, i) => (i === at + 1 ? `${arg},Bash,DesignSync` : arg))
+    }
+    expect(offeredBeyondGrants(widened, grants)).toEqual(['Bash', 'DesignSync'])
+    const unflagged = { ...claude, launch: claude.launch.filter((_, i) => i !== at && i !== at + 1) }
+    expect(() => claudeOffered(unflagged)).toThrow(/default built-in set/)
+  })
+})
+
 describe('role-grant vendor parity', () => {
   for (const role of ROLE_NAMES)
     test(role, () => {
@@ -286,6 +390,14 @@ describe('role-grant vendor parity', () => {
       expect(codexEffective(codex)).toEqual(claudeEffective(claude))
       expect(claudeBuiltins(claude)).toEqual(grants.tools.claude)
       expect(codexBuiltins(codex)).toEqual(grants.tools.codex)
+      // Claude's launch names exactly the built-ins the role's capabilities allow.
+      expect(claudeOffered(claude).sort()).toEqual(
+        Object.entries(grants.tools.claude)
+          .filter(([, decision]) => decision === 'allow')
+          .map(([name]) => name)
+          .sort()
+      )
+      expect(offeredBeyondGrants(claude, grants)).toEqual([])
 
       const claudeSettings = JSON.parse(generatedFile(claude, 'role-settings.json'))
       // A bare Bash allow is only for a role whose grants make the shell's default allow.

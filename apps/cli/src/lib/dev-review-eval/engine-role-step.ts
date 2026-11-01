@@ -4,7 +4,8 @@
  * scratch directory and run through the Engine's public process-run start
  * (`startProcessRun`), its agent launched by the Engine's role launcher
  * (`createRoleLauncher`) from the settings the role's adapter generates from
- * the process's own grants file for that role.
+ * the process's own grants file for that role, narrowed to the capabilities
+ * the trial's case grants (`capabilitiesForCase`).
  *
  * Nothing else of the dev-review Flow runs: no mechanical step, no gate, no
  * forge read or write. The role's driver-run tools are served by the trial's
@@ -26,7 +27,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { generateClaudeSettings } from '../../../../../harness/adapters/agents/claude-code/settings'
 import { generateCodexConfig } from '../../../../../harness/adapters/agents/codex/config'
-import { loadRoleGrants, withModel } from '../../../../../harness/adapters/agents/manifest'
+import { loadRoleContract, resolveRoleGrants, withModel } from '../../../../../harness/adapters/agents/manifest'
 import type { GeneratedAgentConfig } from '../../../../../harness/adapters/agents/policy'
 import { grantVariables } from '../../../../../harness/adapters/agents/variables'
 import {
@@ -42,6 +43,7 @@ import { DEV_TOOLS_MCP_SERVER_NAME } from '../task-tools/dev-tools-names'
 import type { BridgeInvocation } from '../task-tools/dev-tools-registration'
 import { containerClaudeLogin } from '../worker-boundary'
 import { git } from './staging'
+import { capabilitiesForCase } from './vinaya-renderer'
 
 /**
  * The spawn the Engine's executor launches an agent with, as the runtime
@@ -81,6 +83,11 @@ export interface EngineRoleStepRequest {
   outputSchema: Record<string, unknown>
   /** The bridge to the trial's dev-tools host, as the standalone dispatch's MCP settings name it. */
   devToolsBridge: BridgeInvocation
+  /**
+   * The capabilities the trial's case grants, which narrow the role's own; absent, the role keeps its grants
+   * file's capabilities, as a case that names no grant (a layer-`P` case) runs it.
+   */
+  grantedCapabilities?: readonly string[]
   /** The spawn the executor launches the agent with; a test passes a stub agent. */
   spawnFn?: SpawnFn
   observeStdoutLine?: (line: string) => void
@@ -133,9 +140,22 @@ function roleStepProcess(scratch: string, role: EngineTrialRole): LoadedProcess 
   }
 }
 
-/** The adapter's generated settings for the role, from the process's grants file, pointed at the trial's tool host. */
-export function generatedRoleConfig(request: EngineRoleStepRequest, generatedDir: string): GeneratedAgentConfig {
-  const grants = withModel(loadRoleGrants(join(ENGINE_ROLE_GRANTS_ROOT, request.role, 'grants.yaml')), request.model)
+/** What the adapter's generated settings for a role are made from. */
+export type RoleConfigRequest = Pick<
+  EngineRoleStepRequest,
+  'role' | 'adapter' | 'workingTree' | 'scratch' | 'model' | 'outputSchema' | 'devToolsBridge' | 'grantedCapabilities'
+>
+
+/**
+ * The adapter's generated settings for the role, from the process's grants
+ * file narrowed to the case's granted capabilities, pointed at the trial's
+ * tool host.
+ */
+export function generatedRoleConfig(request: RoleConfigRequest, generatedDir: string): GeneratedAgentConfig {
+  const contract = loadRoleContract(join(ENGINE_ROLE_GRANTS_ROOT, request.role, 'grants.yaml'))
+  const narrowed =
+    request.grantedCapabilities === undefined ? contract : capabilitiesForCase(contract, request.grantedCapabilities)
+  const grants = withModel(resolveRoleGrants(narrowed), request.model)
   mkdirSync(generatedDir, { recursive: true })
   const outputSchemaPath = join(generatedDir, 'turn-output.schema.json')
   writeFileSync(outputSchemaPath, JSON.stringify(request.outputSchema))

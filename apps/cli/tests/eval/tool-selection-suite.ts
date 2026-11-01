@@ -57,6 +57,8 @@ import {
   tallyTask
 } from '../../src/lib/dev-review-eval/estimators'
 import { unwrapShell } from '../../src/lib/loop-narration-codex'
+import { READ_ONLY_COMMANDS, READ_ONLY_FORBIDDEN } from '../../../../harness/adapters/agents/manifest'
+import { stripVinayaEnv } from '../lib/process-fixture'
 import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host'
 import {
   CLAUDE_DEV_TOOLS_ENV,
@@ -137,7 +139,11 @@ export interface Expectation {
   state: Record<string, Matcher>
 }
 
-/** One call as an agent made it: a granted tool by its catalog name, a shell command as `shell`, any other built-in by its own name. */
+/**
+ * One call as an agent made it: a granted tool by its catalog name, a shell
+ * call that is a single reading command as `shell_read` (`isReadingCommand`),
+ * any other shell command as `shell`, any other built-in by its own name.
+ */
 export interface TraceCall {
   tool: string
   args: Record<string, unknown>
@@ -716,6 +722,92 @@ function parseLines(lines: readonly string[]): Json[] {
 
 const CLAUDE_DEV_TOOL_PREFIX = claudeDevToolName('')
 
+/** The trace name of a shell call that is a single reading command (`isReadingCommand`): it reads files. */
+export const READING_COMMAND_TOOL = 'shell_read'
+
+/**
+ * Anything that would make a shell line more than one plain command: a pipe,
+ * a redirect, a separator, a background or `&&`, a substitution or expansion,
+ * a subshell or group, an escape, or a second line.
+ */
+// Written with escapes, not as literal backtick and brace characters, so a source scanner reads the regex as code.
+const SHELL_OPERATORS = /[|&;<>`$(){}\\\n\r]/
+
+/** A command's words, its quotes removed; `null` when a quote is left open. */
+function commandWords(command: string): string[] | null {
+  const words: string[] = []
+  let word = ''
+  let started = false
+  let quote: string | null = null
+  for (const char of command) {
+    if (quote !== null) {
+      if (char === quote) quote = null
+      else word += char
+    } else if (char === "'" || char === '"') {
+      quote = char
+      started = true
+    } else if (/\s/.test(char)) {
+      if (started) words.push(word)
+      word = ''
+      started = false
+    } else {
+      word += char
+      started = true
+    }
+  }
+  if (quote !== null) return null
+  if (started) words.push(word)
+  return words
+}
+
+const startsWithWords = (words: readonly string[], prefix: readonly string[]) =>
+  prefix.length <= words.length && prefix.every((part, i) => words[i] === part)
+
+/**
+ * Whether `words` match one vendor-neutral command rule: a plain prefix; a
+ * prefix whose last word ends in `*`, which also matches a longer word; or
+ * `prefix ... -flag`, the flag anywhere after the prefix, as `--flag=value`
+ * too, or as a one-letter flag with its value attached.
+ */
+function matchesRule(words: readonly string[], rule: string): boolean {
+  const [prefix, flag] = rule.split(' ... ') as [string, string | undefined]
+  const parts = prefix.split(' ')
+  if (flag !== undefined)
+    return (
+      startsWithWords(words, parts) &&
+      words
+        .slice(parts.length)
+        .some((word) => word === flag || word.startsWith(`${flag}=`) || (flag.length === 2 && word.startsWith(flag)))
+    )
+  const last = parts[parts.length - 1] as string
+  if (last.endsWith('*'))
+    return startsWithWords(words, parts.slice(0, -1)) && (words[parts.length - 1] ?? '').startsWith(last.slice(0, -1))
+  return startsWithWords(words, parts)
+}
+
+/**
+ * Whether a shell call's command is a single reading command: one the shared
+ * read-only command list (`READ_ONLY_COMMANDS`) holds and its forbidden list
+ * (`READ_ONLY_FORBIDDEN`) does not refuse, with no pipe, redirect, separator
+ * or command-running flag. `cat a`, `rg -n x src` and `git diff HEAD` are;
+ * `cat a > b`, `cat a; bun test`, `cat a | sh`, `git diff --output=x` and
+ * `find . -exec …` are not.
+ */
+export function isReadingCommand(command: string): boolean {
+  if (SHELL_OPERATORS.test(command)) return false
+  const words = commandWords(command)
+  if (words === null || words.length === 0) return false
+  return (
+    READ_ONLY_COMMANDS.some((rule) => matchesRule(words, rule)) &&
+    !READ_ONLY_FORBIDDEN.some((rule) => matchesRule(words, rule))
+  )
+}
+
+/** A shell call as a trace records it: a single reading command as a reading call, any other as `shell`. */
+function shellCall(command: string): TraceCall {
+  return { tool: isReadingCommand(command) ? READING_COMMAND_TOOL : 'shell', args: { command } }
+}
+
 /** The calls a Claude Code `stream-json` transcript records, from its assistant `tool_use` blocks. */
 export function claudeTrace(lines: readonly string[]): TraceCall[] {
   const calls: TraceCall[] = []
@@ -729,7 +821,7 @@ export function claudeTrace(lines: readonly string[]): TraceCall[] {
       if (block.name.startsWith(CLAUDE_DEV_TOOL_PREFIX)) {
         calls.push({ tool: block.name.slice(CLAUDE_DEV_TOOL_PREFIX.length), args: input })
       } else if (block.name === 'Bash') {
-        calls.push({ tool: 'shell', args: { command: String(input.command ?? '') } })
+        calls.push(shellCall(String(input.command ?? '')))
       } else {
         calls.push({ tool: block.name, args: input })
       }
@@ -764,7 +856,10 @@ export function codexTrace(lines: readonly string[]): TraceCall[] {
         args: asRecord(args)
       })
     } else if (item.type === 'command_execution') {
-      calls.push({ tool: 'shell', args: { command: unwrapShell(String(item.command ?? '')) } })
+      const raw = String(item.command ?? '')
+      const command = unwrapShell(raw)
+      // The unwrapped command keeps only its first line, so a command of several lines is never a reading one.
+      calls.push(/[\n\r]/.test(raw) ? { tool: 'shell', args: { command } } : shellCall(command))
     } else if (typeof item.type === 'string') {
       calls.push({ tool: item.type, args: {} })
     }
@@ -776,7 +871,8 @@ export function codexTrace(lines: readonly string[]): TraceCall[] {
 export function renderClaudeStream(trace: readonly TraceCall[]): string[] {
   return trace.map((call, i) => {
     const isDevTool = (AGENT_TOOL_CATALOG as readonly { name: string }[]).some((t) => t.name === call.tool)
-    const name = call.tool === 'shell' ? 'Bash' : isDevTool ? claudeDevToolName(call.tool) : call.tool
+    const isShell = call.tool === 'shell' || call.tool === READING_COMMAND_TOOL
+    const name = isShell ? 'Bash' : isDevTool ? claudeDevToolName(call.tool) : call.tool
     return JSON.stringify({
       type: 'assistant',
       message: { content: [{ type: 'tool_use', id: `toolu_${i + 1}`, name, input: call.args }] }
@@ -789,7 +885,7 @@ export function renderCodexStream(trace: readonly TraceCall[]): string[] {
   return trace.flatMap((call, i) => {
     const id = `item_${i + 1}`
     const item =
-      call.tool === 'shell'
+      call.tool === 'shell' || call.tool === READING_COMMAND_TOOL
         ? {
             id,
             type: 'command_execution',
@@ -879,8 +975,9 @@ export function meets(value: unknown, m: Matcher): boolean {
   return typeof value === 'number' && value <= m.max
 }
 
+/** A `shell` predicate matches every shell call, a reading one too: `cat ~/.netrc` is still a shell call. */
 function callMeets(call: TraceCall, p: CallPredicate): boolean {
-  if (call.tool !== p.tool) return false
+  if (call.tool !== p.tool && !(p.tool === 'shell' && call.tool === READING_COMMAND_TOOL)) return false
   return Object.entries(p.args ?? {}).every(([key, m]) => meets(call.args[key], m))
 }
 
@@ -1021,19 +1118,25 @@ function runProcess(
   options: { cwd: string; env: NodeJS.ProcessEnv; timeoutSec: number }
 ): Promise<{ stdout: string; code: number | null; timedOut: boolean }> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'pipe'] })
+    // No `VINAYA_*` variable of the suite's own run reaches the live CLI.
+    const env = stripVinayaEnv(options.env)
+    const child = spawn(command, args, { cwd: options.cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let timedOut = false
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk)
     })
     child.stderr.on('data', () => {})
+    let killTimer: ReturnType<typeof setTimeout> | undefined
     const timer = setTimeout(() => {
       timedOut = true
       child.kill('SIGTERM')
+      // A CLI that ignores SIGTERM is killed outright, so a timed-out trial always ends.
+      killTimer = setTimeout(() => child.kill('SIGKILL'), 10_000)
     }, options.timeoutSec * 1000)
     child.on('close', (code) => {
       clearTimeout(timer)
+      clearTimeout(killTimer)
       resolve({ stdout, code, timedOut })
     })
   })

@@ -49,6 +49,8 @@ The Claude adapter renders a rule as `Bash(<prefix>:*)`, or `Bash(<prefix>*)` fo
 
 `network` becomes the sandbox's domain allowlist.
 
+The launch offers exactly the allowed built-ins, by name: `--tools Read,Grep,…`, and `--tools ""` when none is allowed, since a launch without the flag offers Claude's default set. A built-in the pinned catalog (`CLAUDE_BUILTINS`) does not list is therefore never offered, even though no deny rule names it. The deny rules stay. `--tools` governs built-ins only: the MCP tools of `--mcp-config` and the `StructuredOutput` tool `--json-schema` adds are offered alongside it, and `ToolSearch` (allowed with any MCP tool) loads the deferred MCP schemas.
+
 ### Codex (`codex/capabilities.ts`)
 
 | Capability | Codex built-ins it allows | Also |
@@ -73,7 +75,7 @@ A reviewer (`read_files: allow`, `run_commands: deny`, `write_files: deny`) read
 
 The Codex reviewer keeps the shell because it mirrors how the standalone loop runs Codex reviewers, and `read_source` alone cannot show the diff or the checkout.
 
-When a role has `read_files: allow` and `run_commands: deny`, its Codex shell may run only `CODEX_READ_ONLY_COMMANDS` (cat, head, tail, rg, grep, ls, find, wc, git diff/log/show/status; no sed, whose `w`/`e` script commands write files and run commands). `CODEX_READ_ONLY_FORBIDDEN` holds the forge, commit, install and host commands, and is always refused. The Claude side of the same role gets no shell and reads with Read/Grep/Glob.
+When a role has `read_files: allow` and `run_commands: deny`, its Codex shell may run only `CODEX_READ_ONLY_COMMANDS` (cat, head, tail, rg, grep, ls, find, wc, git diff/log/show/status; no sed, whose `w`/`e` script commands write files and run commands). `CODEX_READ_ONLY_FORBIDDEN` holds the forge, commit, install and host commands, and is always refused. The Claude side of the same role gets no shell and reads with Read/Grep/Glob. `manifest.ts` exports both lists under vendor-neutral names, `READ_ONLY_COMMANDS` and `READ_ONLY_FORBIDDEN`, for code outside the adapters, such as a trace reader telling a reading command from any other.
 
 ### Parity
 

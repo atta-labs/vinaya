@@ -30,6 +30,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { type IssueSurface, recordedBeyondSurfacePaths } from '@attalabs/aeg-core'
+import type { RoleContract } from '../../../../../harness/adapters/agents/manifest'
 import { parseDeveloperTurnResult } from '../developer-turn-result'
 import { parseReviewResult, REVIEWER_ROLES, REVIEWER_SEVERITIES, type ReviewerRole } from '../review-result'
 import type { SourceDeliveryReceipt } from '../source-manifest'
@@ -53,8 +54,10 @@ import type { CheckResult, Fact, NeutralOutcomes, Review, SourceReceipt, TestRes
 /**
  * The one table from a trace's tool name to the neutral capability it
  * exercises. A trace names a driver-run tool by its catalog name, a shell
+ * call that is a single reading command as `shell_read`, any other shell
  * command as `shell`, and any other built-in by the agent's own name for it —
- * the convention the tool-selection suite records traces in. A traced tool
+ * the convention the tool-selection suite records traces in. A reading
+ * command reads files, as Codex, which has no file-reading tool, always does. A traced tool
  * missing from this table makes the capability outcome `invalid`. A web fetch
  * or search reads a source nobody delivered and leaves no harness receipt, so
  * it maps to `read_web`, a capability no case grants and no role grant holds:
@@ -75,6 +78,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, string>> = {
   Glob: 'read_file',
   LSP: 'read_file',
   Skill: 'read_file',
+  shell_read: 'read_file',
   Edit: 'write_file',
   Write: 'write_file',
   NotebookEdit: 'write_file',
@@ -115,7 +119,72 @@ export const SEVERITY_BLOCKING: Readonly<Record<ReviewerRole, Readonly<Record<st
 ) as Record<ReviewerRole, Record<string, boolean>>
 
 /** The agent built-ins a reviewer may hold: reviewers read the change, with its files and with shell commands, and never write it. */
-export const REVIEWER_BUILTINS: readonly string[] = ['Read', 'Grep', 'Glob', 'shell']
+export const REVIEWER_BUILTINS: readonly string[] = ['Read', 'Grep', 'Glob', 'shell_read', 'shell']
+
+/** A role capability a case's grant can keep: every one a grader judges a trial's calls by. */
+export type CaseNarrowedCapability = 'read_files' | 'write_files' | 'run_commands' | 'web_fetch' | 'web_search'
+
+/**
+ * The one table from a capability a case grants to the role capabilities
+ * (`RoleCapabilities`) its trial's agent keeps: a role capability no granted
+ * capability names is denied, and one it names keeps the role's own decision —
+ * the role's write roots, the role's command rules — so a case never widens
+ * a role. A driver-run capability keeps the role's MCP tools that
+ * `TOOL_CAPABILITIES` maps to it (`capabilitiesForCase`).
+ */
+export const CASE_ROLE_CAPABILITIES: Readonly<Record<string, readonly CaseNarrowedCapability[]>> = {
+  read_file: ['read_files'],
+  write_file: ['write_files'],
+  run_commands: ['run_commands'],
+  read_web: ['web_fetch', 'web_search']
+}
+
+/** Role capabilities denied in every case trial: a subagent's own calls never reach the trace a grader reads. */
+export const CASE_DENIED_CAPABILITIES: readonly 'subagents'[] = ['subagents']
+
+/**
+ * Role capabilities that keep the role's own decision in every case trial: no
+ * case expresses them, and they reach nothing a grader judges.
+ */
+export const ROLE_DECIDED_CAPABILITIES: readonly ('plan_tool' | 'view_image' | 'network')[] = [
+  'plan_tool',
+  'view_image',
+  'network'
+]
+
+const NARROWED_CAPABILITIES: readonly CaseNarrowedCapability[] = [
+  'read_files',
+  'write_files',
+  'run_commands',
+  'web_fetch',
+  'web_search'
+]
+
+/**
+ * A role's capability contract narrowed to what a case grants, through
+ * `CASE_ROLE_CAPABILITIES`: each capability is the role's decision and the
+ * case's grant together, never either alone. The adapters' own generators
+ * translate the result into each vendor's built-ins, so the same narrowing
+ * holds on every vendor. An MCP server left with no tool is dropped.
+ */
+export function capabilitiesForCase(contract: RoleContract, granted: readonly string[]): RoleContract {
+  const kept = new Set(granted.flatMap((capability) => CASE_ROLE_CAPABILITIES[capability] ?? []))
+  const capabilities: Record<string, unknown> = { ...contract.capabilities }
+  for (const capability of NARROWED_CAPABILITIES) if (!kept.has(capability)) capabilities[capability] = 'deny'
+  for (const capability of CASE_DENIED_CAPABILITIES) capabilities[capability] = 'deny'
+  const mcpTools = Object.entries(contract.mcp_tools).flatMap(([server, tools]) => {
+    const allowed = tools.filter((tool) => {
+      const capability = TOOL_CAPABILITIES[tool]
+      return capability !== undefined && granted.includes(capability)
+    })
+    return allowed.length === 0 ? [] : [[server, allowed] as const]
+  })
+  return {
+    ...contract,
+    capabilities: capabilities as unknown as RoleContract['capabilities'],
+    mcp_tools: Object.fromEntries(mcpTools)
+  }
+}
 
 /** The roles the Vinaya process dispatches for each kind of case, by their name in the role grants. */
 export const ROLES_BY_KIND: Readonly<Record<NeutralCaseKind, readonly GrantedRole[]>> = {
@@ -727,6 +796,10 @@ export const RENDERER_SCHEMA_VERSION = 1
 export const MAPPING_TABLES = {
   TOOL_CAPABILITIES,
   REVIEWER_BUILTINS,
+  CASE_ROLE_CAPABILITIES,
+  CASE_DENIED_CAPABILITIES,
+  ROLE_DECIDED_CAPABILITIES,
+  NARROWED_CAPABILITIES,
   BLOCKING_RANKS,
   CATALOG_TOOL_NAMES: AGENT_TOOL_CATALOG.map((tool) => tool.name),
   SEVERITY_BLOCKING,
@@ -745,6 +818,7 @@ export const MAPPING_LOGIC: readonly ((...args: never[]) => unknown)[] = [
   surfaceEntry,
   renderSources,
   renderGrants,
+  capabilitiesForCase,
   renderBrief,
   mayHold,
   isCatalogTool,
@@ -773,7 +847,8 @@ export const MAPPING_LOGIC: readonly ((...args: never[]) => unknown)[] = [
  * Every source file the mapping depends on, repository-relative: this module,
  * the neutral case it validates and identifies, the parsers and schemas that
  * decide whether a review or turn result is read as known or invalid, the
- * role grants, and the beyond-Surface reader with the helpers it calls. A
+ * role grants, the capability contract a case narrows, and the beyond-Surface
+ * reader with the helpers it calls. A
  * function's own text does not show what it calls, so the version digests
  * these files whole; an edit to any of them changes the version, even one
  * that leaves the mapping as it was.
@@ -787,6 +862,7 @@ export const MAPPING_SOURCE_PATHS: readonly string[] = [
   'apps/cli/src/lib/review-result.ts',
   'apps/cli/src/lib/developer-turn-result.ts',
   'apps/cli/src/lib/task-tools/role-grants.ts',
+  'harness/adapters/agents/manifest.ts',
   'packages/aeg-core/src/review-policy.ts',
   'packages/aeg-core/src/log/schema.ts',
   'packages/aeg-core/src/issue-validation.ts',

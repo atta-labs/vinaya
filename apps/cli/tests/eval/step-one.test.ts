@@ -46,15 +46,23 @@ import {
   type HarborTrialUsage,
   runHarborTrial
 } from '../../src/lib/dev-review-eval/harbor-trial'
-import { runEngineRoleStep, type SpawnFn } from '../../src/lib/dev-review-eval/engine-role-step'
+import {
+  ENGINE_DEV_TOOLS_SERVER,
+  generatedRoleConfig,
+  runEngineRoleStep,
+  type SpawnFn
+} from '../../src/lib/dev-review-eval/engine-role-step'
 import {
   renderCase,
+  TOOL_CAPABILITIES,
   VINAYA_RENDERER_VERSION,
   type VinayaTrialRecord
 } from '../../src/lib/dev-review-eval/vinaya-renderer'
 import { developerReferenceCases, developmentCases, type GenericSuiteKey, referenceEntry } from './generic-suites'
 import { KNOWN_BAD_VARIANTS, referenceRecord } from './vinaya-trial-records'
 import { expectGradingSandboxDenies, proveGradingSandbox } from './grading-sandbox-proof'
+import { answerTurnConfig, readOnlyDeveloperTurn } from './source-citation-suite'
+import { claudeTrace, codexTrace } from './tool-selection-suite'
 
 const options = {
   split: 'development' as const,
@@ -1699,5 +1707,175 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
         else process.env.CLAUDE_CODE_OAUTH_TOKEN = priorToken
       }
     }, 60_000)
+  })
+})
+
+describe('the capabilities a case grants decide what its trial agent is offered, on both adapters', () => {
+  const tempDir = (prefix: string) => realpathSync(fixtureDir(prefix))
+  const bridge = { command: 'true', args: [] }
+  const schema = { type: 'object' }
+  const effective = (config: { files: Record<string, string> }) =>
+    JSON.parse(config.files['effective-capabilities.json'] as string) as Record<string, string>
+  const undelivered = developmentCases('sourceCitation').find((c) => c.id === 'dev-undelivered-source') as NeutralCase
+
+  it('an answer case granting only read_file offers no shell beyond reading, no write and no web tool', () => {
+    expect(undelivered.grantedCapabilities).toEqual(['read_file'])
+    for (const adapter of ['claude-code', 'codex'] as const) {
+      const dir = tempDir(`answer-config-${adapter}-`)
+      // A Codex home with no staged login: nothing to copy.
+      const priorCodexHome = process.env.CODEX_HOME
+      process.env.CODEX_HOME = tempDir('answer-config-no-login-')
+      let config: ReturnType<typeof answerTurnConfig>
+      try {
+        config = answerTurnConfig(adapter, dir, tempDir('answer-workspace-'), bridge, schema, {
+          timeoutSec: 5,
+          grantedCapabilities: undelivered.grantedCapabilities
+        })
+      } finally {
+        if (priorCodexHome === undefined) delete process.env.CODEX_HOME
+        else process.env.CODEX_HOME = priorCodexHome
+      }
+      expect(effective(config)).toMatchObject({
+        read_files: 'allow',
+        run_commands: 'deny',
+        write_files: 'deny',
+        web_fetch: 'deny',
+        web_search: 'deny',
+        spawn_agent: 'deny'
+      })
+      // The generated files are on disk where the launch names them.
+      for (const path of Object.keys(config.files)) expect(existsSync(join(dir, 'generated', path))).toBe(true)
+      // No driver-run tool the case does not grant is named anywhere in the agent's configuration.
+      expect(Object.values(config.files).join('\n')).not.toContain('publish_changes')
+    }
+  })
+
+  it('launches the generated configuration with the prompt on stdin, resumes it, and traces fetch_documentation as read_document', async () => {
+    const stubs = tempDir('answer-stub-bin-')
+    const log = join(stubs, 'calls.jsonl')
+    const streams = {
+      claude: [
+        { type: 'system', subtype: 'init', session_id: 'stub-session' },
+        {
+          type: 'assistant',
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                id: 't1',
+                name: `mcp__${ENGINE_DEV_TOOLS_SERVER}__fetch_documentation`,
+                input: { url: 'https://docs.example.test/retries' }
+              }
+            ]
+          }
+        },
+        { type: 'result', subtype: 'success', session_id: 'stub-session', structured_output: { turnResult: {} } }
+      ],
+      codex: [
+        { type: 'thread.started', thread_id: 'stub-thread' },
+        {
+          type: 'item.completed',
+          item: {
+            id: 'm1',
+            type: 'mcp_tool_call',
+            server: ENGINE_DEV_TOOLS_SERVER,
+            tool: 'fetch_documentation',
+            arguments: { url: 'https://docs.example.test/retries' },
+            status: 'completed'
+          }
+        }
+      ]
+    }
+    for (const [name, lines] of Object.entries(streams)) {
+      const stream = lines.map((line) => JSON.stringify(line)).join('\n')
+      writeFileSync(
+        join(stubs, name),
+        [
+          '#!/usr/bin/env bun',
+          "import { appendFileSync } from 'node:fs'",
+          `appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), stdin: await Bun.stdin.text() }) + '\\n')`,
+          `process.stdout.write(${JSON.stringify(`${stream}\n`)})`,
+          ''
+        ].join('\n'),
+        { mode: 0o755 }
+      )
+    }
+    const priorPath = process.env.PATH
+    const priorCodexHome = process.env.CODEX_HOME
+    const login = tempDir('answer-codex-login-')
+    writeFileSync(join(login, 'auth.json'), '{"stub":true}\n')
+    process.env.PATH = `${stubs}:${priorPath ?? ''}`
+    process.env.CODEX_HOME = login
+    try {
+      for (const adapter of ['claude-code', 'codex'] as const) {
+        const dir = tempDir(`answer-turn-${adapter}-`)
+        const workspace = tempDir('answer-turn-workspace-')
+        const options = { timeoutSec: 30, grantedCapabilities: ['read_document'] }
+        const turn = readOnlyDeveloperTurn(adapter, dir, workspace, bridge, schema, options)
+        const first = await turn('Cite the delivered source.', null)
+        const second = await turn('Continue.', 'session-1')
+        const generated = JSON.parse(readFileSync(join(dir, 'generated', 'effective-capabilities.json'), 'utf8'))
+        expect(generated).toMatchObject({ read_files: 'deny', run_commands: 'deny', write_files: 'deny' })
+        const calls = readFileSync(log, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line) as { argv: string[]; stdin: string })
+          .slice(-2)
+        // The generated launch and its resume form, each with the prompt on stdin.
+        const expected = answerTurnConfig(adapter, dir, workspace, bridge, schema, options)
+        expect(calls[0]?.argv).toEqual(expected.launch.slice(1))
+        expect(calls[0]?.stdin).toBe('Cite the delivered source.')
+        expect(calls[1]?.argv).toEqual(
+          (expected.resumeLaunch ?? []).slice(1).map((arg) => (arg === '<session-id>' ? 'session-1' : arg))
+        )
+        expect(calls[1]?.stdin).toBe('Continue.')
+        // The staged Codex login is copied into the generated Codex home.
+        if (adapter === 'codex')
+          expect(readFileSync(join(dir, 'generated', 'auth.json'), 'utf8')).toBe('{"stub":true}\n')
+        for (const stdout of [first, second]) {
+          const lines = stdout.split('\n').filter(Boolean)
+          const trace = adapter === 'claude-code' ? claudeTrace(lines) : codexTrace(lines)
+          expect(trace.map((call) => call.tool)).toEqual(['fetch_documentation'])
+          expect(trace.map((call) => TOOL_CAPABILITIES[call.tool])).toEqual(['read_document'])
+        }
+        expect(first).not.toContain(ENGINE_DEV_TOOLS_SERVER)
+        expect(first).toContain(DEV_TOOLS_MCP_SERVER_NAME)
+      }
+    } finally {
+      process.env.PATH = priorPath
+      if (priorCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = priorCodexHome
+    }
+  }, 60_000)
+
+  it("an Engine role step's generated settings deny a capability its case does not grant", () => {
+    const request = (adapter: 'claude-code' | 'codex', grantedCapabilities?: readonly string[]) => ({
+      role: 'developer' as const,
+      adapter,
+      workingTree: tempDir('engine-narrow-tree-'),
+      scratch: tempDir('engine-narrow-scratch-'),
+      outputSchema: schema,
+      devToolsBridge: bridge,
+      ...(grantedCapabilities === undefined ? {} : { grantedCapabilities })
+    })
+    for (const adapter of ['claude-code', 'codex'] as const) {
+      const own = generatedRoleConfig(request(adapter), tempDir('engine-narrow-own-'))
+      expect(effective(own)).toMatchObject({ write_files: 'allow', web_fetch: 'allow', spawn_agent: 'allow' })
+      const narrowed = generatedRoleConfig(
+        request(adapter, ['read_file', 'run_commands', 'read_document']),
+        tempDir('engine-narrow-case-')
+      )
+      expect(effective(narrowed)).toMatchObject({
+        read_files: 'allow',
+        run_commands: 'allow',
+        write_files: 'deny',
+        web_fetch: 'deny',
+        web_search: 'deny',
+        spawn_agent: 'deny'
+      })
+      expect(Object.values(own.files).join('\n')).toContain('publish_changes')
+      expect(Object.values(narrowed.files).join('\n')).not.toContain('publish_changes')
+      expect(Object.values(narrowed.files).join('\n')).toContain('fetch_documentation')
+    }
   })
 })
