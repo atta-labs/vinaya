@@ -603,6 +603,40 @@ describe('the Evidence of a head whose ready push ran its selected tests locally
     ).rejects.toThrow('no green receipt')
     expect(readFileSync(counter, 'utf8')).toBe('x')
   })
+
+  test('on an already open pull request, an earlier push’s file list gives way to this push’s own selection', async () => {
+    const { dir, marker } = worktree()
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: dir })
+    const selected = [join(dir, 'a.test.ts')]
+    const resultPath = join(dir, '.git', 'ready-result.json')
+    writeFileSync(
+      resultPath,
+      JSON.stringify({
+        head,
+        gate: {
+          passed: true,
+          output: ' 1 pass\n 0 fail',
+          selection: { version: 1, mode: 'full', head, fullCount: 2, selected },
+          failed: [],
+          wallMs: 1
+        }
+      })
+    )
+    const verify = 'bun -e "process.exit(0)"'
+    const stale = readyTestPlanCommand([join(dir, 'a.test.ts'), join(dir, 'b.test.ts')], dir)
+    const body = withReadyTestCommand(['## Test plan', '', '```', `${verify} → exits 0`, '```', ''].join('\n'), stale)
+    const cache = memoryCache()
+    expect(await recordGreenTestRun(verify, 'ok', dir, 'pr-report', cache)).toBe(true)
+    const composed = await readyGateEvidence({ body, head, resultPath, worktreePath: dir, cache })
+    const expected = extractAgentCommandLines(composed).map(agentCommandText)
+    expect(expected).toEqual([readyTestPlanCommand(selected, dir), verify])
+    expect(composed).toContain(`${readyTestPlanCommand(selected, dir)} → every selected test file passes`)
+    const region = resolveAnchoredRegion(ScanContext.from(composed), 'EVIDENCE')
+    if (region === null || region === 'hidden') throw new Error('no evidence region')
+    expect(compareEvidenceBlock(region, head, '', expected).status).toBe('pass')
+    expect(existsSync(marker)).toBe(false)
+  })
 })
 
 describe('the Evidence of a head whose native local run passed and that still owes required CI', () => {
@@ -610,11 +644,17 @@ describe('the Evidence of a head whose native local run passed and that still ow
   const OTHER = 'd'.repeat(64)
   const IDENTITIES = ['a.test.ts@default']
 
-  function nativeHead() {
+  // `identities` is what this push ran; `planIdentities` is what the live body's Test Plan line names — an earlier
+  // push's selection when the pull request was already open; `extra` are explicit Test Plan lines after it.
+  function nativeHead(
+    identities: readonly string[] = IDENTITIES,
+    planIdentities: readonly string[] = identities,
+    extra: readonly string[] = []
+  ) {
     const { dir, marker } = worktree()
     const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
     execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: dir })
-    const command = nativeRunCommand(CONTEXT, IDENTITIES)
+    const command = nativeRunCommand(CONTEXT, identities)
     const resultPath = join(dir, '.git', 'ready-result.json')
     writeFileSync(
       resultPath,
@@ -629,7 +669,7 @@ describe('the Evidence of a head whose native local run passed and that still ow
             head,
             fullCount: 1,
             selected: [join(dir, 'a.test.ts')],
-            native: { version: 1, context: CONTEXT, identities: IDENTITIES, groups: [], command }
+            native: { version: 1, context: CONTEXT, identities, groups: [], command }
           },
           failed: [],
           wallMs: 1,
@@ -650,10 +690,11 @@ describe('the Evidence of a head whose native local run passed and that still ow
         '',
         '```',
         'bun test tests/other.test.ts → passes',
+        ...extra,
         '```',
         ''
       ].join('\n'),
-      command,
+      nativeRunCommand(CONTEXT, planIdentities),
       'every selected test passes under its own native runner'
     )
     return { dir, marker, head, command, resultPath, body }
@@ -676,6 +717,32 @@ describe('the Evidence of a head whose native local run passed and that still ow
     expect(composed).not.toContain('pending in required CI')
     expect(composed).not.toContain('required-ci')
     expect(composed.match(/_Reused from /g)?.length).toBe(1)
+    expect(existsSync(marker)).toBe(false)
+  })
+
+  test('on an already open pull request, the Test Plan line becomes this push’s own command, matching Group C; other lines keep their order', async () => {
+    // The live body still names the first push's 14-identity selection; this push ran and recorded only 10 of them.
+    const all = Array.from({ length: 14 }, (_, i) => `t${i}.test.ts@default`)
+    const ran = all.slice(0, 10)
+    const verify = 'bun -e "process.exit(0)"'
+    const { dir, marker, head, command, resultPath, body } = nativeHead(ran, all, [`${verify} → exits 0`])
+    const stale = nativeRunCommand(CONTEXT, all)
+    expect(extractAgentCommandLines(body).map(agentCommandText)).toEqual([stale, verify])
+    const cache = memoryCache()
+    expect(await recordGreenTestRun(command, ' 10 pass\n 0 fail', dir, 'pre-push', cache, { context: CONTEXT })).toBe(
+      true
+    )
+    expect(await recordGreenTestRun(verify, 'ok', dir, 'pr-report', cache)).toBe(true)
+    const composed = await readyGateEvidence({ body, head, resultPath, worktreePath: dir, cache })
+    const expected = extractAgentCommandLines(composed).map(agentCommandText)
+    expect(expected).toEqual([command, verify])
+    expect(composed).not.toContain(stale)
+    const region = resolveAnchoredRegion(ScanContext.from(composed), 'EVIDENCE')
+    if (region === null || region === 'hidden') throw new Error('no evidence region')
+    expect(compareEvidenceBlock(region, head, '', expected).status).toBe('pass')
+    // The stale line against the same Evidence is what evidence-fresh refused before: the comparison stays exact.
+    expect(compareEvidenceBlock(region, head, '', [stale, verify]).status).not.toBe('pass')
+    expect(checkBareDigits(composed).violations).toEqual([])
     expect(existsSync(marker)).toBe(false)
   })
 

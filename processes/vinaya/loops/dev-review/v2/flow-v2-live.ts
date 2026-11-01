@@ -84,7 +84,8 @@ import {
   type ReadyGateResult,
   readyTestPlanCommand,
   type StagedPullRequest,
-  type V2Functions
+  type V2Functions,
+  withReadyTestCommand
 } from './v2-actions'
 import { checkReadyBaseline } from './ready-baseline'
 import { readRequiredCiLive } from './ci-recovery'
@@ -1198,6 +1199,17 @@ export async function readyGateEvidence(input: {
     // The head sits in a code span: the note renders as prose, where the body gate refuses a bare digit.
     reusedFrom: `persisted ready-gate result at \`${input.head}\``
   }
+  // A push whose selected tests ran locally writes its own command as the Test Plan's automatic line, so the Test
+  // Plan and the Group C heading name the same run even when the pull request was already open and its body still
+  // carries an earlier push's selection.
+  const body =
+    none || !gate.selection
+      ? input.body
+      : withReadyTestCommand(
+          input.body,
+          hookEntry.command,
+          nativeEntry ? 'every selected test passes under its own native runner' : 'every selected test file passes'
+        )
   const commands: GroupCCommandResult[] = []
   if (none || !gate.selection) commands.push(hookEntry)
   else {
@@ -1205,7 +1217,7 @@ export async function readyGateEvidence(input: {
     const cache = input.cache ?? defaultTestRunCache()
     const missing: string[] = []
     let hookPlaced = false
-    for (const line of extractAgentCommandLines(input.body)) {
+    for (const line of extractAgentCommandLines(body)) {
       if (isTestRunLine(line)) {
         if (!hookPlaced) commands.push(hookEntry)
         hookPlaced = true
@@ -1224,13 +1236,13 @@ export async function readyGateEvidence(input: {
   }
   const report = await buildReport({
     cwd: input.worktreePath,
-    body: input.body,
+    body,
     groupA,
     gradedBodySource: 'push',
     gateRunner: () => ({ failed: false, outcomes: [{ name: 'ready-gate', status: 'pass', errors: [] }] }),
     groupC: { commands }
   })
-  return replaceEvidenceBlock(input.body, report.blockInner)
+  return replaceEvidenceBlock(body, report.blockInner)
 }
 
 /** The `storage_push` Log event for one landed storage push. */
