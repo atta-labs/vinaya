@@ -715,7 +715,7 @@
         }
       ],
       "tests": [
-        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/developer-dispatch.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
@@ -741,7 +741,7 @@
         }
       ],
       "tests": [
-        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dispatch/reconcile-launch.test.ts",
         "apps/cli/tests/lib/dispatch.test.ts"
       ],
@@ -1613,7 +1613,7 @@
         "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts",
         "apps/cli/tests/lib/dev-review-loop/security-scan-command.test.ts",
-        "processes/vinaya/tests/completion.test.ts"
+        "harness/processes/vinaya-strict/tests/completion.test.ts"
       ],
       "loopSpec": ["Rounds"],
       "reason": "Deterministic prompt rendering.",
@@ -1711,7 +1711,7 @@
         }
       ],
       "tests": [
-        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-9.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-11.test.ts"
       ],
@@ -2060,7 +2060,7 @@
         }
       ],
       "tests": [
-        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts",
         "apps/cli/tests/lib/dev-review-loop.test.ts"
       ],
@@ -2144,7 +2144,7 @@
         }
       ],
       "tests": [
-        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/journal-history.test.ts",
         "packages/aeg-core/src/dev-review-loop/journal-reconstruction.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts",
@@ -2245,7 +2245,7 @@
         }
       ],
       "tests": [
-        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/driver-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts"
@@ -2341,7 +2341,7 @@
         }
       ],
       "tests": [
-        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/driver-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts"
@@ -2479,7 +2479,7 @@
         }
       ],
       "tests": [
-        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts",
         "apps/cli/tests/lib/dev-review-loop.test.ts"
       ],
@@ -2538,7 +2538,7 @@
         }
       ],
       "tests": [
-        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/driver-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"
@@ -3518,7 +3518,7 @@
       "tests": [
         "apps/cli/tests/lib/dev-review-loop/live-check.test.ts",
         "apps/cli/tests/lib/dev-review-loop/live-gate-fail-closed.test.ts",
-        "processes/vinaya/tests/completion.test.ts"
+        "harness/processes/vinaya-strict/tests/completion.test.ts"
       ],
       "loopSpec": ["The live check"],
       "reason": "A check that needs real signed-in agent sessions is machine-judgeable but skipped in the Developer's sandbox, the push hook and CI; running it inside the loop catches its failure before the Principal does, and running it only on an approved head keeps unreviewed code away from the host's sign-ins.",

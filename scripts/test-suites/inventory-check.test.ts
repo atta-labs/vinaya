@@ -67,10 +67,10 @@ describe('the committed inventory validates against this repository', () => {
       ['apps/cli/tests/lib/test-selector.test.ts', 'cli', 'bun', 'apps/cli', 'apps/cli/tests/lib/test-env-preload.ts'],
       ['harness/kernel/tests/architecture.test.ts', 'kernel', 'bun', 'harness/kernel', null],
       [
-        'processes/vinaya/tests/run-engine.test.ts',
+        'harness/processes/vinaya-strict/tests/run-engine.test.ts',
         'process-vinaya',
         'bun',
-        'processes/vinaya',
+        'harness/processes/vinaya-strict',
         'apps/cli/tests/lib/test-env-preload.ts'
       ],
       ['packages/aeg-core/src/no-binary-sources.test.ts', 'aeg-core', 'vitest', 'packages/aeg-core', null],

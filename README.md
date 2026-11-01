@@ -122,19 +122,19 @@ vinaya/
 │   ├── sources/              # State and doctrine sources
 │   └── typescript-config/    # Shared TypeScript configs
 ├── harness/
-│   └── kernel/               # The generic harness (@attalabs/harness); never imports processes/
-│       ├── adapters/         # Agent, code-host and tracker adapters
-│       ├── isolation/        # The capability policy and the sandbox probes
-│       ├── gates/checks/     # run-checks.ts and guarded-spawn.ts
-│       ├── dev-process-socket/
-│       │   ├── contract/     # process.schema.json — the contract every process.yaml meets
-│       │   └── loader/       # load-process.ts — validates a process folder and pins its digest
-│       ├── loops/runtimes/atta-engine/  # The Engine runtime and its checkpointer
-│       ├── log/client/       # The Log translator
-│       └── tests/            # The architecture checks and the counted ratchet
-├── processes/
-│   └── vinaya/               # The Vinaya process (@attalabs/process-vinaya)
-│       └── process.yaml      # Process identity: id, version, Flow path, role folders
+│   ├── kernel/               # The generic harness (@attalabs/harness); never imports processes/
+│   │   ├── adapters/         # Agent, code-host and tracker adapters
+│   │   ├── isolation/        # The capability policy and the sandbox probes
+│   │   ├── gates/checks/     # run-checks.ts and guarded-spawn.ts
+│   │   ├── dev-process-socket/
+│   │   │   ├── contract/     # process.schema.json — the contract every process.yaml meets
+│   │   │   └── loader/       # load-process.ts — validates a process folder and pins its digest
+│   │   ├── loops/runtimes/atta-engine/  # The Engine runtime and its checkpointer
+│   │   ├── log/client/       # The Log translator
+│   │   └── tests/            # The architecture checks and the counted ratchet
+│   └── processes/
+│       └── vinaya-strict/    # The Vinaya process (@attalabs/process-vinaya, id vinaya)
+│           └── process.yaml  # Process identity: id, version, Flow path, role folders
 └── aeg-root/                 # AEG doctrine
 ```
 
@@ -155,8 +155,8 @@ The standalone review loop (`bun apps/cli/src/index.ts task run`) stays the defa
 can also run one task on the Engine, from a script that lives outside the published CLI:
 
 ```bash
-bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex>
-bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex> --dry-run
+bun harness/processes/vinaya-strict/bin/run-engine.ts --task <n> --agent <claude|codex>
+bun harness/processes/vinaya-strict/bin/run-engine.ts --task <n> --agent <claude|codex> --dry-run
 ```
 
 The first line printed is the run's `loopId`, the id its Log events carry. A run writes its trace

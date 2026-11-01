@@ -21,10 +21,10 @@ import {
 } from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process.js'
-import { setEngineLogIdentity } from '../../../../processes/vinaya/bin/engine-log-identity.js'
+import { setEngineLogIdentity } from '../../../../harness/processes/vinaya-strict/bin/engine-log-identity.js'
 import { LOG_IDENTITY_ENV_KEYS } from '../../src/lib/dispatch.js'
-import { createActions } from '../../../../processes/vinaya/executing/actions.js'
-import type { DeveloperPromptFacts } from '../../../../processes/vinaya/executing/developer-prompt.js'
+import { createActions } from '../../../../harness/processes/vinaya-strict/executing/actions.js'
+import type { DeveloperPromptFacts } from '../../../../harness/processes/vinaya-strict/executing/developer-prompt.js'
 import { probeAgentSandbox, type SandboxProbeRun } from '../../src/lib/worker-boundary.js'
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
 import {
@@ -39,7 +39,7 @@ import {
   type EngineRunOptions,
   type RunTrace,
   isAgentLaunchEvent
-} from '../../../../processes/vinaya/bin/run-engine.js'
+} from '../../../../harness/processes/vinaya-strict/bin/run-engine.js'
 import { createDeveloperDevToolContext } from '../../src/lib/task-tools/developer-dev-tools-context.js'
 import { manifestDigest } from '../../src/lib/review-result.js'
 import {
@@ -51,13 +51,13 @@ import {
   writeDriverLock,
   writeEscalationRecord
 } from '../../src/lib/dev-review-loop/pause-resume.js'
-import { liveHandoffDeps, type HandoffDeps } from '../../../../processes/vinaya/executing/handoff.js'
+import { liveHandoffDeps, type HandoffDeps } from '../../../../harness/processes/vinaya-strict/executing/handoff.js'
 import {
   abortableSleep,
   liveResumeDeps,
   type ResumeDeps,
   type RulingWatch
-} from '../../../../processes/vinaya/bin/run-lifecycle.js'
+} from '../../../../harness/processes/vinaya-strict/bin/run-lifecycle.js'
 import { cancelDevReviewLoop, taskFromPrBody } from '../../src/lib/dev-review-loop.js'
 import {
   createLogSink,
@@ -90,7 +90,7 @@ import type { Observation } from './dev-review-current-loop-adapter.js'
  * Missing behavior stays observable rather than being implemented by this
  * test adapter.
  */
-const PROCESS = loadProcess(resolve(import.meta.dir, '../../../../processes/vinaya'))
+const PROCESS = loadProcess(resolve(import.meta.dir, '../../../../harness/processes/vinaya-strict'))
 // The task and pull request the standalone harness's world names.
 const TASK = 9001
 /** The task every Engine scenario runs. */

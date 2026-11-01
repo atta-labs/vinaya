@@ -53,7 +53,7 @@ import { capabilitiesForCase } from './vinaya-renderer'
 export type SpawnFn = NonNullable<ProcessRunOptions['spawnFn']>
 
 /** The process folder whose role grants an Engine role step launches from. */
-export const ENGINE_ROLE_GRANTS_ROOT = join(import.meta.dir, '../../../../../processes/vinaya/executing')
+export const ENGINE_ROLE_GRANTS_ROOT = join(import.meta.dir, '../../../../../harness/processes/vinaya-strict/executing')
 
 /** The Engine roles a role trial runs, by the process's own role names. */
 export type EngineTrialRole = 'developer' | 'code-reviewer' | 'security-reviewer'

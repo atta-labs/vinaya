@@ -7,7 +7,7 @@ import { loadRoleGrants, ROLE_NAMES } from '../adapters/agents/manifest'
 import type { GeneratedAgentConfig } from './policy'
 
 const dryRun = process.argv.includes('--dry-run')
-const processRoot = join(import.meta.dir, '../../../processes/vinaya/executing')
+const processRoot = join(import.meta.dir, '../../../harness/processes/vinaya-strict/executing')
 const probeRoot = dryRun ? join(tmpdir(), 'vinaya-agent-probe') : mkdtempSync(join(tmpdir(), 'vinaya-agent-probe-'))
 
 function promptFor(vendor: 'claude-code' | 'codex', grants: ReturnType<typeof loadRoleGrants>): string {

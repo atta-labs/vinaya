@@ -162,8 +162,11 @@ export const defaultEngineRunnerDeps: EngineRunnerDeps = {
   notice: (line) => process.stderr.write(`${line}\n`)
 }
 
+/** The Vinaya process folder, relative to the root of a checkout of this repository. */
+export const PROCESS_FOLDER_IN_CHECKOUT = 'harness/processes/vinaya-strict'
+
 export function engineRunnerScriptPath(): string {
-  return resolve(packageRoot(import.meta.url), '../../processes/vinaya/bin/run-engine.ts')
+  return resolve(packageRoot(import.meta.url), '../..', PROCESS_FOLDER_IN_CHECKOUT, 'bin/run-engine.ts')
 }
 
 /**

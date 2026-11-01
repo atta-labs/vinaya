@@ -125,7 +125,7 @@ describe('a role that reads but does not run commands', () => {
 })
 
 describe('the developer before and after the capability contract', () => {
-  const processRoot = join(import.meta.dir, '../../../../processes/vinaya/executing')
+  const processRoot = join(import.meta.dir, '../../../../harness/processes/vinaya-strict/executing')
   const before = JSON.parse(
     readFileSync(join(import.meta.dir, 'fixtures', 'developer-before-capability-contract.json'), 'utf8')
   ) as { claude: GeneratedAgentConfig; codex: GeneratedAgentConfig }
