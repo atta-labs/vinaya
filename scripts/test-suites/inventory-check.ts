@@ -103,15 +103,21 @@ export const INVENTORY_PATH = 'scripts/test-suites/inventory.json'
 
 export type SuiteDeclaration = {
   id: string
-  /** The package name that owns the suite, or `repository` for the root suite. */
+  /** The package name that owns the suite, or `repository` for a root suite. */
   owner: string
-  kind: 'workspace' | 'repository'
-  /** Repository-relative directory: the workspace member, `.` for the repository suite. */
+  /**
+   * `workspace` — a member's runner collects its tests. `repository` — the root
+   * suite. `compatibility` — a root suite that deliberately imports the
+   * published packages' public subpaths; like the repository suite it runs
+   * from the root, in the build job, whatever a change selects.
+   */
+  kind: 'workspace' | 'repository' | 'compatibility'
+  /** Repository-relative directory: the workspace member, `.` for a root suite. */
   dir: string
   runner: NativeRunner
   /** Repository-relative preload the runner loads before every test, or `null`. */
   preload: string | null
-  /** The repository suite's tests, explicitly. A workspace suite lists none: its runner collects them. */
+  /** A root suite's tests, explicitly. A workspace suite lists none: its runner collects them. */
   tests?: string[]
   /** Test-shaped files under a `fixtures/` folder that the runner collects and that are real tests. */
   fixtureExecutables?: string[]
@@ -664,7 +670,7 @@ export function buildInventoryView(tree: TreeReader, options: ViewOptions = {}):
         if (typeof table.root === 'string') environment.root = resolveIn(dir, table.root)
       }
       include =
-        decl.kind === 'repository' ? [...(decl.tests ?? [])] : ['**/*{.,_}{test,spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}']
+        decl.kind !== 'workspace' ? [...(decl.tests ?? [])] : ['**/*{.,_}{test,spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}']
     } else {
       const configPath = ['vitest.config.ts', 'vitest.config.mts', 'vitest.config.js', 'vitest.config.mjs']
         .map((name) => `${dir}/${name}`)
@@ -736,7 +742,7 @@ export function buildInventoryView(tree: TreeReader, options: ViewOptions = {}):
     if (!fileSet.has(path)) problem('missing', path, 'an exclusion names a file that is not in the tree')
 
   const collects = (suite: SuiteFacts, path: string): boolean => {
-    if (suite.kind === 'repository') return suite.include.includes(path)
+    if (suite.kind !== 'workspace') return suite.include.includes(path)
     if (!under(path, suite.dir)) return false
     const inside = relativeTo(suite.dir, path)
     if (/(^|\/)node_modules\//.test(inside)) return false

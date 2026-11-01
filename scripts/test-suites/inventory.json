@@ -83,6 +83,15 @@
         "scripts/test-suites/schedule.test.ts",
         "scripts/test-suites/staged-driver-move.test.ts"
       ]
+    },
+    {
+      "id": "package-compat",
+      "owner": "repository",
+      "kind": "compatibility",
+      "dir": ".",
+      "runner": "bun",
+      "preload": "apps/cli/tests/lib/test-env-preload.ts",
+      "tests": ["scripts/package-compat/package-compat.test.ts"]
     }
   ],
   "typeInputs": [
@@ -123,7 +132,8 @@
             "sources",
             "kernel",
             "process-vinaya",
-            "repository"
+            "repository",
+            "package-compat"
           ]
         }
       ],
@@ -174,12 +184,42 @@
             "apps/cli/tests/lib/log-entry-paths.test.ts",
             "apps/cli/tests/lib/ready-ci-workflow.test.ts",
             "harness/kernel/tests/architecture.test.ts",
+            "scripts/package-compat/package-compat.test.ts",
             "scripts/test-suites/inventory-check.test.ts",
             "scripts/test-suites/schedule.test.ts"
           ]
         }
       ],
       "reason": "Each reads the workflow file from disk and asserts its jobs and steps."
+    },
+    {
+      "id": "published-package-trees",
+      "kind": "fixture",
+      "paths": [
+        "apps/cli/",
+        "packages/aeg-core/",
+        "packages/aeg-forge-state/",
+        "packages/aeg-types/",
+        "packages/sources/",
+        "aeg-root/"
+      ],
+      "readers": [{ "kind": "raw-bytes", "tests": ["scripts/package-compat/package-compat.test.ts"] }],
+      "reason": "The compatibility suite packs every published package's folder with npm, outside any import: the command-line package from the bundle it builds and the doctrine it copies, the three aeg packages through the assemble step, and installs the tarballs."
+    },
+    {
+      "id": "package-compat-programs",
+      "kind": "spawn",
+      "paths": ["apps/cli/scripts/build.ts", "apps/cli/scripts/bundle-doctrine.ts"],
+      "readers": [{ "kind": "code", "tests": ["scripts/package-compat/package-compat.test.ts"] }],
+      "reason": "The compatibility suite starts the command-line package's build and doctrine copy as their own processes before packing it."
+    },
+    {
+      "id": "package-compat-declarations",
+      "kind": "config",
+      "paths": [".changeset/config.json", "scripts/package-compat/snapshot.json"],
+      "format": "json",
+      "readers": [{ "kind": "semantic", "tests": ["scripts/package-compat/package-compat.test.ts"] }],
+      "reason": "The compatibility suite reads the fixed release group that names the published packages, and the snapshot it compares their facts with, from disk."
     },
     {
       "id": "ci-macos-workflow",
@@ -357,6 +397,13 @@
       "kind": "mandatory",
       "inputs": ["scripts/test-suites/"],
       "duty": "the build job checks the inventory and runs the repository suite on every pull request, documentation-only ones included",
+      "source": ".github/workflows/ci.yml"
+    },
+    {
+      "id": "package-compatibility",
+      "kind": "mandatory",
+      "inputs": ["scripts/package-compat/"],
+      "duty": "the build job runs the package-compatibility suite on every pull request, documentation-only ones included, whatever the change selects",
       "source": ".github/workflows/ci.yml"
     }
   ],
