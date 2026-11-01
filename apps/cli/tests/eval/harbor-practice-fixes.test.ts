@@ -22,6 +22,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { publishingInstructionLine } from '../../src/lib/dev-review-loop'
+import { renderDeveloperDoctrineBlock } from '../../src/lib/dev-review-loop/developer-dispatch'
 import {
   type GradingSpec,
   gradeTrial,
@@ -709,6 +710,9 @@ describe("a change trial's publishing instruction and its pull request", () => {
     return tree
   }
 
+  /** The doctrine the fake Vinaya under test resolves for a role. */
+  const FAKE_DOCTRINE = (role: string) => `## Short version\n\nThe ${role} role's fake doctrine.`
+
   function fakeDeveloper(opensPullRequest: boolean, prompts: string[]): VinayaProcessSteps {
     let world: { context: DevToolContext } | null = null
     const transcript = claudeTranscript([
@@ -743,7 +747,8 @@ describe("a change trial's publishing instruction and its pull request", () => {
       startToolHost: async (opts) => {
         world = { context: opts.context }
         return { socketPath: opts.socketPath, close: async () => {} }
-      }
+      },
+      resolveRoleDoctrine: async (role) => FAKE_DOCTRINE(role)
     }
   }
 
@@ -784,6 +789,12 @@ describe("a change trial's publishing instruction and its pull request", () => {
   it('ends the Developer prompt with the loop’s instruction, and records no pull request the Developer did not open', async () => {
     const { record, prompts, grade } = await containerTrial(false)
     expect(prompts).toHaveLength(1)
+    // The prompt starts with the developer doctrine block the loop renders, then the brief.
+    const rendered = renderCase(c)
+    if (!rendered.ok) throw new Error('the case does not render')
+    expect(
+      prompts[0]?.startsWith(`${renderDeveloperDoctrineBlock(FAKE_DOCTRINE('developer'))}\n\n${rendered.input.brief}`)
+    ).toBe(true)
     expect(prompts[0]).toContain(publishingInstructionLine())
     expect(prompts[0]?.endsWith(`When your work is ready, ${publishingInstructionLine()}`)).toBe(true)
     expect(record.pullRequest).toBeNull()

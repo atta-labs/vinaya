@@ -20,10 +20,13 @@ import {
   type AgentVendor
 } from '../dispatch'
 import { publishingInstructionLine } from '../dev-review-loop'
+import { renderDeveloperDoctrineBlock, resolveDeveloperDoctrineText } from '../dev-review-loop/developer-dispatch'
+import { joinReviewerPromptPieces, roleDoctrinePieces } from '../dev-review-loop/reviewer-dispatch'
 import { runtimeDirForThisRepo } from '../run-paths'
 import { startDevToolsHost } from '../task-tools/dev-tools-host'
 import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
 import { buildWorkerEnv, containerClaudeLogin, stageCodexPolicyHome } from '../worker-boundary'
+import { resolveRoleDoctrineText } from '../../roles/plan'
 import { prepareGradingCopy, testContamination, type Attribution, type HiddenInputs } from './contamination'
 import { ENGINE_SPAWN, runEngineRoleStep, type SpawnFn, usageOfStream } from './engine-role-step'
 import { suiteMean, type BootstrapMethod } from './estimators'
@@ -1251,6 +1254,13 @@ export interface VinayaProcessSteps {
   gradeInSandbox: typeof gradeInSandbox
   /** The spawn an Engine role step launches its agent with; a test passes a stub agent. */
   engineSpawn: SpawnFn
+  /**
+   * The role doctrine a layer-`G` trial gives its agent, as the review loop
+   * resolves it, or `null` when none resolves. Production resolves it from
+   * this process's own working directory, the Vinaya under test, never from
+   * the trial's working tree.
+   */
+  resolveRoleDoctrine: (role: TrialDoctrineRole) => Promise<string | null>
 }
 
 export const PRODUCTION_VINAYA_PROCESS_STEPS: VinayaProcessSteps = {
@@ -1267,7 +1277,39 @@ export const PRODUCTION_VINAYA_PROCESS_STEPS: VinayaProcessSteps = {
   importTrialBundle,
   prepareGradingCopy,
   gradeInSandbox,
-  engineSpawn: ENGINE_SPAWN
+  engineSpawn: ENGINE_SPAWN,
+  // The loop's own resolvers, run in this process's working directory: `/opt/vinaya` in a container, the
+  // repository on the host. Neither is pointed at the trial's tree, whose `aeg-root` is the case's base.
+  resolveRoleDoctrine: (role) => (role === 'developer' ? resolveDeveloperDoctrineText() : resolveRoleDoctrineText(role))
+}
+
+/** A role whose doctrine a layer-`G` trial gives its agent: the Developer, or a reviewer by its doctrine role id. */
+export type TrialDoctrineRole = 'developer' | 'reviewer' | 'security'
+
+/**
+ * The doctrine block a layer-`G` trial prepends to its prompt, rendered by the
+ * review loop's own renderer for the role — `renderDeveloperDoctrineBlock` for
+ * the Developer, the reviewer dispatch's `roleDoctrinePieces` for a reviewer —
+ * and its SHA-256, which the trial record names. A doctrine that does not
+ * resolve makes the trial unavailable, naming the role, so no trial runs
+ * without it.
+ */
+export async function trialDoctrineBlock(
+  steps: VinayaProcessSteps,
+  role: TrialDoctrineRole
+): Promise<{ ok: true; block: string; digest: string } | { ok: false; unavailableReason: string }> {
+  const text = await steps.resolveRoleDoctrine(role)
+  if (text === null || text.trim().length === 0)
+    return {
+      ok: false,
+      unavailableReason: unavailableReason(
+        'the role doctrine did not resolve',
+        `no ${role} doctrine resolves from the Vinaya under test`
+      )
+    }
+  const block =
+    role === 'developer' ? renderDeveloperDoctrineBlock(text) : joinReviewerPromptPieces(roleDoctrinePieces(role, text))
+  return { ok: true, block, digest: digest(block) }
 }
 
 /**
@@ -1909,12 +1951,14 @@ function changeRecord(
     patchDigest: string
   },
   receipts: VinayaTrialRecord['receipts'],
-  measured: boolean
+  measured: boolean,
+  doctrineDigest: string
 ): Omit<VinayaTrialRecord, 'hiddenTests'> {
   const opened = developer.toolState.pullRequest
   return {
     rendererVersion: input.rendererVersion,
     input,
+    doctrineDigest,
     pullRequest:
       opened === null
         ? null
@@ -1964,6 +2008,8 @@ async function runChangeCase(
 ): Promise<VinayaProcessRun> {
   const { trial, neutralCase: c, input } = request
   if (c.kind !== 'change') throw new Error(`${c.id} is not a change case`)
+  const doctrine = await trialDoctrineBlock(steps, 'developer')
+  if (!doctrine.ok) return { ok: false, unavailableReason: doctrine.unavailableReason, usage: NO_USAGE }
   const container = context.container
   const delivered =
     container === undefined
@@ -1981,9 +2027,11 @@ async function runChangeCase(
     if (digest(delivered.contents.get(source.sourceId) ?? '') !== source.contentDigest)
       throw new Error(`delivered document ${source.sourceId} differs from its pinned content digest`)
   }
-  // The prompt ends with the review loop's own publishing instruction: the Developer opens its pull request itself,
-  // closing the issue number the trial's fake forge world is created with, as the real loop's brief names it.
+  // The prompt starts with the developer doctrine block a fresh loop session starts with, and ends with the review
+  // loop's own publishing instruction: the Developer opens its pull request itself, closing the issue number the
+  // trial's fake forge world is created with, as the real loop's brief names it.
   const prompt = [
+    doctrine.block,
     input.brief,
     ...input.sources.map(
       (source) =>
@@ -2006,7 +2054,7 @@ async function runChangeCase(
     if (!run.ok) return run
     // The hidden tests are not in the container: the verifier runs them on the tree's commit.
     const record: VinayaTrialRecord = {
-      ...changeRecord(trial.adapter, input, run.value, delivered.receipts, false),
+      ...changeRecord(trial.adapter, input, run.value, delivered.receipts, false, doctrine.digest),
       hiddenTests: null
     }
     return { ok: true, record, usage: run.usage }
@@ -2026,7 +2074,8 @@ async function runChangeCase(
           patchDigest: digest(git(developer.submitted, ['diff', '--binary', item.baseCommit, developer.commit]))
         },
         delivered.receipts,
-        true
+        true,
+        doctrine.digest
       ),
       outcomes: developer.outcomes
     }),
@@ -2058,8 +2107,11 @@ async function runReviewCase(
   if (change === null) throw new Error(`${input.caseId} has no change under review`)
   // A reviewer reports no source use, so a review case's documents could never be shown used.
   if (input.sources.length > 0) throw new Error(`${input.caseId} delivers documents to a reviewer`)
+  const doctrine = await trialDoctrineBlock(steps, item.role === 'security-reviewer' ? 'security' : 'reviewer')
+  if (!doctrine.ok) return { ok: false, unavailableReason: doctrine.unavailableReason, usage: NO_USAGE }
   const suite = await import('../../../tests/eval/reviewer-quality-suite')
   const prompt = [
+    doctrine.block,
     input.brief,
     `Review the following change as the ${item.role}: base ${change.base}, head ${change.head}.`,
     `Bind reviewResult to headSha ${change.head} and manifestDigest ${input.briefHash}.`,
@@ -2078,6 +2130,7 @@ async function runReviewCase(
       const record: VinayaTrialRecord = {
         rendererVersion: input.rendererVersion,
         input,
+        doctrineDigest: doctrine.digest,
         pullRequest: null,
         measuredChange: null,
         hiddenTests: null,
@@ -2131,12 +2184,15 @@ async function runAnswerCase(
     if (spec === undefined || digest(spec.content) !== source.contentDigest)
       throw new Error(`delivered document ${source.sourceId} differs from its pinned content digest`)
   }
+  const doctrine = await trialDoctrineBlock(steps, 'developer')
+  if (!doctrine.ok) return { ok: false, unavailableReason: doctrine.unavailableReason, usage: NO_USAGE }
   const citation = await import('../../../tests/eval/source-citation-suite')
   const sourceManifest = await import('../source-manifest')
   const { manifest, receipts } = citation.evidenceFor(item)
   const required = new Set(input.sources.filter((source) => source.required).map((source) => source.sourceId))
   const alsoDelivered = manifest.sources.filter((source) => !required.has(source.sourceId))
   const prompt = [
+    doctrine.block,
     input.brief,
     'Answer from the delivered documents. This task changes nothing: you cannot edit a file, and you publish nothing.',
     sourceManifest.requiredSourcesPromptBlock({
@@ -2213,6 +2269,7 @@ async function runAnswerCase(
     const record: VinayaTrialRecord = {
       rendererVersion: input.rendererVersion,
       input,
+      doctrineDigest: doctrine.digest,
       pullRequest: null,
       measuredChange: null,
       hiddenTests: null,

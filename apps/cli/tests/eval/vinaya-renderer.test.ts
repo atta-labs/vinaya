@@ -24,6 +24,7 @@ import {
   MAPPING_SOURCE_PATHS,
   MAPPING_SOURCES,
   MAPPING_TABLES,
+  RENDERER_SCHEMA_VERSION,
   REVIEWER_BUILTINS,
   renderCase,
   rendererVersionOf,
@@ -634,7 +635,9 @@ describe('the renderer version', () => {
     const record = reference(changeEntry)
     const extracted = extractOutcomes(record)
     expect(extracted.ok && extracted.rendererVersion).toBe(VINAYA_RENDERER_VERSION)
-    expect(VINAYA_RENDERER_VERSION).toMatch(/^1:[0-9a-f]{64}$/)
+    // The schema version moved to 2 when the trial record gained its doctrine digest.
+    expect(RENDERER_SCHEMA_VERSION).toBe(2)
+    expect(VINAYA_RENDERER_VERSION).toMatch(/^2:[0-9a-f]{64}$/)
     const stale = extractOutcomes({ ...record, rendererVersion: '1:old' })
     expect(!stale.ok && stale.refusal).toMatchObject({ code: 'stale_renderer', field: 'rendererVersion' })
     const staleInput = extractOutcomes({ ...record, input: { ...record.input, rendererVersion: '1:old' } })
@@ -642,6 +645,18 @@ describe('the renderer version', () => {
       code: 'stale_renderer',
       field: 'input.rendererVersion'
     })
+  })
+
+  it('round-trips a record naming its doctrine digest, which no outcome reads, and a record that observes none omits it', () => {
+    for (const entry of [changeEntry, reviewEntry, loopEntry]) {
+      const record = reference(entry)
+      expect('doctrineDigest' in record).toBe(false)
+      const named: VinayaTrialRecord = { ...record, doctrineDigest: 'a'.repeat(64) }
+      const roundTripped = JSON.parse(JSON.stringify(named)) as VinayaTrialRecord
+      expect(roundTripped).toEqual(named)
+      expect(roundTripped.doctrineDigest).toBe('a'.repeat(64))
+      expect(extractOutcomes(roundTripped)).toEqual(extractOutcomes(record))
+    }
   })
 
   it('changes when a mapping table or a mapping function changes', () => {

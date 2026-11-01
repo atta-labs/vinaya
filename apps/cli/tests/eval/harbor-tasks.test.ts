@@ -62,8 +62,11 @@ import {
   TRIAL_TIMEOUT_SEC,
   writeArchive
 } from '../../src/lib/dev-review-eval/harbor-tasks'
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import type { SpawnFn } from '@atta/executor-agent-spawn'
+import { renderDeveloperDoctrineBlock } from '../../src/lib/dev-review-loop/developer-dispatch'
+import { joinReviewerPromptPieces, roleDoctrinePieces } from '../../src/lib/dev-review-loop/reviewer-dispatch'
 import { ENGINE_DEV_TOOLS_SERVER } from '../../src/lib/dev-review-eval/engine-role-step'
 import {
   HARBOR_TRIAL_BACKENDS,
@@ -835,7 +838,13 @@ describe('the case repository built from a local mirror', () => {
       const oracle = readJson<OracleSpec>(join(dir, 'solution/reference.json'))
       const split = splitRecord(referenceRecord(oracle, rendered.input)).agent
       expect(record.backend).toBe('standalone')
-      expect(Object.keys(record).sort()).toEqual([...Object.keys(split), 'backend'].sort())
+      // Beyond the split's fields, the agent part names its backend and the doctrine block its prompt started with.
+      expect(Object.keys(record).sort()).toEqual([...Object.keys(split), 'backend', 'doctrineDigest'].sort())
+      const doctrineBlock =
+        kind === 'review'
+          ? joinReviewerPromptPieces(roleDoctrinePieces('reviewer', fakeDoctrine('reviewer')))
+          : renderDeveloperDoctrineBlock(fakeDoctrine('developer'))
+      expect(record.doctrineDigest).toBe(createHash('sha256').update(doctrineBlock).digest('hex'))
       expect(record.measuredChange).toBeNull()
       expect(record.hiddenTests).toBeNull()
       expect(record.input).toEqual(rendered.input)
@@ -994,6 +1003,12 @@ describe('the case repository built from a local mirror', () => {
         expect(trial.record.backend).toBe(backend)
         expect(trial.grade.reason).toBeNull()
         expect(Object.keys(trial.grade.verdicts).length).toBeGreaterThan(0)
+        // The record names the doctrine block the loop's own renderer makes, on either backend.
+        const doctrineBlock =
+          kind === 'change'
+            ? renderDeveloperDoctrineBlock(fakeDoctrine('developer'))
+            : joinReviewerPromptPieces(roleDoctrinePieces('reviewer', fakeDoctrine('reviewer')))
+        expect(trial.record.doctrineDigest).toBe(createHash('sha256').update(doctrineBlock).digest('hex'))
         if (backend === 'standalone') {
           expect(trial.dispatched).toEqual([{ cwd: trial.tree, containerMode: true }])
           expect(trial.launches).toEqual([])
@@ -1006,6 +1021,7 @@ describe('the case repository built from a local mirror', () => {
         expect(launch.command).toBe('claude')
         expect(realpathSync(launch.cwd)).toBe(realpathSync(trial.tree))
         expect(launch.prompt).toContain(kind === 'change' ? 'Closes #' : 'Review the following change')
+        expect(launch.prompt.startsWith(doctrineBlock)).toBe(true)
         const settings = launch.args[launch.args.indexOf('--settings') + 1] as string
         expect(
           settings.endsWith(`generated/${kind === 'change' ? 'developer' : 'code-reviewer'}/role-settings.json`)
@@ -1276,6 +1292,9 @@ function stubAgent(
   }
 }
 
+/** The doctrine the fake Vinaya under test resolves for a role. */
+const fakeDoctrine = (role: string) => `## Short version\n\nThe ${role} role's fake doctrine.`
+
 /** Fake process steps for a container run: the role's transcript, and for a Developer its change and publication. */
 function fakeSteps(
   kind: NeutralCase['kind'],
@@ -1330,6 +1349,7 @@ function fakeSteps(
     startToolHost: async (opts) => {
       world = { context: opts.context }
       return { socketPath: opts.socketPath, close: async () => {} }
-    }
+    },
+    resolveRoleDoctrine: async (role) => fakeDoctrine(role)
   }
 }

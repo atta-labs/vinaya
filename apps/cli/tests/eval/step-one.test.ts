@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -7,6 +8,12 @@ import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
 import { DEV_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/dev-tools-names'
 import { spawnBudgetedAsync } from '../lib/process-fixture'
 import { fixtureDir } from '../lib/test-temp-fixture'
+import {
+  renderDeveloperDoctrineBlock,
+  resolveDeveloperDoctrineText
+} from '../../src/lib/dev-review-loop/developer-dispatch'
+import { joinReviewerPromptPieces, roleDoctrinePieces } from '../../src/lib/dev-review-loop/reviewer-dispatch'
+import { resolveRoleDoctrineText } from '../../src/roles/plan'
 import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import {
   commitInWorkingTree,
@@ -29,6 +36,7 @@ import {
   type StepOneCommandContext,
   type StepOneRunSuite,
   stepOneRuntime,
+  type TrialDoctrineRole,
   subscriptionQuotaOf,
   TRIAL_COMMIT_SCRIPT,
   trialUsage,
@@ -922,6 +930,19 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
     git(dir, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '--allow-empty', '-m', message])
     return git(dir, ['rev-parse', 'HEAD']).trim()
   }
+  const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
+  /** The doctrine the fake Vinaya under test resolves for `role`. */
+  const fakeDoctrine = (role: TrialDoctrineRole) => `## Short version\n\nThe ${role} role's fake doctrine.\n\n---\n`
+  /** The doctrine role a suite's trial gives its agent. */
+  const doctrineRoleOf = (suite: StepOneRunSuite): TrialDoctrineRole =>
+    suite === 'code-reviewer-quality-neutral.l5'
+      ? 'reviewer'
+      : suite === 'security-reviewer-quality-neutral.l5'
+        ? 'security'
+        : 'developer'
+  /** The doctrine block the review loop itself renders for `role` from `text`, with the loop's own renderers. */
+  const loopDoctrineBlock = (role: TrialDoctrineRole, text: string) =>
+    role === 'developer' ? renderDeveloperDoctrineBlock(text) : joinReviewerPromptPieces(roleDoctrinePieces(role, text))
 
   /** The same fake process run for both modes: the role's transcript, and for a Developer its change and publication. */
   const fakeRun = (kind: NeutralCase['kind'], world: { context: DevToolContext } | null) => {
@@ -957,8 +978,13 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
   }
 
   /** Every step as a recording fake; the fake stage clones the source repository, and the fake import hands that clone back. */
-  function recordingSteps(kind: NeutralCase['kind'], issue: number) {
+  function recordingSteps(
+    kind: NeutralCase['kind'],
+    issue: number,
+    doctrine: (role: TrialDoctrineRole) => Promise<string | null> = async (role) => fakeDoctrine(role)
+  ) {
     const calls: string[] = []
+    const doctrineRoles: TrialDoctrineRole[] = []
     const dispatched: Array<{ cwd: string | undefined; containerMode: boolean | undefined }> = []
     const prompts: string[] = []
     const turns: Array<{ workspace: string; claudeEnv: NodeJS.ProcessEnv | undefined }> = []
@@ -989,7 +1015,10 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
       readOnlyTurn: async (_adapter, _dir, workspace, _bridge, _schema, options) => {
         calls.push('readOnlyTurn')
         turns.push({ workspace, claudeEnv: options.claudeEnv })
-        return async () => `${fakeRun(kind, null).lines.join('\n')}\n`
+        return async (prompt: string) => {
+          prompts.push(prompt)
+          return `${fakeRun(kind, null).lines.join('\n')}\n`
+        }
       },
       startToolHost: async (opts) => {
         calls.push('startToolHost')
@@ -1050,9 +1079,13 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
       gradeInSandbox: async () => {
         calls.push('gradeInSandbox')
         return []
+      },
+      resolveRoleDoctrine: async (role) => {
+        doctrineRoles.push(role)
+        return doctrine(role)
       }
     }
-    return { steps, calls, dispatched, prompts, turns }
+    return { steps, calls, dispatched, prompts, turns, doctrineRoles }
   }
 
   const caseOf = async (suite: StepOneRunSuite, kind: NeutralCase['kind']) => {
@@ -1139,6 +1172,7 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
       const agentFields = (record: VinayaTrialRecord) => ({
         rendererVersion: record.rendererVersion,
         input: record.input,
+        doctrineDigest: record.doctrineDigest,
         pullRequestBody: record.pullRequest?.body ?? null,
         checks: record.checks,
         reviews: record.reviews,
@@ -1356,6 +1390,120 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
       expect(recording.calls).toEqual([])
     }
     expect(existsSync(recordPath)).toBe(false)
+  })
+
+  describe('every role trial gives its agent the role doctrine the review loop gives it', () => {
+    const DOCTRINE_KINDS: { suite: StepOneRunSuite; kind: NeutralCase['kind'] }[] = [
+      { suite: 'developer-capability-neutral.l5', kind: 'change' },
+      { suite: 'code-reviewer-quality-neutral.l5', kind: 'review' },
+      { suite: 'security-reviewer-quality-neutral.l5', kind: 'review' },
+      { suite: 'source-delivery-neutral.l5', kind: 'answer' }
+    ]
+
+    /** One trial of `suite`'s `kind` case on `adapter`, in a container working tree or on the host. */
+    async function doctrineTrial(
+      suite: StepOneRunSuite,
+      kind: NeutralCase['kind'],
+      adapter: 'claude-code' | 'codex',
+      where: 'host' | 'container',
+      doctrine?: (role: TrialDoctrineRole) => Promise<string | null>,
+      tree: string = tempDir('step-one-doctrine-app-')
+    ) {
+      const c = await caseOf(suite, kind)
+      const rendered = renderCase(c)
+      if (!rendered.ok) throw new Error('the case does not render')
+      const fixture = kind === 'change' ? await changeFixture(c) : null
+      if (fixture !== null && where === 'container') git(tree, ['clone', '--quiet', fixture.source, '.'])
+      const recording = recordingSteps(kind, fixture?.issue ?? 1, doctrine)
+      // A container Claude turn authenticates from the subscription token alone.
+      const priorToken = process.env.CLAUDE_CODE_OAUTH_TOKEN
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'test-subscription-token'
+      try {
+        const ran = await vinayaProcess(recording.steps)(
+          { trial: { suite, adapter, taskId: c.id, attempt: 1 }, neutralCase: c, input: rendered.input },
+          {
+            repository: fixture?.source ?? '.',
+            developerBriefs: new Map(),
+            models: {},
+            timeoutMs: 1000,
+            loaded: fixture?.loaded ?? (await loading),
+            ...(where === 'container'
+              ? {
+                  container: {
+                    workingTree: tree,
+                    recordPath: join(tempDir('step-one-doctrine-record-'), 'record.json')
+                  }
+                }
+              : {})
+          }
+        )
+        return { ran, recording, brief: rendered.input.brief }
+      } finally {
+        if (priorToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+        else process.env.CLAUDE_CODE_OAUTH_TOKEN = priorToken
+      }
+    }
+
+    for (const { suite, kind } of DOCTRINE_KINDS) {
+      const role = doctrineRoleOf(suite)
+      for (const adapter of ['claude-code', 'codex'] as const) {
+        for (const where of ['host', 'container'] as const) {
+          it(`a ${suite} ${kind} trial on ${adapter} (${where}) starts its prompt with the loop's ${role} doctrine block, before the brief, and records its digest`, async () => {
+            const { ran, recording, brief } = await doctrineTrial(suite, kind, adapter, where)
+            expect(ran.ok).toBe(true)
+            if (!ran.ok) return
+            const block = loopDoctrineBlock(role, fakeDoctrine(role))
+            expect(recording.doctrineRoles).toEqual([role])
+            expect(recording.prompts).toHaveLength(1)
+            const prompt = recording.prompts[0] as string
+            // Byte for byte the loop's own rendering, then the brief.
+            expect(prompt.slice(0, block.length)).toBe(block)
+            expect(prompt.startsWith(`${block}\n\n${brief}`)).toBe(true)
+            expect(ran.record.doctrineDigest).toBe(sha256(block))
+          }, 60_000)
+        }
+      }
+
+      it(`a ${suite} ${kind} trial whose ${role} doctrine does not resolve is unavailable, naming the role, and dispatches nothing`, async () => {
+        for (const resolved of [null, '  \n']) {
+          const { ran, recording } = await doctrineTrial(suite, kind, 'codex', 'container', async () => resolved)
+          expect(ran.ok).toBe(false)
+          if (ran.ok) return
+          expect(ran.unavailableReason).toContain(`no ${role} doctrine resolves from the Vinaya under test`)
+          expect(recording.prompts).toEqual([])
+          expect(recording.calls).toEqual([])
+        }
+      }, 60_000)
+    }
+
+    it("reads the doctrine from the Vinaya under test, never the trial's working tree", async () => {
+      // A working tree that is a git repository with its own older doctrine, as a case's `/app` is.
+      const tree = tempDir('step-one-doctrine-stale-app-')
+      git(tree, ['init', '--quiet'])
+      for (const file of ['roles/developer.md', 'roles/reviewer.md', 'roles/developer/reference.md']) {
+        mkdirSync(dirname(join(tree, 'aeg-root', file)), { recursive: true })
+        writeFileSync(join(tree, 'aeg-root', file), '## Short version\n\nSTALE-TREE-DOCTRINE\n')
+      }
+      mkdirSync(join(tree, 'aeg-root/skills/aeg'), { recursive: true })
+      writeFileSync(join(tree, 'aeg-root/skills/aeg/SKILL.md'), 'STALE-TREE-DOCTRINE\n')
+      commitAll(tree, 'stale doctrine')
+      const production = PRODUCTION_VINAYA_PROCESS_STEPS.resolveRoleDoctrine
+      for (const [suite, kind, role] of [
+        ['code-reviewer-quality-neutral.l5', 'review', 'reviewer'],
+        ['source-delivery-neutral.l5', 'answer', 'developer']
+      ] as const) {
+        const { ran, recording } = await doctrineTrial(suite, kind, 'claude-code', 'container', production, tree)
+        expect(ran.ok).toBe(true)
+        if (!ran.ok) return
+        const expected =
+          role === 'developer' ? await resolveDeveloperDoctrineText() : await resolveRoleDoctrineText(role)
+        if (expected === null) throw new Error(`the repository's ${role} doctrine does not resolve`)
+        const block = loopDoctrineBlock(role, expected)
+        expect(recording.prompts[0]?.startsWith(block)).toBe(true)
+        expect(recording.prompts[0]).not.toContain('STALE-TREE-DOCTRINE')
+        expect(ran.record.doctrineDigest).toBe(sha256(block))
+      }
+    }, 60_000)
   })
 
   it('runs an answer case on the standalone backend only', async () => {
