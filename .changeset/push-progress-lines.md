@@ -1,5 +1,0 @@
----
-'@attalabs/vinaya': minor
----
-
-A version-2 run's driver log now shows what its pushes, test runs and CI wait are doing while they run. Each storage, ready, repair and default push writes one line per local check as it finishes, with its result and duration. A push that runs its selected tests writes one line per test file once that file is complete, with its position, result, first failing test and duration, and a summary line every 60 seconds. The driver's explicit Test Plan commands write a start line, one line per command and, for a Bun test command, the same per-file lines. The required-CI wait writes one line per job as it completes, the first red job, a job queued without a runner, an infrastructure pause and the execution ceiling, with a summary every 60 seconds. Progress is narration only: every check, push, receipt and CI decision is the same with it on or off, and a push with no driver behind it writes and prints nothing new. The package ships two new bins for it, `vinaya-push-progress` and `vinaya-push-progress-observer`.

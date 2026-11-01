@@ -1,5 +1,24 @@
 # @atta/aeg-core
 
+## 0.41.0
+
+### Minor Changes
+
+- e245323: Write Log schema 4 with explicit process and runner identities, preserve older headers on read, and stamp Engine events with the loaded process and installed runner version.
+- 7844c73: An approved task pull request that falls into conflict with main after its loop published is picked up again. On both runners the driver keeps watching a published pull request, holding the task's lock, until it is merged or closed; when the forge reports it `CONFLICTING` the driver re-enters with no ruling, sends the Developer back with the conflicting files to merge main in, and runs the gates and both reviews again before it publishes. The Engine runner starts each re-entry as a fresh run of the task's next generation rather than resuming its completed checkpoint, and its Flow reads mergeability again before publication. Each re-entry is a new `conflict_reentry` Log event and a line in the driver log; past three for one driver, the run pauses `repeat_failure` for a person.
+- d5230ca: The version 2 ready push's test-run limit is now `reviewPolicy.readyPushTimeoutMinutes` (default 20, a positive integer), read from the default branch like `maxRounds` and overridable in the gitignored local configuration file. A run stopped at its limit pauses for a person, naming the limit and the number of selected test files, instead of being sent back to the Developer as a test failure. The setting is not part of the policy digest.
+- 5f7b9c5: Review locally, push once. A refused push re-runs only the tests that failed plus the tests the fix affects. The pre-push hook gains a storage mode (cheap checks only, no tests, allowed only while no pull request is open) and a ready mode (the selected tests, measured against the default branch). A process may declare more than one flow, and `vinaya task run --flow v2` chooses the new flow on the Atta Engine runner; today's flow stays the default. The Log gains `storage_push`, `local_checks_run`, `ready_push`, `failed_tests_rerun`, `pr_opened`, `ci_result_read` and `phase_time` (written by version 2 runs only), and records which flow ran.
+
+### Patch Changes
+
+- d4b97e7: Resolve dispatch and verification targets from the repository where each tool is invoked.
+- ca981c2: Approvals carry across a v2 conflict merge that leaves the pull request's own lines unchanged. The pull request's own patch is now compared with zero context from each head's own merge base, so a merge of the default branch that only moves or surrounds the pull request's changes keeps the review; the CI review gate recomputes that comparison from the git objects itself. A merge that changes the pull request's own lines is reviewed by its interdiff against the posted approvals.
+- 18ecf9b: Keep approved ready-push repairs separate from the review ceiling and pause after three consecutive failures, naming the failed test files.
+- Updated dependencies [946f290]
+- Updated dependencies [ae83db5]
+  - @attalabs/aeg-types@0.41.0
+  - @attalabs/aeg-forge-state@0.41.0
+
 ## 0.40.0
 
 ### Minor Changes
