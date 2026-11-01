@@ -56,7 +56,7 @@ import {
   stageCodexPolicyHome
 } from '../../src/lib/worker-boundary.js'
 import { sourceManifestPath, sourceReceiptsPath, sourceStoreDir } from '../../src/lib/source-manifest.js'
-import { grantVariables } from '../../../../harness/adapters/agents/variables.js'
+import { grantVariables } from '../../../../harness/kernel/adapters/agents/variables.js'
 import { createRoleLaunchers, sandboxProbePlanFor } from '../../../../processes/vinaya/executing/actions.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture.js'
 import { isSuiteInput, REPO_ROOT } from './command-sources.js'

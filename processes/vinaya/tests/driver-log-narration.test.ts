@@ -13,8 +13,8 @@ import {
   runLoopInProcess,
   taskRunDir
 } from '../../../apps/cli/tests/lib/dev-review-loop-harness'
-import { loadProcess } from '../../../harness/dev-process/loader/load-process'
-import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
+import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
+import type { ActionRegistry } from '../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   classifyDeveloperOutput,
   classifyGateResult,

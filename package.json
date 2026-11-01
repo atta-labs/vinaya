@@ -5,7 +5,7 @@
   "workspaces": [
     "apps/*",
     "packages/*",
-    "harness",
+    "harness/kernel",
     "processes/*"
   ],
   "scripts": {

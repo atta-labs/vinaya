@@ -56,7 +56,7 @@
       "id": "kernel",
       "owner": "@attalabs/harness",
       "kind": "workspace",
-      "dir": "harness",
+      "dir": "harness/kernel",
       "runner": "bun",
       "preload": null
     },
@@ -139,9 +139,11 @@
     {
       "id": "process-contract-schema",
       "kind": "schema",
-      "paths": ["harness/dev-process/contract/process.schema.json"],
+      "paths": ["harness/kernel/dev-process-socket/contract/process.schema.json"],
       "format": "json",
-      "readers": [{ "kind": "schema-policy", "tests": ["harness/dev-process/loader/load-process.test.ts"] }],
+      "readers": [
+        { "kind": "schema-policy", "tests": ["harness/kernel/dev-process-socket/loader/load-process.test.ts"] }
+      ],
       "reason": "The loader test validates every process folder against the contract schema it reads from disk."
     },
     {
@@ -171,7 +173,7 @@
             "apps/cli/tests/lib/ci-impact-plan.test.ts",
             "apps/cli/tests/lib/log-entry-paths.test.ts",
             "apps/cli/tests/lib/ready-ci-workflow.test.ts",
-            "harness/tests/architecture.test.ts",
+            "harness/kernel/tests/architecture.test.ts",
             "scripts/test-suites/inventory-check.test.ts",
             "scripts/test-suites/schedule.test.ts"
           ]

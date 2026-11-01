@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
-import { loadProcess } from '../../../harness/dev-process/loader/load-process'
+import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
 import { setEngineLogIdentity } from '../bin/engine-log-identity'
 
 test('stamps the loaded Vinaya process, installed Engine version and dispatched agent runtime', () => {

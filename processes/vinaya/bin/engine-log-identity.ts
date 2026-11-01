@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { parse } from 'yaml'
-import type { LoadedProcess } from '../../../harness/dev-process/loader/load-process'
+import type { LoadedProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
 
 /** Stamp the loaded process, installed Engine and dispatched agent runtime identities before creating a Log sink. */
 export function setEngineLogIdentity(

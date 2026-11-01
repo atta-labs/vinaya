@@ -65,7 +65,7 @@ describe('the committed inventory validates against this repository', () => {
   test('every named area is covered, with its actual runner, working directory and preload', () => {
     const expectations: [string, string, string, string, string | null][] = [
       ['apps/cli/tests/lib/test-selector.test.ts', 'cli', 'bun', 'apps/cli', 'apps/cli/tests/lib/test-env-preload.ts'],
-      ['harness/tests/architecture.test.ts', 'kernel', 'bun', 'harness', null],
+      ['harness/kernel/tests/architecture.test.ts', 'kernel', 'bun', 'harness/kernel', null],
       [
         'processes/vinaya/tests/run-engine.test.ts',
         'process-vinaya',
@@ -127,7 +127,7 @@ describe('the committed inventory validates against this repository', () => {
     expect(groups.reduce((n, g) => n + g.tests.length, 0)).toBe(head.tests.length)
     expect(groups.find((g) => g.suite === 'aeg-core')?.runner).toBe('vitest')
     const layout = layoutOf(head)
-    expect(layout.packageDirs).toContain('harness')
+    expect(layout.packageDirs).toContain('harness/kernel')
     expect(layout.preloads).toContain('apps/cli/tests/lib/test-env-preload.ts')
     expect(layout.opaque).toContain('scripts/ci/config-probe.ts')
   })

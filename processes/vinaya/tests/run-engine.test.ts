@@ -47,9 +47,9 @@ import {
 } from '../../../apps/cli/tests/lib/task-tools/live-developer-context-world'
 import { developerPrompt } from '../executing/developer-prompt'
 import { AGENT_EXIT_EVENT, createRoleLaunchers } from '../executing/actions'
-import { loadProcess } from '../../../harness/dev-process/loader/load-process'
-import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
-import type { NodeLifecycle } from '../../../harness/dev-process/logging/translate'
+import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
+import type { ActionRegistry } from '../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+import type { NodeLifecycle } from '../../../harness/kernel/log/client/translate'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import {
   classifyDeveloperOutput,
@@ -66,7 +66,7 @@ import {
 } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { readPauseState } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
-import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+import { SqliteCheckpointer } from '../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import { currentRunGeneration, runIdentityOfTask } from '../bin/run-lifecycle'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
@@ -92,7 +92,7 @@ import {
   roleBridgeCommands,
   ROLE_HOST_BRIDGES
 } from '../bin/run-engine'
-import { ROLE_NAMES } from '../../../harness/adapters/agents/manifest'
+import { ROLE_NAMES } from '../../../harness/kernel/adapters/agents/manifest'
 import { createDispatchCapabilityTable } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))

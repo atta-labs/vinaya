@@ -44,7 +44,7 @@ import {
   driverDevBridgeInvocation
 } from '../../src/lib/task-tools/dev-tools-registration'
 import { generatedRoleConfig, withStandaloneToolNames } from '../../src/lib/dev-review-eval/engine-role-step'
-import { type GeneratedAgentConfig, RESUME_SESSION_PLACEHOLDER } from '../../../../harness/adapters/agents/policy'
+import { type GeneratedAgentConfig, RESUME_SESSION_PLACEHOLDER } from '../../../../harness/kernel/isolation/policy'
 import { createWorld, usageOf, type ToolSelectionCase, type Usage, type World } from './tool-selection-suite'
 import { stripVinayaEnv } from '../lib/process-fixture'
 

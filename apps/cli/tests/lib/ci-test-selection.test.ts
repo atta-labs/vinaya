@@ -240,7 +240,7 @@ describe('eligibility follows the workspace members discovery finds', () => {
       expect([path, isSelectablePath(path, layout)]).toEqual([path, isSelectablePath(path, CONVENTIONAL_LAYOUT)])
     for (const path of refused) expect([path, isSelectablePath(path, layout)]).toEqual([path, false])
     // Members the fixed folder list never covered are found, and only their source folders are admitted.
-    expect(layout.packageDirs).toContain('harness')
+    expect(layout.packageDirs).toContain('harness/kernel')
     expect(layout.packageDirs).toContain('processes/vinaya')
     expect(isSelectablePath('processes/vinaya/bin/run-engine.ts', layout)).toBe(false)
   })

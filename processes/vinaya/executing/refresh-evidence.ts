@@ -1,5 +1,5 @@
 import { prReportRefreshArgs } from '../../../apps/cli/src/lib/dev-review-loop'
-import type { CliRun } from '../../../harness/gates/run-checks'
+import type { CliRun } from '../../../harness/kernel/gates/checks/run-checks'
 
 /**
  * The line `pr report --push <pr>` prints once the live pull request body was

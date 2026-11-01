@@ -30,7 +30,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { type IssueSurface, recordedBeyondSurfacePaths } from '@attalabs/aeg-core'
-import type { RoleContract } from '../../../../../harness/adapters/agents/manifest'
+import type { RoleContract } from '../../../../../harness/kernel/adapters/agents/manifest'
 import { parseDeveloperTurnResult } from '../developer-turn-result'
 import { parseReviewResult, REVIEWER_ROLES, REVIEWER_SEVERITIES, type ReviewerRole } from '../review-result'
 import type { SourceDeliveryReceipt } from '../source-manifest'
@@ -862,7 +862,7 @@ export const MAPPING_SOURCE_PATHS: readonly string[] = [
   'apps/cli/src/lib/review-result.ts',
   'apps/cli/src/lib/developer-turn-result.ts',
   'apps/cli/src/lib/task-tools/role-grants.ts',
-  'harness/adapters/agents/manifest.ts',
+  'harness/kernel/adapters/agents/manifest.ts',
   'packages/aeg-core/src/review-policy.ts',
   'packages/aeg-core/src/log/schema.ts',
   'packages/aeg-core/src/issue-validation.ts',
