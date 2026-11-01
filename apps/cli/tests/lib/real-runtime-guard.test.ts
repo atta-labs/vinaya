@@ -11,11 +11,17 @@
  * leaked path — a failing run's summary lists titles, not assertion output.
  */
 import { describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
-import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
+import {
+  exemptPrefixes,
+  liveTaskPrefixes,
+  PROCESS_START_MS,
+  realRuntimeDir,
+  touchedSince
+} from './real-runtime-guard-core'
 
 /** Taken at module load so the test's own TITLE names the leaked paths. */
 const leakedAtLoad = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
@@ -89,6 +95,101 @@ describe('real runtime directory guard', () => {
       rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it('exempts a task whose loop was live at start and then ended, not one never live', () => {
+    const root = mkdtempSync(join(tmpdir(), 'real-runtime-guard-'))
+    try {
+      const dead = Bun.spawnSync(['true']).pid
+      const lock = (pid: number) => JSON.stringify({ pid, startedAt: new Date().toISOString(), token: 't' })
+      const lockPath = (task: string) => join(root, 'tasks-execution', task, 'driver.pid.json')
+      for (const task of ['removed', 'died', 'never', 'late']) {
+        mkdirSync(join(root, 'tasks-execution', task), { recursive: true })
+        mkdirSync(join(root, 'engine-runs', task), { recursive: true })
+      }
+      mkdirSync(join(root, 'logs', 'owner-repo'), { recursive: true })
+      writeFileSync(lockPath('removed'), lock(process.pid))
+      writeFileSync(lockPath('died'), lock(process.pid))
+      writeFileSync(lockPath('never'), lock(dead))
+      const liveAtStart = liveTaskPrefixes(root)
+      // the two loops end — one removes its lock, one leaves it naming a dead pid — and a third starts
+      rmSync(lockPath('removed'))
+      writeFileSync(lockPath('died'), lock(dead))
+      writeFileSync(lockPath('late'), lock(process.pid))
+      for (const task of ['removed', 'died', 'never', 'late']) {
+        writeFileSync(join(root, 'tasks-execution', task, 'state'), 'x')
+        writeFileSync(join(root, 'engine-runs', task, 'checkpoints.sqlite'), 'x')
+        writeFileSync(join(root, 'logs', 'owner-repo', `${task}.ndjson`), 'x')
+      }
+      writeFileSync(join(root, 'stray'), 'x')
+      const found = touchedSince(root, Date.now() - 60_000, [], liveAtStart)
+      for (const task of ['removed', 'died', 'late']) expect(found.some((p) => p.includes(task))).toBe(false)
+      expect(found).toContain(join('tasks-execution', 'never', 'state'))
+      expect(found).toContain(join('engine-runs', 'never', 'checkpoints.sqlite'))
+      expect(found).toContain(join('logs', 'owner-repo', 'never.ndjson'))
+      expect(found).toContain('stray')
+      // without the start set, the ended loops are flagged; a directory other than the real one gets none by default
+      const withoutStart = touchedSince(root, Date.now() - 60_000, [])
+      expect(withoutStart).toContain(join('tasks-execution', 'removed', 'state'))
+      expect(withoutStart).toContain(join('tasks-execution', 'died', 'state'))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // The preload's own end-of-run check, in a child test process whose real runtime directory is a fixture.
+  it('passes a run whose other-task loop ends mid-run, fails one never live, and needs the start set', () => {
+    const home = mkdtempSync(join(tmpdir(), 'guard-home-'))
+    const work = mkdtempSync(join(tmpdir(), 'guard-probe-'))
+    try {
+      const lib = import.meta.dir
+      const root = join(home, '.vinaya', 'runtime', 'o-r')
+      const task = join(root, 'tasks-execution', '4242')
+      mkdirSync(task, { recursive: true })
+      const probe = join(work, 'probe.test.ts')
+      writeFileSync(
+        probe,
+        `import { it } from 'bun:test'\nimport { rmSync, writeFileSync } from 'node:fs'\nit('ends the loop, then writes', () => {\n  rmSync(${JSON.stringify(join(task, 'driver.pid.json'))}, { force: true })\n  writeFileSync(${JSON.stringify(join(task, 'state'))}, 'x')\n})\n`
+      )
+      // the same preload, with a core whose start set is removed and every import pointed back at the real files
+      const core = readFileSync(join(lib, 'real-runtime-guard-core.ts'), 'utf-8')
+      const mutatedCore = core.replace('root === START_ROOT ? LIVE_AT_START : []', '[]')
+      expect(mutatedCore).not.toBe(core)
+      writeFileSync(join(work, 'real-runtime-guard-core.ts'), mutatedCore)
+      const preload = readFileSync(join(lib, 'test-env-preload.ts'), 'utf-8').replace(
+        /from '\.\/test-temp-fixture'/,
+        `from ${JSON.stringify(join(lib, 'test-temp-fixture.ts'))}`
+      )
+      writeFileSync(join(work, 'test-env-preload.ts'), preload)
+      const dead = Bun.spawnSync(['true']).pid
+      const run = (pid: number, preloadPath: string) => {
+        rmSync(join(task, 'state'), { force: true })
+        writeFileSync(join(task, 'driver.pid.json'), JSON.stringify({ pid, startedAt: new Date().toISOString() }))
+        // the core backdates its start by one second; the fixture tree must predate it
+        Bun.sleepSync(1100)
+        const out = spawnSyncBudgeted('bun', ['test', '--preload', preloadPath, probe], {
+          cwd: work,
+          env: { ...stripVinayaEnv(), HOME: home, AEG_REPO: 'o/r' },
+          encoding: 'utf8'
+        })
+        return { status: out.status, output: `${out.stdout}${out.stderr}` }
+      }
+      const realPreload = join(lib, 'test-env-preload.ts')
+      const ended = run(process.pid, realPreload)
+      expect(ended.output).not.toContain('tests wrote into the real runtime directory')
+      expect(ended.status).toBe(0)
+      const never = run(dead, realPreload)
+      expect(never.status).not.toBe(0)
+      expect(never.output).toContain(
+        `tests wrote into the real runtime directory: ${join('tasks-execution', '4242', 'state')}`
+      )
+      const mutated = run(process.pid, join(work, 'test-env-preload.ts'))
+      expect(mutated.status).not.toBe(0)
+      expect(mutated.output).toContain(join('tasks-execution', '4242', 'state'))
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+      rmSync(work, { recursive: true, force: true })
+    }
+  }, 60_000)
 
   // A dispatched session hands its real runtime directory down; the tests it runs must still never write there.
   it('gives a test process a private runtime directory even when one is inherited', () => {
