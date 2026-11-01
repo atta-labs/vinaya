@@ -1280,19 +1280,28 @@ export const PRODUCTION_VINAYA_PROCESS_STEPS: VinayaProcessSteps = {
   engineSpawn: ENGINE_SPAWN,
   // The loop's own resolvers, run in this process's working directory: `/opt/vinaya` in a container, the
   // repository on the host. Neither is pointed at the trial's tree, whose `aeg-root` is the case's base.
-  resolveRoleDoctrine: (role) => (role === 'developer' ? resolveDeveloperDoctrineText() : resolveRoleDoctrineText(role))
+  resolveRoleDoctrine: (role) =>
+    role === CHANGE_DOCTRINE_ROLE ? resolveDeveloperDoctrineText() : resolveRoleDoctrineText(role)
 }
 
-/** A role whose doctrine a layer-`G` trial gives its agent: the Developer, or a reviewer by its doctrine role id. */
-export type TrialDoctrineRole = 'developer' | 'reviewer' | 'security'
+/** The doctrine role id of a change or answer trial's agent, the one `resolveDeveloperDoctrineText` resolves. */
+export const CHANGE_DOCTRINE_ROLE = 'developer'
+
+/** A role whose doctrine a layer-`G` trial gives its agent, by the doctrine role id the loop's resolvers take. */
+export type TrialDoctrineRole = typeof CHANGE_DOCTRINE_ROLE | Parameters<typeof resolveRoleDoctrineText>[0]
+
+/** The doctrine role of a rendered case's agent: a review case's by its suite, every other case's the change role's. */
+function doctrineRoleOf(request: VinayaProcessRequest): TrialDoctrineRole {
+  if (request.neutralCase.kind !== 'review') return CHANGE_DOCTRINE_ROLE
+  return request.trial.suite === 'security-reviewer-quality-neutral.l5' ? 'security' : 'reviewer'
+}
 
 /**
  * The doctrine block a layer-`G` trial prepends to its prompt, rendered by the
- * review loop's own renderer for the role — `renderDeveloperDoctrineBlock` for
- * the Developer, the reviewer dispatch's `roleDoctrinePieces` for a reviewer —
- * and its SHA-256, which the trial record names. A doctrine that does not
- * resolve makes the trial unavailable, naming the role, so no trial runs
- * without it.
+ * review loop's own renderer for the role — `renderDeveloperDoctrineBlock`, or
+ * `roleDoctrinePieces` joined by `joinReviewerPromptPieces` — and its SHA-256,
+ * which the trial record names. A doctrine that does not resolve makes the
+ * trial unavailable, naming the role, so no trial runs without it.
  */
 export async function trialDoctrineBlock(
   steps: VinayaProcessSteps,
@@ -1308,7 +1317,9 @@ export async function trialDoctrineBlock(
       )
     }
   const block =
-    role === 'developer' ? renderDeveloperDoctrineBlock(text) : joinReviewerPromptPieces(roleDoctrinePieces(role, text))
+    role === CHANGE_DOCTRINE_ROLE
+      ? renderDeveloperDoctrineBlock(text)
+      : joinReviewerPromptPieces(roleDoctrinePieces(role, text))
   return { ok: true, block, digest: digest(block) }
 }
 
@@ -1990,8 +2001,9 @@ function changeRecord(
 }
 
 /**
- * A `change` case: the Developer is dispatched with the rendered brief, its
- * delivered documents and the review loop's publishing instruction, on the
+ * A `change` case: the agent is dispatched with the loop's doctrine block for
+ * its role, the rendered brief, its delivered documents and the review loop's
+ * publishing instruction, on the
  * layer-`P` developer case of the same id, and the hidden tests run on the
  * trial's commit. The pull request is the one the Developer opened through
  * `open_pull_request`, never one made for it, on that commit, its body carrying the
@@ -2008,7 +2020,7 @@ async function runChangeCase(
 ): Promise<VinayaProcessRun> {
   const { trial, neutralCase: c, input } = request
   if (c.kind !== 'change') throw new Error(`${c.id} is not a change case`)
-  const doctrine = await trialDoctrineBlock(steps, 'developer')
+  const doctrine = await trialDoctrineBlock(steps, doctrineRoleOf(request))
   if (!doctrine.ok) return { ok: false, unavailableReason: doctrine.unavailableReason, usage: NO_USAGE }
   const container = context.container
   const delivered =
@@ -2027,9 +2039,9 @@ async function runChangeCase(
     if (digest(delivered.contents.get(source.sourceId) ?? '') !== source.contentDigest)
       throw new Error(`delivered document ${source.sourceId} differs from its pinned content digest`)
   }
-  // The prompt starts with the developer doctrine block a fresh loop session starts with, and ends with the review
-  // loop's own publishing instruction: the Developer opens its pull request itself, closing the issue number the
-  // trial's fake forge world is created with, as the real loop's brief names it.
+  // The prompt starts with the doctrine block a fresh loop session starts with, and ends with the review loop's own
+  // publishing instruction: the agent opens its pull request itself, closing the issue number the trial's fake
+  // forge world is created with, as the real loop's brief names it.
   const prompt = [
     doctrine.block,
     input.brief,
@@ -2092,7 +2104,8 @@ async function runChangeCase(
 }
 
 /**
- * A `review` case: the suite's reviewer is dispatched on the change under
+ * A `review` case: the suite's review role is dispatched, its prompt starting
+ * with that role's doctrine block as the loop renders it, on the change under
  * review, the patch of the layer-`P` reviewer case of the same id, and its
  * result is bound to the rendered brief's hash and that change's head.
  */
@@ -2107,7 +2120,7 @@ async function runReviewCase(
   if (change === null) throw new Error(`${input.caseId} has no change under review`)
   // A reviewer reports no source use, so a review case's documents could never be shown used.
   if (input.sources.length > 0) throw new Error(`${input.caseId} delivers documents to a reviewer`)
-  const doctrine = await trialDoctrineBlock(steps, item.role === 'security-reviewer' ? 'security' : 'reviewer')
+  const doctrine = await trialDoctrineBlock(steps, doctrineRoleOf(request))
   if (!doctrine.ok) return { ok: false, unavailableReason: doctrine.unavailableReason, usage: NO_USAGE }
   const suite = await import('../../../tests/eval/reviewer-quality-suite')
   const prompt = [
@@ -2184,7 +2197,7 @@ async function runAnswerCase(
     if (spec === undefined || digest(spec.content) !== source.contentDigest)
       throw new Error(`delivered document ${source.sourceId} differs from its pinned content digest`)
   }
-  const doctrine = await trialDoctrineBlock(steps, 'developer')
+  const doctrine = await trialDoctrineBlock(steps, doctrineRoleOf(request))
   if (!doctrine.ok) return { ok: false, unavailableReason: doctrine.unavailableReason, usage: NO_USAGE }
   const citation = await import('../../../tests/eval/source-citation-suite')
   const sourceManifest = await import('../source-manifest')
