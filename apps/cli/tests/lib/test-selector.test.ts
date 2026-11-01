@@ -22,6 +22,7 @@ import {
   walkFiles
 } from '../../src/lib/test-selector'
 import { cliSpawnEdgeOf } from '../../src/lib/cli-spawn-tests'
+import { spawnEdgeOf, startedScriptsOf } from '../../src/lib/verification/spawn-inputs'
 import { scannedRootsOf } from '../../src/lib/repo-scanner-tests'
 import { loadTypeScript } from '../../src/lib/ts-module-graph'
 import { fixtureDir } from './test-temp-fixture'
@@ -2319,97 +2320,88 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
   const ORIGIN_PATTERN =
     'Bun\\.spawn(Sync)?\\(\\[[^]]*[\'"]bun[\'"]|execFileSync\\([\'"]bun[\'"]|spawnSync\\([\'"]bun[\'"]'
 
-  it('every real *.test.ts file the pattern matches is selected by a log-sink.ts-only change', () => {
+  // Which of the matched files a `log-sink.ts`-only change must select is
+  // derived from what each file starts, never from the selector's own graph:
+  // `bundlerOracle` (above) bundles each started program and lists the
+  // modules it pulls in, sharing no code path with the selector.
+  //
+  // - A file `spawnEdgeOf` answers `'entrypoint'` for starts the CLI entrypoint.
+  // - A `'fallback'` file `startedScriptsOf` reads starts only those scripts.
+  // - Any other `'fallback'` file keeps the coarse folder edge.
+  const LOG_SINK = join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts')
+  const program = { binary: 'bun', entrypoint: join(REPO_ROOT, 'apps/cli/src/index.ts') }
+
+  function matchedTestFiles(): string[] {
     const grep = spawnSyncBudgeted(
       'grep',
       ['-rlE', ORIGIN_PATTERN, join(REPO_ROOT, 'apps/cli/tests'), '--include=*.ts'],
       { encoding: 'utf8' }
     )
-    const matched = grep.stdout
+    return grep.stdout
       .trim()
       .split('\n')
       .filter(Boolean)
       .map((f) => resolve(f))
-    // Sanity floor on the Origin's own count (58 when this task was written) —
+  }
+
+  function startsOf(testFiles: readonly string[]) {
+    const ts = loadTypeScript(REPO_ROOT) as NonNullable<ReturnType<typeof loadTypeScript>>
+    const sourceFiles = new Set(discoverWorkspacePackages(REPO_ROOT).flatMap((p) => p.sourceFiles))
+    const read = (file: string) => readFileSync(file, 'utf8')
+    const starts = new Map<string, { coarse: true } | { coarse: false; scripts: string[] }>()
+    for (const file of testFiles) {
+      const classification = spawnEdgeOf(ts, file, read(file), REPO_ROOT, program)
+      if (classification === 'entrypoint') starts.set(file, { coarse: false, scripts: [program.entrypoint] })
+      else if (classification === 'fallback') {
+        const scripts = startedScriptsOf(ts, file, read(file), REPO_ROOT, program, (p) => sourceFiles.has(p), read)
+        starts.set(file, scripts ? { coarse: false, scripts } : { coarse: true })
+      }
+    }
+    const started = [...new Set([...starts.values()].flatMap((s) => (s.coarse ? [] : s.scripts)))].sort()
+    const oracle = bundlerOracle(REPO_ROOT, started)
+    // A started script the bundler listed no modules for proves nothing either way.
+    expect(oracle.unbuildable).toEqual([])
+    return { starts, reachesLogSink: (script: string) => oracle.reaches(LOG_SINK, script) }
+  }
+
+  it('every real *.test.ts file the pattern matches is selected by a log-sink.ts-only change when what it starts reaches log-sink.ts, or when it keeps the coarse edge', () => {
+    const matched = matchedTestFiles()
+    // Sanity floor on the Origin's own count (58 when this was first written) —
     // guards against the pattern itself silently matching nothing.
     expect(matched.length).toBeGreaterThan(50)
-    // Only genuine `*.test.ts` files are the selector's own universe: a
-    // `.ts` script `bun test` never discovers (an existing, unrelated
-    // `isTestFile` convention predating this task) owes this task nothing.
-    // (This file itself now matches the pattern too — its own fixture
-    // bodies write the literal call shapes being classified, and its real
-    // `bundlerOracle` helper genuinely spawns `bun` — so it is legitimately
-    // `missing`-checked like any other match, not special-cased out.)
+    // Only genuine `*.test.ts` files are the selector's own universe: a `.ts`
+    // script `bun test` never discovers owes this nothing. This file matches
+    // the pattern too — its fixture bodies write the literal call shapes, and
+    // `bundlerOracle` really starts `bun` — and is judged like any other.
     const testFiles = matched.filter(isTestFile)
+    const { starts, reachesLogSink } = startsOf(testFiles)
 
-    const { selected } = selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts')])
-    const selectedSet = new Set(selected)
-    const missing = testFiles.filter((f) => !selectedSet.has(f))
-    expect(missing).toEqual([])
-  }, 30_000)
+    const owed = testFiles.filter((f) => {
+      const start = starts.get(f)
+      return start !== undefined && (start.coarse || start.scripts.some(reachesLogSink))
+    })
+    expect(owed.length).toBeGreaterThan(0)
+    const selected = new Set(selectAffectedTestFiles(REPO_ROOT, [LOG_SINK]).selected)
+    expect(owed.filter((f) => !selected.has(f))).toEqual([])
+  }, 240_000)
 
-  // Round 2 review, MAJOR (capped MINOR) — a PR-body claim ("the N
-  // newly-covered tests include ... all M identified matches") was
-  // hand-typed and wrong on two counts: a smaller newly-covered set cannot
-  // include a larger identified set, and not every identified file even
-  // NEEDS this edge — some (this file's own `bundlerOracle` helper, which
-  // really does spawn `bun`; the repo-tree scanners `log-callers.test.ts`
-  // and `process-fixture-coverage.test.ts`) were already selected by an
-  // existing mechanism before this task. This mechanically pins the honest
-  // relationship instead of a hand-typed count: the newly-covered set is a
-  // PROPER, non-empty SUBSET of the identified files — never all of them,
-  // and never none.
-  //
-  // The measured breakdown at this task's writing (the honest figures the
-  // PR report must name, recorded here in the durable artifact rather than
-  // only in a frozen PR body): of the 57 identified real `*.test.ts` files,
-  // 38 are NEWLY covered by this task's edge and 19 were already selected
-  // without it; the whole-selection delta from the log-sink.ts change is 49
-  // files (83 -> 132), which exceeds the 38 newly-covered-identified figure
-  // because it also catches 11 further spawn-shaped tests the Origin's own
-  // narrower text-grep pattern never matched. These exact counts are
-  // documented, not asserted (a new spawn test added tomorrow moves them);
-  // the assertions below pin the invariants that must hold regardless.
-  it('the identified files split into two real groups — some already selected without this edge, the rest newly covered by it', () => {
-    const grep = spawnSyncBudgeted(
-      'grep',
-      ['-rlE', ORIGIN_PATTERN, join(REPO_ROOT, 'apps/cli/tests'), '--include=*.ts'],
-      { encoding: 'utf8' }
-    )
-    const testFiles = grep.stdout
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((f) => resolve(f))
-      .filter(isTestFile)
+  // The other side: a matched file whose every start resolves to scripts that
+  // never reach `log-sink.ts` owes that change nothing through what it starts,
+  // so the start edge must not be what selects it — it is selected only when
+  // its own imports already select it, with no start edge at all.
+  it('a matched file whose every started script misses log-sink.ts is selected by that change only if its imports alone select it', () => {
+    const testFiles = matchedTestFiles().filter(isTestFile)
+    const { starts, reachesLogSink } = startsOf(testFiles)
 
-    const changed = [join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts')]
-    const withEdgeAll = selectAffectedTestFiles(REPO_ROOT, changed).selected
-    const withoutEdgeAll = selectAffectedTestFiles(REPO_ROOT, changed, { cliSpawnDetection: 'ignore' }).selected
-    const withEdge = new Set(withEdgeAll)
-    const withoutEdge = new Set(withoutEdgeAll)
-
-    const alreadyCovered = testFiles.filter((f) => withoutEdge.has(f))
-    const newlyCovered = testFiles.filter((f) => !withoutEdge.has(f) && withEdge.has(f))
-
-    // Every identified file lands in exactly one of the two groups — the
-    // sibling test above already proves none is left uncovered by either.
-    expect(alreadyCovered.length + newlyCovered.length).toBe(testFiles.length)
-    // The newly-covered group is real (this task's edge is doing actual
-    // work) but never the WHOLE identified set — some were already
-    // reachable on the merits before this task.
-    expect(newlyCovered.length).toBeGreaterThan(0)
-    expect(newlyCovered.length).toBeLessThan(testFiles.length)
-    // The exact arithmetic the wrong PR-body claim violated: the whole-
-    // selection delta cannot be SMALLER than the identified files it newly
-    // covers (the newly-covered-identified set is a subset of the delta),
-    // and it does NOT cover every identified file — so the delta can never
-    // "include all" the identified matches, the impossible claim round 1/2/3
-    // review flagged.
-    const wholeDelta = withEdgeAll.filter((f) => !withoutEdge.has(f))
-    expect(wholeDelta.length).toBeGreaterThanOrEqual(newlyCovered.length)
-    expect(newlyCovered.length).toBeLessThan(testFiles.length)
-  }, 60_000)
+    const unowed = testFiles.filter((f) => {
+      const start = starts.get(f)
+      return start !== undefined && !start.coarse && !start.scripts.some(reachesLogSink)
+    })
+    const changed = [LOG_SINK]
+    const withEdge = new Set(selectAffectedTestFiles(REPO_ROOT, changed).selected)
+    const withoutEdge = new Set(selectAffectedTestFiles(REPO_ROOT, changed, { cliSpawnDetection: 'ignore' }).selected)
+    expect(unowed.filter((f) => withEdge.has(f) && !withoutEdge.has(f))).toEqual([])
+  }, 240_000)
 })
 
 // Issue #707, O1 — `depth: 'one'` (the pre-push hook's own mode) stops at

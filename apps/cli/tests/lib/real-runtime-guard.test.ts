@@ -70,10 +70,11 @@ describe('real runtime directory guard', () => {
         ['stale', dead]
       ] as const) {
         mkdirSync(join(root, 'tasks-execution', task), { recursive: true })
-        mkdirSync(join(root, 'logs'), { recursive: true })
+        mkdirSync(join(root, 'logs', 'owner-repo'), { recursive: true })
         writeFileSync(join(root, 'tasks-execution', task, 'driver.pid.json'), lock(pid))
         writeFileSync(join(root, 'tasks-execution', task, 'state'), 'x')
         writeFileSync(join(root, 'logs', `${task}.ndjson`), 'x')
+        writeFileSync(join(root, 'logs', 'owner-repo', `${task}.ndjson`), 'x')
         mkdirSync(join(root, 'engine-runs', task), { recursive: true })
         writeFileSync(join(root, 'engine-runs', task, 'checkpoints.sqlite'), 'x')
       }
@@ -82,6 +83,7 @@ describe('real runtime directory guard', () => {
       expect(found.some((p) => p.includes('live'))).toBe(false)
       expect(found).toContain(join('tasks-execution', 'stale', 'state'))
       expect(found).toContain(join('logs', 'stale.ndjson'))
+      expect(found).toContain(join('logs', 'owner-repo', 'stale.ndjson'))
       expect(found).toContain(join('logs', 'other.ndjson'))
     } finally {
       rmSync(root, { recursive: true, force: true })

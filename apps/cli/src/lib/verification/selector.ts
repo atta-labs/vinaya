@@ -79,7 +79,10 @@
  * gives each a synthetic `all:`-prefixed edge to the entrypoint FILE itself, so
  * the entrypoint's own already-computed real import edges do the rest. A spawn
  * shape the classifier cannot read as precisely falls back to a `scan:` edge
- * over the entrypoint's own source directory — never silence.
+ * over the entrypoint's own source directory — never silence — unless every
+ * start in the file reads as `<binary> <script>`, each script a known source
+ * file that itself starts nothing: then the test gets an `all:` edge to each
+ * script instead, and the scripts' own import graphs do the rest.
  *
  * ## Conservative fallback — over-select, never omit
  *
@@ -138,7 +141,7 @@ import {
 } from './inventory.js'
 import { globToRegex, inputCovers, underDeclaredRoot } from './path-pattern.js'
 import { type ScannerDeclaration, scannedRootsOf, scannerTriggered } from './scanner-inputs.js'
-import { type SpawnProgram, spawnEdgeOf } from './spawn-inputs.js'
+import { type SpawnProgram, spawnEdgeOf, startedScriptsOf } from './spawn-inputs.js'
 import type {
   FallbackScope,
   InventoryView,
@@ -1528,22 +1531,38 @@ function buildSelectionGraph(tree: SourceTree, options: GraphOptions): Selection
   // already-computed edges (built above, by whichever graph answered) do the
   // rest. A spawn shape the classifier cannot read as precisely earns the
   // coarse `scan:` edge over the entrypoint's own source directory instead —
-  // the whole-package edge for this file, never silence.
+  // the whole-package edge for this file, never silence — unless every start
+  // in it is a `<binary> <script>` start `startedScriptsOf` reads, when it
+  // gets an `all:` edge to each started script.
   if (typescript && options.spawnDetection !== 'ignore') {
     for (const program of options.spawnPrograms) {
       const entrypoint = join(repoRoot, program.entrypoint)
       const entrypointSourceRoot = dirname(entrypoint)
+      const spawnProgram = { binary: program.binary, entrypoint }
       for (const file of allSourceFiles) {
         if (!options.isTest(file)) continue
-        const classification = spawnEdgeOf(typescript, file, readSource(file), repoRoot, {
-          binary: program.binary,
-          entrypoint
-        })
+        const classification = spawnEdgeOf(typescript, file, readSource(file), repoRoot, spawnProgram)
         if (!classification) continue
         const key = `${ALL_PREFIX}${file}`
-        const edge =
-          classification === 'entrypoint' ? `${ALL_PREFIX}${entrypoint}` : `${SCAN_PREFIX}${entrypointSourceRoot}`
-        edges.set(key, [...(edges.get(key) ?? []), edge])
+        const scripts =
+          classification === 'fallback'
+            ? startedScriptsOf(
+                typescript,
+                file,
+                readSource(file),
+                repoRoot,
+                spawnProgram,
+                (path) => allSourceFiles.has(path),
+                readSource
+              )
+            : null
+        const added =
+          classification === 'entrypoint'
+            ? [`${ALL_PREFIX}${entrypoint}`]
+            : scripts
+              ? scripts.map((script) => `${ALL_PREFIX}${script}`)
+              : [`${SCAN_PREFIX}${entrypointSourceRoot}`]
+        edges.set(key, [...(edges.get(key) ?? []), ...added])
       }
     }
   }

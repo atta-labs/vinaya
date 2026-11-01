@@ -101,7 +101,7 @@ or a record of a past run.
 | `compiler-graph.ts` | the compiler-resolved import graph and its read-only source seam |
 | `changed-names.ts` | changed-name attribution and the line diff |
 | `scanner-inputs.ts` | tests that read the tree, and their declared triggers |
-| `spawn-inputs.ts` | tests that start a program |
+| `spawn-inputs.ts` | tests that start a program, and the scripts a test starts with `<binary> <script>` |
 | `path-pattern.ts` | the two glob grammars |
 | `tests/` | the standalone tests and their committed fixture repositories |
 
