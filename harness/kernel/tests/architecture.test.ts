@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
+import ts from 'typescript'
 import { parse } from 'yaml'
 import {
   BASELINE_PATH,
@@ -90,6 +91,181 @@ describe('harness never imports a process', () => {
 
   test('no file under harness/ reaches a process through a forwarding entry of the ownership map', () => {
     expect(importsThroughForwarding(REPOSITORY_ROOT)).toEqual([])
+  })
+})
+
+// ── Imports through a compatibility package ─────────────────────────────────
+
+// A published package's entry may re-export a module from its owner, so a
+// kernel import of one of these packages can reach process code without a
+// `processes/` specifier. The check reads the workspace sources: each
+// package subpath resolves through the package's own `exports` map, and each
+// imported symbol is followed through every re-export to the file that
+// declares it.
+
+/** The packages whose subpaths a kernel import is followed through, by workspace folder. */
+export const COMPATIBILITY_PACKAGES: Readonly<Record<string, string>> = {
+  '@attalabs/aeg-core': 'packages/aeg-core',
+  '@attalabs/aeg-forge-state': 'packages/aeg-forge-state',
+  '@attalabs/aeg-types': 'packages/aeg-types'
+}
+
+export type PackageImportTarget = { file: string; specifier: string; symbol: string; target: string }
+
+const packageOfSpecifier = (specifier: string): string | undefined =>
+  Object.keys(COMPATIBILITY_PACKAGES).find((name) => specifier === name || specifier.startsWith(`${name}/`))
+
+/** The workspace file a compatibility-package specifier names through the package's `exports` map, or `undefined`. */
+function workspaceEntry(root: string, specifier: string): string | undefined {
+  const name = packageOfSpecifier(specifier)
+  if (!name) return undefined
+  const dir = join(root, COMPATIBILITY_PACKAGES[name] as string)
+  const manifestPath = join(dir, 'package.json')
+  if (!existsSync(manifestPath)) return undefined
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { exports?: Record<string, string> }
+  const entry = manifest.exports?.[`.${specifier.slice(name.length)}`]
+  return entry === undefined ? undefined : join(dir, entry)
+}
+
+/**
+ * Every symbol a file under `harness/kernel/` imports or re-exports from a
+ * compatibility package, with the repository file that declares it.
+ */
+export function packageImportTargets(root: string): PackageImportTarget[] {
+  const kernel = join(root, 'harness', 'kernel')
+  const files = existsSync(kernel)
+    ? [...sourceFiles(kernel)].filter((file) => readFileSync(file, 'utf8').includes('@attalabs/aeg-'))
+    : []
+  if (files.length === 0) return []
+  const options: ts.CompilerOptions = {
+    noEmit: true,
+    allowJs: true,
+    allowImportingTsExtensions: true,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    target: ts.ScriptTarget.ES2022,
+    skipLibCheck: true,
+    types: []
+  }
+  const host = ts.createCompilerHost(options, true)
+  host.resolveModuleNameLiterals = (literals, containingFile, _ref, compilerOptions) =>
+    literals.map((literal) => {
+      const entry = workspaceEntry(root, literal.text)
+      if (entry !== undefined && existsSync(entry))
+        return {
+          resolvedModule: { resolvedFileName: entry, extension: ts.Extension.Ts, isExternalLibraryImport: false }
+        }
+      return ts.resolveModuleName(literal.text, containingFile, compilerOptions, host)
+    })
+  const program = ts.createProgram(files, options, host)
+  const checker = program.getTypeChecker()
+  const repositoryPath = (path: string) => relative(root, path).split(sep).join('/')
+  const targetsOf = (symbol: ts.Symbol): string[] => {
+    const resolved = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol
+    return [...new Set((resolved.declarations ?? []).map((d) => repositoryPath(d.getSourceFile().fileName)))]
+  }
+  const out: PackageImportTarget[] = []
+  for (const file of files) {
+    const source = program.getSourceFile(file)
+    if (!source) continue
+    const record = (specifier: string, symbol: ts.Symbol | undefined, name: string) => {
+      if (!symbol) return
+      for (const target of targetsOf(symbol)) out.push({ file: repositoryPath(file), specifier, symbol: name, target })
+    }
+    const wholeModule = (literal: ts.Expression) => {
+      const moduleSymbol = checker.getSymbolAtLocation(literal)
+      if (!moduleSymbol || !ts.isStringLiteralLike(literal)) return
+      for (const exported of checker.getExportsOfModule(moduleSymbol)) record(literal.text, exported, exported.name)
+    }
+    const visit = (node: ts.Node): void => {
+      if (
+        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteralLike(node.moduleSpecifier) &&
+        packageOfSpecifier(node.moduleSpecifier.text)
+      ) {
+        const specifier = node.moduleSpecifier.text
+        if (ts.isImportDeclaration(node)) {
+          const clause = node.importClause
+          if (clause?.name) record(specifier, checker.getSymbolAtLocation(clause.name), 'default')
+          const bindings = clause?.namedBindings
+          if (bindings && ts.isNamespaceImport(bindings)) wholeModule(node.moduleSpecifier)
+          else if (bindings)
+            for (const element of bindings.elements)
+              record(specifier, checker.getSymbolAtLocation(element.name), (element.propertyName ?? element.name).text)
+          if (!clause) wholeModule(node.moduleSpecifier)
+        } else if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+          for (const element of node.exportClause.elements)
+            record(
+              specifier,
+              checker.getExportSpecifierLocalTargetSymbol(element),
+              (element.propertyName ?? element.name).text
+            )
+        } else wholeModule(node.moduleSpecifier)
+      } else if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments[0] &&
+        ts.isStringLiteralLike(node.arguments[0]) &&
+        packageOfSpecifier(node.arguments[0].text)
+      ) {
+        wholeModule(node.arguments[0])
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+  }
+  return out
+}
+
+const underProcesses = (path: string): boolean => path.startsWith('processes/') || path.startsWith('harness/processes/')
+
+/** Each kernel import of a compatibility package whose symbol's authoritative file lies under the processes folder. */
+export function importsReachingAProcessThroughAPackage(root: string): string[] {
+  return [
+    ...new Set(
+      packageImportTargets(root)
+        .filter((t) => underProcesses(t.target))
+        .map(
+          (t) =>
+            `${t.file} imports ${t.symbol} from ${t.specifier}, whose authoritative file ${t.target} lies under the processes folder`
+        )
+    )
+  ].sort()
+}
+
+describe('harness never reaches a process through a compatibility package', () => {
+  test('every kernel import of a compatibility package resolves to a file outside the processes folder', () => {
+    const targets = packageImportTargets(REPOSITORY_ROOT)
+    expect(targets.length).toBeGreaterThan(0)
+    expect(targets.every((t) => !t.target.startsWith('..') && existsSync(join(REPOSITORY_ROOT, t.target)))).toBe(true)
+    expect(importsReachingAProcessThroughAPackage(REPOSITORY_ROOT)).toEqual([])
+  })
+
+  test('the check follows re-exports through a package entry to a planted process file', () => {
+    const root = join(scratch, `indirect-${repositories++}`)
+    const files: Record<string, string> = {
+      'packages/aeg-core/package.json': JSON.stringify({
+        name: '@attalabs/aeg-core',
+        exports: { '.': './src/index.ts', './log': './src/log/index.ts' }
+      }),
+      'packages/aeg-core/src/index.ts': "export { captureBaseline } from './baseline'\nexport const safe = 1\n",
+      'packages/aeg-core/src/baseline.ts': "export { captureBaseline } from '../../../processes/vinaya/capture.ts'\n",
+      'packages/aeg-core/src/log/index.ts': "export * from '../baseline'\n",
+      'processes/vinaya/capture.ts': 'export function captureBaseline(): number {\n  return 1\n}\n',
+      'harness/kernel/gates/named.ts':
+        "import { captureBaseline, safe } from '@attalabs/aeg-core'\nexport const x = [captureBaseline, safe]\n",
+      'harness/kernel/gates/whole.ts': "export * from '@attalabs/aeg-core/log'\n",
+      'harness/kernel/gates/clean.ts': "import { safe } from '@attalabs/aeg-core'\nexport const y = safe\n"
+    }
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, path)), { recursive: true })
+      writeFileSync(join(root, path), text)
+    }
+    expect(importsReachingAProcessThroughAPackage(root)).toEqual([
+      'harness/kernel/gates/named.ts imports captureBaseline from @attalabs/aeg-core, whose authoritative file processes/vinaya/capture.ts lies under the processes folder',
+      'harness/kernel/gates/whole.ts imports captureBaseline from @attalabs/aeg-core/log, whose authoritative file processes/vinaya/capture.ts lies under the processes folder'
+    ])
   })
 })
 

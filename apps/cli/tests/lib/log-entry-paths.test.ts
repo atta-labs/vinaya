@@ -98,6 +98,7 @@ const workflowWithoutProducers = [
   'workflow:ci.yml:build:Docs-only skip report',
   'workflow:ci.yml:build:Test the architecture ratchet against the base',
   'workflow:ci.yml:build:Check the test inventory and run the repository suite',
+  'workflow:ci.yml:build:Check every published package against its compatibility snapshot',
   'workflow:ci.yml:test-shared-packages:Install dependencies',
   'workflow:ci.yml:test-shared-packages:Test the packages the pull request affects',
   'workflow:ci.yml:test-shared-packages:Test',

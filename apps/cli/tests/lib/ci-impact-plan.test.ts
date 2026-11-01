@@ -234,7 +234,7 @@ describe('the CI plan', () => {
     expect(ci.context.head).toBe(local.context.head)
     // CI's additions are stated obligations, never folded into what the change requires.
     const added = [...new Set(ci.obligations.map((o) => o.obligation))].sort()
-    expect(added).toEqual(['inventory-gate', 'pre-push-always-run'])
+    expect(added).toEqual(['inventory-gate', 'package-compatibility', 'pre-push-always-run'])
     for (const o of ci.obligations.filter((x) => x.obligation === 'pre-push-always-run'))
       expect(o.reason.startsWith('unmodeled input:')).toBe(true)
   }, 60_000)

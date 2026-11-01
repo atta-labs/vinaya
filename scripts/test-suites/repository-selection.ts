@@ -65,8 +65,11 @@ export type RepositorySelectionOptions = {
   depth?: SelectionPolicy['depth']
 }
 
-/** The repository suite the inventory gate runs on every pull request. */
-const INVENTORY_GATE = { policy: 'inventory-gate', suite: 'repository' }
+/** The root suites the build job runs on every pull request, each under the policy that states the duty. */
+const BUILD_GATES = [
+  { policy: 'inventory-gate', suite: 'repository' },
+  { policy: 'package-compatibility', suite: 'package-compat' }
+]
 const SCANNER_TRIGGERS: ReadonlySet<string> = new Set(['tree-shape', 'process-start', 'listed-files', 'content'])
 
 /** The commit a revision names, resolved once, so the plan is pinned to an object id rather than a moving name. */
@@ -129,8 +132,10 @@ function obligationsOf(
   consumer: SelectionConsumer
 ): SelectionObligation[] {
   if (consumer === 'local') return alwaysRunObligations(repoRoot, head, view)
-  const gate = view.policies.find((policy) => policy.id === INVENTORY_GATE.policy)
-  return gate ? [{ id: gate.id, kind: 'policy' as const, reason: gate.duty, suites: [INVENTORY_GATE.suite] }] : []
+  return BUILD_GATES.flatMap(({ policy: id, suite }) => {
+    const gate = view.policies.find((policy) => policy.id === id)
+    return gate ? [{ id: gate.id, kind: 'policy' as const, reason: gate.duty, suites: [suite] }] : []
+  })
 }
 
 /** This repository's selection policy for one consumer, read from the head commit. */
