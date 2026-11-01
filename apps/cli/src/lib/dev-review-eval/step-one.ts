@@ -1131,9 +1131,9 @@ function tokensOf(
 
 /**
  * A trial's usage. Its tokens are read from the role's own stream
- * (`usageOfStream`), which counts every assistant message even when the run
- * was stopped, or threw, before the stream's closing event; a stream with no
- * usage falls back to the dispatch handle's.
+ * (`usageOfStream`): its closing `result` events' totals, or the sum of its
+ * assistant messages when the run was stopped, or threw, before writing one; a
+ * stream with no usage falls back to the dispatch handle's.
  */
 export function trialUsage(
   adapter: StepOneAdapter,

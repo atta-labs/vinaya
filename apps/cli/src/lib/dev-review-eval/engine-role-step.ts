@@ -214,12 +214,14 @@ function teeStdout(spawnFn: SpawnFn, line: (text: string) => void): SpawnFn {
 
 /**
  * The stream's own token counts, in the standalone dispatch's handle shape.
- * On Claude Code they are the sum of each assistant message's usage, each
- * message counted once however many events carry it, so a session cut off
- * before its closing `result` event still counts every message it made; a
- * stream whose assistant messages carry no usage falls back to its `result`
- * events. On Codex they are the sum of its `turn.completed` events. A stream
- * with none of these has no usage.
+ * On Claude Code they are the sum of its `result` events, one per invocation,
+ * each holding its session's real totals, since an assistant event carries
+ * only the output tokens counted at the start of its message. A session cut
+ * off before its closing `result` event never writes one, so a stream with no
+ * `result` usage falls back to the sum of each assistant message's usage, each
+ * message counted once however many events carry it — an undercount of its
+ * output tokens. On Codex they are the sum of its `turn.completed` events. A
+ * stream with none of these has no usage.
  */
 export function usageOfStream(adapter: 'claude-code' | 'codex', lines: readonly string[]) {
   let input = 0
@@ -247,7 +249,8 @@ export function usageOfStream(adapter: 'claude-code' | 'codex', lines: readonly 
         messages.set(id, message.usage as Record<string, unknown>)
       }
     }
-    if (adapter === 'claude-code' && event.type === 'result') results.push(usage)
+    if (adapter === 'claude-code' && event.type === 'result' && event.usage !== null && typeof event.usage === 'object')
+      results.push(usage)
     if (adapter === 'codex' && event.type === 'turn.completed') {
       seen = true
       // Codex counts cached input inside its input, as the standalone dispatch's handle keeps it.
@@ -257,7 +260,7 @@ export function usageOfStream(adapter: 'claude-code' | 'codex', lines: readonly 
     }
   }
   if (adapter === 'claude-code') {
-    for (const usage of messages.size > 0 ? messages.values() : results) {
+    for (const usage of results.length > 0 ? results : messages.values()) {
       const count = (key: string) => (typeof usage[key] === 'number' ? (usage[key] as number) : 0)
       seen = true
       input += count('input_tokens')
