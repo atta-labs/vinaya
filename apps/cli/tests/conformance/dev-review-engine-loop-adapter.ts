@@ -20,7 +20,7 @@ import {
   objectivesVersion
 } from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../../harness/dev-process/loader/load-process.js'
+import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process.js'
 import { setEngineLogIdentity } from '../../../../processes/vinaya/bin/engine-log-identity.js'
 import { LOG_IDENTITY_ENV_KEYS } from '../../src/lib/dispatch.js'
 import { createActions } from '../../../../processes/vinaya/executing/actions.js'

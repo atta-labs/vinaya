@@ -12,8 +12,8 @@ import {
   readAgentProvenance,
   readEffectiveResumedState,
   readExecutionRound
-} from '../../../../harness/dev-process/engine-runtime/checkpoint-round'
-import { SqliteCheckpointer } from '../../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+} from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+import { SqliteCheckpointer } from '../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import { restoreExecutionRound } from '../../bin/run-lifecycle'
 import {
   checkpointFile,

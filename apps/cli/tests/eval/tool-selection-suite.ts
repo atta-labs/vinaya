@@ -57,7 +57,7 @@ import {
   tallyTask
 } from '../../src/lib/dev-review-eval/estimators'
 import { unwrapShell } from '../../src/lib/loop-narration-codex'
-import { READ_ONLY_COMMANDS, READ_ONLY_FORBIDDEN } from '../../../../harness/adapters/agents/manifest'
+import { READ_ONLY_COMMANDS, READ_ONLY_FORBIDDEN } from '../../../../harness/kernel/adapters/agents/manifest'
 import { stripVinayaEnv } from '../lib/process-fixture'
 import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host'
 import {

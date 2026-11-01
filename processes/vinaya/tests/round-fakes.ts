@@ -1,5 +1,5 @@
 import type { VerdictObservation } from '@attalabs/aeg-core'
-import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
+import type { ActionRegistry } from '../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import type { EngineForge } from '../bin/run-engine'
 import { LOG_FOLDER_ONLY_ENV } from '../../../apps/cli/src/lib/log-sink'
 import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache } from '../../../apps/cli/src/lib/run-paths'

@@ -6,13 +6,13 @@ import { basename, dirname, resolve } from 'node:path'
 import { parse } from 'yaml'
 import { assessRound } from '@attalabs/aeg-core'
 import { createRunControl, type RunOutcome, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../harness/dev-process/loader/load-process'
+import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
 import {
   resumeProcessRun,
   startProcessRun,
   type ActionRegistry,
   type ProcessRunOptions
-} from '../../../harness/dev-process/engine-runtime/run-process'
+} from '../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   checkTaskDispatchReadiness,
   createTaskWorktree,
@@ -24,7 +24,7 @@ import { cleanupAllReviewerIsolationArtifacts } from '../../../apps/cli/src/lib/
 import { enforcementControlsActive } from '../../../apps/cli/src/lib/enforcement-controls'
 import { probeAgentSandbox } from '../../../apps/cli/src/lib/worker-boundary'
 import { handoffFindings } from '../../../apps/cli/src/lib/dev-review-loop'
-import { runCliChecks } from '../../../harness/gates/run-checks'
+import { runCliChecks } from '../../../harness/kernel/gates/checks/run-checks'
 import { validateDeveloperTurnResult } from '../../../apps/cli/src/lib/developer-turn-result'
 import { classifyReviewOutcome } from '../../../apps/cli/src/lib/review-result'
 import {

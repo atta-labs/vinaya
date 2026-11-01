@@ -17,20 +17,20 @@ import {
   type Observations
 } from '@attalabs/aeg-core'
 import { createRunControl, type RunOutcome, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../harness/dev-process/loader/load-process'
+import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
 import {
   resumeProcessRun,
   startProcessRun,
   type ActionRegistry,
   type ProcessRunOptions
-} from '../../../harness/dev-process/engine-runtime/run-process'
+} from '../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   createLogTranslator,
   recordingActions,
   type LogEventInput,
   type LogTranslator
-} from '../../../harness/dev-process/logging/translate'
-import { loadRoleGrants, ROLE_NAMES } from '../../../harness/adapters/agents/manifest'
+} from '../../../harness/kernel/log/client/translate'
+import { loadRoleGrants, ROLE_NAMES } from '../../../harness/kernel/adapters/agents/manifest'
 import {
   ACTION_BINDINGS,
   createActions,
@@ -39,7 +39,7 @@ import {
   encodeLoopState,
   type TaskInput
 } from '../executing/actions'
-import { encodeExecutionRound } from '../../../harness/dev-process/engine-runtime/checkpoint-round'
+import { encodeExecutionRound } from '../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import { AGENT_STEP_ROLES, createVinayaLogProducers, handoffHaltReason } from '../executing/log-events'
 import { LOG_INVENTORY } from '../executing/log-inventory'
 import { createHandoff } from '../executing/handoff'

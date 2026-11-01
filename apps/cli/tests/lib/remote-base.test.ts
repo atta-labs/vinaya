@@ -38,6 +38,13 @@ for (const key of Object.keys(GIT_ENV)) {
   if (key.startsWith('GIT_')) delete GIT_ENV[key]
 }
 
+// A ready push names its own base through `VINAYA_PUSH_MODE`/`VINAYA_PUSH_BASE`,
+// which `resolveRemoteBase` reads in this process; that base is a commit of the
+// pushing repository, absent from these scratch repositories, so the suite
+// clears both for the fallback chain it proves.
+delete process.env.VINAYA_PUSH_MODE
+delete process.env.VINAYA_PUSH_BASE
+
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV }).trim()
 }

@@ -4,8 +4,8 @@ import type {
   LogProducers,
   RecordedSteps,
   RunEndContext
-} from '../../../harness/dev-process/logging/translate'
-import { decodeExecutionRound } from '../../../harness/dev-process/engine-runtime/checkpoint-round'
+} from '../../../harness/kernel/log/client/translate'
+import { decodeExecutionRound } from '../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import type { DriverExitReason } from '../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
 import { localChecksRunEvent, phaseOfStep, phaseTimeEvent } from '../../../apps/cli/src/lib/flow-v2-events'
 

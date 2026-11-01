@@ -2,8 +2,8 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join, resolve } from 'node:path'
-import { generateCodexConfig } from '../../../../harness/adapters/agents/codex/config'
-import { loadRoleGrants, ROLE_NAMES } from '../../../../harness/adapters/agents/manifest'
+import { generateCodexConfig } from '../../../../harness/kernel/adapters/agents/codex/config'
+import { loadRoleGrants, ROLE_NAMES } from '../../../../harness/kernel/adapters/agents/manifest'
 import { readEffects } from '@attalabs/aeg-core'
 import { createTestTempRun, makeFixtureDir, sweepAbandoned } from '../../../../apps/cli/src/lib/test-temp'
 import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
@@ -11,7 +11,7 @@ import { checkpointFile, createWorld, expectCleanRun, leg, TASK, threadOf } from
 import {
   readEffectiveResumedState,
   readExecutionRound
-} from '../../../../harness/dev-process/engine-runtime/checkpoint-round'
+} from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import { loopLogPathFor } from '../../../../apps/cli/src/lib/loop-log'
 import {
   cleanupWorlds,

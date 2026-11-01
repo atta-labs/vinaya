@@ -25,18 +25,18 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { generateClaudeSettings } from '../../../../../harness/adapters/agents/claude-code/settings'
-import { generateCodexConfig } from '../../../../../harness/adapters/agents/codex/config'
-import { loadRoleContract, resolveRoleGrants, withModel } from '../../../../../harness/adapters/agents/manifest'
-import type { GeneratedAgentConfig } from '../../../../../harness/adapters/agents/policy'
-import { grantVariables } from '../../../../../harness/adapters/agents/variables'
+import { generateClaudeSettings } from '../../../../../harness/kernel/adapters/agents/claude-code/settings'
+import { generateCodexConfig } from '../../../../../harness/kernel/adapters/agents/codex/config'
+import { loadRoleContract, resolveRoleGrants, withModel } from '../../../../../harness/kernel/adapters/agents/manifest'
+import type { GeneratedAgentConfig } from '../../../../../harness/kernel/isolation/policy'
+import { grantVariables } from '../../../../../harness/kernel/adapters/agents/variables'
 import {
   createRoleLauncher,
   type ProcessRunOptions,
   startProcessRun
-} from '../../../../../harness/dev-process/engine-runtime/run-process'
-import { SqliteCheckpointer } from '../../../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
-import type { LoadedProcess } from '../../../../../harness/dev-process/loader/load-process'
+} from '../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+import { SqliteCheckpointer } from '../../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
+import type { LoadedProcess } from '../../../../../harness/kernel/dev-process-socket/loader/load-process'
 import type { DispatchHandle } from '../dispatch'
 import { readClaudeTurnOutput, readCodexTurnOutput } from '../dev-review-loop/turn-result'
 import { DEV_TOOLS_MCP_SERVER_NAME } from '../task-tools/dev-tools-names'

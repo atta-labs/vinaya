@@ -5,13 +5,13 @@ import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { assessRound, initialLoopState, type LoopState, type VerdictObservation } from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+import { SqliteCheckpointer } from '../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import {
   resumeProcessRun,
   startProcessRun,
   type ActionRegistry
-} from '../../../harness/dev-process/engine-runtime/run-process'
-import { loadProcess } from '../../../harness/dev-process/loader/load-process'
+} from '../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
 import {
   carriedLoopState,
   classifyGateResult,

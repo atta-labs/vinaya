@@ -18,9 +18,9 @@ import type { DispatchTeeRecoveryDeps, ParsedLaunch } from '../../../../apps/cli
 import {
   readEffectiveResumedState,
   readExecutionRound
-} from '../../../../harness/dev-process/engine-runtime/checkpoint-round'
-import type { ActionRegistry, ProcessAction } from '../../../../harness/dev-process/engine-runtime/run-process'
-import { loadProcess } from '../../../../harness/dev-process/loader/load-process'
+} from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+import type { ActionRegistry, ProcessAction } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
 import { V2_ACTION_BINDINGS } from '../../loops/dev-review/v2/v2-actions'
 import { checkpointPath, runDirectory, runEngine } from '../../bin/run-engine'
 import { runIdentityOfTask, type RecoveryDeps } from '../../bin/run-lifecycle'

@@ -2954,7 +2954,7 @@ export async function setStandaloneLogIdentity(
   env.VINAYA_RUNNER_ID = 'standalone'
   env.VINAYA_RUNNER_VERSION = pkg.version
   const checkout = resolve(cliRoot, '../..')
-  const loaderPath = join(checkout, 'harness', 'dev-process', 'loader', 'load-process.ts')
+  const loaderPath = join(checkout, 'harness', 'kernel', 'dev-process-socket', 'loader', 'load-process.ts')
   const processFolder = join(checkout, 'processes', 'vinaya')
   if (!existsSync(join(checkout, '.git')) || !existsSync(loaderPath) || !existsSync(processFolder)) return
   const { loadProcess } = (await import(pathToFileURL(loaderPath).href)) as {

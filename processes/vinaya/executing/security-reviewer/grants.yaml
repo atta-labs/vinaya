@@ -1,6 +1,6 @@
 role: security-reviewer
 # The role's capability contract. It names what the role may do, never a vendor's tools: each agent
-# adapter maps it to its own built-ins (harness/adapters/agents/README.md), and denies every built-in
+# adapter maps it to its own built-ins (harness/kernel/adapters/agents/README.md), and denies every built-in
 # no allowed capability names.
 # Per vendor only because a model id names one vendor's model; process-supplied leaves it to the run.
 models: { claude: process-supplied, codex: process-supplied }

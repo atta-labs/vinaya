@@ -32,13 +32,13 @@ import type { BaseCheckpointSaver } from '@langchain/langgraph'
 import {
   type EffectiveResumedState,
   readExecutionRound
-} from '../../../harness/dev-process/engine-runtime/checkpoint-round'
+} from '../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import {
   CheckpointCorruptError,
   type CheckpointProvenance,
   type CheckpointRefusal,
   checkpointRefusal
-} from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+} from '../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import {
   detectUsageLimit,
   getProcessSnapshot,

@@ -5,13 +5,13 @@ import { join } from 'node:path'
 import { initialLoopState } from '@attalabs/aeg-core'
 import { createRunControl, type RunControl } from '@atta/executor-agent-spawn'
 import { MemorySaver } from '@langchain/langgraph'
-import { loadProcess } from '../../../harness/dev-process/loader/load-process'
+import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
 import {
   resumeProcessRun,
   startProcessRun,
   type ProcessAction,
   type ProcessRunOptions
-} from '../../../harness/dev-process/engine-runtime/run-process'
+} from '../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { isHostRepairPause, readPauseState } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { DispatchSandboxRefused } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import type { EnforcementControl } from '../../../apps/cli/src/lib/enforcement-controls'
