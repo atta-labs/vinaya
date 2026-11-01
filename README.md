@@ -121,10 +121,17 @@ vinaya/
 │   ├── aeg-types/            # Shared types
 │   ├── sources/              # State and doctrine sources
 │   └── typescript-config/    # Shared TypeScript configs
-├── harness/                  # The generic harness (@attalabs/harness); never imports processes/
-│   └── dev-process/
-│       ├── contract/         # process.schema.json — the contract every process.yaml meets
-│       └── loader/           # load-process.ts — validates a process folder and pins its digest
+├── harness/
+│   └── kernel/               # The generic harness (@attalabs/harness); never imports processes/
+│       ├── adapters/         # Agent, code-host and tracker adapters
+│       ├── isolation/        # The capability policy and the sandbox probes
+│       ├── gates/checks/     # run-checks.ts and guarded-spawn.ts
+│       ├── dev-process-socket/
+│       │   ├── contract/     # process.schema.json — the contract every process.yaml meets
+│       │   └── loader/       # load-process.ts — validates a process folder and pins its digest
+│       ├── loops/runtimes/atta-engine/  # The Engine runtime and its checkpointer
+│       ├── log/client/       # The Log translator
+│       └── tests/            # The architecture checks and the counted ratchet
 ├── processes/
 │   └── vinaya/               # The Vinaya process (@attalabs/process-vinaya)
 │       └── process.yaml      # Process identity: id, version, Flow path, role folders

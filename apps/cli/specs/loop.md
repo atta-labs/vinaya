@@ -25,7 +25,9 @@ the flow key, `v1` or `v2`; the standalone loop always runs the default flow),
 and the agent runtime it dispatches. The
 standalone loop does it at the top of `devReviewLoop`, so a fresh `task run`
 and a `dev-review-loop --resume` both carry it, and its dispatched roles are
-handed the same values. Which variable carries each value, and what a process
+handed the same values. It reads the process through the kernel's loader at
+`harness/kernel/dev-process-socket/loader/load-process.ts` in the checkout,
+and names no process when that loader or the process folder is absent. Which variable carries each value, and what a process
 no run launched records, is `log.md`'s "Who sets them".
 
 The frozen review-input manifest is protocol version 2. In addition to base,

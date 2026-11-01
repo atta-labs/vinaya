@@ -14,9 +14,9 @@ import {
   type ReviewPolicy
 } from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../../../harness/dev-process/loader/load-process'
+import { loadProcess } from '../../../../../harness/kernel/dev-process-socket/loader/load-process'
 import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, useRuntimeDir } from '../../../tests/round-fakes'
-import type { ActionRegistry } from '../../../../../harness/dev-process/engine-runtime/run-process'
+import type { ActionRegistry } from '../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { pauseMarker, writePauseState } from '../../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { cleanupAllReviewerIsolationArtifacts } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
 import { parseMergeTreeConflictFiles } from '../../../../../apps/cli/src/lib/dev-review-loop/gate-reading'

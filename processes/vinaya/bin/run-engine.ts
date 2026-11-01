@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { Database } from 'bun:sqlite'
-import type { RoleName } from '../../../harness/adapters/agents/manifest'
+import type { RoleName } from '../../../harness/kernel/adapters/agents/manifest'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
@@ -29,17 +29,17 @@ import {
   type SpawnFn,
   type StepNodeResult
 } from '@atta/executor-agent-spawn'
-import { sessionIdOf } from '../../../harness/adapters/agents/structured-result'
-import { loadProcess, type LoadedProcess } from '../../../harness/dev-process/loader/load-process'
+import { sessionIdOf } from '../../../harness/kernel/adapters/agents/structured-result'
+import { loadProcess, type LoadedProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
 import {
   CheckpointCorruptError,
   type CheckpointRefusal,
   SqliteCheckpointer
-} from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+} from '../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import {
   readAgentProvenance,
   type AgentCheckpointProvenance
-} from '../../../harness/dev-process/engine-runtime/checkpoint-round'
+} from '../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import {
   DispatchUsageLimit,
   isUsageLimitPauseDetail,
@@ -48,7 +48,7 @@ import {
 import {
   mirrorExecutionRoundOnCommit,
   readEffectiveResumedStateFrom
-} from '../../../harness/dev-process/engine-runtime/checkpoint-round'
+} from '../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import {
   resumeProcessRun,
   startProcessRun,
@@ -57,14 +57,14 @@ import {
   type RoleLauncher,
   type StepPrompt,
   type AgentRedispatch
-} from '../../../harness/dev-process/engine-runtime/run-process'
+} from '../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   createLogTranslator,
   recordingActions,
   type EmitLogEvent,
   type LegOutcome,
   type NodeLifecycle
-} from '../../../harness/dev-process/logging/translate'
+} from '../../../harness/kernel/log/client/translate'
 import { createVinayaLogProducers, handoffHaltReason, STEP_FAILED } from '../executing/log-events'
 import { createHandoff, liveHandoffDeps, type Handoff, type HandoffDeps } from '../executing/handoff'
 import {
@@ -251,8 +251,8 @@ import {
 } from '../../../apps/cli/src/lib/dev-review-loop'
 import { parseReviewResult, type ReviewResult } from '../../../apps/cli/src/lib/review-result'
 import type { ReviewerPromptFacts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
-import { agentEnvAllowlist } from '../../../harness/adapters/agents/launch-env'
-import { grantVariables } from '../../../harness/adapters/agents/variables'
+import { agentEnvAllowlist } from '../../../harness/kernel/adapters/agents/launch-env'
+import { grantVariables } from '../../../harness/kernel/adapters/agents/variables'
 import { ghPullRequestView } from '../executing/pull-request-env'
 import {
   createVinayaReviewInputStager,
@@ -288,7 +288,7 @@ import {
   type TaskInput
 } from '../executing/actions'
 import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../loops/dev-review/v2/v2-actions'
-import { runCli } from '../../../harness/gates/run-checks'
+import { runCli } from '../../../harness/kernel/gates/checks/run-checks'
 import { checkReadyBaseline } from '../loops/dev-review/v2/ready-baseline'
 import {
   readTrustedReadyTestsPolicy,

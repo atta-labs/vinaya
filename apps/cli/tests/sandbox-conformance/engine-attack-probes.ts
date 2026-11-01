@@ -31,10 +31,10 @@ import {
   credentialDenyRead,
   credentialReadRules,
   generateClaudeSettings
-} from '../../../../harness/adapters/agents/claude-code/settings'
-import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from '../../../../harness/adapters/agents/codex/config'
-import { loadRoleGrants, ROLE_NAMES } from '../../../../harness/adapters/agents/manifest'
-import type { GeneratedAgentConfig } from '../../../../harness/adapters/agents/policy'
+} from '../../../../harness/kernel/adapters/agents/claude-code/settings'
+import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from '../../../../harness/kernel/adapters/agents/codex/config'
+import { loadRoleGrants, ROLE_NAMES } from '../../../../harness/kernel/adapters/agents/manifest'
+import type { GeneratedAgentConfig } from '../../../../harness/kernel/isolation/policy'
 import { createRoleLaunchers } from '../../../../processes/vinaya/executing/actions'
 import { AGENTS, type Agent, ENGINE_PROBE_CANARY } from './sandbox-launch.js'
 

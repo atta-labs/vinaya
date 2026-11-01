@@ -4,8 +4,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { EscalationRecord, ResolutionRecord } from '@attalabs/aeg-core'
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../harness/dev-process/loader/load-process'
-import type { ActionRegistry, ProcessAction } from '../../../harness/dev-process/engine-runtime/run-process'
+import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
+import type { ActionRegistry, ProcessAction } from '../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   readDriverLock,
   ReplayedResolutionError,

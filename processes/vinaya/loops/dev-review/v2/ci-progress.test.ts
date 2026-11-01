@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { initialLoopState } from '@attalabs/aeg-core'
-import type { ActionContext } from '../../../../../harness/dev-process/engine-runtime/run-process'
+import type { ActionContext } from '../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import type { TaskInput } from '../../../executing/actions'
 import { readCiOnce, type V2Functions } from './v2-actions'
 import {

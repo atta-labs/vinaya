@@ -98,12 +98,12 @@
         "typescript": "^5.7.0",
       },
     },
-    "harness": {
+    "harness/kernel": {
       "name": "@attalabs/harness",
       "version": "0.0.0",
       "dependencies": {
-        "@atta/engine": "file:../apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
-        "@atta/executor-agent-spawn": "file:../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
+        "@atta/engine": "file:../../apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
+        "@atta/executor-agent-spawn": "file:../../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
         "@attalabs/aeg-types": "workspace:*",
         "yaml": "2.9.0",
         "zod": "3.25.76",
@@ -239,7 +239,7 @@
 
     "@atta/engine": ["@atta/engine@apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz", { "dependencies": { "@atta/agents": "0.1.0", "js-yaml": "^4.1.1", "zod": "^4.3.6" } }, "sha512-U1ik7L1RohPL8W9P5x9pwHlQFA1lEi2ljfRi7gcj7pa+xlQscQEn20qEm72GeY2s4NbrZ3gmdsepDMU4IDAluA=="],
 
-    "@atta/executor-agent-spawn": ["@atta/executor-agent-spawn@../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz", { "dependencies": { "@atta/engine": "0.0.1", "@langchain/langgraph": "^0.2.0", "handlebars": "^4.7.8" } }, "sha512-qrwg5REpqkkhNqkQTpYGTiud8yXxxEsX/rHwGumtZvPgzy/nB9IY+Ar/2bw9FDLnc6fahjcwDEfNIdK0nHONPQ=="],
+    "@atta/executor-agent-spawn": ["@atta/executor-agent-spawn@../../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz", { "dependencies": { "@atta/engine": "0.0.1", "@langchain/langgraph": "^0.2.0", "handlebars": "^4.7.8" } }, "sha512-qrwg5REpqkkhNqkQTpYGTiud8yXxxEsX/rHwGumtZvPgzy/nB9IY+Ar/2bw9FDLnc6fahjcwDEfNIdK0nHONPQ=="],
 
     "@atta/models": ["@atta/models@apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz", { "dependencies": { "@ai-sdk/anthropic": "^3.0.64", "@ai-sdk/google": "^3.0.60", "@ai-sdk/groq": "^3.0.35", "@ai-sdk/openai": "^3.0.53", "@openrouter/ai-sdk-provider": "^2.5.0", "ai": "^6.0.140", "ollama-ai-provider-v2": "^1.5.0", "server-only": "^0.0.1" }, "peerDependencies": { "next": "^16.0.0", "react": "^19.0.0" } }, "sha512-AUVJeY17KdHusoweJ7+zvaDTVHH51vRMtgtNOOtkQQI9ibMeD0qrAXEcvkRYRLHKQXglYPfmcEJfWMNyYd6eVg=="],
 
@@ -251,7 +251,7 @@
 
     "@attalabs/aeg-types": ["@attalabs/aeg-types@workspace:packages/aeg-types"],
 
-    "@attalabs/harness": ["@attalabs/harness@workspace:harness"],
+    "@attalabs/harness": ["@attalabs/harness@workspace:harness/kernel"],
 
     "@attalabs/log-server": ["@attalabs/log-server@workspace:apps/log-server"],
 

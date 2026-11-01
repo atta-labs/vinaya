@@ -7,9 +7,9 @@ import { compileFlow, type StepsFlow } from '@atta/engine'
 import { parse } from 'yaml'
 import { DEFAULT_REVIEW_POLICY, objectivesVersion, readManifest, type ReviewPolicy } from '@attalabs/aeg-core'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../harness/dev-process/loader/load-process'
+import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
 import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, useRuntimeDir } from './round-fakes'
-import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
+import type { ActionRegistry } from '../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   clearDriverLock,
   pauseMarker,

@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { initialLoopState } from '@attalabs/aeg-core'
 import type { SpawnedProcessLike, StepNodeResult } from '@atta/executor-agent-spawn'
-import type { ActionContext, ActionRegistry } from '../../../../harness/dev-process/engine-runtime/run-process'
-import type { AgentCheckpointProvenance } from '../../../../harness/dev-process/engine-runtime/checkpoint-round'
-import { loadProcess } from '../../../../harness/dev-process/loader/load-process'
+import type { ActionContext, ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+import type { AgentCheckpointProvenance } from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
 import {
   createDispatchCapabilityTable,
   startDevToolsHost,

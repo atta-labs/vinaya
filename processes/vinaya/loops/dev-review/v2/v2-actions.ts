@@ -1,5 +1,5 @@
-import type { ActionContext } from '../../../../../harness/dev-process/engine-runtime/run-process'
-import { runCli } from '../../../../../harness/gates/run-checks'
+import type { ActionContext } from '../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+import { runCli } from '../../../../../harness/kernel/gates/checks/run-checks'
 import {
   ciResultReadEvent,
   failedTestsRerunEvent,

@@ -10,10 +10,10 @@ import { fetchLoopHistory } from '../../../apps/cli/src/lib/dev-review-loop/jour
 import { heldVerdictPath } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { createEffectExecutor, type EffectIdentity, sha256Hex } from '../../../apps/cli/src/lib/effects'
 import { tasksExecutionRoot } from '../../../apps/cli/src/lib/run-paths'
-import type { ActionRegistry, ProcessAction } from '../../../harness/dev-process/engine-runtime/run-process'
+import type { ActionRegistry, ProcessAction } from '../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import type { GatePoll } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
-import { loadProcess } from '../../../harness/dev-process/loader/load-process'
-import type { NodeLifecycle } from '../../../harness/dev-process/logging/translate'
+import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
+import type { NodeLifecycle } from '../../../harness/kernel/log/client/translate'
 import { createActions } from '../executing/actions'
 import {
   type EngineForge,

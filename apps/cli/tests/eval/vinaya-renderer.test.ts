@@ -6,14 +6,14 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { parseIssueSurface } from '@attalabs/aeg-core'
 import { KIND_FIELDS, type NeutralCase, NEUTRAL_CASE_KINDS } from '../../src/lib/dev-review-eval/neutral-case'
-import { CLAUDE_CAPABILITY_TOOLS } from '../../../../harness/adapters/agents/claude-code/capabilities'
+import { CLAUDE_CAPABILITY_TOOLS } from '../../../../harness/kernel/adapters/agents/claude-code/capabilities'
 import { OUTCOME_NAMES } from '../../src/lib/dev-review-eval/neutral-outcomes'
 import {
   CLAUDE_COORDINATION_TOOLS,
   CLAUDE_HARNESS_INTERNAL_TOOLS,
   layerGTrace
 } from '../../src/lib/dev-review-eval/step-one'
-import { loadRoleContract } from '../../../../harness/adapters/agents/manifest'
+import { loadRoleContract } from '../../../../harness/kernel/adapters/agents/manifest'
 import { ENGINE_ROLE_GRANTS_ROOT } from '../../src/lib/dev-review-eval/engine-role-step'
 import {
   CASE_ROLE_CAPABILITIES,

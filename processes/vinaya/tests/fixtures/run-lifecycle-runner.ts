@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { delimiter, join, resolve } from 'node:path'
-import { loadProcess } from '../../../../harness/dev-process/loader/load-process'
-import type { ActionRegistry } from '../../../../harness/dev-process/engine-runtime/run-process'
+import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { classifyGateResult, dispatchReviewers, ACTION_BINDINGS, type TaskInput } from '../../executing/actions'
 import { runEngine, type Agent } from '../../bin/run-engine'
 import { recordedHandoff } from '../handoff-fakes'

@@ -58,7 +58,7 @@ import {
 import { expectGradingSandboxDenies, proveGradingSandbox } from '../eval/grading-sandbox-proof.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../lib/dispatch/driver-socket-reach.js'
 import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture.js'
-import { ROLE_NAMES } from '../../../../harness/adapters/agents/manifest.js'
+import { ROLE_NAMES } from '../../../../harness/kernel/adapters/agents/manifest.js'
 import { createRoleLaunchers, sandboxProbePlanFor } from '../../../../processes/vinaya/executing/actions.js'
 import { commandsTheTextsName, DOCTRINE_SOURCES, isSuiteInput, REPO_ROOT } from './command-sources.js'
 import {
