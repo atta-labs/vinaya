@@ -4,16 +4,7 @@
 // for real against a throwaway git repository.
 import { describe, expect, it } from 'bun:test'
 import { createHash } from 'node:crypto'
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -989,8 +980,7 @@ describe('the native push: its base, its obligations and its proof', () => {
     writeJsonUnderGit(dir, FAILED_TESTS_RECORD, unconfirmedAt())
     writeJsonUnderGit(dir, FAILED_TESTS_RECORD, unconfirmedAt({ head: 'second' }))
     expect(readFailedTestsRecord(dir)).toMatchObject({ head: 'second', failedHoldsUnconfirmed: true })
-    const folder = dirname(gitPath(dir, FAILED_TESTS_RECORD) as string)
-    expect(readdirSync(folder).filter((name) => name.endsWith('.tmp'))).toEqual([])
+    expect(existsSync(`${gitPath(dir, FAILED_TESTS_RECORD) as string}.${process.pid}.tmp`)).toBe(false)
   })
 
   const native = (identities: string[]): NonNullable<SelectionNote['native']> => ({
