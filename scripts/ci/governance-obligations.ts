@@ -54,6 +54,14 @@ export const GOVERNANCE_OBLIGATIONS: readonly GovernanceObligation[] = [
     duty: 'the test inventory validates and the repository suite — the inventory, relocation and schedule proofs among it — runs, documentation-only pull requests included'
   },
   {
+    id: 'package-compatibility',
+    kind: 'compatibility',
+    job: 'build',
+    step: 'Check every published package against its compatibility snapshot',
+    when: 'every-run',
+    duty: "every published package's packed install outside the checkout matches its committed compatibility snapshot, documentation-only pull requests included"
+  },
+  {
     id: 'ci-plan',
     kind: 'merge-authority',
     job: 'build',

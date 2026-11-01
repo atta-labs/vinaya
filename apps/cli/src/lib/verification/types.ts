@@ -51,7 +51,12 @@ export type PolicyDeclaration = {
 export type SuiteFacts = {
   id: string
   owner: string
-  kind: 'workspace' | 'repository'
+  /**
+   * `workspace` — a member's runner collects its tests; `repository` — the root
+   * suite's listed tests; `compatibility` — listed root tests that check the
+   * published packages through their public subpaths.
+   */
+  kind: 'workspace' | 'repository' | 'compatibility'
   dir: string
   cwd: string
   runner: NativeRunner

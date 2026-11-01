@@ -57,32 +57,41 @@ describe('the full schedule of this repository', () => {
     expect([...suites].sort()).toEqual(view.suites.map((s) => s.id).sort())
   })
 
-  test('repository-owned tests are placed in the build job, whose unconditional step runs exactly them', () => {
-    const build = schedule.accounting.filter((e) => e.placement === 'build').map((e) => e.test)
-    expect(build.sort()).toEqual(
+  test('root-suite tests are placed in the build job, whose unconditional steps run exactly them, each once', () => {
+    const build = schedule.accounting
+      .filter((e) => e.placement === 'build')
+      .map((e) => e.test)
+      .sort()
+    const ofKind = (kind: TestIdentity['kind']) =>
       view.tests
-        .filter((t) => t.kind === 'repository')
+        .filter((t) => t.kind === kind)
         .map((t) => t.id)
         .sort()
-    )
+    expect(build).toEqual([...ofKind('repository'), ...ofKind('compatibility')].sort())
     const workflow = parse(readFileSync(join(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8')) as {
       jobs: Record<string, { steps: { name?: string; if?: string; run?: string }[] }>
     }
-    const step = workflow.jobs.build?.steps.find(
-      (s) => s.name === 'Check the test inventory and run the repository suite'
-    )
-    expect(step?.if).toBeUndefined()
-    const listed = (step?.run ?? '')
-      .split('\n')
-      .find((line) => line.trim().startsWith('bun test '))
-      ?.trim()
-      .split(/\s+/)
-      .slice(2)
-    expect(listed?.every((path) => path.startsWith('./'))).toBe(true)
-    expect(listed?.map((path) => path.slice(2)).sort()).toEqual(build)
-    // The schedule tests themselves are among them.
+    const listedBy = (name: string) => {
+      const step = workflow.jobs.build?.steps.find((s) => s.name === name)
+      expect(step?.if).toBeUndefined()
+      const listed = (step?.run ?? '')
+        .split('\n')
+        .find((line) => line.trim().startsWith('bun test '))
+        ?.trim()
+        .split(/\s+/)
+        .slice(2)
+      expect(listed?.every((path) => path.startsWith('./'))).toBe(true)
+      return (listed ?? []).map((path) => path.slice(2)).sort()
+    }
+    const repository = listedBy('Check the test inventory and run the repository suite')
+    const compatibility = listedBy('Check every published package against its compatibility snapshot')
+    expect(repository).toEqual(ofKind('repository'))
+    expect(compatibility).toEqual(ofKind('compatibility'))
+    expect([...repository, ...compatibility].sort()).toEqual(build)
+    // The schedule tests themselves are among them, and so is the package-compatibility suite.
     expect(build).toContain('scripts/test-suites/schedule.test.ts')
     expect(build).toContain('scripts/test-suites/staged-driver-move.test.ts')
+    expect(build).toContain('scripts/package-compat/package-compat.test.ts')
   })
 
   test('Vitest suites and other owners run in the shared job; CLI, kernel and process Bun tests in the shards', () => {
@@ -247,12 +256,14 @@ describe('what a CI run schedules', () => {
   const cliTest = view.tests.find((t) => t.owner === CI_SHARD_LIST_OWNER) as TestIdentity
   const forgeState = view.tests.find((t) => t.owner === '@attalabs/aeg-forge-state') as TestIdentity
 
-  test('a selected run schedules the selected files, every repository test and the whole-run suite with its reason', () => {
+  test('a selected run schedules the selected files, every root-suite test and the whole-run suite with its reason', () => {
     const input = ciScheduleInput(view, { scope: 'selected', selected: [cliTest.id], native: [forgeState.id] })
     expect(input.reason).toBeNull()
     expect(input.selected.map((t) => t.id).sort()).toEqual(
-      [cliTest.id, forgeState.id, ...view.tests.filter((t) => t.kind === 'repository').map((t) => t.id)].sort()
+      [cliTest.id, forgeState.id, ...view.tests.filter((t) => t.kind !== 'workspace').map((t) => t.id)].sort()
     )
+    // The package-compatibility suite is never skipped, whatever the selection holds.
+    expect(input.selected.map((t) => t.id)).toContain('scripts/package-compat/package-compat.test.ts')
     expect(input.wholeSuites.map((w) => [w.suite, w.reason.includes('whole repository')])).toEqual([['aeg-core', true]])
     expect(input.wholeSuites[0]?.identities).toHaveLength(view.tests.filter((t) => t.suite === 'aeg-core').length)
   })

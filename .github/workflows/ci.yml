@@ -317,6 +317,17 @@ jobs:
           bun scripts/test-suites/inventory-check.ts
           bun test ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts
 
+      # The package-compatibility suite (`scripts/package-compat/`): each
+      # published package is packed — the three aeg packages through the
+      # assemble step — and installed from its tarball into a scratch folder
+      # outside the checkout, and every subpath's exported names, declarations
+      # and the tarball's file list must equal the committed snapshot. It is
+      # the inventory's compatibility suite, which selection never skips, so
+      # it runs here on every pull request, documentation-only ones included,
+      # with no condition on the step; a difference fails this job.
+      - name: Check every published package against its compatibility snapshot
+        run: bun test ./scripts/package-compat/package-compat.test.ts
+
       # When this job failed, print its own token budgets on one line for
       # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
       # The same step ends every job in this file; the limits step after it
