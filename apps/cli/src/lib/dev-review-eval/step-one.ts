@@ -2184,7 +2184,7 @@ async function runAnswerCase(
     const { readClaudeTurnOutput, readCodexTurnOutput } = await import('../dev-review-loop/turn-result')
     const tools = await import('../../../tests/eval/tool-selection-suite')
     // The read-only turn the source-citation suite's live trial runs, launched
-    // from the developer role's capabilities narrowed to what the case grants:
+    // from its role's capabilities narrowed to what the case grants:
     // no answer case grants a write, so the Developer cannot write a file
     // whatever the prompt says, on either adapter.
     const runTurn = await steps.readOnlyTurn(
