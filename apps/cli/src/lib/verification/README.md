@@ -48,6 +48,10 @@ a non-source file of that package changes — its `package.json`, its
 non-source file under the package's own `tests`, `test`, `__tests__`, `specs`
 or `fixtures` folder does not count: it is the package's test data, required
 only by the tests that import it or that the inventory declares as reading it.
+Nor does a file named exactly `README.md`, `CHANGELOG.md` or `LICENSE`,
+anywhere in the package: it is prose about the package, required only by the
+tests that declare it as an input or scan its folder. Every other non-source
+file still counts, whatever its extension.
 
 The inventory is the caller's: `validateInventory` checks the shape every
 selection relies on, and `selectTests` refuses views built for other

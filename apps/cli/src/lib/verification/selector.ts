@@ -1588,12 +1588,14 @@ function buildSelectionGraph(tree: SourceTree, options: GraphOptions): Selection
 /** Folders whose files are a package's test, spec or fixture data, never part of what an importer resolves. */
 const PACKAGE_TEST_DATA_FOLDERS = new Set(['tests', 'test', '__tests__', 'specs', 'fixtures'])
 
-/** Whether a package-relative path sits under one of the package's test, spec or fixture folders — judged by folder, never by extension, so a shipped JSON asset still counts as package metadata. */
+/** File names, matched exactly and case-sensitively, that describe a package to people and are never part of what an importer resolves. */
+const PACKAGE_PROSE_FILE_NAMES = new Set(['README.md', 'CHANGELOG.md', 'LICENSE'])
+
+/** Whether a package-relative path sits under one of the package's test, spec or fixture folders, or is itself named exactly `README.md`, `CHANGELOG.md` or `LICENSE` — judged by folder or by those three file names, never by extension, so a shipped JSON asset or any other Markdown file still counts as package metadata. */
 function isPackageTestData(packageRelative: string): boolean {
-  return packageRelative
-    .split('/')
-    .slice(0, -1)
-    .some((segment) => PACKAGE_TEST_DATA_FOLDERS.has(segment))
+  const segments = packageRelative.split('/')
+  if (PACKAGE_PROSE_FILE_NAMES.has(segments[segments.length - 1] ?? '')) return true
+  return segments.slice(0, -1).some((segment) => PACKAGE_TEST_DATA_FOLDERS.has(segment))
 }
 
 /** The change facts one graph walks against: `changed` absolute paths in the graph's tree, names keyed absolute or root-relative. */
@@ -1608,9 +1610,10 @@ function changeFactsFor(
   // — a `package.json`/`tsconfig.json`/asset that is not a graph node and so is
   // invisible to a precisely-resolved importer's file edges (`pkgmeta:` covers it).
   // A non-source file under the package's own test, spec or fixture folders is
-  // data its tests read, never something an importer resolves through, so it
-  // leaves the package unmarked: its readers are found by their own import or
-  // declared-input edges.
+  // data its tests read, and a file named `README.md`, `CHANGELOG.md` or
+  // `LICENSE` is prose about the package; neither is something an importer
+  // resolves through, so each leaves the package unmarked: its readers are found
+  // by their own import, declared-input or folder-scan edges.
   const changedPackageNames = new Set<string>()
   const nonSourceChangedPackages = new Set<string>()
   for (const pkg of graph.packages) {

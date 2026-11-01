@@ -205,6 +205,24 @@
       "fallbacks": ["unattributed"]
     },
     {
+      "name": "a README change in the same imported package selects none of its importers",
+      "depth": "transitive",
+      "change": { "packages/core/README.md": "# @fx/core\n\nAdds and multiplies.\n" },
+      "required": [],
+      "fallbacks": ["unattributed"]
+    },
+    {
+      "name": "a data file change in the same imported package, outside its test-data folders, still selects every importer",
+      "depth": "transitive",
+      "change": { "packages/core/data.json": "{ \"unit\": 1 }\n" },
+      "required": [
+        "packages/app/tests/add.test.ts",
+        "packages/app/tests/mul.test.ts",
+        "packages/app/tests/square.test.ts"
+      ],
+      "fallbacks": ["unattributed"]
+    },
+    {
       "name": "a document selects its declared reader",
       "depth": "one",
       "change": { "docs/guide.md": "# Guide\n\nHow to use the fixture, again.\n" },
