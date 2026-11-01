@@ -149,7 +149,7 @@ describe('the base guard', () => {
       '.github/workflows/sandbox-conformance-macos.yml',
       'packages/aeg-core/package.json',
       'packages/aeg-core/vitest.config.ts',
-      'processes/vinaya/bunfig.toml',
+      'harness/processes/vinaya-strict/bunfig.toml',
       'apps/cli/tsconfig.json',
       'bun.lock',
       'turbo.json',

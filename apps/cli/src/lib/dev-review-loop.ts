@@ -143,7 +143,7 @@ import {
   resolveLogAppendPath,
   type LogSinkDeps
 } from './log-sink.js'
-import { crossRunnerRefusal } from './task-run-engine.js'
+import { crossRunnerRefusal, PROCESS_FOLDER_IN_CHECKOUT } from './task-run-engine.js'
 import {
   conflictReentryEvent,
   createDriverExitRecorder,
@@ -2955,7 +2955,7 @@ export async function setStandaloneLogIdentity(
   env.VINAYA_RUNNER_VERSION = pkg.version
   const checkout = resolve(cliRoot, '../..')
   const loaderPath = join(checkout, 'harness', 'kernel', 'dev-process-socket', 'loader', 'load-process.ts')
-  const processFolder = join(checkout, 'processes', 'vinaya')
+  const processFolder = join(checkout, PROCESS_FOLDER_IN_CHECKOUT)
   if (!existsSync(join(checkout, '.git')) || !existsSync(loaderPath) || !existsSync(processFolder)) return
   const { loadProcess } = (await import(pathToFileURL(loaderPath).href)) as {
     loadProcess: (folder: string) => {

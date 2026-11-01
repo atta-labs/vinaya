@@ -78,8 +78,12 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   { test: 'apps/cli/tests/platform-independence.test.ts', roots: ['apps/cli/tests/'], trigger: 'content' },
   { test: 'apps/cli/tests/process-fixture-coverage.test.ts', roots: ['apps/cli/tests/'], trigger: 'process-start' },
   { test: 'apps/cli/scripts/bundle-doctrine.test.ts', roots: ['.'], trigger: 'content' },
-  { test: 'processes/vinaya/tests/run-engine.test.ts', roots: ['.'], trigger: 'content' },
-  { test: 'harness/kernel/dev-process-socket/loader/load-process.test.ts', roots: ['processes/'], trigger: 'content' },
+  { test: 'harness/processes/vinaya-strict/tests/run-engine.test.ts', roots: ['.'], trigger: 'content' },
+  {
+    test: 'harness/kernel/dev-process-socket/loader/load-process.test.ts',
+    roots: ['harness/processes/'],
+    trigger: 'content'
+  },
   { test: 'apps/cli/tests/checks/bin-permissions.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'apps/cli/tests/checks/registry-gates.test.ts',

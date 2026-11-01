@@ -9,7 +9,10 @@ import {
   type LogSinkDeps
 } from '../../src/lib/log-sink.js'
 import { VinayaConfigSchema, type VinayaConfig } from '../../src/lib/config.js'
-import { configureEngineLogEnvironment, createEngineLogSink } from '../../../../processes/vinaya/bin/run-engine.js'
+import {
+  configureEngineLogEnvironment,
+  createEngineLogSink
+} from '../../../../harness/processes/vinaya-strict/bin/run-engine.js'
 import { buildCheckEnv } from '../../src/checks/runner.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from './process-fixture.js'
 
@@ -113,7 +116,7 @@ describe('Log recording restrictions', () => {
       roots.push(root)
       const url = `http://127.0.0.1:${server.port}/ingest`
       const sinkPath = join(import.meta.dir, '../../src/lib/log-sink.ts')
-      const runnerPath = join(import.meta.dir, '../../../../processes/vinaya/bin/run-engine.ts')
+      const runnerPath = join(import.meta.dir, '../../../../harness/processes/vinaya-strict/bin/run-engine.ts')
       const script = join(root, 'engine-sink.ts')
       writeFileSync(
         script,

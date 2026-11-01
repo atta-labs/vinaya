@@ -6,7 +6,7 @@ import { generateClaudeSettings } from './claude-code/settings'
 import { generateCodexConfig } from './codex/config'
 import { loadRoleGrants } from './manifest'
 
-const processRoot = join(import.meta.dir, '../../../../processes/vinaya/executing')
+const processRoot = join(import.meta.dir, '../../../../harness/processes/vinaya-strict/executing')
 
 function repository(branch: 'main' | 'task'): string {
   const directory = mkdtempSync(join(tmpdir(), `vinaya-cd-${branch}-`))

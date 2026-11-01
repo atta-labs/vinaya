@@ -9,7 +9,7 @@ import type { GeneratedAgentConfig } from '../../isolation/policy'
 
 // A reviewer's shell is read-only twice over: by its sandbox (no writable path) and by its rules (reading
 // commands only, their write-capable forms refused). These run the generated hooks, as the agents do.
-const processRoot = join(import.meta.dir, '../../../../processes/vinaya/executing')
+const processRoot = join(import.meta.dir, '../../../../harness/processes/vinaya-strict/executing')
 const WRITE_FORMS = [
   'find . -name x -exec rm {} ;',
   'find . -execdir touch y ;',

@@ -2,7 +2,7 @@
 /**
  * atta-labs/process-version-bump — a custom vinaya check that refuses a branch
  * changing how the Vinaya process works without raising the `version` in its
- * process definition (`processes/vinaya/process.yaml`).
+ * process definition (`harness/processes/vinaya-strict/process.yaml`).
  *
  * Contract: emit one JSON line on stderr per finding via `emitCheckError`,
  * then exit 0 (pass) or 1 (findings or an undecidable state). The RUNNER
@@ -21,7 +21,10 @@
  * role added later is governed with no edit here. When a governed file changed
  * (against the merge base with the base ref, staged and unstaged edits
  * included), the head version must be a higher semantic version than the base
- * version. When none changed, the check passes and says it skipped.
+ * version. When none changed, the check passes and says it skipped. When the
+ * branch moved the process folder, every governed file counts as changed and
+ * the base version is read from the definition git's rename detection traces
+ * the head's back to.
  *
  * Anything that stops the check deciding — no base, a failed `git diff`, a
  * missing or unparseable process definition, a missing or non-semantic
@@ -49,7 +52,7 @@ export type ProcessDefinition = { version: string; flow: string; flows?: string[
 export type SemVer = { major: number; minor: number; patch: number; prerelease: string[] }
 
 const CHECK_NAME = 'atta-labs/process-version-bump'
-export const PROCESS_FOLDER = 'processes/vinaya'
+export const PROCESS_FOLDER = 'harness/processes/vinaya-strict'
 export const PROCESS_FILE = `${PROCESS_FOLDER}/process.yaml`
 const ROLE_FILES = ['doctrine.md', 'grants.yaml', 'output.schema.json']
 const BINDINGS_FILE = 'executing/actions.ts'
@@ -210,6 +213,20 @@ function resolveMergeBase(): string | null {
   return null
 }
 
+/**
+ * Where the process definition lived at the base: its own path, or, when the branch moved the process folder, the
+ * path git's rename detection traces the definition back to.
+ */
+function baseProcessFile(mergeBase: string): string {
+  if (git(['cat-file', '-e', `${mergeBase}:${PROCESS_FILE}`]) !== null) return PROCESS_FILE
+  const renames = git(['diff', '--name-status', '--find-renames', '--diff-filter=R', '--no-color', mergeBase]) ?? ''
+  for (const line of renames.split('\n')) {
+    const [status, from, to] = line.split('\t')
+    if (status?.startsWith('R') && to === PROCESS_FILE && from) return from
+  }
+  return PROCESS_FILE
+}
+
 function decide(): { changed: string[]; base: string; head: string } | { skipped: true } {
   const mergeBase = resolveMergeBase()
   if (mergeBase === null) {
@@ -240,7 +257,7 @@ function decide(): { changed: string[]; base: string; head: string } | { skipped
   const headText = readFileSync(headPath, 'utf8')
   const head = parseProcessDefinition(headText, 'head')
 
-  const baseText = git(['show', `${mergeBase}:${PROCESS_FILE}`])
+  const baseText = git(['show', `${mergeBase}:${baseProcessFile(mergeBase)}`])
   if (baseText === null) {
     throw new Undecidable(
       `${PROCESS_FILE} is missing at the base ${mergeBase}.`,

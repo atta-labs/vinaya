@@ -24,8 +24,11 @@ import {
 import { createTaskCancelHandler } from '../../../src/lib/task-tools/cancel.js'
 import { readEscalationPacket } from '../../../src/lib/task-tools/read.js'
 import { createTaskResumeHandler, resumeContinuation } from '../../../src/lib/task-tools/resume.js'
-import { claimResume, liveResumeDeps } from '../../../../../processes/vinaya/bin/run-lifecycle.js'
-import { parseResumeArgs, refuseAnotherRunnersPause } from '../../../../../processes/vinaya/bin/run-engine.js'
+import { claimResume, liveResumeDeps } from '../../../../../harness/processes/vinaya-strict/bin/run-lifecycle.js'
+import {
+  parseResumeArgs,
+  refuseAnotherRunnersPause
+} from '../../../../../harness/processes/vinaya-strict/bin/run-engine.js'
 import { runEngineScenario, type EngineScenarioRun } from '../../conformance/dev-review-engine-loop-adapter.js'
 import {
   makeWorld,
@@ -107,7 +110,7 @@ async function startWatchingEngine(
   runtimeDir: string,
   task: number
 ): Promise<{ engine: number; agent: number }> {
-  const lifecycle = join(import.meta.dir, '../../../../../processes/vinaya/bin/run-lifecycle.ts')
+  const lifecycle = join(import.meta.dir, '../../../../../harness/processes/vinaya-strict/bin/run-lifecycle.ts')
   const pauseResume = join(import.meta.dir, '../../../src/lib/dev-review-loop/pause-resume.ts')
   const script = join(dir, 'watching-engine.ts')
   const agentFile = join(dir, 'agent.pid')

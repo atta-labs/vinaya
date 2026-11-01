@@ -35,7 +35,7 @@ import {
 import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from '../../../../harness/kernel/adapters/agents/codex/config'
 import { loadRoleGrants, ROLE_NAMES } from '../../../../harness/kernel/adapters/agents/manifest'
 import type { GeneratedAgentConfig } from '../../../../harness/kernel/isolation/policy'
-import { createRoleLaunchers } from '../../../../processes/vinaya/executing/actions'
+import { createRoleLaunchers } from '../../../../harness/processes/vinaya-strict/executing/actions'
 import { AGENTS, type Agent, ENGINE_PROBE_CANARY } from './sandbox-launch.js'
 
 export const CREDENTIAL_ROW_PREFIX = 'fault-attack:'
@@ -753,7 +753,7 @@ export function branchConfigurationIgnored(
 
 /** The config the Engine generates for every role under each adapter, with the directory it is generated into. */
 export function generatedRoleConfigs(): Record<Agent, Record<string, { config: GeneratedAgentConfig; dir: string }>> {
-  const processRoot = join(import.meta.dir, '../../../../processes/vinaya/executing')
+  const processRoot = join(import.meta.dir, '../../../../harness/processes/vinaya-strict/executing')
   const out = { claude: {}, codex: {} } as Record<Agent, Record<string, { config: GeneratedAgentConfig; dir: string }>>
   for (const role of ROLE_NAMES) {
     const grants = loadRoleGrants(join(processRoot, role, 'grants.yaml'))

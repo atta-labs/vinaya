@@ -122,7 +122,11 @@ describe('the full schedule of this repository', () => {
 
 function identity(id: string, owner: string, over: Partial<TestIdentity> = {}): TestIdentity {
   const cwd =
-    owner === '@attalabs/vinaya' ? 'apps/cli' : owner === '@attalabs/process-vinaya' ? 'processes/vinaya' : 'harness'
+    owner === '@attalabs/vinaya'
+      ? 'apps/cli'
+      : owner === '@attalabs/process-vinaya'
+        ? 'harness/processes/vinaya-strict'
+        : 'harness'
   const suite =
     owner === '@attalabs/vinaya' ? 'cli' : owner === '@attalabs/process-vinaya' ? 'process-vinaya' : 'kernel'
   return { id, suite, owner, kind: 'workspace', runner: 'bun', cwd, preload: null, environment: {}, ...over }
@@ -147,7 +151,8 @@ function viewOf(tests: TestIdentity[]): InventoryView {
 
 describe('shard assignment', () => {
   const cli = (n: number) => identity(`apps/cli/tests/c${n}.test.ts`, '@attalabs/vinaya')
-  const proc = (name: string) => identity(`processes/vinaya/tests/${name}.test.ts`, '@attalabs/process-vinaya')
+  const proc = (name: string) =>
+    identity(`harness/processes/vinaya-strict/tests/${name}.test.ts`, '@attalabs/process-vinaya')
   const lists = [['tests/c1.test.ts', 'tests/c2.test.ts'], ['tests/c3.test.ts'], []]
 
   test('keeps listed shards, then fills the least-populated shard in identity order, ties to the lowest', () => {
@@ -158,10 +163,10 @@ describe('shard assignment', () => {
       'apps/cli/tests/c1.test.ts': 1,
       'apps/cli/tests/c2.test.ts': 1,
       'apps/cli/tests/c3.test.ts': 2,
-      'processes/vinaya/tests/a.test.ts': 3,
-      'processes/vinaya/tests/b.test.ts': 2,
-      'processes/vinaya/tests/c.test.ts': 3,
-      'processes/vinaya/tests/d.test.ts': 1
+      'harness/processes/vinaya-strict/tests/a.test.ts': 3,
+      'harness/processes/vinaya-strict/tests/b.test.ts': 2,
+      'harness/processes/vinaya-strict/tests/c.test.ts': 3,
+      'harness/processes/vinaya-strict/tests/d.test.ts': 1
     })
     // Repeatable, and independent of the order the inventory lists tests in.
     expect(assignShards(viewOf([...v.tests].reverse()), lists).assignments).toEqual(assignments)

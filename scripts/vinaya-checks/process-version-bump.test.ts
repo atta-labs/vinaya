@@ -12,7 +12,7 @@ import {
 } from './process-version-bump'
 
 const CHECK = 'atta-labs/process-version-bump'
-const DIR = 'processes/vinaya'
+const DIR = 'harness/processes/vinaya-strict'
 
 const definition = (version: string | null, roles = ['executing/developer', 'executing/code-reviewer']) =>
   [
@@ -83,8 +83,8 @@ describe('the check run against a git branch', () => {
   })
 
   // A repository whose `main` holds a process at version 0.1.0, checked out on
-  // a `feature` branch cut from it.
-  const fixture = () => {
+  // a `feature` branch cut from it. `dir` is the process folder at the base.
+  const fixture = (dir = DIR) => {
     const root = mkdtempSync(join(tmpdir(), 'process-version-bump-test-'))
     roots.push(root)
     const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'pipe' })
@@ -96,16 +96,16 @@ describe('the check run against a git branch', () => {
     git('config', 'user.email', 't@t.t')
     git('config', 'user.name', 't')
     git('config', 'commit.gpgsign', 'false')
-    write(`${DIR}/process.yaml`, definition('0.1.0'))
-    write(`${DIR}/executing/dev-review.flow.yaml`, 'steps: []\n')
-    write(`${DIR}/executing/actions.ts`, 'export const actions = {}\n')
+    write(`${dir}/process.yaml`, definition('0.1.0'))
+    write(`${dir}/executing/dev-review.flow.yaml`, 'steps: []\n')
+    write(`${dir}/executing/actions.ts`, 'export const actions = {}\n')
     for (const role of ['developer', 'code-reviewer']) {
-      write(`${DIR}/executing/${role}/doctrine.md`, '# doctrine\n')
-      write(`${DIR}/executing/${role}/grants.yaml`, 'grants: []\n')
-      write(`${DIR}/executing/${role}/output.schema.json`, '{}\n')
-      write(`${DIR}/executing/${role}/README.md`, '# readme\n')
+      write(`${dir}/executing/${role}/doctrine.md`, '# doctrine\n')
+      write(`${dir}/executing/${role}/grants.yaml`, 'grants: []\n')
+      write(`${dir}/executing/${role}/output.schema.json`, '{}\n')
+      write(`${dir}/executing/${role}/README.md`, '# readme\n')
     }
-    write(`${DIR}/tests/a.test.ts`, 'export {}\n')
+    write(`${dir}/tests/a.test.ts`, 'export {}\n')
     git('add', '.')
     git('commit', '-q', '-m', 'base')
     git('checkout', '-q', '-b', 'feature')
@@ -128,7 +128,7 @@ describe('the check run against a git branch', () => {
         findings: stderr ? stderr.split('\n').map((l) => JSON.parse(l)) : []
       }
     }
-    return { git, commit, run }
+    return { root, git, commit, run }
   }
 
   test('accept: a role grants file changes and the version rises', () => {
@@ -200,6 +200,29 @@ describe('the check run against a git branch', () => {
     const result = f.run()
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('skipped')
+  })
+
+  // A branch that moves the whole process folder from `processes/sample` to the governed folder.
+  const moved = (version: string) => {
+    const f = fixture('processes/sample')
+    mkdirSync(dirname(join(f.root, DIR)), { recursive: true })
+    f.git('mv', 'processes/sample', DIR)
+    f.commit({ [`${DIR}/process.yaml`]: definition(version) })
+    return f
+  }
+
+  test('accept: the process folder moves and the version rises, read from the definition it moved from', () => {
+    const result = moved('0.1.1').run()
+    expect(result.findings).toEqual([])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('from 0.1.0 to 0.1.1')
+  })
+
+  test('reject: the process folder moves and the version stays', () => {
+    const result = moved('0.1.0').run()
+    expect(result.exitCode).toBe(1)
+    expect(result.findings.map((x) => x.file)).toContain(`${DIR}/executing/dev-review.flow.yaml`)
+    expect(result.findings[0].message).toContain('base 0.1.0, head 0.1.0')
   })
 
   test('error: the process definition at the head has no version', () => {

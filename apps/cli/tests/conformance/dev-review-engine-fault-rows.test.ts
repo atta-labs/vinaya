@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { runDirectory, type Agent, type RunTrace } from '../../../../processes/vinaya/bin/run-engine.js'
+import { runDirectory, type Agent, type RunTrace } from '../../../../harness/processes/vinaya-strict/bin/run-engine.js'
 import { engineEvidenceOf } from '../../src/lib/dev-review-eval/exit-check.js'
 import { loadRegistry } from '../../src/lib/dev-review-eval/registry.js'
 import {

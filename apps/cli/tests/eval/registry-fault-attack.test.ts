@@ -517,7 +517,7 @@ const ENGINE_FAULT_INJECTION_ROWS = [
   'fault-attack:14-remote-success-local-acknowledgement-lost',
   'fault-attack:19-forged-or-stale-beyond-surface-record'
 ] as const
-const ENGINE_FAULT_INJECTION_PROOF = 'processes/vinaya/tests/fault-injection.test.ts'
+const ENGINE_FAULT_INJECTION_PROOF = 'harness/processes/vinaya-strict/tests/fault-injection.test.ts'
 /** The rows above still owing their Engine evidence. Remove a row when its proof lands; never add one. */
 const ENGINE_FAULT_INJECTION_OWED: readonly string[] = []
 /** The most rows the list above may hold. Lower it with the list; never raise it. */

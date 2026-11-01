@@ -14,7 +14,10 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beginProgressSession, PROGRESS_MARKER, type startProgressObserver } from '../../src/lib/push-progress'
-import { withV2DevTools, stagedPullRequestStore } from '../../../../processes/vinaya/loops/dev-review/v2/flow-v2-live'
+import {
+  withV2DevTools,
+  stagedPullRequestStore
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/v2/flow-v2-live'
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 

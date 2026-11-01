@@ -64,7 +64,7 @@
       "id": "process-vinaya",
       "owner": "@attalabs/process-vinaya",
       "kind": "workspace",
-      "dir": "processes/vinaya",
+      "dir": "harness/processes/vinaya-strict",
       "runner": "bun",
       "preload": "apps/cli/tests/lib/test-env-preload.ts"
     },

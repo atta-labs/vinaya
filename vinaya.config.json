@@ -32,7 +32,7 @@
     "atta-labs/process-version-bump": {
       "run": "./scripts/vinaya-checks/process-version-bump.ts",
       "scope": "diff",
-      "include": ["processes/vinaya/**"],
+      "include": ["harness/processes/vinaya-strict/**"],
       "env": { "BASE_SHA": { "optional": true } }
     }
   },

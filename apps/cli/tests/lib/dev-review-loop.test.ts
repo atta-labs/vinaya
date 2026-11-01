@@ -1276,7 +1276,10 @@ describe('devReviewLoop — every event names the standalone runner, the Vinaya 
 
   it('reads the process version and digest from process.yaml and the runner version from the CLI package', async () => {
     const cliVersion = (JSON.parse(readFileSync(join(CLI_ROOT, 'package.json'), 'utf8')) as { version: string }).version
-    const processYaml = readFileSync(join(CLI_ROOT, '..', '..', 'processes', 'vinaya', 'process.yaml'), 'utf8')
+    const processYaml = readFileSync(
+      join(CLI_ROOT, '..', '..', 'harness', 'processes', 'vinaya-strict', 'process.yaml'),
+      'utf8'
+    )
     const declaredVersion = processYaml.match(/^version:\s*(\S+)\s*$/m)?.[1]
     expect(declaredVersion).toMatch(/^\d+\.\d+\.\d+$/)
     const env: NodeJS.ProcessEnv = {}
@@ -1307,7 +1310,10 @@ describe('devReviewLoop — every event names the standalone runner, the Vinaya 
     // process.yaml and the CLI package.
     const named: NodeJS.ProcessEnv = {}
     await setStandaloneLogIdentity(named)
-    const declared = readFileSync(join(CLI_ROOT, '..', '..', 'processes', 'vinaya', 'process.yaml'), 'utf8')
+    const declared = readFileSync(
+      join(CLI_ROOT, '..', '..', 'harness', 'processes', 'vinaya-strict', 'process.yaml'),
+      'utf8'
+    )
     expect(named.VINAYA_PROCESS_VERSION).toBe(declared.match(/^version:\s*(\S+)\s*$/m)?.[1])
     expect(named.VINAYA_PROCESS_DIGEST).toMatch(/^[0-9a-f]{64}$/)
     const expectedIdentity = {

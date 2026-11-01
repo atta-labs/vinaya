@@ -6,7 +6,7 @@
     "apps/*",
     "packages/*",
     "harness/kernel",
-    "processes/*"
+    "harness/processes/*"
   ],
   "scripts": {
     "build": "turbo build",

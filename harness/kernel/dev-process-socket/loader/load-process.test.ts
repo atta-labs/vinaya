@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadProcess, ProcessLoadError, type ProcessLoadReason, processFields } from './load-process'
 
-const processesRoot = join(import.meta.dir, '..', '..', '..', '..', 'processes')
+const processesRoot = join(import.meta.dir, '..', '..', '..', 'processes')
 const schemaPath = join(import.meta.dir, '..', 'contract', 'process.schema.json')
 
 const made: string[] = []
@@ -42,9 +42,13 @@ describe('loadProcess', () => {
       (entry) => entry.isDirectory() && readdirSync(join(processesRoot, entry.name)).includes('process.yaml')
     )
     expect(folders.length).toBeGreaterThan(0)
+    // A process keeps its id when its folder is renamed, so the id is unique across folders, not the folder's name.
+    const ids = new Set<string>()
     for (const entry of folders) {
       const loaded = loadProcess(join(processesRoot, entry.name))
-      expect(loaded.identity.id).toBe(entry.name)
+      expect(loaded.identity.id).toMatch(/^\S+$/)
+      expect(ids.has(loaded.identity.id)).toBe(false)
+      ids.add(loaded.identity.id)
       expect(loaded.rolePaths).toHaveLength(loaded.identity.roles.length)
       expect(loaded.digest).toMatch(/^[0-9a-f]{64}$/)
     }

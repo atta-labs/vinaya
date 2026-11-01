@@ -129,7 +129,7 @@ them; neither the sink nor `buildHeader` invents a value.
   `VINAYA_RUNNER_VERSION` is the CLI's own package version, and
   `VINAYA_PROCESS_ID`, `VINAYA_PROCESS_VERSION` and `VINAYA_PROCESS_DIGEST`
   are the Vinaya process definition's `id`, `version` and digest, read from
-  `processes/vinaya/process.yaml` by `loadProcess`. The process definition
+  `harness/processes/vinaya-strict/process.yaml` by `loadProcess`. The process definition
   sits beside the CLI only in a checkout of this repository; a published CLI
   has none, so its process version and digest stay `null`. `VINAYA_RUNTIME`
   is the agent the run dispatches, once the entry has resolved it: the
@@ -138,7 +138,7 @@ them; neither the sink nor `buildHeader` invents a value.
 - **Engine runner.** `setEngineLogIdentity` sets runner `atta-engine` at the
   installed Engine's version, the loaded process's id, version and digest,
   and `VINAYA_RUNTIME` to the agent the run dispatches.
-  <!-- AEG:CLAIM: processes/vinaya/bin/engine-log-identity.ts contains:env.VINAYA_RUNTIME = runtime -->
+  <!-- AEG:CLAIM: harness/processes/vinaya-strict/bin/engine-log-identity.ts contains:env.VINAYA_RUNTIME = runtime -->
 - **Dispatched roles.** An agent session starts on a named allowlist of the
   parent environment, so `dispatchRole` hands it the run's set identity
   variables explicitly (`logIdentityEnv`), with `VINAYA_RUNTIME` naming the

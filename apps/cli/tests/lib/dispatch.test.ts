@@ -93,7 +93,7 @@ import {
   createEngineLogSink,
   launchUsageEvents,
   withDispatchUsage
-} from '../../../../processes/vinaya/bin/run-engine'
+} from '../../../../harness/processes/vinaya-strict/bin/run-engine'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')

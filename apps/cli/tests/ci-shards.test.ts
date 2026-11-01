@@ -103,7 +103,7 @@ describe('the CI test schedule covers every owner', () => {
     const tests = schedule.accounting.map((e) => e.test)
     expect(new Set(tests).size).toBe(tests.length)
     // Every owner is in it, not only the CLI: the kernel, the process, a Vitest package and the root suite.
-    for (const dir of ['apps/cli/', 'harness/', 'processes/vinaya/', 'packages/aeg-core/', 'scripts/'])
+    for (const dir of ['apps/cli/', 'harness/', 'harness/processes/vinaya-strict/', 'packages/aeg-core/', 'scripts/'])
       expect(`${dir} ${tests.some((t) => t.startsWith(dir))}`).toBe(`${dir} true`)
     for (let n = 1; n <= SHARD_COUNT; n++)
       for (const f of shardFiles(n)) {
@@ -303,8 +303,8 @@ describe('ci-shard-coverage — hook-specific membership', () => {
 
   /** Moves the listed CLI test to another owner, staged. */
   function moveToProcess(dir: string): void {
-    mkdirSync(join(dir, 'processes', 'vinaya', 'tests'), { recursive: true })
-    git(dir, ['mv', 'apps/cli/tests/driver.test.ts', 'processes/vinaya/tests/driver.test.ts'])
+    mkdirSync(join(dir, 'harness', 'processes', 'vinaya-strict', 'tests'), { recursive: true })
+    git(dir, ['mv', 'apps/cli/tests/driver.test.ts', 'harness/processes/vinaya-strict/tests/driver.test.ts'])
   }
 
   it('refuses a CLI test moved to another owner while its shard line stays, at commit and at push', () => {
