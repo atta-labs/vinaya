@@ -398,6 +398,64 @@ describe('the Interface block', () => {
     expect(() => interfaceItems(failing, fixtureCase)).toThrow(RecutRefused)
   })
 
+  it('names a field on a new type whose text also sits on unrelated base types, and holds one a base copy declares with the same owner', () => {
+    const test = `import { expect, it } from 'bun:test'
+import { exitReport } from './exit'
+
+it('reports the exit', () => {
+  expect(exitReport(0).pass).toBe(true)
+  expect(exitReport(0).kept).toBe(true)
+})
+`
+    const reference = `export interface Gate {
+  pass: boolean
+}
+
+export interface Kept {
+  kept: boolean
+}
+
+export interface ExitReport extends Kept {
+  pass: boolean
+}
+
+export function exitReport(code: number): ExitReport {
+  return { pass: code === 0, kept: true }
+}
+`
+    const exitCase = {
+      ...fixtureCase,
+      id: 'fixture-exit',
+      hiddenTests: { files: [{ path: 'src/exit.test.ts', blob: 'exit-test-blob' }], deleted: [] },
+      referenceSolution: { ...fixtureCase.referenceSolution, files: [{ path: 'src/exit.ts', blob: 'exit-blob' }] },
+      failToPass: { 'src/exit.test.ts': ['reports the exit'] }
+    } as unknown as DeveloperCapabilityCase
+    const git = fixtureGit(
+      {
+        'exit-test-blob': test,
+        'exit-blob': reference,
+        // The base copy of the changed file declares `Gate.pass` and `Kept.kept`, and an unchanged file another
+        // type's `pass: boolean`: the text `pass: boolean` sits in both.
+        'base-exit-blob':
+          'export interface Gate {\n  pass: boolean\n}\n\nexport interface Kept {\n  kept: boolean\n}\n',
+        'base-check-blob': 'export interface Check {\n  pass: boolean\n}\n'
+      },
+      { 'src/exit.ts': 'base-exit-blob', 'src/check.ts': 'base-check-blob' }
+    )
+    expect(interfaceItems(git, exitCase)).toEqual([
+      { kind: 'export', text: 'src/exit.ts: function exitReport(code: number): ExitReport' },
+      { kind: 'field', text: 'ExitReport.pass: boolean' }
+    ])
+  })
+
+  it('names the pass field of ExitReport in the pr-1320 statement', () => {
+    const derived = JSON.parse(readFileSync(DERIVED_FILES.developer.development, 'utf8')) as {
+      suites: { cases: { id: string; taskStatement: string }[] }[]
+    }
+    const statement = derived.suites[0]?.cases.find((c) => c.id === 'pr-1320')?.taskStatement ?? ''
+    expect(statement).toContain('field `ExitReport.pass: boolean`')
+  })
+
   it('keeps a statement with no item byte for byte, and writes the block on its single line', () => {
     expect(withInterface('Make the change.', [])).toBe('Make the change.')
     expect(
