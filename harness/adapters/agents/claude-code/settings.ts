@@ -80,6 +80,11 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
   const builtinAllow = Object.entries(grants.tools.claude)
     .filter(([name, decision]) => name !== 'Bash' && decision === 'allow')
     .map(([name]) => name)
+  // Every built-in the role may use, Bash included: the launch offers exactly these, so a built-in the pinned
+  // catalog does not list is never offered, whatever the deny rules below name.
+  const builtinOffered = Object.entries(grants.tools.claude)
+    .filter(([, decision]) => decision === 'allow')
+    .map(([name]) => name)
   const builtinDeny = Object.entries(grants.tools.claude)
     .filter(([, decision]) => decision === 'deny')
     .map(([name]) => name)
@@ -157,6 +162,10 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
     settingsPath,
     '--setting-sources',
     'user',
+    // The built-ins offered, by name; an empty list offers none, where leaving the flag out offers the default set.
+    // MCP tools and the structured-output tool `--json-schema` adds are offered either way.
+    '--tools',
+    builtinOffered.join(','),
     '--strict-mcp-config',
     '--mcp-config',
     mcpPath,

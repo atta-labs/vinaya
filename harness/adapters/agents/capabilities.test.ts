@@ -209,13 +209,20 @@ describe('the developer before and after the capability contract', () => {
   )
 
   test('Claude: the same settings except the listed built-ins, now denied', () => {
-    // Intended: Claude now prints JSON events (stream-json), so its session id and structured result are read.
+    // Intended: Claude now prints JSON events (stream-json), so its session id and structured result are read,
+    // and it is offered exactly the built-ins its capabilities allow, by name.
+    const offered = Object.entries(grants.tools.claude)
+      .filter(([, decision]) => decision === 'allow')
+      .map(([name]) => name)
     expect(claude.launch).toEqual([
       ...before.claude.launch.slice(0, 2),
       '--verbose',
       '--output-format',
       'stream-json',
-      ...before.claude.launch.slice(2)
+      ...before.claude.launch.slice(2, 6),
+      '--tools',
+      offered.join(','),
+      ...before.claude.launch.slice(6)
     ])
     const now = JSON.parse(claude.files['role-settings.json'] as string)
     const then = JSON.parse(before.claude.files['role-settings.json'] as string)
@@ -237,6 +244,21 @@ describe('the developer before and after the capability contract', () => {
     const policyThen = JSON.parse(embeddedPolicy(before.claude))
     for (const tool of NEWLY_DENIED) policyThen.tools[tool] = 'deny'
     expect(policyNow).toEqual(policyThen)
+  })
+
+  test('the Claude launch carries --tools and keeps --json-schema and the MCP config', () => {
+    const at = claude.launch.indexOf('--tools')
+    expect(at).toBeGreaterThan(0)
+    const offered = (claude.launch[at + 1] as string).split(',')
+    expect(offered).toContain('Bash')
+    expect(offered).toContain('ToolSearch')
+    expect(offered).not.toContain('WebSearch')
+    expect(claude.launch[claude.launch.indexOf('--json-schema') + 1]).toBe(JSON.stringify(paths.outputSchema))
+    expect(claude.launch[claude.launch.indexOf('--mcp-config') + 1]).toBe('/gen/developer/role-mcp.json')
+    expect(claude.launch).toContain('--strict-mcp-config')
+    // A resumed session is offered the same built-ins.
+    const resume = claude.resumeLaunch as string[]
+    expect(resume[resume.indexOf('--tools') + 1]).toBe(claude.launch[at + 1] as string)
   })
 
   test('both runners give the dev-tools server the shared per-call limit, so a long publish completes', () => {

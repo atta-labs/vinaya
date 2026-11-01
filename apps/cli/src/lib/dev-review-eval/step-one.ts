@@ -1485,7 +1485,9 @@ async function runDeveloperInTree(
   prompt: string,
   steps: VinayaProcessSteps,
   /** The documents the turn result must cite, on the Engine backend's turn schema. */
-  requiredSources: readonly string[] = []
+  requiredSources: readonly string[] = [],
+  /** The capabilities the case grants, which narrow the Engine role's own; absent, the role keeps its grants file's. */
+  grantedCapabilities?: readonly string[]
 ): Promise<Staged<DeveloperInTreeRun>> {
   const tree = container.workingTree
   const base = git(tree, ['rev-parse', 'HEAD']).trim()
@@ -1519,6 +1521,7 @@ async function runDeveloperInTree(
         timeoutMs: context.timeoutMs,
         outputSchema: developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: [...requiredSources] }),
         devToolsBridge,
+        ...(grantedCapabilities === undefined ? {} : { grantedCapabilities }),
         spawnFn: steps.engineSpawn,
         observeStdoutLine: streamObserver(transcript, container)
       })
@@ -1644,7 +1647,8 @@ async function runEngineReviewer(
   prompt: string,
   parent: string,
   steps: VinayaProcessSteps,
-  transcript: string[]
+  transcript: string[],
+  grantedCapabilities?: readonly string[]
 ): Promise<Awaited<ReturnType<typeof dispatchRole>>> {
   const { reviewResultJsonSchema } = await import('../review-result')
   const tools = await import('../../../tests/eval/tool-selection-suite')
@@ -1668,6 +1672,7 @@ async function runEngineReviewer(
       timeoutMs: context.timeoutMs,
       outputSchema: reviewResultJsonSchema(item.role),
       devToolsBridge: driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts')),
+      ...(grantedCapabilities === undefined ? {} : { grantedCapabilities }),
       spawnFn: steps.engineSpawn,
       observeStdoutLine: streamObserver(transcript, container)
     })
@@ -1689,7 +1694,9 @@ async function runReviewerTrial<T>(
   item: ReviewCase,
   prompt: string,
   finish: (handle: Awaited<ReturnType<typeof dispatchRole>>, transcript: readonly string[]) => Promise<T> | T,
-  steps: VinayaProcessSteps = PRODUCTION_VINAYA_PROCESS_STEPS
+  steps: VinayaProcessSteps = PRODUCTION_VINAYA_PROCESS_STEPS,
+  /** The capabilities the case grants, which narrow the Engine role's own; absent, the role keeps its grants file's. */
+  grantedCapabilities?: readonly string[]
 ): Promise<T> {
   const parent = mkdtempSync(join(stepOneWorkRoot(), 'step-one-reviewer-'))
   const role = item.role === 'security-reviewer' ? 'security' : 'code-reviewer'
@@ -1708,7 +1715,8 @@ async function runReviewerTrial<T>(
           prompt,
           parent,
           steps,
-          transcript
+          transcript,
+          grantedCapabilities
         )
         return await finish(handle, transcript)
       }
@@ -1992,7 +2000,8 @@ async function runChangeCase(
       item,
       prompt,
       steps,
-      input.sources.filter((source) => source.required).map((source) => source.sourceId)
+      input.sources.filter((source) => source.required).map((source) => source.sourceId),
+      c.grantedCapabilities
     )
     if (!run.ok) return run
     // The hidden tests are not in the container: the verifier runs them on the tree's commit.
@@ -2095,7 +2104,8 @@ async function runReviewCase(
       }
       return { ok: true as const, record, usage: trialUsage(trial.adapter, handle, transcript) }
     },
-    steps
+    steps,
+    request.neutralCase.grantedCapabilities
   )
 }
 
@@ -2173,9 +2183,10 @@ async function runAnswerCase(
     const { developerTurnResultJsonSchema } = await import('../developer-turn-result')
     const { readClaudeTurnOutput, readCodexTurnOutput } = await import('../dev-review-loop/turn-result')
     const tools = await import('../../../tests/eval/tool-selection-suite')
-    // The read-only turn the source-citation suite's live trial runs: Claude
-    // Code holds only the served driver-run tools and Codex runs read-only, so
-    // the Developer cannot write a file whatever the prompt says.
+    // The read-only turn the source-citation suite's live trial runs, launched
+    // from the developer role's capabilities narrowed to what the case grants:
+    // no answer case grants a write, so the Developer cannot write a file
+    // whatever the prompt says, on either adapter.
     const runTurn = await steps.readOnlyTurn(
       trial.adapter,
       parent,
@@ -2186,6 +2197,7 @@ async function runAnswerCase(
         ...(context.models['claude-code'] === undefined ? {} : { claudeModel: context.models['claude-code'] }),
         ...(context.models.codex === undefined ? {} : { codexModel: context.models.codex }),
         ...(containerLogin === null ? {} : { claudeEnv: buildWorkerEnv(process.env, containerLogin) }),
+        grantedCapabilities: request.neutralCase.grantedCapabilities,
         timeoutSec: Math.ceil(context.timeoutMs / 1000)
       }
     )

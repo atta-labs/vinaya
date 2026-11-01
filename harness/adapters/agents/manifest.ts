@@ -80,6 +80,15 @@ export const CODEX_BUILTINS = [
   'close_agent'
 ] as const
 
+/**
+ * The reading-only commands a role that reads but runs no commands may still run, as vendor-neutral command
+ * prefixes (`RoleCapabilities.run_commands`): the shell Codex reads through, and what a trace counts as reading.
+ */
+export const READ_ONLY_COMMANDS: readonly string[] = CODEX_READ_ONLY_COMMANDS
+
+/** The command prefixes always refused in that reading-only shell, including the reading commands' write-capable forms. */
+export const READ_ONLY_FORBIDDEN: readonly string[] = CODEX_READ_ONLY_FORBIDDEN
+
 export type ClaudeBuiltin = (typeof CLAUDE_BUILTINS)[number]
 export type CodexBuiltin = (typeof CODEX_BUILTINS)[number]
 
