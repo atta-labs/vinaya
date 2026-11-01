@@ -27,6 +27,8 @@ import {
   bunReportedFiles,
   checkSchedule,
   ciScheduleInput,
+  type GroupOutcome,
+  groupOutcomeOf,
   readShardLists,
   runGroups,
   runnerCommand,
@@ -347,7 +349,11 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
     'pkg/vt/package.json': '{ "name": "@fx/vt", "scripts": { "test": "vitest run" } }\n',
     'pkg/vt/vitest.config.mjs': "export default { test: { include: ['**/*.test.ts'] } }\n",
     'pkg/vt/src/run.test.ts': vitestTest,
-    'pkg/vt/legacy/src/run.test.ts': vitestTest
+    'pkg/vt/legacy/src/run.test.ts': vitestTest,
+    'pkg/bun/tests/fail.test.ts':
+      "import { expect, test } from 'bun:test'\ntest('breaks', () => expect(1).toBe(2))\ntest('holds', () => expect(1).toBe(1))\n",
+    'pkg/vt/src/fail.test.ts':
+      "import { expect, test } from 'vitest'\ntest('breaks', () => expect(1).toBe(2))\ntest('holds', () => expect(1).toBe(1))\n"
   }
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true })
@@ -384,7 +390,9 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
       bun('pkg/bun/tests/kill.test.ts'),
       bun('pkg/bun/tests/chdir.test.ts'),
       vt('pkg/vt/src/run.test.ts'),
-      vt('pkg/vt/legacy/src/run.test.ts')
+      vt('pkg/vt/legacy/src/run.test.ts'),
+      bun('pkg/bun/tests/fail.test.ts'),
+      vt('pkg/vt/src/fail.test.ts')
     ]
   }
 }
@@ -488,5 +496,164 @@ describe('real runners execute exactly their group', () => {
       }) as unknown as typeof import('node:child_process').spawnSync
     })
     expect([started, result.problems]).toEqual([0, []])
+  })
+
+  test('a failing file is named by both runners, and each runner, trusted, confirms the rest of its files', () => {
+    const groups = groupsFor([
+      'pkg/bun/tests/a.test.ts',
+      'pkg/bun/tests/fail.test.ts',
+      'pkg/vt/src/run.test.ts',
+      'pkg/vt/src/fail.test.ts'
+    ])
+    const lines: string[] = []
+    const ended: GroupOutcome[] = []
+    const result = runGroups(root, groups, {
+      log: (line) => lines.push(line),
+      announce: true,
+      onGroupEnd: (outcome) => ended.push(outcome)
+    })
+    expect(result.failedRunners).toEqual(['bun@default', 'vt@default'])
+    expect(ended.map((o) => [o.group, o.trusted, o.confirmed, o.obligations])).toEqual([
+      ['bun@default', true, ['pkg/bun/tests/a.test.ts'], ['pkg/bun/tests/fail.test.ts']],
+      ['vt@default', true, ['pkg/vt/src/run.test.ts'], ['pkg/vt/src/fail.test.ts']]
+    ])
+    expect(result.outcomes).toEqual(ended)
+    // Each group's scheduled files as it starts, and its report's files once it ends.
+    expect(lines.filter((line) => line.startsWith('vinaya-test-group-'))).toEqual([
+      `vinaya-test-group-start ${JSON.stringify({ group: 'bun@default', runner: 'bun', cwd: 'pkg/bun', tests: groups[0]?.tests })}`,
+      `vinaya-test-group-end ${JSON.stringify({ group: 'bun@default', executed: groups[0]?.tests, failed: ['pkg/bun/tests/fail.test.ts'] })}`,
+      `vinaya-test-group-start ${JSON.stringify({ group: 'vt@default', runner: 'vitest', cwd: 'pkg/vt', tests: groups[1]?.tests })}`,
+      `vinaya-test-group-end ${JSON.stringify({ group: 'vt@default', executed: groups[1]?.tests, failed: ['pkg/vt/src/fail.test.ts'] })}`
+    ])
+  }, 120_000)
+
+  test('without announce the runner prints no group line', () => {
+    const lines: string[] = []
+    runGroups(root, [bunGroup], { log: (line) => lines.push(line) })
+    expect(lines.some((line) => line.startsWith('vinaya-test-group-'))).toBe(false)
+  }, 60_000)
+})
+
+describe('what a runner group confirms', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'schedule-outcome-')))
+  scratch.push(root)
+  const ids = ['a', 'b', 'c', 'd', 'e'].map((name) => `pkg/t/${name}.test.ts`)
+  const group = (runner: 'bun' | 'vitest', tests = ids): NativeGroup => ({
+    id: `${runner}@default`,
+    suite: runner,
+    owner: '@fx/x',
+    kind: 'workspace',
+    runner,
+    cwd: 'pkg',
+    preload: null,
+    environment: {},
+    configuration: 'default',
+    scope: 'files',
+    reason: null,
+    tests,
+    args: tests.map((id) => `./${id.slice('pkg/'.length)}`),
+    exclude: []
+  })
+  /** A Bun JUnit report: the root's failures and errors, then each file with its own failures. */
+  const junit = (root: { failures?: number; errors?: number }, files: [string, number][]) =>
+    [
+      `<testsuites name="bun test"${root.failures === undefined ? '' : ` failures="${root.failures}"`}${root.errors === undefined ? '' : ` errors="${root.errors}"`}>`,
+      ...files.map(
+        ([file, failures]) => `<testsuite name="${file}" file="${file}" failures="${failures}"></testsuite>`
+      ),
+      '</testsuites>'
+    ].join('\n')
+  const vitest = (
+    totals: { numFailedTestSuites?: number; numFailedTests?: number; success?: boolean },
+    files: [string, number][]
+  ) =>
+    JSON.stringify({
+      ...totals,
+      testResults: files.map(([file, failed]) => ({
+        name: join(root, 'pkg', file),
+        status: failed > 0 ? 'failed' : 'passed',
+        assertionResults: [...Array.from({ length: failed }, () => ({ status: 'failed' })), { status: 'passed' }]
+      }))
+    })
+  const outcome = (g: NativeGroup, status: number | null, report: string | null, signal: string | null = null) =>
+    groupOutcomeOf(g, { status, signal, report }, root, [root])
+
+  test('named failures plus two unreported files make exactly those files obligations, not the whole group', () => {
+    const result = outcome(
+      group('bun'),
+      1,
+      junit({ failures: 1 }, [
+        ['t/a.test.ts', 1],
+        ['t/b.test.ts', 0],
+        ['t/c.test.ts', 0]
+      ])
+    )
+    expect(result).toEqual({
+      group: 'bun@default',
+      executed: ['pkg/t/a.test.ts', 'pkg/t/b.test.ts', 'pkg/t/c.test.ts'],
+      failed: ['pkg/t/a.test.ts'],
+      unreported: ['pkg/t/d.test.ts', 'pkg/t/e.test.ts'],
+      trusted: true,
+      confirmed: ['pkg/t/b.test.ts', 'pkg/t/c.test.ts'],
+      obligations: ['pkg/t/a.test.ts', 'pkg/t/d.test.ts', 'pkg/t/e.test.ts']
+    })
+  })
+
+  test('a failed runner whose report totals its named files do not cover confirms nothing', () => {
+    const listed: [string, number][] = ids.map((id, i) => [id.slice('pkg/'.length), i === 0 ? 1 : 0])
+    for (const totals of [{ failures: 2 }, { failures: 1, errors: 1 }])
+      expect(outcome(group('bun'), 1, junit(totals, listed))).toMatchObject({
+        trusted: false,
+        confirmed: [],
+        obligations: ids
+      })
+    // A total the report omits counts as zero.
+    expect(outcome(group('bun'), 1, junit({}, listed))).toMatchObject({ trusted: true, obligations: [ids[0]] })
+  })
+
+  test('a failed runner that names no file confirms nothing, whatever its totals', () => {
+    const listed: [string, number][] = ids.map((id) => [id.slice('pkg/'.length), 0])
+    for (const totals of [{}, { failures: 0 }, { errors: 1 }])
+      expect(outcome(group('bun'), 1, junit(totals, listed))).toMatchObject({ trusted: false, obligations: ids })
+  })
+
+  test('an extra or duplicate execution, a signal or no readable report makes every test of the group an obligation', () => {
+    const listed: [string, number][] = ids.map((id) => [id.slice('pkg/'.length), 0])
+    expect(outcome(group('bun'), 0, junit({}, [...listed, ['t/x.test.ts', 0]]))).toMatchObject({
+      trusted: false,
+      confirmed: [],
+      obligations: ids
+    })
+    expect(outcome(group('vitest'), 0, vitest({}, [...listed, listed[0] as [string, number]]))).toMatchObject({
+      trusted: false,
+      obligations: ids
+    })
+    expect(outcome(group('bun'), null, null, 'SIGKILL')).toMatchObject({ trusted: false, obligations: ids })
+    expect(outcome(group('bun'), 0, null)).toMatchObject({ trusted: false, obligations: ids, unreported: [] })
+    expect(outcome(group('bun'), 0, 'not a report')).toMatchObject({ trusted: false, obligations: ids })
+  })
+
+  test('a runner that exited zero confirms every file its report lists once; a missing one stays an obligation', () => {
+    const listed: [string, number][] = ids.slice(0, 4).map((id) => [id.slice('pkg/'.length), 0])
+    expect(outcome(group('bun'), 0, junit({ failures: 0 }, listed))).toMatchObject({
+      trusted: true,
+      confirmed: ids.slice(0, 4),
+      unreported: [ids[4]],
+      obligations: [ids[4]]
+    })
+  })
+
+  test('a Vitest runner is trusted only when its failed suite and test counts are covered and it did not succeed', () => {
+    const listed: [string, number][] = ids.map((id, i) => [id.slice('pkg/'.length), i === 1 ? 2 : 0])
+    expect(
+      outcome(group('vitest'), 1, vitest({ numFailedTestSuites: 1, numFailedTests: 2, success: false }, listed))
+    ).toMatchObject({ trusted: true, obligations: [ids[1]] })
+    expect(outcome(group('vitest'), 1, vitest({}, listed))).toMatchObject({ trusted: true, obligations: [ids[1]] })
+    for (const totals of [
+      { numFailedTestSuites: 2, numFailedTests: 2, success: false },
+      { numFailedTestSuites: 1, numFailedTests: 3, success: false },
+      { numFailedTestSuites: 1, numFailedTests: 2, success: true }
+    ])
+      expect(outcome(group('vitest'), 1, vitest(totals, listed))).toMatchObject({ trusted: false, obligations: ids })
   })
 })

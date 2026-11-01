@@ -8,6 +8,9 @@
  * passing record in the same file, and the next push on the branch then runs
  * only the hook's own selection for what changed since that pass, never the
  * full selection; every record that does not fit gives the full selection.
+ * The native local push's record lists every test its run did not confirm,
+ * and says so (`failedHoldsUnconfirmed`), so its rerun skips only what a
+ * runner's own report proved.
  *
  * The record lives in the worktree's own git directory
  * (`git rev-parse --git-path`), never in the tree: it is a fact about this
@@ -18,7 +21,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import type { NativeGroup } from './verification/index.js'
 
@@ -47,6 +50,21 @@ export type FailedTestsRecord = {
   selectionCompleted?: boolean
   /** The native verification context ({@link NativeSelection.context}) the refused run executed under, when it was a native run. */
   context?: string
+  /**
+   * Set only by the native recorder: {@link failed} holds every test of its run that the run did not confirm as
+   * passed — each named failing test, each scheduled file no runner reported, every test of a runner whose verdict
+   * cannot be trusted and every test of a group that never finished — so every other planned test was confirmed. A
+   * record without it was written under the older rule, where a list meant only the named failing files of a
+   * completed run.
+   */
+  failedHoldsUnconfirmed?: true
+  /** Absolute paths of the scheduled files no runner reported executed, when the native recorder wrote the record. */
+  unreported?: string[]
+  /**
+   * When the native run that wrote the record started. With {@link head} it binds the record to that run, so the
+   * driver keeps a record the run wrote after one of its runner groups across a deadline stop of that very run.
+   */
+  runStartedAt?: string
 }
 
 /**
@@ -163,6 +181,8 @@ export type LastPushResult = {
   recordedAt: string
   /** What the native run completed, when `selection.native` planned it. */
   native?: NativeCompletion
+  /** Absolute paths of the scheduled files no runner reported executed; {@link failed} names them too. */
+  unreported?: string[]
 }
 
 /** Emitted by the supervisor only after Bun exits normally, never after a signal or native crash. */
@@ -487,7 +507,8 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
     if (record.selectionCompleted !== true || context === null || record.context !== context)
       return full('the last refused push ran under another or unreadable verification context', obligations)
     if (!narrowable(record.head)) return full('the changes since the refused push could not be narrowed', obligations)
-    return { base: record.head, kind: 'rerun', obligations, reason: `re-running what failed at ${record.head}` }
+    const what = record.failedHoldsUnconfirmed === true ? 'what it did not confirm' : 'what failed'
+    return { base: record.head, kind: 'rerun', obligations, reason: `re-running ${what} at ${record.head}` }
   }
   const passing = inputs.passing
   if (!passing || passing.selectionCompleted !== true || passing.branch !== inputs.branch)
@@ -701,11 +722,18 @@ export function readJsonUnderGit(repoRoot: string, name: string): string | null 
   }
 }
 
+/** Writes through a temporary file and a rename, so a process killed mid-write leaves the old file or the new one. */
 export function writeJsonUnderGit(repoRoot: string, name: string, value: unknown): void {
   const path = gitPath(repoRoot, name)
   if (!path) return
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`)
+  const temporary = `${path}.${process.pid}.tmp`
+  try {
+    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`)
+    renameSync(temporary, path)
+  } finally {
+    rmSync(temporary, { force: true })
+  }
 }
 
 export function removeUnderGit(repoRoot: string, name: string): void {
@@ -716,6 +744,17 @@ export function removeUnderGit(repoRoot: string, name: string): void {
 /** The record left by this worktree's last refused push, if any. */
 export function readFailedTestsRecord(repoRoot: string): FailedTestsRecord | null {
   return parseRecord(readJsonUnderGit(repoRoot, FAILED_TESTS_RECORD))
+}
+
+/**
+ * Whether `record` was written by the native run of `head` that the driver started at `startedAtMs` (its own wall
+ * clock, read before it started the hook): the binding the last-push result carries, with a second's slack between
+ * the clocks of two processes.
+ */
+export function recordBoundToRun(record: FailedTestsRecord | null, head: string, startedAtMs: number): boolean {
+  if (!record || record.head !== head || record.failedHoldsUnconfirmed !== true || !record.runStartedAt) return false
+  const started = Date.parse(record.runStartedAt)
+  return Number.isFinite(started) && started >= startedAtMs - 1000
 }
 
 /** The passing record left by this worktree's last verified passing run, if any. */

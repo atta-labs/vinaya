@@ -1,7 +1,8 @@
 /**
  * Live progress of the pushes, test runs and CI wait a version-2 run waits on: the one module that defines the
  * progress record, the reserved progress directory under the task's run directory, the closed-block rule for Bun's
- * test output, and the wording of every progress line the driver log receives.
+ * test output, the runner-group lines that limit a native run's count to its scheduled files, and the wording of
+ * every progress line the driver log receives.
  *
  * Progress is narration, never authority. Nothing reads a record as evidence that a check, a test or a push passed:
  * no grant, skip, success, Evidence entry or test-run receipt is derived from it. Every writer is best-effort and
@@ -408,6 +409,13 @@ export class BunProgressParser {
   private open: { file: string; failures: string[]; ms: number; unhandled: boolean } | null = null
   private inRecap = false
 
+  /**
+   * When set, a header opens a block only when this names it — the scheduled file it names, as the block's file — and
+   * any other header-shaped line (one a test prints from an inner fixture run) is skipped: it neither opens nor
+   * closes a block.
+   */
+  accept: ((header: string) => string | null) | null = null
+
   /** Feeds a chunk; returns every file whose block it closed. */
   feed(chunk: string): FileProgress[] {
     this.buffered += chunk
@@ -428,14 +436,31 @@ export class BunProgressParser {
     return closed
   }
 
+  /** Reads one whole line; returns every file whose block it closed. */
+  readLine(line: string): FileProgress[] {
+    const closed: FileProgress[] = []
+    this.line(line, closed)
+    return closed
+  }
+
+  /** The runner of the open block exited: the block closes as complete. */
+  closeOpen(): FileProgress[] {
+    const closed: FileProgress[] = []
+    this.close(closed)
+    this.inRecap = false
+    return closed
+  }
+
   private line(line: string, closed: FileProgress[]): void {
     const header = FILE_HEADER.exec(line)
-    if (header?.[1]) {
+    const file = header?.[1] ? (this.accept ? this.accept(header[1]) : header[1]) : null
+    if (file) {
       this.close(closed)
       this.inRecap = false
-      this.open = { file: header[1], failures: [], ms: 0, unhandled: false }
+      this.open = { file, failures: [], ms: 0, unhandled: false }
       return
     }
+    if (header?.[1]) return
     // The end-of-run recap (`N tests failed:` then every failing test again) belongs to no file: it closes the open
     // block, and its repeated lines are never counted against the last file.
     if (FAILURE_RECAP.test(line)) {
@@ -471,18 +496,51 @@ export class BunProgressParser {
   }
 }
 
-/** What a test run has done so far: the 60-second line's inputs. */
+/**
+ * What a test run has done so far: the 60-second line's inputs. A file of a runner group counts once, by name, and
+ * when the group ends its count becomes exactly what the group's report says executed and failed; a file outside any
+ * group (an explicit command's output, a stream with no group lines) simply counts.
+ */
 export class TestRunTally {
-  done = 0
-  failed = 0
+  private loose = 0
+  private looseFailed = 0
+  private readonly groups = new Map<string, { done: Set<string>; failed: Set<string> }>()
   private msSum = 0
+  private timed = 0
   constructor(public total: number | null) {}
 
-  add(file: FileProgress): void {
-    if (file.outcome === 'interrupted') return
-    this.done += 1
-    if (file.outcome === 'fail') this.failed += 1
+  /** Adds a closed file; false when it was not counted (interrupted, or a file its group already counted). */
+  add(file: FileProgress, group: string | null = null): boolean {
+    if (file.outcome === 'interrupted') return false
+    if (group !== null) {
+      const counted = this.group(group)
+      if (counted.done.has(file.file)) return false
+      counted.done.add(file.file)
+      if (file.outcome === 'fail') counted.failed.add(file.file)
+    } else {
+      this.loose += 1
+      if (file.outcome === 'fail') this.looseFailed += 1
+    }
     this.msSum += file.ms
+    this.timed += 1
+    return true
+  }
+
+  /** A group ended: its count is its report's executed and failing files, whatever its output showed. */
+  reconcile(group: string, executed: readonly string[], failed: readonly string[]): void {
+    this.groups.set(group, { done: new Set(executed), failed: new Set(failed.filter((f) => executed.includes(f))) })
+  }
+
+  get done(): number {
+    let done = this.loose
+    for (const counted of this.groups.values()) done += counted.done.size
+    return done
+  }
+
+  get failed(): number {
+    let failed = this.looseFailed
+    for (const counted of this.groups.values()) failed += counted.failed.size
+    return failed
   }
 
   /** The position of the file just added: `N/M` with a known total, `N` otherwise. */
@@ -491,7 +549,153 @@ export class TestRunTally {
   }
 
   get averageMs(): number | null {
-    return this.done === 0 ? null : this.msSum / this.done
+    return this.timed === 0 ? null : this.msSum / this.timed
+  }
+
+  private group(group: string): { done: Set<string>; failed: Set<string> } {
+    let counted = this.groups.get(group)
+    if (!counted) {
+      counted = { done: new Set(), failed: new Set() }
+      this.groups.set(group, counted)
+    }
+    return counted
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Runner groups: the lines the native group runner prints around each group
+// ---------------------------------------------------------------------------
+
+/** The prefix of the line the native group runner prints, when its caller asks, as a runner group starts. */
+export const TEST_GROUP_START = 'vinaya-test-group-start '
+
+/** The prefix of the line it prints once that group's report is read. */
+export const TEST_GROUP_END = 'vinaya-test-group-end '
+
+/** A group's start: its runner, its working directory and the repository-relative files it was scheduled to run. */
+export type TestGroupStart = { group: string; runner: 'bun' | 'vitest'; cwd: string; tests: string[] }
+
+/** A group's end: the scheduled files its report lists as executed, and those it names failing. */
+export type TestGroupEnd = { group: string; executed: string[]; failed: string[] }
+
+export const testGroupStartLine = (start: TestGroupStart): string => `${TEST_GROUP_START}${JSON.stringify(start)}`
+export const testGroupEndLine = (end: TestGroupEnd): string => `${TEST_GROUP_END}${JSON.stringify(end)}`
+
+const isStrings = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string')
+
+/** A group line of the right shape, or null. */
+export function parseTestGroupLine(
+  line: string
+): { kind: 'start'; start: TestGroupStart } | { kind: 'end'; end: TestGroupEnd } | null {
+  const start = line.startsWith(TEST_GROUP_START)
+  if (!start && !line.startsWith(TEST_GROUP_END)) return null
+  try {
+    const value = JSON.parse(line.slice((start ? TEST_GROUP_START : TEST_GROUP_END).length)) as Record<string, unknown>
+    if (typeof value.group !== 'string') return null
+    if (start) {
+      if ((value.runner !== 'bun' && value.runner !== 'vitest') || typeof value.cwd !== 'string') return null
+      return isStrings(value.tests) ? { kind: 'start', start: value as TestGroupStart } : null
+    }
+    return isStrings(value.executed) && isStrings(value.failed) ? { kind: 'end', end: value as TestGroupEnd } : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The scheduled file of `start` a runner's output line names, as its repository-relative identity, or null: the
+ * name as the runner prints it (relative to the group's folder, with or without `./`), the identity itself, or an
+ * absolute path ending in it. A name that matches no scheduled file — a header an inner fixture run prints — is null.
+ */
+export function scheduledFileNamed(start: TestGroupStart, written: string): string | null {
+  const slashed = written.replace(/\\/g, '/').replace(/^\.\//, '')
+  for (const id of start.tests) {
+    const relative = start.cwd === '.' ? id : id.startsWith(`${start.cwd}/`) ? id.slice(start.cwd.length + 1) : null
+    if (slashed === id || slashed === relative) return id
+    if (slashed.startsWith('/') && slashed.endsWith(`/${id}`)) return id
+  }
+  return null
+}
+
+/** A Vitest default-reporter file line: ` ✓ src/a.test.ts (3 tests) 12ms`, ` ❯ src/b.test.ts (2 tests | 1 failed)`. */
+const VITEST_FILE_LINE = /^\s*([✓×❯✗])\s+(?:\|[^|]*\|\s+)?(\S+\.(?:test|spec)\.[a-zA-Z]+)(?=\s|$)(.*)$/
+
+/** One event of a test run's output: a file closed, or a runner group's report reconciled its files. */
+export type TestOutputEvent =
+  | { kind: 'file'; file: FileProgress; group: string | null }
+  | { kind: 'group-end'; end: TestGroupEnd }
+
+/**
+ * Incremental parser of a test run's whole output. Without group lines it is the closed-block rule of
+ * {@link BunProgressParser}. Once the native group runner prints a group's start, only that group's scheduled files
+ * count: a Bun header opens a block only for a scheduled file, and a Vitest file line is a finished file only for
+ * one; every other header-shaped line is skipped, and a header outside every group is skipped too. A group's end
+ * closes its last block and hands on its report's files.
+ */
+export class TestOutputParser {
+  private readonly bun = new BunProgressParser()
+  private buffered = ''
+  private group: TestGroupStart | null = null
+  private grouped = false
+
+  feed(chunk: string): TestOutputEvent[] {
+    this.buffered += chunk
+    const lines = this.buffered.split('\n')
+    this.buffered = lines.pop() ?? ''
+    const events: TestOutputEvent[] = []
+    for (const raw of lines) this.line(raw.replace(/\r$/, ''), events)
+    return events
+  }
+
+  end(): TestOutputEvent[] {
+    const events: TestOutputEvent[] = []
+    if (this.buffered !== '') this.line(this.buffered, events)
+    this.buffered = ''
+    for (const file of this.bun.end()) events.push(this.fileEvent(file))
+    return events
+  }
+
+  private fileEvent(file: FileProgress): TestOutputEvent {
+    return { kind: 'file', file, group: this.group?.group ?? null }
+  }
+
+  private line(line: string, events: TestOutputEvent[]): void {
+    const marker = parseTestGroupLine(line)
+    if (marker?.kind === 'start') {
+      for (const file of this.bun.closeOpen()) events.push(this.fileEvent(file))
+      this.group = marker.start
+      this.grouped = true
+      const start = marker.start
+      this.bun.accept = start.runner === 'bun' ? (header) => scheduledFileNamed(start, header) : () => null
+      return
+    }
+    if (marker?.kind === 'end') {
+      for (const file of this.bun.closeOpen()) events.push(this.fileEvent(file))
+      events.push({ kind: 'group-end', end: marker.end })
+      this.group = null
+      this.bun.accept = () => null
+      return
+    }
+    if (this.group?.runner === 'vitest') {
+      const vitest = VITEST_FILE_LINE.exec(line)
+      const file = vitest?.[2] ? scheduledFileNamed(this.group, vitest[2]) : null
+      if (vitest && file) {
+        const ms = /(\d+(?:\.\d+)?)\s*ms\s*$/.exec(vitest[3] ?? '')
+        const failed = vitest[1] !== '✓'
+        events.push(
+          this.fileEvent({
+            file,
+            outcome: failed ? 'fail' : 'pass',
+            firstFailure: null,
+            ms: ms ? Math.round(Number(ms[1])) : 0
+          })
+        )
+      }
+      return
+    }
+    if (this.grouped && this.group === null) return
+    for (const file of this.bun.readLine(line)) events.push(this.fileEvent(file))
   }
 }
 
@@ -782,7 +986,7 @@ export async function beginProgressSession(input: {
 // ---------------------------------------------------------------------------
 
 type StreamState = {
-  parser: BunProgressParser
+  parser: TestOutputParser
   tally: TestRunTally
   ended: boolean
   lastSummaryAt: number
@@ -847,7 +1051,7 @@ export class ProgressReader {
     let state = this.streams.get(stream)
     if (!state) {
       state = {
-        parser: new BunProgressParser(),
+        parser: new TestOutputParser(),
         tally: new TestRunTally(total),
         ended: false,
         lastSummaryAt: this.now()
@@ -886,19 +1090,24 @@ export class ProgressReader {
     if (state.ended) return
     const text = this.readNew(`${stream}.out`)
     if (text === '') return
-    for (const file of state.parser.feed(text)) this.fileClosed(state, file)
+    for (const event of state.parser.feed(text)) this.outputEvent(state, event)
   }
 
-  private fileClosed(state: StreamState, file: FileProgress): void {
-    state.tally.add(file)
-    this.emit(testFileLine(file, file.outcome === 'interrupted' ? null : state.tally.position))
+  private outputEvent(state: StreamState, event: TestOutputEvent): void {
+    if (event.kind === 'group-end') {
+      state.tally.reconcile(event.end.group, event.end.executed, event.end.failed)
+      return
+    }
+    const { file, group } = event
+    if (file.outcome === 'interrupted') this.emit(testFileLine(file, null))
+    else if (state.tally.add(file, group)) this.emit(testFileLine(file, state.tally.position))
   }
 
   private endStream(stream: string): void {
     const state = this.stream(stream)
     if (state.ended) return
     this.readCopy(stream)
-    for (const file of state.parser.end()) this.fileClosed(state, file)
+    for (const event of state.parser.end()) this.outputEvent(state, event)
     state.ended = true
   }
 

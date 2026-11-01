@@ -15,8 +15,11 @@ import {
   ProgressReader,
   progressMarkerText,
   resolveProgressDir,
+  TestOutputParser,
   TestRunTally,
   testFileLine,
+  testGroupEndLine,
+  testGroupStartLine,
   testSummaryLine
 } from '../../src/lib/push-progress'
 
@@ -190,6 +193,134 @@ describe('the reader', () => {
     appendProgressRecord(dir, 'tests-2.ndjson', { v: 1, kind: 'tests-end', stream: 'tests-2' })
     reader.scan()
     expect(lines).toEqual(['test progress: 1 tests/a.test.ts ✓, 1 ms', 'test progress: 2 tests/b.test.ts ✓, 1 ms'])
+  })
+})
+
+describe('a run of native runner groups', () => {
+  const bunStart = testGroupStartLine({
+    group: 'cli@default',
+    runner: 'bun',
+    cwd: 'apps/cli',
+    tests: ['apps/cli/tests/a.test.ts', 'apps/cli/tests/b.test.ts', 'apps/cli/tests/c.test.ts']
+  })
+  const vitestStart = testGroupStartLine({
+    group: 'aeg-core@default',
+    runner: 'vitest',
+    cwd: 'packages/aeg-core',
+    tests: ['packages/aeg-core/src/x.test.ts', 'packages/aeg-core/src/y.test.ts']
+  })
+  // A Bun group whose second file runs an inner fixture that prints its own `a.test.ts:` and `b.test.ts:` headers,
+  // and whose third file crashed before its header; then a Vitest group whose reporter prints one line per file.
+  const output = [
+    'vinaya schedule: cli@default — @attalabs/vinaya, bun in apps/cli, 3 file(s)',
+    bunStart,
+    'bun test v1.4.2',
+    'tests/a.test.ts:',
+    '(pass) one [2.00ms]',
+    'tests/b.test.ts:',
+    'a.test.ts:',
+    '(fail) inner fixture failure',
+    'b.test.ts:',
+    '(pass) inner fixture pass',
+    '(pass) runs a fixture [5.00ms]',
+    ' 2 pass',
+    'Ran 2 tests across 2 files.',
+    testGroupEndLine({
+      group: 'cli@default',
+      executed: ['apps/cli/tests/a.test.ts', 'apps/cli/tests/b.test.ts'],
+      failed: []
+    }),
+    'vinaya schedule: aeg-core@default — @attalabs/aeg-core, vitest in packages/aeg-core, 2 file(s)',
+    vitestStart,
+    ' ✓ src/x.test.ts (3 tests) 4ms',
+    ' ❯ src/y.test.ts (2 tests | 1 failed) 7ms',
+    '   × breaks 2ms',
+    testGroupEndLine({
+      group: 'aeg-core@default',
+      executed: ['packages/aeg-core/src/x.test.ts', 'packages/aeg-core/src/y.test.ts'],
+      failed: ['packages/aeg-core/src/y.test.ts']
+    }),
+    ''
+  ].join('\n')
+
+  it('counts only scheduled files, never an inner fixture header, and the Vitest file lines', () => {
+    const parser = new TestOutputParser()
+    const files = [...parser.feed(output), ...parser.end()].flatMap((e) => (e.kind === 'file' ? [e.file.file] : []))
+    expect(files).toEqual([
+      'apps/cli/tests/a.test.ts',
+      'apps/cli/tests/b.test.ts',
+      'packages/aeg-core/src/x.test.ts',
+      'packages/aeg-core/src/y.test.ts'
+    ])
+  })
+
+  it('a mixed Bun and Vitest run ends with its done count equal to the files its reports executed', () => {
+    const { dir } = runtimeWithProgress()
+    const now = 1_000
+    const lines: string[] = []
+    const reader = new ProgressReader(
+      dir,
+      (line) => lines.push(line),
+      () => now
+    )
+    appendProgressRecord(dir, 'tests-3.ndjson', {
+      v: 1,
+      kind: 'tests-start',
+      stream: 'tests-3',
+      total: 5,
+      label: 'selected tests'
+    })
+    appendProgressBytes(dir, 'tests-3.out', output)
+    appendProgressRecord(dir, 'tests-3.ndjson', { v: 1, kind: 'tests-end', stream: 'tests-3' })
+    reader.scan()
+    expect(lines.filter((line) => line.includes('a.test.ts') && !line.includes('apps/cli'))).toEqual([])
+    expect(lines).toEqual([
+      'test progress: 1/5 apps/cli/tests/a.test.ts ✓, 2 ms',
+      'test progress: 2/5 apps/cli/tests/b.test.ts ✗, 5 ms — first failing test: inner fixture failure',
+      'test progress: 3/5 packages/aeg-core/src/x.test.ts ✓, 4 ms',
+      'test progress: 4/5 packages/aeg-core/src/y.test.ts ✗, 7 ms'
+    ])
+    const tally = new TestRunTally(5)
+    for (const event of new TestOutputParser().feed(output)) {
+      if (event.kind === 'file') tally.add(event.file, event.group)
+      else tally.reconcile(event.end.group, event.end.executed, event.end.failed)
+    }
+    // The inner fixture's failure line marked b live; its report did not, and the report decides.
+    expect([tally.done, tally.failed]).toEqual([4, 1])
+  })
+
+  it('a group whose runner prints no file line moves its count when its report is read', () => {
+    const tally = new TestRunTally(2)
+    const silent = [
+      vitestStart,
+      testGroupEndLine({
+        group: 'aeg-core@default',
+        executed: ['packages/aeg-core/src/x.test.ts', 'packages/aeg-core/src/y.test.ts'],
+        failed: []
+      }),
+      ''
+    ].join('\n')
+    for (const event of new TestOutputParser().feed(silent)) {
+      if (event.kind === 'file') tally.add(event.file, event.group)
+      else tally.reconcile(event.end.group, event.end.executed, event.end.failed)
+    }
+    expect(tally.done).toBe(2)
+  })
+
+  it('a header-shaped line outside every group, once groups started, is never counted', () => {
+    const parser = new TestOutputParser()
+    const events = parser.feed(
+      [
+        bunStart,
+        testGroupEndLine({ group: 'cli@default', executed: [], failed: [] }),
+        'stray.test.ts:',
+        '(pass) x',
+        'Ran 1 test across 1 file.',
+        ''
+      ].join('\n')
+    )
+    expect(events.filter((e) => e.kind === 'file')).toEqual([])
+    expect(parser.end()).toEqual([])
   })
 })
 

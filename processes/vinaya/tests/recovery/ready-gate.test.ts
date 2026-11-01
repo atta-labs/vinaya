@@ -236,6 +236,74 @@ describe.each(READY_GATE_RUNNERS)('%s', () => {
     expect(existsSync(record)).toBe(false)
   })
 
+  test('a deadline stop after a finished group keeps the record that run wrote, and the driver log names its files', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    const record = gitPath(dir, FAILED_TESTS_RECORD) as string
+    mkdirSync(join(record, '..'), { recursive: true })
+    const unfinished = join(dir, 'b.test.ts')
+    const hooks = join(dir, '.git', 'hooks')
+    mkdirSync(hooks, { recursive: true })
+    // The hook's run finished one group and wrote its bound record (as the native run does), then hangs in the next.
+    writeFileSync(
+      join(hooks, 'pre-push'),
+      `#!/bin/sh
+T=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+printf '{"version":1,"head":"${head}","branch":"task/issue-1","failed":["${unfinished}"],"recordedAt":"%s","selectionCompleted":true,"failedHoldsUnconfirmed":true,"unreported":[],"runStartedAt":"%s"}' "$T" "$T" > "${record}"
+sleep 300
+`
+    )
+    chmodSync(join(hooks, 'pre-push'), 0o755)
+    const lines: string[] = []
+    const result = await runReadyGateLive({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      head,
+      remoteHead: head,
+      deadlineMs: 1500,
+      registryDir: join(dir, 'registry'),
+      log: (line) => lines.push(line)
+    })
+    expect(result).toMatchObject({ passed: false, timedOut: true, failed: 'all' })
+    expect(JSON.parse(readFileSync(record, 'utf8'))).toMatchObject({ head, failed: [unfinished] })
+    expect(lines).toContainEqual(
+      expect.stringContaining(`ready push failed: not confirmed before the stop: ${unfinished}`)
+    )
+    expect(result.output).toContain('re-runs the 1 test(s) this run had not confirmed')
+  })
+
+  test('a deadline stop in which no group finished keeps an earlier parseable record', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    const pids = join(dir, 'pids')
+    slowHook(dir, pids)
+    const record = gitPath(dir, FAILED_TESTS_RECORD) as string
+    mkdirSync(join(record, '..'), { recursive: true })
+    const earlier = {
+      version: 1,
+      head: 'e'.repeat(40),
+      branch: 'task/issue-1',
+      failed: [join(dir, 'a.test.ts')],
+      recordedAt: '2026-10-01T00:00:00.000Z',
+      selectionCompleted: true,
+      failedHoldsUnconfirmed: true,
+      runStartedAt: '2026-10-01T00:00:00.000Z'
+    }
+    writeFileSync(record, JSON.stringify(earlier))
+    const result = await runReadyGateLive({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      head,
+      remoteHead: head,
+      deadlineMs: 1500,
+      registryDir: join(dir, 'registry')
+    })
+    expect(result).toMatchObject({ passed: false, timedOut: true, failed: 'all' })
+    for (const pid of pidsIn(pids)) expect(identityOf(pid)).toBeNull()
+    expect(JSON.parse(readFileSync(record, 'utf8'))).toEqual(earlier)
+    expect(result.output).toContain('the earlier failed-tests record is kept')
+  })
+
   test('a hook killed by a signal is reported stopped by that signal’s name', async () => {
     const dir = repo()
     const head = headOf(dir)
