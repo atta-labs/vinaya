@@ -218,12 +218,11 @@ const SCENARIOS: { name: string; changes: Change[]; expected: string[] }[] = [
     expected: ['harness/tests/new.test.ts']
   },
   {
-    // The flow test through the inventory's declared fixture edge; the driver
-    // test through the selector's own conservative edge — a non-source file
-    // of a package its imports resolve through changed — in every layout.
+    // The flow test through the inventory's declared fixture edge, in every
+    // layout; the driver test reads nothing from disk.
     name: 'a changed fixture reaches the test that reads it',
     changes: [{ kind: 'modify', path: 'processes/vinaya/tests/fixtures/scenario.json', text: '{"rounds":4}\n' }],
-    expected: ['apps/cli/tests/driver.test.ts', 'processes/vinaya/tests/flow.test.ts']
+    expected: ['processes/vinaya/tests/flow.test.ts']
   },
   {
     name: 'a changed preload reaches every test of its suite',

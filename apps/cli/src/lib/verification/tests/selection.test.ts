@@ -122,7 +122,7 @@ describe('selectTests on two differently structured repositories', () => {
     expect(withObligations.obligations.filter((o) => o.obligation === 'always').map((o) => o.test)).toEqual([
       'packages/app/tests/add.test.ts'
     ])
-    expect(withObligations.obligations.filter((o) => o.obligation === 'linux')).toHaveLength(11)
+    expect(withObligations.obligations.filter((o) => o.obligation === 'linux')).toHaveLength(12)
     expect(withObligations.identity).not.toBe(bare.identity)
     expect(plannedTests(withObligations)).toContain('packages/app/tests/add.test.ts')
   })

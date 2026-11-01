@@ -152,6 +152,13 @@
       "reason": "The golden comparison reads the snapshot's bytes from disk."
     },
     {
+      "id": "aeg-core-test-fixtures",
+      "kind": "fixture",
+      "paths": ["packages/aeg-core/tests/fixtures/"],
+      "readers": [{ "kind": "raw-bytes", "tests": ["apps/cli/tests/commands/pr.test.ts"] }],
+      "reason": "The pr command test reads the core package's pull-request body fixtures from disk, outside any import."
+    },
+    {
       "id": "ci-workflow",
       "kind": "config",
       "paths": [".github/workflows/ci.yml"],

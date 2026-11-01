@@ -1566,6 +1566,17 @@ function buildSelectionGraph(tree: SourceTree, options: GraphOptions): Selection
   }
 }
 
+/** Folders whose files are a package's test, spec or fixture data, never part of what an importer resolves. */
+const PACKAGE_TEST_DATA_FOLDERS = new Set(['tests', 'test', '__tests__', 'specs', 'fixtures'])
+
+/** Whether a package-relative path sits under one of the package's test, spec or fixture folders — judged by folder, never by extension, so a shipped JSON asset still counts as package metadata. */
+function isPackageTestData(packageRelative: string): boolean {
+  return packageRelative
+    .split('/')
+    .slice(0, -1)
+    .some((segment) => PACKAGE_TEST_DATA_FOLDERS.has(segment))
+}
+
 /** The change facts one graph walks against: `changed` absolute paths in the graph's tree, names keyed absolute or root-relative. */
 function changeFactsFor(
   graph: SelectionGraph,
@@ -1577,13 +1588,18 @@ function changeFactsFor(
   // `external:<pkg>` edge matches), and which of those changed a NON-source file
   // — a `package.json`/`tsconfig.json`/asset that is not a graph node and so is
   // invisible to a precisely-resolved importer's file edges (`pkgmeta:` covers it).
+  // A non-source file under the package's own test, spec or fixture folders is
+  // data its tests read, never something an importer resolves through, so it
+  // leaves the package unmarked: its readers are found by their own import or
+  // declared-input edges.
   const changedPackageNames = new Set<string>()
   const nonSourceChangedPackages = new Set<string>()
   for (const pkg of graph.packages) {
     for (const f of changed) {
       if (!f.startsWith(`${pkg.dir}/`)) continue
       changedPackageNames.add(pkg.name)
-      if (!graph.allSourceFiles.has(f)) nonSourceChangedPackages.add(pkg.name)
+      if (!graph.allSourceFiles.has(f) && !isPackageTestData(f.slice(pkg.dir.length + 1)))
+        nonSourceChangedPackages.add(pkg.name)
     }
   }
   // A changed file with no name-level information is WHOLLY changed: every one
