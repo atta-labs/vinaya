@@ -73,6 +73,7 @@ import {
   EXIT_OPEN_PR,
   FORWARD,
   gatePollOf,
+  heldVerdictBodies,
   isApprovalCarried,
   isSentBack,
   latestRecord,
@@ -1036,7 +1037,9 @@ const describeFailure = (failure: ClassifiedFailure): string =>
  * is reacted to at once. Code failures (assertion, lint, typecheck, policy, security) go back to the Developer;
  * recognized setup or provider failures, unclassified failures and a stalled queue or run pause for the Operator with
  * the head, job, URL and diagnostic — nothing is rerun and no Developer turn is spent. Green only on both; pending
- * past the budget pauses, and never reads green. The time bounds read the provider's own timestamps, and the
+ * past the budget pauses, and never reads green. A pull request whose mergeability reads CONFLICTING — read once
+ * before the wait and once on each pending poll — goes back to the Developer as a conflict, since no CI ever starts
+ * on it. The time bounds read the provider's own timestamps, and the
  * obligation itself sits in the ready push's checkpointed record, so a restarted run resumes the same read.
  */
 async function readRequiredCiStep(
@@ -1091,6 +1094,35 @@ async function readRequiredCiStep(
       })
     }
   }
+  // The forge starts no pull-request workflow on a head that conflicts with its base, so a conflict is read on its
+  // own — one read, never a poll — and sent back as the publication step's mergeability check sends it: the
+  // conflicting files, the default branch's tip for the repair, and the reviewed baseline read before the held
+  // verdicts go. Only CONFLICTING sends back; UNKNOWN and MERGEABLE leave the wait as it was.
+  const readMergeable = task.bound?.fetchMergeableState ?? fetchMergeableState
+  const conflictSendBack = (): { exitCode: number; stdout: string } | null => {
+    const mergeable = safeRead(() => readMergeable(pr))
+    if (mergeable !== 'CONFLICTING') return null
+    const files = (task.bound?.fetchConflictingFiles ?? fetchConflictingFiles)('main', task.branch)
+    const baseline = heldVerdictBodies(results) ?? safeRead(() => fns.readPostedVerdicts?.(pr) ?? null)
+    ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, task.reviewRound())
+    const previous = latestRecord(results)
+    const mainTip = safeRead(fns.readMainTip)
+    return {
+      exitCode: BACK,
+      stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+        counters: { ...(previous?.counters ?? NO_COUNTERS), stallCheck: null },
+        sendBack: { kind: 'conflict', headBefore: owed.head, files, mainTip, baseline },
+        decision: { type: 'dispatch_developer' },
+        ...base,
+        conclusion: 'pending',
+        failingChecks: [],
+        mergeable,
+        files
+      })
+    }
+  }
+  const conflictBefore = conflictSendBack()
+  if (conflictBefore !== null) return conflictBefore
   const readGeneric = task.bound?.fetchCiConclusion ?? fetchCiConclusion
   const poll = gatePollOf(task)
   const wallNow = fns.wallNow ?? (() => Date.now())
@@ -1199,6 +1231,10 @@ async function readRequiredCiStep(
         : matches
           ? `${owed.check} passed; other checks are ${generic}`
           : `a green read names ${strict.identity.check} (${strict.identity.workflow}) on ${strict.identity.head}, not the owed check on this head`
+    if (strict.state === 'pending') {
+      const conflict = conflictSendBack()
+      if (conflict !== null) return conflict
+    }
     if (attempt < poll.gatePollMaxAttempts) await poll.sleep(poll.gatePollIntervalMs)
   }
   return pause(
