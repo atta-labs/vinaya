@@ -14,8 +14,12 @@ import {
   type LoopInput,
   type LoopResult,
   taskFromPrBody
-} from '../../src/lib/dev-review-loop.js'
-import { readDriverLock, readPauseState, writeDriverLock } from '../../src/lib/dev-review-loop/pause-resume.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
+import {
+  readDriverLock,
+  readPauseState,
+  writeDriverLock
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import type { LogSinkDeps } from '../../src/lib/log-sink.js'
 import {
   CLEAN_REVIEWER,
@@ -30,7 +34,7 @@ import {
   type RoleOutcome,
   runLoopInProcess,
   withWorldEnv
-} from '../lib/dev-review-loop-harness.js'
+} from '../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 
 /**
  * The thin adapter between the normalized behavioral corpus

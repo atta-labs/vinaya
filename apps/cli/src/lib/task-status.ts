@@ -43,11 +43,17 @@ import {
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { resolveTrustedPrincipals, type TaskRunner } from './config.js'
 import { readEngineRun, readTaskRunner, type EngineRunReading } from './task-run-engine.js'
-import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
+import {
+  findOpenPrForBranch,
+  runtimeDir
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
 import { newestStage, OVER_TYPICAL_MARK, PAUSED_STAGE_ACTOR, STAGES } from './follow-view.js'
-import { confidenceFromRecords, readTurnResultRecords } from './dev-review-loop/turn-result.js'
+import {
+  confidenceFromRecords,
+  readTurnResultRecords
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import {
   phaseHistoryLookup,
   prCommentReaderForOneStatusRead,
@@ -73,7 +79,7 @@ import {
   type TaskPrRead
 } from './task-tools/pr-facts.js'
 import { getProcessSnapshot, type ProcessSnapshot } from './dispatch.js'
-import { describeUsageLimitPause } from './dev-review-loop/round-assess.js'
+import { describeUsageLimitPause } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 
 /**
  * The ceiling on one `gh` read this file makes — the SAME bounds

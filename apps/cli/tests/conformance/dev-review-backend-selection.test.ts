@@ -19,8 +19,12 @@ import {
 } from '../../src/lib/backend-rollback.js'
 /** The configuration a run reads its runner from. */
 type VinayaConfig = NonNullable<ReturnType<NonNullable<RunTaskDeps['runnerConfig']>>>
-import { isDriverPidAlive, readDriverLock, readPauseState } from '../../src/lib/dev-review-loop/pause-resume.js'
-import { runtimeDir as runtimeDirForThisRepo } from '../../src/lib/dev-review-loop.js'
+import {
+  isDriverPidAlive,
+  readDriverLock,
+  readPauseState
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { runtimeDir as runtimeDirForThisRepo } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import { CrossRunnerRefusedError, runTask, type RunTaskDeps } from '../../src/lib/task-run.js'
 import {
   crossRunnerInFlightText,
@@ -32,7 +36,11 @@ import {
 } from '../../src/lib/task-run-engine.js'
 import { runnerReadingFor } from '../../src/lib/task-status.js'
 import { resumeContinuation } from '../../src/lib/task-tools/resume.js'
-import { cleanupWorlds, makeWorld, runLoopInProcess } from '../lib/dev-review-loop-harness.js'
+import {
+  cleanupWorlds,
+  makeWorld,
+  runLoopInProcess
+} from '../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 import {
   IN_FLIGHT_KINDS,
   type InFlightEngineRun,

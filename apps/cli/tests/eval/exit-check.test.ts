@@ -22,7 +22,7 @@ import {
   ENGINE_STATES,
   ENGINE_TRANSITIONS,
   NODE_CONTRACTS
-} from '../lib/dev-review-loop/dev-review-engine-state-contract.fixture'
+} from '../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture'
 import { deriveContractUniverses, readContractSources, universeNames } from './registry/contract-kinds-universe'
 import { readCutoverGateUniverse } from './registry/cutover-gates-universe'
 import { readFaultAttackUniverse } from './registry/fault-attack-universe'

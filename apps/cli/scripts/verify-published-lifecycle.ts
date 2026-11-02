@@ -662,7 +662,8 @@ export const EXEMPTIONS: Record<string, string> = {
     'tests/commands/dispatch.test.ts and tests/lib/dispatch.test.ts.',
   'dev-review-loop':
     '`dev-review-loop` makes FORGE WRITES and runs LIVE Developer and reviewer sessions on a SUBSCRIPTION LOGIN. ' +
-    'Its logic is proven in tests/commands/dev-review-loop.test.ts and tests/lib/dev-review-loop.test.ts.',
+    'Its logic is proven in tests/commands/dev-review-loop.test.ts and ' +
+    'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts.',
   'log selftest':
     '`log selftest` passes only against a LOG SERVER (network destination: the configured `logs.url`) with an ' +
     'INGEST credential and a READ credential; a folder destination ends in a named failure by design, so a ' +

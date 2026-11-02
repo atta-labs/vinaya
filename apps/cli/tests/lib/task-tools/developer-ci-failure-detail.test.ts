@@ -15,7 +15,7 @@ import {
   failureSignaturePart,
   type LoopDeps,
   renderFailedCheckLog
-} from '../../../src/lib/dev-review-loop.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import { readFailedCheckLogs, readJobLogTail } from '../../../src/lib/task-tools/pr-facts.js'
 import {
   cleanupWorlds,
@@ -23,7 +23,7 @@ import {
   makeInProcessDeps,
   makeWorld,
   runLoopInProcess
-} from '../dev-review-loop-harness.js'
+} from '../../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
 

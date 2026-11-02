@@ -142,13 +142,13 @@ import {
   readEscalationRecord,
   readPauseState,
   rulingAuthenticatesResume
-} from '../dev-review-loop/pause-resume.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import {
   fetchIssueRulings,
   fetchNewestIssueRulingOrdinal,
   fetchNewestRulingOrdinal,
   fetchRulings
-} from '../dev-review-loop/developer-dispatch.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
 import {

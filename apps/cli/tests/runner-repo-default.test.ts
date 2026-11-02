@@ -4,8 +4,15 @@ import { hostname, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
 import { loadConfigChecked, resolveTaskRunner, type VinayaConfig } from '../src/lib/config.js'
-import { cancelDevReviewLoop, taskFromPrBody } from '../src/lib/dev-review-loop.js'
-import { readDriverLock, readPauseState, writeDriverLock } from '../src/lib/dev-review-loop/pause-resume.js'
+import {
+  cancelDevReviewLoop,
+  taskFromPrBody
+} from '../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
+import {
+  readDriverLock,
+  readPauseState,
+  writeDriverLock
+} from '../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { runnerReadingFor } from '../src/lib/task-status.js'
 import { runTask, type RunTaskDeps } from '../src/lib/task-run.js'
 import {
@@ -16,7 +23,12 @@ import {
 } from '../src/lib/task-run-engine.js'
 import { createTaskCancelHandler } from '../src/lib/task-tools/cancel.js'
 import { resumeContinuation } from '../src/lib/task-tools/resume.js'
-import { makeWorld, runLoopInProcess, withWorldEnv, type RoleOutcome } from './lib/dev-review-loop-harness.js'
+import {
+  makeWorld,
+  runLoopInProcess,
+  withWorldEnv,
+  type RoleOutcome
+} from '../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 
 const REPO_ROOT = resolve(import.meta.dir, '../../..')
 

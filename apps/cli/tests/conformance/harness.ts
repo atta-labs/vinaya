@@ -14,7 +14,7 @@ import {
   ReplayedResolutionError,
   resolveEscalation,
   writePauseState
-} from '../../src/lib/dev-review-loop/pause-resume.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { tasksExecutionRoot } from '../../src/lib/run-paths.js'
 import { createTaskCancelHandler } from '../../src/lib/task-tools/cancel.js'
 import { createTaskResumeHandler, type ResumeClaimStore, type ResumeRecord } from '../../src/lib/task-tools/resume.js'

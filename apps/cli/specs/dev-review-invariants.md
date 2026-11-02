@@ -15,18 +15,18 @@ designs no Engine state machine.
 The data lives in
 `apps/cli/tests/fixtures/dev-review-architecture-invariants.json`. Its
 architecture test,
-`apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts`,
+`harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts`,
 keeps the data honest against the checkout.
 
 ## The surface
 
-<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:return readdirSync(abs, { withFileTypes: true }) -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts contains:return readdirSync(abs, { withFileTypes: true }) -->
 The surface is found by listing directories, never by scanning source
 text:
 
 - implementation: `apps/cli/src/commands/dev-review-loop.ts`,
-  `apps/cli/src/lib/dev-review-loop.ts`, every `.ts` file in
-  `apps/cli/src/lib/dev-review-loop/`, and every non-test `.ts` file in
+  `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts`, every `.ts` file in
+  `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/`, and every non-test `.ts` file in
   `packages/aeg-core/src/dev-review-loop/`;
 - tests: `apps/cli/tests/commands/dev-review-loop.test.ts`, every
   `apps/cli/tests/lib/dev-review-loop*` test file, every test file in
@@ -39,7 +39,7 @@ block. Two files on the surface are neither: `fakes.ts`, the policy
 layer's test fakes, and `dev-review-loop-harness.ts`, the in-process
 harness. They are declared as support files, each with a reason.
 
-<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:expect(implementation).toEqual(expectedImpl) -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts contains:expect(implementation).toEqual(expectedImpl) -->
 One module and its test landed after the baseline: the driver-side
 publication of each Developer turn (`developer-publication.ts`). They are
 recorded under `addedSinceBaseline` and classified from loop.md's
@@ -48,8 +48,8 @@ holds 16 modules and 27 test files. The test fails when a file appears or
 disappears without a matching entry, so the baseline can never drift
 silently.
 
-<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"path": "apps/cli/src/lib/dev-review-loop/turn-result.ts", -->
-<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/turn-result.ts contains:export function confidenceFromRecords( -->
+<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.ts", -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.ts contains:export function confidenceFromRecords( -->
 The Developer's turn result moved onto each CLI's native structured
 output (`turn-result.ts`, with its test), also recorded under
 `addedSinceBaseline`. The confidence entry, `INV-013`, now names that
@@ -60,7 +60,7 @@ absent, never a made-up number. The guarantee is unchanged; only its
 source moved from the file the Developer wrote to the structured output
 the CLI returns.
 
-<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:const excluded = new Set(inv.exclusions.filter((e) => e.reason.trim().length > 0).map((e) => e.path)) -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts contains:const excluded = new Set(inv.exclusions.filter((e) => e.reason.trim().length > 0).map((e) => e.path)) -->
 <!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"path": "packages/aeg-core/src/dev-review-loop/index.ts", -->
 Every surface file is either cited by at least one invariant (as a
 source or as a test) or listed under `exclusions` with a concrete reason
@@ -106,7 +106,7 @@ Each invariant records:
 
 ### The five classifications
 
-<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:function unknownClassifications(inv: Inventory): string[] { -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts contains:function unknownClassifications(inv: Inventory): string[] { -->
 The register uses one classification vocabulary: the five values below, the
 four kinds section 16.17's Outcome A asks the oracle to decide between
 (guarantees, implementation accidents, known defects, advisory mechanisms)
@@ -124,8 +124,8 @@ register alike.
 
 ### The classification and scope fields
 
-<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:if (!e.summary?.trim()) out.push(`${e.id}: summary`) -->
-<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:`defects by scope: ${SCOPES.map((s) => `${s} ${defectsByScope[s]}`).join(', ')}` -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts contains:if (!e.summary?.trim()) out.push(`${e.id}: summary`) -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts contains:`defects by scope: ${SCOPES.map((s) => `${s} ${defectsByScope[s]}`).join(', ')}` -->
 Every entry of the invariant register and of the defect register carries two
 separate fields and a summary, and the architecture test fails on an entry
 missing any of the three. An invariant's summary is its `behavior`; a defect's
@@ -160,9 +160,9 @@ doctrine that contradicts the controller, the policy or another rule is
 
 ## Control state versus telemetry
 
-<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/pause-resume.ts contains:export function recoverLoopState( -->
-<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/pause-resume.ts contains:export function readPauseState(root: string, task: number): PauseState | null { -->
-<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/journal-history.ts contains:export function fetchLoopHistory(prNumber: number | null): ReconstructedJournal { -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts contains:export function recoverLoopState( -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts contains:export function readPauseState(root: string, task: number): PauseState | null { -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/journal-history.ts contains:export function fetchLoopHistory(prNumber: number | null): ReconstructedJournal { -->
 <!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"id": "INV-096", -->
 The map treats the Vinaya Log as telemetry, never as control truth. The
 recovery reads the audit traced are the control store's loop state
@@ -185,7 +185,7 @@ every other leg `stopped` (`INV-021`, `INV-041`), and opens the deferred-finding
 Issue from the publish step. The scan's command resolver is
 `dev-review-loop/security-scan-command.ts`, shared by both runners.
 
-<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"path": "apps/cli/src/lib/dev-review-loop/unpushed-work.ts", -->
+<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/unpushed-work.ts", -->
 The Engine runner decides every round through the shared assessment as well:
 a red gate is a gate observation (`INV-010`, `INV-016`), the time budget is
 checked on gate and mechanical-failure observations (`INV-020`), a confidence
@@ -199,7 +199,7 @@ the Flow's ceilings come from the review policy's round cap (`INV-005`). The
 reader of a Developer's unpushed work is `dev-review-loop/unpushed-work.ts`,
 shared by both runners, where `INV-042`'s source now points.
 
-<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/round-assess.ts contains:export async function waitForOwnLoopLine( -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.ts contains:export async function waitForOwnLoopLine( -->
 <!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"id": "INV-111", -->
 Telemetry entries are therefore classified on their own terms (`INV-111`
 and its neighbours). A telemetry defect, such as the per-event wait in
@@ -275,7 +275,7 @@ ruling can, and that ruling's status is then recorded on the entry.
 ## Re-checked against revision 17
 
 <!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"revision": 17, -->
-<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:function staleReasonCitations(inv: Inventory): string[] { -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts contains:function staleReasonCitations(inv: Inventory): string[] { -->
 The register's normative design is revision 17 of the Engine specification,
 and the fixture's `normativeDesign` names it with the sections the register
 rests on. This file, `apps/cli/specs/dev-review-engine-state-machine.md` and
@@ -326,7 +326,7 @@ pinned, and the entries they touched:
 
 ## Register counts
 
-<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:function computedCounts(inv: Inventory): Map<string, number> { -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts contains:function computedCounts(inv: Inventory): Map<string, number> { -->
 The architecture test computes every count below from the fixture and fails
 when a row here differs, is missing, or names a count it does not compute.
 
@@ -351,7 +351,7 @@ when a row here differs, is missing, or names a count it does not compute.
 
 ## Changing the map
 
-<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:`unmapped paths: ${unmapped.length}`, -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts contains:`unmapped paths: ${unmapped.length}`, -->
 When a loop module or test file is added, removed or renamed, update the
 fixture in the same change: map the file to an invariant or exclude it
 with a reason. When a defect is fixed, keep its entry and set its status

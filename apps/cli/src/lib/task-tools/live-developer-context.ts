@@ -19,10 +19,10 @@ import {
   type DeveloperModelRun,
   readDeveloperModelRuns,
   withDeveloperModelsLine
-} from '../dev-review-loop/developer-dispatch.js'
-import { fastForwardedOntoDefaultTip } from '../dev-review-loop/developer-publication.js'
-import { resolveHead } from '../dev-review-loop/gate-reading.js'
-import type { LoopDeps } from '../dev-review-loop.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
+import { fastForwardedOntoDefaultTip } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-publication.js'
+import { resolveHead } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/gate-reading.js'
+import type { LoopDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import { sourceReceiptsPath, sourceStoreDir, readRequiredSourceManifest } from '../source-manifest.js'
 import { devToolError, type DevToolContext } from './dev-tools-server.js'
 import { createDeveloperDevToolContext, type DeveloperDevToolDeps } from './developer-dev-tools-context.js'

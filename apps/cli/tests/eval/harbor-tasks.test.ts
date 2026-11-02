@@ -65,8 +65,11 @@ import {
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import type { SpawnFn } from '@atta/executor-agent-spawn'
-import { renderDeveloperDoctrineBlock } from '../../src/lib/dev-review-loop/developer-dispatch'
-import { joinReviewerPromptPieces, roleDoctrinePieces } from '../../src/lib/dev-review-loop/reviewer-dispatch'
+import { renderDeveloperDoctrineBlock } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import {
+  joinReviewerPromptPieces,
+  roleDoctrinePieces
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { ENGINE_DEV_TOOLS_SERVER } from '../../src/lib/dev-review-eval/engine-role-step'
 import {
   HARBOR_TRIAL_BACKENDS,

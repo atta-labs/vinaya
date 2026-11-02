@@ -11,8 +11,11 @@ import { fixtureDir } from '../lib/test-temp-fixture'
 import {
   renderDeveloperDoctrineBlock,
   resolveDeveloperDoctrineText
-} from '../../src/lib/dev-review-loop/developer-dispatch'
-import { joinReviewerPromptPieces, roleDoctrinePieces } from '../../src/lib/dev-review-loop/reviewer-dispatch'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import {
+  joinReviewerPromptPieces,
+  roleDoctrinePieces
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { resolveRoleDoctrineText } from '../../src/roles/plan'
 import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import {

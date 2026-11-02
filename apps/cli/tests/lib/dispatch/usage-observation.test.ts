@@ -2,7 +2,7 @@
  * O2 — the vendor-level `usage` observation (input/output/cache, honest
  * `unknownReason`) `dispatchRole` now logs alongside its pre-existing
  * `usage` field. Pure unit tests, no spawn: `apps/cli/tests/lib/dispatch.test.ts`
- * and `apps/cli/tests/lib/dev-review-loop.test.ts` already exercise these
+ * and `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts` already exercise these
  * through a real dispatched attempt end to end.
  */
 import { describe, expect, it } from 'vitest'

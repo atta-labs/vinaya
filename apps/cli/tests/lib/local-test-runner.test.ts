@@ -578,7 +578,7 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     git('update-ref', 'refs/remotes/origin/main', 'HEAD')
     git('checkout', '-q', '-b', 'task/x/1')
     // The clone shares this checkout's installed dependencies.
-    for (const pkg of ['.', 'apps/cli', 'packages/sources', 'packages/aeg-core', 'processes/vinaya']) {
+    for (const pkg of ['.', 'apps/cli', 'packages/sources', 'packages/aeg-core', 'harness/processes/vinaya-strict']) {
       const from = join(REPO_ROOT, pkg, 'node_modules')
       if (existsSync(from) && !existsSync(join(dir, pkg, 'node_modules')))
         symlinkSync(from, join(dir, pkg, 'node_modules'))

@@ -7,7 +7,7 @@ import { loadRoleGrants } from '../adapters/agents/manifest'
 import type { GeneratedAgentConfig } from './policy'
 import { ORDINARY_COMMANDS, SHELL_ATTACKS, type ShellGuard } from './shell-attacks'
 
-const processRoot = join(import.meta.dir, '../../../processes/vinaya/executing')
+const processRoot = join(import.meta.dir, '../../../harness/processes/vinaya-strict/executing')
 
 export interface ShellDecisionRow {
   guard: ShellGuard | 'ordinary'

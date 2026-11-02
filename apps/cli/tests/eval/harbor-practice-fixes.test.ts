@@ -21,8 +21,8 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { publishingInstructionLine } from '../../src/lib/dev-review-loop'
-import { renderDeveloperDoctrineBlock } from '../../src/lib/dev-review-loop/developer-dispatch'
+import { publishingInstructionLine } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop'
+import { renderDeveloperDoctrineBlock } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import {
   type GradingSpec,
   gradeTrial,
@@ -685,12 +685,17 @@ describe("the verifier's hidden-test runs", () => {
 
 describe("a change trial's publishing instruction and its pull request", () => {
   it('imports the review loop’s one publishing instruction, defined once at module level', () => {
-    const loop = readFileSync(join(REPOSITORY_ROOT, 'apps/cli/src/lib/dev-review-loop.ts'), 'utf8')
+    const loop = readFileSync(
+      join(REPOSITORY_ROOT, 'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts'),
+      'utf8'
+    )
     expect(loop.match(/function publishingInstructionLine\(/g)?.length).toBe(1)
     expect(loop).toContain('\nexport function publishingInstructionLine(): string {\n')
     expect(loop.match(/publishingInstructionLine\(\)/g)?.length).toBeGreaterThan(1)
     const stepOne = readFileSync(join(REPOSITORY_ROOT, 'apps/cli/src/lib/dev-review-eval/step-one.ts'), 'utf8')
-    expect(stepOne).toContain("import { publishingInstructionLine } from '../dev-review-loop'")
+    expect(stepOne).toContain(
+      "import { publishingInstructionLine } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop'"
+    )
     expect(stepOne).not.toContain(publishingInstructionLine())
   })
 

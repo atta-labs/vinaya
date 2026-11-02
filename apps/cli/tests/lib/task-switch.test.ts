@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { parseSwitchFlags } from '../../src/commands/task-switch'
-import { readPauseState, writePauseState } from '../../src/lib/dev-review-loop/pause-resume'
+import {
+  readPauseState,
+  writePauseState
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 import {
   CHECKPOINT_FILES,

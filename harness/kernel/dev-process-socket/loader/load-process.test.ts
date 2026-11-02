@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadProcess, ProcessLoadError, type ProcessLoadReason, processFields } from './load-process'
 
-const processesRoot = join(import.meta.dir, '..', '..', '..', '..', 'processes')
+const processesRoot = join(import.meta.dir, '..', '..', '..', 'processes')
 const schemaPath = join(import.meta.dir, '..', 'contract', 'process.schema.json')
 
 const made: string[] = []
@@ -42,9 +42,12 @@ describe('loadProcess', () => {
       (entry) => entry.isDirectory() && readdirSync(join(processesRoot, entry.name)).includes('process.yaml')
     )
     expect(folders.length).toBeGreaterThan(0)
+    // A process keeps its id when its folder is renamed: a renamed folder names the id it kept; any other folder's id
+    // is its folder name.
+    const keptIds: Record<string, string> = { 'vinaya-strict': 'vinaya' }
     for (const entry of folders) {
       const loaded = loadProcess(join(processesRoot, entry.name))
-      expect(loaded.identity.id).toBe(entry.name)
+      expect(loaded.identity.id).toBe(keptIds[entry.name] ?? entry.name)
       expect(loaded.rolePaths).toHaveLength(loaded.identity.roles.length)
       expect(loaded.digest).toMatch(/^[0-9a-f]{64}$/)
     }

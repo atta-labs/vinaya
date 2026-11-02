@@ -119,7 +119,7 @@ describe('task runner selection', () => {
           return 'task/sample/2'
         },
         engine: {
-          scriptPath: () => '/workspace/processes/vinaya/bin/run-engine.ts',
+          scriptPath: () => '/workspace/harness/processes/vinaya-strict/bin/run-engine.ts',
           exists: () => true,
           spawn: async (argv, options) => {
             calls.push({ argv, options })
@@ -138,7 +138,7 @@ describe('task runner selection', () => {
       {
         argv: [
           'bun',
-          '/workspace/processes/vinaya/bin/run-engine.ts',
+          '/workspace/harness/processes/vinaya-strict/bin/run-engine.ts',
           '--task',
           '42',
           '--agent',

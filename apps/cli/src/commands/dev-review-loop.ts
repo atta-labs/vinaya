@@ -3,7 +3,7 @@
  * `vinaya dev-review-loop --resume <pr> --agent …`, or `vinaya
  * dev-review-loop --cancel <pr> --agent …`. A thin
  * argv-parsing shim over `devReviewLoop`/`cancelDevReviewLoop`
- * (`../lib/dev-review-loop.js`) — the real logic, including `--resume`'s and
+ * (`../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js`) — the real logic, including `--resume`'s and
  * `--cancel`'s held-state/ruling/escalation checks, lives there; `--task`
  * and `--resume` build the SAME `LoopInput` union into the SAME one
  * `devReviewLoop` call, and `--cancel` makes the SAME one
@@ -30,7 +30,12 @@
 import { colourLoopLine, isAgentVendor, type AgentVendor } from '../lib/dispatch.js'
 import { loadConfig } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
-import { cancelDevReviewLoop, devReviewLoop, type LoopInput, runDriverLoop } from '../lib/dev-review-loop.js'
+import {
+  cancelDevReviewLoop,
+  devReviewLoop,
+  type LoopInput,
+  runDriverLoop
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 
 type ParsedArgs = {
   task: number | undefined

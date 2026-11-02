@@ -56,7 +56,7 @@ import {
   type ProcessSnapshot,
   terminateChildWithGrace
 } from './dispatch.js'
-import { fenceStartedEffectsAsUncertain } from './dev-review-loop/pause-resume.js'
+import { fenceStartedEffectsAsUncertain } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { loopLogPathFor } from './loop-log.js'
 import { defaultRunTaskDeps, resolveIssueForRunTask, type RunTaskInput } from './task-run.js'
 

@@ -11,8 +11,11 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CONFIDENCE_REASON_MAX_LENGTH } from '@attalabs/aeg-core'
-import { handoffFindings } from '../../../src/lib/dev-review-loop.js'
-import { defangReportedCommand, renderDeveloperRoundComment } from '../../../src/lib/dev-review-loop/round-assess.js'
+import { handoffFindings } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
+import {
+  defangReportedCommand,
+  renderDeveloperRoundComment
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 import {
   addressedFindingIdsFromRecords,
   confidenceFromRecords,
@@ -29,7 +32,7 @@ import {
   turnResultCorrectionPrompt,
   writeTurnResultRecord,
   REPORTED_CHECK_COMMAND_MAX_LENGTH
-} from '../../../src/lib/dev-review-loop/turn-result.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import {
   BLOCKER_KINDS,
   type DeveloperTurnResult,
@@ -49,7 +52,7 @@ import {
   type LoopWorld,
   handoffIdsInPrompt,
   sha
-} from '../dev-review-loop-harness.js'
+} from '../../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
 

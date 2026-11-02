@@ -36,7 +36,7 @@ import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path'
 import type { Role } from '@attalabs/aeg-core'
 import { devToolsSocketRoot } from './task-tools/dev-tools-registration.js'
 import { sourceReceiptsPath, sourceStoreDir } from './source-manifest.js'
-import { isReviewerScratchName } from './dev-review-loop/reviewer-isolation.js'
+import { isReviewerScratchName } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.js'
 
 /** The same allowlist discipline `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `apps/cli/specs/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
 export const WORKER_ENV_ALLOWLIST_KEYS = [

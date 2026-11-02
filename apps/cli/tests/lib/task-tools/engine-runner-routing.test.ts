@@ -4,13 +4,16 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { acquireOwnership, defaultControlStoreDeps, readEffect, readResolution, writeEffect } from '@attalabs/aeg-core'
-import { cancelDevReviewLoop, taskFromPrBody } from '../../../src/lib/dev-review-loop.js'
+import {
+  cancelDevReviewLoop,
+  taskFromPrBody
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import {
   escalationIdFor,
   readDriverLock,
   readPauseState,
   writeDriverLock
-} from '../../../src/lib/dev-review-loop/pause-resume.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { engineRunNote, runnerReadingFor } from '../../../src/lib/task-status.js'
 import { runTask, type RunTaskDeps } from '../../../src/lib/task-run.js'
 import {
@@ -24,8 +27,11 @@ import {
 import { createTaskCancelHandler } from '../../../src/lib/task-tools/cancel.js'
 import { readEscalationPacket } from '../../../src/lib/task-tools/read.js'
 import { createTaskResumeHandler, resumeContinuation } from '../../../src/lib/task-tools/resume.js'
-import { claimResume, liveResumeDeps } from '../../../../../processes/vinaya/bin/run-lifecycle.js'
-import { parseResumeArgs, refuseAnotherRunnersPause } from '../../../../../processes/vinaya/bin/run-engine.js'
+import { claimResume, liveResumeDeps } from '../../../../../harness/processes/vinaya-strict/bin/run-lifecycle.js'
+import {
+  parseResumeArgs,
+  refuseAnotherRunnersPause
+} from '../../../../../harness/processes/vinaya-strict/bin/run-engine.js'
 import { runEngineScenario, type EngineScenarioRun } from '../../conformance/dev-review-engine-loop-adapter.js'
 import {
   makeWorld,
@@ -34,7 +40,7 @@ import {
   withWorldEnv,
   type LoopWorld,
   type RoleOutcome
-} from '../dev-review-loop-harness.js'
+} from '../../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 import { stripVinayaEnv } from '../process-fixture.js'
 
 const roots: string[] = []
@@ -107,8 +113,11 @@ async function startWatchingEngine(
   runtimeDir: string,
   task: number
 ): Promise<{ engine: number; agent: number }> {
-  const lifecycle = join(import.meta.dir, '../../../../../processes/vinaya/bin/run-lifecycle.ts')
-  const pauseResume = join(import.meta.dir, '../../../src/lib/dev-review-loop/pause-resume.ts')
+  const lifecycle = join(import.meta.dir, '../../../../../harness/processes/vinaya-strict/bin/run-lifecycle.ts')
+  const pauseResume = join(
+    import.meta.dir,
+    '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts'
+  )
   const script = join(dir, 'watching-engine.ts')
   const agentFile = join(dir, 'agent.pid')
   writeFileSync(

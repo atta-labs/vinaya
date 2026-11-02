@@ -42,7 +42,7 @@ import { isNativeRunCommand, parseNativeRunCommand } from './pre-push-test-runne
  * describes. Moved out of `apps/cli/src/commands/pr-report.ts`:
  * a COMMAND (`apps/cli/src/commands/pr-report.ts`'s
  * `prReportCommand`, argv-parsing and console I/O only) and the loop's own
- * driver (`apps/cli/src/lib/dev-review-loop.ts`) both need this engine, and a
+ * driver (`harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts`) both need this engine, and a
  * command never calls a command (`apps/cli/specs/surface.md`'s "the rule") —
  * so the shared logic lives in `apps/cli/src/lib/`, imported by both, rather
  * than the loop shelling out to `vinaya pr report --push` as a subprocess.

@@ -31,14 +31,19 @@ import {
   type TaskToolRef
 } from '@attalabs/aeg-core'
 import { type AgentVendor, isAgentVendor } from '../dispatch.js'
-import { cancelDevReviewLoop, type CancelInput, type CancelResult, runtimeDir } from '../dev-review-loop.js'
+import {
+  cancelDevReviewLoop,
+  type CancelInput,
+  type CancelResult,
+  runtimeDir
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import { tasksExecutionRoot } from '../run-paths.js'
 import {
   fetchIssueRulings,
   fetchNewestIssueRulingOrdinal,
   fetchNewestRulingOrdinal,
   fetchRulings
-} from '../dev-review-loop/developer-dispatch.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 import { appendRoleLine, loopLogPathFor } from '../loop-log.js'
 import {
   escalationIdFor,
@@ -51,7 +56,7 @@ import {
   ReplayedResolutionError,
   StaleEscalationError,
   WrongTargetResolutionError
-} from '../dev-review-loop/pause-resume.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { log } from '../log-sink.js'
 import { readTaskRunner } from '../task-run-engine.js'
 import { resolveIssueForRef, type TaskToolCallResult } from './handlers.js'

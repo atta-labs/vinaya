@@ -67,10 +67,10 @@ describe('the committed inventory validates against this repository', () => {
       ['apps/cli/tests/lib/test-selector.test.ts', 'cli', 'bun', 'apps/cli', 'apps/cli/tests/lib/test-env-preload.ts'],
       ['harness/kernel/tests/architecture.test.ts', 'kernel', 'bun', 'harness/kernel', null],
       [
-        'processes/vinaya/tests/run-engine.test.ts',
+        'harness/processes/vinaya-strict/tests/run-engine.test.ts',
         'process-vinaya',
         'bun',
-        'processes/vinaya',
+        'harness/processes/vinaya-strict',
         'apps/cli/tests/lib/test-env-preload.ts'
       ],
       ['packages/aeg-core/src/no-binary-sources.test.ts', 'aeg-core', 'vitest', 'packages/aeg-core', null],
@@ -114,6 +114,7 @@ describe('the committed inventory validates against this repository', () => {
   test('governance policy is kept apart from dependency data', () => {
     expect(head.policies.map((p) => p.kind).sort()).toEqual([
       'always-run',
+      'mandatory',
       'mandatory',
       'mandatory',
       'oracle',
@@ -652,6 +653,38 @@ describe('the build job runs the inventory check and the repository suite, and e
   test('fails when the repository suite fails, the relocation proof among it', () => {
     expect(runStep('relocation-fixture.test.ts').status).not.toBe(0)
     expect(runStep('ui-rules.test.ts').status).not.toBe(0)
+  })
+})
+
+describe('the package-compatibility suite is a dedicated root suite the build job runs on every pull request', () => {
+  const inventory = readTestInventory(REPO_ROOT).head
+  const suite = inventory.suites.find((s) => s.id === 'package-compat')
+
+  test('it is the one compatibility suite, run by Bun from the root under the root preload, owning only its test', () => {
+    expect(inventory.suites.filter((s) => s.kind === 'compatibility').map((s) => s.id)).toEqual(['package-compat'])
+    expect(suite).toMatchObject({ owner: 'repository', dir: '.', cwd: '.', runner: 'bun' })
+    expect(suite?.preload).toBe('apps/cli/tests/lib/test-env-preload.ts')
+    expect(inventory.tests.filter((t) => t.suite === 'package-compat').map((t) => [t.id, t.kind])).toEqual([
+      ['scripts/package-compat/package-compat.test.ts', 'compatibility']
+    ])
+  })
+
+  test('a mandatory policy states its duty, and the package folders, programs and snapshot it reads are its inputs', () => {
+    expect(inventory.policies.find((p) => p.id === 'package-compatibility')?.kind).toBe('mandatory')
+    const inputs = inventory.edges
+      .filter((e) => e.readers.includes('scripts/package-compat/package-compat.test.ts') && e.kind !== 'import')
+      .map((e) => e.input)
+    for (const path of [
+      'packages/aeg-core/',
+      'packages/sources/',
+      'apps/cli/',
+      'apps/cli/scripts/build.ts',
+      '.changeset/config.json',
+      'scripts/package-compat/snapshot.json',
+      '.github/workflows/ci.yml',
+      'bun.lock'
+    ])
+      expect(inputs).toContain(path)
   })
 })
 

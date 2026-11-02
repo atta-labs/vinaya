@@ -1,0 +1,409 @@
+/**
+ * In-process conversions of dev-review-loop.test.ts's real-process fixtures
+ * covering lines 909-2117: the crash-mid-publish suite (a `publishRound`
+ * that throws partway through posting its verdicts) and the two SETUP-phase
+ * forge/git read failures that must become a decided pause rather than an
+ * uncaught crash. Each test drives `devReviewLoop()` directly through
+ * `runLoopInProcess`, never a spawned subprocess.
+ */
+
+import { afterEach, describe, expect, it } from 'bun:test'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import {
+  cleanupWorlds,
+  developerDir,
+  makeInProcessDeps,
+  makeWorld,
+  outboxLines as ipOutboxLines,
+  runLoopInProcess,
+  taskRunDir as ipTaskRunDir
+} from '../dev-review-loop-harness.js'
+import { readDriverLock, readPauseState } from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+
+afterEach(cleanupWorlds)
+
+/**
+ * Throws immediately — the in-process analogue of `gh pr comment` crashing
+ * on the SECOND publish post. The developer's own round-marker comment
+ * (`postDeveloperRoundComment`, posted at round-1 entry, ahead of the gate/
+ * reviewer dispatch) is the FIRST post the real `gh` fixture ever answered
+ * successfully; `publishRound`'s own first post attempt (the reviewer
+ * verdict) is the second call overall, and that is the one that crashes —
+ * so `publishRound` itself never records a successful post here.
+ */
+function publishRoundCrashesOnFirstPost(): void {
+  throw new Error('simulated crash on the second publish post')
+}
+
+/**
+ * The persistent-failure flavor: the same crashing `publishRound` above,
+ * plus a `postPauseComment` that also fails — the in-process analogue of a
+ * `gh` that never recovers, so the driver's own best-effort pause-comment
+ * post afterward fails too (`setUpCrashMidPublish`'s own fake `gh`, never
+ * the "then healthy" one O6's own test uses).
+ */
+function persistentGhFailureDeps() {
+  return {
+    publishRound: publishRoundCrashesOnFirstPost,
+    postPauseComment: (): never => {
+      throw new Error('fake gh: simulated crash on the second publish post')
+    }
+  }
+}
+
+describe('devReviewLoop — a crash mid-publish never logs merged_ready (regression, PR #459 MAJOR)', () => {
+  it('posts the reviewer verdict, crashes on the security verdict, and the outbox never claims merged_ready', async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(world, undefined, persistentGhFailureDeps())
+    expect(result.finalDecision.type).toBe('pause')
+
+    // Exactly one post landed — the crash hit the second, before the third
+    // (the summary) was ever attempted; the driver's own best-effort
+    // pause-comment post afterward fails too (persistent `gh` failure).
+    expect(world.postedComments).toHaveLength(1)
+
+    // The regression: `journal_finalized`/`merged_ready` must never be
+    // logged for a run whose `publishRound` never actually returned.
+    const journalFinalizedLines = ipOutboxLines(world).filter((l) => l.event === 'journal_finalized')
+    expect(journalFinalizedLines.some((l) => l.result === 'merged_ready')).toBe(false)
+  })
+
+  it("[task-files-v1] 5, O3: an uncaught throw mid-round never posts telemetry to the task's own Issue — there is no final flush left to do it, configured `logPublish` or not", async () => {
+    const world = makeWorld()
+    // A `logPublish` target configured here would have been exactly what
+    // the old round-end/final flush read — proving it is never even
+    // consulted any more, on the identical uncaught-throw exit path the
+    // removed crash-recovery fix used to guarantee a flush for.
+    writeFileSync(join(world.repoRoot, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: world.task + 1 } }))
+    const result = await runLoopInProcess(world, undefined, persistentGhFailureDeps())
+    expect(result.finalDecision.type).toBe('pause')
+
+    expect(world.postedComments.some((c) => c.kind === 'issue')).toBe(false)
+
+    // The events themselves still landed — live, in the local default
+    // destination — even though nothing ever shipped them anywhere else.
+    const journalFinalizedLines = ipOutboxLines(world).filter((l) => l.event === 'journal_finalized')
+    expect(journalFinalizedLines.length).toBeGreaterThan(0)
+  })
+
+  // `#548` v3, O2: this exact scenario — a genuinely uncaught throw mid-round,
+  // never a decided `pause`/`publish` from the loop's OWN logic — is the
+  // fixture the brief asks for. The role log is the one trace left inside
+  // this task's Surface (the forge journal event needs an out-of-surface
+  // `packages/aeg-core` schema change and belongs to a different task, per
+  // the Principal's ruling).
+  it('O2 (#548 v3): an uncaught error mid-loop leaves a driver_exited trace in the role log', async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(world, undefined, persistentGhFailureDeps())
+    expect(result.finalDecision.type).toBe('pause')
+
+    const roleLog = readFileSync(join(ipTaskRunDir(world), 'output', 'driver.log'), 'utf8')
+    expect(roleLog).toMatch(/^.*\bLoop\s+driver_exited: reason=error last_decision=\S+$/m)
+  })
+
+  // O6: the SAME uncaught-error scenario, now proven to be a clean, decided
+  // pause — never a raw crash the process merely survives by accident. The
+  // driver lock is deliberately left in place (never cleared) for this
+  // reason: `task status` reads a live lock as `running` before it ever
+  // consults the pause-state file, so a cleared lock here would make the
+  // process's own death indistinguishable from a genuine, settled pause.
+  it('O6: the SAME crash is a decided pause(infrastructure) — the lock stays in place, a real pause-state and PR comment exist, nothing is thrown', async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(world, undefined, { publishRound: publishRoundCrashesOnFirstPost })
+    expect(result.finalDecision.type).toBe('pause')
+    expect((result.finalDecision as { reason?: string }).reason).toBe('infrastructure')
+
+    // The lock is NEVER cleared for this reason — still on disk, still
+    // naming a real pid, proving this run's own `finally` deliberately
+    // skipped `clearDriverLock` rather than the process merely not having
+    // reached it yet.
+    const lock = readDriverLock(world.runtimeDir, world.task)
+    expect(typeof lock?.pid).toBe('number')
+
+    const pauseState = readPauseState(world.runtimeDir, world.task)
+    expect(pauseState?.reason).toBe('infrastructure')
+
+    // The driver's own best-effort pause comment, posted moments later on
+    // the world's own (always-healthy) `postPauseComment` fake, lands
+    // normally — the real marked pipeline (`pauseMarker` → `renderPauseComment`
+    // → `markedCommentBody`), asserted on its exact marker line.
+    expect(world.postedComments.some((c) => /^<!-- aeg:loop:paused:infrastructure -->$/m.test(c.body))).toBe(true)
+  })
+})
+
+describe('runLoopInProcess — the run never inherits the outer CI runner’s or dispatched session’s env', () => {
+  // A CI runner sets `GITHUB_ACTIONS`, which moves the log destination off the
+  // local file `outboxLines` reads; a dispatched session sets `VINAYA_ROLE`.
+  // Either leaking into the in-process loop made the same test pass on a
+  // laptop and time out in CI.
+  it('clears GITHUB_ACTIONS and VINAYA_ROLE for the run, restores both after, and the run still lands its log lines', async () => {
+    const saved = { GITHUB_ACTIONS: process.env.GITHUB_ACTIONS, VINAYA_ROLE: process.env.VINAYA_ROLE }
+    process.env.GITHUB_ACTIONS = 'true'
+    process.env.VINAYA_ROLE = 'developer'
+    try {
+      const world = makeWorld()
+      const seen: Array<{ ci: string | undefined; role: string | undefined }> = []
+      const worldDispatch = makeInProcessDeps(world).dispatchRole!
+      const result = await runLoopInProcess(world, undefined, {
+        dispatchRole: (...args) => {
+          seen.push({ ci: process.env.GITHUB_ACTIONS, role: process.env.VINAYA_ROLE })
+          return worldDispatch(...args)
+        }
+      })
+      expect(result.finalDecision.type).toBe('publish')
+      expect(seen.length).toBeGreaterThan(0)
+      expect(seen.every((s) => s.ci === undefined && s.role === undefined)).toBe(true)
+      expect(ipOutboxLines(world).length).toBeGreaterThan(0)
+
+      expect(process.env.GITHUB_ACTIONS).toBe('true')
+      expect(process.env.VINAYA_ROLE).toBe('developer')
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+  })
+})
+
+describe('devReviewLoop — the loop’s exit sites (O6)', () => {
+  it("a forge-read failure in round 1's own fresh-dispatch entry (fetchFrozenBrief, before runRoundLoop even starts) is a decided pause too — never an uncaught crash, and no developer is ever dispatched", async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(world, undefined, {
+      fetchFrozenBrief: () => {
+        throw new Error(
+          `fetchFrozenBrief: Issue #${world.task} carries no principal-authored, frozen \`aeg:brief:v<k>\` comment — \`vinaya task brief\` must post the brief before this loop can start.`
+        )
+      }
+    })
+    expect(result.finalDecision.type).toBe('pause')
+    expect((result.finalDecision as { reason?: string }).reason).toBe('infrastructure')
+    expect(world.dispatchCountByRole.developer ?? 0).toBe(0)
+
+    const pauseState = readPauseState(world.runtimeDir, world.task)
+    expect(pauseState?.reason).toBe('infrastructure')
+    expect(String((pauseState as { detail?: unknown })?.detail)).toMatch(/carries no principal-authored, frozen/)
+
+    // O6: the lock is deliberately left in place for this reason — the same
+    // "process stays alive" discipline every other infrastructure pause gets.
+    const lock = readDriverLock(world.runtimeDir, world.task)
+    expect(typeof lock?.pid).toBe('number')
+  })
+
+  // A `git` failure on `rev-parse origin/main` is the driver's own SETUP,
+  // run before round 1's fresh-dispatch entry even starts — it must reach
+  // the same widened `try` any other setup-phase failure does, never
+  // propagate straight out of `devReviewLoop` uncaught with no pause/lock
+  // left behind.
+  it("a git read failure in the driver's own SETUP (git rev-parse origin/main, before round 1's fresh-dispatch entry) is a decided pause — never an uncaught crash, and no developer is ever dispatched", async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(world, undefined, {
+      gitRevParseOriginMain: () => {
+        throw new Error(
+          "git rev-parse origin/main: fatal: ambiguous argument 'origin/main': unknown revision or path not in the working tree."
+        )
+      }
+    })
+    expect(result.finalDecision.type).toBe('pause')
+    expect((result.finalDecision as { reason?: string }).reason).toBe('infrastructure')
+    expect(world.dispatchCountByRole.developer ?? 0).toBe(0)
+
+    const pauseState = readPauseState(world.runtimeDir, world.task)
+    expect(pauseState?.reason).toBe('infrastructure')
+
+    // O6: the lock stays in place — the process is alive, holding it,
+    // exactly as it does for every other infrastructure pause.
+    const lock = readDriverLock(world.runtimeDir, world.task)
+    expect(typeof lock?.pid).toBe('number')
+  })
+})
+
+describe('devReviewLoop — the reviewer prompt carries its resolved role doctrine (role-reach-v1 task 1, O1/O2)', () => {
+  it('injects the code-reviewer and security doctrine the resolver returned into each dispatched prompt', async () => {
+    const world = makeWorld({
+      roleDoctrine: {
+        reviewer: 'REVIEWER SHORT VERSION.\n\n## What you check\n\n1. Does the code match the brief?',
+        security: 'SECURITY SHORT VERSION.\n\n## What you check\n\n1. Secret / credential leakage.'
+      }
+    })
+    await runLoopInProcess(world)
+    const reviewerDispatch = world.dispatches.find((d) => d.role === 'code-reviewer')
+    const securityDispatch = world.dispatches.find((d) => d.role === 'security')
+    expect(reviewerDispatch?.prompt).toContain('YOUR ROLE DOCTRINE')
+    expect(reviewerDispatch?.prompt).toContain('REVIEWER SHORT VERSION.')
+    expect(reviewerDispatch?.prompt).toContain('1. Does the code match the brief?')
+    expect(securityDispatch?.prompt).toContain('SECURITY SHORT VERSION.')
+    expect(securityDispatch?.prompt).toContain('1. Secret / credential leakage.')
+  })
+})
+
+describe('devReviewLoop — a fresh developer session is prepended its role doctrine outside the frozen brief (role-reach-v1/2, O1/O3)', () => {
+  const DEV_DOCTRINE =
+    'DEVELOPER SHORT VERSION.\n\n## Stop conditions\n\nSTOP when a pre-flight check fails.\n\n## Verification before reporting done\n\nRun typecheck, lint, tests before opening the PR.'
+
+  it('prepends the resolved doctrine to the round-1 dispatch, with the frozen brief carried verbatim after it (hash untouched)', async () => {
+    const world = makeWorld({ developerDoctrine: DEV_DOCTRINE })
+    await runLoopInProcess(world)
+    const dev = world.dispatches.find((d) => d.role === 'developer')
+    expect(dev).toBeDefined()
+    const prompt = dev?.prompt ?? ''
+    // O1: the block, its label, and both checklist sections all reach the developer.
+    expect(prompt).toContain('YOUR ROLE DOCTRINE')
+    expect(prompt).toContain('DEVELOPER SHORT VERSION.')
+    expect(prompt).toContain('## Stop conditions')
+    expect(prompt).toContain('## Verification before reporting done')
+    // O2: the block names the doctrine command, never a repository path.
+    expect(prompt).toContain('bun apps/cli/src/index.ts doctrine --role developer --print')
+    // O3: the frozen brief is carried VERBATIM as a contiguous suffix — the
+    // doctrine is prepended OUTSIDE it, so the text the brief hash binds is
+    // byte-for-byte unchanged.
+    expect(prompt).toContain(world.frozenBrief)
+    expect(prompt.endsWith(world.frozenBrief)).toBe(true)
+    // The doctrine sits BEFORE the brief.
+    expect(prompt.indexOf('YOUR ROLE DOCTRINE')).toBeLessThan(prompt.indexOf(world.frozenBrief))
+  })
+
+  it('prepends no doctrine when none resolves — the frozen brief then stands alone for a self-publishing Claude Developer', async () => {
+    const world = makeWorld({ developerDoctrine: null })
+    await runLoopInProcess(world)
+    const dev = world.dispatches.find((d) => d.role === 'developer')
+    const prompt = dev?.prompt ?? ''
+    // No doctrine block is prepended when none resolves.
+    expect(prompt).not.toContain('YOUR ROLE DOCTRINE')
+    // O4: the Developer publishes only through the driver-run tools and holds
+    // no forge credential, so no bare-forge-command rule is prepended any
+    // longer — with no doctrine block the frozen brief stands alone as the
+    // whole prompt (its hash untouched).
+    expect(prompt).not.toContain('SANDBOX NOTE')
+    expect(prompt.endsWith(world.frozenBrief)).toBe(true)
+  })
+})
+
+describe('the driver-run dispatch-readiness gate', () => {
+  it('a NOT READY verdict refuses the Developer turn: no developer dispatch, a decided pause(infrastructure), the gate output staged for the Developer', async () => {
+    const world = makeWorld()
+    const gateOutput =
+      '$ bun apps/cli/src/checks/bin/check-dispatch-readiness.ts --issue 1\nNOT READY: a dependency is still open'
+    const result = await runLoopInProcess(world, undefined, {
+      checkTaskDispatchReadiness: (_branch) => ({ ready: false, output: gateOutput })
+    })
+
+    expect(world.dispatches.filter((d) => d.role === 'developer')).toHaveLength(0)
+    expect(world.dispatchCountByRole.developer ?? 0).toBe(0)
+    expect(result.finalDecision.type).toBe('pause')
+    expect((result.finalDecision as { reason?: string }).reason).toBe('infrastructure')
+    expect(readPauseState(world.runtimeDir, world.task)?.detail).toContain('dispatch-readiness gate failed')
+
+    const staged = readFileSync(join(developerDir(world, 1), 'dispatch-readiness.txt'), 'utf8')
+    expect(staged).toBe(gateOutput)
+  })
+
+  it('a READY verdict is staged where the Developer reads it, and the turn is dispatched', async () => {
+    const world = makeWorld()
+    const gateOutput = '$ bun packages/aeg-core/bin/verify-dispatch.ts --issue 1\nREADY'
+    await runLoopInProcess(world, undefined, {
+      checkTaskDispatchReadiness: (_branch) => ({ ready: true, output: gateOutput })
+    })
+
+    expect(world.dispatches.filter((d) => d.role === 'developer').length).toBeGreaterThan(0)
+    const staged = readFileSync(join(developerDir(world, 1), 'dispatch-readiness.txt'), 'utf8')
+    expect(staged).toBe(gateOutput)
+  })
+
+  it('an unreadable required source pauses the run as missing_source before any developer dispatch, naming the source and its typed reason', async () => {
+    const world = makeWorld()
+    world.frozenBrief = `${world.frozenBrief}\n## Documentation\n\n- https://example.com/spec — the mechanism it governs\n`
+    const result = await runLoopInProcess(world, undefined, {
+      checkTaskDispatchReadiness: (_branch) => ({ ready: true, output: 'READY' }),
+      fetchDocumentationDeps: {
+        resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+        request: async () => ({
+          status: 404,
+          headers: { 'content-type': 'text/plain' },
+          body: new Uint8Array(),
+          framed: true
+        }),
+        now: () => new Date()
+      }
+    })
+
+    expect(world.dispatches.filter((d) => d.role === 'developer')).toHaveLength(0)
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'missing_source' })
+    const detail = readPauseState(world.runtimeDir, world.task)?.detail ?? ''
+    expect(detail).toContain('https://example.com/spec')
+    expect(detail).toContain('not_a_document')
+    const manifest = JSON.parse(
+      readFileSync(join(ipTaskRunDir(world), 'control', 'sources', 'manifest.json'), 'utf8')
+    ) as { sources: { deliveryMode: string; unavailable?: { reason: string } }[] }
+    expect(manifest.sources[0]).toMatchObject({
+      deliveryMode: 'unavailable',
+      unavailable: { reason: 'not_a_document' }
+    })
+  })
+
+  it('a private source behind a login pauses as login_required — never read as the document', async () => {
+    const world = makeWorld()
+    world.frozenBrief = `${world.frozenBrief}\n## Documentation\n\n- https://example.com/private — the mechanism it governs\n`
+    const page = new TextEncoder().encode(`<html><body>${'Please sign in to continue. '.repeat(100)}</body></html>`)
+    const result = await runLoopInProcess(world, undefined, {
+      checkTaskDispatchReadiness: (_branch) => ({ ready: true, output: 'READY' }),
+      fetchDocumentationDeps: {
+        resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+        request: async () => ({ status: 401, headers: { 'content-type': 'text/html' }, body: page, framed: true }),
+        now: () => new Date()
+      }
+    })
+
+    expect(world.dispatches.filter((d) => d.role === 'developer')).toHaveLength(0)
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'missing_source' })
+    expect(readPauseState(world.runtimeDir, world.task)?.detail ?? '').toContain('login_required')
+  })
+})
+
+describe('the required-source manifest rides every Developer dispatch', () => {
+  it('round 1 and round 2 prompts each lead with the controller manifest; repository sources are recorded as injected', async () => {
+    const world = makeWorld({
+      roleOutcomes: {
+        1: {
+          reviewer: {
+            findings: 'BLOCKER|smoke.ts:1|deliberate round-1 blocker',
+            report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+            objectives: 'O1|MET|done.\n',
+            sessionId: 'rev-session-1'
+          }
+        }
+      }
+    })
+    world.frozenBrief = `${world.frozenBrief}\n## Documentation\n\n- apps/cli/specs/loop.md — the loop it governs\n\n## 2. Context\n\n- **Revision:** rendered at \`abcdef1\` — fixture\n`
+    const pinnedAt: string[] = []
+    const result = await runLoopInProcess(world, undefined, {
+      readSourceObject: (revision, path) => {
+        pinnedAt.push(`${revision}:${path}`)
+        return { type: 'blob', id: 'b'.repeat(40), content: new TextEncoder().encode('# Loop\n') }
+      }
+    })
+
+    expect(result.finalDecision.type).toBe('publish')
+    const prompts = world.dispatches
+      .filter((d) => d.role === 'developer')
+      .map((d) => ({ round: d.round, prompt: d.prompt ?? '' }))
+    expect(prompts.map((p) => p.round)).toEqual(expect.arrayContaining([1, 2]))
+    for (const { prompt } of prompts) {
+      expect(prompt.startsWith('Required sources (controller manifest sha256:')).toBe(true)
+      expect(prompt).toContain('`apps/cli/specs/loop.md`')
+      expect(prompt).toContain(`git:blob:${'b'.repeat(40)}`)
+    }
+    expect(pinnedAt.every((p) => p === 'abcdef1:apps/cli/specs/loop.md')).toBe(true)
+    expect(new Set(pinnedAt).size).toBe(1)
+    const receipts = readFileSync(join(ipTaskRunDir(world), 'control', 'sources', 'receipts.jsonl'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { round: number; mode: string; recordedBy: string })
+    expect(receipts.filter((r) => r.mode === 'injected' && r.recordedBy === 'controller').map((r) => r.round)).toEqual(
+      expect.arrayContaining([1, 2])
+    )
+    const manifest = JSON.parse(readFileSync(join(ipTaskRunDir(world), 'control', 'sources', 'manifest.json'), 'utf8'))
+    expect(manifest.round).toBe(2)
+  })
+})

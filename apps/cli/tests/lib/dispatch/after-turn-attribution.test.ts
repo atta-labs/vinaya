@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
+import type { LoopDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import { type ProtectedPathEntry, startTurnWriteAttribution, taskControlDir } from '../../../src/lib/worker-boundary.js'
 import {
   cleanupWorlds,
@@ -19,7 +19,7 @@ import {
   makeInProcessDeps,
   makeWorld,
   runLoopInProcess
-} from '../dev-review-loop-harness.js'
+} from '../../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 
 const tempDirs: string[] = []
 
