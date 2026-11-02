@@ -54,7 +54,7 @@ import {
   LINUX_CODEX_SANDBOX_TOOLS,
   snapshotProtectedPaths,
   changedProtectedPaths,
-  protectedPathsForTurn,
+  createWorkerBoundary,
   RECOGNIZED_CREDENTIAL_PATTERNS,
   findCredentialPatterns,
   type LinuxSandboxToolDeps,
@@ -62,6 +62,9 @@ import {
   type ProtectedPathEntry
 } from '../../../src/lib/worker-boundary'
 import { readlinkSync, lstatSync } from 'node:fs'
+import { vinayaWorkerBoundaryPolicies } from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies'
+
+const { protectedPathsForTurn } = createWorkerBoundary(vinayaWorkerBoundaryPolicies())
 
 /** O2's env allowlist, the Codex authentication staging and the vendors' own confinement settings, exercised as pure/injectable functions so they are provable on any host. */
 

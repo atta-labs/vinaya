@@ -6,11 +6,8 @@
 
 import { describe, expect, it } from 'bun:test'
 import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
-import {
-  authenticateOperatorInvocation,
-  authenticateWorkerInvocation,
-  ForgedInvocationError
-} from '../../../src/lib/broker'
+import { authenticateOperatorInvocation, ForgedInvocationError } from '../../../src/lib/broker'
+import { authenticateWorkerInvocation } from './vinaya-broker'
 import type { LogEventInput } from '../../../src/lib/log-sink'
 
 /** An in-memory `DispatchTeeRecoveryDeps` naming exactly one launch record — `records` is `[runId, role, task]` triples, mirroring what `dispatchRole` would have durably written before spawning this child. */

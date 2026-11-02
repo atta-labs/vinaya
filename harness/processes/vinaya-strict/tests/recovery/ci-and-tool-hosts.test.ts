@@ -43,6 +43,7 @@ import {
   type RoleDispatches
 } from '../../bin/run-engine'
 import { recordedHandoff } from '../handoff-fakes'
+import { vinayaToolGrantPolicy } from '../../integration/policies/vinaya-policies'
 import { ENGINE_RUNNERS } from './runners'
 
 // Owner: agent B. An unpushed head never reaches a CI read; dev-tools hosts are replaced only at a dispatch boundary;
@@ -413,7 +414,14 @@ describe('tool hosts', () => {
       const capabilities = createDispatchCapabilityTable()
       const timeline: string[] = []
       const host = await startReplaceableDevToolsHost(
-        { socketPath, serverVersion: 'test', context: okContext(), role, capabilities },
+        {
+          socketPath,
+          serverVersion: 'test',
+          context: okContext(),
+          role,
+          toolGrants: vinayaToolGrantPolicy(),
+          capabilities
+        },
         {
           start: async (options) => {
             timeline.push('start')
@@ -483,6 +491,7 @@ describe('tool hosts', () => {
     const socketPath = socketIn(dir, 'h')
     let published = 0
     const host = await startReplaceableDevToolsHost({
+      toolGrants: vinayaToolGrantPolicy(),
       socketPath,
       serverVersion: 'test',
       context: okContext(() => (published += 1)),
@@ -507,6 +516,7 @@ describe('tool hosts', () => {
     const socketPath = socketIn(dir, 'h')
     const capabilities = createDispatchCapabilityTable()
     const host = await startReplaceableDevToolsHost({
+      toolGrants: vinayaToolGrantPolicy(),
       socketPath,
       serverVersion: 'test',
       context: okContext(),
@@ -537,6 +547,7 @@ describe('tool hosts', () => {
     const capabilities = createDispatchCapabilityTable()
     let published = 0
     const host = await startReplaceableDevToolsHost({
+      toolGrants: vinayaToolGrantPolicy(),
       socketPath,
       serverVersion: 'test',
       context: okContext(() => (published += 1)),
