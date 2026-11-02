@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import {
   addedOrRenamedFilesSinceRemoteBase,
   changedFilesSinceRemoteBase,
+  cleanMergeOnto,
   resolveRemoteBase
 } from '../../src/lib/remote-base'
 
@@ -243,6 +244,85 @@ describe('resolveRemoteBase after a merge of the default branch', () => {
       delete process.env.VINAYA_PUSH_MODE
       delete process.env.VINAYA_PUSH_BASE
       cleanUp(bareDir, cloneDir)
+    }
+  })
+})
+
+describe('newest merge', () => {
+  // One repository: a base commit, the branch's recorded commit, default-branch commits and the merge of them.
+  function mergeRepo(options: { main?: Record<string, string>; inMerge?: Record<string, string> } = {}): {
+    dir: string
+    recordHead: string
+    merge: string
+  } {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-newest-merge-'))
+    initRepo(dir)
+    commit(dir, 'shared.txt', 'one\ntwo\nthree\n', 'Initial commit')
+    git(dir, ['checkout', '--quiet', '-b', 'feature'])
+    commit(dir, 'shared.txt', 'ONE\ntwo\nthree\n', 'Recorded branch commit')
+    const recordHead = git(dir, ['rev-parse', 'HEAD'])
+    git(dir, ['checkout', '--quiet', 'main'])
+    for (const [file, content] of Object.entries(options.main ?? { 'm.txt': 'default branch\n' }))
+      commit(dir, file, content, `Default-branch edit of ${file}`)
+    git(dir, ['checkout', '--quiet', 'feature'])
+    git(dir, ['merge', '--quiet', '--no-ff', '--no-commit', 'main'])
+    for (const [file, content] of Object.entries(options.inMerge ?? {})) {
+      writeFileSync(join(dir, file), content)
+      git(dir, ['add', '--', file])
+    }
+    git(dir, ['commit', '--quiet', '-m', 'Merge the default branch'])
+    return { dir, recordHead, merge: git(dir, ['rev-parse', 'HEAD']) }
+  }
+
+  it('a clean merge whose first parent is the recorded head is the base', () => {
+    const { dir, recordHead, merge } = mergeRepo()
+    try {
+      commit(dir, 'f2.txt', 'after\n', 'Branch commit after the merge')
+      expect(cleanMergeOnto(dir, recordHead)).toBe(merge)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('both sides editing one file, the merge holding both edits, is not a clean union', () => {
+    const { dir, recordHead } = mergeRepo({ main: { 'shared.txt': 'one\ntwo\nTHREE\n' } })
+    try {
+      expect(git(dir, ['show', 'HEAD:shared.txt'])).toBe('ONE\ntwo\nTHREE')
+      expect(cleanMergeOnto(dir, recordHead)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a file only the merge changed is not a clean union', () => {
+    const { dir, recordHead } = mergeRepo({ inMerge: { 'resolved.txt': 'edited in the merge\n' } })
+    try {
+      expect(cleanMergeOnto(dir, recordHead)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a second merge since the recorded head is not the merge onto it', () => {
+    const { dir, recordHead } = mergeRepo()
+    try {
+      git(dir, ['checkout', '--quiet', 'main'])
+      commit(dir, 'm2.txt', 'again\n', 'Second default-branch commit')
+      git(dir, ['checkout', '--quiet', 'feature'])
+      git(dir, ['merge', '--quiet', '--no-ff', '--no-edit', 'main'])
+      expect(cleanMergeOnto(dir, recordHead)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('no merge since the recorded head, or an unknown head, gives no merge', () => {
+    const { dir, merge } = mergeRepo()
+    try {
+      expect(cleanMergeOnto(dir, merge)).toBeNull()
+      expect(cleanMergeOnto(dir, 'f'.repeat(40))).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })
