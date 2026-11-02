@@ -402,7 +402,7 @@
       ],
       "format": "json",
       "readers": [{ "kind": "semantic", "tests": ["apps/cli/tests/config-golden.test.ts"] }],
-      "reason": "The configuration golden lists every tracked vinaya.config*.json with git ls-files and parses each from disk. These are the files that scan finds today; a new one joins the golden only when its snapshot is rewritten, a change to the snapshot edge above."
+      "reason": "The configuration golden lists every tracked vinaya.config*.json with git ls-files and parses each from disk. These are the files that scan finds today. The `git ls-files` call also makes the selector read the test as a whole-tree scanner, the conservative fallback that selects it on any change: a newly tracked configuration file anywhere fails the golden until its snapshot is rewritten."
     }
   ],
   "providers": [
