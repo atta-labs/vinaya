@@ -10,6 +10,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   completionOf,
+  LOCAL_GROUP_FILE_CAP,
+  LOCAL_RUN_EXECUTION,
   type LocalRunOutcome,
   localNativePlan,
   nativeContext,
@@ -150,6 +152,54 @@ describe('the plan a push freezes', () => {
       obligations: []
     })
     expect(local.problems).toEqual([expect.objectContaining({ code: 'missing', path: 'apps/cli/tests/gone.test.ts' })])
+  })
+})
+
+describe('a plan over the local file cap', () => {
+  const files = Array.from({ length: 300 }, (_, i) => `apps/cli/tests/t${String(i).padStart(3, '0')}.test.ts`)
+  const view = { ...VIEW, tests: files.map((f) => identity(f, 'cli')) } as unknown as InventoryView
+  const local = () =>
+    localNativePlan({ plan: plan({ required: files.map((f) => required(f)) }), view, obligations: [] })
+
+  it('holds 300 files in 8 chunks of at most the cap, every file once, under the unchanged execution version', () => {
+    const { groups, identities, problems } = local()
+    expect(problems).toEqual([])
+    expect(LOCAL_GROUP_FILE_CAP).toBe(40)
+    expect(LOCAL_RUN_EXECUTION).toBe('native-local-run@1')
+    expect(groups).toHaveLength(8)
+    expect(groups.every((g) => g.tests.length <= LOCAL_GROUP_FILE_CAP)).toBe(true)
+    expect(groups.flatMap((g) => g.tests)).toEqual(files)
+    expect(identities).toEqual(files.map((f) => `${f}@default`))
+  })
+
+  it('writes one checkpoint record per finished chunk and counts every chunk executed', () => {
+    const { groups, identities } = local()
+    const native = nativeOf(groups)
+    const written: unknown[] = []
+    const outcome = runFrozenPlan('/repo', native, {
+      run: (gs, onGroupEnd) => {
+        const executions = gs.map((g) => ({
+          group: g.id,
+          outcome: 'completed' as const,
+          files: g.tests.map((t) => t.slice('apps/cli/'.length))
+        }))
+        for (const g of gs) onGroupEnd({ ...groupOutcome(g), confirmed: [...g.tests.map((t) => `${t}@default`)] })
+        return ran({ executions })
+      },
+      state: () => 'same',
+      context: () => native.context,
+      roots: ['/repo'],
+      groupRecord: {
+        head: 'h'.repeat(40),
+        branch: 'task/x/1',
+        treeClean: true,
+        runStartedAt: new Date(0),
+        write: (r: unknown) => void written.push(r)
+      } as never
+    })
+    expect(written).toHaveLength(8)
+    expect(outcome.completion.executed).toEqual(identities)
+    expect(outcome.passed).toBe(true)
   })
 })
 

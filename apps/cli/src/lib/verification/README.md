@@ -82,7 +82,12 @@ configuration, a member whose runner facts differ from its group's, or a path
 outside the repository or its suite's working directory is a problem. The same
 file under two configurations is two groups. A whole-suite request expands to
 the identities it lists, and its group runs with no file filter. An empty set
-yields no group.
+yields no group. With the optional `maxFilesPerGroup` (a positive integer), a
+group over that many files — a whole suite included — is split, after its
+problems are decided, into ordered chunks of consecutive sorted files, each
+its own runner start with id `<suite>@<configuration>#<k>of<n>`, its own
+file arguments and exclusions, and, for a whole suite, its reason; a group at
+or under the limit is unchanged.
 
 `validateExecutedIdentities` takes, per group, the files the runner's own
 report says executed — parsed by the caller — and fails on a missing, extra or

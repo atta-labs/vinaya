@@ -35,6 +35,98 @@ const ROOT_CHECK = identity('scripts/check.test.ts', 'root')
 
 const completed = (group: string, files: string[]): ExecutionFacts => ({ group, outcome: 'completed', files })
 
+describe('groupNativeTests with maxFilesPerGroup', () => {
+  const many = (count: number, suite = 'app') =>
+    Array.from({ length: count }, (_, i) =>
+      identity(`packages/${suite}/tests/t${String(i).padStart(3, '0')}.test.ts`, suite)
+    )
+
+  test('300 files in one suite become 8 ordered chunks of at most 40, with identical runner facts', () => {
+    const tests = many(300)
+    const { groups, problems } = groupNativeTests({ tests: [...tests].reverse(), maxFilesPerGroup: 40 })
+    expect(problems).toEqual([])
+    expect(groups).toHaveLength(8)
+    expect(groups.map((g) => g.id)).toEqual(Array.from({ length: 8 }, (_, i) => `app@default#${i + 1}of8`))
+    expect(groups.every((g) => g.tests.length <= 40)).toBe(true)
+    expect(groups.flatMap((g) => g.tests)).toEqual(tests.map((t) => t.id).sort())
+    for (const g of groups) {
+      expect(g.args).toEqual(g.tests.map((t) => `./${t.slice('packages/app/'.length)}`))
+      expect([g.suite, g.owner, g.kind, g.runner, g.cwd, g.scope]).toEqual([
+        'app',
+        '@fx/app',
+        'workspace',
+        'bun',
+        'packages/app',
+        'files'
+      ])
+    }
+  })
+
+  test('a group at or under the limit keeps its id; absent limit changes nothing', () => {
+    const tests = many(40)
+    expect(groupNativeTests({ tests, maxFilesPerGroup: 40 }).groups.map((g) => g.id)).toEqual(['app@default'])
+    expect(groupNativeTests({ tests }).groups).toEqual(groupNativeTests({ tests, maxFilesPerGroup: 1000 }).groups)
+  })
+
+  test('a whole suite over the limit chunks into files-scope groups that keep the reason', () => {
+    const identities = many(130)
+    const { groups } = groupNativeTests({
+      tests: [],
+      wholeSuites: [{ suite: 'app', reason: 'runs whole', identities }],
+      maxFilesPerGroup: 40
+    })
+    expect(groups.map((g) => g.tests.length)).toEqual([40, 40, 40, 10])
+    expect(groups.every((g) => g.scope === 'files' && g.reason === 'runs whole' && g.args.length > 0)).toBe(true)
+    const small = groupNativeTests({
+      tests: [],
+      wholeSuites: [{ suite: 'app', reason: 'runs whole', identities: many(5) }],
+      maxFilesPerGroup: 40
+    }).groups
+    expect(small.map((g) => [g.id, g.scope, g.args, g.reason])).toEqual([['app@default', 'suite', [], 'runs whole']])
+  })
+
+  test('a chunk excludes siblings of its own files only, and chunks stay in order past ten', () => {
+    const core = Array.from({ length: 3 }, (_, i) => identity(`packages/core/src/f${i}.test.ts`, 'core'))
+    const nested = identity('packages/core/xsrc/f0.test.ts', 'core')
+    const { groups } = groupNativeTests({ tests: core, universe: [...core, nested], maxFilesPerGroup: 2 })
+    expect(groups.map((g) => [g.id, g.exclude])).toEqual([
+      ['core@default#1of2', ['xsrc/f0.test.ts']],
+      ['core@default#2of2', []]
+    ])
+    const twelve = groupNativeTests({ tests: many(12), maxFilesPerGroup: 1 }).groups.map((g) => g.id)
+    expect(twelve[1]).toBe('app@default#2of12')
+    expect(twelve[9]).toBe('app@default#10of12')
+  })
+
+  test('refuses a limit that is not a positive integer', () => {
+    for (const bad of [0, -1, 1.5, Number.NaN]) {
+      expect(() => groupNativeTests({ tests: many(2), maxFilesPerGroup: bad })).toThrow()
+    }
+  })
+
+  test('each chunk is validated against its own report', () => {
+    const { groups } = groupNativeTests({ tests: many(3), maxFilesPerGroup: 2 })
+    const abs = (t: string) => `${ROOT}/${t}`
+    const [a, b] = groups as [(typeof groups)[0], (typeof groups)[0]]
+    const ok = validateExecutedIdentities(
+      groups,
+      [completed(a.id, a.tests.map(abs)), completed(b.id, b.tests.map(abs))],
+      {
+        roots: [ROOT]
+      }
+    )
+    expect(ok.problems).toEqual([])
+    const wrong = validateExecutedIdentities(
+      groups,
+      [completed(a.id, [...a.tests, ...b.tests].map(abs)), completed(b.id, b.tests.map(abs))],
+      {
+        roots: [ROOT]
+      }
+    )
+    expect(wrong.problems.map((p) => p.code)).toEqual(['extra'])
+  })
+})
+
 describe('groupNativeTests', () => {
   test('groups by suite and configuration, with cwd-relative arguments, Bun ones ./-prefixed', () => {
     const { groups, problems } = groupNativeTests({ tests: [APP_B, CORE_A, APP_A] })
