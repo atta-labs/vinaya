@@ -31,7 +31,8 @@
 
 import { ownVersion } from './artifacts.js'
 import type { VendoredVinaya } from '../../../../apps/cli/src/lib/self-host.js'
-import { MCP_PROTOCOL_VERSION, TASK_TOOLS_MCP_SERVER_NAME } from './server.js'
+import { MCP_PROTOCOL_VERSION } from '../../../../apps/cli/src/lib/task-tools/mcp-protocol.js'
+import { TASK_TOOLS_MCP_SERVER_NAME } from './server.js'
 
 /** The `vinaya task-tools serve` subcommand argv — the one command both adapters register. */
 export const TASK_TOOLS_SERVE_ARGS = ['task-tools', 'serve'] as const
