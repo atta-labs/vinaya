@@ -53,6 +53,7 @@ import {
   validateExecutedIdentities,
   type WholeSuiteRequest
 } from '../../apps/cli/src/lib/verification/index.js'
+import { testGroupEndLine, testGroupStartLine } from '../../apps/cli/src/lib/push-progress.js'
 import { type InventoryView, readTestInventory, type TestIdentity } from './inventory-check.js'
 
 export type Placement = 'build' | 'shared' | `shard-${number}`
@@ -354,24 +355,79 @@ export function bunJunitFiles(xml: string): string[] | null {
  * `null` when the text is not a Bun JUnit report.
  */
 export function bunJunitFailedFiles(xml: string): string[] | null {
+  const failures = bunJunitFailures(xml)
+  return failures === null ? null : failures.files.filter((entry) => entry.count > 0).map((entry) => entry.file)
+}
+
+/** `failures` plus `errors` of a JUnit tag's attributes; an attribute the tag omits counts as zero. */
+function failureCount(attrs: string): number {
+  const count = (attr: string) => Number(new RegExp(`\\b${attr}="(\\d+)"`).exec(attrs)?.[1] ?? 0)
+  return count('failures') + count('errors')
+}
+
+/**
+ * A Bun JUnit report's failure totals: the `<testsuites>` element's own `failures` plus `errors`, and each top-level
+ * `<testsuite>`'s file, as written, with its own. `null` when the text is not a Bun JUnit report.
+ */
+export function bunJunitFailures(xml: string): { total: number; files: { file: string; count: number }[] } | null {
   if (!/<testsuites\b/.test(xml)) return null
-  const failed: string[] = []
+  const files: { file: string; count: number }[] = []
+  let total = 0
   let depth = 0
   for (const tag of xml.matchAll(/<(\/?)(testsuites|testsuite)\b([^>]*?)(\/?)>/g)) {
     const [, closing, name, attrs, selfClosing] = tag as unknown as [string, string, string, string, string]
-    if (name === 'testsuites') continue
+    if (name === 'testsuites') {
+      if (!closing) total = failureCount(attrs)
+      continue
+    }
     if (closing) {
       depth--
       continue
     }
     if (depth === 0) {
       const file = /\bfile="([^"]*)"/.exec(attrs)?.[1]
-      const count = (attr: string) => Number(new RegExp(`\\b${attr}="(\\d+)"`).exec(attrs)?.[1] ?? 0)
-      if (file !== undefined && (count('failures') > 0 || count('errors') > 0)) failed.push(xmlText(file))
+      if (file !== undefined) files.push({ file: xmlText(file), count: failureCount(attrs) })
     }
     if (!selfClosing) depth++
   }
-  return depth === 0 ? failed : null
+  return depth === 0 ? { total, files } : null
+}
+
+/**
+ * A Vitest JSON report's failure totals: its failed suite and test counts (zero when omitted), its `success`, and each
+ * failed file, as written, with its own failed test count. `null` when the text is not one.
+ */
+export function vitestJsonFailures(text: string): {
+  failedSuites: number
+  failedTests: number
+  success: unknown
+  files: { file: string; failedTests: number }[]
+} | null {
+  try {
+    const report = JSON.parse(text) as {
+      numFailedTestSuites?: unknown
+      numFailedTests?: unknown
+      success?: unknown
+      testResults?: { name?: unknown; status?: unknown; assertionResults?: { status?: unknown }[] }[]
+    }
+    if (!Array.isArray(report.testResults)) return null
+    const number = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+    return {
+      failedSuites: number(report.numFailedTestSuites),
+      failedTests: number(report.numFailedTests),
+      success: report.success,
+      files: report.testResults
+        .filter((r) => r.status === 'failed' && typeof r.name === 'string')
+        .map((r) => ({
+          file: r.name as string,
+          failedTests: Array.isArray(r.assertionResults)
+            ? r.assertionResults.filter((a) => a?.status === 'failed').length
+            : 0
+        }))
+    }
+  } catch {
+    return null
+  }
 }
 
 /** The files a Vitest JSON report says failed, as written; `null` when the text is not one. */
@@ -469,6 +525,96 @@ export type RunResult = {
    * no readable report), so a failure is never read as nothing failing.
    */
   failedTests: Record<string, string[] | 'all'>
+  /** What each group that ended proved, in run order; a group with none proved nothing. */
+  outcomes?: GroupOutcome[]
+}
+
+/**
+ * What one runner group proved. A test is confirmed only when the group's report lists it as executed once, does not
+ * name it failing, and the runner is trusted: it exited zero, or it exited non-zero, named at least one failing file,
+ * and its report's own failure totals are fully accounted for by the files it named. Every other scheduled test of
+ * the group is an obligation: all of them for an untrusted runner, a runner that left no readable report, or a report
+ * with an extra or duplicate execution; for a trusted one, its named failing tests and each scheduled file its report
+ * does not list.
+ */
+export type GroupOutcome = {
+  group: string
+  /** Repository-relative scheduled tests the report lists as executed once. */
+  executed: string[]
+  /** Repository-relative scheduled tests the report names failing. */
+  failed: string[]
+  /** Repository-relative scheduled tests a readable report does not list. */
+  unreported: string[]
+  trusted: boolean
+  confirmed: string[]
+  obligations: string[]
+}
+
+/** What one runner start left: its exit, and its report's text, when it left one. */
+export type GroupRun = { status: number | null; signal: string | null; report: string | null }
+
+/** What one group's run confirms, and what stays an obligation, under {@link GroupOutcome}'s rule. */
+export function groupOutcomeOf(
+  group: NativeGroup,
+  run: GroupRun,
+  repoRoot: string,
+  roots: readonly string[]
+): GroupOutcome {
+  const untrusted = (executed: string[] = [], failed: string[] = [], unreported: string[] = []): GroupOutcome => ({
+    group: group.id,
+    executed,
+    failed,
+    unreported,
+    trusted: false,
+    confirmed: [],
+    obligations: [...group.tests]
+  })
+  if (run.signal || run.report === null) return untrusted()
+  const text = run.report
+  const files = group.runner === 'bun' ? bunReportedFiles(group, bunJunitFiles(text), repoRoot) : vitestJsonFiles(text)
+  if (files === null) return untrusted()
+  const validation = validateExecutedIdentities([group], [{ group: group.id, outcome: 'completed', files }], { roots })
+  const suffix = `@${group.configuration}`
+  const executed = validation.executed.map((id) => (id.endsWith(suffix) ? id.slice(0, -suffix.length) : id))
+  const unreported = validation.problems.filter((p) => p.code === 'missing').map((p) => p.path)
+  const irregular = validation.problems.some((p) => p.code !== 'missing')
+
+  // Every failing entry, mapped to the group's own test; an entry that maps to none is a failure no file accounts for.
+  const failures =
+    group.runner === 'bun'
+      ? (bunJunitFailures(text)?.files ?? []).filter((e) => e.count > 0).map((e) => ({ file: e.file, count: e.count }))
+      : (vitestJsonFailures(text)?.files ?? []).map((e) => ({ file: e.file, count: e.failedTests }))
+  const mapped = failures.map((e) => ({ ...e, id: scheduledTestOf(group, e.file, repoRoot) }))
+  const failed = [...new Set(mapped.flatMap((e) => (e.id === null ? [] : [e.id])))].sort()
+  if (irregular) return untrusted(executed, failed, unreported)
+
+  let trusted = run.status === 0
+  if (!trusted && failed.length > 0 && mapped.every((e) => e.id !== null)) {
+    if (group.runner === 'bun') {
+      const totals = bunJunitFailures(text)
+      trusted = totals !== null && totals.total <= mapped.reduce((n, e) => n + e.count, 0)
+    } else {
+      const totals = vitestJsonFailures(text)
+      trusted =
+        totals !== null &&
+        totals.success !== true &&
+        totals.failedSuites <= mapped.length &&
+        totals.failedTests <= mapped.reduce((n, e) => n + e.count, 0)
+    }
+  }
+  if (!trusted) return untrusted(executed, failed, unreported)
+  const unconfirmed = new Set([...failed, ...unreported])
+  const confirmed = executed.filter((id) => !unconfirmed.has(id))
+  const kept = new Set(confirmed)
+  return {
+    group: group.id,
+    executed,
+    failed,
+    unreported,
+    trusted: true,
+    confirmed,
+    obligations: group.tests.filter((id) => !kept.has(id))
+  }
 }
 
 /** The group's own test a report entry names, repository-relative, or `null`. */
@@ -487,19 +633,39 @@ function scheduledTestOf(group: NativeGroup, written: string, repoRoot: string):
  * Runs `groups` one after another, each in its own working directory under
  * its own runner, and checks every runner executed exactly its files. The
  * environment is this process's unless `env` names one; nothing runs in
- * parallel.
+ * parallel. Each runner writes its own report (Bun's JUnit, Vitest's JSON)
+ * into a temporary folder removed when the run ends; the report names the
+ * files it executed and the ones that failed. With `announce`, each group's
+ * scheduled files are printed as it starts and its report's executed and
+ * failing files once it ends (`push-progress.ts`'s group lines), so a progress
+ * reader counts only those files. `onGroupEnd` hears what each group proved,
+ * right after its report is read.
  */
 export function runGroups(
   repoRoot: string,
   groups: readonly NativeGroup[],
-  options: { log?: (line: string) => void; spawn?: typeof spawnSync; env?: NodeJS.ProcessEnv } = {}
+  options: {
+    log?: (line: string) => void
+    spawn?: typeof spawnSync
+    env?: NodeJS.ProcessEnv
+    announce?: boolean
+    onGroupEnd?: (outcome: GroupOutcome, index: number) => void
+  } = {}
 ): RunResult {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`))
   const spawn = options.spawn ?? spawnSync
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-schedule-'))
+  const roots = [...new Set([repoRoot, realpathSync(repoRoot)])]
   const executions: ExecutionFacts[] = []
   const failedRunners: string[] = []
   const failedTests: Record<string, string[] | 'all'> = {}
+  const outcomes: GroupOutcome[] = []
+  const ended = (group: NativeGroup, index: number, run: GroupRun) => {
+    const outcome = groupOutcomeOf(group, run, repoRoot, roots)
+    outcomes.push(outcome)
+    if (options.announce) log(testGroupEndLine({ group: group.id, executed: outcome.executed, failed: outcome.failed }))
+    options.onGroupEnd?.(outcome, index)
+  }
   try {
     groups.forEach((group, index) => {
       const report = join(dir, `${index}.${group.runner === 'bun' ? 'xml' : 'json'}`)
@@ -507,6 +673,8 @@ export function runGroups(
       log(
         `vinaya schedule: ${group.id} — ${group.owner}, ${group.runner} in ${group.cwd}, ${group.tests.length} file(s)`
       )
+      if (options.announce)
+        log(testGroupStartLine({ group: group.id, runner: group.runner, cwd: group.cwd, tests: group.tests }))
       const run = spawn(command[0] as string, command.slice(1), {
         cwd: join(repoRoot, group.cwd),
         stdio: 'inherit',
@@ -516,6 +684,7 @@ export function runGroups(
         executions.push({ group: group.id, outcome: 'signaled', detail: run.signal, files: [] })
         failedRunners.push(group.id)
         failedTests[group.id] = 'all'
+        ended(group, index, { status: run.status, signal: run.signal, report: null })
         return
       }
       let text: string | null = null
@@ -524,6 +693,7 @@ export function runGroups(
       } catch {
         text = null
       }
+      ended(group, index, { status: run.status, signal: null, report: text })
       const files =
         text === null
           ? null
@@ -548,9 +718,8 @@ export function runGroups(
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
-  const roots = [...new Set([repoRoot, realpathSync(repoRoot)])]
   const { problems } = validateExecutedIdentities(groups, executions, { roots })
-  return { failedRunners, problems, executions, failedTests }
+  return { failedRunners, problems, executions, failedTests, outcomes }
 }
 
 // ── Command line ───────────────────────────────────────────────────────────

@@ -256,6 +256,38 @@ describe('runReadyGateLive', () => {
     })
   }
 
+  test('a failed ready push logs its failing files and, apart, the scheduled files no runner reported', async () => {
+    const dir = repo()
+    const head = headOf(dir)
+    mkdirSync(join(dir, '.git', 'vinaya'), { recursive: true })
+    writeFileSync(
+      gitPath(dir, LAST_PUSH_RESULT) as string,
+      JSON.stringify({
+        version: 1,
+        outcome: 'failed',
+        head,
+        failed: ['a.test.ts', 'b.test.ts'],
+        unreported: ['b.test.ts'],
+        selection: null
+      })
+    )
+    withHook(dir, 'exit 1')
+    const lines: string[] = []
+    let tick = 0
+    const result = await runReadyGateLive({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      head,
+      remoteHead: head,
+      now: () => (tick++ === 0 ? 1000 : 3500),
+      log: (line) => lines.push(line)
+    })
+    expect(result.failed).toEqual(['a.test.ts', 'b.test.ts'])
+    expect(lines.filter((line) => line.startsWith('ready push failed:'))).toEqual([
+      'ready push failed: a.test.ts; not reported by its runner: b.test.ts; wall time 2500 ms'
+    ])
+  })
+
   test('a repository with no pre-push hook is the logged no-local-tests state, not a silent pass', async () => {
     const dir = repo()
     const lines: string[] = []

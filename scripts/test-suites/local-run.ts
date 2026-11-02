@@ -29,9 +29,11 @@
  *     directory and prints one absolute test path per line (none: nothing
  *     selected). Exits 1, with the reason, when no plan can be made.
  *   bun scripts/test-suites/local-run.ts run --log <capture>
- *     runs exactly the frozen plan for the current head, records the head-bound
- *     result, the passing or failed record and, on a complete green run, the
- *     receipt of its aggregate native command; exits 0 only on that run.
+ *     runs exactly the frozen plan for the current head, leaves after each
+ *     runner group the failed record a stop there would need, then records the
+ *     head-bound result, the passing or failed record and, on a complete green
+ *     run, the receipt of its aggregate native command; exits 0 only on that
+ *     run. A failed record lists every planned test the run did not confirm.
  *   bun scripts/test-suites/local-run.ts exact --context <digest> -- <test@configuration>...
  *     the aggregate native command itself: runs exactly those identities and
  *     refuses under any other verification context. It records nothing.
@@ -85,7 +87,7 @@ import {
 } from '../../apps/cli/src/lib/verification/index.js'
 import { readTestInventory } from './inventory-check.js'
 import { repositorySelectionInput } from './repository-selection.js'
-import { type RunResult, runGroups, WHOLE_ON_CHANGE_OWNERS, WHOLE_SUITE_OWNERS } from './schedule.js'
+import { type GroupOutcome, type RunResult, runGroups, WHOLE_ON_CHANGE_OWNERS, WHOLE_SUITE_OWNERS } from './schedule.js'
 
 /** The version of how this adapter executes a plan; part of every verification context it names. */
 export const LOCAL_RUN_EXECUTION = 'native-local-run@1'
@@ -319,10 +321,87 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
 export type LocalRunOutcome = {
   passed: boolean
   completion: NativeCompletion
-  /** Repository-relative failing tests, or `'all'` when a failure named none. */
+  /**
+   * Repository-relative failing tests and scheduled files no runner reported, or `'all'` when a failure named
+   * neither.
+   */
   failed: string[] | 'all'
+  /** Repository-relative scheduled files no runner reported executed. */
+  unreported?: string[]
+  /**
+   * Repository-relative tests of the plan the run did not confirm as passed (`schedule.ts`'s `GroupOutcome` rule);
+   * absent when the runner result carried no group outcomes, so nothing beyond `failed` is known.
+   */
+  unconfirmed?: string[]
   /** Why the run proves nothing even though every runner passed, or `null`. */
   drift: string | null
+}
+
+/** Where the run writes the record each finished runner group leaves, and what binds it to this run. */
+export type GroupRecordWriter = {
+  head: string
+  branch: string
+  /** This run's start, the binding the driver checks on a deadline stop. */
+  runStartedAt: string
+  /** Whether the tracked tree held exactly the head when the run started; only then is a record written per group. */
+  treeClean: boolean | null
+  write: (record: FailedTestsRecord) => void
+}
+
+/** The plan's tests, repository-relative, each once, sorted. */
+const planTests = (native: NativeSelection): string[] =>
+  [...new Set(native.groups.flatMap((g) => g.tests))].sort(compare)
+
+/**
+ * The record of a run that confirms nothing — its head, tracked tree or verification context moved, or no runner
+ * confirmed a test: every test of its plan, the earlier record's obligations among them, as an incomplete
+ * selection, so the next push runs its full selection plus those tests.
+ */
+function unprovenRecord(input: {
+  repoRoot: string
+  native: NativeSelection
+  head: string
+  branch: string
+  now: Date
+}): FailedTestsRecord {
+  return {
+    version: 1,
+    head: input.head,
+    branch: input.branch,
+    failed: planTests(input.native).map((id) => join(input.repoRoot, id)),
+    recordedAt: input.now.toISOString(),
+    selectionCompleted: false,
+    ...(input.native.context ? { context: input.native.context } : {})
+  }
+}
+
+/**
+ * The record of a run whose confirmed tests narrow the next push: `unconfirmed` holds every test of the plan the run
+ * did not confirm, and the record says so.
+ */
+function unconfirmedRecord(input: {
+  repoRoot: string
+  native: NativeSelection
+  head: string
+  branch: string
+  unconfirmed: readonly string[]
+  unreported: readonly string[]
+  runStartedAt?: string
+  now: Date
+}): FailedTestsRecord {
+  const absolute = (ids: readonly string[]) => ids.map((id) => join(input.repoRoot, id))
+  return {
+    version: 1,
+    head: input.head,
+    branch: input.branch,
+    failed: absolute(input.unconfirmed),
+    recordedAt: input.now.toISOString(),
+    selectionCompleted: true,
+    ...(input.native.context ? { context: input.native.context } : {}),
+    failedHoldsUnconfirmed: true,
+    unreported: absolute(input.unreported),
+    ...(input.runStartedAt ? { runStartedAt: input.runStartedAt } : {})
+  }
 }
 
 /**
@@ -353,16 +432,20 @@ export function completionOf(
   }
 }
 
-/** The run's failing tests: every failed runner's named tests, or `'all'` when any failure named none. */
+/**
+ * The run's named files: every failing test the reports name (a failed runner's own list when the result carries no
+ * group outcomes) and every scheduled file no runner reported — or `'all'` when a run that did not pass named none.
+ */
 export function failedOf(result: RunResult, completion: NativeCompletion): string[] | 'all' {
-  if (result.failedRunners.length === 0) return completion.completed ? [] : 'all'
-  const named: string[] = []
+  const outcomes = new Map((result.outcomes ?? []).map((o) => [o.group, o]))
+  const named = new Set<string>()
+  for (const outcome of outcomes.values()) for (const id of [...outcome.failed, ...outcome.unreported]) named.add(id)
   for (const group of result.failedRunners) {
     const tests = result.failedTests[group]
-    if (tests === undefined || tests === 'all') return 'all'
-    named.push(...tests)
+    if (!outcomes.has(group) && Array.isArray(tests)) for (const id of tests) named.add(id)
   }
-  return completion.completed ? [...new Set(named)].sort() : 'all'
+  if (named.size > 0) return [...named].sort(compare)
+  return result.failedRunners.length === 0 && completion.completed ? [] : 'all'
 }
 
 /**
@@ -371,32 +454,87 @@ export function failedOf(result: RunResult, completion: NativeCompletion): strin
  * its tests. A green verdict needs every runner to pass and to have executed
  * its tests once, and the head, the tracked tree and the verification context
  * to be what they were when the run started.
+ *
+ * With `groupRecord`, and a tracked tree that held exactly the head when the
+ * run started, each finished group leaves the record a stop at that moment
+ * would need, through a temporary file and a rename: after re-reading the
+ * tracked state and the verification context, the plan's tests not yet
+ * confirmed — the finished groups' obligations and every test of the groups
+ * still to run — bound to this run. A moved state or context writes the
+ * record of a run that confirms nothing instead, and stops the writes; a
+ * group that leaves nothing confirmed so far writes nothing, so an earlier
+ * record stays.
  */
 export function runFrozenPlan(
   repoRoot: string,
   native: NativeSelection,
   deps: {
-    run?: (groups: readonly NativeGroup[]) => RunResult
+    run?: (groups: readonly NativeGroup[], onGroupEnd: (outcome: GroupOutcome) => void) => RunResult
     state?: () => string | null
     context?: () => string | null
     roots?: readonly string[]
+    groupRecord?: GroupRecordWriter
+    now?: () => Date
   } = {}
 ): LocalRunOutcome {
   const state = deps.state ?? (() => trackedState(repoRoot))
   const contextNow =
     deps.context ?? (() => nativeContext(computeVerificationContext(repoRoot)?.digest ?? null, native.inventory))
+  const now = deps.now ?? (() => new Date())
   const before = state()
   const contextBefore = contextNow()
   const roots = deps.roots ?? [repoRoot, ...(existsSync(repoRoot) ? [realRoot(repoRoot)] : [])]
+  const plan = planTests(native)
+  const writer = deps.groupRecord
+  let writing =
+    writer !== undefined &&
+    writer.treeClean === true &&
+    before !== null &&
+    contextBefore !== null &&
+    contextBefore === native.context
+  const finished: GroupOutcome[] = []
+  const onGroupEnd = (outcome: GroupOutcome) => {
+    finished.push(outcome)
+    if (!writing || writer === undefined) return
+    try {
+      if (state() !== before || contextNow() !== contextBefore) {
+        writing = false
+        writer.write(unprovenRecord({ repoRoot, native, head: writer.head, branch: writer.branch, now: now() }))
+        return
+      }
+      const confirmed = new Set(finished.flatMap((o) => o.confirmed))
+      if (confirmed.size === 0) return
+      writer.write(
+        unconfirmedRecord({
+          repoRoot,
+          native,
+          head: writer.head,
+          branch: writer.branch,
+          unconfirmed: plan.filter((id) => !confirmed.has(id)),
+          unreported: [...new Set(finished.flatMap((o) => o.unreported))].sort(compare),
+          runStartedAt: writer.runStartedAt,
+          now: now()
+        })
+      )
+    } catch {
+      // A record a group could not write leaves the one before it: never a narrower answer than the run proved.
+      writing = false
+    }
+  }
   const run =
     deps.run ??
-    ((groups: readonly NativeGroup[]) =>
-      runGroups(repoRoot, groups, { env: cleanGitEnv(), log: (line) => process.stderr.write(`${line}\n`) }))
+    ((groups: readonly NativeGroup[], onEnd: (outcome: GroupOutcome) => void) =>
+      runGroups(repoRoot, groups, {
+        env: cleanGitEnv(),
+        log: (line) => process.stderr.write(`${line}\n`),
+        announce: true,
+        onGroupEnd: onEnd
+      }))
   // An empty plan starts nothing.
   const result: RunResult =
     native.groups.length === 0
-      ? { failedRunners: [], problems: [], executions: [], failedTests: {} }
-      : run(native.groups)
+      ? { failedRunners: [], problems: [], executions: [], failedTests: {}, outcomes: [] }
+      : run(native.groups, onGroupEnd)
   const completion = completionOf(native.groups, result, roots)
   const failed = failedOf(result, completion)
   const after = state()
@@ -406,8 +544,17 @@ export function runFrozenPlan(
     drift = 'the head or the tracked tree changed during the run'
   else if (contextBefore === null || contextBefore !== contextAfter || contextBefore !== native.context)
     drift = 'the verification context is not the one the plan was frozen under'
-  const passed = failed !== 'all' && failed.length === 0 && completion.completed && drift === null
-  return { passed, completion, failed, drift }
+  const passed = result.failedRunners.length === 0 && failed !== 'all' && failed.length === 0 && completion.completed
+  const outcomes = result.outcomes
+  const confirmed = new Set((outcomes ?? []).flatMap((o) => o.confirmed))
+  return {
+    passed: passed && drift === null,
+    completion,
+    failed,
+    unreported: [...new Set((outcomes ?? []).flatMap((o) => o.unreported))].sort(compare),
+    ...(outcomes !== undefined ? { unconfirmed: plan.filter((id) => !confirmed.has(id)) } : {}),
+    drift
+  }
 }
 
 function realRoot(repoRoot: string): string {
@@ -433,6 +580,8 @@ export async function recordLocalRun(input: {
   mode: LastPushResult['mode']
   now?: Date
   cache?: Parameters<typeof recordGreenTestRun>[4]
+  /** This run's start, as its per-group records carry it: the final record replaces or removes any of them. */
+  runStartedAt?: string
 }): Promise<{ receipt: boolean }> {
   const { repoRoot, note, outcome } = input
   const native = note.native as NativeSelection
@@ -440,6 +589,7 @@ export async function recordLocalRun(input: {
   const head = currentHead(repoRoot)
   const branch = currentBranch(repoRoot)
   const absolute = (failed: string[] | 'all') => (failed === 'all' ? 'all' : failed.map((id) => join(repoRoot, id)))
+  const unconfirmed = outcome.unconfirmed
   if (outcome.passed) {
     const passing = nativePassingRecord({
       note,
@@ -451,12 +601,33 @@ export async function recordLocalRun(input: {
       treeClean: trackedTreeClean(repoRoot),
       now
     })
+    const own = readFailedTestsRecord(repoRoot)
+    const ownRecord =
+      input.runStartedAt !== undefined && own?.head === note.head && own.runStartedAt === input.runStartedAt
     if (passing) writeJsonUnderGit(repoRoot, FAILED_TESTS_RECORD, passing)
-    else if (native.identities.length === 0) clearRecordOfKind(repoRoot, 'failed')
+    else if (native.identities.length === 0 || ownRecord) clearRecordOfKind(repoRoot, 'failed')
     else clearRecordOfKind(repoRoot, 'passed')
+  } else if (outcome.drift !== null && native.groups.length > 0) {
+    // What ran is no longer the head under test: it confirms nothing, failures or not.
+    writeJsonUnderGit(repoRoot, FAILED_TESTS_RECORD, unprovenRecord({ repoRoot, native, head: note.head, branch, now }))
   } else if (outcome.drift !== null && outcome.failed !== 'all' && outcome.failed.length === 0) {
     // Every runner passed, but what it ran is no longer the head under test: no proof either way.
     clearRecordOfKind(repoRoot, 'passed')
+  } else if (unconfirmed !== undefined) {
+    const record =
+      unconfirmed.length === 0 || unconfirmed.length === planTests(native).length
+        ? unprovenRecord({ repoRoot, native, head, branch, now })
+        : unconfirmedRecord({
+            repoRoot,
+            native,
+            head,
+            branch,
+            unconfirmed,
+            unreported: outcome.unreported ?? [],
+            ...(input.runStartedAt ? { runStartedAt: input.runStartedAt } : {}),
+            now
+          })
+    writeJsonUnderGit(repoRoot, FAILED_TESTS_RECORD, record)
   } else {
     const record: FailedTestsRecord = {
       version: 1,
@@ -480,7 +651,8 @@ export async function recordLocalRun(input: {
     failed: outcome.passed ? [] : absolute(outcome.failed),
     elapsedSeconds: Number.isFinite(input.elapsedSeconds) ? input.elapsedSeconds : null,
     recordedAt: now.toISOString(),
-    native: outcome.completion
+    native: outcome.completion,
+    ...(!outcome.passed && outcome.unreported?.length ? { unreported: absolute(outcome.unreported) as string[] } : {})
   }
   writeJsonUnderGit(repoRoot, LAST_PUSH_RESULT, result)
   if (!outcome.passed || native.command === null) return { receipt: false }
@@ -549,7 +721,16 @@ async function runCommand(repoRoot: string, logPath: string | undefined): Promis
     process.stdout.write(`vinaya pre-push: refused — no frozen native test plan for ${head}; nothing ran\n`)
     return 1
   }
-  const outcome = runFrozenPlan(repoRoot, note.native)
+  const runStartedAt = new Date(started).toISOString()
+  const outcome = runFrozenPlan(repoRoot, note.native, {
+    groupRecord: {
+      head: note.head,
+      branch: currentBranch(repoRoot),
+      runStartedAt,
+      treeClean: trackedTreeClean(repoRoot),
+      write: (record) => writeJsonUnderGit(repoRoot, FAILED_TESTS_RECORD, record)
+    }
+  })
   const elapsed = Math.round((Date.now() - started) / 1000)
   let log = ''
   if (logPath) {
@@ -560,7 +741,7 @@ async function runCommand(repoRoot: string, logPath: string | undefined): Promis
     }
   }
   try {
-    await recordLocalRun({ repoRoot, note, outcome, log, elapsedSeconds: elapsed, mode: pushMode() })
+    await recordLocalRun({ repoRoot, note, outcome, log, elapsedSeconds: elapsed, mode: pushMode(), runStartedAt })
   } catch (error) {
     process.stderr.write(
       `vinaya pre-push: could not record this run (${error instanceof Error ? error.message : String(error)}).\n`
@@ -577,7 +758,11 @@ async function runCommand(repoRoot: string, logPath: string | undefined): Promis
   }
   process.stdout.write(`\nvinaya pre-push: refused — selected ${count} test(s), ${elapsed}s:\n`)
   if (outcome.failed === 'all') process.stdout.write('  a runner failed without naming its failing tests\n')
-  else for (const test of outcome.failed) process.stdout.write(`  failing: ${test}\n`)
+  else {
+    const unreported = new Set(outcome.unreported ?? [])
+    for (const test of outcome.failed) if (!unreported.has(test)) process.stdout.write(`  failing: ${test}\n`)
+    for (const test of unreported) process.stdout.write(`  not reported by its runner: ${test}\n`)
+  }
   for (const p of outcome.completion.problems)
     process.stdout.write(`  ${p.code} ${p.path}${p.group ? ` (${p.group})` : ''}: ${p.detail}\n`)
   if (outcome.drift) process.stdout.write(`  ${outcome.drift}\n`)
