@@ -110,7 +110,7 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     'required = true',
     `command = ${quote(paths.mcpCommand ?? 'vinaya-dev-bridge')}`,
     'args = []',
-    `tool_timeout_sec = ${DEV_TOOLS_TOOL_TIMEOUT_SEC}`,
+    `tool_timeout_sec = ${Math.max(DEV_TOOLS_TOOL_TIMEOUT_SEC, paths.devToolsTimeoutSec ?? 0)}`,
     `enabled_tools = ${JSON.stringify(mcpTools)}`,
     'default_tools_approval_mode = "approve"',
     '',

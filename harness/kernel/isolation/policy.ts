@@ -26,6 +26,8 @@ export interface GeneratorPaths {
   variables?: Record<string, string>
   /** Claude's sandbox may connect to Unix sockets: the Linux host opt-in for a kernel that refuses the sandbox's seccomp step. */
   allowUnixSockets?: boolean
+  /** Seconds one dev-tools call may run; the generators never go below `DEV_TOOLS_TOOL_TIMEOUT_SEC`, which an absent value keeps. */
+  devToolsTimeoutSec?: number
 }
 
 export function resolveGrantValues(values: string[], variables: Record<string, string> = {}): string[] {
