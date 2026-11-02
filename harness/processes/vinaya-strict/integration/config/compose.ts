@@ -6,7 +6,7 @@ import {
   type ConfigLoadResult as KernelConfigLoadResult,
   createConfigLoader,
   gitCommonDir,
-  resolveCiTrustAnchorProbeRef,
+  resolveCiTrustAnchorProbeRef as kernelResolveCiTrustAnchorProbeRef,
   type TrustAnchorFetcher,
   trustAnchorRepo,
   trustAnchorRepoAsync
@@ -227,6 +227,9 @@ function reportInvalidConfig(path: string, detail: string): void {
   console.error(`⚠ ${message}`)
 }
 
+/** The environment variable the pre-merge probe job sets to its checked-out pull-request ref. */
+const CI_CONFIG_PROBE_REF_VARIABLE = 'VINAYA_CI_CONFIG_PROBE_REF'
+
 const loader = createConfigLoader({
   schema: VinayaConfigSchema,
   localFileName: VINAYA_CONFIG_FILENAME,
@@ -246,10 +249,20 @@ const loader = createConfigLoader({
     { key: 'runtimeDir', present: (config) => Boolean(config.runtimeDir), warning: globalRuntimeDirIgnoredWarning }
   ],
   reportInvalid: reportInvalidConfig,
-  trustAnchorFallbackWarning
+  trustAnchorFallbackWarning,
+  probeRefVariable: CI_CONFIG_PROBE_REF_VARIABLE
 })
 
 export const GLOBAL_CONFIG_PATH = loader.globalConfigPath
+
+/**
+ * The pre-merge probe ref, or `null` — the trust-anchor read's one CI-only seam,
+ * named by `VINAYA_CI_CONFIG_PROBE_REF` (`resolveCiTrustAnchorProbeRef` in the
+ * kernel loader holds the rule).
+ */
+export function resolveCiTrustAnchorProbeRef(env: NodeJS.ProcessEnv = process.env): string | null {
+  return kernelResolveCiTrustAnchorProbeRef(env, CI_CONFIG_PROBE_REF_VARIABLE)
+}
 
 export type ConfigLoadResult = KernelConfigLoadResult<VinayaConfig>
 
@@ -360,7 +373,6 @@ export {
   PRINCIPALS_FIX,
   PrincipalsUnresolvedError,
   parseTokensCollectDeclaration,
-  resolveCiTrustAnchorProbeRef,
   resolveLocalPacingOverride,
   resolveLogsHeaderValues,
   tokensCollectTrustKey,

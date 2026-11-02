@@ -361,3 +361,35 @@ describe('driver death and cancellation', () => {
     expect(existsSync(join(work, '.git', PROGRESS_MARKER))).toBe(false)
   }, 30_000)
 })
+
+describe('the progress helper is a composition root of its own', () => {
+  it('resolves the progress directory from the default runtime folder, with no runtime directory handed down', async () => {
+    const work = repository()
+    // No `VINAYA_RUNTIME_DIR`: the helper resolves the per-repository default under its own home, which reads the
+    // repository's configuration through the provider the helper installs.
+    const home = join(base, 'home')
+    const runtime = join(home, '.vinaya', 'runtime', 'o-r')
+    // The driver side runs in this process: its session lives where the helper's default resolves.
+    setEnv('VINAYA_RUNTIME_DIR', runtime)
+    const session = await beginProgressSession({
+      runDir: join(runtime, 'engine-runs', String(TASK)),
+      task: TASK,
+      worktreePath: work,
+      logPath: join(runtime, 'tasks-execution', String(TASK), 'output', 'driver.log')
+    })
+    try {
+      expect(session.dir).not.toBeNull()
+      const env = childEnv()
+      delete env.VINAYA_RUNTIME_DIR
+      const out = spawnSyncBudgeted('bun', [HELPER, 'dir'], {
+        cwd: work,
+        encoding: 'utf8',
+        env: { ...env, HOME: home, AEG_REPO: 'o/r' }
+      })
+      expect(out.stdout).toBe('on\n')
+      expect(out.status).toBe(0)
+    } finally {
+      await session.end()
+    }
+  }, 30_000)
+})

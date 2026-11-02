@@ -21,6 +21,7 @@ import {
   type ProgressRecord,
   resolveProgressDirLive
 } from './push-progress.js'
+import { installVinayaConfigProvider } from './config.js'
 
 /** How often the copier looks at the capture. */
 const FOLLOW_INTERVAL_MS = 250
@@ -101,6 +102,9 @@ async function main(argv: string[]): Promise<void> {
   }
 }
 
+// The composition root: the hook runs this program on its own, and the progress directory resolves through the run
+// paths, which read configuration only through the provider this installs.
+installVinayaConfigProvider()
 main(process.argv.slice(2)).then(
   () => process.exit(0),
   () => process.exit(0)

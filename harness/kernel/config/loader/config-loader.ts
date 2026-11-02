@@ -35,6 +35,8 @@ export type ConfigLoaderOptions<Schema extends z.ZodTypeAny> = {
   reportInvalid(path: string, detail: string): void
   /** The line a swallowed trust-anchor read failure prints, `why` naming the failure. */
   trustAnchorFallbackWarning(why: string): string
+  /** The environment variable naming the pre-merge probe ref (`resolveCiTrustAnchorProbeRef`). */
+  probeRefVariable: string
 }
 
 /** The first line of an error's message — what a warning quotes, so a multi-line `execFileSync` dump never floods the log. */
@@ -126,14 +128,15 @@ export async function trustAnchorRepoAsync(): Promise<string | null> {
 
 /**
  * The pre-merge probe ref, or `null`. Inside one continuous-integration job —
- * `VINAYA_CI_CONFIG_PROBE_REF` set, `GITHUB_ACTIONS === 'true'` and no forge
- * credential present — both trust-anchor fetchers read the file from this local
- * ref instead of the default branch, so the pull request's configuration stands
- * in for the default branch's. The three facts coincide nowhere else: a run
- * that decides merge authority always carries a credential.
+ * the probe variable (`probeRefVariable`, named by the process) set,
+ * `GITHUB_ACTIONS === 'true'` and no forge credential present — both
+ * trust-anchor fetchers read the file from this local ref instead of the
+ * default branch, so the pull request's configuration stands in for the
+ * default branch's. The three facts coincide nowhere else: a run that decides
+ * merge authority always carries a credential.
  */
-export function resolveCiTrustAnchorProbeRef(env: NodeJS.ProcessEnv = process.env): string | null {
-  const ref = env.VINAYA_CI_CONFIG_PROBE_REF?.trim()
+export function resolveCiTrustAnchorProbeRef(env: NodeJS.ProcessEnv, probeRefVariable: string): string | null {
+  const ref = env[probeRefVariable]?.trim()
   if (!ref) return null
   if (env.GITHUB_ACTIONS !== 'true') return null
   if ((env.GH_TOKEN ?? '').length > 0 || (env.GITHUB_TOKEN ?? '').length > 0) return null
@@ -409,7 +412,7 @@ export function createConfigLoader<Schema extends z.ZodTypeAny>(options: ConfigL
    * pre-merge probe is the one exception, inert outside its one job.
    */
   function fetchTrustAnchorConfig(): string {
-    const probeRef = resolveCiTrustAnchorProbeRef()
+    const probeRef = resolveCiTrustAnchorProbeRef(process.env, options.probeRefVariable)
     if (probeRef) return readTrustAnchorConfigAtRef(probeRef)
     const repo = trustAnchorRepo()
     if (!repo) throw new Error(NO_TRUST_ANCHOR_REPO_MESSAGE)
@@ -421,7 +424,7 @@ export function createConfigLoader<Schema extends z.ZodTypeAny>(options: ConfigL
 
   /** `fetchTrustAnchorConfig`'s async twin — the same read, as an async child that never blocks the event loop. */
   async function fetchTrustAnchorConfigAsync(): Promise<string> {
-    const probeRef = resolveCiTrustAnchorProbeRef()
+    const probeRef = resolveCiTrustAnchorProbeRef(process.env, options.probeRefVariable)
     if (probeRef) {
       const { stdout } = await execFileAsync('git', ['show', `${probeRef}:${localFileName}`], {
         encoding: 'utf-8',

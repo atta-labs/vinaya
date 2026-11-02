@@ -3,7 +3,13 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { createConfigLoader, isMissingFileError, readLocalOverrideFile, schemaIssueDetail } from './config-loader'
+import {
+  createConfigLoader,
+  isMissingFileError,
+  readLocalOverrideFile,
+  resolveCiTrustAnchorProbeRef,
+  schemaIssueDetail
+} from './config-loader'
 
 const LOCAL = 'kernel-loader-test.config.json'
 const schema = z.object({ name: z.string().optional(), secret: z.string().optional(), size: z.number().optional() })
@@ -33,7 +39,8 @@ describe('the configuration loader', () => {
         { key: 'secret', present: (c) => Boolean(c.secret), warning: (path) => `${path}: secret is local-only` }
       ],
       reportInvalid: (path, detail) => reports.push(`${path} | ${detail}`),
-      trustAnchorFallbackWarning: (why) => `fallback (${why})\n`
+      trustAnchorFallbackWarning: (why) => `fallback (${why})\n`,
+      probeRefVariable: 'KERNEL_LOADER_TEST_PROBE_REF'
     })
   })
 
@@ -137,5 +144,18 @@ describe('the configuration loader', () => {
     } finally {
       delete process.env.KERNEL_LOADER_TEST_SUPPRESS
     }
+  })
+})
+
+describe('the pre-merge probe ref', () => {
+  const VARIABLE = 'KERNEL_LOADER_TEST_PROBE_REF'
+  const job = { [VARIABLE]: ' refs/pr ', GITHUB_ACTIONS: 'true' }
+
+  test('reads the variable the process names, only in a credential-free Actions job', () => {
+    expect(resolveCiTrustAnchorProbeRef(job, VARIABLE)).toBe('refs/pr')
+    expect(resolveCiTrustAnchorProbeRef(job, 'SOME_OTHER_VARIABLE')).toBeNull()
+    expect(resolveCiTrustAnchorProbeRef({ ...job, GITHUB_ACTIONS: undefined }, VARIABLE)).toBeNull()
+    expect(resolveCiTrustAnchorProbeRef({ ...job, GH_TOKEN: 'x' }, VARIABLE)).toBeNull()
+    expect(resolveCiTrustAnchorProbeRef({ ...job, GITHUB_TOKEN: 'x' }, VARIABLE)).toBeNull()
   })
 })
