@@ -14,6 +14,7 @@ import {
   projectPrChecks,
   projectPrReviews
 } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
+import { vinayaToolGrantPolicy } from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 
 const required = [
   'name',
@@ -232,7 +233,12 @@ describe('canonical agent tool catalog', () => {
       runChecks: unavailable,
       fetchDocumentation: unavailable
     } as unknown as DevToolContext
-    const server = createDevToolsMcpServer({ serverVersion: 'test', context, role: 'developer' })
+    const server = createDevToolsMcpServer({
+      toolGrants: vinayaToolGrantPolicy(),
+      serverVersion: 'test',
+      context,
+      role: 'developer'
+    })
     const response = JSON.parse(
       (await server.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))) as string
     )

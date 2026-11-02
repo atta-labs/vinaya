@@ -47,6 +47,7 @@ import {
   type ReviewerPromptFacts,
   reviewerSourceFacts
 } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
+import { vinayaToolGrantPolicy } from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 
 const tempDirs: string[] = []
 afterEach(() => {
@@ -257,9 +258,15 @@ describe('the Developer and both reviewers resolve the same pinned digest when t
 
     // Each reviewer's own server answers at the pinned digest, with the pinned content.
     for (const role of ['code-reviewer', 'security'] as const) {
-      const result = await dispatchDevTool(reviewerDevToolContext(readSource), role, READ_SOURCE_TOOL, {
-        sourceId: PAGE_URL
-      })
+      const result = await dispatchDevTool(
+        vinayaToolGrantPolicy(),
+        reviewerDevToolContext(readSource),
+        role,
+        READ_SOURCE_TOOL,
+        {
+          sourceId: PAGE_URL
+        }
+      )
       expect(result.ok).toBe(true)
       if (result.ok) {
         const served = result.result as ReadSourceResult
@@ -273,18 +280,24 @@ describe('the Developer and both reviewers resolve the same pinned digest when t
 
 describe('the grant: reviewers read pinned sources, and fetch nothing (O1)', () => {
   it('serves each reviewer exactly read_source and the Developer never', () => {
-    expect(servedTools('code-reviewer').map((t) => t.name)).toEqual([READ_SOURCE_TOOL])
-    expect(servedTools('security').map((t) => t.name)).toEqual([READ_SOURCE_TOOL])
-    expect(servedTools('developer').map((t) => t.name)).not.toContain(READ_SOURCE_TOOL)
-    expect(isToolGranted('code-reviewer', 'fetch_documentation')).toBe(false)
-    expect(isToolGranted('security', 'fetch_documentation')).toBe(false)
+    expect(servedTools(vinayaToolGrantPolicy(), 'code-reviewer').map((t) => t.name)).toEqual([READ_SOURCE_TOOL])
+    expect(servedTools(vinayaToolGrantPolicy(), 'security').map((t) => t.name)).toEqual([READ_SOURCE_TOOL])
+    expect(servedTools(vinayaToolGrantPolicy(), 'developer').map((t) => t.name)).not.toContain(READ_SOURCE_TOOL)
+    expect(isToolGranted(vinayaToolGrantPolicy(), 'code-reviewer', 'fetch_documentation')).toBe(false)
+    expect(isToolGranted(vinayaToolGrantPolicy(), 'security', 'fetch_documentation')).toBe(false)
   })
 
   it('refuses a reviewer’s fetch_documentation call before any handler runs', async () => {
     const { readSource } = await prepared()
-    const result = await dispatchDevTool(reviewerDevToolContext(readSource), 'code-reviewer', 'fetch_documentation', {
-      url: PAGE_URL
-    })
+    const result = await dispatchDevTool(
+      vinayaToolGrantPolicy(),
+      reviewerDevToolContext(readSource),
+      'code-reviewer',
+      'fetch_documentation',
+      {
+        url: PAGE_URL
+      }
+    )
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toMatchObject({ errorClass: 'unauthorized', check: 'role-grant' })
   })
@@ -298,10 +311,16 @@ describe('the grant: reviewers read pinned sources, and fetch nothing (O1)', () 
 
   it('validates every success value against the catalog’s strict schema', async () => {
     const { readSource } = await prepared()
-    const result = await dispatchDevTool(reviewerDevToolContext(readSource), 'security', READ_SOURCE_TOOL, {
-      sourceId: SPEC,
-      offset: 0
-    })
+    const result = await dispatchDevTool(
+      vinayaToolGrantPolicy(),
+      reviewerDevToolContext(readSource),
+      'security',
+      READ_SOURCE_TOOL,
+      {
+        sourceId: SPEC,
+        offset: 0
+      }
+    )
     expect(result.ok).toBe(true)
   })
 })

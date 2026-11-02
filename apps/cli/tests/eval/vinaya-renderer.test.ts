@@ -37,7 +37,7 @@ import {
   REVIEWER_ROLES,
   REVIEWER_SEVERITIES
 } from '../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
-import { ROLE_TOOL_GRANTS } from '../../src/lib/task-tools/role-grants'
+import { ROLE_TOOL_GRANTS } from '../../../../harness/processes/vinaya-strict/integration/policies/roles'
 import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
 import {
   claudeTrace,

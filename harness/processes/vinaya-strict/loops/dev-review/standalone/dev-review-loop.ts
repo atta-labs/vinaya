@@ -59,8 +59,8 @@ import {
 import {
   addedDiffLines,
   agentOwnConfigDirs,
+  createWorkerBoundary,
   findCredentialPatterns,
-  protectedPathsForTurn,
   startTurnWriteAttribution,
   taskControlDir,
   WORKER_ENV_ALLOWLIST_KEYS,
@@ -119,11 +119,15 @@ import {
   type DispatchHandle,
   isAgentVendor,
   readResumeRecord as realReadResumeRecord,
-  realDispatchTeeRecoveryDeps,
   type ResumeRecord,
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from '../dispatch/dispatch.js'
-import { authenticateWorkerInvocation, requestEffect, scopeTarget } from '../../../../../../apps/cli/src/lib/broker.js'
+import { createBroker, type InvocationContext, scopeTarget } from '../../../../../../apps/cli/src/lib/broker.js'
+import {
+  vinayaBrokerPolicies,
+  vinayaToolGrantPolicy,
+  vinayaWorkerBoundaryPolicies
+} from '../../../integration/policies/vinaya-policies.js'
 import {
   classifyReviewOutcome,
   manifestDigest as reviewManifestDigest,
@@ -348,7 +352,7 @@ import {
   reviewerDevToolContext
 } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server.js'
 import { createReadSourceTool } from '../../../../../../apps/cli/src/lib/task-tools/read-source.js'
-import type { GrantedRole } from '../../../../../../apps/cli/src/lib/task-tools/role-grants.js'
+import type { GrantedRole } from '../../../integration/policies/roles.js'
 import { type FailedCheckLog, readFailedCheckLogs, readJobLogTail } from '../run-control/pr-facts.js'
 import { startDevToolsHost } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-host.js'
 import type { FetchDocumentationDeps } from '../../../../../../apps/cli/src/lib/task-tools/fetch-documentation.js'
@@ -2025,17 +2029,19 @@ function defaultOpenTaskPullRequest(input: {
 }): number | null {
   const runId = developerRunIdFor(input.agent, input.repo, input.task)
   if (runId === null) return null
-  let context: ReturnType<typeof authenticateWorkerInvocation>
+  const broker = createBroker(vinayaBrokerPolicies())
+  let context: InvocationContext
   try {
-    context = authenticateWorkerInvocation(
-      { VINAYA_ROLE: 'developer', VINAYA_TASK: String(input.task), VINAYA_RUN_ID: runId },
-      realDispatchTeeRecoveryDeps()
-    )
+    context = broker.authenticateWorkerInvocation({
+      VINAYA_ROLE: 'developer',
+      VINAYA_TASK: String(input.task),
+      VINAYA_RUN_ID: runId
+    })
   } catch {
     return null
   }
   try {
-    requestEffect(defaultControlStoreDeps(controlStoreRoot), context, {
+    broker.requestEffect(defaultControlStoreDeps(controlStoreRoot), context, {
       operation: 'pr-open',
       target: scopeTarget(input.task, input.branch),
       inputVersion: input.round,
@@ -2083,7 +2089,8 @@ async function defaultStartDevTools(input: {
     serverVersion: ownVersion(),
     context: input.context,
     // A Developer turn is served its seven tools; a reviewer turn only `read_source`.
-    role: input.role ?? 'developer'
+    role: input.role ?? 'developer',
+    toolGrants: vinayaToolGrantPolicy()
   })
   return { bridge: driverDevBridgeInvocation(host.socketPath), close: () => host.close() }
 }
@@ -4158,7 +4165,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // receipts and other roles' folders are still resolved and hashed, so
       // an unreadable config never fails this role's WHOLE check open.
       const vinayaConfigPath = configPath()
-      const entries = protectedPathsForTurn({ runtimeDir: root, task, round: roundNum, role, vinayaConfigPath })
+      const entries = createWorkerBoundary(vinayaWorkerBoundaryPolicies()).protectedPathsForTurn({
+        runtimeDir: root,
+        task,
+        round: roundNum,
+        role,
+        vinayaConfigPath
+      })
       // The control store and the documentation receipts file are the
       // entries the driver's own tools write during a turn; `driverToolCall`
       // (wrapped around every dev-tools call that writes,

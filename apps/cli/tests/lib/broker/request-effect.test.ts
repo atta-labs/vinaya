@@ -13,15 +13,14 @@ import { type ControlStoreDeps, defaultControlStoreDeps, readEffect, StaleEpochW
 import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import {
   acquireOwnership,
-  authenticateWorkerInvocation,
   LeasePushTargetError,
   ProtectedPathError,
   ReplayedInputVersionError,
-  requestEffect,
   scopeTarget,
   UnboundTargetError,
   UngrantedOperationError
 } from '../../../src/lib/broker'
+import { authenticateWorkerInvocation, requestEffect } from './vinaya-broker'
 import type { LogEventInput } from '../../../src/lib/log-sink'
 
 let dir: string

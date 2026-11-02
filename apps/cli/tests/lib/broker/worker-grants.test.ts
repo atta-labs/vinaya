@@ -15,13 +15,12 @@ import { join } from 'node:path'
 import { type ControlStoreDeps, defaultControlStoreDeps } from '@attalabs/aeg-core'
 import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import {
-  authenticateWorkerInvocation,
   NEVER_GRANTED_OPERATIONS,
-  requestEffect,
   scopeTarget,
   UngrantedOperationError,
   WORKER_OPERATIONS
 } from '../../../src/lib/broker'
+import { authenticateWorkerInvocation, requestEffect } from './vinaya-broker'
 
 let dir: string
 let deps: ControlStoreDeps

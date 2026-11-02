@@ -6,8 +6,11 @@ import {
   renderAgentSkill,
   roleAllowedTools
 } from '../../../../harness/processes/vinaya-strict/integration/agents-skills-emitter.js'
-import { refuseUngrantedTool } from '../../src/lib/task-tools/router.js'
+import { createTaskToolRouter } from '../../src/lib/task-tools/router.js'
 import { createTaskToolsMcpServer } from '../../../../harness/processes/vinaya-strict/integration/server.js'
+import { vinayaRouterPolicies } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
+
+const { refuseUngrantedTool } = createTaskToolRouter(vinayaRouterPolicies())
 
 /**
  * The Operator's grant is one fact with four representations that must never

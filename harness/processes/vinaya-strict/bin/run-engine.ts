@@ -86,13 +86,14 @@ import { postMarkedComment } from '../tools/task-contract/forge/forge-write'
 import { developerBranchFor } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import { publishRound } from '../loops/dev-review/standalone/dev-review-loop/publication'
 import {
+  createWorkerBoundary,
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
   linuxUnixSocketFilterOptIn,
-  protectedPathsForTurn,
   startTurnWriteAttribution,
   taskControlDir,
   type TurnWriteAttribution
 } from '../../../../apps/cli/src/lib/worker-boundary'
+import { vinayaToolGrantPolicy, vinayaWorkerBoundaryPolicies } from '../integration/policies/vinaya-policies'
 import { configPath } from '../../../../apps/cli/src/lib/config'
 import {
   appendSourceDeliveryReceipt,
@@ -1710,6 +1711,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           serverVersion: 'engine-run-1',
           context: roleHost.context,
           role: roleHost.role,
+          toolGrants: vinayaToolGrantPolicy(),
           capabilities,
           // Every refused call is recorded in the task's driver log, which outlives the run.
           audit: (event) =>
@@ -2433,7 +2435,7 @@ export function engineLiveDevToolsContext(input: {
   let attribution: TurnWriteAttribution
   const buildTurnContext = (): DevToolContext => {
     attribution = startTurnWriteAttribution(
-      protectedPathsForTurn({
+      createWorkerBoundary(vinayaWorkerBoundaryPolicies()).protectedPathsForTurn({
         runtimeDir: input.runtimeDir,
         task: input.task,
         round: input.round(),

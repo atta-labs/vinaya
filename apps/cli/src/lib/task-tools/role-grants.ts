@@ -8,47 +8,63 @@
  * rules. MCP annotations (read-only, destructive, idempotent, open-world) are
  * discovery hints and play no part here.
  *
- * The Operator's tools are a separate server (`server.ts`) with its own
- * launch, and are not granted through this table.
+ * The table itself is a tool-grant policy the process supplies: this module
+ * holds only the membership logic and names no role. A server or host built
+ * without a policy is refused (`assertToolGrantPolicy`), never served an
+ * empty or default grant.
  */
 
 import { AGENT_TOOL_CATALOG } from './tool-catalog.js'
 
-/** The roles the driver dispatches against this table. The controller is listed so its empty grant is explicit, not implied. */
-export const GRANTED_ROLES = ['developer', 'code-reviewer', 'security', 'controller'] as const
-
-export type GrantedRole = (typeof GRANTED_ROLES)[number]
-
 /**
- * Per role, every tool it may call: the Developer its seven tools, each
- * reviewer only `read_source` — the pinned required sources, never a URL
- * fetch or a Developer tool.
+ * The closed set of roles a process dispatches against its tool server, and
+ * each one's granted tools. A role outside `roles` is granted nothing, even
+ * when `grants` happens to carry an entry for it.
  */
-export const ROLE_TOOL_GRANTS: Readonly<Record<GrantedRole, readonly string[]>> = {
-  developer: [
-    'fetch_documentation',
-    'run_checks',
-    'publish_changes',
-    'open_pull_request',
-    'update_pull_request_body',
-    'refresh_evidence',
-    'read_pull_request'
-  ],
-  'code-reviewer': ['read_source'],
-  security: ['read_source'],
-  controller: []
+export type ToolGrantPolicy = {
+  readonly roles: readonly string[]
+  readonly grants: Readonly<Record<string, readonly string[]>>
 }
 
-export function isGrantedRole(role: string): role is GrantedRole {
-  return (GRANTED_ROLES as readonly string[]).includes(role)
+/** Thrown when a tool server, tool host or tool dispatch is built without its tool-grant policy. */
+export class MissingToolGrantPolicyError extends Error {
+  constructor(readonly builder: string) {
+    super(
+      `${builder}: refusing to build without its tool-grant policy (toolGrants) — a missing grant is never an empty one`
+    )
+    this.name = 'MissingToolGrantPolicyError'
+  }
+}
+
+/** Refuses a missing or malformed policy, naming the builder that was handed it. */
+export function assertToolGrantPolicy(policy: ToolGrantPolicy | undefined, builder: string): ToolGrantPolicy {
+  if (
+    policy === undefined ||
+    policy === null ||
+    !Array.isArray(policy.roles) ||
+    typeof policy.grants !== 'object' ||
+    policy.grants === null
+  ) {
+    throw new MissingToolGrantPolicyError(builder)
+  }
+  return policy
+}
+
+export function isGrantedRole(policy: ToolGrantPolicy, role: string): boolean {
+  return policy.roles.includes(role)
+}
+
+/** The tools `role` is granted — empty for a role outside the policy's closed set. */
+export function grantedTools(policy: ToolGrantPolicy, role: string): readonly string[] {
+  return isGrantedRole(policy, role) ? (policy.grants[role] ?? []) : []
 }
 
 /** Whether `role` may call `tool`. A role outside the table is granted nothing. */
-export function isToolGranted(role: string, tool: string): boolean {
-  return isGrantedRole(role) && ROLE_TOOL_GRANTS[role].includes(tool)
+export function isToolGranted(policy: ToolGrantPolicy, role: string, tool: string): boolean {
+  return grantedTools(policy, role).includes(tool)
 }
 
 /** The tools a dispatch of `role` is served, in catalog order: every catalog tool its grant names. */
-export function servedTools(role: GrantedRole): typeof AGENT_TOOL_CATALOG {
-  return AGENT_TOOL_CATALOG.filter((tool) => isToolGranted(role, tool.name))
+export function servedTools(policy: ToolGrantPolicy, role: string): typeof AGENT_TOOL_CATALOG {
+  return AGENT_TOOL_CATALOG.filter((tool) => isToolGranted(policy, role, tool.name))
 }

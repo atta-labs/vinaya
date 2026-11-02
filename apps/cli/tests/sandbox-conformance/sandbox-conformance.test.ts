@@ -107,6 +107,7 @@ import {
   probeLeaked,
   roleHasShell
 } from './engine-attack-probes.js'
+import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 
 describe('sandbox mount setup retry', () => {
   const missingMount = {
@@ -1175,6 +1176,7 @@ async function openControllerTargets(session: SandboxSession): Promise<{
   const otherRoleTable = createDispatchCapabilityTable()
   const host = (socketName: string, capabilities: DispatchCapabilityTable) =>
     startDevToolsHost({
+      toolGrants: vinayaToolGrantPolicy(),
       socketPath: join(dir, socketName),
       serverVersion: 'conformance',
       context: INERT_CONTEXT,
@@ -1396,6 +1398,7 @@ async function openContainmentTargets(session: SandboxSession): Promise<{
   execFileSync('git', ['init', '-q', '--bare', bareRemote])
   const refusals: CapabilityRefusalEvent[] = []
   const reviewerHost = await startDevToolsHost({
+    toolGrants: vinayaToolGrantPolicy(),
     socketPath: join(dir, 'r.sock'),
     serverVersion: 'conformance',
     context: INERT_CONTEXT,

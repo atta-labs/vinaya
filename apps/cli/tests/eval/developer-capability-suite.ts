@@ -31,7 +31,8 @@ import {
   TASK_TOOL_NAMES
 } from '@attalabs/aeg-core'
 
-import { authenticateWorkerInvocation, ProtectedPathError, requestEffect, scopeTarget } from '../../src/lib/broker'
+import { ProtectedPathError, scopeTarget } from '../../src/lib/broker'
+import { authenticateWorkerInvocation, requestEffect } from '../lib/broker/vinaya-broker'
 import {
   type CodeGraderIdentity,
   createSuite,
@@ -51,7 +52,7 @@ import {
   type SourceDeliveryReceipt
 } from '../../src/lib/source-manifest'
 import { documentationSourceId } from '../../src/lib/task-tools/fetch-documentation'
-import { ROLE_TOOL_GRANTS } from '../../src/lib/task-tools/role-grants'
+import { ROLE_TOOL_GRANTS } from '../../../../harness/processes/vinaya-strict/integration/policies/roles'
 import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
 import { selectAffectedTestFiles } from '../../src/lib/test-selector'
 import { agentOwnConfigSubpaths } from '../../src/lib/worker-boundary'

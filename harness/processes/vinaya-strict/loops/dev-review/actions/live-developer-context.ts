@@ -5,13 +5,13 @@ import {
   carryLiveRecord,
   defaultControlStoreDeps,
   globCoversPath,
-  isProtectedAdminPath,
   type IssueSurface,
   normalizeTouchedPath,
   withBeyondSurfaceBlock
 } from '@attalabs/aeg-core'
-import { authenticateWorkerInvocation, requestEffect, scopeTarget } from '../../../../../../apps/cli/src/lib/broker.js'
-import { type AgentVendor, readLaunchRecord, realDispatchTeeRecoveryDeps } from '../dispatch/dispatch.js'
+import { createBroker, type InvocationContext, scopeTarget } from '../../../../../../apps/cli/src/lib/broker.js'
+import { type AgentVendor, readLaunchRecord } from '../dispatch/dispatch.js'
+import { vinayaBrokerPolicies, vinayaProtectedPathPolicy } from '../../../integration/policies/vinaya-policies.js'
 import { controlStoreRoot } from '../../../../../../apps/cli/src/lib/effects.js'
 import { appendDriverLine, appendRoleLine } from '../../../../../../apps/cli/src/lib/loop-log.js'
 import { addedDiffLines, findCredentialPatterns } from '../../../../../../apps/cli/src/lib/worker-boundary.js'
@@ -227,7 +227,7 @@ export function createLiveDeveloperContext(params: LiveDeveloperContextParams): 
   const blockingPaths = (paths: readonly string[], surface: IssueSurface | null): string[] =>
     paths.filter(
       (path) =>
-        isProtectedAdminPath(path) &&
+        vinayaProtectedPathPolicy().isProtected(normalizeTouchedPath(path)) &&
         !(surface?.in.some((glob) => globCoversPath(glob, normalizeTouchedPath(path))) ?? false)
     )
   // A main-drift rebase or lease push that could not land: nothing was
@@ -898,16 +898,14 @@ function pushTaskBranchThroughBroker(
       lease: false
     }
   }
-  let context: ReturnType<typeof authenticateWorkerInvocation>
+  const broker = createBroker(vinayaBrokerPolicies())
+  let context: InvocationContext
   try {
-    context = authenticateWorkerInvocation(
-      {
-        VINAYA_ROLE: 'developer',
-        VINAYA_TASK: String(input.task),
-        VINAYA_RUN_ID: runId
-      },
-      realDispatchTeeRecoveryDeps()
-    )
+    context = broker.authenticateWorkerInvocation({
+      VINAYA_ROLE: 'developer',
+      VINAYA_TASK: String(input.task),
+      VINAYA_RUN_ID: runId
+    })
   } catch (err) {
     return {
       ok: false,
@@ -917,7 +915,7 @@ function pushTaskBranchThroughBroker(
     }
   }
   try {
-    requestEffect(defaultControlStoreDeps(controlStoreRoot), context, {
+    broker.requestEffect(defaultControlStoreDeps(controlStoreRoot), context, {
       operation,
       target: scopeTarget(input.task, `refs/heads/${input.branch}`),
       inputVersion: input.round,

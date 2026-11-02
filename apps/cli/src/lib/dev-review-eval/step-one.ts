@@ -33,6 +33,7 @@ import { startDevToolsHost } from '../task-tools/dev-tools-host'
 import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
 import { buildWorkerEnv, containerClaudeLogin, stageCodexPolicyHome } from '../worker-boundary'
 import { resolveRoleDoctrineText } from '../../../../../harness/processes/vinaya-strict/integration/roles/plan'
+import { vinayaToolGrantPolicy } from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies'
 import { prepareGradingCopy, testContamination, type Attribution, type HiddenInputs } from './contamination'
 import { ENGINE_SPAWN, runEngineRoleStep, type SpawnFn, usageOfStream } from './engine-role-step'
 import { suiteMean, type BootstrapMethod } from './estimators'
@@ -291,7 +292,7 @@ export interface GradingSandbox {
 }
 
 export function resolveGradingCodex(toolRoot: string): string {
-  // Never execute a `codex` selected through the controller's PATH. PATH is
+  // Never execute a `codex` selected through the trusted process's PATH. PATH is
   // operational configuration, not a provenance record, and an executable
   // planted there would run on the host before the grading sandbox existed.
   // Install the exact package named by the evaluation program into this
@@ -1386,7 +1387,8 @@ async function runDeveloperTrial<T>(
       socketPath,
       serverVersion: 'step-one-1',
       context: world.context,
-      role: 'developer'
+      role: 'developer',
+      toolGrants: vinayaToolGrantPolicy()
     })
     const devToolsBridge = driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts'))
     handle = await steps.dispatch('developer', adapterVendor(input.adapter), prompt, {
@@ -1565,7 +1567,8 @@ async function runDeveloperInTree(
       socketPath,
       serverVersion: 'step-one-1',
       context: world.context,
-      role: 'developer'
+      role: 'developer',
+      toolGrants: vinayaToolGrantPolicy()
     })
     const devToolsBridge = driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts'))
     if (container.backend === 'engine') {
@@ -1722,7 +1725,8 @@ async function runEngineReviewer(
     socketPath,
     serverVersion: 'step-one-1',
     context: world.context,
-    role: granted
+    role: granted,
+    toolGrants: vinayaToolGrantPolicy()
   })
   try {
     return await runEngineRoleStep({
@@ -2257,7 +2261,8 @@ async function runAnswerCase(
     socketPath,
     serverVersion: 'step-one-1',
     context: world.context,
-    role: 'developer'
+    role: 'developer',
+    toolGrants: vinayaToolGrantPolicy()
   })
   try {
     const { developerTurnResultJsonSchema } = await import(

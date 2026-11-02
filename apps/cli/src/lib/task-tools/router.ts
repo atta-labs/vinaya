@@ -12,19 +12,21 @@
  * not about the locally persisted pause packet a `why.*stuck` utterance
  * means, and not about the one-line loop state `task_status` answers.
  *
- * This module is also where the Operator's grant check lives
- * (`refuseUngrantedTool`): it refuses any tool outside the grant declared in
- * `aeg-root/roles/operator.md` and mirrored by `OPERATOR_TOOL_GRANT`.
+ * This module is also where the task-tool seat's grant check lives
+ * (`refuseUngrantedTool` on a router built by `createTaskToolRouter`): it
+ * refuses any tool outside the grant the router policy carries. The policy —
+ * the granted tools, the seat that holds them and who a refused call is asked
+ * of instead — is supplied by the process; this module names no role.
  * Classification answers "which tool does this utterance mean?"; the grant
- * check answers the prior question "may the Operator call that tool at
- * all?" — a shell, a forge write, an Issue edit, a review publish or a merge
- * is never in the grant. `server.ts`'s `dispatchToolCall` is the one place a
- * caller-supplied tool name reaches this function on a real call path, so
- * every MCP call is refused there before its handler runs, not merely in
- * this module's own fixture.
+ * check answers the prior question "may the seat call that tool at all?" — a
+ * shell, a forge write, an Issue edit, a review publish or a merge is never
+ * in the grant. The task-tools server's `dispatchToolCall` is the one place a
+ * caller-supplied tool name reaches this check on a real call path, so every
+ * MCP call is refused there before its handler runs, not merely in this
+ * module's own fixture.
  */
 
-import { isOperatorGranted, OPERATOR_TOOL_GRANT, taskToolError, type TaskToolError } from '@attalabs/aeg-core'
+import { taskToolError, type TaskToolError } from '@attalabs/aeg-core'
 import type { TaskToolName } from '@attalabs/aeg-core'
 
 const CANCEL_WORDS = /\b(cancel|abort|kill|stop|terminate)\b/i
@@ -47,21 +49,64 @@ export function routeTaskToolIntent(utterance: string): TaskToolName | null {
 }
 
 /**
- * The router's grant gate: given the tool a caller wants to invoke, return
- * an `authority` error when it falls outside the Operator's grant, or
- * `null` when it is granted. This is the mechanical form of the role doc's
- * boundary — "a registered tool is a capability; the grant is what says you
- * may call it." A caller-supplied claim of role authenticates nothing, so
- * this takes only the requested tool name, never a self-asserted identity:
- * the grant is a fixed property of the Operator seat, not a value the caller
- * sets. The refusal names the whole grant so the caller sees exactly what it
- * may reach instead.
+ * The facts the router's grant gate reads: the tools the seat may call, the
+ * seat's name as its refusals print it, and who a call outside the grant is
+ * asked of instead.
  */
-export function refuseUngrantedTool(requestedTool: string): TaskToolError | null {
-  if (isOperatorGranted(requestedTool)) return null
-  return taskToolError(
-    'authority',
-    `the Operator is not granted "${requestedTool}"`,
-    `the Operator's grant is limited to: ${OPERATOR_TOOL_GRANT.join(', ')} — a shell, a forge write, an Issue edit, a review publish or a merge is asked of the Planner or Principal, never called here`
-  )
+export type RouterRolePolicy = {
+  readonly grantedTools: readonly string[]
+  /** The seat as a refusal names it, e.g. `the <seat>`; its possessive is this plus `'s`. */
+  readonly seat: string
+  /** Who an ungranted act is asked of instead, as the refusal's detail names them. */
+  readonly askedOf: string
+}
+
+export type TaskToolRouter = {
+  routeTaskToolIntent: (utterance: string) => TaskToolName | null
+  refuseUngrantedTool: (requestedTool: string) => TaskToolError | null
+}
+
+/** Thrown when a router is built without its role policy — never a router with an empty or default grant. */
+export class MissingRouterPolicyError extends Error {
+  constructor() {
+    super(
+      'createTaskToolRouter: refusing to build without its role policy (roles) — a missing grant is never an empty one'
+    )
+    this.name = 'MissingRouterPolicyError'
+  }
+}
+
+/**
+ * Builds the router over the process's role policy. Its grant gate: given the
+ * tool a caller wants to invoke, return an `authority` error when it falls
+ * outside the seat's grant, or `null` when it is granted. This is the
+ * mechanical form of the role doc's boundary — "a registered tool is a
+ * capability; the grant is what says you may call it." A caller-supplied
+ * claim of role authenticates nothing, so this takes only the requested tool
+ * name, never a self-asserted identity: the grant is a fixed property of the
+ * seat, not a value the caller sets. The refusal names the whole grant so the
+ * caller sees exactly what it may reach instead.
+ */
+export function createTaskToolRouter(policies: { roles: RouterRolePolicy }): TaskToolRouter {
+  const roles = policies?.roles
+  if (
+    roles === undefined ||
+    roles === null ||
+    !Array.isArray(roles.grantedTools) ||
+    typeof roles.seat !== 'string' ||
+    typeof roles.askedOf !== 'string'
+  ) {
+    throw new MissingRouterPolicyError()
+  }
+  return {
+    routeTaskToolIntent,
+    refuseUngrantedTool: (requestedTool) => {
+      if (roles.grantedTools.includes(requestedTool)) return null
+      return taskToolError(
+        'authority',
+        `${roles.seat} is not granted "${requestedTool}"`,
+        `${roles.seat}'s grant is limited to: ${roles.grantedTools.join(', ')} — a shell, a forge write, an Issue edit, a review publish or a merge is asked of ${roles.askedOf}, never called here`
+      )
+    }
+  }
 }
