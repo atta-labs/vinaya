@@ -15,7 +15,7 @@
  */
 
 import { afterEach, beforeAll, describe, expect, it } from 'bun:test'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, execSync } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -67,6 +67,28 @@ import {
   withoutTurnResultFlag
 } from './dispatch-fixtures.js'
 
+/**
+ * The process-hygiene proof the child-process file carries, for this file's own fake-vendor launches: the
+ * host's `vinaya-dispatch-bin-` processes are read before any test here runs, and the last case below asserts
+ * none is new. Each file keeps its own snapshot, so a leak is caught in the file that made it.
+ */
+function vendorProcessSurvivors(): string[] {
+  const out = execSync('ps -eo pid,command | grep "vinaya-dispatch-bin-" | grep -v grep || true', {
+    encoding: 'utf8',
+    timeout: 5_000,
+    killSignal: 'SIGKILL'
+  }).trim()
+  if (out.length === 0) return []
+  return out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
+let preExistingVendorSurvivors: Set<string> = new Set()
+beforeAll(() => {
+  preExistingVendorSurvivors = new Set(vendorProcessSurvivors())
+})
 const tempDirs: string[] = []
 afterEach(() => {
   // O1: unconditional — runs whether the test above passed, failed, or hit
@@ -2917,4 +2939,11 @@ describe('dispatchRole — container mode on a faked Linux host with no bubblewr
     expect(run.calls).toEqual([])
     expect(run.stderr).toContain('CLAUDE_CODE_OAUTH_TOKEN, which is unset')
   }, 40_000)
+})
+
+describe('process hygiene (Issue #670) — the file leaves no fake vendor process behind', () => {
+  it('no NEW process — beyond whatever the host already carried before this file ran — still carries a vinaya-dispatch-bin- path in its command line', () => {
+    const newSurvivors = vendorProcessSurvivors().filter((line) => !preExistingVendorSurvivors.has(line))
+    expect(newSurvivors).toEqual([])
+  })
 })
