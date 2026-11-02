@@ -24,7 +24,7 @@ import { ScanContext } from '../../../../../apps/cli/src/checks/scan-context'
 import { loadConfig } from '../../../../../apps/cli/src/lib/config'
 import { collectBodyCheckErrors } from '../task-contract/forge/forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../../../apps/cli/src/lib/numstat'
-import { packageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
+import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../apps/cli/src/lib/run-paths.js'
 import {
   type DeferredTestsRecord,
@@ -353,7 +353,7 @@ function shouldRenderAsSkipped(outcome: GateOutcome, gradedBody: string): boolea
 
 /** `dist/index.js` when built, the raw `src/index.ts` entry otherwise — same fallback `checks/registry.ts` uses for its own bins. */
 function resolveSelfEntry(): string {
-  const root = packageRoot(import.meta.resolve('@attalabs/vinaya/package.json'))
+  const root = cliPackageRoot()
   const dist = join(root, 'dist', 'index.js')
   return existsSync(dist) ? dist : join(root, 'src', 'index.ts')
 }

@@ -61,14 +61,14 @@ import {
 } from '../../../../../apps/cli/src/checks/edge-resolve.js'
 import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config.js'
 import { briefCliInvocation } from '../../../../../apps/cli/src/lib/own-version.js'
-import { packageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
+import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
 import { detectVendoredVinaya } from '../../../../../apps/cli/src/lib/self-host.js'
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 /** The workspace member that owns the unabridged gate derivations a brief may name, and the name it must declare for this repository to be the one that owns them. */
 const AEG_CORE_DIR = 'packages/aeg-core'
 const AEG_CORE_PACKAGE_NAME = '@attalabs/aeg-core'
-const PACKAGE_ROOT = packageRoot(import.meta.resolve('@attalabs/vinaya/package.json'))
+const PACKAGE_ROOT = cliPackageRoot()
 const PACKAGED_TEMPLATE_PATH = join(PACKAGE_ROOT, 'aeg-root', 'templates', 'brief-template.md')
 const TEMPLATE_PATH = existsSync(PACKAGED_TEMPLATE_PATH)
   ? PACKAGED_TEMPLATE_PATH

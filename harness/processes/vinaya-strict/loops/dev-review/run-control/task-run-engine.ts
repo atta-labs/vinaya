@@ -3,7 +3,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import type { AgentVendor } from '../dispatch/dispatch.js'
 import { isDriverPidAlive, readDriverLock } from '../standalone/dev-review-loop/pause-resume.js'
-import { packageRoot } from '../../../../../../apps/cli/src/lib/package-root.js'
+import { cliPackageRoot } from '../../../../../../apps/cli/src/lib/package-root.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../../apps/cli/src/lib/run-paths.js'
 import type { TaskRunner } from '../../../../../../apps/cli/src/lib/config.js'
 
@@ -166,12 +166,7 @@ export const defaultEngineRunnerDeps: EngineRunnerDeps = {
 export const PROCESS_FOLDER_IN_CHECKOUT = 'harness/processes/vinaya-strict'
 
 export function engineRunnerScriptPath(): string {
-  return resolve(
-    packageRoot(import.meta.resolve('@attalabs/vinaya/package.json')),
-    '../..',
-    PROCESS_FOLDER_IN_CHECKOUT,
-    'bin/run-engine.ts'
-  )
+  return resolve(cliPackageRoot(), '../..', PROCESS_FOLDER_IN_CHECKOUT, 'bin/run-engine.ts')
 }
 
 /**
