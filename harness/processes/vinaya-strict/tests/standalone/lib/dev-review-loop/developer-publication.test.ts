@@ -25,6 +25,7 @@ import {
   pushBranchClassified
 } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
 import { ProtectedPathError } from '../../../../../../../apps/cli/src/lib/broker.js'
+import { VINAYA_BROKER_ROLES } from '../../../../integration/policies/roles.js'
 import { loopLogPathFor } from '../../../../../../../apps/cli/src/lib/loop-log.js'
 import {
   createLivePublicationState,
@@ -1186,7 +1187,11 @@ describe('main drift on a protected path, through the driver', () => {
       // The Broker's own protected-path refusal, as the real push returns it.
       pushTaskBranch: (input) => {
         touched.push([...input.touchedPaths])
-        return { ok: false, refusal: new ProtectedPathError(CI).message, hook: false }
+        return {
+          ok: false,
+          refusal: new ProtectedPathError(CI, VINAYA_BROKER_ROLES.surfaceOwner).message,
+          hook: false
+        }
       }
     })
 

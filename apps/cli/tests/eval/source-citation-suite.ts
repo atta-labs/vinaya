@@ -50,6 +50,7 @@ import { generatedRoleConfig, withStandaloneToolNames } from '../../src/lib/dev-
 import { type GeneratedAgentConfig, RESUME_SESSION_PLACEHOLDER } from '../../../../harness/kernel/isolation/policy'
 import { createWorld, usageOf, type ToolSelectionCase, type Usage, type World } from './tool-selection-suite'
 import { stripVinayaEnv } from '../lib/process-fixture'
+import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies'
 
 export const ADAPTERS = ['claude-code', 'codex'] as const
 export type Adapter = (typeof ADAPTERS)[number]
@@ -635,6 +636,7 @@ export async function liveTrial(
   }
   const socketPath = devToolsSocketPath(`source-citation:${adapter}:${testCase.id}:${trial}`)
   const host = await startDevToolsHost({
+    toolGrants: vinayaToolGrantPolicy(),
     socketPath,
     serverVersion: 'source-citation-1',
     context: switchable.context,

@@ -39,7 +39,10 @@ import {
   type ReviewerRole
 } from '../../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 import type { SourceDeliveryReceipt } from '../source-manifest'
-import { type GrantedRole, ROLE_TOOL_GRANTS } from '../task-tools/role-grants'
+import {
+  type GrantedRole,
+  ROLE_TOOL_GRANTS
+} from '../../../../../harness/processes/vinaya-strict/integration/policies/roles'
 import { AGENT_TOOL_CATALOG } from '../task-tools/tool-catalog'
 import type { Digest } from './contracts'
 import {
@@ -403,7 +406,7 @@ function renderSources(c: NeutralCase): RenderedSource[] {
         `${JSON.stringify(document.id)} cannot be written as one Documentation source`
       )
     }
-    // A reviewer's result has no field to report a source use in, so a
+    // A review result has no field to report a source use in, so a
     // relevant document could never be shown as used in a review case.
     if (c.kind === 'review' && document.relevant) {
       unexpressible(
@@ -480,7 +483,7 @@ function render(c: NeutralCase): VinayaProcessInput {
   // let the statement start a section of its own.
   if (/[\r\n]/.test(c.taskStatement))
     unexpressible('taskStatement', 'an objective is one line, and the statement has a line break')
-  // An answer case changes nothing, so the Developer is dispatched with no Surface.
+  // An answer case changes nothing, so its turn is dispatched with no Surface.
   const surface = c.kind === 'answer' ? null : renderSurface(c)
   const sources = renderSources(c)
   const roleToolGrants = renderGrants(c)
@@ -872,6 +875,7 @@ export const MAPPING_SOURCE_PATHS: readonly string[] = [
   'harness/processes/vinaya-strict/executing/code-reviewer/review-result.ts',
   'harness/processes/vinaya-strict/executing/developer/developer-turn-result.ts',
   'apps/cli/src/lib/task-tools/role-grants.ts',
+  'harness/processes/vinaya-strict/integration/policies/roles.ts',
   'harness/kernel/adapters/agents/manifest.ts',
   'packages/aeg-core/src/review-policy.ts',
   'packages/aeg-core/src/log/schema.ts',

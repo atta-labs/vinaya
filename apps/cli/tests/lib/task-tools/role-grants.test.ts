@@ -3,7 +3,6 @@ import net from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { OPERATOR_TOOL_GRANT } from '@attalabs/aeg-core'
 import { startDevToolsHost } from '../../../src/lib/task-tools/dev-tools-host.js'
 import {
   createDevToolsMcpServer,
@@ -11,14 +10,9 @@ import {
   dispatchDevTool,
   type DevToolContext
 } from '../../../src/lib/task-tools/dev-tools-server.js'
-import {
-  GRANTED_ROLES,
-  type GrantedRole,
-  isToolGranted,
-  ROLE_TOOL_GRANTS,
-  servedTools
-} from '../../../src/lib/task-tools/role-grants.js'
-import { AGENT_TOOL_CATALOG } from '../../../src/lib/task-tools/tool-catalog.js'
+import { servedTools } from '../../../src/lib/task-tools/role-grants.js'
+import type { GrantedRole } from '../../../../../harness/processes/vinaya-strict/integration/policies/roles.js'
+import { vinayaToolGrantPolicy } from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 
 /**
  * The capability grants: one table names each role's tools, and the
@@ -64,54 +58,29 @@ const VALID_ARGS: Record<string, unknown> = {
 }
 
 async function listed(role: GrantedRole): Promise<string[]> {
-  const srv = createDevToolsMcpServer({ serverVersion: 'test', context: recordingContext([]), role })
+  const srv = createDevToolsMcpServer({
+    toolGrants: vinayaToolGrantPolicy(),
+    serverVersion: 'test',
+    context: recordingContext([]),
+    role
+  })
   const resp = await srv.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))
   return (JSON.parse(resp as string).result.tools as Array<{ name: string }>).map((t) => t.name)
 }
 
-describe('ROLE_TOOL_GRANTS — the one grant table', () => {
-  it('grants the Developer exactly the seven Developer tools', () => {
-    expect(ROLE_TOOL_GRANTS.developer).toHaveLength(7)
-    expect([...ROLE_TOOL_GRANTS.developer].sort()).toEqual([...DEV_TOOL_NAMES].sort())
-  })
-  it('grants the code and security reviewers read_source only', () => {
-    expect(ROLE_TOOL_GRANTS['code-reviewer']).toEqual(['read_source'])
-    expect(ROLE_TOOL_GRANTS.security).toEqual(['read_source'])
-  })
-  it('grants the controller nothing', () => {
-    expect(ROLE_TOOL_GRANTS.controller).toEqual([])
-  })
-  it('names no Operator tool and no Operator role', () => {
-    expect(GRANTED_ROLES as readonly string[]).not.toContain('operator')
-    const granted = Object.values(ROLE_TOOL_GRANTS).flat()
-    for (const tool of OPERATOR_TOOL_GRANT) expect(granted).not.toContain(tool)
-  })
-  it('every granted tool is a catalog entry', () => {
-    const catalog = AGENT_TOOL_CATALOG.map((t) => t.name)
-    for (const tool of Object.values(ROLE_TOOL_GRANTS).flat()) expect(catalog).toContain(tool)
-  })
-  it('a role outside the table is granted nothing', () => {
-    expect(isToolGranted('operator', 'run_checks')).toBe(false)
-    expect(isToolGranted('planner', 'read_source')).toBe(false)
-  })
-  it('an annotation never grants: a read-only Developer tool is still not a reviewer’s', () => {
-    const readPr = AGENT_TOOL_CATALOG.find((t) => t.name === 'read_pull_request')
-    expect(readPr?.annotations.readOnlyHint).toBe(true)
-    expect(isToolGranted('code-reviewer', 'read_pull_request')).toBe(false)
-    expect(isToolGranted('security', 'read_pull_request')).toBe(false)
-  })
-})
+// The grant table's own assertions live with the process that owns it:
+// `harness/processes/vinaya-strict/tests/integration/policies/roles.test.ts`.
 
 describe('servedTools — granted and live', () => {
   it('serves the Developer every Developer tool', () => {
-    expect(servedTools('developer').map((t) => t.name)).toEqual([...DEV_TOOL_NAMES])
+    expect(servedTools(vinayaToolGrantPolicy(), 'developer').map((t) => t.name)).toEqual([...DEV_TOOL_NAMES])
   })
   it('serves each reviewer read_source and nothing else', () => {
-    expect(servedTools('code-reviewer').map((t) => t.name)).toEqual(['read_source'])
-    expect(servedTools('security').map((t) => t.name)).toEqual(['read_source'])
+    expect(servedTools(vinayaToolGrantPolicy(), 'code-reviewer').map((t) => t.name)).toEqual(['read_source'])
+    expect(servedTools(vinayaToolGrantPolicy(), 'security').map((t) => t.name)).toEqual(['read_source'])
   })
   it('serves the controller nothing', () => {
-    expect(servedTools('controller')).toEqual([])
+    expect(servedTools(vinayaToolGrantPolicy(), 'controller')).toEqual([])
   })
 })
 
@@ -127,7 +96,13 @@ describe('the driver-run server serves each role only its grant', () => {
     it(`${role}: every Developer tool refuses unauthorized / never / not_started, and no handler runs`, async () => {
       const calls: string[] = []
       for (const name of DEV_TOOL_NAMES) {
-        const result = await dispatchDevTool(recordingContext(calls), role, name, VALID_ARGS[name] ?? {})
+        const result = await dispatchDevTool(
+          vinayaToolGrantPolicy(),
+          recordingContext(calls),
+          role,
+          name,
+          VALID_ARGS[name] ?? {}
+        )
         expect(result.ok).toBe(false)
         if (!result.ok) {
           expect(result.error).toMatchObject({
@@ -143,31 +118,51 @@ describe('the driver-run server serves each role only its grant', () => {
   }
 
   it('the refusal comes before argument validation, so malformed input to an ungranted tool still reads unauthorized', async () => {
-    const result = await dispatchDevTool(recordingContext([]), 'code-reviewer', 'publish_changes', { nope: 1 })
+    const result = await dispatchDevTool(
+      vinayaToolGrantPolicy(),
+      recordingContext([]),
+      'code-reviewer',
+      'publish_changes',
+      { nope: 1 }
+    )
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.errorClass).toBe('unauthorized')
   })
 
   it('the Developer still reaches its handlers', async () => {
     const calls: string[] = []
-    const result = await dispatchDevTool(recordingContext(calls), 'developer', 'run_checks', {})
+    const result = await dispatchDevTool(
+      vinayaToolGrantPolicy(),
+      recordingContext(calls),
+      'developer',
+      'run_checks',
+      {}
+    )
     expect(result.ok).toBe(true)
     expect(calls).toEqual(['run_checks'])
   })
 
   it('a reviewer’s read_source on a context with no source reader refuses as unavailable, reaching no Developer handler', async () => {
     const calls: string[] = []
-    const result = await dispatchDevTool(recordingContext(calls), 'code-reviewer', 'read_source', {
-      sourceId: 's',
-      offset: 0
-    })
+    const result = await dispatchDevTool(
+      vinayaToolGrantPolicy(),
+      recordingContext(calls),
+      'code-reviewer',
+      'read_source',
+      {
+        sourceId: 's',
+        offset: 0
+      }
+    )
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.check).toBe('read-source-unavailable')
     expect(calls).toEqual([])
   })
 
   it('the Developer is refused read_source before any handler runs', async () => {
-    const result = await dispatchDevTool(recordingContext([]), 'developer', 'read_source', { sourceId: 's' })
+    const result = await dispatchDevTool(vinayaToolGrantPolicy(), recordingContext([]), 'developer', 'read_source', {
+      sourceId: 's'
+    })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toMatchObject({ errorClass: 'unauthorized', check: 'role-grant' })
   })
@@ -178,6 +173,7 @@ describe('the host enforces the grant over its real socket', () => {
     const dir = mkdtempSync(join(tmpdir(), 'role-grants-host-'))
     const calls: string[] = []
     const host = await startDevToolsHost({
+      toolGrants: vinayaToolGrantPolicy(),
       socketPath: join(dir, 'r.sock'),
       serverVersion: 'test',
       context: recordingContext(calls),

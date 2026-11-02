@@ -22,6 +22,7 @@ import {
   type DevToolContext
 } from '../../../src/lib/task-tools/dev-tools-server.js'
 import { stripVinayaEnv } from '../process-fixture.js'
+import { vinayaToolGrantPolicy } from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 
 /**
  * The driver-run dev-tools server (O1–O3): the seven tools over the shared wire
@@ -65,7 +66,12 @@ function okContext(overrides: Partial<DevToolContext> = {}): DevToolContext {
 }
 
 function server(context: DevToolContext) {
-  return createDevToolsMcpServer({ serverVersion: '0.0.0-test', context, role: 'developer' })
+  return createDevToolsMcpServer({
+    toolGrants: vinayaToolGrantPolicy(),
+    serverVersion: '0.0.0-test',
+    context,
+    role: 'developer'
+  })
 }
 
 async function call(srv: ReturnType<typeof server>, name: string, args: unknown = {}) {
@@ -197,7 +203,7 @@ describe('dispatchDevTool — direct dispatch of each tool', () => {
               : name === 'fetch_documentation'
                 ? { url: 'https://example.com/docs' }
                 : {}
-      const result = await dispatchDevTool(context, 'developer', name, args)
+      const result = await dispatchDevTool(vinayaToolGrantPolicy(), context, 'developer', name, args)
       expect(result.ok).toBe(true)
     }
   })
@@ -213,6 +219,7 @@ describe('dispatch capability', () => {
   async function callFrom(capabilities: DispatchCapabilityTable, supplied: string | undefined, peerPid: number | null) {
     const events: CapabilityRefusalEvent[] = []
     const result = await dispatchDevTool(
+      vinayaToolGrantPolicy(),
       okContext(),
       'developer',
       'run_checks',
@@ -272,6 +279,7 @@ describe('dispatch capability', () => {
   it('checks the capability before the role grant and before argument validation', async () => {
     const events: CapabilityRefusalEvent[] = []
     const ungranted = await dispatchDevTool(
+      vinayaToolGrantPolicy(),
       okContext(),
       'code-reviewer',
       'publish_changes',
@@ -296,7 +304,7 @@ describe('dispatch capability', () => {
   })
 
   it('a host without a capability table serves its single caller as before', async () => {
-    const result = await dispatchDevTool(okContext(), 'developer', 'run_checks', {})
+    const result = await dispatchDevTool(vinayaToolGrantPolicy(), okContext(), 'developer', 'run_checks', {})
     expect(result.ok).toBe(true)
   })
 })
@@ -332,6 +340,7 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
     const dir = mkdtempSync(join(tmpdir(), 'dev-tools-host-'))
     const socketPath = join(dir, 'driver.sock')
     const host = await startDevToolsHost({
+      toolGrants: vinayaToolGrantPolicy(),
       socketPath,
       serverVersion: '0.0.0-test',
       context: okContext(),
@@ -359,6 +368,7 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
     const capabilities = createDispatchCapabilityTable()
     const events: CapabilityRefusalEvent[] = []
     const host = await startDevToolsHost({
+      toolGrants: vinayaToolGrantPolicy(),
       socketPath,
       serverVersion: '0.0.0-test',
       context: okContext(),
@@ -422,6 +432,7 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
     const capabilities = createDispatchCapabilityTable()
     const events: CapabilityRefusalEvent[] = []
     const host = await startDevToolsHost({
+      toolGrants: vinayaToolGrantPolicy(),
       socketPath,
       serverVersion: '0.0.0-test',
       context: okContext(),
@@ -450,6 +461,7 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
     // A clean slate so the host itself, not a prior run, creates the directory.
     rmSync(socketDir, { recursive: true, force: true })
     const host = await startDevToolsHost({
+      toolGrants: vinayaToolGrantPolicy(),
       socketPath,
       serverVersion: '0.0.0-test',
       context: okContext(),

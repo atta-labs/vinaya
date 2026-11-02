@@ -38,6 +38,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ownVersion } from '../../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import { buildCodexExecpolicyRules } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
+import { vinayaToolGrantPolicy } from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 import {
   buildWorkerEnv,
   realConfinementPlatformDeps,
@@ -363,7 +364,7 @@ function buildAgentLaunch(
     }
   }
   const codexHome = stageProofCodexHome(bridge, scratchDir, confinement)
-  // The SAME argv a real Developer dispatch uses (`dispatch.ts` VENDOR_TABLE):
+  // The SAME argv a real dispatch uses (`dispatch.ts` VENDOR_TABLE):
   // `--json` so the proof can read Codex's own events (ruling round-2), the
   // prompt read from stdin (`-`), and `--strict-config`/`--skip-git-repo-check`/
   // `--dangerously-bypass-hook-trust` so the proof runs exactly the production
@@ -470,7 +471,8 @@ export async function devToolsProofCommand(args: string[]): Promise<void> {
     socketPath,
     serverVersion: ownVersion(),
     context: proofContext(recorded),
-    role: 'developer'
+    role: 'developer',
+    toolGrants: vinayaToolGrantPolicy()
   })
 
   const confinement = resolveProofConfinement(agent, 'developer', cwd, scratchDir)

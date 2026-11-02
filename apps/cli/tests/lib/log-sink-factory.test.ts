@@ -192,6 +192,8 @@ const SITES: Record<string, number> = {
   'apps/cli/tests/lib/log-sink-no-sync-spawn.test.ts installVinayaLogSinkFactory embedded': 1,
   'apps/cli/tests/lib/log-sink.test.ts installVinayaLogSinkFactory embedded': 1,
   'harness/processes/vinaya-strict/tests/integration/log/log-sink-factory.test.ts installVinayaLogSinkFactory embedded': 1,
+  'harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts installVinayaLogSinkFactory embedded': 2,
+  'apps/cli/tests/fixtures/checks/run-and-hang.ts installVinayaLogSinkFactory code': 1,
   // Kernel contract tests: each builds the Log client's own sink with a branch reader it gives itself.
   'apps/cli/tests/checks/runner.test.ts createLogSink code': 1,
   'apps/cli/tests/commands/log-emit.test.ts createLogSink code': 1,

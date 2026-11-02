@@ -46,7 +46,7 @@ import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from '.
 import { DEV_TOOLS_MCP_SERVER_NAME, DISPATCH_CAPABILITY_ARGUMENT } from './dev-tools-names.js'
 import type { FailedCheckLog } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/pr-facts.js'
 import { AGENT_TOOL_CATALOG, DEV_TOOL_CATALOG, DEV_TOOL_NAMES, serveTool } from './tool-catalog.js'
-import { type GrantedRole, isToolGranted, ROLE_TOOL_GRANTS, servedTools } from './role-grants.js'
+import { assertToolGrantPolicy, grantedTools, isToolGranted, servedTools, type ToolGrantPolicy } from './role-grants.js'
 import { validatesJsonSchema } from './result-proof.js'
 import {
   FETCH_DOCUMENTATION_TOOL,
@@ -104,7 +104,7 @@ export type CapabilityRefusalReason = 'missing' | 'expired' | 'revoked' | 'repla
 
 /** The one audit record every refused call writes: the role, the tool, the reason and what was observed. */
 export type CapabilityRefusalEvent = {
-  role: GrantedRole
+  role: string
   tool: string
   reason: CapabilityRefusalReason
   detail: string
@@ -229,12 +229,14 @@ function readString(args: unknown, key: string): string | null {
  * a refusal into `isError: true`.
  */
 export async function dispatchDevTool(
+  toolGrants: ToolGrantPolicy,
   context: DevToolContext,
-  role: GrantedRole,
+  role: string,
   name: string,
   args: unknown,
   capability?: DispatchCapabilityCheck
 ): Promise<DevToolResult<unknown>> {
+  assertToolGrantPolicy(toolGrants, 'dispatchDevTool')
   // The capability is the first check: before the role grant, argument validation and any handler.
   if (capability) {
     const supplied =
@@ -259,8 +261,8 @@ export async function dispatchDevTool(
     const { [DISPATCH_CAPABILITY_ARGUMENT]: _carried, ...rest } = args as Record<string, unknown>
     args = rest
   }
-  if (!isToolGranted(role, name)) {
-    const granted = ROLE_TOOL_GRANTS[role]
+  if (!isToolGranted(toolGrants, role, name)) {
+    const granted = grantedTools(toolGrants, role)
     return {
       ok: false,
       error: devToolError(
@@ -413,7 +415,9 @@ export type CreateDevToolsMcpServerOptions = {
   serverVersion: string
   context: DevToolContext
   /** The dispatched role whose grant decides what is listed and what may be called. */
-  role: GrantedRole
+  role: string
+  /** The process's tool-grant policy; a server built without one is refused. */
+  toolGrants: ToolGrantPolicy
   /** Checks the capability each call carries; absent, the server serves its single caller as the standalone dispatch does. */
   capability?: DispatchCapabilityCheck
 }
@@ -425,11 +429,12 @@ export type CreateDevToolsMcpServerOptions = {
  * `handleLine` directly with a faked context.
  */
 export function createDevToolsMcpServer(opts: CreateDevToolsMcpServerOptions): McpServerCore {
+  const toolGrants = assertToolGrantPolicy(opts.toolGrants, 'createDevToolsMcpServer')
   return createMcpServerCore({
     protocolVersion: MCP_PROTOCOL_VERSION,
     serverName: DEV_TOOLS_MCP_SERVER_NAME,
     serverVersion: opts.serverVersion,
-    listTools: () => servedTools(opts.role).map(serveTool),
-    callTool: (name, args) => dispatchDevTool(opts.context, opts.role, name, args, opts.capability)
+    listTools: () => servedTools(toolGrants, opts.role).map(serveTool),
+    callTool: (name, args) => dispatchDevTool(toolGrants, opts.context, opts.role, name, args, opts.capability)
   })
 }

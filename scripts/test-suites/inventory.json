@@ -377,7 +377,9 @@
             "apps/cli/tests/lib/log-sink.test.ts",
             "apps/cli/tests/lib/log-destination.test.ts",
             "harness/processes/vinaya-strict/tests/integration/log/branch-issue.test.ts",
-            "harness/processes/vinaya-strict/tests/integration/log/log-sink-factory.test.ts"
+            "harness/processes/vinaya-strict/tests/integration/log/log-sink-factory.test.ts",
+            "harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts",
+            "apps/cli/tests/checks/runner/cancelled.test.ts"
           ]
         }
       ],

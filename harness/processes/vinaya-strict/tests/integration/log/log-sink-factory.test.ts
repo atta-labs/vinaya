@@ -10,7 +10,6 @@ import { mkdtempSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../apps/cli/tests/lib/process-fixture.js'
-import type { LogSinkDeps } from '../../../../../../apps/cli/src/lib/log-sink.js'
 import { createVinayaLogSink, resolveVinayaLogAppendPath } from '../../../integration/log/log-sink-factory.js'
 
 const DISPATCHED = {
@@ -23,7 +22,10 @@ const DISPATCHED = {
   prompt_hash: 'sha256:abc'
 }
 
-function fixedDeps(dir: string): Partial<LogSinkDeps> {
+// The overrides the factory takes, named through the factory itself rather than the Log client.
+type SinkOverrides = NonNullable<Parameters<typeof createVinayaLogSink>[0]>
+
+function fixedDeps(dir: string): SinkOverrides {
   return {
     outboxRoot: () => join(dir, 'outbox'),
     resolveLogDestination: () => ({ kind: 'folder', folder: join(dir, 'outbox') }),

@@ -16,8 +16,10 @@ import {
   driverDevBridgeInvocation
 } from '../../src/lib/task-tools/dev-tools-registration.js'
 import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
-import { type GrantedRole, servedTools } from '../../src/lib/task-tools/role-grants.js'
+import { servedTools } from '../../src/lib/task-tools/role-grants.js'
+import type { GrantedRole } from '../../../../harness/processes/vinaya-strict/integration/policies/roles.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture.js'
+import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 
 /**
  * Live grant conformance, shared by `claude.test.ts` and `codex.test.ts`: a
@@ -265,6 +267,7 @@ async function runGrantSession(
   const scratchDir = mkdtempSync(join(tmpdir(), `vinaya-grant-live-${agent}-`))
   const calls: string[] = []
   const host = await startDevToolsHost({
+    toolGrants: vinayaToolGrantPolicy(),
     socketPath: devToolsSocketPath(`grant-live:${randomUUID()}`),
     serverVersion: '0.0.0-grant-live',
     context: recordingContext(calls),
@@ -343,7 +346,7 @@ async function runGrantSession(
 export function defineLiveGrantCases(agent: LiveAgent): void {
   describe.skipIf(!LIVE_GRANT_CONFORMANCE)(`${agent} — each role sees exactly its granted tools (live)`, () => {
     for (const role of ['developer', 'code-reviewer', 'security'] as const) {
-      const granted = servedTools(role).map((tool) => tool.name)
+      const granted = servedTools(vinayaToolGrantPolicy(), role).map((tool) => tool.name)
       it(
         `${role}: the session sees exactly ${granted.length === 0 ? 'no tools' : granted.join(', ')}`,
         async () => {

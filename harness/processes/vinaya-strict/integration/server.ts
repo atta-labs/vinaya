@@ -45,7 +45,8 @@ import {
   type McpServerCore
 } from '../../../../apps/cli/src/lib/task-tools/mcp-protocol.js'
 import { taskPrReadHandler } from '../loops/dev-review/run-control/pr-read.js'
-import { refuseUngrantedTool } from '../../../../apps/cli/src/lib/task-tools/router.js'
+import { createTaskToolRouter } from '../../../../apps/cli/src/lib/task-tools/router.js'
+import { vinayaRouterPolicies } from './policies/vinaya-policies.js'
 import { defaultTaskResumeHandler } from '../loops/dev-review/run-control/resume.js'
 import { defaultTaskStartHandler } from '../loops/dev-review/run-control/start.js'
 
@@ -108,8 +109,9 @@ export const defaultTaskToolHandlers: TaskToolHandlers = {
 /**
  * Routes one tool call to its handler through two refusals, both BEFORE a
  * handler runs so a forbidden call reaches no effect: first, a name not in
- * the catalog at all; second, `grantCheck` (`refuseUngrantedTool` by
- * default — the router's grant gate), a catalog name outside the Operator's
+ * the catalog at all; second, `grantCheck` (by default the
+ * `refuseUngrantedTool` of a router built from `vinayaRouterPolicies` — the
+ * router's grant gate), a catalog name outside the Operator's
  * grant — every caller of this server speaks for the Operator seat, so this
  * is the one place that gate actually runs, not just where it is unit-
  * tested. `grantCheck` is injectable, like `handlers`, so a fixture can force
@@ -124,7 +126,7 @@ export async function dispatchToolCall(
   name: string,
   input: unknown,
   ctx: CallerContext,
-  grantCheck: (tool: string) => TaskToolError | null = refuseUngrantedTool
+  grantCheck: (tool: string) => TaskToolError | null = createTaskToolRouter(vinayaRouterPolicies()).refuseUngrantedTool
 ): Promise<TaskToolCallResult<unknown>> {
   if (!isTaskToolName(name)) {
     return { ok: false, error: taskToolError('validation', `no such task tool: ${JSON.stringify(name)}`) }

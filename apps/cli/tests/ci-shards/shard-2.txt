@@ -37,3 +37,7 @@ tests/lib/push-progress-observer.test.ts
 tests/conformance/packed-push-progress.test.ts
 tests/placement.test.ts
 tests/lib/log-sink-factory.test.ts
+tests/lib/broker/policy-required.test.ts
+tests/lib/role-policy-parity.test.ts
+tests/lib/task-tools/policy-required.test.ts
+tests/lib/worker-boundary-policy.test.ts

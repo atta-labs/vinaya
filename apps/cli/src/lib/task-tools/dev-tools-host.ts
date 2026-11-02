@@ -35,7 +35,7 @@ import {
   createDevToolsMcpServer,
   type DevToolContext
 } from './dev-tools-server.js'
-import type { GrantedRole } from './role-grants.js'
+import { assertToolGrantPolicy, type ToolGrantPolicy } from './role-grants.js'
 
 export type DevToolsHost = {
   /** The unix-socket path the bridge connects to — write this into the per-dispatch MCP registration. */
@@ -48,8 +48,10 @@ export type StartDevToolsHostOptions = {
   socketPath: string
   serverVersion: string
   context: DevToolContext
-  /** The dispatched role; the host serves only the tools `role-grants.ts` grants it. */
-  role: GrantedRole
+  /** The dispatched role; the host serves only the tools `toolGrants` grants it. */
+  role: string
+  /** The process's tool-grant policy; a host started without one is refused before any socket is bound. */
+  toolGrants: ToolGrantPolicy
   /**
    * The capabilities minted for this role's dispatches. With a table, every
    * call must carry a live capability of a dispatch whose launched process is
@@ -232,6 +234,7 @@ function descendsFrom(pid: number, ancestor: number): boolean {
  * the host. A stale socket file from a crashed prior run is removed first.
  */
 export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise<DevToolsHost> {
+  const toolGrants = assertToolGrantPolicy(opts.toolGrants, 'startDevToolsHost')
   // Create the socket's parent directory owner-only (mode 0700) so no other
   // local user can traverse into it and reach the socket — the socket itself is
   // then chmod'd 0600 below. `mode` is subject to the process umask, so chmod
@@ -263,6 +266,7 @@ export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise
       serverVersion: opts.serverVersion,
       context: opts.context,
       role: opts.role,
+      toolGrants,
       ...(capabilities
         ? {
             capability: {

@@ -155,10 +155,29 @@ describe('real runtime directory guard', () => {
       const mutatedCore = core.replace('root === START_ROOT ? LIVE_AT_START : []', '[]')
       expect(mutatedCore).not.toBe(core)
       writeFileSync(join(work, 'real-runtime-guard-core.ts'), mutatedCore)
-      const preload = readFileSync(join(lib, 'test-env-preload.ts'), 'utf-8').replace(
-        /from '\.\/test-temp-fixture'/,
-        `from ${JSON.stringify(join(lib, 'test-temp-fixture.ts'))}`
-      )
+      const factoryImport = "'../../../../harness/processes/vinaya-strict/integration/log/log-sink-factory.js'"
+      const unmutatedPreload = readFileSync(join(lib, 'test-env-preload.ts'), 'utf-8')
+      expect(unmutatedPreload).toContain(factoryImport)
+      const preload = unmutatedPreload
+        .replace(/from '\.\/test-temp-fixture'/, `from ${JSON.stringify(join(lib, 'test-temp-fixture.ts'))}`)
+        .replace(
+          factoryImport,
+          JSON.stringify(
+            join(
+              lib,
+              '..',
+              '..',
+              '..',
+              '..',
+              'harness',
+              'processes',
+              'vinaya-strict',
+              'integration',
+              'log',
+              'log-sink-factory.ts'
+            )
+          )
+        )
       writeFileSync(join(work, 'test-env-preload.ts'), preload)
       const dead = Bun.spawnSync(['true']).pid
       const run = (pid: number, preloadPath: string) => {

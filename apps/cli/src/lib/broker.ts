@@ -7,20 +7,23 @@
  * against target T at task N, actually allowed to ask for that" — before
  * the caller's own poster closure is ever invoked.
  *
- * "Parent" names where this runs: the Controller process
- * (`apps/cli/specs/isolation.md` §1, "Controller" row) — the trusted `vinaya`
- * CLI code, never inside a dispatched Worker/Reviewer child itself. A
- * caller-supplied claim of role authenticates nothing on its own (the same
- * posture `task-tools/router.ts`'s own module doc states for the Operator's
- * tool grant): `VINAYA_ROLE` is read from the CALLER's own environment, so a
- * compromised or merely buggy Worker (an "untrusted execution surface"
- * running arbitrary Bash, per `isolation.md`) could set it to anything
- * before invoking a `vinaya` command. `authenticateWorkerInvocation` accepts
- * only the one dispatched role `isolation.md`'s boundary table actually
- * names as Worker (`developer`) — every other value, including `principal`
- * (never itself a dispatched child; `isolation.md`'s Operator row is the
- * human, not a `VINAYA_ROLE` a controller ever spawns), is refused here,
- * never silently mapped to a default grant.
+ * "Parent" names where this runs: the trusted process
+ * (`apps/cli/specs/isolation.md` §1) — the trusted `vinaya` CLI code, never
+ * inside a dispatched child itself. A caller-supplied claim of role
+ * authenticates nothing on its own (the same posture `task-tools/router.ts`'s
+ * own module doc states for its seat's tool grant): `VINAYA_ROLE` is read
+ * from the CALLER's own environment, so a compromised or merely buggy Worker
+ * (an "untrusted execution surface" running arbitrary Bash, per
+ * `isolation.md`) could set it to anything before invoking a `vinaya`
+ * command. `authenticateWorkerInvocation` accepts only a role the broker's
+ * role policy maps to the Worker grant — every other value, recognized or
+ * not, is refused here, never silently mapped to a default grant.
+ *
+ * Policies: the broker names no role and no repository path. A broker is
+ * built (`createBroker`) from three policies the process supplies — a
+ * protected-path policy, a launch-record verifier and a role policy — and
+ * building one without any of them is refused (`MissingBrokerPolicyError`),
+ * never defaulted to no protection or to an unchecked task claim.
  *
  * Grant vocabulary reuses `EffectIdentity`'s own shape (`effects.ts`): an
  * operation, a target, an input version — the exact four-field identity
@@ -37,20 +40,7 @@
  * Real credential minting stays future work, not yet assigned anywhere.
  */
 
-import {
-  acquireOwnership,
-  type ControlStoreDeps,
-  isProtectedAdminPath,
-  normalizeTouchedPath,
-  readEffect,
-  type Role,
-  ROLE_VALUES
-} from '@attalabs/aeg-core'
-import {
-  type DispatchTeeRecoveryDeps,
-  launchRecordMatchesRun,
-  realDispatchTeeRecoveryDeps
-} from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
+import { acquireOwnership, type ControlStoreDeps, normalizeTouchedPath, readEffect } from '@attalabs/aeg-core'
 import { createEffectExecutor, type EffectReconciler, sha256Hex } from './effects.js'
 import { log as defaultLogEvent, type LogEventInput } from './log-sink.js'
 
@@ -61,12 +51,70 @@ import { log as defaultLogEvent, type LogEventInput } from './log-sink.js'
  * replay checks `requestEffect` runs before ever reaching the effect
  * executor (whose own `attempted`/`observed`/`verified` sequence,
  * `effects.ts`, picks up from there). Threaded as an optional trailing
- * parameter, defaulting to the real global sink — the SAME `deps`-with-a-
- * real-default shape `authenticateWorkerInvocation`'s own
- * `DispatchTeeRecoveryDeps` parameter already uses in this file, rather
- * than a second, differently-shaped injection convention.
+ * parameter, defaulting to the real global sink.
  */
 export type BrokerLogEvent = (e: LogEventInput) => void
+
+// --- the policies a broker is built from -----------------------------------
+
+/**
+ * Answers whether a touched path is a protected administrative path. The
+ * broker normalizes every touched path (`normalizeTouchedPath`) BEFORE asking,
+ * so `isProtected` only ever sees a normalized path.
+ */
+export type ProtectedPathPolicy = {
+  isProtected: (normalizedPath: string) => boolean
+}
+
+/**
+ * Answers whether the trusted launcher durably recorded launching run `runId`
+ * as `role` for `task` before the child was spawned — the cross-check that
+ * keeps a child from claiming a task it was not launched for.
+ */
+export type LaunchRecordVerifier = {
+  matchesRun: (runId: string, role: string, task: number) => boolean
+}
+
+/** The role facts the broker reads: the closed set of roles an invocation may name at all, which of them hold the Worker grant, and who a protected-path refusal sends the path to. */
+export type BrokerRolePolicy = {
+  readonly recognizedRoles: readonly string[]
+  readonly workerRoles: readonly string[]
+  /** Who adds a path to a task's Surface, as the protected-path refusal names them. */
+  readonly surfaceOwner: string
+}
+
+export type BrokerPolicies = {
+  protectedPaths: ProtectedPathPolicy
+  launchRecords: LaunchRecordVerifier
+  roles: BrokerRolePolicy
+}
+
+/** Thrown by `createBroker` when a policy is missing or malformed — a broker is never built with no protection, no launch-record check or no role set. */
+export class MissingBrokerPolicyError extends Error {
+  constructor(readonly policy: keyof BrokerPolicies) {
+    super(`broker: refusing to build without its ${BROKER_POLICY_NAMES[policy]} (${policy})`)
+    this.name = 'MissingBrokerPolicyError'
+  }
+}
+
+const BROKER_POLICY_NAMES: Readonly<Record<keyof BrokerPolicies, string>> = {
+  protectedPaths: 'protected-path policy',
+  launchRecords: 'launch-record verifier',
+  roles: 'role policy'
+}
+
+function assertBrokerPolicies(policies: BrokerPolicies | undefined): BrokerPolicies {
+  if (typeof policies?.protectedPaths?.isProtected !== 'function') throw new MissingBrokerPolicyError('protectedPaths')
+  if (typeof policies.launchRecords?.matchesRun !== 'function') throw new MissingBrokerPolicyError('launchRecords')
+  if (
+    !Array.isArray(policies.roles?.recognizedRoles) ||
+    !Array.isArray(policies.roles?.workerRoles) ||
+    typeof policies.roles?.surfaceOwner !== 'string'
+  ) {
+    throw new MissingBrokerPolicyError('roles')
+  }
+  return policies
+}
 
 function operationEvent(
   operation: string,
@@ -80,22 +128,23 @@ function operationEvent(
 // --- invocation context (O1) ------------------------------------------------
 
 /**
- * The two grantable invocation contexts this broker authorizes. Reviewer,
- * Controller and Repository-subprocess (`isolation.md` §1) never request an
- * effect through here: a Reviewer holds no forge-write grant at all (it is
- * never a broker role), and Controller/Repository-subprocess are the
- * trusted code that CALLS this module, not a role granted BY it.
+ * The two grantable invocation channels this broker authorizes
+ * (`isolation.md` §1): the Worker channel, for a dispatched child whose role
+ * the role policy maps to it, and the task-tool seat's channel. Every other
+ * party never requests an effect through here: a read-only child holds no
+ * forge-write grant at all, and the trusted process CALLS this module rather
+ * than being granted by it.
  */
 export type BrokerRole = 'worker' | 'operator'
 
-/** The one dispatched `VINAYA_ROLE` value that maps to the Worker broker role — `isolation.md` §1's own "Worker" row ("The dispatched Developer role's ... child process"). Every other role value dispatch ever sets (`code-reviewer`, `security`) is a real, legitimately dispatched role that simply holds no Worker grant; `principal`/`planner`/`archivist`/`architect` are never dispatched-child values at all. */
-const DISPATCHED_ROLE_TO_BROKER_ROLE: Readonly<Partial<Record<Role, BrokerRole>>> = {
-  developer: 'worker'
+/** A role the role policy maps to the Worker channel. Every other recognized role is a real role that simply holds no Worker grant. */
+function brokerRoleFor(roles: BrokerRolePolicy, role: string): BrokerRole | undefined {
+  return roles.workerRoles.includes(role) ? 'worker' : undefined
 }
 
-/** `role in DISPATCHED_ROLE_TO_BROKER_ROLE` alone doesn't narrow `string` to `Role` for TypeScript — this does, off the SAME closed vocabulary `envelope.ts`'s own `isRole` validates the Vinaya Log's `subject.role` against. */
-function isDispatchedRole(value: string | undefined): value is Role {
-  return value !== undefined && (ROLE_VALUES as readonly string[]).includes(value)
+/** Whether `value` is in the role policy's closed vocabulary at all. */
+function isRecognizedRole(roles: BrokerRolePolicy, value: string | undefined): value is string {
+  return value !== undefined && roles.recognizedRoles.includes(value)
 }
 
 /** Thrown by both `authenticate*Invocation` functions — an invocation context that cannot be trusted is refused before any grant is even looked up, never defaulted to the least-privileged role silently (silently downgrading would hide a forged claim rather than surfacing it). */
@@ -149,13 +198,13 @@ function assertPositiveTaskId(task: number, raw: unknown): number {
 
 /**
  * Authenticates a Worker's invocation context from the SAME attribution
- * variables `dispatchRole` sets on every spawned child's own environment
- * (`dispatch.ts`, `VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_RUN_ID`) — never a
- * value the caller passes as a function argument, since an argument is
- * exactly the self-asserted claim `task-tools/router.ts`'s own module doc
- * says authenticates nothing. `VINAYA_ROLE=developer` is the only value
- * this maps to a grantable role; anything else — a forged `principal`, a
- * real but ungranted `code-reviewer`, a missing or empty value — is
+ * variables the role launcher sets on every spawned child's own environment
+ * (`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_RUN_ID`) — never a value the caller
+ * passes as a function argument, since an argument is exactly the
+ * self-asserted claim `task-tools/router.ts`'s own module doc says
+ * authenticates nothing. Only a role the role policy maps to the Worker
+ * channel is grantable; anything else — a forged role outside the policy's
+ * closed set, a real but ungranted role, a missing or empty value — is
  * refused.
  *
  * `VINAYA_ROLE` and `VINAYA_TASK` both come from the SAME caller-controlled
@@ -163,27 +212,27 @@ function assertPositiveTaskId(task: number, raw: unknown): number {
  * (this module's own header doc) — accepting `VINAYA_TASK` at face value
  * would let a Worker genuinely dispatched for one task claim any other
  * task id and satisfy every downstream task-binding check with a forged
- * value. `launchRecordMatchesRun` (`dispatch.ts`) closes that: it looks for
- * a launch record the CONTROLLER itself wrote, before this child was ever
+ * value. The launch-record verifier closes that: it looks for a launch
+ * record the trusted launcher itself wrote, before this child was ever
  * spawned, naming the presented `(runId, role, task)` triple exactly — a
  * forged task finds no such record (the real one sits at the child's true
  * task), so the claim is refused before a grant is ever checked. `runId`
- * is `dispatchRole`'s own generated identifier, never a value the child
+ * is the launcher's own generated identifier, never a value the child
  * chooses.
  */
-export function authenticateWorkerInvocation(
+function authenticateWorkerInvocation(
+  policies: BrokerPolicies,
   env: Readonly<Record<string, string | undefined>>,
-  deps: DispatchTeeRecoveryDeps = realDispatchTeeRecoveryDeps(),
   logEvent: BrokerLogEvent = defaultLogEvent
 ): InvocationContext {
   try {
     const role = env.VINAYA_ROLE
-    if (!isDispatchedRole(role)) {
+    if (!isRecognizedRole(policies.roles, role)) {
       throw new ForgedInvocationError(
         `VINAYA_ROLE ${JSON.stringify(role ?? null)} is not a recognized dispatched role at all`
       )
     }
-    const mapped = DISPATCHED_ROLE_TO_BROKER_ROLE[role]
+    const mapped = brokerRoleFor(policies.roles, role)
     if (mapped === undefined) {
       throw new ForgedInvocationError(
         `VINAYA_ROLE ${JSON.stringify(role)} does not map to a broker-grantable Worker role`
@@ -197,7 +246,7 @@ export function authenticateWorkerInvocation(
     if (runId === undefined || runId.trim().length === 0) {
       throw new ForgedInvocationError('no VINAYA_RUN_ID on this invocation — cannot cross-check the claimed task')
     }
-    if (!launchRecordMatchesRun(deps, runId, role, validTask)) {
+    if (!policies.launchRecords.matchesRun(runId, role, validTask)) {
       throw new ForgedInvocationError(
         `no launch record names run ${JSON.stringify(runId)} as role ${JSON.stringify(role)} for task ${validTask} — the claimed task does not match what dispatchRole actually launched this child for`
       )
@@ -259,7 +308,7 @@ export function authenticateOperatorInvocation(
  * Branch and change operations — what O2 calls "required branch and change
  * operations." `branch-lease-push` is the force-with-lease push of the task's
  * own branch after the driver rebased it onto the default branch; only the
- * driver's own publication code requests it (no Developer tool names it), and
+ * driver's own publication code requests it (no agent tool names it), and
  * `requestEffect` refuses it for any target outside `refs/heads/task/`.
  */
 export const WORKER_OPERATIONS = ['branch-push', 'branch-lease-push', 'pr-open', 'pr-comment'] as const
@@ -279,8 +328,8 @@ export type Operation = WorkerOperation | OperatorOperation
  * protected merge and a review-approval publication are O2's named Worker
  * denials; human resolution of a paused/escalated run (a resume/cancel
  * decision, or the ruling that unblocks one) is O3's — it belongs to the
- * Principal's own forge-identity-gated channel (`forge-write.ts`'s
- * `refuseUnlessPrincipal`), a DIFFERENT authenticated channel than this
+ * human owner's own forge-identity-gated channel (`forge-write.ts`), a
+ * DIFFERENT authenticated channel than this
  * broker, never something this broker's own grant table extends to either
  * role.
  */
@@ -378,21 +427,28 @@ function assertLeasePushTarget(operation: string, target: string): void {
 }
 
 export class ProtectedPathError extends Error {
-  constructor(readonly path: string) {
+  /** `surfaceOwner` is the role policy's name for who widens a task's Surface, as the refusal prints it. */
+  constructor(
+    readonly path: string,
+    surfaceOwner: string
+  ) {
     super(
-      `broker: refusing an operation that touches a protected administrative policy path: ${path} — the task's Surface does not cover it; the Planner must add the path to the task's Surface`
+      `broker: refusing an operation that touches a protected administrative policy path: ${path} — the task's Surface does not cover it; ${surfaceOwner} must add the path to the task's Surface`
     )
     this.name = 'ProtectedPathError'
   }
 }
 
+/** Normalizes each touched path first, then asks the protected-path policy about the normalized form — never the raw one. */
 function assertNoProtectedPaths(
+  policies: BrokerPolicies,
   paths: readonly string[] | undefined,
   surfaceCoversPath: ((path: string) => boolean) | undefined
 ): void {
   for (const path of paths ?? []) {
-    if (isProtectedAdminPath(path) && !surfaceCoversPath?.(normalizeTouchedPath(path)))
-      throw new ProtectedPathError(path)
+    const normalized = normalizeTouchedPath(path)
+    if (policies.protectedPaths.isProtected(normalized) && !surfaceCoversPath?.(normalized))
+      throw new ProtectedPathError(path, policies.roles.surfaceOwner)
   }
 }
 
@@ -443,7 +499,7 @@ export type BrokerEffectRequest = {
   target: string
   /** `EffectIdentity.inputVersion` — see `assertNoReplayedInputVersion`. */
   inputVersion: number
-  /** Repo-relative paths this operation would touch, when applicable (a `branch-push`'s changed files) — checked against `PROTECTED_ADMIN_PATHS` regardless of role or grant, unless `surfaceCoversPath` accepts the path. */
+  /** Repo-relative paths this operation would touch, when applicable (a `branch-push`'s changed files) — each normalized, then checked against the protected-path policy regardless of role or grant, unless `surfaceCoversPath` accepts the path. */
   touchedPaths?: readonly string[]
   /** Given a normalized protected path, `true` only when the task's frozen Surface names it. Absent (or no resolvable Surface) keeps every protected path refused; supplied by the driver from the task Issue, never from anything the agent writes. */
   surfaceCoversPath?: (path: string) => boolean
@@ -475,7 +531,8 @@ export type BrokerEffectRequest = {
  * refused by `effects.ts`'s own `assertCurrentEpoch`, exactly as it is for
  * every other control-store writer — this is O1's "ownership" check.
  */
-export function requestEffect(
+function requestEffect(
+  policies: BrokerPolicies,
   deps: ControlStoreDeps,
   context: InvocationContext,
   request: BrokerEffectRequest,
@@ -486,7 +543,7 @@ export function requestEffect(
     assertGranted(context.role, request.operation)
     assertTargetScopedToTask(context.task, request.target)
     assertLeasePushTarget(request.operation, request.target)
-    assertNoProtectedPaths(request.touchedPaths, request.surfaceCoversPath)
+    assertNoProtectedPaths(policies, request.touchedPaths, request.surfaceCoversPath)
     assertNoReplayedInputVersion(deps, context.task, request.key, request.inputVersion)
   } catch (err) {
     logEvent(
@@ -531,6 +588,38 @@ export function requestEffect(
     poster: request.poster,
     reconcile: request.reconcile
   })
+}
+
+// --- building a broker -------------------------------------------------------
+
+/** A broker bound to its policies: the Worker authentication that reads the role policy and launch-record verifier, and the effect request that reads the protected-path policy. */
+export type Broker = {
+  authenticateWorkerInvocation: (
+    env: Readonly<Record<string, string | undefined>>,
+    logEvent?: BrokerLogEvent
+  ) => InvocationContext
+  authenticateOperatorInvocation: typeof authenticateOperatorInvocation
+  requestEffect: (
+    deps: ControlStoreDeps,
+    context: InvocationContext,
+    request: BrokerEffectRequest,
+    logEvent?: BrokerLogEvent
+  ) => string
+}
+
+/**
+ * Builds a broker from the policies the process supplies. Every policy is
+ * required: a missing or malformed one is refused here
+ * (`MissingBrokerPolicyError`, naming it), so no broker ever runs with no
+ * protected-path check, no launch-record cross-check or no role set.
+ */
+export function createBroker(policies: BrokerPolicies): Broker {
+  const bound = assertBrokerPolicies(policies)
+  return {
+    authenticateWorkerInvocation: (env, logEvent) => authenticateWorkerInvocation(bound, env, logEvent),
+    authenticateOperatorInvocation,
+    requestEffect: (deps, context, request, logEvent) => requestEffect(bound, deps, context, request, logEvent)
+  }
 }
 
 // Re-exported so a caller that needs to pre-check ownership (rather than

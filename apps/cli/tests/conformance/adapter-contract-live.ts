@@ -42,6 +42,7 @@ import {
   PLANTED_SECRET,
   readTurn
 } from './adapter-contract.js'
+import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 
 /**
  * The live adapter-conformance suite: the shared case list of
@@ -240,6 +241,7 @@ export async function runContractDispatches(agent: ContractAdapter): Promise<Dis
   spawnSyncBudgeted('git', ['init', '--quiet', scratch], { encoding: 'utf8' })
   const recorded: Array<{ tool: string; args: unknown; result: unknown }> = []
   const host = await startDevToolsHost({
+    toolGrants: vinayaToolGrantPolicy(),
     socketPath: devToolsSocketPath(`adapter-contract:${randomUUID()}`),
     serverVersion: ownVersion(),
     context: proofContext(recorded),
