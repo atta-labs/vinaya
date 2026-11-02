@@ -12,7 +12,7 @@
     },
     {
       "file": "apps/cli/tests/eval/generic-task-statements.json",
-      "sha256": "38e5c1f960ae33eb1588f575aca450b8bc5e75bb7897dcdf2bb931fc81f11af9"
+      "sha256": "326aee9c7e405dae0237227b30fc00c55e40bac1126e143e51ac95893ebb0984"
     }
   ],
   "suites": [
