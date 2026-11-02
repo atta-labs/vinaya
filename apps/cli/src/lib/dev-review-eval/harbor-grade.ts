@@ -15,6 +15,7 @@
  * when every generic grader passes, `0` otherwise.
  */
 
+import { installVinayaLogSinkFactory } from './step-one'
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -356,6 +357,8 @@ export async function harborGradeCommand(argv: readonly string[]): Promise<numbe
 }
 
 if (import.meta.main) {
+  // An entry point: Log events reach the sink the process factory builds.
+  installVinayaLogSinkFactory()
   harborGradeCommand(process.argv.slice(2))
     .then((code) => process.exit(code))
     .catch((error) => {

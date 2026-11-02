@@ -170,11 +170,19 @@ const EMBEDDED_CALL = new RegExp(`\\b(${CENSUSED_CALLS.join('|')})\\s*\\(`, 'g')
 const FACTORY_MODULE = 'harness/processes/vinaya-strict/integration/log/log-sink-factory.ts'
 
 /** The entry points that install the process factory before any command or run starts. */
-const ENTRY_POINTS = ['apps/cli/src/index.ts', 'harness/processes/vinaya-strict/bin/run-engine.ts']
+const ENTRY_POINTS = [
+  'apps/cli/src/index.ts',
+  'harness/processes/vinaya-strict/bin/run-engine.ts',
+  // The evaluation programs, each run on its own.
+  ...['harbor-grade', 'harbor-results', 'harbor-tasks', 'harbor-trial', 'step-one', 'whole-loop'].map(
+    (name) => `apps/cli/src/lib/dev-review-eval/${name}.ts`
+  )
+]
 
 /**
- * Every site in the repository, as `<file> <call> <code|embedded>` with its
- * count: `code` is a call the compiler sees, `embedded` one inside a string or
+ * Every site in the repository, as `<file> <name> <code|reference|embedded>`
+ * with its count: `code` is a call the compiler sees, `reference` any other
+ * use of the value (see `sitesIn`), `embedded` one inside a string or
  * template a test writes out as a child process's own program (or hands to an
  * analyzer as a sample). A new site fails here until it is listed, with why.
  */
@@ -185,6 +193,12 @@ const SITES: Record<string, number> = {
   // The entry points.
   'apps/cli/src/index.ts installVinayaLogSinkFactory code': 1,
   'harness/processes/vinaya-strict/bin/run-engine.ts installVinayaLogSinkFactory code': 1,
+  ...Object.fromEntries(
+    ['harbor-grade', 'harbor-results', 'harbor-tasks', 'harbor-trial', 'step-one', 'whole-loop'].map((name) => [
+      `apps/cli/src/lib/dev-review-eval/${name}.ts installVinayaLogSinkFactory code`,
+      1
+    ])
+  ),
   // The test processes' composition root.
   'apps/cli/tests/lib/test-env-preload.ts installVinayaLogSinkFactory code': 1,
   // Child processes a test starts with the bare default sink, installing the process factory as an entry point does.
@@ -203,6 +217,8 @@ const SITES: Record<string, number> = {
   'apps/cli/tests/lib/log-sink.test.ts createLogSink code': 50,
   'apps/cli/tests/lib/log-sink.test.ts createLogSink embedded': 2,
   'apps/cli/tests/lib/log-sync-folder-source.test.ts createLogSink code': 2,
+  // Run for the Log client's own sink and the Engine runner's, each taken as a loop value and called once per case.
+  'apps/cli/tests/lib/log-sink-off.test.ts createLogSink reference': 1,
   // Samples the destination-isolation analyzer reads as text; nothing runs them.
   'apps/cli/tests/log-destination-isolation.test.ts createLogSink embedded': 2
 }
@@ -223,48 +239,144 @@ function censusedSites(): Record<string, number> {
       (f) => f !== '' && f !== CENSUS_FILE && !f.includes('node_modules/') && existsSync(join(REPOSITORY_ROOT, f))
     )
   const sites: Record<string, number> = {}
-  const count = (key: string): void => {
-    sites[key] = (sites[key] ?? 0) + 1
-  }
   for (const file of files) {
     const text = readFileSync(join(REPOSITORY_ROOT, file), 'utf8')
     if (!CENSUSED_CALLS.some((name) => text.includes(name))) continue
-    const source = ts.createSourceFile(file, text, ts.ScriptTarget.ES2022, true)
-    const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node)) {
-        const callee = ts.isIdentifier(node.expression)
-          ? node.expression.text
-          : ts.isPropertyAccessExpression(node.expression)
-            ? node.expression.name.text
-            : ''
-        if ((CENSUSED_CALLS as readonly string[]).includes(callee)) count(`${file} ${callee as CensusedCall} code`)
-      }
-      const literal =
-        ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)
-          ? node.text
-          : ts.isTemplateExpression(node)
-            ? [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join('\n')
-            : null
-      if (literal !== null) for (const match of literal.matchAll(EMBEDDED_CALL)) count(`${file} ${match[1]} embedded`)
-      if (!ts.isTemplateExpression(node)) ts.forEachChild(node, visit)
-      else for (const span of node.templateSpans) visit(span.expression)
-    }
-    visit(source)
+    for (const [key, n] of Object.entries(sitesIn(file, text))) sites[key] = (sites[key] ?? 0) + n
   }
   return sites
 }
+
+const isCensused = (name: string): name is CensusedCall => (CENSUSED_CALLS as readonly string[]).includes(name)
+
+/**
+ * Every site in one file, keyed `<file> <name> <code|reference|embedded>`:
+ * `code` a call, `reference` any other use of the value — handed on as an
+ * argument, stored in a variable or a list, re-bound — so a sink built
+ * through a variable or a renamed import is still a site. A name imported
+ * under another local name counts under its own; import and export
+ * specifiers, the declaration itself and `typeof` type positions are
+ * bindings or types, not uses.
+ */
+function sitesIn(file: string, text: string): Record<string, number> {
+  const sites: Record<string, number> = {}
+  const count = (key: string): void => {
+    sites[key] = (sites[key] ?? 0) + 1
+  }
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.ES2022, true)
+  const local = new Map<string, CensusedCall>(CENSUSED_CALLS.map((name) => [name, name]))
+  for (const statement of source.statements) {
+    const bindings = ts.isImportDeclaration(statement) ? statement.importClause?.namedBindings : undefined
+    if (bindings === undefined || !ts.isNamedImports(bindings)) continue
+    for (const element of bindings.elements) {
+      const imported = (element.propertyName ?? element.name).text
+      if (isCensused(imported)) local.set(element.name.text, imported)
+    }
+  }
+  const inTypeQuery = (node: ts.Node): boolean => {
+    for (let at: ts.Node | undefined = node.parent; at !== undefined; at = at.parent) {
+      if (ts.isTypeQueryNode(at)) return true
+      if (ts.isStatement(at)) return false
+    }
+    return false
+  }
+  const visit = (node: ts.Node): void => {
+    // `const { createLogSink: make } = await import(…)` binds a local name as an import does.
+    if (ts.isBindingElement(node) && ts.isIdentifier(node.name)) {
+      const bound =
+        node.propertyName !== undefined && ts.isIdentifier(node.propertyName) ? node.propertyName.text : node.name.text
+      if (isCensused(bound)) local.set(node.name.text, bound)
+    }
+    if (ts.isIdentifier(node)) {
+      const parent = node.parent
+      const isMember = ts.isPropertyAccessExpression(parent) && parent.name === node
+      const name = isMember ? (isCensused(node.text) ? node.text : undefined) : local.get(node.text)
+      const isBinding =
+        ts.isImportSpecifier(parent) ||
+        ts.isExportSpecifier(parent) ||
+        ts.isImportClause(parent) ||
+        ((ts.isFunctionDeclaration(parent) || ts.isVariableDeclaration(parent)) && parent.name === node) ||
+        (ts.isPropertyAssignment(parent) && parent.name === node) ||
+        (ts.isBindingElement(parent) && (parent.name === node || parent.propertyName === node))
+      if (name !== undefined && !isBinding && !inTypeQuery(node)) {
+        const used: ts.Node = isMember ? parent : node
+        const called = ts.isCallExpression(used.parent) && used.parent.expression === used
+        count(`${file} ${name} ${called ? 'code' : 'reference'}`)
+      }
+    }
+    const literal =
+      ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)
+        ? node.text
+        : ts.isTemplateExpression(node)
+          ? [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join('\n')
+          : null
+    if (literal !== null) for (const match of literal.matchAll(EMBEDDED_CALL)) count(`${file} ${match[1]} embedded`)
+    if (!ts.isTemplateExpression(node)) ts.forEachChild(node, visit)
+    else for (const span of node.templateSpans) visit(span.expression)
+  }
+  visit(source)
+  return sites
+}
+
+/** The sites of product code that bypass the process factory: any use of the sink builder or the default-factory installer outside it. */
+function bypassingSites(sites: Record<string, number>): string[] {
+  return Object.keys(sites).filter((site) => {
+    const [file, call] = site.split(' ') as [string, CensusedCall]
+    if (isTestPath(file)) return false
+    if (call === 'installVinayaLogSinkFactory') return false
+    return file !== FACTORY_MODULE
+  })
+}
+
+describe('the census sees a sink built any way the language allows', () => {
+  const product = 'apps/cli/src/lib/planted.ts'
+  const counted = (text: string): Record<string, number> => sitesIn(product, text)
+
+  it('a direct call, a renamed import, a value kept in a variable or a list, and a member call are each a site', () => {
+    expect(counted("import { createLogSink } from './log-sink.js'\ncreateLogSink({})\n")).toEqual({
+      [`${product} createLogSink code`]: 1
+    })
+    expect(counted("import { createLogSink as make } from './log-sink.js'\nmake({})\n")).toEqual({
+      [`${product} createLogSink code`]: 1
+    })
+    expect(counted("import { createLogSink } from './log-sink.js'\nconst build = createLogSink\nbuild({})\n")).toEqual({
+      [`${product} createLogSink reference`]: 1
+    })
+    expect(counted("import { createLogSink } from './log-sink.js'\nfor (const f of [createLogSink]) f({})\n")).toEqual({
+      [`${product} createLogSink reference`]: 1
+    })
+    expect(counted("import * as sink from './log-sink.js'\nsink.createLogSink({})\n")).toEqual({
+      [`${product} createLogSink code`]: 1
+    })
+    expect(counted("const { createLogSink: make } = await import('./log-sink.js')\nmake({})\n")).toEqual({
+      [`${product} createLogSink code`]: 1
+    })
+  })
+
+  it('each of those in product code fails as a bypass', () => {
+    for (const text of [
+      "import { createLogSink as make } from './log-sink.js'\nmake({})\n",
+      "import { createLogSink } from './log-sink.js'\nconst build = createLogSink\nbuild({})\n",
+      "import { installDefaultLogSinkFactory } from './log-sink.js'\ninstallDefaultLogSinkFactory(() => null)\n"
+    ]) {
+      expect(bypassingSites(counted(text))).toHaveLength(1)
+    }
+  })
+
+  it('a type position, an import alone and a re-export are not sites', () => {
+    expect(
+      counted(
+        "import { createLogSink, installVinayaLogSinkFactory } from './x.js'\nexport { installVinayaLogSinkFactory }\ntype S = ReturnType<typeof createLogSink>\n"
+      )
+    ).toEqual({})
+  })
+})
 
 describe('every Log sink is built through the process factory', () => {
   const sites = censusedSites()
 
   it('no product code builds a sink, or installs a default factory, anywhere but the process factory', () => {
-    const bypassing = Object.keys(sites).filter((site) => {
-      const [file, call] = site.split(' ') as [string, CensusedCall]
-      if (isTestPath(file)) return false
-      if (call === 'installVinayaLogSinkFactory') return false
-      return file !== FACTORY_MODULE
-    })
-    expect(bypassing).toEqual([])
+    expect(bypassingSites(sites)).toEqual([])
   })
 
   it('each entry point, and only an entry point, installs the process factory', () => {
@@ -280,6 +392,12 @@ describe('every Log sink is built through the process factory', () => {
       .filter((name) => name.endsWith('.ts') && readFileSync(join(binDir, name), 'utf8').includes('import.meta.main'))
       .map((name) => `harness/processes/vinaya-strict/bin/${name}`)
     for (const runner of runners) expect(ENTRY_POINTS).toContain(runner)
+    // So is every evaluation program.
+    const evalDir = join(REPOSITORY_ROOT, 'apps', 'cli', 'src', 'lib', 'dev-review-eval')
+    const evalPrograms = readdirSync(evalDir)
+      .filter((name) => name.endsWith('.ts') && readFileSync(join(evalDir, name), 'utf8').includes('import.meta.main'))
+      .map((name) => `apps/cli/src/lib/dev-review-eval/${name}`)
+    for (const program of evalPrograms) expect(ENTRY_POINTS).toContain(program)
   })
 
   it('the entry point installs the factory before it runs any command', () => {

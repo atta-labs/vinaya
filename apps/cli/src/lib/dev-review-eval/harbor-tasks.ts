@@ -29,6 +29,7 @@
  * counts.
  */
 
+import { installVinayaLogSinkFactory } from './step-one'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -865,5 +866,7 @@ export async function harborTasksCommand(argv: readonly string[], read?: ReadByt
 }
 
 if (import.meta.main) {
+  // An entry point: Log events reach the sink the process factory builds.
+  installVinayaLogSinkFactory()
   harborTasksCommand(process.argv.slice(2)).then((code) => process.exit(code))
 }
