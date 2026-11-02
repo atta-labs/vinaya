@@ -1285,7 +1285,7 @@ export const PRODUCTION_VINAYA_PROCESS_STEPS: VinayaProcessSteps = {
   gradeInSandbox,
   engineSpawn: ENGINE_SPAWN,
   // The loop's own resolvers, run in this process's working directory: `/opt/vinaya` in a container, the
-  // repository on the host. Neither is pointed at the trial's tree, whose `aeg-root` is the case's base.
+  // repository on the host. Neither is pointed at the trial's tree, whose doctrine is the case's base.
   resolveRoleDoctrine: (role) =>
     role === CHANGE_DOCTRINE_ROLE ? resolveDeveloperDoctrineText() : resolveRoleDoctrineText(role)
 }
@@ -2183,7 +2183,8 @@ async function runReviewCase(
 
 /**
  * An `answer` case, run as the source-citation suite's live trial runs: the
- * Developer is dispatched in an empty workspace holding only the injected
+ * agent is dispatched, its prompt starting with the change role's doctrine
+ * block, in an empty workspace holding only the injected
  * documents of the layer-`P` source-citation case of the same id, the others
  * served by `fetch_documentation`, told to change nothing; nothing is
  * committed, and the record carries no change. In container mode the
