@@ -58,6 +58,7 @@ for (const name of ['execFileSync', 'spawnSync', 'execSync']) {
     throw new Error('synchronous spawn on the log path: ' + name)
   }
 }
+await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()
 const { installVinayaLogSinkFactory } = await import(${JSON.stringify(LOG_SINK_FACTORY)})
 installVinayaLogSinkFactory()
 const { log } = await import(${JSON.stringify(LOG_SINK)})
@@ -157,6 +158,7 @@ describe('log() never makes a synchronous spawn', () => {
 //   - the read is silent — its fallback warning would otherwise land on the
 //     stdout that `vinaya dispatch --json` and every check own.
 const ANCHOR_PROBE = `
+await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()
 const { createVinayaLogSink } = await import(${JSON.stringify(LOG_SINK_FACTORY)})
 const eventEnv = process.env.PROBE_EVENT_ROLE ? { ...process.env, VINAYA_ROLE: process.env.PROBE_EVENT_ROLE } : process.env
 const { log } = createVinayaLogSink({ env: () => eventEnv })
@@ -275,6 +277,7 @@ describe('the default-branch logs read belongs to the process, and is silent', (
 // builds — `dispatchRole` and the loop driver each build a fresh sink per
 // call, and a persistently broken destination must not warn once per call.
 const WARN_PROBE = `
+await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()
 const { createVinayaLogSink } = await import(${JSON.stringify(LOG_SINK_FACTORY)})
 for (let i = 0; i < 3; i++) {
   const { log } = createVinayaLogSink()

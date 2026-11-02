@@ -408,6 +408,30 @@
         }
       ],
       "reason": "The dispatch helpers test reads two credential-shaped test files verbatim, so the after-turn credential scan is proven against the bytes the repository ships."
+    },
+    {
+      "id": "config-golden-corpus",
+      "kind": "fixture",
+      "paths": [
+        "apps/cli/tests/fixtures/config-golden/corpus.json",
+        "apps/cli/tests/fixtures/config-golden/snapshot.json"
+      ],
+      "format": "json",
+      "readers": [{ "kind": "semantic", "tests": ["apps/cli/tests/config-golden.test.ts"] }],
+      "reason": "The configuration golden parses its corpus and its recorded snapshot from disk and compares the composed schema's answers against them, outside any import."
+    },
+    {
+      "id": "config-golden-tracked-configs",
+      "kind": "fixture",
+      "paths": [
+        "vinaya.config.json",
+        "apps/cli/tests/fixtures/checks/vinaya.config.json",
+        "apps/cli/tests/fixtures/checks/vinaya.config.invalid.json",
+        "apps/cli/tests/fixtures/forge/vinaya.config.custom.json"
+      ],
+      "format": "json",
+      "readers": [{ "kind": "semantic", "tests": ["apps/cli/tests/config-golden.test.ts"] }],
+      "reason": "The configuration golden lists every tracked vinaya.config*.json with git ls-files and parses each from disk. These are the files that scan finds today. The `git ls-files` call also makes the selector read the test as a whole-tree scanner, the conservative fallback that selects it on any change: a newly tracked configuration file anywhere fails the golden until its snapshot is rewritten."
     }
   ],
   "providers": [

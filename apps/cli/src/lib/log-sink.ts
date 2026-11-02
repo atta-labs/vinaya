@@ -40,16 +40,13 @@ import {
   recordIdentity,
   redact
 } from '@attalabs/aeg-core'
+import { configProvider, type ProvidedConfig } from '../../../../harness/kernel/config/loader/config-provider.js'
 import {
-  GLOBAL_VINAYA_HOME,
-  loadConfig,
-  loadTrustAnchorConfigAsync,
+  type LogsDestination,
   resolveLogsHeaderValues,
   resolveLogsSetting,
-  resolveTrustAnchorLogsDestination,
-  type LogsDestination,
-  type VinayaConfig
-} from './config.js'
+  resolveTrustAnchorLogsDestination
+} from '../../../../harness/kernel/config/schema/config-schema.js'
 import {
   isInsideRepo,
   isUnattendedProcess,
@@ -156,7 +153,7 @@ export function describeFolderFallback(reason: FolderFallbackReason): string {
 export type LogSinkDeps = {
   /** Restricts this sink to a local folder, even when a server is configured. */
   folderOnly?: boolean
-  readConfig: () => VinayaConfig | null
+  readConfig: () => ProvidedConfig | null
 
   /** Trust asserted by a caller that structurally knows the producer; absent uses the derived default. */
   provenance?: Provenance
@@ -304,8 +301,12 @@ export function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Prom
   })
 }
 
-async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
-  return withDeadline(loadTrustAnchorConfigAsync(undefined, { quiet: true }), LOG_DESTINATION_ANCHOR_DEADLINE_MS, null)
+async function safeLoadTrustAnchorConfig(): Promise<ProvidedConfig | null> {
+  return withDeadline(
+    configProvider().loadTrustAnchorConfigAsync(undefined, { quiet: true }),
+    LOG_DESTINATION_ANCHOR_DEADLINE_MS,
+    null
+  )
 }
 
 /**
@@ -372,8 +373,8 @@ export function logsCredentialMissing(headers: Record<string, string> | undefine
 }
 
 export function resolveLogDestinationFrom(input: {
-  localConfig: VinayaConfig | null
-  trustAnchorConfig: VinayaConfig | null
+  localConfig: ProvidedConfig | null
+  trustAnchorConfig: ProvidedConfig | null
   unattended: boolean
   env: NodeJS.ProcessEnv
   defaultFolder: string
@@ -508,7 +509,7 @@ export const LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS = 30_000
 /** Fresh reads a missed trust-anchor read gets per repository after the first, and re-resolutions a sink makes after its first; past this the fallback stands for the process. */
 export const LOG_DESTINATION_ANCHOR_MAX_RETRIES = 5
 
-type TrustAnchorSlot = { reading: Promise<VinayaConfig | null>; retries: number; missedAt: number | null }
+type TrustAnchorSlot = { reading: Promise<ProvidedConfig | null>; retries: number; missedAt: number | null }
 
 /**
  * The per-repository trust-anchor cache behind `processTrustAnchor`, built
@@ -518,15 +519,15 @@ type TrustAnchorSlot = { reading: Promise<VinayaConfig | null>; retries: number;
  * throws counts as a miss.
  */
 export function createTrustAnchorCache(
-  read: () => Promise<VinayaConfig | null>,
+  read: () => Promise<ProvidedConfig | null>,
   now: () => number = Date.now,
   bounds: { retryIntervalMs: number; maxRetries: number } = {
     retryIntervalMs: LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS,
     maxRetries: LOG_DESTINATION_ANCHOR_MAX_RETRIES
   }
-): { get: (repoRoot: string | null) => Promise<VinayaConfig | null>; clear: () => void } {
+): { get: (repoRoot: string | null) => Promise<ProvidedConfig | null>; clear: () => void } {
   const slots = new Map<string | null, TrustAnchorSlot>()
-  const start = (repoRoot: string | null, retries: number): Promise<VinayaConfig | null> => {
+  const start = (repoRoot: string | null, retries: number): Promise<ProvidedConfig | null> => {
     const slot: TrustAnchorSlot = {
       reading: Promise.resolve()
         .then(read)
@@ -555,7 +556,7 @@ export function createTrustAnchorCache(
 }
 
 const processTrustAnchorByRepo = createTrustAnchorCache(safeLoadTrustAnchorConfig)
-function processTrustAnchor(repoRoot: string | null): Promise<VinayaConfig | null> {
+function processTrustAnchor(repoRoot: string | null): Promise<ProvidedConfig | null> {
   return processTrustAnchorByRepo.get(repoRoot)
 }
 
@@ -580,7 +581,7 @@ async function defaultResolveLogDestination(
   env: NodeJS.ProcessEnv,
   folderOnly = false
 ): Promise<ResolvedLogDestination> {
-  const localConfig = loadConfig()
+  const localConfig = configProvider().loadConfig()
   // THIS process's own classification, never the event env's: `dispatchRole`
   // hands its sink a synthetic env carrying the CHILD's `VINAYA_ROLE` for
   // attribution, and reading trust from that would treat an attended parent
@@ -620,7 +621,7 @@ async function defaultResolveLogDestination(
  * before the decision.
  */
 export function unresolvedLogDestination(env: NodeJS.ProcessEnv): ResolvedLogDestination {
-  const loaded = loadConfig()
+  const loaded = configProvider().loadConfig()
   if (loaded?.logs === false) return { kind: 'none', reason: 'logs: false disables Log recording' }
   if (hostFromEnv(env) === 'ci') {
     return {
@@ -664,7 +665,7 @@ export async function resolveUnattendedLogDestination(
   const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
   const repoRoot = repoRootSync()
   return resolveLogDestinationFrom({
-    localConfig: loadConfig(),
+    localConfig: configProvider().loadConfig(),
     trustAnchorConfig: await processTrustAnchor(repoRoot),
     unattended: true,
     env,
@@ -688,7 +689,7 @@ export async function resolveUnattendedServerSetting(): Promise<{
   url: string
   headers?: Record<string, string>
 } | null> {
-  const local = resolveLogsSetting(loadConfig())
+  const local = resolveLogsSetting(configProvider().loadConfig())
   const anchor = await processTrustAnchor(repoRootSync())
   const effective = local ? resolveTrustAnchorLogsDestination(local, anchor) : resolveLogsSetting(anchor)
   return effective && 'url' in effective ? { url: effective.url, headers: effective.headers } : null
@@ -710,7 +711,7 @@ export type FolderFallbackRecord = {
   kind: FolderFallbackReason['kind']
 }
 
-export function folderFallbackStatePath(repo: RepoRef | null, stateRoot: string = GLOBAL_VINAYA_HOME): string {
+export function folderFallbackStatePath(repo: RepoRef | null, stateRoot: string = configProvider().homeDir): string {
   const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
   return join(stateRoot, 'fallback', `${dirName}.json`)
 }
@@ -718,7 +719,7 @@ export function folderFallbackStatePath(repo: RepoRef | null, stateRoot: string 
 /** The last recorded folder fallback for `repo`, or `null` when none is recorded or the file cannot be read/parsed (doctor degrades to "no fallback recorded", never a throw). `stateRoot` defaults to the machine's Vinaya home; a test isolates it by passing its own. */
 export function readFolderFallbackState(
   repo: RepoRef | null,
-  stateRoot: string = GLOBAL_VINAYA_HOME
+  stateRoot: string = configProvider().homeDir
 ): FolderFallbackRecord | null {
   try {
     const parsed = JSON.parse(readFileSync(folderFallbackStatePath(repo, stateRoot), 'utf8')) as unknown
@@ -757,7 +758,7 @@ export function recordFolderFallback(
   reason: FolderFallbackReason,
   now: Date,
   runtimeDir: string,
-  stateRoot: string = GLOBAL_VINAYA_HOME
+  stateRoot: string = configProvider().homeDir
 ): void {
   const message = describeFolderFallback(reason)
   if (issue !== null) {
@@ -850,7 +851,7 @@ function safeRepoSlug(repo: RepoRef | null): string | null {
  * exception to "no file outside `run-paths.ts` assembles a run-file path."
  */
 export function telemetryOutboxRoot(): string {
-  return join(GLOBAL_VINAYA_HOME, 'outbox')
+  return join(configProvider().homeDir, 'outbox')
 }
 
 /**
@@ -1146,8 +1147,8 @@ function requireBranchIssueResolver(resolver: unknown, builder: string): void {
  */
 function defaultDeps(): Omit<LogSinkDeps, 'resolveBranchIssue' | 'resolveHeadSha'> {
   return {
-    readConfig: loadConfig,
-    outboxRoot: () => join(GLOBAL_VINAYA_HOME, 'outbox'),
+    readConfig: () => configProvider().loadConfig(),
+    outboxRoot: () => join(configProvider().homeDir, 'outbox'),
     home: () => homedir(),
     hostname: () => osHostname(),
     cwd: () => process.cwd(),

@@ -87,7 +87,6 @@
   "apps/cli/src/commands/waiver.ts": 3,
   "apps/cli/src/lib/agent-line.ts": 14,
   "apps/cli/src/lib/broker.ts": 13,
-  "apps/cli/src/lib/config.ts": 88,
   "apps/cli/src/lib/detect.ts": 1,
   "apps/cli/src/lib/dev-review-eval/banned-terms.ts": 14,
   "apps/cli/src/lib/dev-review-eval/contamination.ts": 1,

@@ -266,7 +266,7 @@ function writeDrainScript(
 ): void {
   writeFileSync(
     scriptPath,
-    `import { drainOutboxToWebhook, WebhookDrainError } from ${JSON.stringify(DRAIN_MODULE)}
+    `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { drainOutboxToWebhook, WebhookDrainError } from ${JSON.stringify(DRAIN_MODULE)}
     try {
       const outcome = await drainOutboxToWebhook(${issue}, ${JSON.stringify(url)}, ${headers ? JSON.stringify(headers) : 'undefined'}${fetchTimeoutMs !== undefined ? `, ${fetchTimeoutMs}` : ''})
       console.log(JSON.stringify({ ok: true, outcome }))

@@ -47,15 +47,11 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, realpathSync } from 'node:fs'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { CONTROL_AREA_DIRNAME, mkdirNoSymlinks } from '@attalabs/aeg-core'
+import { configProvider, type ProvidedConfig } from '../../../../harness/kernel/config/loader/config-provider.js'
 import {
-  GLOBAL_VINAYA_HOME,
-  loadConfig,
-  loadTrustAnchorConfig,
-  loadTrustAnchorConfigAsync,
   resolveRuntimeDirSetting,
-  resolveTrustAnchorRuntimeDir,
-  type VinayaConfig
-} from './config.js'
+  resolveTrustAnchorRuntimeDir
+} from '../../../../harness/kernel/config/schema/config-schema.js'
 
 /** The repository a run belongs to, or `null` when it could not be resolved. */
 export type RunPathsRepo = { owner: string; repo: string } | null
@@ -141,7 +137,7 @@ export function repoSegment(repo: RunPathsRepo): string {
  * control records. A CONFIGURED `runtimeDir` carries no such segment,
  * because it is already declared by one repository's own config file.
  */
-export function defaultRuntimeDir(repo: RunPathsRepo, home: string = GLOBAL_VINAYA_HOME): string {
+export function defaultRuntimeDir(repo: RunPathsRepo, home: string = configProvider().homeDir): string {
   return join(home, 'runtime', repoSegment(repo))
 }
 
@@ -174,8 +170,8 @@ export function defaultRuntimeDir(repo: RunPathsRepo, home: string = GLOBAL_VINA
  */
 export function resolveRuntimeDir(input: {
   repo: RunPathsRepo
-  localConfig: VinayaConfig | null
-  trustAnchorConfig?: VinayaConfig | null
+  localConfig: ProvidedConfig | null
+  trustAnchorConfig?: ProvidedConfig | null
   unattended: boolean
   home?: string
   repoRoot?: string | null
@@ -369,7 +365,7 @@ export async function runtimeDirForRepoAsync(repo: RunPathsRepo): Promise<string
   const value = resolveRuntimeDir({
     repo,
     ...inputs.base,
-    trustAnchorConfig: inputs.needsAnchor ? await loadTrustAnchorConfigAsync() : null
+    trustAnchorConfig: inputs.needsAnchor ? await configProvider().loadTrustAnchorConfigAsync() : null
   })
   memoized = { key, value }
   return value
@@ -381,7 +377,7 @@ function resolveRuntimeDirUncached(repo: RunPathsRepo): string {
   return resolveRuntimeDir({
     repo,
     ...inputs.base,
-    trustAnchorConfig: inputs.needsAnchor ? loadTrustAnchorConfig() : null
+    trustAnchorConfig: inputs.needsAnchor ? configProvider().loadTrustAnchorConfig() : null
   })
 }
 
@@ -395,13 +391,13 @@ function resolveRuntimeDirUncached(repo: RunPathsRepo): string {
 function runtimeDirInputs():
   | string
   | {
-      base: { localConfig: VinayaConfig | null; unattended: boolean; repoRoot: string | null }
+      base: { localConfig: ProvidedConfig | null; unattended: boolean; repoRoot: string | null }
       needsAnchor: boolean
     } {
   const handedDown = process.env[RUNTIME_DIR_ENV_KEY]
   if (handedDown) return handedDown
 
-  const localConfig = loadConfig()
+  const localConfig = configProvider().loadConfig()
   const unattended = isUnattendedProcess()
   return {
     base: { localConfig, unattended, repoRoot: repoRootSync() },

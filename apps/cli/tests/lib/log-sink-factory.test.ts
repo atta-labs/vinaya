@@ -76,6 +76,7 @@ const SINK_OVERRIDES = `{
 // The sink the product builds, with every read but the branch and the forge
 // pinned; the branch read is the real one, run in the child's own checkout.
 const PROBE = `import { createVinayaLogSink } from ${JSON.stringify(LOG_SINK_FACTORY)}
+await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()
 const outbox = process.argv[2]
 const sink = createVinayaLogSink(${SINK_OVERRIDES})
 sink.log({

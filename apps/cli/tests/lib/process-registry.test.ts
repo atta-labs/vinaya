@@ -122,7 +122,9 @@ describe('process registry', () => {
     const budget = setTimeout(() => child.kill('SIGKILL'), PROCESS_FIXTURE_BUDGET_MS)
     let member: ReturnType<typeof identityOf> = null
     try {
-      while (!existsSync(pidFile)) await new Promise((resolve) => setTimeout(resolve, 10))
+      // The shell creates the file before `echo` writes the pid into it: wait for a whole line, not the file.
+      while (!existsSync(pidFile) || !readFileSync(pidFile, 'utf8').endsWith('\n'))
+        await new Promise((resolve) => setTimeout(resolve, 10))
       member = identityOf(Number(readFileSync(pidFile, 'utf8')))
       const identity = identityOf(child.pid!)!
       await registerProcess({ ...identity, runToken: 'orphan', label: 'observed group', processGroup: true }, { dir })
@@ -181,7 +183,9 @@ describe('process registry', () => {
       const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
       child.stdin!.end('ack\n')
       await exited
-      while (!existsSync(pidFile)) await new Promise((resolve) => setTimeout(resolve, 10))
+      // The shell creates the file before `echo` writes the pid into it: wait for a whole line, not the file.
+      while (!existsSync(pidFile) || !readFileSync(pidFile, 'utf8').endsWith('\n'))
+        await new Promise((resolve) => setTimeout(resolve, 10))
       descendant = Number(readFileSync(pidFile, 'utf8'))
       await expect(stopRegistered('unowned', { dir, graceMs: 200 })).rejects.toThrow(
         `process registry: group ${identity.pid} has no verifiable recorded member; refusing to signal an unowned group`

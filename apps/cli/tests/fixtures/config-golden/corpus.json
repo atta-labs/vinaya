@@ -1,0 +1,1430 @@
+[
+  {
+    "dispatch": {
+      "timeoutMs": 14400000
+    }
+  },
+  {
+    "rings": {
+      "ring1_forgeWriteInterception": true,
+      "ring2_asyncAudits": false
+    }
+  },
+  {
+    "principals": ["alice", "bob"]
+  },
+  {
+    "tokens": {
+      "collect": "node scripts/collect-usage.js"
+    }
+  },
+  {
+    "dispatch": {
+      "reviewerTimeoutMs": 1200000
+    }
+  },
+  {
+    "dispatch": {
+      "reviewerTimeoutMs": 0
+    }
+  },
+  {
+    "dispatch": {
+      "reviewerTimeoutMs": 1.5
+    }
+  },
+  {
+    "rings": {
+      "ring1_forgeWriteInterception": false,
+      "ring2_asyncAudits": true
+    }
+  },
+  {
+    "rings": {
+      "ring1_forgeWriteInterception": "yes",
+      "ring2_asyncAudits": false
+    }
+  },
+  {
+    "checks": {
+      "my-check": {
+        "run": "./scripts/my-check.ts",
+        "scope": "diff",
+        "include": ["src/**/*.ts"]
+      }
+    }
+  },
+  {
+    "checks": {
+      "typo-check": {
+        "run": "./tests/fixtures/checks/passing-check.ts",
+        "scop": "diff"
+      }
+    }
+  },
+  {
+    "rings": {
+      "ring1_forgeWriteInterception": "yes"
+    }
+  },
+  {
+    "dispatch": {
+      "agent": "gemini"
+    }
+  },
+  {
+    "dispatch": {
+      "agent": "claude"
+    }
+  },
+  {
+    "dispatch": {
+      "agent": "codex"
+    }
+  },
+  {
+    "rings": {
+      "ring2_asyncAudits": 1
+    }
+  },
+  {
+    "principals": ["legit-reviewer"]
+  },
+  {
+    "principals": []
+  },
+  {
+    "principals": ["pr-added-reviewer"]
+  },
+  {
+    "principals": ["legit-default-branch"]
+  },
+  {
+    "checks": {
+      "c": {
+        "run": "./check.ts",
+        "scope": "diff",
+        "env": {
+          "AEG_REPO": true
+        }
+      }
+    }
+  },
+  {
+    "checks": {
+      "c": {
+        "run": "./check.ts",
+        "scope": "diff",
+        "env": {
+          "PR_BODY": {
+            "optional": true
+          }
+        }
+      }
+    }
+  },
+  {
+    "checks": {
+      "c": {
+        "run": "./check.ts",
+        "scope": "diff",
+        "env": {
+          "NODE_ENV": "production"
+        }
+      }
+    }
+  },
+  {
+    "checks": {
+      "c": {
+        "run": "./check.ts",
+        "scope": "diff",
+        "env": {
+          "GITHUB_TOKEN": {
+            "anyOf": ["GITHUB_TOKEN", "GH_TOKEN"]
+          }
+        }
+      }
+    }
+  },
+  {
+    "checks": {
+      "c": {
+        "run": "./check.ts",
+        "scope": "diff",
+        "env": {
+          "GITHUB_TOKEN": {
+            "anyOf": ["GITHUB_TOKEN"]
+          }
+        }
+      }
+    }
+  },
+  {
+    "checks": {
+      "c": {
+        "run": "./check.ts",
+        "scope": "diff",
+        "env": {
+          "GITHUB_TOKEN": {
+            "anyOf": ["GITHUB_TOKEN", "GITHUB_TOKEN"]
+          }
+        }
+      }
+    }
+  },
+  {
+    "checks": {
+      "c": {
+        "run": "./check.ts",
+        "scope": "diff",
+        "env": {
+          "GITHUB_TOKEN": {
+            "anyOf": ["GH_TOKEN", "GHE_TOKEN"]
+          }
+        }
+      }
+    }
+  },
+  {
+    "checks": {
+      "c": {
+        "run": "./check.ts",
+        "scope": "diff",
+        "env": {
+          "X": {
+            "bogus": true
+          }
+        }
+      }
+    }
+  },
+  {
+    "checks": {
+      "fixture-check": {
+        "run": "./tests/fixtures/checks/passing-check.ts",
+        "scope": "diff",
+        "include": ["**/*"]
+      }
+    }
+  },
+  {
+    "rings": {
+      "ring1_forgeWriteInterception": true,
+      "ring2_asyncAudits": true
+    },
+    "runner": "atta-engine",
+    "prePush": {
+      "alwaysRun": [
+        "apps/cli/tests/ci-shards.test.ts",
+        "apps/cli/tests/checks/check-exec-bits.test.ts",
+        "apps/cli/tests/checks/changeset-coverage*.test.ts",
+        "apps/cli/tests/checks/own-workflow.test.ts",
+        "apps/cli/tests/import-boundary.test.ts",
+        "apps/cli/tests/surface-spec-exports.test.ts",
+        "apps/cli/tests/run-paths-only.test.ts",
+        "apps/cli/tests/lib/log-callers.test.ts",
+        "harness/processes/vinaya-strict/tests/commands/task-status.test.ts"
+      ],
+      "requiredCi": {
+        "workflow": ".github/workflows/ci.yml",
+        "check": "Vinaya CI"
+      }
+    },
+    "checks": {
+      "atta-labs/secret-scan": {
+        "run": "./scripts/vinaya-checks/secret-scan.ts",
+        "scope": "full"
+      },
+      "atta-labs/ui-rules": {
+        "run": "./scripts/vinaya-checks/ui-rules.ts",
+        "scope": "diff",
+        "include": ["apps/vinaya-*/**"],
+        "env": {
+          "BASE_SHA": {
+            "optional": true
+          }
+        }
+      },
+      "atta-labs/process-version-bump": {
+        "run": "./scripts/vinaya-checks/process-version-bump.ts",
+        "scope": "diff",
+        "include": ["harness/processes/vinaya-strict/**"],
+        "env": {
+          "BASE_SHA": {
+            "optional": true
+          }
+        }
+      }
+    },
+    "ci": {
+      "setup": "set -euo pipefail\nGITLEAKS_VERSION=8.30.1\nGITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb\ncurl -fsSL -o /tmp/gitleaks.tar.gz \"https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz\"\necho \"${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz\" | sha256sum -c -\nsudo tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks\nsudo chmod +x /usr/local/bin/gitleaks\ngitleaks version"
+    },
+    "logs": {
+      "url": "https://vinaya-log-server.estevez-dani.workers.dev/v1/repos/atta-labs/vinaya/events",
+      "headers": {
+        "authorization": "Bearer ${VINAYA_LOG_TOKEN}"
+      },
+      "readHeaders": {
+        "authorization": "Bearer ${VINAYA_LOG_READ_TOKEN}"
+      }
+    },
+    "principals": ["daniboomerang"],
+    "releaseActor": "daniboomerang",
+    "reviewPolicy": {
+      "codeReviewThreshold": "MAJOR",
+      "securityThreshold": "HIGH",
+      "maxTaskMinutes": 600
+    },
+    "securityScan": {
+      "command": ["npx", "--yes", "ecc-agentshield@1.6.0", "scan"]
+    },
+    "gateCutovers": {
+      "objectivesSinceIssue": 404,
+      "briefSectionsSinceIssue": 426,
+      "documentationSinceIssue": 626,
+      "briefRulesSincePr": 394,
+      "agentBoxesRefusedSincePr": 396
+    },
+    "dispatch": {
+      "agent": "claude"
+    },
+    "proseGates": {
+      "sourceComments": {
+        "globs": ["apps/cli/src", "packages/aeg-core/src", "packages/aeg-forge-state/src", "packages/sources/src"],
+        "allowlist": [
+          "packages/aeg-forge-state/src/parse-rationale-deps.test.ts",
+          "packages/aeg-forge-state/src/amend-rationale-deps.test.ts"
+        ],
+        "severity": "error"
+      },
+      "specGrandfather": {
+        "apps/cli/specs/dev-review-evaluation-program.md": 46
+      },
+      "rules": {
+        "custom": [
+          {
+            "id": "decision-id-everywhere",
+            "pattern": "\\bD-[0-9]{2,4}\\b",
+            "means": "state the decision in plain words instead of citing a decision identifier",
+            "scopes": ["spec", "source-comment"],
+            "severity": "error"
+          }
+        ]
+      }
+    },
+    "decisionRecords": {
+      "path": "docs/adr"
+    },
+    "briefSchema": {
+      "pr": {
+        "sections": [
+          {
+            "builtin": "tier"
+          },
+          {
+            "builtin": "testPlan"
+          },
+          {
+            "builtin": "testPlanExclusivity"
+          },
+          {
+            "builtin": "closesN"
+          },
+          {
+            "builtin": "project"
+          }
+        ]
+      },
+      "issue": {
+        "sections": [
+          {
+            "builtin": "issueRationale"
+          },
+          {
+            "builtin": "objectives"
+          },
+          {
+            "builtin": "briefSections"
+          },
+          {
+            "builtin": "project"
+          }
+        ]
+      }
+    },
+    "managed": {
+      "version": 3,
+      "files": [
+        ".github/workflows/vinaya-checks.yml",
+        ".github/workflows/vinaya-review.yml",
+        ".github/workflows/vinaya-review-verdict.yml",
+        ".github/workflows/vinaya-archivist.yml",
+        ".github/workflows/vinaya-body-checks.yml",
+        "vinaya.config.json",
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".vinaya/doc-owners",
+        ".claude/settings.json",
+        "vinaya/checks/.gitkeep",
+        "vinaya/roles/.gitkeep",
+        ".gemini/settings.json"
+      ],
+      "blocks": [
+        {
+          "path": ".vinaya/hooks/pre-commit",
+          "marker": "pre-commit",
+          "comment": "hash"
+        },
+        {
+          "path": ".vinaya/hooks/pre-push",
+          "marker": "pre-push",
+          "comment": "hash"
+        },
+        {
+          "path": ".claude/hooks/track-transcript.sh",
+          "marker": "track-transcript",
+          "comment": "hash"
+        },
+        {
+          "path": ".vinaya/hooks/commit-msg",
+          "marker": "commit-msg",
+          "comment": "hash"
+        }
+      ],
+      "labels": [
+        "vinaya/tier:0",
+        "vinaya/tier:1",
+        "vinaya/tier:3",
+        "vinaya/needs:execution-input",
+        "vinaya/needs:strategy-input",
+        "vinaya/needs:principal-input",
+        "project:vinaya"
+      ]
+    }
+  },
+  {
+    "ci": {
+      "setup": "npm ci"
+    }
+  },
+  {
+    "checks": {}
+  },
+  {
+    "ci": {
+      "setup": ""
+    }
+  },
+  {
+    "briefSchema": {
+      "ack": ["closesN", "tier"]
+    }
+  },
+  {
+    "briefSchema": {
+      "pr": {
+        "sections": [
+          {
+            "builtin": "tier"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "briefSchema": {
+      "ack": ["closesn"]
+    }
+  },
+  {
+    "briefSchema": {
+      "milestone": {
+        "sections": [
+          {
+            "builtin": "milestoneShape"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "briefSchema": {
+      "pr": {
+        "sections": [
+          {
+            "builtin": "tier"
+          }
+        ]
+      },
+      "issue": {
+        "sections": [
+          {
+            "builtin": "issueRationale"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "briefSchema": {
+      "pr": {
+        "sections": [
+          {
+            "builtin": "tier"
+          }
+        ]
+      },
+      "issue": {
+        "sections": [
+          {
+            "builtin": "issueRationale"
+          }
+        ]
+      },
+      "milestone": {
+        "sections": [
+          {
+            "builtin": "milestoneShape"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "managed": {
+      "version": 2,
+      "files": [],
+      "blocks": [
+        {
+          "path": ".GIT/config",
+          "marker": "x",
+          "comment": "hash"
+        }
+      ],
+      "labels": []
+    }
+  },
+  {
+    "managed": {
+      "version": 2,
+      "files": [],
+      "blocks": [
+        {
+          "path": ".Git/hooks/../config",
+          "marker": "x",
+          "comment": "hash"
+        }
+      ],
+      "labels": []
+    }
+  },
+  {
+    "managed": {
+      "version": 2,
+      "files": [],
+      "blocks": [
+        {
+          "path": ".git",
+          "marker": "x",
+          "comment": "hash"
+        }
+      ],
+      "labels": []
+    }
+  },
+  {
+    "managed": {
+      "version": 2,
+      "files": [],
+      "blocks": [
+        {
+          "path": ".git/hooks/pre-commit",
+          "marker": "x",
+          "comment": "hash"
+        }
+      ],
+      "labels": []
+    }
+  },
+  {
+    "managed": {
+      "version": 2,
+      "files": [],
+      "blocks": [
+        {
+          "path": ".husky/pre-commit",
+          "marker": "x",
+          "comment": "hash"
+        }
+      ],
+      "labels": []
+    }
+  },
+  {
+    "managed": {
+      "version": 2,
+      "files": [],
+      "blocks": [
+        {
+          "path": ".vinaya/hooks/pre-push",
+          "marker": "x",
+          "comment": "hash"
+        }
+      ],
+      "labels": []
+    }
+  },
+  {
+    "managed": {
+      "version": 2,
+      "files": [],
+      "blocks": [
+        {
+          "path": ".gitkeep-hooks/x",
+          "marker": "x",
+          "comment": "hash"
+        }
+      ],
+      "labels": []
+    }
+  },
+  {
+    "projects": [
+      {
+        "name": "mobile"
+      }
+    ]
+  },
+  {
+    "projects": [
+      {
+        "name": "mobile",
+        "description": "The mobile client",
+        "path": "apps/mobile"
+      }
+    ]
+  },
+  {
+    "projects": [
+      {
+        "path": "apps/mobile"
+      }
+    ]
+  },
+  {
+    "projects": [
+      {
+        "name": ""
+      }
+    ]
+  },
+  {
+    "tokens": {
+      "collect": ""
+    }
+  },
+  {
+    "tokens": {}
+  },
+  {
+    "tokens": {
+      "collect": "node"
+    }
+  },
+  {
+    "tokens": {
+      "collect": "node -u scripts/collect-usage.js"
+    }
+  },
+  {
+    "tokens": {
+      "collect": "node scripts/a.js && rm -rf /"
+    }
+  },
+  {
+    "tokens": {
+      "collect": "node /etc/passwd"
+    }
+  },
+  {
+    "tokens": {
+      "collect": "node ../../outside.js"
+    }
+  },
+  {
+    "runtimeDir": "/var/lib/vinaya/runs"
+  },
+  {
+    "runtimeDir": ".vinaya-runs"
+  },
+  {
+    "runtimeDir": "../runs"
+  },
+  {
+    "runtimeDir": ""
+  },
+  {
+    "logs": {
+      "folder": "/var/lib/vinaya/logs"
+    }
+  },
+  {
+    "logs": {
+      "folder": "relative/logs"
+    }
+  },
+  {
+    "logs": {
+      "url": "https://example.com/ingest",
+      "headers": {
+        "authorization": "Bearer example-token"
+      }
+    }
+  },
+  {
+    "logs": {
+      "folder": "/var/lib/vinaya/logs",
+      "url": "https://example.com/ingest"
+    }
+  },
+  {
+    "logs": {
+      "folder": "/var/lib/vinaya/logs",
+      "headers": {
+        "a": "b"
+      }
+    }
+  },
+  {},
+  {
+    "logPublish": {
+      "issue": 42
+    }
+  },
+  {
+    "logPublish": {
+      "webhookUrl": "https://example.com/ingest"
+    }
+  },
+  {
+    "rings": {
+      "ring1_forgeWriteInterception": true,
+      "ring2_asyncAudits": true
+    }
+  },
+  {
+    "prePush": {
+      "alwaysRun": ["apps/cli/tests/ci-shards.test.ts"]
+    }
+  },
+  {
+    "prePush": {
+      "readyTests": {
+        "mode": "ci",
+        "workflow": ".github/workflows/ci.yml",
+        "check": "Vinaya CI"
+      }
+    }
+  },
+  {
+    "prePush": {}
+  },
+  {
+    "prePush": {
+      "readyTests": {
+        "mode": "local",
+        "workflow": ".github/workflows/ci.yml",
+        "check": "Vinaya CI"
+      }
+    }
+  },
+  {
+    "prePush": {
+      "readyTests": {
+        "mode": "ci",
+        "workflow": ".github/workflows/other.yml",
+        "check": "Vinaya CI"
+      }
+    }
+  },
+  {
+    "prePush": {
+      "readyTests": {
+        "mode": "ci",
+        "workflow": ".github/workflows/ci.yml",
+        "check": "Some check"
+      }
+    }
+  },
+  {
+    "prePush": {
+      "readyTests": {
+        "mode": "ci"
+      }
+    }
+  },
+  {
+    "prePush": {
+      "readyTests": {
+        "mode": "ci",
+        "workflow": ".github/workflows/ci.yml",
+        "check": "Vinaya CI",
+        "runner": "adopter"
+      }
+    }
+  },
+  {
+    "prePush": {
+      "readyTests": "ci"
+    }
+  },
+  {
+    "prePush": {
+      "requiredCi": {
+        "workflow": ".github/workflows/ci.yml",
+        "check": "Vinaya CI"
+      }
+    }
+  },
+  {
+    "prePush": {
+      "requiredCi": {
+        "workflow": ".github/workflows/ci.yml",
+        "check": "Vinaya CI"
+      },
+      "readyTests": {
+        "mode": "ci",
+        "workflow": ".github/workflows/ci.yml",
+        "check": "Vinaya CI"
+      }
+    }
+  },
+  {
+    "prePush": {
+      "requiredCi": {
+        "workflow": ".github/workflows/other.yml",
+        "check": "Vinaya CI"
+      }
+    }
+  },
+  {
+    "prePush": {
+      "requiredCi": {
+        "workflow": ".github/workflows/ci.yml",
+        "check": "Some check"
+      }
+    }
+  },
+  {
+    "prePush": {
+      "requiredCi": {
+        "workflow": ".github/workflows/ci.yml"
+      }
+    }
+  },
+  {
+    "prePush": {
+      "requiredCi": {
+        "workflow": ".github/workflows/ci.yml",
+        "check": "Vinaya CI",
+        "mode": "ci"
+      }
+    }
+  },
+  {
+    "prePush": {
+      "requiredCi": "Vinaya CI"
+    }
+  },
+  {
+    "report": {
+      "commandTimeoutMs": 1800000
+    }
+  },
+  {
+    "report": {
+      "commandTimeoutMs": 0
+    }
+  },
+  {
+    "report": {
+      "commandTimeoutMs": -1
+    }
+  },
+  {
+    "report": {
+      "commandTimeoutMs": 3600001
+    }
+  },
+  {
+    "report": {
+      "commandTimeoutMs": 3600000
+    }
+  },
+  {
+    "securityScan": {
+      "command": ["scan"]
+    }
+  },
+  {
+    "securityScan": {
+      "command": []
+    }
+  },
+  {
+    "securityScan": {
+      "command": [""]
+    }
+  },
+  {
+    "securityScan": {}
+  },
+  {
+    "reviewPolicy": {
+      "codeReviewThreshold": "MAJOR"
+    }
+  },
+  {
+    "principals": ["someone"]
+  },
+  {
+    "proseGates": {}
+  },
+  {
+    "proseGates": {
+      "productPaths": ["src", "README.md"],
+      "published": {
+        "allow": ["task/<tranche>/<n>"]
+      },
+      "rules": {
+        "exempt": ["docs/archive/"],
+        "defaults": {
+          "coined-term": "off",
+          "tranche-slug": {
+            "scopes": ["spec", "product"],
+            "severity": {
+              "spec": "warning"
+            },
+            "exempt": ["CHANGELOG.md"]
+          },
+          "retired-vocabulary-1": {
+            "severity": "warning"
+          }
+        },
+        "custom": [
+          {
+            "id": "acme/leverage",
+            "pattern": "leverage",
+            "flags": "iu",
+            "means": "say \"use\"",
+            "scopes": ["ships", "spec"]
+          },
+          {
+            "id": "acme/todo",
+            "patterns": {
+              "repository": "TODO"
+            },
+            "means": "unfinished",
+            "scopes": ["repository"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "defaults": {
+          "no-such-rule": "off"
+        }
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "defaults": {
+          "forge-number": {
+            "pattern": "#",
+            "means": "x"
+          }
+        }
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "forge-number",
+            "pattern": "x",
+            "means": "m",
+            "scopes": ["spec"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "retired-vocabulary-3",
+            "pattern": "x",
+            "means": "m",
+            "scopes": ["spec"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "internal-path",
+            "pattern": "x",
+            "means": "m",
+            "scopes": ["spec"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "(unclosed"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "pattern": "x",
+            "scopes": ["spec"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "pattern": "x",
+            "means": "m"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "pattern": "x",
+            "means": "m",
+            "scopes": []
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["everywhere"],
+            "pattern": "x"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "x",
+            "severity": "fatal"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "x",
+            "severity": {
+              "spec": "loud"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "defaults": {
+          "task-number": {
+            "scopes": ["nowhere"]
+          }
+        }
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "x",
+            "flags": "g"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "x",
+            "flags": "m"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "x",
+            "flags": "s"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "x",
+            "flags": "y"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "x",
+            "flags": "ig"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "x",
+            "flags": "iu"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "patterns": {
+              "spec": "x",
+              "product": "y"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "exempt": ["../elsewhere"]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "defaults": {
+          "forge-number": {
+            "exempt": ["/etc"]
+          }
+        }
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "x",
+            "exempt": ["docs/../../x"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "productPaths": ["/abs"]
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "patterns": {
+              "spec": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "(a+)+$"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "means": "m",
+            "scopes": ["spec"],
+            "pattern": "a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+-a+"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "acme/x",
+            "pattern": "(",
+            "means": "m",
+            "scopes": ["spec"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "decisionRecords": {
+      "path": "docs/adr"
+    }
+  },
+  {
+    "decisionRecords": {
+      "path": "./docs/decisions/"
+    }
+  },
+  {
+    "decisionRecords": {
+      "path": "/etc/adr"
+    }
+  },
+  {
+    "decisionRecords": {
+      "path": "docs/../../adr"
+    }
+  },
+  {
+    "decisionRecords": {
+      "path": "./"
+    }
+  },
+  {
+    "decisionRecords": {
+      "path": "aeg-root/adr"
+    }
+  },
+  {
+    "decisionRecords": {
+      "path": "aeg-root"
+    }
+  },
+  {
+    "proseGates": {
+      "doctrineRoot": "doctrine"
+    },
+    "decisionRecords": {
+      "path": "doctrine/records"
+    }
+  },
+  {
+    "proseGates": {
+      "doctrineRoot": "doctrine"
+    },
+    "decisionRecords": {
+      "path": "aeg-root-notes"
+    }
+  },
+  {
+    "decisionRecords": {
+      "path": "docs/adr",
+      "folder": "x"
+    }
+  },
+  {
+    "proseGates": {
+      "rules": {
+        "custom": [
+          {
+            "id": "decision-record-citation",
+            "pattern": "x",
+            "means": "m",
+            "scopes": ["spec"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "decisionRecords": {
+      "path": "../adr"
+    }
+  }
+]

@@ -102,7 +102,8 @@ describe('log-sink — what the branch lookup costs, and when (O1)', () => {
       const probe = join(scratch, 'probe.ts')
       writeFileSync(
         probe,
-        `import { resolveBranchIssue } from ${JSON.stringify(BRANCH_ISSUE_MODULE)}\n` +
+        `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\n` +
+          `import { resolveBranchIssue } from ${JSON.stringify(BRANCH_ISSUE_MODULE)}\n` +
           `import { createVinayaLogSink } from ${JSON.stringify(LOG_SINK_FACTORY_MODULE)}\n` +
           "import { readdirSync } from 'node:fs'\n" +
           'const [repoDir, outbox] = process.argv.slice(2) as [string, string]\n' +
@@ -246,7 +247,8 @@ describe('log-sink — one read per process, not per sink (O1)', () => {
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
-      `import { createVinayaLogSink } from ${JSON.stringify(LOG_SINK_FACTORY_MODULE)}\n` +
+      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\n` +
+        `import { createVinayaLogSink } from ${JSON.stringify(LOG_SINK_FACTORY_MODULE)}\n` +
         'const [first, second, outbox] = process.argv.slice(2) as [string, string, string]\n' +
         'const sinkFor = (cwd: string) =>\n' +
         '  createVinayaLogSink({\n' +

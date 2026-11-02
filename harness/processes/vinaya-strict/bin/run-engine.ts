@@ -198,6 +198,7 @@ import {
   type UsageLimit
 } from '../loops/dev-review/dispatch/dispatch'
 import { loadConfig } from '../../../../apps/cli/src/lib/config'
+import { installVinayaConfigProvider } from '../integration/config/compose'
 import { crossRunnerRefusal, recordTaskRunner } from '../loops/dev-review/run-control/task-run-engine'
 import {
   createDispatchCapabilityTable,
@@ -3447,6 +3448,8 @@ export async function main(argv: readonly string[]): Promise<number> {
 }
 
 if (import.meta.main) {
+  // The composition root: kernel code reads configuration through the provider this installs, before the run starts.
+  installVinayaConfigProvider()
   installVinayaLogSinkFactory()
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),

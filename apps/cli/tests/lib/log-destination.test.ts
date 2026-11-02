@@ -799,7 +799,7 @@ async function runServerDestinationScript(home: string, cwd: string, url: string
   const script = join(cwd, `run-log-${effectId}.ts`)
   writeFileSync(
     script,
-    `import { createLogSink } from ${JSON.stringify(LOG_SINK_PATH)}
+    `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { createLogSink } from ${JSON.stringify(LOG_SINK_PATH)}
     const { log } = createLogSink({
       env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
       resolveBranchIssue: async () => null,
@@ -916,6 +916,7 @@ async function runAbruptExitScript(cwd: string, home: string, drainOnExit: boole
   writeFileSync(
     script,
     `import { drainLogSink, log } from ${JSON.stringify(LOG_SINK_PATH)}
+    await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()
     import { installVinayaLogSinkFactory } from ${JSON.stringify(LOG_SINK_FACTORY_PATH)}
     installVinayaLogSinkFactory()
     setInterval(() => {}, 60000)

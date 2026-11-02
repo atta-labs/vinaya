@@ -65,6 +65,7 @@ import { logSync } from './lib/log-sink.js'
 import { printHelp } from './lib/output.js'
 import { packageRoot } from './lib/package-root.js'
 import { resolveAuthorRepoSourceEntry } from './lib/self-host.js'
+import { installVinayaConfigProvider } from './lib/config.js'
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -120,6 +121,10 @@ installVinayaLogSinkFactory()
 // launching PATH lacked its install folder — so every `gh`-by-name call site,
 // in this process and in every child it spawns, resolves it.
 ensureGhOnPath()
+
+// The composition root: kernel code reads configuration through the provider
+// this installs, before any command runs.
+installVinayaConfigProvider()
 
 maybeDeferToAuthorRepoSource()
 

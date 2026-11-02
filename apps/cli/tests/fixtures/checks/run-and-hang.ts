@@ -8,6 +8,11 @@
 import { join } from 'node:path'
 import { installVinayaLogSinkFactory } from '../../../../../harness/processes/vinaya-strict/integration/log/log-sink-factory'
 import { runChecks } from '../../../src/checks/runner'
+import { installVinayaConfigProvider } from '../../../src/lib/config'
+
+// This program is its own composition root: the runner's log sink reads
+// configuration only through the provider one installs.
+installVinayaConfigProvider()
 
 const SLEEPER = join(import.meta.dir, 'sleeper.ts')
 

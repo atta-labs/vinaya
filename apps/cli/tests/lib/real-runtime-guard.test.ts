@@ -178,6 +178,10 @@ describe('real runtime directory guard', () => {
             )
           )
         )
+        .replace(
+          /import\('\.\.\/\.\.\/src\/lib\/config\.js'\)/,
+          `import(${JSON.stringify(join(lib, '..', '..', 'src', 'lib', 'config.ts'))})`
+        )
       writeFileSync(join(work, 'test-env-preload.ts'), preload)
       const dead = Bun.spawnSync(['true']).pid
       const run = (pid: number, preloadPath: string) => {

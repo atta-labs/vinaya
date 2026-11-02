@@ -1,1 +1,3 @@
-{}
+{
+  "apps/cli/src/lib/config.ts": "harness/processes/vinaya-strict/integration/config/compose.ts"
+}

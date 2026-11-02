@@ -25,7 +25,7 @@ import {
   known,
   unknownBecause
 } from '@attalabs/aeg-core'
-import { resolveLogsHeaderValues } from './config.js'
+import { resolveLogsHeaderValues } from '../../../../harness/kernel/config/schema/config-schema.js'
 
 /** The server's own page bound (`apps/log-server/specs/server.md` § 5: `limit`'s default and maximum). */
 export const SERVER_SOURCE_PAGE_MAX = 1000
