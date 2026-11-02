@@ -16,10 +16,11 @@ import {
   recordLocalRun,
   runFrozenPlan
 } from '../../../../scripts/test-suites/local-run'
-import { type RunResult, runGroups } from '../../../../scripts/test-suites/schedule'
+import { type GroupOutcome, type RunResult, runGroups } from '../../../../scripts/test-suites/schedule'
 import {
   computeVerificationContext,
   FAILED_TESTS_RECORD,
+  type FailedTestsRecord,
   LAST_PUSH_RESULT,
   type NativeSelection,
   readJsonUnderGit,
@@ -291,6 +292,166 @@ describe('the verdict of a native run', () => {
   })
 })
 
+// ── What a failed run confirms, group by group ───────────────────────────────
+
+const VT_GROUP: NativeGroup = {
+  ...GROUP,
+  id: 'aeg-core@default',
+  suite: 'aeg-core',
+  owner: '@attalabs/aeg-core',
+  runner: 'vitest',
+  cwd: 'packages/aeg-core',
+  tests: ['packages/aeg-core/src/x.test.ts', 'packages/aeg-core/src/y.test.ts'],
+  args: ['src/x.test.ts', 'src/y.test.ts']
+}
+
+const groupOutcome = (group: NativeGroup, over: Partial<GroupOutcome> = {}): GroupOutcome => ({
+  group: group.id,
+  executed: [...group.tests],
+  failed: [],
+  unreported: [],
+  trusted: true,
+  confirmed: [...group.tests],
+  obligations: [],
+  ...over
+})
+
+describe('what a failed native run confirms', () => {
+  const A = 'apps/cli/tests/a.test.ts'
+  const B = 'apps/cli/tests/b.test.ts'
+  const [X, Y] = VT_GROUP.tests as [string, string]
+  const cliFailedB = groupOutcome(GROUP, { failed: [B], confirmed: [A], obligations: [B] })
+  const vtUntrusted = groupOutcome(VT_GROUP, { trusted: false, confirmed: [], obligations: [X, Y] })
+  const result = (outcomes: GroupOutcome[]): RunResult => ({
+    failedRunners: outcomes.filter((o) => o.obligations.length > 0).map((o) => o.group),
+    problems: [],
+    executions: [
+      { group: GROUP.id, outcome: 'completed', files: ['tests/a.test.ts', 'tests/b.test.ts'] },
+      { group: VT_GROUP.id, outcome: 'completed', files: ['src/x.test.ts', 'src/y.test.ts'] }
+    ],
+    failedTests: {},
+    outcomes
+  })
+  type Writes = { records: FailedTestsRecord[]; snapshots: FailedTestsRecord[][] }
+  const run = (
+    outcomes: GroupOutcome[],
+    over: {
+      state?: () => string | null
+      context?: () => string | null
+      treeClean?: boolean | null
+      runResult?: RunResult
+    } = {}
+  ) => {
+    const writes: Writes = { records: [], snapshots: [] }
+    const outcome = runFrozenPlan('/repo', nativeOf([GROUP, VT_GROUP]), {
+      run: (_groups, onGroupEnd) => {
+        for (const ended of outcomes) {
+          onGroupEnd(ended)
+          writes.snapshots.push([...writes.records])
+        }
+        return over.runResult ?? result(outcomes)
+      },
+      state: over.state ?? (() => 'same'),
+      context: over.context ?? (() => 'ctx'),
+      roots: ['/repo'],
+      now: () => new Date('2026-11-01T00:00:00.000Z'),
+      groupRecord: {
+        head: 'h'.repeat(40),
+        branch: 'task/x/1',
+        runStartedAt: '2026-11-01T00:00:00.000Z',
+        treeClean: over.treeClean === undefined ? true : over.treeClean,
+        write: (record) => writes.records.push(record)
+      }
+    })
+    return { outcome, writes }
+  }
+
+  it('one untrusted runner costs only its own tests; a trusted one keeps only its named failure', () => {
+    const { outcome } = run([cliFailedB, vtUntrusted])
+    expect(outcome).toMatchObject({ passed: false, failed: [B], unreported: [], unconfirmed: [B, X, Y] })
+  })
+
+  it('a runner that names no file yields only its own tests', () => {
+    const cliUntrusted = groupOutcome(GROUP, { trusted: false, confirmed: [], obligations: [A, B] })
+    expect(run([cliUntrusted, groupOutcome(VT_GROUP)]).outcome).toMatchObject({ failed: 'all', unconfirmed: [A, B] })
+  })
+
+  it('named failures and unreported files are named apart, and only they stay unconfirmed', () => {
+    const vtMissingY = groupOutcome(VT_GROUP, { executed: [X], unreported: [Y], confirmed: [X], obligations: [Y] })
+    expect(run([cliFailedB, vtMissingY]).outcome).toMatchObject({
+      failed: [B, Y],
+      unreported: [Y],
+      unconfirmed: [B, Y]
+    })
+  })
+
+  it('after each finished group a record bound to this run holds the finished obligations and every unfinished test', () => {
+    const { writes } = run([cliFailedB, vtUntrusted])
+    // A stop after the first group would find exactly this record.
+    expect(writes.snapshots[0]).toEqual([
+      {
+        version: 1,
+        head: 'h'.repeat(40),
+        branch: 'task/x/1',
+        failed: [
+          '/repo/apps/cli/tests/b.test.ts',
+          '/repo/packages/aeg-core/src/x.test.ts',
+          '/repo/packages/aeg-core/src/y.test.ts'
+        ],
+        recordedAt: '2026-11-01T00:00:00.000Z',
+        selectionCompleted: true,
+        context: 'ctx',
+        failedHoldsUnconfirmed: true,
+        unreported: [],
+        runStartedAt: '2026-11-01T00:00:00.000Z'
+      }
+    ])
+    expect(writes.records).toHaveLength(2)
+  })
+
+  it('a group that leaves nothing confirmed so far writes no record, so an earlier one stays', () => {
+    const cliUntrusted = groupOutcome(GROUP, { trusted: false, confirmed: [], obligations: [A, B] })
+    expect(run([cliUntrusted, vtUntrusted]).writes.records).toEqual([])
+  })
+
+  it('no record is written per group when the tracked tree was not clean at the start', () => {
+    for (const treeClean of [false, null])
+      expect(run([cliFailedB, vtUntrusted], { treeClean }).writes.records).toEqual([])
+  })
+
+  it('a state or context that moved during the run writes, at the next group, a record that confirms nothing, then stops', () => {
+    for (const over of [
+      {
+        state: (() => {
+          let reads = 0
+          return () => (reads++ === 0 ? 'same' : 'moved')
+        })()
+      },
+      {
+        context: (() => {
+          let reads = 0
+          return () => (reads++ === 0 ? 'ctx' : 'other')
+        })()
+      }
+    ]) {
+      const { outcome, writes } = run([cliFailedB, groupOutcome(VT_GROUP)], over)
+      expect(writes.records).toEqual([
+        expect.objectContaining({
+          selectionCompleted: false,
+          failed: [
+            '/repo/apps/cli/tests/a.test.ts',
+            '/repo/apps/cli/tests/b.test.ts',
+            '/repo/packages/aeg-core/src/x.test.ts',
+            '/repo/packages/aeg-core/src/y.test.ts'
+          ]
+        })
+      ])
+      expect(writes.records[0]?.failedHoldsUnconfirmed).toBeUndefined()
+      expect(outcome.drift).not.toBeNull()
+    }
+  })
+})
+
 // ── Real runner starts ───────────────────────────────────────────────────────
 
 describe('real native runner starts', () => {
@@ -501,6 +662,136 @@ describe('what a native run records', () => {
       outcome: 'failed',
       selectionCompleted: false
     })
+  })
+
+  /** A two-file plan in the fixture repository, so a run can confirm one file and not the other. */
+  const twoFiles = (dir: string, head: string): SelectionNote => {
+    const note = frozen(dir, head, ['a.test.ts@default', 'b.test.ts@default'])
+    const groups = [{ ...GROUP, cwd: '.', tests: ['a.test.ts', 'b.test.ts'], args: ['./a.test.ts', './b.test.ts'] }]
+    return { ...note, native: { ...(note.native as NativeSelection), groups } }
+  }
+  const failedRun = (over: Partial<LocalRunOutcome>): LocalRunOutcome => ({
+    passed: false,
+    failed: ['a.test.ts'],
+    drift: null,
+    completion: {
+      version: 1,
+      completed: true,
+      executed: ['a.test.ts@default', 'b.test.ts@default'],
+      failedRunners: ['cli@default'],
+      problems: []
+    },
+    ...over
+  })
+  const record = (dir: string) => JSON.parse(readJsonUnderGit(dir, FAILED_TESTS_RECORD) as string)
+
+  it('a refused run leaves exactly what it did not confirm, marked so, with its unreported files apart', async () => {
+    const { dir, head } = repo()
+    const note = twoFiles(dir, head)
+    await recordLocalRun({
+      repoRoot: dir,
+      note,
+      outcome: failedRun({ failed: ['b.test.ts'], unreported: ['b.test.ts'], unconfirmed: ['b.test.ts'] }),
+      log: '',
+      elapsedSeconds: 1,
+      mode: 'ready',
+      cache: memoryCache(),
+      runStartedAt: '2026-11-01T00:00:00.000Z'
+    })
+    expect(record(dir)).toMatchObject({
+      head,
+      failed: [join(dir, 'b.test.ts')],
+      selectionCompleted: true,
+      failedHoldsUnconfirmed: true,
+      unreported: [join(dir, 'b.test.ts')],
+      runStartedAt: '2026-11-01T00:00:00.000Z',
+      context: note.native?.context
+    })
+    expect(JSON.parse(readJsonUnderGit(dir, LAST_PUSH_RESULT) as string)).toMatchObject({
+      outcome: 'failed',
+      failed: [join(dir, 'b.test.ts')],
+      unreported: [join(dir, 'b.test.ts')]
+    })
+  })
+
+  it('a run in which nothing was confirmed leaves every test of its plan as an incomplete selection', async () => {
+    const { dir, head } = repo()
+    await recordLocalRun({
+      repoRoot: dir,
+      note: twoFiles(dir, head),
+      outcome: failedRun({ failed: 'all', unconfirmed: ['a.test.ts', 'b.test.ts'] }),
+      log: '',
+      elapsedSeconds: 1,
+      mode: 'ready',
+      cache: memoryCache()
+    })
+    expect(record(dir)).toMatchObject({
+      failed: [join(dir, 'a.test.ts'), join(dir, 'b.test.ts')],
+      selectionCompleted: false
+    })
+    expect(record(dir).failedHoldsUnconfirmed).toBeUndefined()
+  })
+
+  it('a drifted run, with or without failures, leaves every test of its plan as an incomplete selection', async () => {
+    for (const failed of [['a.test.ts'], []]) {
+      const { dir, head } = repo()
+      writeJsonUnderGit(dir, FAILED_TESTS_RECORD, {
+        version: 1,
+        head,
+        branch: 'task/x/1',
+        failed: ['x'],
+        recordedAt: 'now'
+      })
+      await recordLocalRun({
+        repoRoot: dir,
+        note: twoFiles(dir, head),
+        outcome: failedRun({
+          failed,
+          unconfirmed: failed,
+          drift: 'the head or the tracked tree changed during the run'
+        }),
+        log: '',
+        elapsedSeconds: 1,
+        mode: 'ready',
+        cache: memoryCache()
+      })
+      expect(record(dir)).toEqual({
+        version: 1,
+        head,
+        branch: 'task/x/1',
+        failed: [join(dir, 'a.test.ts'), join(dir, 'b.test.ts')],
+        recordedAt: expect.any(String),
+        selectionCompleted: false,
+        context: expect.any(String)
+      })
+    }
+  })
+
+  it('a green run that leaves no passing record removes the record this very run wrote after a group', async () => {
+    const { dir, head } = repo()
+    writeFileSync(join(dir, 'a.test.ts'), 'edited\n')
+    const runStartedAt = '2026-11-01T00:00:00.000Z'
+    writeJsonUnderGit(dir, FAILED_TESTS_RECORD, {
+      version: 1,
+      head,
+      branch: 'task/x/1',
+      failed: [join(dir, 'a.test.ts')],
+      recordedAt: runStartedAt,
+      selectionCompleted: true,
+      failedHoldsUnconfirmed: true,
+      runStartedAt
+    })
+    await recordLocalRun({
+      repoRoot: dir,
+      note: frozen(dir, head, ['a.test.ts@default']),
+      outcome: green(['a.test.ts@default']),
+      log: '',
+      elapsedSeconds: 1,
+      mode: 'ready',
+      cache: memoryCache(),
+      runStartedAt
+    })
+    expect(readJsonUnderGit(dir, FAILED_TESTS_RECORD)).toBeNull()
   })
 
   it('a zero selection clears a stale refusal and records no command', async () => {

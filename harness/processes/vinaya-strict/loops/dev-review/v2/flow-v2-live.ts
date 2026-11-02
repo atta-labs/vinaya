@@ -18,9 +18,13 @@ import { type DevToolContext, devToolError } from '../../../../../../apps/cli/sr
 import { storagePushEvent } from '../flow-v2-events'
 import {
   FAILED_TESTS_RECORD,
+  type FailedTestsRecord,
   gitPath,
+  parsePassingRecord,
+  parseRecord,
   readJsonUnderGit,
   readLastPushResult,
+  recordBoundToRun,
   removeUnderGit,
   SELECTION_NOTE,
   type SelectionNote
@@ -657,6 +661,43 @@ async function worktreeDrift(worktreePath: string, head: string, signal?: AbortS
         : null
 }
 
+/** Files of a failed run for the driver log: the named ones, then those no runner reported, separately. */
+function namedFiles(failed: readonly string[], unreported: readonly string[] | undefined): string {
+  const missing = new Set(unreported ?? [])
+  const named = failed.filter((file) => !missing.has(file))
+  const parts = [named.length > 0 ? named.join(', ') : 'no failing file named']
+  if (missing.size > 0) parts.push(`not reported by its runner: ${[...missing].join(', ')}`)
+  return parts.join('; ')
+}
+
+/**
+ * The failed-tests record a deadline stop leaves, and what the next ready push runs from it: the record this run
+ * wrote after a finished runner group (bound to its head and start) is kept; so is any other parseable record, whose
+ * obligations were never proven; an unparseable one is removed.
+ */
+function keepRecordAfterDeadline(
+  worktreePath: string,
+  head: string,
+  startedAt: number
+): { bound: FailedTestsRecord | null; next: string } {
+  const text = readJsonUnderGit(worktreePath, FAILED_TESTS_RECORD)
+  const failed = parseRecord(text)
+  if (recordBoundToRun(failed, head, startedAt) && failed !== null && failed.failed !== 'all')
+    return {
+      bound: failed,
+      next: `the next ready push re-runs the ${failed.failed.length} test(s) this run had not confirmed, plus what changed since`
+    }
+  if (failed !== null && failed.failed !== 'all' && failed.failed.length > 0)
+    return {
+      bound: null,
+      next: `the earlier failed-tests record is kept: the next ready push re-runs its ${failed.failed.length} test(s) on top of its selection`
+    }
+  if (failed === null && parsePassingRecord(text) !== null)
+    return { bound: null, next: 'the last verified pass is kept: the next ready push runs what changed since it' }
+  if (text !== null && failed === null) removeUnderGit(worktreePath, FAILED_TESTS_RECORD)
+  return { bound: null, next: 'the next ready push runs its full selection' }
+}
+
 /** A fresh, owned temp run for one supervised phase: its folder, token and process registry. */
 async function openSupervisedRun(registryDir: string | undefined) {
   await sweepReadyGateRuns()
@@ -680,9 +721,10 @@ async function openSupervisedRun(registryDir: string | undefined) {
  *
  * The hook runs as an awaited child in its own process group, registered (and the registration acknowledged)
  * before it does any work, with its own temp folder. A cancel (`signal`) stops the group, removes the folder and
- * rejects with `ReadyGateCancelledError`; the deadline stops it the same way and records a timed-out refusal, and
- * clears the failed-tests record, since a stopped run left no complete one: the next ready push runs its full
- * selection.
+ * rejects with `ReadyGateCancelledError`; the deadline stops it the same way and records a timed-out refusal. The
+ * failed-tests record is then kept when this very run wrote it after a finished runner group (the next ready push
+ * re-runs what that run had not confirmed), and an earlier parseable record is kept too, since its obligations were
+ * never proven; only an unparseable record is removed.
  *
  * With `deferTests` (the default branch opts in), the driver marks this push for deferral first; the hook then runs
  * every cheap gate and defers the selected tests to required CI, recording that for this head and run. What the
@@ -779,15 +821,18 @@ export async function runReadyGateLive(input: {
     if (run.interrupted === 'cancel') throw new ReadyGateCancelledError()
     const wallMs = Math.max(0, now() - started)
     if (run.interrupted === 'deadline') {
-      removeUnderGit(input.worktreePath, FAILED_TESTS_RECORD)
+      const kept = keepRecordAfterDeadline(input.worktreePath, input.head, startedAt)
       const minutes = Math.round((input.deadlineMs ?? READY_GATE_DEADLINE_MS) / 60000)
       log(`ready push: timed out after ${minutes} min; the test run was stopped`)
-      log(`ready push failed: all; wall time ${wallMs} ms`)
+      const unconfirmed = kept.bound && kept.bound.failed !== 'all' ? kept.bound.failed : null
+      log(
+        `ready push failed: ${unconfirmed ? `not confirmed before the stop: ${namedFiles(unconfirmed, kept.bound?.unreported)}` : 'all'}; wall time ${wallMs} ms`
+      )
       // The selector writes its note before the tests start, so a stopped run still says how many files it selected.
       const note = parseSelectionNote(readJsonUnderGit(input.worktreePath, SELECTION_NOTE), input.head)
       return {
         passed: false,
-        output: `${run.stdout}${run.stderr}\nthe ready push timed out after ${minutes} min and was stopped; the next ready push runs its full selection`,
+        output: `${run.stdout}${run.stderr}\nthe ready push timed out after ${minutes} min and was stopped; ${kept.next}`,
         selection: null,
         failed: 'all',
         wallMs,
@@ -825,7 +870,10 @@ export async function runReadyGateLive(input: {
       log('ready push: the hook exited zero, but no complete native test result was recorded for this head')
     const fresh = forHead && (run.status === 0 || record.outcome === 'failed') && !nativeUnproven
     const failed = passed ? [] : fresh ? record.failed : 'all'
-    if (!passed) log(`ready push failed: ${failed === 'all' ? 'all' : failed.join(', ')}; wall time ${wallMs} ms`)
+    if (!passed)
+      log(
+        `ready push failed: ${failed === 'all' ? 'all' : namedFiles(failed, fresh ? record.unreported : undefined)}; wall time ${wallMs} ms`
+      )
     // No runner is decided by structured facts first. A last-push record this hook run wrote for this head (bound to
     // the head and to this run by its time) rules the state out whatever the output says. A repository that vendors
     // the CLI runs the self-hosted hook, which always selects tests and never declares a runner, so it is never in

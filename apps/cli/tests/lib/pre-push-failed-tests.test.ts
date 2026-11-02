@@ -25,11 +25,15 @@ import {
   passingRecordFromRun,
   readFailedTestsRecord,
   readPassingRecord,
+  recordBoundToRun,
   recordFromRun,
   type SelectionDeps,
   type SelectionNote,
   SELECTION_POLICY,
-  verificationInputsDirty
+  verificationInputsDirty,
+  FAILED_TESTS_RECORD,
+  gitPath,
+  writeJsonUnderGit
 } from '../../src/lib/pre-push-failed-tests'
 import { prePushSelection } from '../../src/lib/pre-push-selection'
 import {
@@ -925,6 +929,58 @@ describe('the native push: its base, its obligations and its proof', () => {
   it('a refusal on another branch or outside this history is ignored', () => {
     expect(chooseNativeBase(inputs({ failed: failedAt({ branch: 'task/x/2' }) })).obligations).toEqual([])
     expect(chooseNativeBase(inputs({ failed: failedAt(), isAncestor: () => false })).obligations).toEqual([])
+  })
+
+  const unconfirmedAt = (over: Partial<FailedTestsRecord> = {}): FailedTestsRecord =>
+    failedAt({
+      failed: ['/repo/apps/cli/tests/a.test.ts', '/repo/apps/cli/tests/gone.test.ts'],
+      failedHoldsUnconfirmed: true,
+      unreported: ['/repo/apps/cli/tests/gone.test.ts'],
+      runStartedAt: '2026-10-30T00:00:00.000Z',
+      ...over
+    })
+
+  it('a record holding every unconfirmed test narrows to its head, those tests its obligations', () => {
+    expect(chooseNativeBase(inputs({ failed: unconfirmedAt() }))).toMatchObject({
+      base: 'r'.repeat(40),
+      kind: 'rerun',
+      obligations: ['/repo/apps/cli/tests/a.test.ts', '/repo/apps/cli/tests/gone.test.ts'],
+      reason: expect.stringContaining('what it did not confirm')
+    })
+  })
+
+  it('every case that gave the full selection still does for a record holding every unconfirmed test', () => {
+    const exists = (path: string) => !path.endsWith('gone.test.ts')
+    for (const over of [
+      { failed: unconfirmedAt({ branch: 'task/x/2' }) },
+      { failed: unconfirmedAt(), isAncestor: () => false },
+      { failed: unconfirmedAt({ context: 'other' }) },
+      { failed: unconfirmedAt(), context: null },
+      { failed: unconfirmedAt(), changedBetween: () => ['/repo/vinaya.config.json'] },
+      { failed: unconfirmedAt(), exists },
+      { failed: unconfirmedAt({ selectionCompleted: false }) },
+      { failed: unconfirmedAt({ failed: 'all' }) }
+    ])
+      expect(chooseNativeBase(inputs(over)).kind).toBe('merge-base')
+  })
+
+  it('a record is bound to a run only by its head, its start and the new writer’s mark', () => {
+    const started = Date.parse('2026-10-30T00:00:00.000Z')
+    expect(recordBoundToRun(unconfirmedAt({ head: 'h' }), 'h', started)).toBe(true)
+    expect(recordBoundToRun(unconfirmedAt({ head: 'h' }), 'h', started + 900)).toBe(true)
+    expect(recordBoundToRun(unconfirmedAt({ head: 'h' }), 'h', started + 5000)).toBe(false)
+    expect(recordBoundToRun(unconfirmedAt({ head: 'h' }), 'other', started)).toBe(false)
+    expect(recordBoundToRun(failedAt({ head: 'h' }), 'h', started)).toBe(false)
+    expect(recordBoundToRun(unconfirmedAt({ head: 'h', runStartedAt: 'never' }), 'h', started)).toBe(false)
+    expect(recordBoundToRun(null, 'h', started)).toBe(false)
+  })
+
+  it('a record is written through a temporary file and a rename, leaving no temporary file behind', () => {
+    const dir = fixtureRepo()
+    writeJsonUnderGit(dir, FAILED_TESTS_RECORD, unconfirmedAt())
+    writeJsonUnderGit(dir, FAILED_TESTS_RECORD, unconfirmedAt({ head: 'second' }))
+    expect(readFailedTestsRecord(dir)).toMatchObject({ head: 'second', failedHoldsUnconfirmed: true })
+    expect(existsSync(`${gitPath(dir, FAILED_TESTS_RECORD) as string}.${process.pid}.tmp`)).toBe(false)
   })
 
   const native = (identities: string[]): NonNullable<SelectionNote['native']> => ({
