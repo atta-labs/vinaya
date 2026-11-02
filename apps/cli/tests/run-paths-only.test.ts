@@ -36,6 +36,7 @@ const SOURCE_ROOTS = [
 
 /** The one function every run file resolves through, and the only file allowed to build a path under the runtime directory. */
 const PATH_FUNCTION = 'apps/cli/src/lib/run-paths.ts'
+const PROCESS_LOOPS_FOLDER = 'processes/vinaya-strict/loops/'
 
 /**
  * Where the machine's Vinaya home may still be reached, and why. Everything
@@ -146,7 +147,11 @@ describe('run-file paths are assembled in exactly one place (O3)', () => {
     for (const f of files) {
       const rel = relative(REPO_ROOT, f)
       if (rel === PATH_FUNCTION) continue
-      const lines = codeLines(readFileSync(f, 'utf8')).filter((line) => !isModuleSpecifier(line))
+      // The process's own source folder `harness/processes/vinaya-strict/loops/` is a repository folder, never a run-file
+      // location, so a path that names it (a wrapped import of the moved driver, a scanner root) is not the retired folder.
+      const lines = codeLines(readFileSync(f, 'utf8'))
+        .filter((line) => !isModuleSpecifier(line))
+        .map((line) => line.replaceAll(PROCESS_LOOPS_FOLDER, ''))
       for (const { segment, nowAt } of RETIRED_SEGMENTS) {
         // As a quoted path segment — `'dispatch-resume'`, `"loops"`,
         // `/loops/` inside a template — never a mention in an identifier

@@ -4,7 +4,10 @@ import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isDriverPidAlive, readDriverLock } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import {
+  isDriverPidAlive,
+  readDriverLock
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { readTaskIssueFacts, resolveOpenTaskIssueForRef } from '../../../src/lib/task-tools/handlers.js'
 import type { TaskIssueFacts } from '../../../src/lib/task-tools/handlers.js'
 import type { AgentVendor, ProcessSnapshot } from '../../../src/lib/dispatch.js'

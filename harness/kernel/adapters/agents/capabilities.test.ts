@@ -125,7 +125,7 @@ describe('a role that reads but does not run commands', () => {
 })
 
 describe('the developer before and after the capability contract', () => {
-  const processRoot = join(import.meta.dir, '../../../../processes/vinaya/executing')
+  const processRoot = join(import.meta.dir, '../../../../harness/processes/vinaya-strict/executing')
   const before = JSON.parse(
     readFileSync(join(import.meta.dir, 'fixtures', 'developer-before-capability-contract.json'), 'utf8')
   ) as { claude: GeneratedAgentConfig; codex: GeneratedAgentConfig }
@@ -267,6 +267,23 @@ describe('the developer before and after the capability contract', () => {
     const mcp = JSON.parse(claude.files['role-mcp.json'] as string)
     expect(mcp.mcpServers.vinaya_dev_tools.timeout).toBe(DEV_TOOLS_TOOL_TIMEOUT_SEC * 1000)
   })
+
+  for (const [given, written] of [
+    [4500, 4500],
+    [600, DEV_TOOLS_TOOL_TIMEOUT_SEC]
+  ] as const) {
+    test(`Codex: a dev-tools limit of ${given} seconds is written as ${written}, never below the shared default`, () => {
+      const config = generateCodexConfig(grants, { ...paths, devToolsTimeoutSec: given })
+      const toolTimeouts = [...(config.files['config.toml'] as string).matchAll(/^tool_timeout_sec = (\d+)$/gm)]
+      expect(toolTimeouts.map((m) => Number(m[1]))).toEqual([written])
+    })
+
+    test(`Claude: a dev-tools limit of ${given} seconds is written as ${written * 1000} ms, never below the shared default`, () => {
+      const config = generateClaudeSettings(grants, { ...paths, devToolsTimeoutSec: given })
+      const mcp = JSON.parse(config.files['role-mcp.json'] as string)
+      expect(mcp.mcpServers.vinaya_dev_tools.timeout).toBe(written * 1000)
+    })
+  }
 
   test('the effective capabilities are renamed, not changed', () => {
     for (const config of [claude, codex]) {

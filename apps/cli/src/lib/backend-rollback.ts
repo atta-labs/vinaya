@@ -47,7 +47,7 @@ import {
   isDriverPidAlive,
   readDriverLock,
   readPauseState
-} from './dev-review-loop/pause-resume.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import type { EffectIdentity, EffectReconciler, EffectReconcileResult } from './effects.js'
 import { reconcileGhComment } from './forge-write.js'
 import { ensureRunDir, runPath } from './run-paths.js'

@@ -9,7 +9,7 @@ import {
   type TurnResultControllerContext,
   turnResultCorrectionPrompt,
   turnResultInstruction
-} from '../../src/lib/dev-review-loop/turn-result.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import { developerTurnResultJsonSchema } from '../../src/lib/developer-turn-result.js'
 import {
   classifyRoleAttemptOutcome,

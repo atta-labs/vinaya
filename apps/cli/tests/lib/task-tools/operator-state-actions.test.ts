@@ -11,8 +11,8 @@ import {
   TASK_TOOL_NAMES,
   writeEscalation
 } from '@attalabs/aeg-core'
-import { escalationIdFor } from '../../../src/lib/dev-review-loop/pause-resume.js'
-import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess.js'
+import { escalationIdFor } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 import { taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
 import { appendRoleLine, loopLogPathFor } from '../../../src/lib/loop-log.js'
 import {

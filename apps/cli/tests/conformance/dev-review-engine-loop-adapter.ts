@@ -21,10 +21,10 @@ import {
 } from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process.js'
-import { setEngineLogIdentity } from '../../../../processes/vinaya/bin/engine-log-identity.js'
+import { setEngineLogIdentity } from '../../../../harness/processes/vinaya-strict/bin/engine-log-identity.js'
 import { LOG_IDENTITY_ENV_KEYS } from '../../src/lib/dispatch.js'
-import { createActions } from '../../../../processes/vinaya/executing/actions.js'
-import type { DeveloperPromptFacts } from '../../../../processes/vinaya/executing/developer-prompt.js'
+import { createActions } from '../../../../harness/processes/vinaya-strict/executing/actions.js'
+import type { DeveloperPromptFacts } from '../../../../harness/processes/vinaya-strict/executing/developer-prompt.js'
 import { probeAgentSandbox, type SandboxProbeRun } from '../../src/lib/worker-boundary.js'
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
 import {
@@ -39,7 +39,7 @@ import {
   type EngineRunOptions,
   type RunTrace,
   isAgentLaunchEvent
-} from '../../../../processes/vinaya/bin/run-engine.js'
+} from '../../../../harness/processes/vinaya-strict/bin/run-engine.js'
 import { createDeveloperDevToolContext } from '../../src/lib/task-tools/developer-dev-tools-context.js'
 import { manifestDigest } from '../../src/lib/review-result.js'
 import {
@@ -50,15 +50,18 @@ import {
   resolveEscalation,
   writeDriverLock,
   writeEscalationRecord
-} from '../../src/lib/dev-review-loop/pause-resume.js'
-import { liveHandoffDeps, type HandoffDeps } from '../../../../processes/vinaya/executing/handoff.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { liveHandoffDeps, type HandoffDeps } from '../../../../harness/processes/vinaya-strict/executing/handoff.js'
 import {
   abortableSleep,
   liveResumeDeps,
   type ResumeDeps,
   type RulingWatch
-} from '../../../../processes/vinaya/bin/run-lifecycle.js'
-import { cancelDevReviewLoop, taskFromPrBody } from '../../src/lib/dev-review-loop.js'
+} from '../../../../harness/processes/vinaya-strict/bin/run-lifecycle.js'
+import {
+  cancelDevReviewLoop,
+  taskFromPrBody
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import {
   createLogSink,
   drainLogSink,
@@ -70,9 +73,12 @@ import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, tasksExecutionRoot } from '.
 import { createEffectExecutor, type EffectIdentity, type EffectReconciler, sha256Hex } from '../../src/lib/effects.js'
 import { createTaskCancelHandler } from '../../src/lib/task-tools/cancel.js'
 import { readTaskRunner } from '../../src/lib/task-run-engine.js'
-import { cleanupAllReviewerIsolationArtifacts } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
-import { heldVerdictPath } from '../../src/lib/dev-review-loop/reviewer-dispatch.js'
-import { handoffIdsInPrompt, OWNED_ENV_KEYS } from '../lib/dev-review-loop-harness.js'
+import { cleanupAllReviewerIsolationArtifacts } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.js'
+import { heldVerdictPath } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
+import {
+  handoffIdsInPrompt,
+  OWNED_ENV_KEYS
+} from '../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 import { FIXTURE_REPO } from '../lib/process-fixture.js'
 import type { Observation } from './dev-review-current-loop-adapter.js'
 
@@ -90,7 +96,7 @@ import type { Observation } from './dev-review-current-loop-adapter.js'
  * Missing behavior stays observable rather than being implemented by this
  * test adapter.
  */
-const PROCESS = loadProcess(resolve(import.meta.dir, '../../../../processes/vinaya'))
+const PROCESS = loadProcess(resolve(import.meta.dir, '../../../../harness/processes/vinaya-strict'))
 // The task and pull request the standalone harness's world names.
 const TASK = 9001
 /** The task every Engine scenario runs. */

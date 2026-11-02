@@ -16,7 +16,7 @@ import {
   repairLocalGateControl
 } from '../../src/lib/local-gate-control.js'
 import { fixtureDir } from './test-temp-fixture'
-import { checkTaskDispatchReadiness } from '../../src/lib/dev-review-loop/developer-dispatch.js'
+import { checkTaskDispatchReadiness } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 
 const roots: string[] = []
 afterEach(() => {

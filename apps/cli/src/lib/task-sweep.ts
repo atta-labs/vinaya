@@ -36,8 +36,8 @@ import {
   developerBranchFor as realDeveloperBranchFor,
   fetchPrBody as realFetchPrBody,
   taskFromPrBody as realTaskFromPrBody
-} from './dev-review-loop/developer-dispatch.js'
-import { isDriverPidAlive as realIsDriverPidAlive } from './dev-review-loop/pause-resume.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
+import { isDriverPidAlive as realIsDriverPidAlive } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { GLOBAL_VINAYA_HOME } from './config.js'
 import {
   DRIVER_LOCK_FILENAME,

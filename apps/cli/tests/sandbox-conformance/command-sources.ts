@@ -55,7 +55,7 @@ export const SUITE_INPUTS: readonly string[] = [
   // The Engine's own launch-shape generators and the launcher the credential probes run inside.
   'harness/kernel/adapters/agents/',
   'harness/kernel/isolation/',
-  'processes/vinaya/executing/',
+  'harness/processes/vinaya-strict/executing/',
   'apps/cli/src/lib/task-tools/dev-tools-registration.ts',
   // The tool host and server the controller-boundary probes attack, with their per-dispatch capability check.
   'apps/cli/src/lib/task-tools/dev-tools-host.ts',

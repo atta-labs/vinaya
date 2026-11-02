@@ -13,9 +13,17 @@ import { join } from 'node:path'
 import { assembleAndRenderBrief } from './brief-assembly.js'
 import type { TaskRunner } from './config.js'
 import type { AgentVendor } from './dispatch.js'
-import { developerBranchFor, findOpenPrForBranch } from './dev-review-loop/developer-dispatch.js'
-import { isDriverPidAlive, readDriverLock, readPauseState, writePauseState } from './dev-review-loop/pause-resume.js'
-import { runtimeDir as thisRepoRuntimeDir } from './dev-review-loop/reviewer-dispatch.js'
+import {
+  developerBranchFor,
+  findOpenPrForBranch
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
+import {
+  isDriverPidAlive,
+  readDriverLock,
+  readPauseState,
+  writePauseState
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { runtimeDir as thisRepoRuntimeDir } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
 import { appendDriverLine, loopLogPathFor } from './loop-log.js'
 import { engineRunDirectory, readTaskRunner } from './task-run-engine.js'
 

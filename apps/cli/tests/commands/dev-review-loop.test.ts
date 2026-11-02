@@ -2,7 +2,7 @@
  * `vinaya dev-review-loop` argv/refusal layer (dev-review-loop-v1 task 5,
  * `#415`) — mirrors `dispatch.test.ts`'s own lib-vs-command split:
  * `devReviewLoop`'s real dispatch/round-loop behavior is
- * `apps/cli/tests/lib/dev-review-loop.test.ts`'s job; this file only checks
+ * `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts`'s job; this file only checks
  * that missing/invalid `--task`/`--agent` refuse by name before any dispatch
  * is attempted. Same fresh-subprocess discipline as `dispatch.test.ts` (a
  * scratch `HOME`, a scratch non-git `cwd`).
@@ -36,7 +36,7 @@ type CliResult = { status: number; stdout: string; stderr: string }
  * `runtimeDirForThisRepo()` resolves unconditionally at the top of the call,
  * before any dispatch, the exact same `VINAYA_RUNTIME_DIR`-leak/no-budget
  * pattern already fixed in the sibling
- * `apps/cli/tests/lib/dev-review-loop.test.ts` (`fixtureChildEnv`) was left
+ * `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-test-support.ts` (`fixtureChildEnv`) was left
  * unfixed here even though this file exercises the same call path.
  *
  * `AEG_REPO` is stripped alongside every `VINAYA_*` key (round 5, security

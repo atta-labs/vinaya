@@ -10,7 +10,10 @@ import {
   TOOL_REFUSAL_SCHEMA
 } from '../../../src/lib/task-tools/tool-catalog.js'
 import { createDevToolsMcpServer, type DevToolContext } from '../../../src/lib/task-tools/dev-tools-server.js'
-import { projectPrChecks, projectPrReviews } from '../../../src/lib/dev-review-loop.js'
+import {
+  projectPrChecks,
+  projectPrReviews
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 
 const required = [
   'name',

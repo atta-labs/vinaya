@@ -25,7 +25,7 @@ import {
   checkPublicationPreconditions,
   type PublicationCheckInput,
   validateCommitHeader
-} from '../dev-review-loop/developer-publication.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-publication.js'
 import { devToolError, type DevPullRequestView, type DevToolResult } from './dev-tools-server.js'
 import type { DevToolContext } from './dev-tools-server.js'
 import type { FetchDocumentationInput, FetchDocumentationResult } from './fetch-documentation.js'

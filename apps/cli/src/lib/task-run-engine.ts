@@ -2,7 +2,10 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import type { AgentVendor } from './dispatch.js'
-import { isDriverPidAlive, readDriverLock } from './dev-review-loop/pause-resume.js'
+import {
+  isDriverPidAlive,
+  readDriverLock
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { packageRoot } from './package-root.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from './run-paths.js'
 import type { TaskRunner } from './config.js'
@@ -162,8 +165,11 @@ export const defaultEngineRunnerDeps: EngineRunnerDeps = {
   notice: (line) => process.stderr.write(`${line}\n`)
 }
 
+/** The Vinaya process folder, relative to the root of a checkout of this repository. */
+export const PROCESS_FOLDER_IN_CHECKOUT = 'harness/processes/vinaya-strict'
+
 export function engineRunnerScriptPath(): string {
-  return resolve(packageRoot(import.meta.url), '../../processes/vinaya/bin/run-engine.ts')
+  return resolve(packageRoot(import.meta.url), '../..', PROCESS_FOLDER_IN_CHECKOUT, 'bin/run-engine.ts')
 }
 
 /**

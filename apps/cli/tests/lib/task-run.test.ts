@@ -12,7 +12,7 @@
  * than hitting a real forge).
  *
  * A genuine end-to-end CLI-subprocess proof (mirroring
- * `apps/cli/tests/lib/dev-review-loop.test.ts`'s fake-`claude`/fake-`gh`
+ * `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-test-support.ts`'s fake-`claude`/fake-`gh`
  * fixture) is not reachable for the fresh-task path here: `prepareTask`
  * always renders first (its own doc comment), and that render
  * (`assembleAndRenderBrief` -> `createForgeSource`/`fetchOpenIssuesByLabel`)
@@ -36,10 +36,10 @@ import {
   widenSurfaceCommandFor,
   widenSurfaceRequestOf
 } from '../../src/lib/task-run.js'
-import type { PauseState } from '../../src/lib/dev-review-loop/pause-resume.js'
-import type { TurnResultRecord } from '../../src/lib/dev-review-loop/turn-result.js'
+import type { PauseState } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import type { TurnResultRecord } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import { DispatchTaskError } from '../../src/lib/dispatch-task.js'
-import type { LoopResult } from '../../src/lib/dev-review-loop.js'
+import type { LoopResult } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 
 function neverCalled(name: string) {
   return (...args: unknown[]) => {

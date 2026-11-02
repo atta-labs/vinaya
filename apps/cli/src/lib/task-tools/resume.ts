@@ -74,7 +74,7 @@ import {
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchRulings
-} from '../dev-review-loop/developer-dispatch.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 import {
   escalationIdFor,
   escalationPrOf,
@@ -90,13 +90,13 @@ import {
   rulingAuthenticatesResume,
   StaleEscalationError,
   WrongTargetResolutionError
-} from '../dev-review-loop/pause-resume.js'
-import { runtimeDir } from '../dev-review-loop.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { runtimeDir } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import { engineContinuationArgv, readTaskRunner } from '../task-run-engine.js'
 import { newestPublishedRound } from '../task-status.js'
 import { widenSurfaceContinuationFor } from '../task-run.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
-import { taskFromEscalationId } from '../dev-review-loop/pause-resume.js'
+import { taskFromEscalationId } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { log } from '../log-sink.js'
 import type { TaskToolCallResult } from './handlers.js'
 import { resolveIssueForRef } from './handlers.js'

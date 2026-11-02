@@ -55,7 +55,7 @@ import {
   readCodexTurnOutput,
   type TurnRead,
   turnResultCorrectionPrompt
-} from '../dev-review-loop/turn-result.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import { vendorResumeArgs, vendorSessionArgs, writeDispatchSettingsAt } from '../dispatch.js'
 import { buildWorkerEnv, realConfinementPlatformDeps, resolveClaudeConfinement } from '../worker-boundary.js'
 import {

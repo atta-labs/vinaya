@@ -45,8 +45,12 @@ import {
   type TaskPrReviewRecord,
   type TaskPrVerdict
 } from '@attalabs/aeg-core'
-import { markerComments } from '../dev-review-loop/developer-dispatch.js'
-import { judgeWorkflowRuns, type RestWorkflowRun, sh } from '../dev-review-loop/gate-reading.js'
+import { markerComments } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
+import {
+  judgeWorkflowRuns,
+  type RestWorkflowRun,
+  sh
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/gate-reading.js'
 import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
 import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../review-gate-check-name.js'
 

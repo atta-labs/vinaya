@@ -46,7 +46,7 @@ import {
   requiredSourcePieces,
   type ReviewerPromptFacts,
   reviewerSourceFacts
-} from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
 
 const tempDirs: string[] = []
 afterEach(() => {

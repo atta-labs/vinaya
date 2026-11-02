@@ -22,7 +22,7 @@ import {
 import { resolveGrantValues, type GeneratedAgentConfig } from '../../isolation/policy'
 import { evaluateShellGuards } from '../../isolation/shell-eval'
 
-const processRoot = join(import.meta.dir, '../../../../processes/vinaya/executing')
+const processRoot = join(import.meta.dir, '../../../../harness/processes/vinaya-strict/executing')
 
 function generatedFile(config: GeneratedAgentConfig, path: string): string {
   const value = config.files[path]

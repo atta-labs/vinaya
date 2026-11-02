@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { runDirectory, type Agent, type RunTrace } from '../../../../processes/vinaya/bin/run-engine.js'
+import { runDirectory, type Agent, type RunTrace } from '../../../../harness/processes/vinaya-strict/bin/run-engine.js'
 import { engineEvidenceOf } from '../../src/lib/dev-review-eval/exit-check.js'
 import { loadRegistry } from '../../src/lib/dev-review-eval/registry.js'
 import {
@@ -13,8 +13,8 @@ import {
   readEscalationRecord,
   readPauseState,
   type PauseState
-} from '../../src/lib/dev-review-loop/pause-resume.js'
-import { MAX_INFRASTRUCTURE_RETRIES } from '../../src/lib/dev-review-loop/round-assess.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 import { taskEscalationReadHandler } from '../../src/lib/task-tools/handlers.js'
 import { readEscalationPacket, readTaskLoopStateObserved } from '../../src/lib/task-tools/read.js'
 import type { Observation } from './dev-review-current-loop-adapter.js'

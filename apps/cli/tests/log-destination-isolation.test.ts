@@ -1459,7 +1459,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('a deps object built before the call still counts as that call’s own log dependency', () => {
     const sample = `
-      import { devReviewLoop } from '../src/lib/dev-review-loop.js'
+      import { devReviewLoop } from '../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
       const deps = { log: spy }
       await devReviewLoop(input, deps)
       ${A_DEFAULT_READ}
@@ -1493,7 +1493,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('…and so is a boundary producer driven with no log dependency of the caller’s own', () => {
     const sample = `
-      import { devReviewLoop } from '../src/lib/dev-review-loop.js'
+      import { devReviewLoop } from '../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
       await devReviewLoop(input, { fetchPrBody: () => 'x' })
       ${A_DEFAULT_READ}
     `
@@ -1503,7 +1503,7 @@ describe("no test reads this repository's own log destination", () => {
   it('…and so is one whose only log dependency is the module producer itself, or a key nested in an unrelated object', () => {
     for (const deps of ['{ log: log }', "{ checks: { log: 'x' } }"]) {
       const sample = `
-        import { devReviewLoop, log } from '../src/lib/dev-review-loop.js'
+        import { devReviewLoop, log } from '../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
         await devReviewLoop(input, ${deps})
         ${A_DEFAULT_READ}
       `

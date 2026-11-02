@@ -13,7 +13,7 @@ import {
   assembleDeveloperDoctrine,
   DEVELOPER_CHECKLIST_HEADINGS,
   extractDeveloperSection
-} from '../../src/lib/dev-review-loop/developer-dispatch'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 
 /**
  * The shape of the Developer doctrine that the dispatch driver and the

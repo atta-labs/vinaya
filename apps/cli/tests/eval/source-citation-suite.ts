@@ -24,7 +24,10 @@ import {
   type DeveloperTurnResult
 } from '../../src/lib/developer-turn-result'
 import { passHatK } from '../../src/lib/dev-review-eval/estimators'
-import { readClaudeTurnOutput, readCodexTurnOutput } from '../../src/lib/dev-review-loop/turn-result'
+import {
+  readClaudeTurnOutput,
+  readCodexTurnOutput
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result'
 import {
   injectedDeliveryReceipts,
   SOURCE_REVISION_POLICY,
