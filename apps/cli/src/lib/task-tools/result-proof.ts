@@ -41,6 +41,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { ownVersion } from '../../../../../harness/processes/vinaya-strict/integration/artifacts.js'
+import { vinayaToolGrantPolicy } from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 import {
   DEVELOPER_TURN_RESULT_SCHEMA_VERSION,
   type DeveloperTurnContext,
@@ -124,7 +125,7 @@ export function driverVerdict(read: TurnRead, context: DeveloperTurnContext): Dr
   if (read.event === null) return { crossed: false, reason: 'the stream carried no structured result' }
   const shaped = parseDeveloperTurnResult(read.raw, context)
   if (!shaped.ok) return { crossed: false, reason: `refused at the adapter (schema): ${shaped.errors.join('; ')}` }
-  // The production controller judges it: a round past the first (the proof's
+  // The production judge reads it: a round past the first (the proof's
   // findings come from a review), and the proof's required source declared
   // read — the proof sessions fetch nothing, so it supplies the receipt.
   const judged = judgeTurnOutput(
@@ -825,7 +826,8 @@ export async function resultProofCommand(args: string[]): Promise<void> {
     socketPath: devToolsSocketPath(`result-proof:${randomUUID()}`),
     serverVersion: ownVersion(),
     context: proofContext(recorded),
-    role: 'developer'
+    role: 'developer',
+    toolGrants: vinayaToolGrantPolicy()
   })
   const out = (line = ''): void => {
     process.stdout.write(`${line}\n`)

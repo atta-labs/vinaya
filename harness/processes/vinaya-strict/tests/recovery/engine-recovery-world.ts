@@ -11,7 +11,8 @@ import {
   readExecutionRoundMirror
 } from '@attalabs/aeg-core'
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { authenticateWorkerInvocation, requestEffect, scopeTarget } from '../../../../../apps/cli/src/lib/broker'
+import { createBroker, scopeTarget } from '../../../../../apps/cli/src/lib/broker'
+import { vinayaBrokerPolicies } from '../../integration/policies/vinaya-policies'
 import { loopHistoryFromComments } from '../../loops/dev-review/standalone/dev-review-loop/journal-history'
 import { controlStoreRootFor } from '../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import type { DispatchTeeRecoveryDeps, ParsedLaunch } from '../../loops/dev-review/dispatch/dispatch'
@@ -177,9 +178,9 @@ const LAUNCH_DEPS: DispatchTeeRecoveryDeps = {
   listLaunchRecordPaths: () => ['launch-0.json'],
   readFile: () => JSON.stringify({ runId: RUN_ID, role: 'developer', agent: 'claude', task: TASK })
 } as DispatchTeeRecoveryDeps
-const developer = authenticateWorkerInvocation(
+const broker = createBroker(vinayaBrokerPolicies({ launchRecordDeps: LAUNCH_DEPS }))
+const developer = broker.authenticateWorkerInvocation(
   { VINAYA_ROLE: 'developer', VINAYA_TASK: String(TASK), VINAYA_RUN_ID: RUN_ID },
-  LAUNCH_DEPS,
   () => {}
 )
 
@@ -289,7 +290,7 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
     const sha = world.head
     let died = false
     try {
-      requestEffect(
+      broker.requestEffect(
         world.store,
         developer,
         {

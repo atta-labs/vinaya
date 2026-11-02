@@ -31,7 +31,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { INSTALL_CONFIG_PROVIDER, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const LOG_SINK = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
 
@@ -44,7 +44,7 @@ for (const name of ['execFileSync', 'spawnSync', 'execSync']) {
     throw new Error('synchronous spawn on the log path: ' + name)
   }
 }
-${INSTALL_CONFIG_PROVIDER}const { log } = await import(${JSON.stringify(LOG_SINK)})
+await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nconst { log } = await import(${JSON.stringify(LOG_SINK)})
 log({
   kind: 'dispatch',
   event: 'dispatched',
@@ -141,7 +141,7 @@ describe('log() never makes a synchronous spawn', () => {
 //   - the read is silent — its fallback warning would otherwise land on the
 //     stdout that `vinaya dispatch --json` and every check own.
 const ANCHOR_PROBE = `
-${INSTALL_CONFIG_PROVIDER}const { createLogSink } = await import(${JSON.stringify(LOG_SINK)})
+await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nconst { createLogSink } = await import(${JSON.stringify(LOG_SINK)})
 const eventEnv = process.env.PROBE_EVENT_ROLE ? { ...process.env, VINAYA_ROLE: process.env.PROBE_EVENT_ROLE } : process.env
 const { log } = createLogSink({ env: () => eventEnv })
 log({
@@ -259,7 +259,7 @@ describe('the default-branch logs read belongs to the process, and is silent', (
 // builds — `dispatchRole` and the loop driver each build a fresh sink per
 // call, and a persistently broken destination must not warn once per call.
 const WARN_PROBE = `
-${INSTALL_CONFIG_PROVIDER}const { createLogSink } = await import(${JSON.stringify(LOG_SINK)})
+await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nconst { createLogSink } = await import(${JSON.stringify(LOG_SINK)})
 for (let i = 0; i < 3; i++) {
   const { log } = createLogSink()
   log({

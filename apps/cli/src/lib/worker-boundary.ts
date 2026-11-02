@@ -33,10 +33,8 @@ import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path'
-import type { Role } from '@attalabs/aeg-core'
 import { devToolsSocketRoot } from './task-tools/dev-tools-registration.js'
 import { sourceReceiptsPath, sourceStoreDir } from './source-manifest.js'
-import { isReviewerScratchName } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.js'
 
 /** The same allowlist discipline `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `apps/cli/specs/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
 export const WORKER_ENV_ALLOWLIST_KEYS = [
@@ -1096,7 +1094,7 @@ export const DOCUMENTATION_HOSTS: readonly string[] = [
 ]
 
 export type ConfinementRequest = {
-  readonly role: Role
+  readonly role: string
   /** A plain string, never `AgentVendor` — that type lives in `dispatch.ts`, which imports this module, and importing it back here would cycle. */
   readonly agent: string
   readonly worktreeDir: string
@@ -2088,43 +2086,92 @@ function entryKind(path: string): 'file' | 'dir' {
   }
 }
 
-/** The directory name `rounds/<n>` holds for each role — `developer` is literal; a reviewer/security round directory is named `reviewer-work`/`security-work`, with a `-retry<k>` or `-redispatch<k>` suffix — the result directories reviewers wrote before they returned their review as structured output, still attributed to their role when an older round folder carries one — so a prefix match, not an exact one, is what "belongs to this role" means for those two. */
-function roundEntryBelongsToRole(name: string, role: Role): boolean {
-  if (role === 'developer') return name === 'developer'
-  const prefix = role === 'code-reviewer' ? 'reviewer-work' : 'security-work'
-  return name === prefix || name.startsWith(`${prefix}-`)
+/**
+ * The role facts the after-turn boundary reads, supplied by the process so
+ * this module names no role:
+ *
+ * - `sessionRoles` — every role a sessions-area file name `<role>-<agent>.json`
+ *   / `<role>-<agent>-config` may open with, most specific first. A role name
+ *   may itself contain a `-`, so matching against this list is what makes the
+ *   split unambiguous; splitting on the first `-` alone misreads a hyphenated
+ *   role's file as the role named by its first segment.
+ * - `roundDirectory` — the directory `rounds/<n>` holds for a role's turn, and
+ *   whether a `<name>-<suffix>` sibling (a retried or redispatched attempt's
+ *   directory, still attributed to its role when an older round folder
+ *   carries one) also belongs to that role — a prefix match, not an exact one.
+ * - `concurrentSibling` — the role dispatched for the SAME round at the same
+ *   time as `role`, or `null` when `role` runs alone.
+ */
+export type BoundaryRolePolicy = {
+  readonly sessionRoles: readonly string[]
+  readonly roundDirectory: (role: string) => { readonly name: string; readonly suffixed: boolean }
+  readonly concurrentSibling: (role: string) => string | null
 }
 
 /**
- * A round-folder entry a concurrently-dispatched sibling reviewer creates or
- * removes during its own turn: its work directory (`roundEntryBelongsToRole`)
- * and its scratch copy of the candidate (`reviewerScratchDir`'s name family).
- * `candidate` itself is never one of these — the driver builds it once per
- * round for both reviewers, so a change to it during a turn is a violation.
+ * Answers whether a round-folder entry `name` is an exempt scratch copy of the
+ * candidate for the launched `role` — the directory that role's turn runs in
+ * and is expected to change. Never the shared `candidate` itself, and never
+ * another role's copy.
  */
-function isConcurrentSiblingRoundEntry(name: string, sibling: Role): boolean {
-  if (roundEntryBelongsToRole(name, sibling)) return true
-  return isReviewerScratchName(name, sibling === 'code-reviewer' ? 'reviewer' : 'security')
+export type ScratchNamePolicy = {
+  readonly isExemptScratchName: (name: string, role: string) => boolean
+}
+
+export type WorkerBoundaryPolicies = {
+  roles: BoundaryRolePolicy
+  scratchNames: ScratchNamePolicy
+}
+
+/** Thrown by `createWorkerBoundary` when a policy is missing or malformed — a boundary is never built with no role facts or no scratch rule. */
+export class MissingWorkerBoundaryPolicyError extends Error {
+  constructor(readonly policy: keyof WorkerBoundaryPolicies) {
+    super(
+      `worker boundary: refusing to build without its ${policy === 'roles' ? 'role policy' : 'scratch-name policy'} (${policy})`
+    )
+    this.name = 'MissingWorkerBoundaryPolicyError'
+  }
+}
+
+function assertWorkerBoundaryPolicies(policies: WorkerBoundaryPolicies | undefined): WorkerBoundaryPolicies {
+  const roles = policies?.roles
+  if (
+    roles === undefined ||
+    roles === null ||
+    !Array.isArray(roles.sessionRoles) ||
+    typeof roles.roundDirectory !== 'function' ||
+    typeof roles.concurrentSibling !== 'function'
+  ) {
+    throw new MissingWorkerBoundaryPolicyError('roles')
+  }
+  if (typeof policies?.scratchNames?.isExemptScratchName !== 'function') {
+    throw new MissingWorkerBoundaryPolicyError('scratchNames')
+  }
+  return policies
+}
+
+/** Whether round-folder entry `name` is `role`'s own work directory (`BoundaryRolePolicy.roundDirectory`). */
+function roundEntryBelongsToRole(roles: BoundaryRolePolicy, name: string, role: string): boolean {
+  const directory = roles.roundDirectory(role)
+  if (!directory.suffixed) return name === directory.name
+  return name === directory.name || name.startsWith(`${directory.name}-`)
 }
 
 /**
- * A round-folder entry that is the dispatched reviewer's OWN scratch copy of
- * the candidate (`reviewerScratchDir`'s name family, every attempt) — the
- * directory this turn runs in and is expected to change. Never `candidate`
- * itself, and never the sibling's copy (`isReviewerScratchName` matches one
- * role's prefix only); a developer has no scratch copy at all.
+ * A round-folder entry a concurrently-dispatched sibling creates or removes
+ * during its own turn: its work directory (`roundEntryBelongsToRole`) and its
+ * scratch copy of the candidate (the scratch-name policy). `candidate` itself
+ * is never one of these — the driver builds it once per round for both
+ * siblings, so a change to it during a turn is a violation.
  */
-function isOwnScratchRoundEntry(name: string, role: Role): boolean {
-  if (role === 'developer') return false
-  return isReviewerScratchName(name, role === 'code-reviewer' ? 'reviewer' : 'security')
+function isConcurrentSiblingRoundEntry(policies: WorkerBoundaryPolicies, name: string, sibling: string): boolean {
+  if (roundEntryBelongsToRole(policies.roles, name, sibling)) return true
+  return policies.scratchNames.isExemptScratchName(name, sibling)
 }
 
-/** Every role this file's sessions area ever names in a filename — the three worker roles a turn can actually be dispatched as. `code-reviewer` itself contains a `-`, so matching against this list (longest/most-specific first) is what makes the split unambiguous; splitting on the first `-` alone (round 2 review, BLOCKER) misreads `code-reviewer-<agent>.json` as role `code`. */
-const SESSION_ENTRY_ROLES: readonly Role[] = ['code-reviewer', 'developer', 'security']
-
-/** The sessions-area filename `<role>-<agent>.json`/`<role>-<agent>-config` names its role as one of `SESSION_ENTRY_ROLES`, matched by prefix — never a bare first-`-` split, which breaks on `code-reviewer`'s own hyphen. Falls back to the first segment for a name this task's roles never produce, so an unrecognized file is still a plausible string here, never a crash. */
-function sessionEntryRole(name: string): string {
-  for (const role of SESSION_ENTRY_ROLES) {
+/** The sessions-area filename names its role as one of `sessionRoles`, matched by prefix — never a bare first-`-` split. Falls back to the first segment for a name no listed role produces, so an unrecognized file is still a plausible string here, never a crash. */
+function sessionEntryRole(roles: BoundaryRolePolicy, name: string): string {
+  for (const role of roles.sessionRoles) {
     if (name === role || name.startsWith(`${role}-`)) return role
   }
   return name.split('-')[0] ?? name
@@ -2137,33 +2184,35 @@ function sessionEntryRole(name: string): string {
  * two deliberate exceptions:
  *
  * - This role's own entries are never in the list at all — this IS the
- *   dispatch whose turn is ending, and it is expected to write there. For a
- *   reviewer that includes its own scratch copies of the candidate in the
- *   round being judged (`isOwnScratchRoundEntry`) — its working directory —
- *   never another round's, and never the shared `candidate`.
- * - `code-reviewer` and `security` dispatch CONCURRENTLY, in one
- *   `Promise.all` (`dev-review-loop.ts`), for the SAME round — so a
- *   reviewer's own check must not protect its sibling's SAME-round folder,
- *   which may still be mid-write when this dispatch's own turn ends. Every
- *   OTHER round's sibling folder stays protected; only `round`'s is excused,
- *   and only for the sibling, never for a THIRD role (there is none here).
- *   That same-round excusal covers the sibling's scratch copies too
- *   (`isConcurrentSiblingRoundEntry`), never the shared `candidate`.
+ *   dispatch whose turn is ending, and it is expected to write there. That
+ *   includes its own exempt scratch copies of the candidate in the round
+ *   being judged (the scratch-name policy) — its working directory — never
+ *   another round's, and never the shared `candidate`.
+ * - A role's concurrent sibling (`BoundaryRolePolicy.concurrentSibling`) is
+ *   dispatched in the same `Promise.all` for the SAME round — so a role's
+ *   own check must not protect its sibling's SAME-round folder, which may
+ *   still be mid-write when this dispatch's own turn ends. Every OTHER
+ *   round's sibling folder stays protected; only `round`'s is excused, and
+ *   only for the sibling, never for a THIRD role. That same-round excusal
+ *   covers the sibling's scratch copies too (`isConcurrentSiblingRoundEntry`),
+ *   never the shared `candidate`.
  */
-function otherRolesProtectedPaths(input: {
-  runtimeDir: string
-  task: number
-  round: number
-  role: Role
-}): ProtectedPathEntry[] {
+function otherRolesProtectedPaths(
+  policies: WorkerBoundaryPolicies,
+  input: {
+    runtimeDir: string
+    task: number
+    round: number
+    role: string
+  }
+): ProtectedPathEntry[] {
   const entries: ProtectedPathEntry[] = []
-  const concurrentSibling: Role | null =
-    input.role === 'code-reviewer' ? 'security' : input.role === 'security' ? 'code-reviewer' : null
+  const concurrentSibling = policies.roles.concurrentSibling(input.role)
 
   const sessionsDir = join(input.runtimeDir, 'tasks-execution', String(input.task), 'sessions')
   if (existsSync(sessionsDir)) {
     for (const name of readdirSync(sessionsDir)) {
-      const role = sessionEntryRole(name)
+      const role = sessionEntryRole(policies.roles, name)
       if (role === input.role) continue
       if (concurrentSibling !== null && role === concurrentSibling) continue
       const path = join(sessionsDir, name)
@@ -2178,12 +2227,12 @@ function otherRolesProtectedPaths(input: {
       if (!Number.isInteger(roundNum)) continue
       const roundDir = join(roundsDir, roundName)
       for (const name of readdirSync(roundDir)) {
-        if (roundEntryBelongsToRole(name, input.role)) continue
-        if (roundNum === input.round && isOwnScratchRoundEntry(name, input.role)) continue
+        if (roundEntryBelongsToRole(policies.roles, name, input.role)) continue
+        if (roundNum === input.round && policies.scratchNames.isExemptScratchName(name, input.role)) continue
         if (
           concurrentSibling !== null &&
           roundNum === input.round &&
-          isConcurrentSiblingRoundEntry(name, concurrentSibling)
+          isConcurrentSiblingRoundEntry(policies, name, concurrentSibling)
         )
           continue
         const path = join(roundDir, name)
@@ -2266,13 +2315,16 @@ export function controllerStoreReachableBy(controllerDir: string, writableRoots:
  * owes nothing to the config file's own existence, so an unreadable config
  * must never fail the WHOLE per-turn check open (round 2 review, MINOR).
  */
-export function protectedPathsForTurn(input: {
-  runtimeDir: string
-  task: number
-  round: number
-  role: Role
-  vinayaConfigPath: string | null
-}): ProtectedPathEntry[] {
+function protectedPathsForTurn(
+  policies: WorkerBoundaryPolicies,
+  input: {
+    runtimeDir: string
+    task: number
+    round: number
+    role: string
+    vinayaConfigPath: string | null
+  }
+): ProtectedPathEntry[] {
   const taskDir = join(input.runtimeDir, 'tasks-execution', String(input.task))
   const entries: ProtectedPathEntry[] = [
     { path: taskControlDir(input.runtimeDir, input.task), kind: 'dir' },
@@ -2283,10 +2335,26 @@ export function protectedPathsForTurn(input: {
     // It lives inside the control store, outside every worker's writable
     // roots, so this entry is a second line behind prevention, not the line.
     { path: sourceReceiptsPath(sourceStoreDir(input.runtimeDir, input.task)), kind: 'file' },
-    ...otherRolesProtectedPaths(input)
+    ...otherRolesProtectedPaths(policies, input)
   ]
   if (input.vinayaConfigPath !== null) entries.push({ path: input.vinayaConfigPath, kind: 'file' })
   return entries
+}
+
+/** The per-turn boundary bound to its policies: the protected-path list its after-turn check hashes. */
+export type WorkerBoundary = {
+  protectedPathsForTurn: (input: Parameters<typeof protectedPathsForTurn>[1]) => ProtectedPathEntry[]
+}
+
+/**
+ * Builds the per-turn boundary from the policies the process supplies. Both
+ * are required: a missing or malformed one is refused here
+ * (`MissingWorkerBoundaryPolicyError`, naming it), never defaulted to no role
+ * folders protected or to no scratch exemption.
+ */
+export function createWorkerBoundary(policies: WorkerBoundaryPolicies): WorkerBoundary {
+  const bound = assertWorkerBoundaryPolicies(policies)
+  return { protectedPathsForTurn: (input) => protectedPathsForTurn(bound, input) }
 }
 
 // --- O2: credential recognition, never the value itself --------------------

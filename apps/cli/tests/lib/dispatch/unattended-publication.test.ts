@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defaultControlStoreDeps, type ControlStoreDeps } from '@attalabs/aeg-core'
 import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
-import { authenticateWorkerInvocation, requestEffect, scopeTarget, WORKER_OPERATIONS } from '../../../src/lib/broker'
+import { scopeTarget, WORKER_OPERATIONS } from '../../../src/lib/broker'
+import { authenticateWorkerInvocation, requestEffect } from '../broker/vinaya-broker'
 import { buildWorkerEnv } from '../../../src/lib/worker-boundary'
 
 /**

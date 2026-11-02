@@ -20,15 +20,14 @@ import { join } from 'node:path'
 import { type ControlStoreDeps, defaultControlStoreDeps } from '@attalabs/aeg-core'
 import {
   authenticateOperatorInvocation,
-  authenticateWorkerInvocation,
   ForgedInvocationError,
   type InvocationContext,
   OPERATOR_OPERATIONS,
   ReplayedInputVersionError,
-  requestEffect,
   scopeTarget,
   UngrantedOperationError
 } from '../../../src/lib/broker'
+import { authenticateWorkerInvocation, requestEffect } from './vinaya-broker'
 
 let dir: string
 let deps: ControlStoreDeps

@@ -71,8 +71,13 @@ import {
 } from '../../src/lib/task-tools/dev-tools-registration'
 import { DEV_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/dev-tools-names'
 import { type DevToolContext, type DevToolRefusal, dispatchDevTool } from '../../src/lib/task-tools/dev-tools-server'
-import { type GrantedRole, ROLE_TOOL_GRANTS, servedTools } from '../../src/lib/task-tools/role-grants'
+import { servedTools } from '../../src/lib/task-tools/role-grants'
+import {
+  type GrantedRole,
+  ROLE_TOOL_GRANTS
+} from '../../../../harness/processes/vinaya-strict/integration/policies/roles'
 import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
+import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies'
 
 // ── Suite identity and decision rule ────────────────────────────────────────
 
@@ -1087,7 +1092,8 @@ export async function executeTrace(c: ToolSelectionCase, trace: readonly TraceCa
   const world = createWorld(c.world, c.role)
   const catalog = new Set(AGENT_TOOL_CATALOG.map((t) => t.name))
   for (const call of trace) {
-    if (catalog.has(call.tool)) await dispatchDevTool(world.context, c.role, call.tool, call.args)
+    if (catalog.has(call.tool))
+      await dispatchDevTool(vinayaToolGrantPolicy(), world.context, c.role, call.tool, call.args)
   }
   return world.state()
 }
@@ -1163,6 +1169,7 @@ export async function liveTrial(
   mkdirSync(workspace)
   const socketPath = devToolsSocketPath(`tool-selection:${trialId}:${dir}`)
   const host = await startDevToolsHost({
+    toolGrants: vinayaToolGrantPolicy(),
     socketPath,
     serverVersion: 'tool-selection-1',
     context: world.context,
@@ -1175,7 +1182,7 @@ export async function liveTrial(
     if (adapter === 'claude-code') {
       const config = join(dir, 'mcp.json')
       writeFileSync(config, devToolsMcpConfigFileBody(bridge))
-      const allowed = servedTools(c.role).map((t) => claudeDevToolName(t.name))
+      const allowed = servedTools(vinayaToolGrantPolicy(), c.role).map((t) => claudeDevToolName(t.name))
       result = await runProcess(
         'claude',
         [

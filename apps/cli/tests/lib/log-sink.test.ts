@@ -14,7 +14,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { INSTALL_CONFIG_PROVIDER, spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
+import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 import {
   createLogSink,
   folderFallbackStatePath,
@@ -605,7 +605,7 @@ describe('log-sink — what the branch lookup costs, and when (O1)', () => {
       const probe = join(scratch, 'probe.ts')
       writeFileSync(
         probe,
-        `${INSTALL_CONFIG_PROVIDER}import { createLogSink, resolveBranchIssue } from ${JSON.stringify(sinkModule)}\n` +
+        `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { createLogSink, resolveBranchIssue } from ${JSON.stringify(sinkModule)}\n` +
           "import { readdirSync } from 'node:fs'\n" +
           'const [repoDir, outbox] = process.argv.slice(2) as [string, string]\n' +
           'const verified = await resolveBranchIssue(repoDir, {})\n' +
@@ -727,7 +727,7 @@ describe('log-sink — CI has no branch checked out (O1)', () => {
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
-      `${INSTALL_CONFIG_PROVIDER}import { resolveBranchIssue } from ${JSON.stringify(sinkModule)}\n` +
+      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { resolveBranchIssue } from ${JSON.stringify(sinkModule)}\n` +
         'const repoDir = process.argv[2] as string\n' +
         "const withHeadRef = await resolveBranchIssue(repoDir, { GITHUB_HEAD_REF: 'task/issue-321' })\n" +
         'const withoutHeadRef = await resolveBranchIssue(repoDir, {})\n' +
@@ -788,7 +788,7 @@ describe('log-sink — one read per process, not per sink (O1)', () => {
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
-      `${INSTALL_CONFIG_PROVIDER}import { createLogSink } from ${JSON.stringify(sinkModule)}\n` +
+      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { createLogSink } from ${JSON.stringify(sinkModule)}\n` +
         'const [first, second, outbox] = process.argv.slice(2) as [string, string, string]\n' +
         'const sinkFor = (cwd: string) =>\n' +
         '  createLogSink({\n' +
@@ -888,7 +888,7 @@ describe('log-sink — the trust-anchor config is cached per repository (O1, O3)
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
-      `${INSTALL_CONFIG_PROVIDER}import { resolveUnattendedServerSetting, resetTrustAnchorConfigMemo } from ${JSON.stringify(sinkModule)}\n` +
+      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { resolveUnattendedServerSetting, resetTrustAnchorConfigMemo } from ${JSON.stringify(sinkModule)}\n` +
         'const [a, b] = process.argv.slice(2) as [string, string]\n' +
         'resetTrustAnchorConfigMemo()\n' +
         'process.chdir(a)\n' +
@@ -1013,7 +1013,7 @@ describe('log-sink — the branch read outlives nothing (O1)', () => {
     const probe = join(binDir, 'probe.ts')
     writeFileSync(
       probe,
-      `${INSTALL_CONFIG_PROVIDER}import { resolveBranchIssue } from ${JSON.stringify(sinkModule)}\n` +
+      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { resolveBranchIssue } from ${JSON.stringify(sinkModule)}\n` +
         'const started = Date.now()\n' +
         'const issue = await resolveBranchIssue(process.argv[2] as string)\n' +
         'console.log(JSON.stringify({ issue, ms: Date.now() - started }))\n'
@@ -1480,7 +1480,7 @@ for (const name of ['spawn', 'spawnSync']) {
     throw new Error('process spawned by logSync: Bun.' + name)
   }
 }
-${INSTALL_CONFIG_PROVIDER}const { logSync } = await import(${JSON.stringify(logSinkModule)})
+await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nconst { logSync } = await import(${JSON.stringify(logSinkModule)})
 logSync({ kind: 'dispatch', event: 'dispatched', payload: {}, target_role: 'developer', model: 'sonnet', effect_id: 'cold-exit', prompt_hash: 'sha256:abc' })
 process.stdout.write(JSON.stringify({ calls }))
 process.exit(0)`
@@ -1532,6 +1532,7 @@ const GATE_EVENT = {
 describe('logSync — the next drain delivers it once (O4)', () => {
   const LOG_SINK_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
   const DRAIN_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-webhook-drain.ts')
+  const CONFIG_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts')
 
   function startServer(): { url: string; lines: Array<Record<string, any>>; stop: () => void } {
     const lines: Array<Record<string, any>> = []
@@ -1561,7 +1562,7 @@ describe('logSync — the next drain delivers it once (O4)', () => {
   const sinkScript = (
     url: string,
     call: string
-  ): string => `${INSTALL_CONFIG_PROVIDER}import { createLogSink } from ${JSON.stringify(LOG_SINK_MODULE)}
+  ): string => `await (await import(${JSON.stringify(CONFIG_MODULE)})).installVinayaConfigProvider()\nimport { createLogSink } from ${JSON.stringify(LOG_SINK_MODULE)}
 const sink = createLogSink({
   env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
   resolveLogDestination: () => ({ kind: 'server', url: ${JSON.stringify(url)} })
@@ -1621,7 +1622,7 @@ await sink.drain()`
         cwd,
         home,
         'drain-again',
-        `${INSTALL_CONFIG_PROVIDER}import { drainOutboxToWebhook } from ${JSON.stringify(DRAIN_MODULE)}
+        `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { drainOutboxToWebhook } from ${JSON.stringify(DRAIN_MODULE)}
 await drainOutboxToWebhook(404, ${JSON.stringify(server.url)})`
       )
       expect(server.lines).toHaveLength(2)
@@ -1654,7 +1655,7 @@ describe('log-sink — a missed trust-anchor read is retried and the run switche
     const script = join(cwd, 'anchor-retry.ts')
     writeFileSync(
       script,
-      `${INSTALL_CONFIG_PROVIDER}import { createLogSink, LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS } from ${JSON.stringify(LOG_SINK_MODULE)}
+      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { createLogSink, LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS } from ${JSON.stringify(LOG_SINK_MODULE)}
 let clock = Date.parse('2026-10-25T00:00:00.000Z')
 let resolutions = 0
 const stderr = []

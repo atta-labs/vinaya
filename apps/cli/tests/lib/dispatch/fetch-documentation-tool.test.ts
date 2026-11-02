@@ -56,11 +56,15 @@ import {
 } from '../../../src/lib/source-manifest.js'
 import {
   buildCodexSandboxConfigToml,
+  createWorkerBoundary,
   DOCUMENTATION_HOSTS,
-  protectedPathsForTurn,
   startTurnWriteAttribution,
   taskControlDir
 } from '../../../src/lib/worker-boundary.js'
+import {
+  vinayaToolGrantPolicy,
+  vinayaWorkerBoundaryPolicies
+} from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 import {
   cleanupWorlds,
   controlDir,
@@ -69,6 +73,8 @@ import {
   runLoopInProcess
 } from '../../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture'
+
+const { protectedPathsForTurn } = createWorkerBoundary(vinayaWorkerBoundaryPolicies())
 
 const tempDirs: string[] = []
 afterEach(() => {
@@ -217,7 +223,12 @@ describe('O1: a seventh dev tool both agents call through the dev-tools server',
       runChecks: async () => ({ ok: true, result: { passed: true, output: '' } }),
       fetchDocumentation: tool(network, receiptsPath)
     })
-    const server = createDevToolsMcpServer({ serverVersion: '0.0.0-test', context, role: 'developer' })
+    const server = createDevToolsMcpServer({
+      toolGrants: vinayaToolGrantPolicy(),
+      serverVersion: '0.0.0-test',
+      context,
+      role: 'developer'
+    })
     const line = JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
@@ -251,7 +262,12 @@ describe('O1: a seventh dev tool both agents call through the dev-tools server',
       }),
       runChecks: async () => ({ ok: true, result: { passed: true, output: '' } })
     })
-    const server = createDevToolsMcpServer({ serverVersion: '0.0.0-test', context, role: 'developer' })
+    const server = createDevToolsMcpServer({
+      toolGrants: vinayaToolGrantPolicy(),
+      serverVersion: '0.0.0-test',
+      context,
+      role: 'developer'
+    })
     for (const args of [{}, { url: 'https://x.example.com', offset: -1 }]) {
       const line = JSON.stringify({
         jsonrpc: '2.0',

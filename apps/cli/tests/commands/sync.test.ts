@@ -108,7 +108,7 @@ async function runSync(
   const script = join(cwd, 'run-sync.ts')
   writeFileSync(
     script,
-    `import { syncCommand } from ${JSON.stringify(COMMAND_PATH)}\nprocess.exit(await syncCommand(${JSON.stringify([...args, '--json'])}))\n`
+    `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { syncCommand } from ${JSON.stringify(COMMAND_PATH)}\nprocess.exit(await syncCommand(${JSON.stringify([...args, '--json'])}))\n`
   )
   const { status, stdout, stderr } = spawnSyncBudgeted(
     'bun',
@@ -192,7 +192,7 @@ describe('vinaya sync — fills, resumes and rebuilds the local cache (O1, O2, O
     const script = join(cwd, 'run-sync.ts')
     writeFileSync(
       script,
-      `import { syncCommand } from ${JSON.stringify(COMMAND_PATH)}\nprocess.exit(await syncCommand(['--json']))\n`
+      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { syncCommand } from ${JSON.stringify(COMMAND_PATH)}\nprocess.exit(await syncCommand(['--json']))\n`
     )
     const { status, stdout } = spawnSyncBudgeted(
       'bun',

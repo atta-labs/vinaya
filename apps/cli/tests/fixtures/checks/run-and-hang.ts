@@ -7,6 +7,11 @@
 // under test, or the 60s ceiling neither test should ever reach.
 import { join } from 'node:path'
 import { runChecks } from '../../../src/checks/runner'
+import { installVinayaConfigProvider } from '../../../src/lib/config'
+
+// This program is its own composition root: the runner's log sink reads
+// configuration only through the provider one installs.
+installVinayaConfigProvider()
 
 const SLEEPER = join(import.meta.dir, 'sleeper.ts')
 

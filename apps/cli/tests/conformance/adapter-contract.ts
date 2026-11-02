@@ -49,7 +49,10 @@ import {
 } from '../../src/lib/task-tools/dev-tools-registration.js'
 import { DEV_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/dev-tools-names.js'
 import { validatesJsonSchema } from '../../src/lib/task-tools/result-proof.js'
-import { type GrantedRole, ROLE_TOOL_GRANTS } from '../../src/lib/task-tools/role-grants.js'
+import {
+  type GrantedRole,
+  ROLE_TOOL_GRANTS
+} from '../../../../harness/processes/vinaya-strict/integration/policies/roles.js'
 import {
   AGENT_TOOL_CATALOG,
   TOOL_EFFECT_STATES,
@@ -73,6 +76,7 @@ import {
   outboxLines,
   runLoopInProcess
 } from '../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
+import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 
 /**
  * The shared adapter-conformance suite (evaluation layer L4): one case list,
@@ -1328,7 +1332,12 @@ export function forgeFakeContext(overrides: Partial<DevToolContext> = {}): DevTo
 async function listTools(
   role: GrantedRole
 ): Promise<{ names: string[]; tools: Array<{ name: string; inputSchema: unknown }> }> {
-  const srv = createDevToolsMcpServer({ serverVersion: '0.0.0-conformance', context: forgeFakeContext(), role })
+  const srv = createDevToolsMcpServer({
+    toolGrants: vinayaToolGrantPolicy(),
+    serverVersion: '0.0.0-conformance',
+    context: forgeFakeContext(),
+    role
+  })
   const resp = JSON.parse((await srv.handleLine(json({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))) as string) as {
     result: { tools: Array<{ name: string; inputSchema: unknown }> }
   }
@@ -1342,6 +1351,7 @@ async function callTool(
   overrides: Partial<DevToolContext> = {}
 ): Promise<{ isError: boolean; error: DevToolRefusal | null }> {
   const srv = createDevToolsMcpServer({
+    toolGrants: vinayaToolGrantPolicy(),
     serverVersion: '0.0.0-conformance',
     context: forgeFakeContext(overrides),
     role

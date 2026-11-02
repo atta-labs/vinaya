@@ -60,6 +60,8 @@ export const SUITE_INPUTS: readonly string[] = [
   // The tool host and server the controller-boundary probes attack, with their per-dispatch capability check.
   'apps/cli/src/lib/task-tools/dev-tools-host.ts',
   'apps/cli/src/lib/task-tools/dev-tools-server.ts',
+  // The process policies the tool host is built from: its grant table, and the boundary's role and scratch facts.
+  'harness/processes/vinaya-strict/integration/policies/',
   // Where the task's required-source store lives, which both sandboxes must not write.
   'apps/cli/src/lib/source-manifest.ts',
   // The Developer evaluation's grading sandbox, its proof and the test runner it confines.

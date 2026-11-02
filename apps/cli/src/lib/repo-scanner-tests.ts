@@ -58,6 +58,9 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'listed-files'
   },
   { test: 'apps/cli/tests/ci-shards.test.ts', roots: ['apps/cli/'], trigger: 'tree-shape' },
+  // Lists every tracked `vinaya.config*.json` with `git ls-files`: a configuration file added or removed anywhere
+  // changes its corpus. The files' contents are its declared inventory inputs.
+  { test: 'apps/cli/tests/config-golden.test.ts', roots: ['.'], trigger: 'tree-shape' },
   {
     test: 'harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts',
     roots: [

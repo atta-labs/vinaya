@@ -10,6 +10,7 @@ import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from '../../src/lib/ta
 import { MCP_PROTOCOL_VERSION } from '../../../../harness/processes/vinaya-strict/integration/server.js'
 import { PROCESS_FIXTURE_BUDGET_MS, stripVinayaEnv } from '../lib/process-fixture.js'
 import { liveBridgeInvocation, startInitializeWitness, VINAYA_CLI_ENTRY } from './role-grants-live.js'
+import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 
 /**
  * The live grant harness's staged bridge, proven without a vendor login: the
@@ -38,6 +39,7 @@ async function stagedHost(): Promise<{ bridgeSocket: string; answered: () => boo
   const scratchDir = mkdtempSync(join(tmpdir(), 'vinaya-grant-bridge-'))
   cleanups.push(() => rmSync(scratchDir, { recursive: true, force: true }))
   const host = await startDevToolsHost({
+    toolGrants: vinayaToolGrantPolicy(),
     socketPath: devToolsSocketPath(`grant-bridge:${randomUUID()}`),
     serverVersion: '0.0.0-grant-bridge',
     context: refuseEverything,
