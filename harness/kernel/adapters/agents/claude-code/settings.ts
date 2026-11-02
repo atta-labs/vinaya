@@ -146,7 +146,7 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
         type: 'stdio',
         command: paths.mcpCommand ?? 'vinaya-dev-bridge',
         args: [],
-        timeout: DEV_TOOLS_TOOL_TIMEOUT_SEC * 1000
+        timeout: Math.max(DEV_TOOLS_TOOL_TIMEOUT_SEC, paths.devToolsTimeoutSec ?? 0) * 1000
       }
     }
   }
