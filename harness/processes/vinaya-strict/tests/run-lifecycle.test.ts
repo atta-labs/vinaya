@@ -24,8 +24,8 @@ import {
   type ProcessAction,
   type ProcessRunOptions
 } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
-import { DEFAULT_REVIEWER_TIMEOUT_MS, DEFAULT_TIMEOUT_MS } from '../../../../apps/cli/src/lib/dispatch'
-import type { LaunchRecord, ParsedLaunch } from '../../../../apps/cli/src/lib/dispatch'
+import { DEFAULT_REVIEWER_TIMEOUT_MS, DEFAULT_TIMEOUT_MS } from '../loops/dev-review/dispatch/dispatch'
+import type { LaunchRecord, ParsedLaunch } from '../loops/dev-review/dispatch/dispatch'
 import {
   DRIVER_HEARTBEAT_INTERVAL_MS,
   keepDriverLock,
@@ -45,8 +45,8 @@ import {
   writeHeldVerdict
 } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { loopLogPathFor } from '../../../../apps/cli/src/lib/loop-log'
-import { parseReviewResult } from '../../../../apps/cli/src/lib/review-result'
-import { manifestDigest } from '../../../../apps/cli/src/lib/review-result'
+import { parseReviewResult } from '../executing/code-reviewer/review-result'
+import { manifestDigest } from '../executing/code-reviewer/review-result'
 import {
   ACTION_BINDINGS,
   classifyGateResult,

@@ -20,7 +20,7 @@ import { coreCheckRegistry, runsUnderAll } from '../../src/checks/registry'
  * validate `'issue'`-scope content, which no pull-request workflow ever has
  * — nothing in `.github/workflows` invokes them at all. Their executables run
  * by name only from the Issue write gate's runner,
- * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks`. The coherence sweep
+ * `harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts`'s `runIssueChecks`. The coherence sweep
  * never spawns one, though its R1 rule calls two of their rule functions
  * (`checkIssueObjectives`, `checkPartsCiteDefinedObjectives`) directly.
  */

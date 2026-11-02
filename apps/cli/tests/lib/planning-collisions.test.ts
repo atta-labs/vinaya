@@ -1,7 +1,11 @@
 import { DEFAULT_COLLISION_THRESHOLD, type TaskFileFacts } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import { resolveCollisionThreshold, type VinayaConfig } from '../../src/lib/config'
-import { buildCollisionPeers, pinnedFilesOf, validateIssueContent } from '../../src/lib/forge-write'
+import {
+  buildCollisionPeers,
+  pinnedFilesOf,
+  validateIssueContent
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
 // The forced-companion gates are dormant here — this file exercises only the
 // pinned-file collision findings, so the command/config references carry no

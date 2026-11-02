@@ -27,7 +27,10 @@ import {
   type SelectionNote,
   writeJsonUnderGit
 } from '../../src/lib/pre-push-failed-tests'
-import { lookupGreenRun, type TestRunCacheRecord } from '../../src/lib/pr-report-engine'
+import {
+  lookupGreenRun,
+  type TestRunCacheRecord
+} from '../../../../harness/processes/vinaya-strict/tools/pr-report/pr-report-engine'
 import { nativeRunCommand, parseNativeRunCommand, REPOSITORY_LOCAL_RUN } from '../../src/lib/pre-push-test-runner'
 import type { InventoryView, NativeGroup, SelectionPlan, TestIdentity } from '../../src/lib/verification/index'
 import { stripVinayaEnv } from './process-fixture'

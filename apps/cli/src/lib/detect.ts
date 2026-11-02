@@ -7,7 +7,7 @@ import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { type HookDir, TRACKED_HOOK_DIR } from './artifacts.js'
+import { type HookDir, TRACKED_HOOK_DIR } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import type { ManagedManifest } from './config.js'
 import { blockStripLeavesEmpty, type LabelGateway, resolveManagedBlockPath, stripBlockFromContent } from './ops.js'
 

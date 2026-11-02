@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path'
 import type { DeveloperCapabilityCase } from '../../../tests/eval/developer-capability-suite'
 import type { PatchRecord, ReviewCase } from '../../../tests/eval/reviewer-quality-suite'
 import type { SourceCitationCase } from '../../../tests/eval/source-citation-suite'
-import type { ReviewerRole } from '../review-result'
+import type { ReviewerRole } from '../../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 import type { NeutralCase } from './neutral-case'
 import {
   type LoadedDevelopment,

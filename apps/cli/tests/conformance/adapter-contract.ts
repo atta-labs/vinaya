@@ -25,10 +25,14 @@ import {
   REVIEWER_RESUME_REFUSED_REASON,
   vendorResumeArgs,
   vendorSessionArgs
-} from '../../src/lib/dispatch.js'
-import { developerTurnResultJsonSchema } from '../../src/lib/developer-turn-result.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
+import { developerTurnResultJsonSchema } from '../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result.js'
 import { agentControlsRefusal } from '../../src/lib/enforcement-controls.js'
-import { classifyReviewOutcome, type ReviewBinding, reviewResultJsonSchema } from '../../src/lib/review-result.js'
+import {
+  classifyReviewOutcome,
+  type ReviewBinding,
+  reviewResultJsonSchema
+} from '../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result.js'
 import { runPath } from '../../src/lib/run-paths.js'
 import {
   createDevToolsMcpServer,

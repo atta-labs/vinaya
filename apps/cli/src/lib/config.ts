@@ -21,8 +21,8 @@ import {
 import { CustomEventDeclarationsSchema } from '@attalabs/aeg-core/log'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../checks/contract.js'
 import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
-import { CLAUDE_COMMAND_PATH } from './claude-command-emitter.js'
-import { GEMINI_COMMAND_PATH } from './gemini-command-emitter.js'
+import { CLAUDE_COMMAND_PATH } from '../../../../harness/processes/vinaya-strict/integration/claude-command-emitter.js'
+import { GEMINI_COMMAND_PATH } from '../../../../harness/processes/vinaya-strict/integration/gemini-command-emitter.js'
 import {
   outsideRepositoryReason,
   ProseRulesSchema,
@@ -548,7 +548,7 @@ const VinayaConfigObjectSchema = z.object({
   // the legacy `.aeg/packages` static file is retired, zero backward
   // compatibility, so this is now the ONLY way to declare one beyond
   // derivation. `checkBlastRadiusScope`'s domain list
-  // (`apps/cli/src/lib/forge-write.ts`'s `readSharedPackages`, mirroring
+  // (`harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts`'s `readSharedPackages`, mirroring
   // `packages/aeg-core/bin/open-issue.ts`'s own) is live-derived from
   // `package.json` workspaces plus a built-in cross-cutting default set
   // (lockfile, monorepo config, CI, git hooks); an adopter who needs a
@@ -657,7 +657,7 @@ const VinayaConfigObjectSchema = z.object({
   // Config-native project metadata — see the `ProjectEntrySchema` comment
   // above. Additive-only; absent entirely for a single-project repo.
   projects: z.array(ProjectEntrySchema).optional(),
-  // `vinaya dispatch <role> --agent <vendor>` (`apps/cli/src/lib/dispatch.ts`).
+  // `vinaya dispatch <role> --agent <vendor>` (`harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`).
   // `timeoutMs` is the Developer wall-time ceiling before `dispatchRole`
   // sends `SIGTERM` (then `SIGKILL`) to the child; absent defaults to four
   // hours (`DEFAULT_TIMEOUT_MS` in `dispatch.ts`). `reviewerTimeoutMs` is the

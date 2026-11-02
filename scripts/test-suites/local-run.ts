@@ -66,7 +66,10 @@ import {
   verificationInputsDirty,
   writeJsonUnderGit
 } from '../../apps/cli/src/lib/pre-push-failed-tests.js'
-import { defaultTestRunCache, recordGreenTestRun } from '../../apps/cli/src/lib/pr-report-engine.js'
+import {
+  defaultTestRunCache,
+  recordGreenTestRun
+} from '../../harness/processes/vinaya-strict/tools/pr-report/pr-report-engine.js'
 import { nativeRunCommand, parseNativeRunCommand } from '../../apps/cli/src/lib/pre-push-test-runner.js'
 import { resolveRemoteBase } from '../../apps/cli/src/lib/remote-base.js'
 import {

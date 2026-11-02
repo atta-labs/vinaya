@@ -227,13 +227,28 @@ export function resolvePath(text: string, file: string, tree: Tree, nearestOnly 
 
 type Located = { target: string; contribution: number }
 
-/** Each string literal that names a file or a package, with how many counted units it carries. */
+// The path a documentation claim anchor names, unquoted: `AEG:CLAIM: <path> contains|absent|sha256:…`, read from the
+// repository root the way the claim check reads it.
+const CLAIM_ANCHOR_PATH = /AEG:CLAIM:\s*(\S+)\s+(?:contains|absent|sha256)\s*:/gi
+
+/**
+ * Each string literal, and each claim anchor's path, that names a file or a package, with how many counted units it
+ * carries. A claim anchor's path is located like a quoted path string, so re-pointing it to a moved file is a relocation.
+ */
 function locatedStrings(source: string, file: string, tree: Tree, units: Unit[]): Located[] {
   const located: Located[] = []
   for (const match of source.matchAll(/(['"`])([^'"`\n]*)\1/g)) {
     const text = match[2] ?? ''
     const span = { start: (match.index ?? 0) + 1, end: (match.index ?? 0) + 1 + text.length }
     const target = isCountedImport(text) && !text.startsWith('.') ? text : resolvePath(text, file, tree)
+    if (target === null) continue
+    located.push({ target, contribution: units.filter((u) => within(u, span)).length })
+  }
+  for (const match of source.matchAll(CLAIM_ANCHOR_PATH)) {
+    const text = match[1] ?? ''
+    const start = (match.index ?? 0) + match[0].indexOf(text)
+    const span = { start, end: start + text.length }
+    const target = resolvePath(text, 'repository-root', tree)
     if (target === null) continue
     located.push({ target, contribution: units.filter((u) => within(u, span)).length })
   }

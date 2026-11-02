@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ArchiveDeps } from '../src/commands/archive.js'
 import { PrincipalsUnresolvedError } from '../src/lib/config.js'
-import { milestoneCloseDecision } from '../src/lib/milestone-close-hold.js'
+import { milestoneCloseDecision } from '../../../harness/processes/vinaya-strict/retrospecting/archivist/milestone-close-hold.js'
 import {
   appendRetrospectiveSection,
   fetchMilestoneIssueStates,

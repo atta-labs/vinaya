@@ -11,11 +11,7 @@ import {
   parseDeferralMarker,
   READY_DEFERRAL_MARKER
 } from '../../../../../../apps/cli/src/lib/pre-push-ready-policy'
-import {
-  lookupGreenRun,
-  type TestRunCache,
-  type TestRunCacheRecord
-} from '../../../../../../apps/cli/src/lib/pr-report-engine'
+import { lookupGreenRun, type TestRunCache, type TestRunCacheRecord } from '../../../tools/pr-report/pr-report-engine'
 import {
   beginReadyDeferral,
   beginStoragePushes,

@@ -16,7 +16,10 @@ import {
   type LoopDeps,
   renderFailedCheckLog
 } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
-import { readFailedCheckLogs, readJobLogTail } from '../../../src/lib/task-tools/pr-facts.js'
+import {
+  readFailedCheckLogs,
+  readJobLogTail
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/pr-facts.js'
 import {
   cleanupWorlds,
   type LoopWorld,
@@ -197,9 +200,34 @@ describe('the red-CI retry message carries each failed check’s log tail', () =
 
 describe('no second job-log reader exists', () => {
   it('names the job-log endpoint in exactly one source file — the shared reader the Operator and the loop both call', () => {
+    // The CLI's source and the process folders the CLI's run control and dispatch moved into.
     const srcRoot = join(import.meta.dir, '../../../src')
-    const files = (readdirSync(srcRoot, { recursive: true }) as string[]).filter((f) => f.endsWith('.ts'))
-    const readers = files.filter((f) => readFileSync(join(srcRoot, f), 'utf8').includes('/actions/jobs/'))
-    expect(readers).toEqual([join('lib', 'task-tools', 'pr-facts.ts')])
+    const processRoot = join(import.meta.dir, '../../../../../harness/processes/vinaya-strict')
+    const movedFolders = [
+      'tools',
+      'artifacts',
+      'integration',
+      join('executing', 'developer'),
+      join('executing', 'code-reviewer'),
+      join('retrospecting', 'archivist'),
+      join('loops', 'dev-review', 'run-control'),
+      join('loops', 'dev-review', 'dispatch'),
+      join('loops', 'dev-review', 'actions')
+    ]
+    const movedFiles = [
+      join('loops', 'dev-review', 'flow-v2-events.ts'),
+      join('loops', 'dev-review', 'review-gate-input.ts')
+    ]
+    const files = [
+      ...(readdirSync(srcRoot, { recursive: true }) as string[]).map((f) => join(srcRoot, f)),
+      ...movedFolders.flatMap((folder) =>
+        (readdirSync(join(processRoot, folder), { recursive: true }) as string[]).map((f) =>
+          join(processRoot, folder, f)
+        )
+      ),
+      ...movedFiles.map((f) => join(processRoot, f))
+    ].filter((f) => f.endsWith('.ts'))
+    const readers = files.filter((f) => readFileSync(f, 'utf8').includes('/actions/jobs/'))
+    expect(readers).toEqual([join(processRoot, 'loops', 'dev-review', 'run-control', 'pr-facts.ts')])
   })
 })

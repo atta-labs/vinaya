@@ -33,6 +33,19 @@ const STANDALONE_TESTS_ROOT = join(
   'tests',
   'standalone'
 )
+/** The run control, dispatch, task-contract and emitter tests, moved into the process with their code. */
+const PROCESS_TESTS_ROOT = join(STANDALONE_TESTS_ROOT, '..')
+const MOVED_TEST_FOLDERS = [join(PROCESS_TESTS_ROOT, 'commands'), join(PROCESS_TESTS_ROOT, 'lib')]
+const MOVED_TEST_FILES = [
+  'agents-skills-emitter.test.ts',
+  'backend-rollback.test.ts',
+  'claude-command-emitter.test.ts',
+  'claude-stop-hook-emitter.test.ts',
+  'forge-write.test.ts',
+  'gemini-command-emitter.test.ts',
+  'registry-write.test.ts',
+  'task-run-engine.test.ts'
+].map((name) => join(PROCESS_TESTS_ROOT, name))
 
 /** Syntax-tree walk: the host-platform reads in one source text, as 1-based line numbers. */
 export function hostPlatformReads(fileName: string, source: string): number[] {
@@ -136,7 +149,7 @@ const REAL_SANDBOX_FILES: Readonly<Record<string, string>> = {
     "asserts the host's own Seatbelt boundary and bubblewrap detection against the real host facts",
   'lib/dispatch/unattended.test.ts':
     "spawns the real dispatch command, whose confinement is the host's real sandbox, so its confinement cases are per platform",
-  'commands/dispatch-task.test.ts':
+  '../../../harness/processes/vinaya-strict/tests/commands/dispatch-task.test.ts':
     "spawns the real dispatch command, whose confinement is the host's real sandbox, so its cases are per platform",
   '../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts':
     "spawns the real dispatch command, whose confinement is the host's real sandbox, so its cases are per platform"
@@ -187,7 +200,12 @@ describe('hostPlatformReads — the syntax-tree classifier', () => {
 
 describe('CLI tests do not read the host platform outside the real-sandbox list', () => {
   const readers = new Map<string, number[]>()
-  for (const file of [...testFiles(TESTS_ROOT), ...testFiles(STANDALONE_TESTS_ROOT)]) {
+  for (const file of [
+    ...testFiles(TESTS_ROOT),
+    ...testFiles(STANDALONE_TESTS_ROOT),
+    ...MOVED_TEST_FOLDERS.flatMap(testFiles),
+    ...MOVED_TEST_FILES
+  ]) {
     const lines = hostPlatformReads(file, readFileSync(file, 'utf8'))
     if (lines.length > 0) readers.set(relative(TESTS_ROOT, file), lines)
   }

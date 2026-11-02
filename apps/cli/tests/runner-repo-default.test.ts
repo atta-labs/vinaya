@@ -13,16 +13,19 @@ import {
   readPauseState,
   writeDriverLock
 } from '../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import { runnerReadingFor } from '../src/lib/task-status.js'
-import { runTask, type RunTaskDeps } from '../src/lib/task-run.js'
+import { runnerReadingFor } from '../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.js'
+import {
+  runTask,
+  type RunTaskDeps
+} from '../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.js'
 import {
   ENGINE_FALLBACK_NOTICE,
   readTaskRunner,
   recordTaskRunner,
   taskRunnerRecordPath
-} from '../src/lib/task-run-engine.js'
-import { createTaskCancelHandler } from '../src/lib/task-tools/cancel.js'
-import { resumeContinuation } from '../src/lib/task-tools/resume.js'
+} from '../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-engine.js'
+import { createTaskCancelHandler } from '../../../harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.js'
+import { resumeContinuation } from '../../../harness/processes/vinaya-strict/loops/dev-review/run-control/resume.js'
 import {
   makeWorld,
   runLoopInProcess,

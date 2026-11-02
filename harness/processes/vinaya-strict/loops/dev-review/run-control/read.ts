@@ -1,0 +1,280 @@
+/**
+ * The task-operator read interface (O2) — one place `task_status` and
+ * `task_escalation_read` (`handlers.ts`) both read from. Every function here
+ * takes an explicit `root` and a bare task/Issue number, reads only the
+ * outbox and the readers `task-status.ts` already exports (`deriveLoopState`,
+ * `lastRoundVerdictLines`, `newestPublishedRound` — the one shared
+ * published-round reader, no longer a second private copy here) — never `ps`
+ * (Traps to avoid: `task_status` must
+ * not shell to `ps`; the driver lock file is the liveness record `
+ * deriveLoopState` already reads), never a forge call, never a write. A
+ * `TaskToolRef` naming `{ tranche, id }` rather than a bare Issue number is
+ * resolved to one by `handlers.ts` before it reaches this module — the same
+ * split `task-status.ts` itself keeps between its forge-touching entry
+ * points and its pure, `root`-parameterized outbox reads (its own file
+ * header, and `harness/processes/vinaya-strict/tests/lib/task-status.test.ts`'s), so every read
+ * here stays a fixture-driven unit test with no `gh` call anywhere in it.
+ *
+ * "Stale" is never a wall-clock judgment (a record is not stale merely for
+ * being old) — it means the record predates the run's own last transition:
+ * a pause record naming a round the outbox's effect markers show already
+ * published, or a driver-lock pid that is no longer alive. "Unknown" means
+ * no record exists to read at all, or it failed to parse. Every value this
+ * module returns is wrapped in `Observed<T>`, timestamped at the moment of
+ * THIS read (`observedAt`) — never the record's own internal timestamp,
+ * which stays inside the value for a caller that wants it.
+ */
+
+import {
+  defaultControlStoreDeps,
+  type Freshness,
+  type TaskConfidence,
+  type TaskEscalationPacket,
+  type TaskPhaseHistory
+} from '@attalabs/aeg-core'
+import {
+  escalationIdFor,
+  noPushResumeCommandFor,
+  PAUSE_REASON_PROFILE,
+  readEscalationRecord,
+  readPauseState,
+  type PauseState
+} from '../standalone/dev-review-loop/pause-resume.js'
+import {
+  deriveLoopState,
+  lastRoundVerdictLines,
+  newestPublication,
+  newestPublishedRound,
+  pauseSuperseded,
+  readStartClaim,
+  resumeCommandFor,
+  type RoundVerdictLines,
+  type TaskAddress,
+  type TaskLoopState,
+  type TaskStatusRow
+} from './task-status.js'
+import { tasksExecutionRoot } from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { widenSurfaceContinuationFor } from './task-run.js'
+import { engineContinuationCommand, readTaskRunner } from './task-run-engine.js'
+import { describeUsageLimitPause } from '../standalone/dev-review-loop/round-assess.js'
+
+// --- Observed<T> -------------------------------------------------------------
+
+export type Observed<T> = { value: T; observedAt: string; freshness: Freshness }
+
+function observedNow<T>(value: T, freshness: Freshness): Observed<T> {
+  return { value, observedAt: new Date().toISOString(), freshness }
+}
+
+// --- bounded pagination ------------------------------------------------------
+
+export type Page<T> = { items: T[]; nextCursor: string | null }
+
+/**
+ * An offset encoded as a decimal string — opaque to the caller (it is never
+ * documented as an index, only ever round-tripped), bounded by `limit` on
+ * every call so a caller cannot request an unbounded page by omitting it.
+ */
+export function paginate<T>(items: readonly T[], cursor: string | undefined, limit: number): Page<T> {
+  const requested = cursor === undefined ? 0 : Number.parseInt(cursor, 10)
+  const start = Number.isInteger(requested) && requested >= 0 ? requested : 0
+  const slice = items.slice(start, start + limit)
+  const next = start + slice.length
+  return { items: slice, nextCursor: next < items.length ? String(next) : null }
+}
+
+// --- task_status's own observation ------------------------------------------
+
+/**
+ * `deriveLoopState` already resolves a stale pause record internally (it
+ * prefers `published` over a pause naming a round the outbox shows already
+ * published past) — so by the time it returns `paused`, that pause is
+ * necessarily current. `no_driver` is the one case with no record of any
+ * kind to observe; every other `TaskLoopState` kind is this read's current,
+ * fresh answer.
+ *
+ * `address` is the task's tranche ordinal, when it has one: a `task_start`
+ * claim written against an ordinal names that ordinal, not the Issue number,
+ * so a caller reading a tranche task passes its address to have a start that
+ * has not written its driver lock yet read as `starting`. Omitted, only a claim
+ * that named this Issue directly is matched.
+ */
+export function readTaskLoopStateObserved(
+  root: string,
+  task: number,
+  address: TaskAddress = null
+): Observed<TaskLoopState> {
+  const state = deriveLoopState(root, task, undefined, () => readStartClaim(root, task, address))
+  return observedNow(state, classifyStateFreshness(state))
+}
+
+/** `no_driver` is the only `TaskLoopState` kind backed by no record at all; every other kind — `not_started` (a definite current fact: the brief is not frozen), and the two start-claim states (a start this machine accepted, recorded on disk) included — is a current, fresh answer. Exported so `handlers.ts` can classify a `TaskStatusRow.state` it already has in hand — computed by `gatherTaskStatusList`/`gatherSingleTaskStatus` against the same outbox — without a second, redundant outbox read. */
+export function classifyStateFreshness(state: TaskLoopState): Freshness {
+  return state.kind === 'no_driver' ? 'unknown' : 'fresh'
+}
+
+/** One short phrase per `TaskLoopState` kind — the same vocabulary `task-status.ts`'s own private `renderStateText` renders into its one-line row, duplicated here (that function is not exported, and widening `task-status.ts`'s Surface for one more reader is out of this task's Surface) so `handlers.ts` can put the state into `TaskStatusItemSchema`'s plain `state: string` field. */
+export function describeTaskLoopState(state: TaskLoopState): string {
+  switch (state.kind) {
+    case 'running':
+      return `running (pid ${state.pid})`
+    case 'paused': {
+      const usageLimit = describeUsageLimitPause(state.detail)
+      return usageLimit !== null ? `paused — ${usageLimit}` : `paused (${state.reason})`
+    }
+    case 'published':
+      return 'published'
+    case 'exited':
+      return `exited (${state.reason}) — last decision: ${state.lastDecision}`
+    case 'not_started':
+      return 'not started'
+    case 'starting':
+      return `starting (start request ${state.requestId})`
+    case 'start_did_not_come_up':
+      return `start did not come up (start request ${state.requestId}, accepted ${state.startedAt})`
+    case 'no_driver':
+      return 'no driver'
+  }
+}
+
+/**
+ * The seven `TaskStatusItemSchema` fields that say WHERE a run is, taken from
+ * the status row the reader already built — never re-read here, so the tool
+ * and `vinaya task status` can never disagree about a task's round or phase.
+ *
+ * Every field is `null` when no record carries it: a task with no control
+ * record has no round, no phase, no time in phase and no `phaseIsCurrent`; a
+ * round whose confidence no record still carries has none; a phase with no
+ * comparable history — or too few past intervals of it — has no typical time.
+ * None of them is ever estimated, `phaseIsCurrent: false` marks a phase a
+ * stopped run only RECORDED rather than one it is in, and `phaseHistory` is
+ * history, not a prediction of when this run leaves this phase.
+ */
+export function whereTheRunIs(row: TaskStatusRow): {
+  round: number | null
+  phase: string | null
+  minutesInPhase: number | null
+  phaseIsCurrent: boolean | null
+  lastConfidence: TaskConfidence | null
+  lastConfidenceUnread: boolean
+  phaseHistory: TaskPhaseHistory | null
+} {
+  return {
+    round: row.round,
+    phase: row.phase,
+    minutesInPhase: row.minutesInPhase,
+    // Whether a driver is still in that phase — `false` marks the record as the
+    // last phase the run wrote before it stopped, so a caller never presents a
+    // stale phase as a place the run is in now.
+    phaseIsCurrent: row.phaseIsCurrent,
+    lastConfidence: row.lastConfidence,
+    // An absence a caller may report, told apart from a read a bound stopped
+    // this status read from making at all.
+    lastConfidenceUnread: row.lastConfidenceUnread,
+    phaseHistory: row.phaseHistory
+  }
+}
+
+// --- task_escalation_read's own observation ---------------------------------
+
+/**
+ * Read straight from `pause-state.json` — never through `deriveLoopState`
+ * (which only ever returns `paused` for the CURRENT pause and collapses a
+ * superseded one into `published`) — so a caller can tell "no pause ever
+ * recorded" apart from "a pause is on disk but the run has since moved past
+ * it" (`freshness: 'stale'`) apart from "this is the live pause"
+ * (`freshness: 'fresh'`). `null` when the outbox never wrote a pause record
+ * for this task at all — `handlers.ts` renders that as an empty page, per
+ * the catalog's own boundary note, never as an error.
+ *
+ * `TaskEscalationPacket` (`@attalabs/aeg-core`) already carries its own
+ * `observedAt`/`freshness` fields (`ObservedSchema`, merged into the
+ * schema directly) — they are set here, once, rather than through the
+ * generic `Observed<T>` wrapper above, which would double them.
+ *
+ * `runIdentity`/`inputVersions` come from the durable `EscalationRecord`
+ * (code review, round 2, MEDIUM: this was the one read path meant to serve
+ * a recipient with no chat history, and it never read the control-store
+ * record a prior round added — only `pause-state.json`'s own, narrower
+ * fields) — `null` on either when no record exists yet for this pause (a
+ * `PauseState` written before that adoption, or a best-effort escalation
+ * write that itself failed at pause time; the pause itself is still fully
+ * reported either way, just without those two extra facts). Read through a
+ * control-store root DERIVED from `root` (`root`'s own parent, `'control-
+ * store'` sibling — the SAME `GLOBAL_VINAYA_HOME` layout `outboxRoot()`/
+ * `controlStoreRoot()` already share in production) rather than the real
+ * global default — this module's own contract is a fixture-testable,
+ * explicit `root`, and a read that silently escaped past it into this
+ * machine's real `~/.vinaya/control-store/` would break that for every
+ * caller, test fixtures included.
+ */
+export function readEscalationPacket(root: string, task: number): TaskEscalationPacket | null {
+  const pause: PauseState | null = readPauseState(root, task)
+  if (!pause) return null
+
+  const freshness: Freshness = pauseSuperseded(pause, newestPublication(root, task)) ? 'stale' : 'fresh'
+
+  const verdictLines: RoundVerdictLines | null = lastRoundVerdictLines(root, task)
+  const profile = PAUSE_REASON_PROFILE[pause.reason]
+  const escalationId = pause.escalationId ?? escalationIdFor(pause.task, pause.round, pause.head)
+  const controlStoreDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
+  const escalation = readEscalationRecord(pause.task, escalationId, controlStoreDeps)
+  const widenSurface = widenSurfaceContinuationFor(root, pause)
+
+  return {
+    reason: pause.reason,
+    detail: pause.detail ?? null,
+    inputs: {
+      task: pause.task,
+      round: pause.round,
+      head: pause.head,
+      branch: pause.branch,
+      prNumber: pause.prNumber
+    },
+    evidence:
+      verdictLines === null
+        ? null
+        : { round: verdictLines.round, reviewer: verdictLines.reviewer, security: verdictLines.security },
+    attemptedRecovery: profile.attemptedRecovery,
+    requestedAuthority: profile.requestedAuthority,
+    // A pause with no pull request has no `--resume <pr>` to name: naming one
+    // anyway is how the `-1` sentinel used to reach a reader as `vinaya
+    // dev-review-loop --resume -1`. `vinaya task run` is the continuation that
+    // exists for it, in whichever of its two address forms this task's own
+    // branch says it takes — `noPushResumeCommandFor`'s single builder
+    // (`pause-resume.ts`), the same one that pause's Issue comment prints and
+    // `task_resume`'s launcher spawns, so none of the three can disagree.
+    // A pre-pull-request escalation whose Developer asked for `widen_surface`
+    // names the one Planner command that continues it — supersede with the
+    // widened Surface, gate, start — ahead of the plain restart, which would
+    // freeze the next Developer on the same narrow brief.
+    permittedNextActions: [
+      ...profile.nextActions,
+      ...(widenSurface === null ? [] : [`To widen the Surface the Developer asked for (Planner): ${widenSurface}`]),
+      // An Engine run continues on the Engine runner, which the standalone commands refuse.
+      `Or run: ${
+        readTaskRunner(pause.task, root) === 'atta-engine'
+          ? engineContinuationCommand({
+              issue: pause.task,
+              pr: pause.prNumber,
+              agent: pause.agent === 'codex' ? 'codex' : 'claude',
+              ...(pause.model ? { model: pause.model } : {})
+            })
+          : pause.prNumber === null
+            ? noPushResumeCommandFor(pause.task, pause.branch, pause.agent, pause.model)
+            : resumeCommandFor(pause.prNumber)
+      }`
+    ],
+    runIdentity: escalation ? { runId: escalation.runId, pid: escalation.pid, host: escalation.host } : null,
+    inputVersions: escalation
+      ? {
+          briefHash: escalation.briefHash,
+          objectivesVersion: escalation.objectivesVersion,
+          rulingOrdinal: escalation.rulingOrdinal,
+          policyDigest: escalation.policyDigest
+        }
+      : null,
+    observedAt: new Date().toISOString(),
+    freshness
+  }
+}

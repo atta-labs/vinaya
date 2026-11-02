@@ -26,10 +26,13 @@ import {
   RETIRED_DOCTRINE_POINTER_PATH,
   REVIEW_WORKFLOW_PATH,
   TASK_LOG_COLLECTOR_WORKFLOW_PATH
-} from '../src/lib/artifacts.js'
-import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
-import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
-import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
+} from '../../../harness/processes/vinaya-strict/integration/artifacts.js'
+import { CLAUDE_COMMAND_PATH } from '../../../harness/processes/vinaya-strict/integration/claude-command-emitter.js'
+import {
+  CLAUDE_SETTINGS_PATH,
+  CLAUDE_STOP_HOOK_SCRIPT_PATH
+} from '../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
+import { GEMINI_COMMAND_PATH } from '../../../harness/processes/vinaya-strict/integration/gemini-command-emitter.js'
 import type { LabelGateway } from '../src/lib/ops.js'
 
 let root: string

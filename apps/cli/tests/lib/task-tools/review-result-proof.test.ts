@@ -15,8 +15,8 @@ import {
   reviewBlockerNeedsRuling,
   reviewResultJsonSchema,
   validateReviewResult
-} from '../../../src/lib/review-result.js'
-import { isReviewerResume } from '../../../src/lib/dispatch.js'
+} from '../../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result.js'
+import { isReviewerResume } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import {
   adversarialCases,
   bindingFor,

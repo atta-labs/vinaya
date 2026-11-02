@@ -11,7 +11,12 @@
 
 import { readFileSync } from 'node:fs'
 import { ROLE_VALUES, type Role } from '@attalabs/aeg-core'
-import { AGENT_VENDOR_NAMES, dispatchRole, isAgentVendor, type AgentVendor } from '../lib/dispatch.js'
+import {
+  AGENT_VENDOR_NAMES,
+  dispatchRole,
+  isAgentVendor,
+  type AgentVendor
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { loadConfig } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
 

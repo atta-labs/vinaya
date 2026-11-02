@@ -35,3 +35,12 @@ export function packageRoot(moduleUrl: string): string {
   }
   return dir
 }
+
+/**
+ * The CLI package's own root, walked from this module's location. A module that moved out of the CLI into a
+ * process calls this where it used to call `packageRoot(import.meta.url)`, so it still finds the CLI's root:
+ * from source this file sits in the CLI, and in a bundle every module shares the bundle's own location, as before.
+ */
+export function cliPackageRoot(): string {
+  return packageRoot(import.meta.url)
+}

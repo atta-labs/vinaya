@@ -10,13 +10,13 @@ import {
   turnResultCorrectionPrompt,
   turnResultInstruction
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
-import { developerTurnResultJsonSchema } from '../../src/lib/developer-turn-result.js'
+import { developerTurnResultJsonSchema } from '../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result.js'
 import {
   classifyRoleAttemptOutcome,
   type DispatchHandle,
   dispatchRole,
   vendorSessionArgs
-} from '../../src/lib/dispatch.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { ownVersion } from '../../src/lib/own-version.js'
 import { proofContext } from '../../src/lib/task-tools/dev-proof.js'
 import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host.js'

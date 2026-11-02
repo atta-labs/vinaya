@@ -13,16 +13,22 @@ import {
 } from '@attalabs/aeg-core'
 import { escalationIdFor } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.js'
-import { taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
+import { taskPrReadHandler } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/pr-read.js'
 import { appendRoleLine, loopLogPathFor } from '../../../src/lib/loop-log.js'
 import {
   deriveLoopState,
   NEXT_ACTION_BY_PAUSE_DISPOSITION,
   NEXT_ACTION_BY_STATE_KIND,
   type TaskLoopState
-} from '../../../src/lib/task-status.js'
-import { describeTaskLoopState, readTaskLoopStateObserved } from '../../../src/lib/task-tools/read.js'
-import { createTaskResumeHandler, type TaskResumeDeps } from '../../../src/lib/task-tools/resume.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.js'
+import {
+  describeTaskLoopState,
+  readTaskLoopStateObserved
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/read.js'
+import {
+  createTaskResumeHandler,
+  type TaskResumeDeps
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/resume.js'
 import {
   createTaskStartHandler,
   defaultHeldAgent,
@@ -32,8 +38,8 @@ import {
   type PauseDisposition,
   type PauseRulingDeps,
   resolvePauseDisposition
-} from '../../../src/lib/task-tools/start.js'
-import type { CallerContext } from '../../../src/lib/task-tools/server.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/start.js'
+import type { CallerContext } from '../../../../../harness/processes/vinaya-strict/integration/server.js'
 
 /**
  * The conformance test between the Operator's doctrine and the Operator's
@@ -931,7 +937,10 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
   })
 
   it('reads no loop state in `task_pr_read`, which is why every row may name it', () => {
-    const source = readFileSync(join(import.meta.dir, '../../../src/lib/task-tools/pr-read.ts'), 'utf8')
+    const source = readFileSync(
+      join(import.meta.dir, '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/pr-read.ts'),
+      'utf8'
+    )
     for (const reader of ['deriveLoopState', 'readPauseState', 'readDriverLock', 'newestPublishedRound']) {
       expect(source).not.toContain(reader)
     }

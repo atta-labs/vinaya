@@ -50,7 +50,7 @@ export const SUITE_INPUTS: readonly string[] = [
   'apps/cli/tests/lib/process-fixture.ts',
   'apps/cli/tests/lib/dispatch/driver-socket-reach.ts',
   // The driver code that builds each agent's sandbox settings.
-  'apps/cli/src/lib/dispatch.ts',
+  'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts',
   'apps/cli/src/lib/worker-boundary.ts',
   // The Engine's own launch-shape generators and the launcher the credential probes run inside.
   'harness/kernel/adapters/agents/',

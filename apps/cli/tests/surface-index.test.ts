@@ -44,16 +44,38 @@ const checker = program.getTypeChecker()
 
 /** The standalone driver, moved out of `apps/cli/src/lib/` into the process; the commands still call it as a library. */
 const STANDALONE_DRIVER = '/harness/processes/vinaya-strict/loops/dev-review/standalone/'
+/** The run control, dispatch, task-contract, emitter, artifact and result modules, moved out of `apps/cli/src/lib/` into the process; the commands still call them as a library. */
+const MOVED_LIBRARY_FOLDERS = [
+  'tools/',
+  'artifacts/',
+  'integration/',
+  'executing/developer/',
+  'executing/code-reviewer/',
+  'retrospecting/archivist/',
+  'loops/dev-review/run-control/',
+  'loops/dev-review/dispatch/',
+  'loops/dev-review/actions/'
+].map((folder) => `/harness/processes/vinaya-strict/${folder}`)
+const MOVED_LIBRARY_FILES = ['loops/dev-review/flow-v2-events.ts', 'loops/dev-review/review-gate-input.ts'].map(
+  (file) => `/harness/processes/vinaya-strict/${file}`
+)
+const isMovedLibrary = (filePath: string): boolean =>
+  !filePath.includes('/harness/processes/vinaya-strict/tests/') &&
+  // `roles/plan.ts` sat beside `lib/`, never inside it, so it stays outside the library here too.
+  !filePath.includes('/harness/processes/vinaya-strict/integration/roles/') &&
+  (MOVED_LIBRARY_FOLDERS.some((folder) => filePath.includes(folder)) ||
+    MOVED_LIBRARY_FILES.some((file) => filePath.endsWith(file)))
 
 function isInScope(filePath: string): boolean {
   return (
     filePath.includes('/apps/cli/src/lib/') ||
     filePath.includes('/apps/cli/src/commands/') ||
-    filePath.includes(STANDALONE_DRIVER)
+    filePath.includes(STANDALONE_DRIVER) ||
+    isMovedLibrary(filePath)
   )
 }
 function isLibFile(filePath: string): boolean {
-  return filePath.includes('/apps/cli/src/lib/') || filePath.includes(STANDALONE_DRIVER)
+  return filePath.includes('/apps/cli/src/lib/') || filePath.includes(STANDALONE_DRIVER) || isMovedLibrary(filePath)
 }
 
 /** Every top-level `export function`/`export const <id> = (...)` in a source file, by name. */

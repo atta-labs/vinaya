@@ -30,7 +30,7 @@ import {
 } from '@attalabs/aeg-core'
 import { principalBodies } from '../../../../../../../apps/cli/src/commands/review-post.js'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../../../../../../../apps/cli/src/lib/effects.js'
-import { type DeferredFindingsIssueRef, reconcileGhComment } from '../../../../../../../apps/cli/src/lib/forge-write.js'
+import { type DeferredFindingsIssueRef, reconcileGhComment } from '../../../../tools/task-contract/forge/forge-write.js'
 import { sh } from './gate-reading.js'
 import { markerComments, principalAllowlist } from './developer-dispatch.js'
 import { heldVerdictPath, readIfExists } from './reviewer-dispatch.js'

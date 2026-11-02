@@ -19,7 +19,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
-import { TRACKED_HOOK_DIR } from '../lib/artifacts.js'
+import { TRACKED_HOOK_DIR } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import { detectGitRepo, resolveHookDir } from '../lib/detect.js'
 import { resolveManagedBlockPath } from '../lib/ops.js'
 

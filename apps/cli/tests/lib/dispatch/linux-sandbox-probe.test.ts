@@ -488,7 +488,21 @@ describe('listingRevealsSocket', () => {
  * call in order.
  */
 describe('dispatchRole runs the probe before spawn on Linux', () => {
-  const DISPATCH_LIB = join(import.meta.dir, '..', '..', '..', 'src', 'lib', 'dispatch.ts')
+  const DISPATCH_LIB = join(
+    import.meta.dir,
+    '..',
+    '..',
+    '..',
+    '..',
+    '..',
+    'harness',
+    'processes',
+    'vinaya-strict',
+    'loops',
+    'dev-review',
+    'dispatch',
+    'dispatch.ts'
+  )
 
   type ProbeOutcome = 'sandbox-error' | 'pass'
 

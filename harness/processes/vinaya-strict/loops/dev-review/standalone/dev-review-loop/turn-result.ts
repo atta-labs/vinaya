@@ -34,7 +34,7 @@ import {
   type DeveloperTurnSchemaContext,
   parseDeveloperTurnResult,
   semanticErrors
-} from '../../../../../../../apps/cli/src/lib/developer-turn-result.js'
+} from '../../../../executing/developer/developer-turn-result.js'
 import { runPath } from '../../../../../../../apps/cli/src/lib/run-paths.js'
 
 // --- adapter ----------------------------------------------------------------

@@ -4,7 +4,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkPinnedFileImportersCovered } from '@attalabs/aeg-core'
-import { readPinnedFileImporters, readSurfaceForcedSet, renderSurfaceForcedSet } from '../../src/lib/forge-write'
+import {
+  readPinnedFileImporters,
+  readSurfaceForcedSet,
+  renderSurfaceForcedSet
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const CLI_ENTRY = join(import.meta.dir, '..', '..', 'src', 'index.ts')

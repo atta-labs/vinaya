@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { dirname, join } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import type { DispatchHandle } from '../../../../../../../apps/cli/src/lib/dispatch.js'
+import type { DispatchHandle } from '../../../../loops/dev-review/dispatch/dispatch.js'
 import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess.js'
 import {

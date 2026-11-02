@@ -20,7 +20,7 @@ import {
   retryOnConfigLock
 } from '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import { ownChangesRangeBase } from '../../../../loops/dev-review/standalone/dev-review-loop'
-import type { LaunchRecord, ParsedLaunch } from '../../../../../../../apps/cli/src/lib/dispatch'
+import type { LaunchRecord, ParsedLaunch } from '../../../../loops/dev-review/dispatch/dispatch'
 
 // task-run-v1 task 15, O1: `developerBranchFor` derives `task/issue-<n>` for
 // a backlog Issue (no `[<tranche>] <n> — …` title, no `vinaya/tranche:*`

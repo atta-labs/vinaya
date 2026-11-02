@@ -791,7 +791,7 @@ async function resolveDoctrine(cwd: string, vinayaVersion: string): Promise<stri
 /**
  * The two branch shapes this doctrine addresses a task by — `task/issue-<n>`
  * for a tranche-less backlog Issue, `task/<tranche>/<n>` for a tranche task
- * (`apps/cli/src/lib/task-status.ts`'s `branchForRef`, the same two shapes
+ * (`harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.ts`'s `branchForRef`, the same two shapes
  * `developerBranchFor` derives). Pure: a branch name in, a claim about what
  * it names out — no I/O, so the shape rule itself is testable without a
  * checkout or a forge.

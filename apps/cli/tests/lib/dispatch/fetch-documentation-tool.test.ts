@@ -18,8 +18,8 @@ import {
   DOCUMENTATION_READ_MIN_SIZE as DISPATCH_MIN_SIZE,
   documentationStopHookScript,
   writeCodexHookFiles
-} from '../../../src/lib/dispatch.js'
-import { createDeveloperDevToolContext } from '../../../src/lib/task-tools/developer-dev-tools-context.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
+import { createDeveloperDevToolContext } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/actions/developer-dev-tools-context.js'
 import {
   createDevToolsMcpServer,
   DEV_TOOL_CATALOG,

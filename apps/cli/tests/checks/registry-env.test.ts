@@ -231,7 +231,7 @@ describe('registry env declarations', () => {
       // driver's "is this review concluded?" read calls the SAME assembly, so
       // this rule binds where the resolution actually happens. The bin itself
       // is asserted to hold no copy of it, just below.
-      join('lib', 'review-gate-input.ts'),
+      join('..', '..', '..', 'harness', 'processes', 'vinaya-strict', 'loops', 'dev-review', 'review-gate-input.ts'),
       join('checks', 'bin', 'check-doc-coverage.ts'),
       join('checks', 'bin', 'check-doc-coverage-push.ts'),
       join('checks', 'bin', 'check-evidence-fresh.ts'),
@@ -265,7 +265,7 @@ describe('registry env declarations', () => {
   it('every remaining trust-anchor config read in a check-side source calls loadTrustAnchorConfig() exactly once with NO arguments', () => {
     const sources = [
       // The review policy and the Objectives cutover, beside the Principal list.
-      join('lib', 'review-gate-input.ts'),
+      join('..', '..', '..', 'harness', 'processes', 'vinaya-strict', 'loops', 'dev-review', 'review-gate-input.ts'),
       // The release actor, not a Principal.
       join('checks', 'bin', 'check-body-bare-digits.ts')
     ]

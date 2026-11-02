@@ -27,7 +27,11 @@
  * spent, the bound's pause detail (`--pause-on-conflict <detail>`) forward.
  */
 
-import { colourLoopLine, isAgentVendor, type AgentVendor } from '../lib/dispatch.js'
+import {
+  colourLoopLine,
+  isAgentVendor,
+  type AgentVendor
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { loadConfig } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
 import {

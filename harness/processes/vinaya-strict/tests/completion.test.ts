@@ -7,7 +7,7 @@ import { DEFAULT_REVIEW_POLICY, initialLoopState, objectivesVersion, type Verdic
 import { createRunControl, type SpawnedProcessLike, type StepNodeResult } from '@atta/executor-agent-spawn'
 import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
-import { resolveRoleDoctrineText } from '../../../../apps/cli/src/roles/plan'
+import { resolveRoleDoctrineText } from '../integration/roles/plan'
 import { cleanupAllReviewerIsolationArtifacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
 import { ENGINE_SCENARIO_DRIVERS } from '../../../../apps/cli/tests/conformance/dev-review-engine-loop-adapter'
 import {

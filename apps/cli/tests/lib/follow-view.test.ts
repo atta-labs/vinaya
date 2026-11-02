@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { colourEnabled } from '../../src/lib/dispatch'
+import { colourEnabled } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import {
   createFollowView,
   type FollowViewOptions,

@@ -7,7 +7,7 @@ import {
   findBannedTerms,
   interfaceCodeSpan
 } from '../../src/lib/dev-review-eval/banned-terms'
-import { REVIEWER_SEVERITIES } from '../../src/lib/review-result'
+import { REVIEWER_SEVERITIES } from '../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 
 const NEUTRAL =
   'Make the date parser accept ISO week dates such as 2026-W03-4, keep every existing format working, and add tests for both.'

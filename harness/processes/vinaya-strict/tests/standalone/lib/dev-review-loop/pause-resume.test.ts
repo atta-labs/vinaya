@@ -34,11 +34,11 @@ import {
   runDriverLoop
 } from '../../../../loops/dev-review/standalone/dev-review-loop'
 import { MAX_AUTOMATIC_CONFLICT_REENTRIES } from '../../../../loops/dev-review/standalone/dev-review-loop/gate-reading'
-import type { DispatchHandle } from '../../../../../../../apps/cli/src/lib/dispatch'
+import type { DispatchHandle } from '../../../../loops/dev-review/dispatch/dispatch'
 import { drainLogSink } from '../../../../../../../apps/cli/src/lib/log-sink'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess'
-import { readEscalationPacket } from '../../../../../../../apps/cli/src/lib/task-tools/read'
-import { type RunTaskDeps, runTask } from '../../../../../../../apps/cli/src/lib/task-run'
+import { readEscalationPacket } from '../../../../loops/dev-review/run-control/read'
+import { type RunTaskDeps, runTask } from '../../../../loops/dev-review/run-control/task-run'
 import { LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV } from '../../../../../../../apps/cli/src/lib/worker-boundary'
 import {
   cleanupWorlds,

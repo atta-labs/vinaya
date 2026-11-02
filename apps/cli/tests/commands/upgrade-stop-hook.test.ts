@@ -8,12 +8,12 @@ import type { InitDeps } from '../../src/commands/init.js'
 import { runInit } from '../../src/commands/init.js'
 import type { UpgradeDeps } from '../../src/commands/upgrade.js'
 import { runUpgrade } from '../../src/commands/upgrade.js'
-import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../../src/lib/artifacts.js'
+import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import {
   CLAUDE_SETTINGS_PATH,
   CLAUDE_STOP_HOOK_MARKER,
   CLAUDE_STOP_HOOK_SCRIPT_PATH
-} from '../../src/lib/claude-stop-hook-emitter.js'
+} from '../../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
 import type { LabelGateway } from '../../src/lib/ops.js'
 
 // Task 3 (#397): a repo that ran `vinaya init` before the Claude Code Stop

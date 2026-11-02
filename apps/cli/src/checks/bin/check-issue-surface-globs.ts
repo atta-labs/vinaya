@@ -8,19 +8,19 @@
  * request's.
  *
  * `resolvesToFile` shells to `git ls-files` (`expandGlob`, the SAME
- * implementation `apps/cli/src/lib/brief-assembly.ts`'s render path and
+ * implementation `harness/processes/vinaya-strict/tools/task-contract/brief-assembly.ts`'s render path and
  * `forge-write.ts`'s `validateIssueContent` already use) — the gate and the
  * renderer can never disagree about whether a glob resolves.
  *
  * scope: full, ownWorkflow: true — invoked by name only from
- * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` (the Issue write
+ * `harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts`'s `runIssueChecks` (the Issue write
  * gate's runner), never from `vinaya check --all`.
  */
 
 import { checkSurfaceGlobsResolve } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { readIssueCheckEnv } from '../issue-check-env'
-import { expandGlob } from '../../lib/brief-assembly'
+import { expandGlob } from '../../../../../harness/processes/vinaya-strict/tools/task-contract/brief-assembly'
 
 const CHECK_NAME = 'issue-surface-globs'
 

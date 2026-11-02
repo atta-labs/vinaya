@@ -1,11 +1,6 @@
 import type { ActionContext } from '../../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { runCli } from '../../../../../../harness/kernel/gates/checks/run-checks'
-import {
-  ciResultReadEvent,
-  failedTestsRerunEvent,
-  prOpenedEvent,
-  readyPushEvent
-} from '../../../../../../apps/cli/src/lib/flow-v2-events'
+import { ciResultReadEvent, failedTestsRerunEvent, prOpenedEvent, readyPushEvent } from '../flow-v2-events'
 import { discardHeldVerdicts } from '../standalone/dev-review-loop/reviewer-dispatch'
 import {
   checkPremiseAtHead,
@@ -20,10 +15,10 @@ import {
   readFailedCheckExcerpt,
   renderFailureExcerpt,
   sanitizeForgeText
-} from '../../../../../../apps/cli/src/lib/task-tools/pr-facts'
+} from '../run-control/pr-facts'
 import type { SelectionNote } from '../../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import { PROGRESS_SUMMARY_INTERVAL_MS } from '../../../../../../apps/cli/src/lib/push-progress'
-import { manifestDigest } from '../../../../../../apps/cli/src/lib/review-result'
+import { manifestDigest } from '../../../executing/code-reviewer/review-result'
 import { isNativeRunCommand, readyTestCommand } from '../../../../../../apps/cli/src/lib/pre-push-test-runner'
 import {
   isReadyCiCommand,
@@ -31,7 +26,7 @@ import {
   type ReadyTestsPolicy,
   type RequiredCiPolicy
 } from '../../../../../../apps/cli/src/lib/pre-push-ready-policy'
-import { agentCommandText, extractAgentCommandLines } from '../../../../../../apps/cli/src/lib/pr-report-engine'
+import { agentCommandText, extractAgentCommandLines } from '../../../tools/pr-report/pr-report-engine'
 import {
   type CiProgress,
   type ClassifiedFailure,

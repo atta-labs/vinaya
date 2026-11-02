@@ -1513,7 +1513,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('a boundary producer handed a log dependency is accepted — that is how a test drives one writing nowhere real', () => {
     const sample = `
-      import { createTaskCancelHandler } from '../src/lib/task-tools/cancel.js'
+      import { createTaskCancelHandler } from '../../../harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.js'
       const handler = createTaskCancelHandler({ runtimeDir: () => outbox, log: (e) => { seen.push(e) } })
       ${A_DEFAULT_READ}
     `

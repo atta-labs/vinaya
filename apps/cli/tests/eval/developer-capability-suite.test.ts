@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { renderBeyondSurfaceBlock } from '@attalabs/aeg-core'
 
-import type { DeveloperTurnResult } from '../../src/lib/developer-turn-result'
+import type { DeveloperTurnResult } from '../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result'
 import {
   injectedDeliveryReceipts,
   manifestDigest,

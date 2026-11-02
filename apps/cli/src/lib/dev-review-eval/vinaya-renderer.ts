@@ -31,8 +31,13 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { type IssueSurface, recordedBeyondSurfacePaths } from '@attalabs/aeg-core'
 import type { RoleContract } from '../../../../../harness/kernel/adapters/agents/manifest'
-import { parseDeveloperTurnResult } from '../developer-turn-result'
-import { parseReviewResult, REVIEWER_ROLES, REVIEWER_SEVERITIES, type ReviewerRole } from '../review-result'
+import { parseDeveloperTurnResult } from '../../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result'
+import {
+  parseReviewResult,
+  REVIEWER_ROLES,
+  REVIEWER_SEVERITIES,
+  type ReviewerRole
+} from '../../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 import type { SourceDeliveryReceipt } from '../source-manifest'
 import { type GrantedRole, ROLE_TOOL_GRANTS } from '../task-tools/role-grants'
 import { AGENT_TOOL_CATALOG } from '../task-tools/tool-catalog'
@@ -864,8 +869,8 @@ export const MAPPING_SOURCE_PATHS: readonly string[] = [
   'apps/cli/src/lib/dev-review-eval/neutral-outcomes.ts',
   'apps/cli/src/lib/dev-review-eval/banned-terms.ts',
   'apps/cli/src/lib/dev-review-eval/contracts.ts',
-  'apps/cli/src/lib/review-result.ts',
-  'apps/cli/src/lib/developer-turn-result.ts',
+  'harness/processes/vinaya-strict/executing/code-reviewer/review-result.ts',
+  'harness/processes/vinaya-strict/executing/developer/developer-turn-result.ts',
   'apps/cli/src/lib/task-tools/role-grants.ts',
   'harness/kernel/adapters/agents/manifest.ts',
   'packages/aeg-core/src/review-policy.ts',

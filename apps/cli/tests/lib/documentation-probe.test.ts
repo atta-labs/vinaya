@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { checkDocumentationReadable } from '@attalabs/aeg-core'
-import { type DocumentationResponse, probeDocumentationUrl } from '../../src/lib/forge-write'
+import {
+  type DocumentationResponse,
+  probeDocumentationUrl
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
 const URL_ = 'https://docs.example.com/page'
 

@@ -25,12 +25,7 @@ import {
   type RoundHeadIdentity,
   type RoundStats
 } from '@attalabs/aeg-core'
-import type {
-  AgentVendor,
-  DispatchHandle,
-  SandboxProbeRefusal,
-  UsageLimit
-} from '../../../../../../../apps/cli/src/lib/dispatch.js'
+import type { AgentVendor, DispatchHandle, SandboxProbeRefusal, UsageLimit } from '../../dispatch/dispatch.js'
 import { controlStoreRoot } from '../../../../../../../apps/cli/src/lib/effects.js'
 import { isControlCharacter } from './turn-result.js'
 

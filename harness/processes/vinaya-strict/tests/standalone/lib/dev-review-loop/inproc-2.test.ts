@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { DispatchHandle } from '../../../../../../../apps/cli/src/lib/dispatch.js'
+import type { DispatchHandle } from '../../../../loops/dev-review/dispatch/dispatch.js'
 import {
   CLEAN_REVIEWER,
   CLEAN_SECURITY,

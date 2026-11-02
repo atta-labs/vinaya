@@ -7,7 +7,7 @@ import {
   DOCUMENTATION_READ_MIN_SIZE,
   documentationLogHookScript,
   documentationStopHookScript
-} from '../../../src/lib/dispatch'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 
 const RUN_ID = 'run-1'
 const SOURCE = 'https://code.claude.com/docs/en/hooks'

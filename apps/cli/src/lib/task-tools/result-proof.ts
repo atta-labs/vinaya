@@ -40,14 +40,14 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
-import { ownVersion } from '../artifacts.js'
+import { ownVersion } from '../../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import {
   DEVELOPER_TURN_RESULT_SCHEMA_VERSION,
   type DeveloperTurnContext,
   type DeveloperTurnResult,
   developerTurnResultJsonSchema,
   parseDeveloperTurnResult
-} from '../developer-turn-result.js'
+} from '../../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result.js'
 import {
   judgeTurnOutput,
   PERMISSIBLE_RULING_DECISIONS,
@@ -56,7 +56,11 @@ import {
   type TurnRead,
   turnResultCorrectionPrompt
 } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
-import { vendorResumeArgs, vendorSessionArgs, writeDispatchSettingsAt } from '../dispatch.js'
+import {
+  vendorResumeArgs,
+  vendorSessionArgs,
+  writeDispatchSettingsAt
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { buildWorkerEnv, realConfinementPlatformDeps, resolveClaudeConfinement } from '../worker-boundary.js'
 import {
   type ConfinementDisclosure,

@@ -31,7 +31,11 @@ import {
 } from '@attalabs/aeg-forge-state'
 import { detectGitRepo } from '../lib/detect.js'
 import { printJson } from '../lib/envelope.js'
-import { declaredTranches, milestoneCloseDecision, type TrancheLifecycle } from '../lib/milestone-close-hold.js'
+import {
+  declaredTranches,
+  milestoneCloseDecision,
+  type TrancheLifecycle
+} from '../../../../harness/processes/vinaya-strict/retrospecting/archivist/milestone-close-hold.js'
 import {
   type BodyResult,
   ForgeArgError,
@@ -41,7 +45,7 @@ import {
   refuse,
   resolveSections,
   validateForgeWrite
-} from '../lib/forge-write.js'
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.js'
 
 const RETRY_CREATE = 'vinaya milestone create --title <title> --body-file <path>'
 const RETRY_ADOPT = 'vinaya milestone adopt --target <title> --slug <slug> [--slug <slug> ...]'

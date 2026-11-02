@@ -7,7 +7,7 @@ import type {
 } from '../../../../harness/kernel/log/client/translate'
 import { decodeExecutionRound } from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import type { DriverExitReason } from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
-import { localChecksRunEvent, phaseOfStep, phaseTimeEvent } from '../../../../apps/cli/src/lib/flow-v2-events'
+import { localChecksRunEvent, phaseOfStep, phaseTimeEvent } from '../loops/dev-review/flow-v2-events'
 
 // The Log events the developer review Flow's run produces, for the harness
 // translator. Nothing here reaches the Log: each producer returns events

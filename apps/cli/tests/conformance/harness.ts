@@ -16,14 +16,18 @@ import {
   writePauseState
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { tasksExecutionRoot } from '../../src/lib/run-paths.js'
-import { createTaskCancelHandler } from '../../src/lib/task-tools/cancel.js'
-import { createTaskResumeHandler, type ResumeClaimStore, type ResumeRecord } from '../../src/lib/task-tools/resume.js'
+import { createTaskCancelHandler } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.js'
+import {
+  createTaskResumeHandler,
+  type ResumeClaimStore,
+  type ResumeRecord
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/resume.js'
 import {
   createTaskToolsMcpServer,
   defaultTaskToolHandlers,
   dispatchToolCall,
   type TaskToolHandlers
-} from '../../src/lib/task-tools/server.js'
+} from '../../../../harness/processes/vinaya-strict/integration/server.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
 /**

@@ -14,7 +14,7 @@ import { dirname, join, sep } from 'node:path'
 import matter from 'gray-matter'
 import { printJson } from '../lib/envelope.js'
 import { packageRoot } from '../lib/package-root.js'
-import { resolveRoleFile } from '../roles/plan.js'
+import { resolveRoleFile } from '../../../../harness/processes/vinaya-strict/integration/roles/plan.js'
 
 /** The doctrine's front door, relative to its `aeg-root/`. */
 export const ENTRY_SEGMENTS = ['skills', 'aeg', 'SKILL.md'] as const

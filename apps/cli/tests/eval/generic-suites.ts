@@ -23,7 +23,10 @@ import {
   validateNeutralCase
 } from '../../src/lib/dev-review-eval/neutral-case'
 import { extractOutcomes, renderCase, type VinayaTrialRecord } from '../../src/lib/dev-review-eval/vinaya-renderer'
-import { REVIEWER_SEVERITIES, type ReviewerRole } from '../../src/lib/review-result'
+import {
+  REVIEWER_SEVERITIES,
+  type ReviewerRole
+} from '../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 import {
   type DeveloperCapabilityCase,
   loadCaseFile as loadDeveloperCaseFile,

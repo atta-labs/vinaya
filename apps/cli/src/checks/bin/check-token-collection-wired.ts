@@ -34,7 +34,7 @@ const CHECK_NAME = 'token-collection-wired'
  * existence oracle.
  *
  * The repo already accepted this exact threat model on the WRITER side:
- * `apps/cli/src/lib/claude-stop-hook-emitter.ts` records a prior review's CWE-59
+ * `harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.ts` records a prior review's CWE-59
  * finding on this same path and hardens the write with `wx` + rename. The read
  * side inherited the threat and none of the hardening; this is that half.
  *

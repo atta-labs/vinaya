@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defaultControlStoreDeps, type ControlStoreDeps } from '@attalabs/aeg-core'
-import type { DispatchTeeRecoveryDeps } from '../../../src/lib/dispatch'
+import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import { authenticateWorkerInvocation, requestEffect, scopeTarget, WORKER_OPERATIONS } from '../../../src/lib/broker'
 import { buildWorkerEnv } from '../../../src/lib/worker-boundary'
 

@@ -16,7 +16,7 @@ import {
   joinReviewerPromptPieces,
   roleDoctrinePieces
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import { resolveRoleDoctrineText } from '../../src/roles/plan'
+import { resolveRoleDoctrineText } from '../../../../harness/processes/vinaya-strict/integration/roles/plan'
 import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import {
   commitInWorkingTree,

@@ -52,12 +52,19 @@
  * operator action rather than a signal.
  */
 
-import { colourLoopLine } from '../lib/dispatch.js'
-import { DISPATCH_AGENTS, type DispatchAgent } from '../lib/dispatch-task.js'
+import { colourLoopLine } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
+import {
+  DISPATCH_AGENTS,
+  type DispatchAgent
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/dispatch-task.js'
 import { loadConfig, loadTaskRunner, type TaskRunner } from '../lib/config.js'
-import { runTask, type RunTaskResult, type RunTaskOutcome } from '../lib/task-run.js'
-import { startBackgroundRun } from '../lib/task-run-background.js'
-import { resumeCommandFor } from '../lib/task-status.js'
+import {
+  runTask,
+  type RunTaskResult,
+  type RunTaskOutcome
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.js'
+import { startBackgroundRun } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-background.js'
+import { resumeCommandFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.js'
 import { noPushResumeCommandFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */

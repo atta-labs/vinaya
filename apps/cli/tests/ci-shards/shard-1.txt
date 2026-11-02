@@ -1,6 +1,5 @@
 src/commands/doctor-metering-io.test.ts
 tests/lib/log-entry-paths.test.ts
-src/commands/pr-verify-evidence-logic.test.ts
 src/commands/tokens-metering-io.test.ts
 tests/audit.test.ts
 tests/checks/body-bare-digits-changeset-exempt.test.ts
@@ -19,7 +18,6 @@ tests/checks/surface-scope.test.ts
 tests/checks/sweeps-declare-include.test.ts
 tests/checks/token-collection-pointer-hardening.test.ts
 tests/commands/check-flip.test.ts
-tests/commands/dispatch.test.ts
 tests/commands/issue-objectives.test.ts
 tests/config.test.ts
 tests/demo.test.ts

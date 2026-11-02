@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'bun:test'
-import { defaultTaskCancelHandler } from '../../../src/lib/task-tools/cancel.js'
-import { taskEscalationReadHandler, taskStatusHandler } from '../../../src/lib/task-tools/handlers.js'
-import { taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
+import { defaultTaskCancelHandler } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.js'
+import {
+  taskEscalationReadHandler,
+  taskStatusHandler
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/handlers.js'
+import { taskPrReadHandler } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/pr-read.js'
 import { routeTaskToolIntent } from '../../../src/lib/task-tools/router.js'
-import { defaultTaskResumeHandler } from '../../../src/lib/task-tools/resume.js'
-import { defaultTaskStartHandler } from '../../../src/lib/task-tools/start.js'
+import { defaultTaskResumeHandler } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/resume.js'
+import { defaultTaskStartHandler } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/start.js'
 
 /**
  * Held-out prompts (O3) — none of these are the literal keywords the

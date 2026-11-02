@@ -19,7 +19,12 @@
  * instead, which runs this same supersede and then starts the run in order.
  */
 
-import { DISPATCH_AGENTS, type DispatchAgent, dispatchTask, prepareTaskOrIssue } from '../lib/dispatch-task.js'
+import {
+  DISPATCH_AGENTS,
+  type DispatchAgent,
+  dispatchTask,
+  prepareTaskOrIssue
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/dispatch-task.js'
 
 export async function taskDispatchCommand(args: string[]): Promise<void> {
   const trancheSlug = args[0]

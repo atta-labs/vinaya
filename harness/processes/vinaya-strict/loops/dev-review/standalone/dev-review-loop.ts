@@ -55,7 +55,7 @@ import {
   buildDeveloperDeltaPacket,
   buildDeveloperFullPacket,
   renderContextPacket
-} from '../../../../../../apps/cli/src/lib/context-packet.js'
+} from '../../../tools/task-contract/context-packet.js'
 import {
   addedDiffLines,
   agentOwnConfigDirs,
@@ -122,7 +122,7 @@ import {
   realDispatchTeeRecoveryDeps,
   type ResumeRecord,
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
-} from '../../../../../../apps/cli/src/lib/dispatch.js'
+} from '../dispatch/dispatch.js'
 import { authenticateWorkerInvocation, requestEffect, scopeTarget } from '../../../../../../apps/cli/src/lib/broker.js'
 import {
   classifyReviewOutcome,
@@ -130,15 +130,15 @@ import {
   type ReviewBinding,
   type ReviewResult,
   reviewBlockerNeedsRuling
-} from '../../../../../../apps/cli/src/lib/review-result.js'
+} from '../../../executing/code-reviewer/review-result.js'
 import {
   type DeferredFindingEntry,
   type DeferredFindingsIssueRef,
   postMarkedComment,
   upsertDeferredFindingsIssue
-} from '../../../../../../apps/cli/src/lib/forge-write.js'
+} from '../../../tools/task-contract/forge/forge-write.js'
 import { controlStoreRoot } from '../../../../../../apps/cli/src/lib/effects.js'
-import { resolveRoleDoctrineText } from '../../../../../../apps/cli/src/roles/plan.js'
+import { resolveRoleDoctrineText } from '../../../integration/roles/plan.js'
 import { validatePrBodyForCreate } from '../../../../../../apps/cli/src/commands/pr.js'
 import {
   createLogSink,
@@ -147,7 +147,7 @@ import {
   resolveLogAppendPath,
   type LogSinkDeps
 } from '../../../../../../apps/cli/src/lib/log-sink.js'
-import { crossRunnerRefusal, PROCESS_FOLDER_IN_CHECKOUT } from '../../../../../../apps/cli/src/lib/task-run-engine.js'
+import { crossRunnerRefusal, PROCESS_FOLDER_IN_CHECKOUT } from '../run-control/task-run-engine.js'
 import {
   conflictReentryEvent,
   createDriverExitRecorder,
@@ -159,7 +159,7 @@ import {
 } from './dev-review-loop/driver-lifecycle.js'
 import { ensureRunDir, markProcessUnattended, runPath } from '../../../../../../apps/cli/src/lib/run-paths.js'
 import { packageRoot } from '../../../../../../apps/cli/src/lib/package-root.js'
-import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from '../../../../../../apps/cli/src/lib/task-sweep.js'
+import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from '../run-control/task-sweep.js'
 import {
   appendDriverLine,
   appendRoleLine,
@@ -318,13 +318,8 @@ import {
   type TurnResultControllerContext,
   writeTurnResultRecord
 } from './dev-review-loop/turn-result.js'
-import type { DeveloperTurnResult } from '../../../../../../apps/cli/src/lib/developer-turn-result.js'
-import {
-  buildReport,
-  gh,
-  resolveMergeBase,
-  runReportForOpenPr
-} from '../../../../../../apps/cli/src/lib/pr-report-engine.js'
+import type { DeveloperTurnResult } from '../../../executing/developer/developer-turn-result.js'
+import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from '../../../tools/pr-report/pr-report-engine.js'
 import type { PremiseReassertResult } from '../../../../../../apps/cli/src/checks/premise-reassert-logic.js'
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
 import { patchIdAt } from '../../../../../../apps/cli/src/lib/patch-id.js'
@@ -346,7 +341,7 @@ import {
   resolvePublicationBase as sharedResolvePublicationBase,
   syncBeyondSurfaceRecord as sharedSyncBeyondSurfaceRecord,
   withBeyondSurfaceRecord as sharedWithBeyondSurfaceRecord
-} from '../../../../../../apps/cli/src/lib/task-tools/live-developer-context.js'
+} from '../actions/live-developer-context.js'
 import {
   type DevPullRequestView,
   type DevToolContext,
@@ -354,11 +349,7 @@ import {
 } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server.js'
 import { createReadSourceTool } from '../../../../../../apps/cli/src/lib/task-tools/read-source.js'
 import type { GrantedRole } from '../../../../../../apps/cli/src/lib/task-tools/role-grants.js'
-import {
-  type FailedCheckLog,
-  readFailedCheckLogs,
-  readJobLogTail
-} from '../../../../../../apps/cli/src/lib/task-tools/pr-facts.js'
+import { type FailedCheckLog, readFailedCheckLogs, readJobLogTail } from '../run-control/pr-facts.js'
 import { startDevToolsHost } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-host.js'
 import type { FetchDocumentationDeps } from '../../../../../../apps/cli/src/lib/task-tools/fetch-documentation.js'
 import {
@@ -377,7 +368,7 @@ import {
   realSourceProviderDeps,
   type SourceProviderDeps
 } from '../../../../../../apps/cli/src/lib/source-provider.js'
-import { ownVersion } from '../../../../../../apps/cli/src/lib/artifacts.js'
+import { ownVersion } from '../../../integration/artifacts.js'
 import {
   type BridgeInvocation,
   devToolsSocketPath,
@@ -1627,7 +1618,7 @@ export function defaultRestoreWorktreeHead(worktreePath: string, head: string): 
   return gitOk(worktreePath, ['rev-parse', 'HEAD']) === head
 }
 
-export { pushedCommitRangeBase } from '../../../../../../apps/cli/src/lib/task-tools/live-developer-context.js'
+export { pushedCommitRangeBase } from '../actions/live-developer-context.js'
 
 /**
  * The lower bound that measures only the task's own changes: `pushedBase`

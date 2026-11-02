@@ -35,11 +35,17 @@ import {
   REVIEW_VERDICT_WORKFLOW_PATH,
   SETUP_BUN_SHA,
   starterConfig
-} from '../src/lib/artifacts.js'
-import { agentSkillPath, discoverRoleNames } from '../src/lib/agents-skills-emitter.js'
-import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
-import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
-import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
+} from '../../../harness/processes/vinaya-strict/integration/artifacts.js'
+import {
+  agentSkillPath,
+  discoverRoleNames
+} from '../../../harness/processes/vinaya-strict/integration/agents-skills-emitter.js'
+import { CLAUDE_COMMAND_PATH } from '../../../harness/processes/vinaya-strict/integration/claude-command-emitter.js'
+import {
+  CLAUDE_SETTINGS_PATH,
+  CLAUDE_STOP_HOOK_SCRIPT_PATH
+} from '../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
+import { GEMINI_COMMAND_PATH } from '../../../harness/processes/vinaya-strict/integration/gemini-command-emitter.js'
 import { resolveDoctrineRoot } from '../src/commands/doctrine.js'
 import type { VendoredVinaya } from '../src/lib/self-host.js'
 import { detectVendoredVinaya } from '../src/lib/self-host.js'
@@ -1278,7 +1284,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // gap: a regression that reverts to a hand-typed copy (even one that
     // still matches VERDICT_MARKER_SOURCE/WAIVER_LABEL_REVIEW's current
     // value) drops the identifier from the source and fails here.
-    const generatorSource = readFileSync(join(import.meta.dir, '..', 'src/lib/artifacts.ts'), 'utf-8')
+    const generatorSource = readFileSync(
+      join(import.meta.dir, '..', '..', '..', 'harness/processes/vinaya-strict/integration/artifacts.ts'),
+      'utf-8'
+    )
     expect(generatorSource).toMatch(/import\s*\{[^}]*VERDICT_MARKER_SOURCE[^}]*\}\s*from\s*'@attalabs\/aeg-core'/)
     expect(generatorSource).toMatch(/import\s*\{[^}]*WAIVER_LABEL_REVIEW[^}]*\}\s*from\s*'@attalabs\/aeg-core'/)
     expect(generatorSource).toContain('jqStringEscape(VERDICT_MARKER_SOURCE)')

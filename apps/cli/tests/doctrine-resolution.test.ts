@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { extractShortVersionAndChecklist } from '@attalabs/aeg-core/docs'
 import { ENTRY_SEGMENTS, resolveDoctrineRoot } from '../src/commands/doctrine'
-import { buildRolePlan } from '../src/roles/plan'
+import { buildRolePlan } from '../../../harness/processes/vinaya-strict/integration/roles/plan'
 
 /**
  * The resolution rule, exercised against a checkout that carries BOTH roots

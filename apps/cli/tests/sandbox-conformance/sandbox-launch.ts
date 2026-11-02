@@ -44,7 +44,7 @@ import {
   buildCodexExecpolicyRules,
   codexSpawnEnvExtras,
   confinedTurboCacheDir
-} from '../../src/lib/dispatch.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import {
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   claudeRunsCommandUnsandboxed,

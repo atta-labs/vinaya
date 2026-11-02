@@ -90,7 +90,7 @@ On any failure: STOP and report.
 
 ## 8. Verification before claiming done
 
-<!-- AEG:CLAIM: apps/cli/src/lib/artifacts.ts contains:pre-push-select-tests.ts -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/integration/artifacts.ts contains:pre-push-select-tests.ts -->
 
 - [Under the review loop, the controller runs static gates through the commit hook, the managed `pre-push` hook, `run_checks`, and CI. Do NOT list hand-run static-gate commands or ask for a test-suite run per Part: the push hook selects and runs affected tests once, on the one push, refusing it on failure. Working manually, the Developer uses the repository's declared static-gate commands.]
 - [every blast-radius consumer named in §4 re-verified, by name]

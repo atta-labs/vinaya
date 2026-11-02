@@ -132,11 +132,30 @@ function walk(dir: string, prefix: string): [string, string][] {
 /** The standalone driver's tests, moved out of `apps/cli/tests` into the process with the driver. */
 const STANDALONE_TESTS = 'harness/processes/vinaya-strict/tests/standalone'
 
-/** Every `.ts`/`.tsx` file under `apps/cli/tests` and the driver's own tests, repo-relative, the helper itself excluded. */
+/** The run control, dispatch, task-contract and emitter tests, moved out of `apps/cli/tests` into the process with their code. */
+const MOVED_TEST_FOLDERS = [
+  'harness/processes/vinaya-strict/tests/commands',
+  'harness/processes/vinaya-strict/tests/lib'
+]
+const MOVED_TEST_FILES = [
+  'harness/processes/vinaya-strict/tests/agents-skills-emitter.test.ts',
+  'harness/processes/vinaya-strict/tests/backend-rollback.test.ts',
+  'harness/processes/vinaya-strict/tests/claude-command-emitter.test.ts',
+  'harness/processes/vinaya-strict/tests/claude-stop-hook-emitter.test.ts',
+  'harness/processes/vinaya-strict/tests/forge-write.test.ts',
+  'harness/processes/vinaya-strict/tests/gemini-command-emitter.test.ts',
+  'harness/processes/vinaya-strict/tests/registry-write.test.ts',
+  'harness/processes/vinaya-strict/tests/task-run-engine.test.ts'
+]
+
+/** Every `.ts`/`.tsx` file under `apps/cli/tests` and the moved tests, repo-relative, the helper itself excluded. */
 function allTestTreeFiles(): [string, string][] {
-  return [...walk(TESTS_ROOT, 'apps/cli/tests'), ...walk(join(REPO_ROOT, STANDALONE_TESTS), STANDALONE_TESTS)].filter(
-    ([rel]) => rel !== HELPER_PATH
-  )
+  return [
+    ...walk(TESTS_ROOT, 'apps/cli/tests'),
+    ...walk(join(REPO_ROOT, STANDALONE_TESTS), STANDALONE_TESTS),
+    ...MOVED_TEST_FOLDERS.flatMap((folder) => walk(join(REPO_ROOT, folder), folder)),
+    ...MOVED_TEST_FILES.map((rel): [string, string] => [rel, join(REPO_ROOT, rel)])
+  ].filter(([rel]) => rel !== HELPER_PATH)
 }
 
 /**
@@ -589,8 +608,8 @@ const GRANDFATHERED_FILES: readonly string[] = [
   'apps/cli/tests/checks/runner/cancelled.test.ts',
   'apps/cli/tests/checks/surface-scope.test.ts',
   'apps/cli/tests/checks/token-collection-pointer-hardening.test.ts',
-  'apps/cli/tests/claude-command-emitter.test.ts',
-  'apps/cli/tests/claude-stop-hook-emitter.test.ts',
+  'harness/processes/vinaya-strict/tests/claude-command-emitter.test.ts',
+  'harness/processes/vinaya-strict/tests/claude-stop-hook-emitter.test.ts',
   'apps/cli/tests/commands/brief-render.test.ts',
   'apps/cli/tests/commands/check-flip.test.ts',
   'apps/cli/tests/commands/check-roles-plan.test.ts',
@@ -612,7 +631,7 @@ const GRANDFATHERED_FILES: readonly string[] = [
   'apps/cli/tests/init.test.ts',
   'apps/cli/tests/isolation/isolation-probe.test.ts',
   'apps/cli/tests/lib/dispatch/worker-boundary.test.ts',
-  'apps/cli/tests/lib/forge-write.test.ts',
+  'harness/processes/vinaya-strict/tests/lib/forge-write.test.ts',
   'apps/cli/tests/lib/test-selector.test.ts',
   'apps/cli/tests/lib/turbo-test-task-uncached.test.ts',
   'apps/cli/tests/milestone.test.ts',
@@ -673,7 +692,7 @@ describe('process-fixture coverage — O3 (#660, round 5): every real-process fi
       'apps/cli/tests/lib/log-webhook-drain.test.ts',
       'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/gate-reading.test.ts',
       'apps/cli/tests/conformance/harness.ts',
-      'apps/cli/tests/commands/dispatch-task.test.ts',
+      'harness/processes/vinaya-strict/tests/commands/dispatch-task.test.ts',
       // Issue #670, O2 — the two dispatch test files hardened by that task's
       // own pid-capture-and-group-kill fixtures (`killLaunchedChild`) and its
       // new host-wide process-hygiene proof (a bare `execSync` call, covered
@@ -681,7 +700,9 @@ describe('process-fixture coverage — O3 (#660, round 5): every real-process fi
       // `killSignal: 'SIGKILL'` budget) — proven compliant here, by name,
       // rather than left to the silent absence from `GRANDFATHERED_FILES`
       // this round's review found insufficient on its own.
-      'apps/cli/tests/lib/dispatch.test.ts',
+      'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-helpers.test.ts',
+      'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-child-process.test.ts',
+      'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-vinaya-policy.test.ts',
       'apps/cli/tests/lib/dispatch/reconcile-launch.test.ts'
     ]
     for (const rel of fixed) {

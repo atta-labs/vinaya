@@ -31,7 +31,7 @@ import {
   type LivePublicationScope,
   mergeMovedDefaultBranch,
   resolvePublicationBase
-} from '../../../../../../../apps/cli/src/lib/task-tools/live-developer-context.js'
+} from '../../../../loops/dev-review/actions/live-developer-context.js'
 import {
   checkPublicationPreconditions,
   fastForwardedOntoDefaultTip,

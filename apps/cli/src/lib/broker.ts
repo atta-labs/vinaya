@@ -46,7 +46,11 @@ import {
   type Role,
   ROLE_VALUES
 } from '@attalabs/aeg-core'
-import { type DispatchTeeRecoveryDeps, launchRecordMatchesRun, realDispatchTeeRecoveryDeps } from './dispatch.js'
+import {
+  type DispatchTeeRecoveryDeps,
+  launchRecordMatchesRun,
+  realDispatchTeeRecoveryDeps
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { createEffectExecutor, type EffectReconciler, sha256Hex } from './effects.js'
 import { log as defaultLogEvent, type LogEventInput } from './log-sink.js'
 

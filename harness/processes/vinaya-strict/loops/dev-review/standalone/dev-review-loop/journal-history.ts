@@ -46,7 +46,7 @@ import {
 } from '@attalabs/aeg-core'
 import { markerComments, principalAllowlist, type MarkerComment } from './developer-dispatch.js'
 import { sh } from './gate-reading.js'
-import { reviewGateFactForCurrentState } from '../../../../../../../apps/cli/src/lib/review-gate-input.js'
+import { reviewGateFactForCurrentState } from '../../review-gate-input.js'
 
 /** An empty journal — no PR to read, or a `gh` read that failed: reconstruction is a display/recovery aid, never a dispatch gate, so it degrades to "no history" rather than throwing. */
 const EMPTY_JOURNAL: ReconstructedJournal = {

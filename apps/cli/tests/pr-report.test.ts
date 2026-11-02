@@ -1101,7 +1101,17 @@ describe('defaultTestRunCache — one shared file regardless of PR_NUMBER (round
     // import of `run-paths.ts` (which would itself become a NEW depth-one
     // edge into O1's own log-sink/config/run-paths reference change set).
     const script = join(dir, 'scope-consistency.ts')
-    const engine = join(CLI_ROOT, 'src', 'lib', 'pr-report-engine.ts')
+    const engine = join(
+      CLI_ROOT,
+      '..',
+      '..',
+      'harness',
+      'processes',
+      'vinaya-strict',
+      'tools',
+      'pr-report',
+      'pr-report-engine.ts'
+    )
     writeFileSync(
       script,
       `import { buildReport, recordGreenTestRun } from ${JSON.stringify(engine)}

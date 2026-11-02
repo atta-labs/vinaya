@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 
-import { parseDeveloperTurnResult, semanticErrors, type DeveloperTurnResult } from '../../src/lib/developer-turn-result'
+import {
+  parseDeveloperTurnResult,
+  semanticErrors,
+  type DeveloperTurnResult
+} from '../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result'
 import { manifestDigest, sha256Digest, type SourceDeliveryReceipt } from '../../src/lib/source-manifest'
 import {
   ADAPTERS,

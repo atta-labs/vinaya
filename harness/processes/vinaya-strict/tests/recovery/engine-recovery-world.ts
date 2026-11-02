@@ -14,7 +14,7 @@ import { createRunControl, type RunControl, type SpawnedProcessLike } from '@att
 import { authenticateWorkerInvocation, requestEffect, scopeTarget } from '../../../../../apps/cli/src/lib/broker'
 import { loopHistoryFromComments } from '../../loops/dev-review/standalone/dev-review-loop/journal-history'
 import { controlStoreRootFor } from '../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import type { DispatchTeeRecoveryDeps, ParsedLaunch } from '../../../../../apps/cli/src/lib/dispatch'
+import type { DispatchTeeRecoveryDeps, ParsedLaunch } from '../../loops/dev-review/dispatch/dispatch'
 import {
   readEffectiveResumedState,
   readExecutionRound

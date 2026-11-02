@@ -13,9 +13,13 @@
  */
 
 import { writeFileSync } from 'node:fs'
-import { assembleAndRenderBrief } from '../lib/brief-assembly.js'
+import { assembleAndRenderBrief } from '../../../../harness/processes/vinaya-strict/tools/task-contract/brief-assembly.js'
 
-export { expandGlob, packageNameForPath, sha256OfFile } from '../lib/brief-assembly.js'
+export {
+  expandGlob,
+  packageNameForPath,
+  sha256OfFile
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/brief-assembly.js'
 
 function refuse(message: string): never {
   console.error(`vinaya brief render: refused — ${message}`)

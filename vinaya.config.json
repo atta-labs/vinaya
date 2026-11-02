@@ -14,7 +14,7 @@
       "apps/cli/tests/surface-spec-exports.test.ts",
       "apps/cli/tests/run-paths-only.test.ts",
       "apps/cli/tests/lib/log-callers.test.ts",
-      "apps/cli/tests/commands/task-status.test.ts"
+      "harness/processes/vinaya-strict/tests/commands/task-status.test.ts"
     ],
     "requiredCi": { "workflow": ".github/workflows/ci.yml", "check": "Vinaya CI" }
   },

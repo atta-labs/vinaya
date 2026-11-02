@@ -5,8 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TASK_TOOL_NAMES } from '@attalabs/aeg-core'
 import type { VendoredVinaya } from '../../../src/lib/self-host.js'
-import { claudeMcpJsonConfig, codexMcpServersToml } from '../../../src/lib/task-tools/adapters.js'
-import { TASK_TOOLS_MCP_SERVER_NAME } from '../../../src/lib/task-tools/server.js'
+import {
+  claudeMcpJsonConfig,
+  codexMcpServersToml
+} from '../../../../../harness/processes/vinaya-strict/integration/adapters.js'
+import { TASK_TOOLS_MCP_SERVER_NAME } from '../../../../../harness/processes/vinaya-strict/integration/server.js'
 
 /**
  * Protocol-level fixtures (O3): a REAL JSON-RPC client drives the shared server

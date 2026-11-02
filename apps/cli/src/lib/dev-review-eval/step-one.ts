@@ -18,7 +18,7 @@ import {
   codexSpawnEnvExtras,
   dispatchRole,
   type AgentVendor
-} from '../dispatch'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import { publishingInstructionLine } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop'
 import {
   renderDeveloperDoctrineBlock,
@@ -32,7 +32,7 @@ import { runtimeDirForThisRepo } from '../run-paths'
 import { startDevToolsHost } from '../task-tools/dev-tools-host'
 import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
 import { buildWorkerEnv, containerClaudeLogin, stageCodexPolicyHome } from '../worker-boundary'
-import { resolveRoleDoctrineText } from '../../roles/plan'
+import { resolveRoleDoctrineText } from '../../../../../harness/processes/vinaya-strict/integration/roles/plan'
 import { prepareGradingCopy, testContamination, type Attribution, type HiddenInputs } from './contamination'
 import { ENGINE_SPAWN, runEngineRoleStep, type SpawnFn, usageOfStream } from './engine-role-step'
 import { suiteMean, type BootstrapMethod } from './estimators'
@@ -1569,7 +1569,9 @@ async function runDeveloperInTree(
     })
     const devToolsBridge = driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts'))
     if (container.backend === 'engine') {
-      const { developerTurnResultJsonSchema } = await import('../developer-turn-result')
+      const { developerTurnResultJsonSchema } = await import(
+        '../../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result'
+      )
       handle = await runEngineRoleStep({
         role: 'developer',
         adapter: input.adapter,
@@ -1709,7 +1711,9 @@ async function runEngineReviewer(
   transcript: string[],
   grantedCapabilities?: readonly string[]
 ): Promise<Awaited<ReturnType<typeof dispatchRole>>> {
-  const { reviewResultJsonSchema } = await import('../review-result')
+  const { reviewResultJsonSchema } = await import(
+    '../../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
+  )
   const tools = await import('../../../tests/eval/tool-selection-suite')
   const granted = item.role === 'security-reviewer' ? 'security' : 'code-reviewer'
   const world = tools.createWorld({}, granted)
@@ -2256,7 +2260,9 @@ async function runAnswerCase(
     role: 'developer'
   })
   try {
-    const { developerTurnResultJsonSchema } = await import('../developer-turn-result')
+    const { developerTurnResultJsonSchema } = await import(
+      '../../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result'
+    )
     const { readClaudeTurnOutput, readCodexTurnOutput } = await import(
       '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result'
     )

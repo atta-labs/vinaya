@@ -37,7 +37,7 @@ import {
   TaskWorktreeDivergedError,
   type MarkerComment
 } from '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
-import type { DispatchHandle } from '../../../../../../../apps/cli/src/lib/dispatch.js'
+import type { DispatchHandle } from '../../../../loops/dev-review/dispatch/dispatch.js'
 
 afterEach(cleanupWorlds)
 

@@ -27,7 +27,10 @@ import { StringDecoder } from 'node:string_decoder'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { printJson } from '../lib/envelope.js'
 import { followTaskLog } from '../lib/follow-view.js'
-import { gatherSingleTaskStatus, gatherTaskStatusList } from '../lib/task-status.js'
+import {
+  gatherSingleTaskStatus,
+  gatherTaskStatusList
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.js'
 
 type ParsedArgs = { json: boolean; follow: boolean; quiet: boolean; issue: string | undefined; positional: string[] }
 

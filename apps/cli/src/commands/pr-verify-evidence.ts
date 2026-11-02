@@ -18,7 +18,10 @@
 import { execFileSync } from 'node:child_process'
 import { ScanContext, resolveAnchoredRegion } from '../checks/scan-context.js'
 import { buildReport } from './pr-report.js'
-import { compareEvidence, renderVerdict } from './pr-verify-evidence-logic.js'
+import {
+  compareEvidence,
+  renderVerdict
+} from '../../../../harness/processes/vinaya-strict/tools/pr-report/pr-verify-evidence-logic.js'
 
 function gh(args: string[]): string {
   return execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })

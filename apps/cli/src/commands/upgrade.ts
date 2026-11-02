@@ -44,13 +44,16 @@ import {
   RETIRED_DOCTRINE_POINTER_PATH,
   TASK_LOG_COLLECTOR_WORKFLOW_PATH,
   TRACKED_HOOK_DIR
-} from '../lib/artifacts.js'
-import { isAgentSkillPath, staleAgentSkillPaths } from '../lib/agents-skills-emitter.js'
+} from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
+import {
+  isAgentSkillPath,
+  staleAgentSkillPaths
+} from '../../../../harness/processes/vinaya-strict/integration/agents-skills-emitter.js'
 import {
   CLAUDE_SETTINGS_PATH,
   CLAUDE_STOP_HOOK_MARKER,
   CLAUDE_STOP_HOOK_SCRIPT_PATH
-} from '../lib/claude-stop-hook-emitter.js'
+} from '../../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
 import { resolveDoctrineRoot } from './doctrine.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {

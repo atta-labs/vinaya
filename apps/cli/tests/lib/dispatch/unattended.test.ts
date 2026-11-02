@@ -228,7 +228,18 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
       const fixture = buildFixture()
       const outputFile = join(fixture.cwd, 'dispatch-result.json')
       const scriptFile = join(fixture.cwd, 'dispatch-probe.ts')
-      const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+      const dispatchLib = join(
+        CLI_ROOT,
+        '..',
+        '..',
+        'harness',
+        'processes',
+        'vinaya-strict',
+        'loops',
+        'dev-review',
+        'dispatch',
+        'dispatch.ts'
+      )
       writeFileSync(
         scriptFile,
         [

@@ -339,6 +339,46 @@
         }
       ],
       "reason": "The selection library's committed fixture repositories, read from disk by its own tests and by the repository-side library test."
+    },
+    {
+      "id": "process-forge-fixtures",
+      "kind": "fixture",
+      "paths": ["apps/cli/tests/fixtures/forge/"],
+      "readers": [
+        { "kind": "raw-bytes", "tests": ["harness/processes/vinaya-strict/tests/forge-write.test.ts"] },
+        {
+          "kind": "code",
+          "tests": [
+            "harness/processes/vinaya-strict/tests/lib/forge-write.test.ts",
+            "harness/processes/vinaya-strict/tests/lib/pr-report-engine.test.ts"
+          ]
+        }
+      ],
+      "reason": "The forge-write and pull-request report tests moved into the process with their code; they read the CLI's forge body fixtures from disk and start its fake body checks as programs, outside any import."
+    },
+    {
+      "id": "process-dispatch-narration-fixture",
+      "kind": "fixture",
+      "paths": ["apps/cli/tests/fixtures/loop-narration/codex-developer-stream.jsonl"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-child-process.test.ts"]
+        }
+      ],
+      "reason": "The dispatch child-process test replays the CLI's recorded Codex stream through the dispatch role log, read from disk."
+    },
+    {
+      "id": "process-dispatch-credential-shaped-sources",
+      "kind": "fixture",
+      "paths": ["apps/cli/tests/lib/dispatch/worker-boundary.test.ts", "packages/aeg-core/src/log/redact.test.ts"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-helpers.test.ts"]
+        }
+      ],
+      "reason": "The dispatch helpers test reads two credential-shaped test files verbatim, so the after-turn credential scan is proven against the bytes the repository ships."
     }
   ],
   "providers": [

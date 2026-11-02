@@ -50,11 +50,11 @@ import {
   renderSecurityComment,
   SECRET_SCAN_CHECK
 } from '../../../../../../../apps/cli/src/commands/review-post.js'
-import type { AgentVendor, DispatchHandle } from '../../../../../../../apps/cli/src/lib/dispatch.js'
+import type { AgentVendor, DispatchHandle } from '../../dispatch/dispatch.js'
 import {
   manifestDigest as reviewManifestDigest,
   type ReviewResult
-} from '../../../../../../../apps/cli/src/lib/review-result.js'
+} from '../../../../executing/code-reviewer/review-result.js'
 import { isStagedPrBodyFile, type ReviewerCandidateInputPaths } from './reviewer-isolation.js'
 import {
   ensureRunDir,

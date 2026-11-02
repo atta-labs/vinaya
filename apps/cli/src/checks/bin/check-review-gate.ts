@@ -50,7 +50,7 @@
 import { isEntryPoint } from '@attalabs/aeg-core'
 import { checkReviewGate } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { assembleReviewGateInput } from '../../lib/review-gate-input'
+import { assembleReviewGateInput } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/review-gate-input'
 
 const CHECK_NAME = 'review-gate'
 

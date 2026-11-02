@@ -96,7 +96,7 @@ export function runsUnderAll(spec: CheckSpec): boolean {
  * `0` for every check that runs under the managed local hooks (pre-commit/
  * pre-push's `vinaya check --all --local`) — i.e. everything that is
  * neither `requiresOpenPr` nor `ownWorkflow`, since `--local` skips exactly
- * those two classes (`apps/cli/src/lib/artifacts.ts`'s `preCommitBody`/
+ * those two classes (`harness/processes/vinaya-strict/integration/artifacts.ts`'s `preCommitBody`/
  * `prePushBody` comments) and nothing else; `1` for a check that can only
  * ever run once a pull request exists (`requiresOpenPr`) or is reported by
  * its own dedicated workflow instead of `--all` (`ownWorkflow`) — CI/PR-only
@@ -483,7 +483,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // this check's entire job. Its one all-`pending` error still never
       // refuses a forge-write: the write path excludes that by reading
       // `CheckError.pending` alone (`isPendingOnlyFailure`,
-      // `apps/cli/src/lib/forge-write.ts`), so the per-round Evidence splice
+      // `harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts`), so the per-round Evidence splice
       // goes through while the box is still unticked and the Principal's tick
       // then finds a fresh block rather than the template placeholder.
       // The same inputs as `test-plan`'s declaration above, for the same

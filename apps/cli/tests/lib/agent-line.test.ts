@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { formatAgentDetails, formatAgentLine, logQuiet, renderNarratedUpdate } from '../../src/lib/agent-line.js'
 import { createAgentStreamRenderer } from '../../src/lib/agent-stream.js'
-import { renderClaudeEvent, renderCodexEvent } from '../../src/lib/dispatch.js'
+import {
+  renderClaudeEvent,
+  renderCodexEvent
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { appendRoleLine } from '../../src/lib/loop-log.js'
 
 describe('formatAgentLine', () => {

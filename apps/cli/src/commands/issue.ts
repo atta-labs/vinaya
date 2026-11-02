@@ -17,9 +17,9 @@ import {
   runIssueSurface,
   validateTaskIssue,
   writeValidatedIssueEdit
-} from '../lib/forge-write'
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
-export { parseIssueNumberFromRef } from '../lib/forge-write'
+export { parseIssueNumberFromRef } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
 const RETRY_CREATE = 'vinaya issue create --validate-only …'
 const RETRY_EDIT = 'vinaya issue edit <n> --validate-only …'

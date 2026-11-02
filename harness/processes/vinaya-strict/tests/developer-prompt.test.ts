@@ -5,7 +5,7 @@ import {
   buildDeveloperDeltaPacket,
   buildDeveloperFullPacket,
   renderContextPacket
-} from '../../../../apps/cli/src/lib/context-packet'
+} from '../tools/task-contract/context-packet'
 import { developerContinuationFacts, publishingInstructionLine } from '../loops/dev-review/standalone/dev-review-loop'
 import { renderDeveloperDoctrineBlock } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import { renderConflictPrompt } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'

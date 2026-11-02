@@ -22,7 +22,7 @@ import {
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process.js'
 import { setEngineLogIdentity } from '../../../../harness/processes/vinaya-strict/bin/engine-log-identity.js'
-import { LOG_IDENTITY_ENV_KEYS } from '../../src/lib/dispatch.js'
+import { LOG_IDENTITY_ENV_KEYS } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { createActions } from '../../../../harness/processes/vinaya-strict/executing/actions.js'
 import type { DeveloperPromptFacts } from '../../../../harness/processes/vinaya-strict/executing/developer-prompt.js'
 import { probeAgentSandbox, type SandboxProbeRun } from '../../src/lib/worker-boundary.js'
@@ -40,8 +40,8 @@ import {
   type RunTrace,
   isAgentLaunchEvent
 } from '../../../../harness/processes/vinaya-strict/bin/run-engine.js'
-import { createDeveloperDevToolContext } from '../../src/lib/task-tools/developer-dev-tools-context.js'
-import { manifestDigest } from '../../src/lib/review-result.js'
+import { createDeveloperDevToolContext } from '../../../../harness/processes/vinaya-strict/loops/dev-review/actions/developer-dev-tools-context.js'
+import { manifestDigest } from '../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result.js'
 import {
   clearDriverLock,
   pauseMarker,
@@ -71,8 +71,8 @@ import {
 } from '../../src/lib/log-sink.js'
 import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, tasksExecutionRoot } from '../../src/lib/run-paths.js'
 import { createEffectExecutor, type EffectIdentity, type EffectReconciler, sha256Hex } from '../../src/lib/effects.js'
-import { createTaskCancelHandler } from '../../src/lib/task-tools/cancel.js'
-import { readTaskRunner } from '../../src/lib/task-run-engine.js'
+import { createTaskCancelHandler } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.js'
+import { readTaskRunner } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-engine.js'
 import { cleanupAllReviewerIsolationArtifacts } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.js'
 import { heldVerdictPath } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
 import {

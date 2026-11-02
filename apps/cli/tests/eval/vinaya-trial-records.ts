@@ -17,7 +17,7 @@ import {
   type VinayaProcessInput,
   type VinayaTrialRecord
 } from '../../src/lib/dev-review-eval/vinaya-renderer'
-import type { ReviewerRole } from '../../src/lib/review-result'
+import type { ReviewerRole } from '../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 
 export const FIXTURE_PATH = join(import.meta.dir, 'neutral-cases-fixture.json')
 

@@ -82,7 +82,7 @@ import {
   rerunFailedWorkflowJobs,
   resolveHead
 } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
-import { postMarkedComment } from '../../../../apps/cli/src/lib/forge-write'
+import { postMarkedComment } from '../tools/task-contract/forge/forge-write'
 import { developerBranchFor } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import { publishRound } from '../loops/dev-review/standalone/dev-review-loop/publication'
 import {
@@ -182,7 +182,7 @@ import {
 import { type AgentStreamRenderer, createAgentStreamRenderer } from '../../../../apps/cli/src/lib/agent-stream'
 import { CLI_ENTRY_ENV } from '../../../../apps/cli/src/lib/cli-entry'
 import { pollMergeableState } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
-import { developerTurnResultJsonSchema } from '../../../../apps/cli/src/lib/developer-turn-result'
+import { developerTurnResultJsonSchema } from '../executing/developer/developer-turn-result'
 import {
   getProcessSnapshot,
   readLaunchRecord,
@@ -195,9 +195,9 @@ import {
   terminateChildWithGrace,
   type DispatchUsageReading,
   type UsageLimit
-} from '../../../../apps/cli/src/lib/dispatch'
+} from '../loops/dev-review/dispatch/dispatch'
 import { loadConfig } from '../../../../apps/cli/src/lib/config'
-import { crossRunnerRefusal, recordTaskRunner } from '../../../../apps/cli/src/lib/task-run-engine'
+import { crossRunnerRefusal, recordTaskRunner } from '../loops/dev-review/run-control/task-run-engine'
 import {
   createDispatchCapabilityTable,
   type DispatchCapabilityTable,
@@ -216,7 +216,7 @@ import {
   type LivePublicationState,
   mergeMovedDefaultBranch,
   resolvePublicationBase
-} from '../../../../apps/cli/src/lib/task-tools/live-developer-context'
+} from '../loops/dev-review/actions/live-developer-context'
 import {
   checkTaskDispatchReadiness,
   createTaskWorktree,
@@ -253,7 +253,7 @@ import {
   ownChangesRangeBase,
   worktreeCheckEnv
 } from '../loops/dev-review/standalone/dev-review-loop'
-import { parseReviewResult, type ReviewResult } from '../../../../apps/cli/src/lib/review-result'
+import { parseReviewResult, type ReviewResult } from '../executing/code-reviewer/review-result'
 import type { ReviewerPromptFacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { agentEnvAllowlist } from '../../../../harness/kernel/adapters/agents/launch-env'
 import { grantVariables } from '../../../../harness/kernel/adapters/agents/variables'
@@ -265,7 +265,7 @@ import {
   type VinayaReviewInputDeps,
   type VinayaStagedReviewInput
 } from '../executing/review-input'
-import { resolveRoleDoctrineText } from '../../../../apps/cli/src/roles/plan'
+import { resolveRoleDoctrineText } from '../integration/roles/plan'
 import {
   developerPrompt,
   type DeveloperPromptFacts,

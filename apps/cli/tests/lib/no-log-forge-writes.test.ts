@@ -14,7 +14,11 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AgentVendor } from '../../src/lib/agent-vendors.js'
-import { BODY_CHECKS_WORKFLOW_PATH, buildInitOps, FORGE_SNAPSHOT_ARTIFACT_NAME } from '../../src/lib/artifacts.js'
+import {
+  BODY_CHECKS_WORKFLOW_PATH,
+  buildInitOps,
+  FORGE_SNAPSHOT_ARTIFACT_NAME
+} from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import type { VendoredVinaya } from '../../src/lib/self-host.js'
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -105,7 +109,7 @@ describe('no source file posts a log comment or uploads a log artifact (O4)', ()
     // `artifacts.ts` emits exactly one upload: `vinaya-body-checks.yml`'s read
     // job handing the forge snapshot to its two check jobs. The workflow test
     // below holds every generated upload to that one artifact name.
-    const allowlist = new Set(['apps/cli/src/lib/artifacts.ts'])
+    const allowlist = new Set(['harness/processes/vinaya-strict/integration/artifacts.ts'])
     const offenders = files
       .filter(([rel, abs]) => !allowlist.has(rel) && readFileSync(abs, 'utf8').includes('actions/upload-artifact'))
       .map(([rel]) => rel)
@@ -118,7 +122,7 @@ describe('no source file posts a log comment or uploads a log artifact (O4)', ()
     // from a repo that has it (see `apps/cli/specs/self-hosting.md` §
     // Retiring a managed file) — that is the file being named for removal,
     // never a caller invoking it.
-    const allowlist = new Set(['apps/cli/src/lib/artifacts.ts'])
+    const allowlist = new Set(['harness/processes/vinaya-strict/integration/artifacts.ts'])
     const offenders = files
       .filter(([rel, abs]) => {
         if (allowlist.has(rel)) return false

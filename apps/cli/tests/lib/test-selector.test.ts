@@ -398,8 +398,8 @@ const LOG_CALLERS_TEST = join(REPO_ROOT, 'apps/cli/tests/lib/log-callers.test.ts
 const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
   'task-operator-v1/5 — 93e25534, the control-store symlink fix': [
     'apps/cli/src/lib/run-paths.ts',
-    'apps/cli/src/lib/task-tools/resume.ts',
-    'apps/cli/src/lib/task-tools/start.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/run-control/start.ts',
     'apps/cli/tests/lib/run-paths.test.ts',
     'packages/aeg-core/src/control-store/index.ts',
     'packages/aeg-core/src/control-store/local.test.ts',
@@ -417,33 +417,35 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.ts',
-    'apps/cli/src/lib/dispatch.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts',
     'apps/cli/src/lib/effects.ts',
     'apps/cli/src/lib/log-sink.ts',
     'apps/cli/src/lib/loop-log.ts',
     'apps/cli/src/lib/run-paths.ts',
-    'apps/cli/src/lib/task-run.ts',
-    'apps/cli/src/lib/task-status.ts',
-    'apps/cli/src/lib/task-tools/cancel.ts',
-    'apps/cli/src/lib/task-tools/handlers.ts',
-    'apps/cli/src/lib/task-tools/read.ts',
-    'apps/cli/src/lib/task-tools/resume.ts',
-    'apps/cli/src/lib/task-tools/start.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/run-control/handlers.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/run-control/read.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts',
+    'harness/processes/vinaya-strict/loops/dev-review/run-control/start.ts',
     'apps/cli/src/lib/worker-boundary.ts',
     'apps/cli/tests/ci-shards/shard-2.txt',
     'apps/cli/tests/ci-shards/shard-3.txt',
     'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts',
     'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/reviewer-dispatch.test.ts',
-    'apps/cli/tests/lib/dispatch.test.ts',
+    'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-helpers.test.ts',
+    'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-child-process.test.ts',
+    'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-vinaya-policy.test.ts',
     'apps/cli/tests/lib/dispatch/launch-intent.test.ts',
     'apps/cli/tests/lib/dispatch/worker-boundary.test.ts',
     'apps/cli/tests/lib/effects/executor.test.ts',
     'apps/cli/tests/lib/loop-log.test.ts',
     'apps/cli/tests/lib/run-paths.test.ts',
-    'apps/cli/tests/lib/task-status.test.ts',
-    'apps/cli/tests/lib/task-tools/cancel.test.ts',
-    'apps/cli/tests/lib/task-tools/read.test.ts',
-    'apps/cli/tests/lib/task-tools/resume.test.ts',
+    'harness/processes/vinaya-strict/tests/lib/task-status.test.ts',
+    'harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts',
+    'harness/processes/vinaya-strict/tests/lib/task-tools/read.test.ts',
+    'harness/processes/vinaya-strict/tests/lib/task-tools/resume.test.ts',
     'apps/cli/tests/run-paths-only.test.ts',
     'packages/aeg-core/src/control-store/local.test.ts',
     'packages/aeg-core/src/control-store/local.ts',
@@ -476,7 +478,7 @@ describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 i
 // Round 2 review, BLOCKER — the a6d9640c change set above failed a SECOND
 // CI shard the first pass of this fixture never checked: GitHub Actions run
 // 35434611919, shard 3, failed 6 assertions in
-// apps/cli/tests/commands/task-status.test.ts (reproduced live at that sha).
+// harness/processes/vinaya-strict/tests/commands/task-status.test.ts (reproduced live at that sha).
 // This was a DIFFERENT class of gap than log-callers — O2's: this file has no
 // import edge to walk at all. It drives the real CLI end-to-end
 // (`execFileSync('bun', [INDEX, ...])` against a string path, never a
@@ -496,7 +498,7 @@ describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 i
 // same way it reaches every other file that imports the entrypoint directly.
 describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue #660, O2, round 2 review BLOCKER; closed on the merits by Issue #702)', () => {
   const changed = INCIDENT_CHANGE_SETS['task-files-v1/1 — a6d9640c, the one-runtime-directory first push'] as string[]
-  const TASK_STATUS_E2E_TEST = join(REPO_ROOT, 'apps/cli/tests/commands/task-status.test.ts')
+  const TASK_STATUS_E2E_TEST = join(REPO_ROOT, 'harness/processes/vinaya-strict/tests/commands/task-status.test.ts')
 
   it("with this repo's real alwaysRun config, commands/task-status.test.ts (shard 3's real CI failure) is selected", () => {
     const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
@@ -930,7 +932,7 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
     const sample = [
       'apps/cli/src/commands/demo.ts',
       'apps/cli/src/lib/config.ts',
-      'apps/cli/src/lib/dispatch.ts',
+      'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts',
       'apps/cli/src/lib/test-selector.ts',
       'apps/cli/src/lib/remote-base.ts',
       'apps/cli/src/checks/runner.ts'
@@ -2334,7 +2336,13 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
   function matchedTestFiles(): string[] {
     const grep = spawnSyncBudgeted(
       'grep',
-      ['-rlE', ORIGIN_PATTERN, join(REPO_ROOT, 'apps/cli/tests'), '--include=*.ts'],
+      [
+        '-rlE',
+        ORIGIN_PATTERN,
+        join(REPO_ROOT, 'apps/cli/tests'),
+        join(REPO_ROOT, 'harness/processes/vinaya-strict/tests'),
+        '--include=*.ts'
+      ],
       { encoding: 'utf8' }
     )
     return grep.stdout

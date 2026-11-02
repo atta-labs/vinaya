@@ -164,7 +164,7 @@ function discoverLoopSurface(): { implementation: string[]; tests: string[]; oth
       p.slice('harness/processes/vinaya-strict/tests/standalone/lib/'.length).startsWith('dev-review-loop')
     ),
     ...tsFilesIn('harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop'),
-    ...tsFilesIn('apps/cli/tests/lib/dev-review-loop')
+    ...tsFilesIn('harness/processes/vinaya-strict/tests/lib/dev-review-loop')
   ]
   const all = [...sourceSide, ...testSide]
   return {

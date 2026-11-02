@@ -32,7 +32,11 @@ import { deriveTrancheFromForge, hasTrancheIntentsSection } from '@attalabs/aeg-
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
 import { loadConfig, PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../lib/config.js'
-import { declaredTranches, milestoneCloseDecision, type TrancheLifecycle } from '../lib/milestone-close-hold.js'
+import {
+  declaredTranches,
+  milestoneCloseDecision,
+  type TrancheLifecycle
+} from '../../../../harness/processes/vinaya-strict/retrospecting/archivist/milestone-close-hold.js'
 import { realDeps as meteringRealDeps } from './tokens.js'
 
 // `rings.ring2_asyncAudits` means what it says: `true` (the default — an

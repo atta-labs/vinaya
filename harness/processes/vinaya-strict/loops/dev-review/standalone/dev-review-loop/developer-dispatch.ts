@@ -35,7 +35,7 @@ import { extractShortVersion } from '@attalabs/aeg-core/docs'
 import { hasLabel } from '@attalabs/aeg-forge-state'
 import { type GateStep, resolveGateStep } from '../../../../../../../apps/cli/src/checks/registry.js'
 import { resolveDoctrineRoot } from '../../../../../../../apps/cli/src/commands/doctrine.js'
-import { buildRolePlan } from '../../../../../../../apps/cli/src/roles/plan.js'
+import { buildRolePlan } from '../../../../integration/roles/plan.js'
 import {
   configPath,
   resolveLocalPacingOverride,
@@ -55,7 +55,7 @@ import {
   type ProcessSnapshot,
   readLaunchRecord,
   terminateChildWithGrace
-} from '../../../../../../../apps/cli/src/lib/dispatch.js'
+} from '../../dispatch/dispatch.js'
 import {
   describeInactiveControls,
   type EnforcementControl,

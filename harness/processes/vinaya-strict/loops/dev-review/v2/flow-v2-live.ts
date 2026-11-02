@@ -15,7 +15,7 @@ import type { Readable, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
 import { type DevToolContext, devToolError } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
-import { storagePushEvent } from '../../../../../../apps/cli/src/lib/flow-v2-events'
+import { storagePushEvent } from '../flow-v2-events'
 import {
   FAILED_TESTS_RECORD,
   type FailedTestsRecord,
@@ -78,9 +78,9 @@ import {
   resolveCommandTimeoutMs,
   type TestRunCache,
   truncateAgentOutput
-} from '../../../../../../apps/cli/src/lib/pr-report-engine'
+} from '../../../tools/pr-report/pr-report-engine'
 import { defaultReadDefaultBranchTip } from '../standalone/dev-review-loop'
-import { readPostedReviewVerdicts } from '../../../../../../apps/cli/src/lib/review-gate-input'
+import { readPostedReviewVerdicts } from '../review-gate-input'
 import { detectVendoredVinaya } from '../../../../../../apps/cli/src/lib/self-host'
 import {
   type ExplicitCommandsResult,

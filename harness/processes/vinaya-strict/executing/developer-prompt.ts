@@ -5,11 +5,11 @@ import {
   buildDeveloperFullPacket,
   renderContextPacket,
   type EvidenceEntry
-} from '../../../../apps/cli/src/lib/context-packet'
+} from '../tools/task-contract/context-packet'
 import { publishingInstructionLine } from '../loops/dev-review/standalone/dev-review-loop'
 import { renderDeveloperDoctrineBlock } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import { renderConflictPrompt } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
-import { commitAndPushPrompt } from '../../../../apps/cli/src/lib/task-tools/live-developer-context'
+import { commitAndPushPrompt } from '../loops/dev-review/actions/live-developer-context'
 import {
   turnResultCorrectionPrompt,
   turnResultInstruction

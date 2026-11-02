@@ -15,7 +15,7 @@ import { type ConfigLoadResult, configPath, loadConfigChecked } from '../lib/con
 import { printJson } from '../lib/envelope'
 import { checkProgressWriter } from '../lib/push-progress'
 import { type ProseRulesPlan, proseRulesPlanSection } from '../lib/prose-rules-plan'
-import { buildRolePlan, type RolePlan } from '../roles/plan'
+import { buildRolePlan, type RolePlan } from '../../../../harness/processes/vinaya-strict/integration/roles/plan'
 import type { RoleResolutionState } from '../roles/resolver'
 
 // Array-form execFileSync — no shell, so `base` (env-controlled) is passed
