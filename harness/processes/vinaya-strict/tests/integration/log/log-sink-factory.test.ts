@@ -93,7 +93,8 @@ describe('the process Log sink factory', () => {
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
-      `import { installVinayaLogSinkFactory } from ${JSON.stringify(factory)}\n` +
+      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\n` +
+        `import { installVinayaLogSinkFactory } from ${JSON.stringify(factory)}\n` +
         `import { drainLogSink, log } from ${JSON.stringify(logSink)}\n` +
         'installVinayaLogSinkFactory()\n' +
         `log(${JSON.stringify({ ...DISPATCHED, effect_id: 'installed-factory' })})\n` +
