@@ -852,6 +852,65 @@ describe('the Linux sandbox opt-in', () => {
   })
 })
 
+describe("the dev-tools server's per-call limit follows the ready push", () => {
+  const ROLES = ['developer', 'code-reviewer', 'security-reviewer']
+  const claudeTimeoutOf = (options: EngineRunOptions, role: string): number =>
+    JSON.parse(readFileSync(join(options.runtimeDir, 'engine-runs', '7', 'generated', role, 'role-mcp.json'), 'utf8'))
+      .mcpServers.vinaya_dev_tools.timeout
+  const codexTimeoutOf = (options: EngineRunOptions, role: string): number => {
+    const toml = readFileSync(join(options.runtimeDir, 'engine-runs', '7', 'generated', role, 'config.toml'), 'utf8')
+    return Number(/^tool_timeout_sec = (\d+)$/m.exec(toml)?.[1])
+  }
+  const withPolicy = (options: EngineRunOptions, reviewPolicy: () => unknown): void => {
+    ;(options.taskInput as unknown as { reviewPolicy: () => unknown }).reviewPolicy = reviewPolicy
+  }
+  // A Codex run beside the Claude one: a stub login keeps the launcher from copying an operator's credential.
+  const codexRun = async (reviewPolicy: () => unknown): Promise<EngineRunOptions> => {
+    const { options } = stubRun()
+    withPolicy(options, reviewPolicy)
+    options.args.agent = 'codex'
+    const stubHome = fixtureDir('engine-codex-home-')
+    writeFileSync(join(stubHome, 'auth.json'), '{}\n')
+    const savedHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = stubHome
+    try {
+      await runEngine(options)
+    } finally {
+      if (savedHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = savedHome
+    }
+    return options
+  }
+
+  for (const [minutes, seconds] of [
+    [75, 4500],
+    [20, 1800]
+  ] as const)
+    test(`a ready-push limit of ${minutes} minutes gives every role ${seconds} seconds, on both agents`, async () => {
+      const policy = () => ({ ...DEFAULT_REVIEW_POLICY, readyPushTimeoutMinutes: minutes })
+      const { options } = stubRun()
+      withPolicy(options, policy)
+      await runEngine(options)
+      for (const role of ROLES) expect(claudeTimeoutOf(options, role)).toBe(seconds * 1000)
+      const codex = await codexRun(policy)
+      for (const role of ROLES) expect(codexTimeoutOf(codex, role)).toBe(seconds)
+    })
+
+  test('a policy read that throws keeps 1800 seconds and the run completes past launcher creation', async () => {
+    const policy = () => {
+      throw new Error('the review policy is unreadable')
+    }
+    const { options } = stubRun()
+    withPolicy(options, policy)
+    const result = await runEngine(options)
+    expect(result.exitCode).toBe(0)
+    expect(readTrace(result.tracePath).outcome).toBe('completed')
+    for (const role of ROLES) expect(claudeTimeoutOf(options, role)).toBe(1800_000)
+    const codex = await codexRun(policy)
+    for (const role of ROLES) expect(codexTimeoutOf(codex, role)).toBe(1800)
+  })
+})
+
 describe('agent-step failures and the live task context', () => {
   test('a failed agent step records its error and first stack lines, and the runner reports them', () => {
     const reported: string[] = []
