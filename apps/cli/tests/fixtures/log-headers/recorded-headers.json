@@ -1,0 +1,226 @@
+{
+  "task-in-environment": {
+    "file": "atta-labs-vinaya/404.ndjson",
+    "meta": {
+      "schema": 4,
+      "ts": "2026-11-01T00:00:00.000Z",
+      "run_id": "header-recording-run",
+      "seq": 0,
+      "repo": "atta-labs/vinaya",
+      "vinaya": "0.0.0-recording",
+      "doctrine": "0.0.0-recording",
+      "host": "cli",
+      "machine": "3977384216d82e6bc405a67e42dffbe436965bb86b2faf131e77ecc6e037f1ed",
+      "event_id": "<random>",
+      "process_id": "<random>",
+      "actor_id": "developer",
+      "lineage": {
+        "run": "header-recording-run",
+        "attempt": null,
+        "parent": null
+      },
+      "input_versions": {
+        "manifest_version": null,
+        "objectives_version": null,
+        "brief_hash": null,
+        "ruling_ordinal": null,
+        "pause_bound_ruling": null,
+        "policy_digest": null
+      },
+      "provenance": "env_correlated",
+      "work": {
+        "ref": "404",
+        "repo": "atta-labs/vinaya",
+        "change": null,
+        "revision": null
+      },
+      "flow": {
+        "id": "vinaya",
+        "version": null
+      },
+      "runtime": null,
+      "source": null,
+      "process": {
+        "id": "vinaya",
+        "version": null,
+        "digest": null
+      },
+      "runner": {
+        "id": "standalone",
+        "version": null
+      }
+    },
+    "subject": {
+      "issue": 404,
+      "role": "developer"
+    }
+  },
+  "backlog-branch": {
+    "file": "atta-labs-vinaya/792.ndjson",
+    "meta": {
+      "schema": 4,
+      "ts": "2026-11-01T00:00:00.000Z",
+      "run_id": "header-recording-run",
+      "seq": 0,
+      "repo": "atta-labs/vinaya",
+      "vinaya": "0.0.0-recording",
+      "doctrine": "0.0.0-recording",
+      "host": "cli",
+      "machine": "3977384216d82e6bc405a67e42dffbe436965bb86b2faf131e77ecc6e037f1ed",
+      "event_id": "<random>",
+      "process_id": "<random>",
+      "actor_id": null,
+      "lineage": {
+        "run": "header-recording-run",
+        "attempt": null,
+        "parent": null
+      },
+      "input_versions": {
+        "manifest_version": null,
+        "objectives_version": null,
+        "brief_hash": null,
+        "ruling_ordinal": null,
+        "pause_bound_ruling": null,
+        "policy_digest": null
+      },
+      "provenance": "unavailable",
+      "work": {
+        "ref": "792",
+        "repo": "atta-labs/vinaya",
+        "change": null,
+        "revision": null
+      },
+      "flow": {
+        "id": "vinaya",
+        "version": null
+      },
+      "runtime": null,
+      "source": null,
+      "process": {
+        "id": "vinaya",
+        "version": null,
+        "digest": null
+      },
+      "runner": {
+        "id": "standalone",
+        "version": null
+      }
+    },
+    "subject": {
+      "issue": 792,
+      "role": "unattributed"
+    }
+  },
+  "tranche-branch": {
+    "file": "atta-labs-vinaya/905.ndjson",
+    "meta": {
+      "schema": 4,
+      "ts": "2026-11-01T00:00:00.000Z",
+      "run_id": "header-recording-run",
+      "seq": 0,
+      "repo": "atta-labs/vinaya",
+      "vinaya": "0.0.0-recording",
+      "doctrine": "0.0.0-recording",
+      "host": "cli",
+      "machine": "3977384216d82e6bc405a67e42dffbe436965bb86b2faf131e77ecc6e037f1ed",
+      "event_id": "<random>",
+      "process_id": "<random>",
+      "actor_id": null,
+      "lineage": {
+        "run": "header-recording-run",
+        "attempt": null,
+        "parent": null
+      },
+      "input_versions": {
+        "manifest_version": null,
+        "objectives_version": null,
+        "brief_hash": null,
+        "ruling_ordinal": null,
+        "pause_bound_ruling": null,
+        "policy_digest": null
+      },
+      "provenance": "unavailable",
+      "work": {
+        "ref": "905",
+        "repo": "atta-labs/vinaya",
+        "change": null,
+        "revision": null
+      },
+      "flow": {
+        "id": "vinaya",
+        "version": null
+      },
+      "runtime": null,
+      "source": null,
+      "process": {
+        "id": "vinaya",
+        "version": null,
+        "digest": null
+      },
+      "runner": {
+        "id": "standalone",
+        "version": null
+      }
+    },
+    "subject": {
+      "issue": 905,
+      "role": "unattributed"
+    }
+  },
+  "neither": {
+    "file": "atta-labs-vinaya/none.ndjson",
+    "meta": {
+      "schema": 4,
+      "ts": "2026-11-01T00:00:00.000Z",
+      "run_id": "header-recording-run",
+      "seq": 0,
+      "repo": "atta-labs/vinaya",
+      "vinaya": "0.0.0-recording",
+      "doctrine": "0.0.0-recording",
+      "host": "cli",
+      "machine": "3977384216d82e6bc405a67e42dffbe436965bb86b2faf131e77ecc6e037f1ed",
+      "event_id": "<random>",
+      "process_id": "<random>",
+      "actor_id": null,
+      "lineage": {
+        "run": "header-recording-run",
+        "attempt": null,
+        "parent": null
+      },
+      "input_versions": {
+        "manifest_version": null,
+        "objectives_version": null,
+        "brief_hash": null,
+        "ruling_ordinal": null,
+        "pause_bound_ruling": null,
+        "policy_digest": null
+      },
+      "provenance": "unavailable",
+      "work": {
+        "ref": null,
+        "repo": "atta-labs/vinaya",
+        "change": null,
+        "revision": null
+      },
+      "flow": {
+        "id": "vinaya",
+        "version": null
+      },
+      "runtime": null,
+      "source": null,
+      "process": {
+        "id": "vinaya",
+        "version": null,
+        "digest": null
+      },
+      "runner": {
+        "id": "standalone",
+        "version": null
+      }
+    },
+    "subject": {
+      "issue": null,
+      "role": "unattributed"
+    }
+  }
+}

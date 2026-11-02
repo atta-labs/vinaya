@@ -137,6 +137,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'content'
   },
   { test: 'apps/cli/tests/lib/log-callers.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'apps/cli/tests/lib/log-sink-factory.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'apps/cli/tests/lib/log-sink-no-sync-spawn.test.ts',
     roots: ['apps/cli/src/lib/log-sink.ts'],

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogSink, type LogSinkDeps } from '../../../src/lib/log-sink'
+import type { LogSink, LogSinkDeps } from '../../../src/lib/log-sink'
+import { createVinayaLogSink } from '../../../../../harness/processes/vinaya-strict/integration/log/log-sink-factory'
 import type { CheckSpec } from '../../../src/checks/contract'
 import { runChecks } from '../../../src/checks/runner'
 
@@ -19,7 +20,7 @@ const BASE_OPTS = { parallel: 1, diffOnly: false, changedFiles: null, defaultTim
 // forget `.then()` chain (a `resolveRepo()` read races the JSON write).
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 150))
 
-function sinkFor(dir: string, env: NodeJS.ProcessEnv): ReturnType<typeof createLogSink> {
+function sinkFor(dir: string, env: NodeJS.ProcessEnv): LogSink {
   const deps: Partial<LogSinkDeps> = {
     outboxRoot: () => join(dir, 'outbox'),
     // [task-files-v1] 5: `log()` now resolves its destination through
@@ -36,7 +37,7 @@ function sinkFor(dir: string, env: NodeJS.ProcessEnv): ReturnType<typeof createL
     vinayaVersion: () => '0.0.0-test',
     stderr: () => {}
   }
-  return createLogSink(deps)
+  return createVinayaLogSink(deps)
 }
 
 function readGateLines(dir: string, issue: string): Array<Record<string, unknown>> {

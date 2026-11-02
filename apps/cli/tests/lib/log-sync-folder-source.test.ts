@@ -12,7 +12,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogSink, type LogSinkDeps } from '../../src/lib/log-sink.js'
+import { createLogSink, type LogSinkDeps, type LogSinkOverrides } from '../../src/lib/log-sink.js'
 import { createFolderLogSource } from '../../src/lib/log-sync-folder-source.js'
 
 // The folder source is proven against REAL temporary folders, written for
@@ -34,7 +34,7 @@ const DISPATCHED = {
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 100))
 
-function sinkDeps(dir: string, issue: number, overrides: Partial<LogSinkDeps> = {}): Partial<LogSinkDeps> {
+function sinkDeps(dir: string, issue: number, overrides: Partial<LogSinkDeps> = {}): LogSinkOverrides {
   return {
     outboxRoot: () => join(dir, 'outbox'),
     resolveLogDestination: () => ({ kind: 'folder', folder: join(dir, 'outbox') }),

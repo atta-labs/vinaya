@@ -2,6 +2,7 @@
  * Reads one completed Harbor 0.24.0 job into one freeze-record result: a
  * practice run or a scored result, of the split, backend and adapter named.
  */
+import { installVinayaLogSinkFactory } from './step-one'
 import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join, relative, resolve, sep } from 'node:path'
@@ -513,4 +514,8 @@ export function harborResultsMain(argv: readonly string[]): number {
   }
 }
 
-if (import.meta.main) process.exit(harborResultsMain(process.argv.slice(2)))
+if (import.meta.main) {
+  // An entry point: Log events reach the sink the process factory builds.
+  installVinayaLogSinkFactory()
+  process.exit(harborResultsMain(process.argv.slice(2)))
+}

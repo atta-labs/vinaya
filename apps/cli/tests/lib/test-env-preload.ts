@@ -133,6 +133,19 @@ for (const { dir, error } of sweep.failed) console.error(`test temp: could not s
 process.env.VINAYA_STEP_ONE_TMP ??= join(privateRuntimeDir ?? tmpdir(), 'step-one')
 
 /**
+ * The test process's composition root, as `apps/cli/src/index.ts` is the
+ * command line's: the Log client builds its default sink only from an
+ * installed factory, so every code path a test reaches through the bare
+ * `log`/`logSync` gets the sink the product gets. Imported after the
+ * environment above is settled, so the Log modules load against it exactly
+ * as they did when a test file loaded them first.
+ */
+const { installVinayaLogSinkFactory } = await import(
+  '../../../../harness/processes/vinaya-strict/integration/log/log-sink-factory.js'
+)
+installVinayaLogSinkFactory()
+
+/**
  * Once, after every test file this process ran: remove the private runtime
  * directory above, and fail the run if any test wrote into the REAL runtime
  * directory (`real-runtime-guard-core.ts`). A preload `afterAll` is the one

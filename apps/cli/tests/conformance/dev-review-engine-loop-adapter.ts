@@ -63,12 +63,12 @@ import {
   taskFromPrBody
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import {
-  createLogSink,
   drainLogSink,
   LOG_FOLDER_ONLY_ENV,
   resetDefaultLogSinkContext,
   type LogSinkDeps
 } from '../../src/lib/log-sink.js'
+import { createVinayaLogSink } from '../../../../harness/processes/vinaya-strict/integration/log/log-sink-factory.js'
 import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, tasksExecutionRoot } from '../../src/lib/run-paths.js'
 import { createEffectExecutor, type EffectIdentity, type EffectReconciler, sha256Hex } from '../../src/lib/effects.js'
 import { createTaskCancelHandler } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.js'
@@ -1075,10 +1075,10 @@ async function drive(
 
 /**
  * The run's sink: every event is kept for the observation and, when overrides
- * are injected, also written through the shared `createLogSink`.
+ * are injected, also written through the shared `createVinayaLogSink`.
  */
 function recordingSink(eventFile: string, logSink: Partial<LogSinkDeps> | undefined): EngineRunOptions['sink'] {
-  const shared = logSink ? createLogSink(logSink) : null
+  const shared = logSink ? createVinayaLogSink(logSink) : null
   return {
     log: (event) => {
       // An agent launch's own lines are the dispatch's, never the loop's: the standalone side's in-process dispatch

@@ -6,7 +6,7 @@ import {
   createLogSink,
   LOG_FOLDER_ONLY_ENV,
   resolveLogDestinationFrom,
-  type LogSinkDeps
+  type LogSinkOverrides
 } from '../../src/lib/log-sink.js'
 import { VinayaConfigSchema, type VinayaConfig } from '../../src/lib/config.js'
 import {
@@ -36,13 +36,15 @@ function fixture(config: VinayaConfig) {
   const folder = join(root, 'logs')
   const outbox = join(root, 'outbox')
   let serverDestinations = 0
-  const deps: Partial<LogSinkDeps> = {
+  const deps: LogSinkOverrides = {
     readConfig: () => config,
     outboxRoot: () => outbox,
     home: () => root,
     cwd: () => root,
     env: () => ({ VINAYA_TASK: '42', VINAYA_ROLE: 'developer' }),
     resolveRepo: async () => ({ owner: 'example', repo: 'test' }),
+    // Every event names its task (`VINAYA_TASK`), so the branch reader is never asked.
+    resolveBranchIssue: async () => null,
     vinayaVersion: () => 'test',
     stderr: () => {},
     resolveLogDestination: (_repo, env, folderOnly) => {

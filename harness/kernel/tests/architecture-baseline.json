@@ -113,7 +113,7 @@
   "apps/cli/src/lib/log-custom.ts": 1,
   "apps/cli/src/lib/log-producer-graph.ts": 1,
   "apps/cli/src/lib/log-schema-digest.ts": 1,
-  "apps/cli/src/lib/log-sink.ts": 15,
+  "apps/cli/src/lib/log-sink.ts": 12,
   "apps/cli/src/lib/log-sync-folder-source.ts": 2,
   "apps/cli/src/lib/log-sync-server-source.ts": 1,
   "apps/cli/src/lib/log-sync.ts": 3,
