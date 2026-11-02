@@ -221,7 +221,7 @@ function parseByFormat(
   format: InputFormat | undefined,
   parsers: FormatParsers
 ): { ok: true; value: unknown } | { ok: false } {
-  if (format === 'json' || format === 'toml') {
+  if (format === 'json' || format === 'toml' || format === 'bun-lock') {
     const parse = parsers[format] ?? (format === 'json' ? (t: string) => JSON.parse(t) as unknown : null)
     if (!parse) return { ok: false }
     try {
