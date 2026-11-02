@@ -73,9 +73,10 @@
  * producer) is gathered here, by the import resolution the test selector
  * already has — no second source search: the crossing files are G3's own list,
  * the blocking-gate files are the Ring-0 rows' `.ts` implementations, and a
- * producer is a CLI source file that imports the sink's `log` or `logSync`.
- * Reaching is confined to the CLI package's own sources; a file outside it is
- * named in `G7_EXEMPTIONS` with its reason.
+ * producer is a CLI source file, or one of the process folders' sources, that
+ * imports the sink's `log` or `logSync`. Reaching is confined to the CLI
+ * package's own sources and the process folders' non-test sources; a file
+ * outside them is named in `G7_EXEMPTIONS` with its reason.
  *
  * scope: full — reads the whole doctrine tree, not the local diff.
  */

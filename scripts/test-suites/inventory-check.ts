@@ -55,11 +55,13 @@ import { join, posix } from 'node:path'
 import ts from 'typescript'
 import { extractImportSpecifiers, resolveRelativeImport, testRunnerOf } from '../../apps/cli/src/lib/test-selector.js'
 import {
+  bunLockIdentity,
   declarationListProblems,
   diffTestIdentities,
   type EdgeKind,
   globRegex,
   type InputChange,
+  type InputFormat,
   type InputImpact,
   type InventoryProblem,
   type InventoryView,
@@ -140,7 +142,7 @@ export type InputDeclaration = {
   kind: EdgeKind
   /** Repository-relative files, or folders ending in `/`. */
   paths: string[]
-  format?: 'json' | 'toml' | 'text'
+  format?: InputFormat
   readers: ReaderDeclaration[]
   /** Required when `readers` is empty: why nothing reads it. Checked against scanner and policy duties. */
   noReader?: { reason: string }
@@ -1175,13 +1177,24 @@ export function nativeGroups(view: InventoryView): {
 // ── Which readers a changed input reaches ──────────────────────────────────
 
 /**
+ * The `bun-lock` parser, one constant for both parser tables (this file's and
+ * the selection policy's): the lockfile — JSON with trailing commas — read as
+ * its dependency identity, so a folder or local path move leaves it equal.
+ */
+export const bunLockParser = (text: string): unknown => bunLockIdentity(Bun.JSONC.parse(text))
+
+/**
  * The tests a changed input reaches, by how each reads it, on both the base
  * and the head view — the selection library's `changedInputReaders`, given
  * this repository's TOML parser so a `bunfig.toml` reader is judged by its
- * parsed value like a JSON one.
+ * parsed value like a JSON one, and its `bun-lock` parser so a lockfile reader
+ * is judged by the lockfile's dependency identity.
  */
 export function changedInputReaders(base: InventoryView | null, head: InventoryView, change: InputChange): InputImpact {
-  return libraryChangedInputReaders(base, head, change, { toml: (text) => Bun.TOML.parse(text) })
+  return libraryChangedInputReaders(base, head, change, {
+    toml: (text) => Bun.TOML.parse(text),
+    'bun-lock': bunLockParser
+  })
 }
 
 /**

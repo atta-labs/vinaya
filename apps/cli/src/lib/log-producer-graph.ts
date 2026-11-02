@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import type { GateRow } from '@attalabs/aeg-core'
 import { extractImportRecords, resolveRelativeImport, walkFiles } from './test-selector.js'
 
@@ -7,11 +7,14 @@ import { extractImportRecords, resolveRelativeImport, walkFiles } from './test-s
  * The inputs of the registry gates' seventh rule — anything able to block a
  * change or write to the forge reaches a log producer — gathered with the import
  * resolution the test selector already has, so no second source search exists.
- * A producer is a CLI source file that imports the sink's `log` or `logSync`;
- * reaching one is confined to the CLI package's own sources.
+ * A producer is a CLI source file, or one of the process folders' sources, that
+ * imports the sink's `log` or `logSync`; reaching one is confined to the CLI
+ * package's own sources and the process folders' sources, leaving out any file
+ * under a `tests` folder there and every `.test.ts` file.
  */
 
 const CLI_SOURCE_DIR = 'apps/cli/src'
+const PROCESSES_DIR = 'harness/processes'
 const LOG_SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
 const LOG_SINK_PRODUCER_NAMES: readonly string[] = ['log', 'logSync']
 
@@ -46,9 +49,12 @@ export function blockingGateFiles(ring0Rows: readonly GateRow[], existsFn: (path
   return [...new Set(ring0Rows.map((r) => r.implementation).filter((p) => p.endsWith('.ts') && existsFn(p)))]
 }
 
-/** The CLI package's import graph (repo-relative paths) and the files that import the sink's logging functions. */
+/** The import graph (repo-relative paths) of the CLI package and the process folders' non-test sources, and the files that import the sink's logging functions. */
 export function gatherLogProducerGraph(root: string): { producers: Set<string>; imports: Map<string, string[]> } {
-  const files = walkFiles(join(root, CLI_SOURCE_DIR)).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+  const files = [
+    ...walkFiles(join(root, CLI_SOURCE_DIR)),
+    ...walkFiles(join(root, PROCESSES_DIR)).filter((f) => !relative(root, f).split(sep).includes('tests'))
+  ].filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
   const known = new Set(files)
   const sink = join(root, LOG_SINK_PATH)
   const producers = new Set<string>([LOG_SINK_PATH])

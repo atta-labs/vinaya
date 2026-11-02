@@ -4,12 +4,19 @@
  * identically; computed once here so the two can never quietly diverge on
  * what "changed" means.
  *
- * Base resolution order: the branch's own upstream (`@{u}`) when one is
- * configured (the ordinary case — this hook only ever runs on a branch
- * that's about to push, and `git push` itself requires a remote to exist),
+ * Base resolution order: a ready push's named base first, then the branch's
+ * own upstream (`@{u}`) when one is configured (the ordinary case — this
+ * hook only ever runs on a branch that's about to push, and `git push`
+ * itself requires a remote to exist),
  * falling back to `origin/main` for a first push with no upstream tracking
  * set up yet, and finally the previous commit — a push can never fail this
  * resolution outright the way a check with no repo state at all might.
+ *
+ * Then one read of the branch's own history: when the branch merged a commit
+ * the starting base does not already hold — the default branch's tip, merged
+ * before a push — the change is measured from that merged commit instead, so
+ * the push measures the branch's own change, never the default branch's
+ * commits the merge brought in. With no such merge, the starting base stands.
  */
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -66,8 +73,25 @@ function git(repoRoot: string, args: string[], failure?: ReadFailure): string {
   }
 }
 
-/** The ref this push's changes should be measured against — never throws. */
+/**
+ * The ref this push's changes should be measured against — never throws.
+ *
+ * The starting base is picked first: a ready push's named base, else the
+ * upstream, else `origin/main`, else `HEAD~1`. Then, when the first-parent
+ * chain of `<start>..HEAD` holds a merge commit whose second parent is not an
+ * ancestor of the start, the newest such merge's second parent is returned:
+ * that commit holds everything the merge brought in, and the branch's
+ * earlier-pushed commits still differ from it, so measuring from it keeps the
+ * whole branch change and drops only what was merged. The rule reads HEAD's
+ * own history, never the default branch's remote-tracking ref, which a merge
+ * of a commit fetched by URL leaves stale. With no such merge, or when a read
+ * fails or prints nothing, the start is returned.
+ */
 export function resolveRemoteBase(repoRoot: string): string {
+  return mergedCommitAfter(repoRoot, startingRemoteBase(repoRoot))
+}
+
+function startingRemoteBase(repoRoot: string): string {
   // A ready push (review locally, push once) names its base: storage pushes
   // already moved the branch's upstream to the head, so the upstream would
   // measure nothing; the change is measured against the default branch.
@@ -79,6 +103,23 @@ export function resolveRemoteBase(repoRoot: string): string {
   const originMain = git(repoRoot, ['rev-parse', '--verify', '--quiet', 'origin/main'])
   if (originMain) return 'origin/main'
   return 'HEAD~1'
+}
+
+/** The second parent of the newest first-parent merge after `start` that `start` does not already hold, else `start`. */
+function mergedCommitAfter(repoRoot: string, start: string): string {
+  const merges = git(repoRoot, ['rev-list', '--first-parent', '--merges', `${start}..HEAD`])
+  for (const merge of merges
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)) {
+    const merged = git(repoRoot, ['rev-parse', '--verify', '--quiet', `${merge}^2`])
+    if (!merged) continue
+    // `--is-ancestor` answers through its exit status alone: a non-zero exit is "not an ancestor".
+    const notAncestor: ReadFailure = { failed: false }
+    git(repoRoot, ['merge-base', '--is-ancestor', merged, start], notAncestor)
+    if (notAncestor.failed) return merged
+  }
+  return start
 }
 
 /** Repo-root-relative paths of every file changed between `resolveRemoteBase()` and `HEAD` — added, copied, modified, renamed; never a deleted file, which has nothing left to lint or test. */

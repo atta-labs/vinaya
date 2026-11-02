@@ -22,6 +22,7 @@ export {
   validateInventory,
   validateInventoryView
 } from './inventory.js'
+export { bunLockIdentity } from './lockfile-identity.js'
 export {
   DEFAULT_CONFIGURATION,
   type ExecutedValidation,
