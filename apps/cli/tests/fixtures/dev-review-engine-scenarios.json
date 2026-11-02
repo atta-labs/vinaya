@@ -10,11 +10,11 @@
     "loopSurface": [
       {
         "path": "apps/cli/src/commands/dev-review-loop.ts",
-        "sha256": "b958460872c543ab85f65f2ac7f3f008b9d7946a34e7faa4f654f51ac528c98c"
+        "sha256": "9aad1b7efa313301001a4e8f3716e0de023bcfbd23910c8d3beea418fc9a91bf"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "sha256": "b99820e0ab4495b7c4fe201a9af80c63638889d581398828a00bfbaee975b8a6"
+        "sha256": "c1d65dfd1ffa831714fc4d87499a19a95a58e86a3c7770579fb406b71481b970"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.ts",
@@ -58,7 +58,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.ts",
-        "sha256": "f9a97ac049476e2676ebfd69c67ebf2d03db591b8b33f4fc453438dae511b71c"
+        "sha256": "23eaaec1aa5550ff2c74dff637e75a1bb4a9b0f51567d61012dc30ac3f541c56"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/security-scan-command.ts",

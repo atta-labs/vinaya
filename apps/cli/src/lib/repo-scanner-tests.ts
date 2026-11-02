@@ -67,6 +67,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
       'packages/aeg-core/src/dev-review-loop/',
       'apps/cli/tests/commands/dev-review-loop.test.ts',
       'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop',
+      'harness/processes/vinaya-strict/tests/lib/dev-review-loop',
       'apps/cli/tests/lib/dev-review-loop'
     ],
     trigger: 'tree-shape'
