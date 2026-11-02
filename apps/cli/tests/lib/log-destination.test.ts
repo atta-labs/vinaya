@@ -33,7 +33,7 @@ import {
   resolveLogDestinationFrom,
   type LogSinkDeps
 } from '../../src/lib/log-sink.js'
-import { spawnBudgetedAsync, stripVinayaEnv } from './process-fixture'
+import { INSTALL_CONFIG_PROVIDER, spawnBudgetedAsync, stripVinayaEnv } from './process-fixture'
 
 const DEFAULT_FOLDER = '/h/runtime/atta-labs-vinaya/logs'
 
@@ -780,7 +780,7 @@ async function runServerDestinationScript(home: string, cwd: string, url: string
   const script = join(cwd, `run-log-${effectId}.ts`)
   writeFileSync(
     script,
-    `import { createLogSink } from ${JSON.stringify(LOG_SINK_PATH)}
+    `${INSTALL_CONFIG_PROVIDER}import { createLogSink } from ${JSON.stringify(LOG_SINK_PATH)}
     const { log } = createLogSink({
       env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
       resolveLogDestination: () => ({ kind: 'server', url: ${JSON.stringify(url)} })
@@ -895,7 +895,7 @@ async function runAbruptExitScript(cwd: string, home: string, drainOnExit: boole
   const script = join(cwd, `run-log-abrupt-${effectId}.ts`)
   writeFileSync(
     script,
-    `import { drainLogSink, log } from ${JSON.stringify(LOG_SINK_PATH)}
+    `${INSTALL_CONFIG_PROVIDER}import { drainLogSink, log } from ${JSON.stringify(LOG_SINK_PATH)}
     setInterval(() => {}, 60000)
     process.on('SIGTERM', async () => {
       ${drainOnExit ? 'await drainLogSink()' : ''}

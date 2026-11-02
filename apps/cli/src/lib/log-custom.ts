@@ -19,7 +19,7 @@ import {
   CUSTOM_EVENT_NAME_PATTERN,
   checkCustomEvent
 } from '@attalabs/aeg-core/log'
-import { loadConfig } from './config.js'
+import { configProvider } from '../../../../harness/kernel/config/loader/config-provider.js'
 import { log } from './log-sink.js'
 
 export type EmitCustomEventResult =
@@ -33,7 +33,9 @@ export type EmitCustomEventDeps = {
 }
 
 const defaultDeps: EmitCustomEventDeps = {
-  declarations: () => (loadConfig()?.logs || undefined)?.events ?? {},
+  // The composed schema validated `logs.events` against `CustomEventDeclarationsSchema`.
+  declarations: () =>
+    ((configProvider().loadConfig()?.logs || undefined)?.events as CustomEventDeclarations | undefined) ?? {},
   emit: log
 }
 

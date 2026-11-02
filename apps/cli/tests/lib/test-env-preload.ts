@@ -133,6 +133,16 @@ for (const { dir, error } of sweep.failed) console.error(`test temp: could not s
 process.env.VINAYA_STEP_ONE_TMP ??= join(privateRuntimeDir ?? tmpdir(), 'step-one')
 
 /**
+ * The composition root a test process has: kernel code (`run-paths.ts`,
+ * `log-sink.ts`) reads configuration through the provider the CLI entry point
+ * installs, and a test that imports such a module directly never runs that
+ * entry point. Imported after the environment above is cleaned, so nothing the
+ * composition loads reads the variables this file removes.
+ */
+const { installVinayaConfigProvider } = await import('../../src/lib/config.js')
+installVinayaConfigProvider()
+
+/**
  * Once, after every test file this process ran: remove the private runtime
  * directory above, and fail the run if any test wrote into the REAL runtime
  * directory (`real-runtime-guard-core.ts`). A preload `afterAll` is the one

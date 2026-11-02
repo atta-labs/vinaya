@@ -37,7 +37,7 @@ import {
   renewDrainLock
 } from '../../src/lib/log-webhook-drain.js'
 import { OUTBOX_MAX_BYTES } from '../../src/lib/log-sink.js'
-import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
+import { INSTALL_CONFIG_PROVIDER, spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DRAIN_MODULE = join(CLI_ROOT, 'src', 'lib', 'log-webhook-drain.ts')
@@ -266,7 +266,7 @@ function writeDrainScript(
 ): void {
   writeFileSync(
     scriptPath,
-    `import { drainOutboxToWebhook, WebhookDrainError } from ${JSON.stringify(DRAIN_MODULE)}
+    `${INSTALL_CONFIG_PROVIDER}import { drainOutboxToWebhook, WebhookDrainError } from ${JSON.stringify(DRAIN_MODULE)}
     try {
       const outcome = await drainOutboxToWebhook(${issue}, ${JSON.stringify(url)}, ${headers ? JSON.stringify(headers) : 'undefined'}${fetchTimeoutMs !== undefined ? `, ${fetchTimeoutMs}` : ''})
       console.log(JSON.stringify({ ok: true, outcome }))

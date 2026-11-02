@@ -15,6 +15,7 @@
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
   decisionRecordsPathIssue,
@@ -147,6 +148,89 @@ function currentSnapshot(): Record<string, unknown> {
     corpus: corpus.map((value) => ({ value, ...golden(value) }))
   }
 }
+
+// Every runtime export the configuration module had while it held the schema
+// itself, plus the provider installer its composition roots call.
+const CONFIG_MODULE_EXPORTS = [
+  'BRIEF_BUILTINS',
+  'GLOBAL_CONFIG_PATH',
+  'GLOBAL_VINAYA_HOME',
+  'LOCAL_CONFIG_FILENAME',
+  'LOCAL_OVERRIDABLE_KEYS',
+  'LOCAL_OVERRIDE_FILENAME',
+  'MANAGED_MANIFEST_VERSION',
+  'PRINCIPALS_FIX',
+  'PrincipalsUnresolvedError',
+  'VinayaConfigSchema',
+  'VinayaConfigShape',
+  'configPath',
+  'decisionRecordsPathIssue',
+  'getTokensCollectTrust',
+  'gitBlobHash',
+  'gitCommonDir',
+  'globalChecksIgnoredWarning',
+  'globalPrincipalsIgnoredWarning',
+  'globalReleaseActorIgnoredWarning',
+  'globalRolesIgnoredWarning',
+  'globalRuntimeDirIgnoredWarning',
+  'globalTokensCollectIgnoredWarning',
+  'installVinayaConfigProvider',
+  'isCanonicalHookBlockPath',
+  'isDefaultedAgentVendorPath',
+  'isSafeRepoRelPath',
+  'lintEnvDeclarations',
+  'loadConfig',
+  'loadConfigChecked',
+  'loadTaskRunner',
+  'loadTrustAnchorConfig',
+  'loadTrustAnchorConfigAsync',
+  'loadTrustAnchorConfigOrThrow',
+  'parseTokensCollectDeclaration',
+  'readRepoCiSetup',
+  'repoLocalConfigDir',
+  'resolveAgentVendors',
+  'resolveCiTrustAnchorProbeRef',
+  'resolveCollisionThreshold',
+  'resolveGateCutovers',
+  'resolveLocalPacingOverride',
+  'resolveLogsHeaderValues',
+  'resolveLogsSetting',
+  'resolveReleaseActor',
+  'resolveReviewPolicy',
+  'resolveRuntimeDirSetting',
+  'resolveSecurityScanCommand',
+  'resolveTaskRunner',
+  'resolveTrustAnchorLogsDestination',
+  'resolveTrustAnchorRuntimeDir',
+  'resolveTrustedPrincipals',
+  'tokensCollectTrustKey',
+  'trustAnchorRepo',
+  'trustAnchorRepoAsync',
+  'trustTokensCollectCommand',
+  'writeConfig'
+]
+
+describe('the configuration module', () => {
+  test('exports every name it always exported', async () => {
+    const module = await import('../src/lib/config.js')
+    expect(Object.keys(module).sort()).toEqual([...CONFIG_MODULE_EXPORTS].sort())
+  })
+
+  test('its home and file names are unchanged', async () => {
+    const { GLOBAL_CONFIG_PATH, GLOBAL_VINAYA_HOME, LOCAL_CONFIG_FILENAME } = await import('../src/lib/config.js')
+    expect(GLOBAL_VINAYA_HOME).toBe(join(homedir(), '.vinaya'))
+    expect(GLOBAL_CONFIG_PATH).toBe(join(homedir(), '.vinaya', 'config.json'))
+    expect(LOCAL_CONFIG_FILENAME).toBe('vinaya.config.json')
+  })
+
+  test("installs Vinaya's composed loader as the provider kernel code reads through", async () => {
+    const { GLOBAL_VINAYA_HOME, installVinayaConfigProvider, loadConfig } = await import('../src/lib/config.js')
+    const { configProvider } = await import('../../../harness/kernel/config/loader/config-provider.js')
+    installVinayaConfigProvider()
+    expect(configProvider().homeDir).toBe(GLOBAL_VINAYA_HOME)
+    expect(configProvider().loadConfig()).toEqual(loadConfig())
+  })
+})
 
 describe('the configuration golden', () => {
   const current = currentSnapshot()

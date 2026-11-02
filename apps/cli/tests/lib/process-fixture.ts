@@ -59,6 +59,17 @@ export function stripVinayaEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pro
  */
 export const PROCESS_FIXTURE_BUDGET_MS = 18_000
 
+/**
+ * The statement a spawned script runs before it uses the sink, so the script
+ * is a composition root of its own. Kernel code (`log-sink.ts`, `run-paths.ts`,
+ * `log-webhook-drain.ts`) reads configuration only through the provider a
+ * composition root installs, and a script that imports such a module directly
+ * never runs the CLI entry point that installs it.
+ */
+export const INSTALL_CONFIG_PROVIDER = `await (await import(${JSON.stringify(
+  join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts')
+)})).installVinayaConfigProvider()\n`
+
 export type BudgetedSpawnResult = { status: number; stdout: string; stderr: string }
 
 /**

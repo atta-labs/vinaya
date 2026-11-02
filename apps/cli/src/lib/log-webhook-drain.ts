@@ -49,7 +49,7 @@ import { dirname, join } from 'node:path'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { classifyStoredLine } from '@attalabs/aeg-core'
 import { appendHardenedLine, outboxPathFor as sinkOutboxPathFor } from './log-sink.js'
-import { GLOBAL_VINAYA_HOME } from './config.js'
+import { configProvider } from '../../../../harness/kernel/config/loader/config-provider.js'
 
 /** One POST body capped well under common reverse-proxy/body-size limits (most default to 1-10 MiB). A queue larger than this is not a failure any more — it is delivered as however many chunks of at most this size it takes, each acknowledged and removed on its own. */
 export const MAX_WEBHOOK_BODY_BYTES = 5 * 1024 * 1024
@@ -658,7 +658,7 @@ export async function drainOutboxToWebhook(
 ): Promise<WebhookDrainOutcome> {
   const resolved = await resolveRepo()
   const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
-  const outboxRoot = () => join(GLOBAL_VINAYA_HOME, 'outbox')
+  const outboxRoot = () => join(configProvider().homeDir, 'outbox')
   const path = sinkOutboxPathFor({ outboxRoot }, repo, outboxTask)
 
   const lockPath = `${path}.flush-lock`

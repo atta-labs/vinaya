@@ -20,7 +20,8 @@ import type { LogCache, LogSource } from '@attalabs/aeg-core'
 // its `./log` subpath export, which the package's own `exports` map already
 // publishes.
 import { type SyncSummary, syncSource } from '@attalabs/aeg-core/log'
-import { loadConfig, loadTrustAnchorConfigAsync, resolveLogsHeaderValues, type VinayaConfig } from './config.js'
+import { configProvider, type ProvidedConfig } from '../../../../harness/kernel/config/loader/config-provider.js'
+import { resolveLogsHeaderValues } from '../../../../harness/kernel/config/schema/config-schema.js'
 import { toEnvelope } from './envelope.js'
 import {
   LOG_DESTINATION_ANCHOR_DEADLINE_MS,
@@ -228,14 +229,14 @@ export async function runLogSync(opts: SyncRunOptions, deps: LogSyncDeps = realL
 }
 
 export function realLogSyncDeps(): LogSyncDeps {
-  const config: VinayaConfig | null = loadConfig()
+  const config: ProvidedConfig | null = configProvider().loadConfig()
   return {
     resolveRepo: () => resolveRepo(),
     resolveDestination: async (repo) => {
       const unattended = isUnattendedProcess(process.env)
       const trustAnchorConfig = unattended
         ? await withDeadline(
-            loadTrustAnchorConfigAsync(undefined, { quiet: true }),
+            configProvider().loadTrustAnchorConfigAsync(undefined, { quiet: true }),
             LOG_DESTINATION_ANCHOR_DEADLINE_MS,
             null
           )
