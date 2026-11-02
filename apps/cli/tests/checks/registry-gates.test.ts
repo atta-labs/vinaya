@@ -198,4 +198,55 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     const result = Bun.spawnSync(['bun', BIN_PATH], { cwd: repoRoot, env: { ...process.env } })
     expect(result.stderr.toString()).not.toContain('registry-gates.G7')
   }, 20_000)
+
+  it("follows a check program's import through a process folder to the sink, and leaves that folder's tests out", () => {
+    const root = join(tmpdir(), `vinaya-g7-process-folder-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const checkBin = 'apps/cli/src/checks/bin/check-demo.ts'
+    const processModule = join(root, 'harness', 'processes', 'demo', 'run-control.ts')
+    const write = (path: string, text: string) => {
+      mkdirSync(join(path, '..'), { recursive: true })
+      writeFileSync(path, text)
+    }
+    const evaluate = () => {
+      const { producers, imports } = gatherLogProducerGraph(root)
+      const result = checkG7({
+        enforcementMapPresent: true,
+        crossingFiles: [],
+        blockingFiles: [checkBin],
+        producers,
+        imports,
+        exemptions: {},
+        existsFn: (p) => existsSync(join(root, p))
+      })
+      return { producers, result }
+    }
+    try {
+      write(join(root, 'apps', 'cli', 'src', 'lib', 'log-sink.ts'), 'export function log(): void {}\n')
+      write(
+        join(root, checkBin),
+        "import { runControl } from '../../../../../harness/processes/demo/run-control.js'\nrunControl()\n"
+      )
+      write(
+        processModule,
+        "import { log } from '../../../apps/cli/src/lib/log-sink.js'\nexport function runControl(): void {\n  log()\n}\n"
+      )
+      write(
+        join(root, 'harness', 'processes', 'demo', 'tests', 'helper.ts'),
+        "import { log } from '../../../../apps/cli/src/lib/log-sink.js'\nexport const helper = log\n"
+      )
+
+      const withModule = evaluate()
+      expect(withModule.producers.has('harness/processes/demo/run-control.ts')).toBe(true)
+      expect(withModule.producers.has('harness/processes/demo/tests/helper.ts')).toBe(false)
+      expect(withModule.result.findings).toEqual([])
+      expect(withModule.result.status).toBe('pass')
+
+      rmSync(processModule)
+      const withoutModule = evaluate()
+      expect(withoutModule.result.status).toBe('fail')
+      expect(withoutModule.result.findings.map((f) => f.path)).toEqual([checkBin])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })

@@ -299,6 +299,11 @@ export interface RecordedReview {
 export interface VinayaTrialRecord {
   rendererVersion: string
   input: VinayaProcessInput
+  /**
+   * The SHA-256 of the role doctrine block prepended to the trial's prompt, as
+   * the review loop renders it; a record that observes no doctrine omits it.
+   */
+  doctrineDigest?: Observed<Digest>
   /** The published pull request: the head and base it names, its diff digest as the forge serves it, and its body. */
   pullRequest: Observed<{ headSha: string; baseSha: string; diffDigest: Digest; body: string }>
   /** What the harness measured from the repository. */
@@ -795,7 +800,7 @@ export function extractOutcomes(record: VinayaTrialRecord): Extracted {
 // ── Version ─────────────────────────────────────────────────────────────────
 
 /** Bumped by hand when the process input or trial record changes shape. */
-export const RENDERER_SCHEMA_VERSION = 1
+export const RENDERER_SCHEMA_VERSION = 2
 
 /** The mapping tables the renderer version covers. */
 export const MAPPING_TABLES = {

@@ -1745,6 +1745,15 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       hostParts[roleHost.role] = { capabilities, writeShim, onEnded }
     }
     const mcpCommands = roleBridgeCommands(runDir, roleHosts)
+    // Every role's dev-tools calls may run as long as the ready push; the generators keep the shared default as the
+    // floor, and an unreadable policy passes nothing, so the prepare-run step still pauses on it as before.
+    let devToolsTimeoutSec: number | undefined
+    try {
+      const minutes = options.taskInput?.reviewPolicy?.()?.readyPushTimeoutMinutes
+      devToolsTimeoutSec = minutes === undefined ? undefined : minutes * 60
+    } catch {
+      devToolsTimeoutSec = undefined
+    }
     const roles: Record<string, RoleLauncher[string]> = {
       ...createRoleLaunchers({
         vendor: vendorOf(args.agent),
@@ -1755,6 +1764,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         mcpCommands,
         model: args.model,
         allowUnixSockets: options.allowUnixSockets === true,
+        ...(devToolsTimeoutSec === undefined ? {} : { devToolsTimeoutSec }),
         stageCodexLogin: true,
         timeouts: roleTimeouts(lifecycle.dispatchConfig)
       })

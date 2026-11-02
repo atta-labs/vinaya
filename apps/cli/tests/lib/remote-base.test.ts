@@ -155,3 +155,94 @@ describe('resolveRemoteBase / changedFilesSinceRemoteBase (task-run-v1 20, O5/O6
     }
   })
 })
+
+describe('resolveRemoteBase after a merge of the default branch', () => {
+  // A remote, a branch pushed with one commit, then a default-branch commit
+  // pushed from elsewhere and merged by URL — `FETCH_HEAD`, the way the loop's
+  // pre-turn merge does it — so `origin/main` never points at the merged commit;
+  // then one more branch-only commit, not yet pushed.
+  function mergedBranchFixture(): { bareDir: string; cloneDir: string; otherDir: string; merged: string } {
+    const bareDir = mkdtempSync(join(tmpdir(), 'vinaya-remote-bare-'))
+    git(bareDir, ['init', '--quiet', '--bare', '--initial-branch=main'])
+
+    const cloneDir = mkdtempSync(join(tmpdir(), 'vinaya-remote-clone-'))
+    git(cloneDir, ['clone', '--quiet', bareDir, '.'])
+    git(cloneDir, ['config', 'user.email', 'test@example.com'])
+    git(cloneDir, ['config', 'user.name', 'Test'])
+    commit(cloneDir, 'a.txt', 'one\n', 'Initial commit')
+    git(cloneDir, ['push', '--quiet', '-u', 'origin', 'main'])
+    git(cloneDir, ['checkout', '--quiet', '-b', 'feature'])
+    commit(cloneDir, 'f1.txt', 'branch one\n', 'Branch commit, pushed')
+    git(cloneDir, ['push', '--quiet', '-u', 'origin', 'feature'])
+
+    const otherDir = mkdtempSync(join(tmpdir(), 'vinaya-remote-other-'))
+    git(otherDir, ['clone', '--quiet', bareDir, '.'])
+    git(otherDir, ['config', 'user.email', 'test@example.com'])
+    git(otherDir, ['config', 'user.name', 'Test'])
+    commit(otherDir, 'm.txt', 'default branch\n', 'Default-branch commit')
+    git(otherDir, ['push', '--quiet', 'origin', 'main'])
+
+    git(cloneDir, ['fetch', '--quiet', bareDir, 'main'])
+    const merged = git(cloneDir, ['rev-parse', 'FETCH_HEAD'])
+    git(cloneDir, ['merge', '--quiet', '--no-ff', '--no-edit', 'FETCH_HEAD'])
+    commit(cloneDir, 'f2.txt', 'branch two\n', 'Branch commit after the merge')
+    return { bareDir, cloneDir, otherDir, merged }
+  }
+
+  function cleanUp(...dirs: string[]): void {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+  }
+
+  it('measures from the merged commit, keeping every branch file and none the merge brought in', () => {
+    const { bareDir, cloneDir, otherDir, merged } = mergedBranchFixture()
+    try {
+      expect(git(cloneDir, ['rev-parse', 'origin/main'])).not.toBe(merged)
+      expect(resolveRemoteBase(cloneDir)).toBe(merged)
+      expect(changedFilesSinceRemoteBase(cloneDir).sort()).toEqual(['f1.txt', 'f2.txt'])
+    } finally {
+      cleanUp(bareDir, cloneDir, otherDir)
+    }
+  })
+
+  it('a ready push whose named base is the stale remote-tracking ref resolves the same merged commit', () => {
+    const { bareDir, cloneDir, otherDir, merged } = mergedBranchFixture()
+    process.env.VINAYA_PUSH_MODE = 'ready'
+    process.env.VINAYA_PUSH_BASE = 'origin/main'
+    try {
+      expect(resolveRemoteBase(cloneDir)).toBe(merged)
+      expect(changedFilesSinceRemoteBase(cloneDir).sort()).toEqual(['f1.txt', 'f2.txt'])
+    } finally {
+      delete process.env.VINAYA_PUSH_MODE
+      delete process.env.VINAYA_PUSH_BASE
+      cleanUp(bareDir, cloneDir, otherDir)
+    }
+  })
+
+  it('with no merge, the upstream stands and a ready push keeps its named base', () => {
+    const bareDir = mkdtempSync(join(tmpdir(), 'vinaya-remote-bare-'))
+    git(bareDir, ['init', '--quiet', '--bare', '--initial-branch=main'])
+    const cloneDir = mkdtempSync(join(tmpdir(), 'vinaya-remote-clone-'))
+    git(cloneDir, ['clone', '--quiet', bareDir, '.'])
+    git(cloneDir, ['config', 'user.email', 'test@example.com'])
+    git(cloneDir, ['config', 'user.name', 'Test'])
+    commit(cloneDir, 'a.txt', 'one\n', 'Initial commit')
+    const initial = git(cloneDir, ['rev-parse', 'HEAD'])
+    git(cloneDir, ['push', '--quiet', '-u', 'origin', 'main'])
+    git(cloneDir, ['checkout', '--quiet', '-b', 'feature'])
+    commit(cloneDir, 'f1.txt', 'branch one\n', 'Branch commit, pushed')
+    git(cloneDir, ['push', '--quiet', '-u', 'origin', 'feature'])
+    commit(cloneDir, 'f2.txt', 'branch two\n', 'Branch commit, not yet pushed')
+
+    try {
+      expect(resolveRemoteBase(cloneDir)).toBe('origin/feature')
+      expect(changedFilesSinceRemoteBase(cloneDir)).toEqual(['f2.txt'])
+      process.env.VINAYA_PUSH_MODE = 'ready'
+      process.env.VINAYA_PUSH_BASE = initial
+      expect(resolveRemoteBase(cloneDir)).toBe(initial)
+    } finally {
+      delete process.env.VINAYA_PUSH_MODE
+      delete process.env.VINAYA_PUSH_BASE
+      cleanUp(bareDir, cloneDir)
+    }
+  })
+})
