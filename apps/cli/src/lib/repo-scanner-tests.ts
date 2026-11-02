@@ -40,8 +40,8 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
       'apps/cli/tests/fixtures/dev-review-architecture-invariants.json',
       'apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json',
       'apps/cli/src/commands/dev-review-loop.ts',
-      'apps/cli/src/lib/dev-review-loop.ts',
-      'apps/cli/src/lib/dev-review-loop/',
+      'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
+      'harness/processes/',
       'packages/aeg-core/src/dev-review-loop/'
     ],
     trigger: 'listed-files'
@@ -59,13 +59,14 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   },
   { test: 'apps/cli/tests/ci-shards.test.ts', roots: ['apps/cli/'], trigger: 'tree-shape' },
   {
-    test: 'apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts',
+    test: 'harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts',
     roots: [
       'apps/cli/src/commands/dev-review-loop.ts',
-      'apps/cli/src/lib/dev-review-loop.ts',
-      'apps/cli/src/lib/dev-review-loop/',
+      'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
+      'harness/processes/',
       'packages/aeg-core/src/dev-review-loop/',
       'apps/cli/tests/commands/dev-review-loop.test.ts',
+      'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop',
       'apps/cli/tests/lib/dev-review-loop'
     ],
     trigger: 'tree-shape'
@@ -76,7 +77,11 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'content'
   },
   { test: 'apps/cli/tests/platform-independence.test.ts', roots: ['apps/cli/tests/'], trigger: 'content' },
-  { test: 'apps/cli/tests/process-fixture-coverage.test.ts', roots: ['apps/cli/tests/'], trigger: 'process-start' },
+  {
+    test: 'apps/cli/tests/process-fixture-coverage.test.ts',
+    roots: ['apps/cli/tests/', 'harness/processes/'],
+    trigger: 'process-start'
+  },
   { test: 'apps/cli/scripts/bundle-doctrine.test.ts', roots: ['.'], trigger: 'content' },
   { test: 'harness/processes/vinaya-strict/tests/run-engine.test.ts', roots: ['.'], trigger: 'content' },
   {

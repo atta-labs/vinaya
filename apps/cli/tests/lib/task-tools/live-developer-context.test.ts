@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { failedCheckLogsOnHead } from '../../../src/lib/dev-review-loop'
+import { failedCheckLogsOnHead } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop'
 import {
   attributeDriverToolCalls,
   commitAndPushPrompt,

@@ -129,9 +129,14 @@ function walk(dir: string, prefix: string): [string, string][] {
   return out
 }
 
-/** Every `.ts`/`.tsx` file under `apps/cli/tests`, repo-relative, the helper itself excluded. */
+/** The standalone driver's tests, moved out of `apps/cli/tests` into the process with the driver. */
+const STANDALONE_TESTS = 'harness/processes/vinaya-strict/tests/standalone'
+
+/** Every `.ts`/`.tsx` file under `apps/cli/tests` and the driver's own tests, repo-relative, the helper itself excluded. */
 function allTestTreeFiles(): [string, string][] {
-  return walk(TESTS_ROOT, 'apps/cli/tests').filter(([rel]) => rel !== HELPER_PATH)
+  return [...walk(TESTS_ROOT, 'apps/cli/tests'), ...walk(join(REPO_ROOT, STANDALONE_TESTS), STANDALONE_TESTS)].filter(
+    ([rel]) => rel !== HELPER_PATH
+  )
 }
 
 /**
@@ -666,7 +671,7 @@ describe('process-fixture coverage — O3 (#660, round 5): every real-process fi
       'apps/cli/tests/package-root.test.ts',
       'apps/cli/tests/commands/check-json-pipe.test.ts',
       'apps/cli/tests/lib/log-webhook-drain.test.ts',
-      'apps/cli/tests/lib/dev-review-loop/gate-reading.test.ts',
+      'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/gate-reading.test.ts',
       'apps/cli/tests/conformance/harness.ts',
       'apps/cli/tests/commands/dispatch-task.test.ts',
       // Issue #670, O2 — the two dispatch test files hardened by that task's

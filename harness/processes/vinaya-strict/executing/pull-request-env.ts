@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { worktreeCheckEnv } from '../../../../apps/cli/src/lib/dev-review-loop'
+import { worktreeCheckEnv } from '../loops/dev-review/standalone/dev-review-loop'
 
 /** The open-or-not pull request for a branch, as `gh pr view <branch>` reports it. */
 export interface PullRequestView {

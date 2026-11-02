@@ -39,7 +39,7 @@ const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboo
  * with no `VINAYA_*` stripping, so a leaked `VINAYA_RUNTIME_DIR` from a
  * dispatched session's own environment survives past this fixture's `HOME`
  * override into the real MCP server subprocess's durable `task_start`
- * writes. Same fix as `apps/cli/tests/lib/dev-review-loop.test.ts`'s
+ * writes. Same fix as `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-test-support.ts`'s
  * `fixtureChildEnv`.
  */
 function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

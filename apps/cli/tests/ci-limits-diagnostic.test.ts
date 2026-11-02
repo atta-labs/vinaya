@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { parse } from 'yaml'
-import { isRateLimitedJobLog } from '../src/lib/dev-review-loop/round-assess'
+import { isRateLimitedJobLog } from '../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess'
 import { spawnSyncBudgeted, stripVinayaEnv } from './lib/process-fixture'
 
 const CI_PATH = join(import.meta.dir, '..', '..', '..', '.github', 'workflows', 'ci.yml')

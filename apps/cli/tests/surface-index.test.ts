@@ -42,11 +42,18 @@ const program = ts.createProgram({
 })
 const checker = program.getTypeChecker()
 
+/** The standalone driver, moved out of `apps/cli/src/lib/` into the process; the commands still call it as a library. */
+const STANDALONE_DRIVER = '/harness/processes/vinaya-strict/loops/dev-review/standalone/'
+
 function isInScope(filePath: string): boolean {
-  return filePath.includes('/apps/cli/src/lib/') || filePath.includes('/apps/cli/src/commands/')
+  return (
+    filePath.includes('/apps/cli/src/lib/') ||
+    filePath.includes('/apps/cli/src/commands/') ||
+    filePath.includes(STANDALONE_DRIVER)
+  )
 }
 function isLibFile(filePath: string): boolean {
-  return filePath.includes('/apps/cli/src/lib/')
+  return filePath.includes('/apps/cli/src/lib/') || filePath.includes(STANDALONE_DRIVER)
 }
 
 /** Every top-level `export function`/`export const <id> = (...)` in a source file, by name. */

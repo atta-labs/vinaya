@@ -38,7 +38,10 @@ import {
 import { SqliteCheckpointer } from '../../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import type { LoadedProcess } from '../../../../../harness/kernel/dev-process-socket/loader/load-process'
 import type { DispatchHandle } from '../dispatch'
-import { readClaudeTurnOutput, readCodexTurnOutput } from '../dev-review-loop/turn-result'
+import {
+  readClaudeTurnOutput,
+  readCodexTurnOutput
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result'
 import { DEV_TOOLS_MCP_SERVER_NAME } from '../task-tools/dev-tools-names'
 import type { BridgeInvocation } from '../task-tools/dev-tools-registration'
 import { containerClaudeLogin } from '../worker-boundary'

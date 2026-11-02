@@ -21,7 +21,7 @@ import {
   taskPrFactsFrom,
   toChecks
 } from '../../../src/lib/task-tools/pr-facts.js'
-import type { RestWorkflowRun } from '../../../src/lib/dev-review-loop/gate-reading.js'
+import type { RestWorkflowRun } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/gate-reading.js'
 import { type PrReadForge, taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
 
 /** The default branch's `vinaya.config.json` every `gh` stub here serves to the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`), base64-encoded as the contents API returns it. */

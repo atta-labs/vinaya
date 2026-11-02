@@ -16,7 +16,7 @@ import {
   ENGINE_STATES,
   ENGINE_TRANSITIONS,
   NODE_CONTRACTS
-} from '../lib/dev-review-loop/dev-review-engine-state-contract.fixture'
+} from '../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture'
 
 const CLI = join(import.meta.dir, '../..')
 const REGISTRY_DIR = join(import.meta.dir, 'registry')

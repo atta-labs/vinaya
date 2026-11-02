@@ -5,12 +5,12 @@ import {
   reviewerCandidateInputPaths,
   writeReviewerCandidateInputs,
   type ReviewerCandidateInputPaths
-} from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
+} from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
 import {
   buildPriorRoundFindingsText,
   renderReviewerDispatchPrompt,
   type ReviewerPromptFacts
-} from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+} from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 
 /**
  * The input one review step judges: an immutable, staged copy of the judged

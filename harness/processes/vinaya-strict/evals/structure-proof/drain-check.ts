@@ -5,7 +5,7 @@ import {
   isDriverPidAlive,
   readDriverLock,
   readPauseState
-} from '../../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+} from '../../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { runtimeDirForThisRepo, TASKS_EXECUTION_DIRNAME } from '../../../../../apps/cli/src/lib/run-paths'
 import { SqliteCheckpointer } from '../../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import { checkpointPath, runDirectory } from '../../bin/run-engine'

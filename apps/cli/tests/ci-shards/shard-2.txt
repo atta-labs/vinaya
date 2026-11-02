@@ -31,17 +31,7 @@ tests/commit-msg.test.ts
 tests/doctrine-resolution.test.ts
 tests/envelope.test.ts
 tests/forge-write.test.ts
-tests/lib/dev-review-loop/developer-dispatch.test.ts
 tests/lib/dev-review-loop/developer-turn-result.test.ts
-tests/lib/dev-review-loop/dev-review-engine-state-contract.test.ts
-tests/lib/dev-review-loop/publication.test.ts
-tests/lib/dev-review-loop/inproc-1.test.ts
-tests/lib/dev-review-loop/rate-limit-red-gate.test.ts
-tests/lib/dev-review-loop/inproc-3.test.ts
-tests/lib/dev-review-loop/developer-publication.test.ts
-tests/lib/dev-review-loop/driver-lifecycle.test.ts
-tests/lib/dev-review-loop/inproc-11.test.ts
-tests/lib/dev-review-loop/reviewer-redispatch.test.ts
 tests/lib/dispatch-task.test.ts
 tests/lib/forge-read.test.ts
 tests/lib/codex-execpolicy.test.ts

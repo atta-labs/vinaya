@@ -25,8 +25,8 @@ import {
   readDriverLock,
   resolveEscalation,
   writePauseState
-} from '../../../src/lib/dev-review-loop/pause-resume.js'
-import { writeTurnResultRecord } from '../../../src/lib/dev-review-loop/turn-result.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { writeTurnResultRecord } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import { readEscalationPacket } from '../../../src/lib/task-tools/read.js'
 
 /**

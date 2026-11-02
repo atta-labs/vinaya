@@ -9,11 +9,11 @@ import {
   writePauseState,
   type PauseCommentPostResult,
   type PauseState
-} from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+} from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import {
   MAX_INFRASTRUCTURE_RETRIES,
   spendsInfrastructureRetry
-} from '../../../../apps/cli/src/lib/dev-review-loop/round-assess'
+} from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 
 // The one place a pause on the Engine path is made durable. Every action whose
 // decision is `pause`, and every error that reaches the runner uncaught, comes

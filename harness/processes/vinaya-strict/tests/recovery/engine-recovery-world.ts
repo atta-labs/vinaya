@@ -12,8 +12,8 @@ import {
 } from '@attalabs/aeg-core'
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { authenticateWorkerInvocation, requestEffect, scopeTarget } from '../../../../../apps/cli/src/lib/broker'
-import { loopHistoryFromComments } from '../../../../../apps/cli/src/lib/dev-review-loop/journal-history'
-import { controlStoreRootFor } from '../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import { loopHistoryFromComments } from '../../loops/dev-review/standalone/dev-review-loop/journal-history'
+import { controlStoreRootFor } from '../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import type { DispatchTeeRecoveryDeps, ParsedLaunch } from '../../../../../apps/cli/src/lib/dispatch'
 import {
   readEffectiveResumedState,

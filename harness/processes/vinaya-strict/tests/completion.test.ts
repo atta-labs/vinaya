@@ -8,7 +8,7 @@ import { createRunControl, type SpawnedProcessLike, type StepNodeResult } from '
 import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
 import { resolveRoleDoctrineText } from '../../../../apps/cli/src/roles/plan'
-import { cleanupAllReviewerIsolationArtifacts } from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
+import { cleanupAllReviewerIsolationArtifacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
 import { ENGINE_SCENARIO_DRIVERS } from '../../../../apps/cli/tests/conformance/dev-review-engine-loop-adapter'
 import {
   runEngine,
@@ -26,7 +26,7 @@ import {
   readExecutionRound
 } from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import { runIdentityOfTask } from '../bin/run-lifecycle'
-import { clearDriverLock } from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+import { clearDriverLock } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { recordedHandoff } from './handoff-fakes'
 import { confidentTurn, heldReviews, PASSING_FORGE_GATES, vendorLines } from './round-fakes'
 

@@ -7,8 +7,8 @@ import { loadProcess } from '../../../../../../harness/kernel/dev-process-socket
 import { fixtureDir } from '../../../../../../apps/cli/tests/lib/test-temp-fixture'
 import { decodeLoopState, type latestRecord, recordOutput } from '../../../executing/actions'
 import { V2_APPROVED_REPAIR_ALLOWANCE, exhaustedPause, withPolicyCeilings } from '../../../bin/run-engine'
-import { heldVerdictPath } from '../../../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
-import { publicationEffectKey } from '../../../../../../apps/cli/src/lib/dev-review-loop/publication'
+import { heldVerdictPath } from '../standalone/dev-review-loop/reviewer-dispatch'
+import { publicationEffectKey } from '../standalone/dev-review-loop/publication'
 import { conflictRepairFailure, readyTestPlanCommand } from './v2-actions'
 import {
   ALL_TESTS,

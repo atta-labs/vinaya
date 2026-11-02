@@ -18,7 +18,7 @@ import {
   makeInProcessDeps,
   makeWorld,
   runLoopInProcess
-} from '../../../../../apps/cli/tests/lib/dev-review-loop-harness'
+} from '../standalone/lib/dev-review-loop-harness'
 import { ALL_RUNNERS, ENGINE_RUNNERS } from './runners'
 
 // Recovery cases that cross launch, checkpoint, broker and test-storage boundaries.

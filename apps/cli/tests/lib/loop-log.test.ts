@@ -10,7 +10,10 @@ import {
   loopLogPathFor,
   narrateDriverEvent
 } from '../../src/lib/loop-log'
-import { devReviewLoop, type LoopDeps } from '../../src/lib/dev-review-loop.js'
+import {
+  devReviewLoop,
+  type LoopDeps
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
 import {
   cleanupWorlds,
   makeInProcessDeps,
@@ -19,7 +22,7 @@ import {
   runLoopInProcess,
   withWorldEnv,
   defaultDeveloperTurnOutput
-} from './dev-review-loop-harness.js'
+} from '../../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-harness.js'
 
 const tempDirs: string[] = []
 afterEach(() => {

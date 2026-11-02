@@ -30,20 +30,20 @@ import {
   DRIVER_HEARTBEAT_INTERVAL_MS,
   keepDriverLock,
   type DriverLockExit
-} from '../../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
-import { loopHistoryFromComments } from '../../../../apps/cli/src/lib/dev-review-loop/journal-history'
+} from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
+import { loopHistoryFromComments } from '../loops/dev-review/standalone/dev-review-loop/journal-history'
 import {
   acquireDriverLockAtomic,
   readDriverLock,
   readPauseState,
   writeDriverLock,
   writePauseState
-} from '../../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+} from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import {
   buildVerdictFromReview,
   latestHeldCleanVerdict,
   writeHeldVerdict
-} from '../../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+} from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { loopLogPathFor } from '../../../../apps/cli/src/lib/loop-log'
 import { parseReviewResult } from '../../../../apps/cli/src/lib/review-result'
 import { manifestDigest } from '../../../../apps/cli/src/lib/review-result'
@@ -387,7 +387,10 @@ describe('one Engine runner per task', () => {
   })
 
   test('the standalone loop calls the moved functions rather than carrying its own copies', () => {
-    const source = readFileSync(join(repoRoot, 'apps/cli/src/lib/dev-review-loop.ts'), 'utf8')
+    const source = readFileSync(
+      join(repoRoot, 'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts'),
+      'utf8'
+    )
     for (const call of ['createDriverExitRecorder(', 'emitDriverHeartbeat(', 'keepDriverLock(', 'seedLoopHistory('])
       expect(source).toContain(call)
     expect(source).not.toContain('function recordDriverExited(')

@@ -60,7 +60,7 @@ export {
  * `vinaya pr report` — the CLI surface over the `AEG:EVIDENCE` engine
  * (`apps/cli/src/lib/pr-report-engine.ts`): argv
  * parsing, console I/O, and `process.exit` only. Every computation lives in
- * the engine, which the loop's driver (`apps/cli/src/lib/dev-review-loop.ts`)
+ * the engine, which the loop's driver (`harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts`)
  * also calls directly, in-process — a command never calls a command
  * (`apps/cli/specs/surface.md`'s "the rule"), so the loop never shells out to
  * this file. See the engine's own module doc for the Group A/B/C model, why

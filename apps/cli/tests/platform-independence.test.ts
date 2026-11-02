@@ -21,6 +21,18 @@ import ts from 'typescript'
  */
 
 const TESTS_ROOT = import.meta.dir
+/** The standalone driver's tests, moved into the process with the driver; named relative to `TESTS_ROOT`. */
+const STANDALONE_TESTS_ROOT = join(
+  TESTS_ROOT,
+  '..',
+  '..',
+  '..',
+  'harness',
+  'processes',
+  'vinaya-strict',
+  'tests',
+  'standalone'
+)
 
 /** Syntax-tree walk: the host-platform reads in one source text, as 1-based line numbers. */
 export function hostPlatformReads(fileName: string, source: string): number[] {
@@ -126,7 +138,7 @@ const REAL_SANDBOX_FILES: Readonly<Record<string, string>> = {
     "spawns the real dispatch command, whose confinement is the host's real sandbox, so its confinement cases are per platform",
   'commands/dispatch-task.test.ts':
     "spawns the real dispatch command, whose confinement is the host's real sandbox, so its cases are per platform",
-  'lib/dev-review-loop.test.ts':
+  '../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts':
     "spawns the real dispatch command, whose confinement is the host's real sandbox, so its cases are per platform"
 }
 
@@ -175,7 +187,7 @@ describe('hostPlatformReads — the syntax-tree classifier', () => {
 
 describe('CLI tests do not read the host platform outside the real-sandbox list', () => {
   const readers = new Map<string, number[]>()
-  for (const file of testFiles(TESTS_ROOT)) {
+  for (const file of [...testFiles(TESTS_ROOT), ...testFiles(STANDALONE_TESTS_ROOT)]) {
     const lines = hostPlatformReads(file, readFileSync(file, 'utf8'))
     if (lines.length > 0) readers.set(relative(TESTS_ROOT, file), lines)
   }
