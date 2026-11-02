@@ -129,7 +129,7 @@
   "apps/cli/src/lib/principal-test-plan-wait-check-name.ts": 4,
   "apps/cli/src/lib/prose-rules-config.ts": 1,
   "apps/cli/src/lib/prose-rules-plan.ts": 1,
-  "apps/cli/src/lib/repo-scanner-tests.ts": 7,
+  "apps/cli/src/lib/repo-scanner-tests.ts": 8,
   "apps/cli/src/lib/run-paths.ts": 20,
   "apps/cli/src/lib/self-host.ts": 2,
   "apps/cli/src/lib/source-manifest.ts": 23,
