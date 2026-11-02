@@ -467,6 +467,68 @@ export type NativeBaseInputs = {
   exists: (path: string) => boolean
   /** Absolute paths changed between `from` and the head, or `null` when git could not read them. */
   changedBetween: (from: string) => string[] | null
+  /** The reads that let a default-branch merge since the recorded head keep the recorded proof; absent: no merge-aware base. */
+  mergeAware?: MergeAwareReads
+}
+
+/** What a recorded test needs from its runner: the facts the inventory holds for it at one revision. */
+export type TestRunnerFacts = {
+  suite: string
+  runner: string
+  cwd: string
+  preload: string | null
+  environment: unknown
+}
+
+/** The git and inventory reads behind {@link mergeAwareBase}; every one answers `null` when it could not read. */
+export type MergeAwareReads = {
+  /** The newest first-parent merge since `recordHead` when its first parent is `recordHead` and it is a clean union of its two sides. */
+  cleanMergeOnto: (recordHead: string) => string | null
+  /** The native context with the verification digest now and the inventory read at `recordHead`. */
+  contextAtRecord: (recordHead: string) => string | null
+  /** The runner facts of the repository-relative test `id` in the inventory read at `recordHead`. */
+  factsAtRecord: (recordHead: string, id: string) => TestRunnerFacts | null
+  /** The runner facts of the repository-relative test `id` in the inventory read now. */
+  factsNow: (id: string) => TestRunnerFacts | null
+}
+
+/**
+ * The merge commit a push may build on instead of a recorded head: the newest first-parent merge since that head, a
+ * clean union with the recorded head as its first parent, when the recorded context is the one a re-read of the
+ * inventory at the recorded head gives and every recorded test (an absolute path) has the same runner facts at the
+ * recorded head and now. A recorded context equal to the one now needs no facts. Anything unreadable answers `null`.
+ * It reuses only the local proof of the recorded tests; the required CI check remains the backstop for the rest.
+ */
+export function mergeAwareBase(input: {
+  repoRoot: string
+  recordHead: string
+  recordContext: string | undefined
+  context: string
+  tests: readonly string[]
+  reads: MergeAwareReads
+}): string | null {
+  const { reads, recordHead } = input
+  if (!input.recordContext) return null
+  const merge = reads.cleanMergeOnto(recordHead)
+  if (!merge) return null
+  if (input.recordContext === input.context) return merge
+  if (reads.contextAtRecord(recordHead) !== input.recordContext) return null
+  for (const path of input.tests) {
+    if (!path.startsWith(input.repoRoot)) return null
+    const id = path.slice(input.repoRoot.length).replace(/^[\\/]+/, '')
+    const before = reads.factsAtRecord(recordHead, id)
+    const now = reads.factsNow(id)
+    if (!before || !now) return null
+    if (
+      before.suite !== now.suite ||
+      before.runner !== now.runner ||
+      before.cwd !== now.cwd ||
+      before.preload !== now.preload ||
+      JSON.stringify(before.environment) !== JSON.stringify(now.environment)
+    )
+      return null
+  }
+  return merge
 }
 
 export type NativeBaseChoice = {
@@ -487,6 +549,7 @@ export type NativeBaseChoice = {
  * merge base: the wider answer.
  */
 export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
+  const otherContext = 'the last refused push ran under another or unreadable verification context'
   const context = inputs.context !== null && inputs.inputsClean === true ? inputs.context : null
   const full = (reason: string, obligations: string[] = []): NativeBaseChoice => ({
     base: inputs.mergeBase,
@@ -504,19 +567,46 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
     const obligations = record.failed.filter(inputs.exists).sort()
     if (obligations.length !== record.failed.length)
       return full('a failed test file of the last refused push no longer exists', obligations)
-    if (record.selectionCompleted !== true || context === null || record.context !== context)
-      return full('the last refused push ran under another or unreadable verification context', obligations)
-    if (!narrowable(record.head)) return full('the changes since the refused push could not be narrowed', obligations)
+    if (record.selectionCompleted !== true || context === null) return full(otherContext, obligations)
+    const merged = inputs.mergeAware
+      ? mergeAwareBase({
+          repoRoot: inputs.repoRoot,
+          recordHead: record.head,
+          recordContext: record.context,
+          context,
+          tests: obligations,
+          reads: inputs.mergeAware
+        })
+      : null
+    if (merged === null && record.context !== context) return full(otherContext, obligations)
+    const from = merged ?? record.head
+    if (!narrowable(record.head) || !narrowable(from))
+      return full('the changes since the refused push could not be narrowed', obligations)
     const what = record.failedHoldsUnconfirmed === true ? 'what it did not confirm' : 'what failed'
-    return { base: record.head, kind: 'rerun', obligations, reason: `re-running ${what} at ${record.head}` }
+    const onto = merged === null ? '' : `, building on the merge ${merged}`
+    return { base: from, kind: 'rerun', obligations, reason: `re-running ${what} at ${record.head}${onto}` }
   }
   const passing = inputs.passing
   if (!passing || passing.selectionCompleted !== true || passing.branch !== inputs.branch)
     return full('no passing run on this branch to build on')
-  if (context === null || passing.context !== context) return full('the passing run had another verification context')
+  if (context === null) return full('the passing run had another verification context')
+  const merged = inputs.mergeAware
+    ? mergeAwareBase({
+        repoRoot: inputs.repoRoot,
+        recordHead: passing.head,
+        recordContext: passing.context,
+        context,
+        tests: passing.selection,
+        reads: inputs.mergeAware
+      })
+    : null
+  if (merged === null && passing.context !== context) return full('the passing run had another verification context')
   if (!inputs.isAncestor(passing.head)) return full('the passing head is not in this branch history')
-  if (!narrowable(passing.head)) return full('the changes since the passing run could not be narrowed')
-  return { base: passing.head, kind: 'since-green', obligations: [], reason: `building on the pass at ${passing.head}` }
+  const from = merged ?? passing.head
+  if (!narrowable(passing.head) || !narrowable(from))
+    return full('the changes since the passing run could not be narrowed')
+  const onto = merged === null ? '' : `, building on the merge ${merged}`
+  return { base: from, kind: 'since-green', obligations: [], reason: `building on the pass at ${passing.head}${onto}` }
 }
 
 /**
