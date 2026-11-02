@@ -94,6 +94,13 @@ export type GroupNativeTestsInput = {
    * exclusion is computed and only the execution check catches one.
    */
   universe?: readonly TestIdentity[]
+  /**
+   * The most files one group may hold. A larger group is split, after its
+   * problems are decided, into ordered chunks of consecutive sorted tests, each
+   * its own runner start with id `<suite>@<configuration>#<k>of<n>`; a chunk of
+   * a whole suite names its files. Absent, no group is split.
+   */
+  maxFilesPerGroup?: number
 }
 
 /**
@@ -137,6 +144,9 @@ function startFacts(t: TestIdentity): string {
  * A group with no test is never produced, so no runner starts for nothing.
  */
 export function groupNativeTests(input: GroupNativeTestsInput): NativeGrouping {
+  const maxFilesPerGroup = input.maxFilesPerGroup
+  if (maxFilesPerGroup !== undefined && (!Number.isInteger(maxFilesPerGroup) || maxFilesPerGroup < 1))
+    throw new Error(`maxFilesPerGroup must be a positive integer, got ${String(maxFilesPerGroup)}`)
   const problems: NativeProblem[] = []
   type Building = { first: TestIdentity; configuration: string; tests: Set<string>; whole: string | null }
   const building = new Map<string, Building>()
@@ -219,33 +229,40 @@ export function groupNativeTests(input: GroupNativeTestsInput): NativeGrouping {
   const groups: NativeGroup[] = []
   for (const [id, group] of [...building.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const f = group.first
-    const tests = [...group.tests].sort()
-    const scope = group.whole === null ? 'files' : 'suite'
-    const relative = tests.map((t) => relativeToCwd(f.cwd, t) as string)
-    const args = scope === 'suite' ? [] : f.runner === 'bun' ? relative.map((r) => `./${r}`) : relative
-    const exclude =
-      scope === 'files' && f.runner === 'vitest'
-        ? (universe.get(f.suite) ?? [])
-            .filter((other) => !group.tests.has(other))
-            .map((other) => relativeToCwd(f.cwd, other))
-            .filter((other): other is string => other !== null && relative.some((arg) => other.includes(arg)))
-            .sort()
-        : []
-    groups.push({
-      id,
-      suite: f.suite,
-      owner: f.owner,
-      kind: f.kind,
-      runner: f.runner,
-      cwd: f.cwd,
-      preload: f.preload,
-      environment: f.environment,
-      configuration: group.configuration,
-      scope,
-      reason: group.whole,
-      tests,
-      args,
-      exclude
+    const all = [...group.tests].sort()
+    const chunked = maxFilesPerGroup !== undefined && all.length > maxFilesPerGroup
+    const slices: string[][] = []
+    if (chunked) for (let i = 0; i < all.length; i += maxFilesPerGroup) slices.push(all.slice(i, i + maxFilesPerGroup))
+    else slices.push(all)
+    slices.forEach((tests, index) => {
+      const members = new Set(tests)
+      const scope = group.whole === null || chunked ? 'files' : 'suite'
+      const relative = tests.map((t) => relativeToCwd(f.cwd, t) as string)
+      const args = scope === 'suite' ? [] : f.runner === 'bun' ? relative.map((r) => `./${r}`) : relative
+      const exclude =
+        scope === 'files' && f.runner === 'vitest'
+          ? (universe.get(f.suite) ?? [])
+              .filter((other) => !members.has(other))
+              .map((other) => relativeToCwd(f.cwd, other))
+              .filter((other): other is string => other !== null && relative.some((arg) => other.includes(arg)))
+              .sort()
+          : []
+      groups.push({
+        id: chunked ? `${id}#${index + 1}of${slices.length}` : id,
+        suite: f.suite,
+        owner: f.owner,
+        kind: f.kind,
+        runner: f.runner,
+        cwd: f.cwd,
+        preload: f.preload,
+        environment: f.environment,
+        configuration: group.configuration,
+        scope,
+        reason: group.whole,
+        tests,
+        args,
+        exclude
+      })
     })
   }
   return { groups, problems }

@@ -96,6 +96,9 @@ import { type GroupOutcome, type RunResult, runGroups, WHOLE_ON_CHANGE_OWNERS, W
 /** The version of how this adapter executes a plan; part of every verification context it names. */
 export const LOCAL_RUN_EXECUTION = 'native-local-run@1'
 
+/** The most files one local runner start holds, so a push's runner memory is released between chunks. */
+export const LOCAL_GROUP_FILE_CAP = 40
+
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
 function cleanGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -199,7 +202,12 @@ export function localNativePlan(input: LocalPlanInput): LocalPlan {
   const tests: NativeTestRequest[] = known
     .filter((t) => !whole.has(t.suite))
     .map((t) => ({ ...t, configuration: DEFAULT_CONFIGURATION }))
-  const grouping = groupNativeTests({ tests, wholeSuites, universe: view.tests })
+  const grouping = groupNativeTests({
+    tests,
+    wholeSuites,
+    universe: view.tests,
+    maxFilesPerGroup: LOCAL_GROUP_FILE_CAP
+  })
   problems.push(...grouping.problems)
   const identities = grouping.groups.flatMap((g) => g.tests.map((t) => `${t}@${g.configuration}`)).sort(compare)
   return {
@@ -823,7 +831,7 @@ function exactCommand(repoRoot: string, argv: readonly string[]): number {
     if (!test) problems.push(`${identity.slice(0, at)} is not a test the inventory holds`)
     else tests.push({ ...test, configuration: identity.slice(at + 1) })
   }
-  const grouping = groupNativeTests({ tests, universe: view.tests })
+  const grouping = groupNativeTests({ tests, universe: view.tests, maxFilesPerGroup: LOCAL_GROUP_FILE_CAP })
   problems.push(...grouping.problems.map((p) => `${p.code} ${p.path}: ${p.detail}`))
   if (problems.length > 0) {
     process.stderr.write(`vinaya local-run: refused — ${problems.join('; ')}\n`)
