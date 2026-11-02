@@ -47,6 +47,7 @@ import {
   selectTests
 } from '../../apps/cli/src/lib/verification/index.js'
 import {
+  bunLockParser,
   INVENTORY_PATH,
   type InventoryDeclarations,
   type InventoryView,
@@ -151,7 +152,7 @@ export function repositoryPolicy(
     scanners: scannerDeclarations(repoRoot, head),
     spawnPrograms: [{ binary: CLI_SPAWN_BINARY, entrypoint: DEFAULT_CLI_ENTRYPOINT }],
     obligations: obligationsOf(repoRoot, head, view, consumer),
-    parsers: { toml: (text) => Bun.TOML.parse(text) }
+    parsers: { toml: (text) => Bun.TOML.parse(text), 'bun-lock': bunLockParser }
   }
 }
 

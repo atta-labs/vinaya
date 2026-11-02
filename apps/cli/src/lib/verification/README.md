@@ -100,6 +100,7 @@ or a record of a past run.
 | `index.ts` | the public entrypoint |
 | `types.ts` | the public types |
 | `inventory.ts` | inventory validation, and which readers a changed input reaches |
+| `lockfile-identity.ts` | a parsed `bun.lock`'s dependency identity, its path text replaced |
 | `selector.ts` | trees, repository readers, the graph walk and `selectTests` |
 | `native.ts` | native test groups, and the check of what each runner executed |
 | `compiler-graph.ts` | the compiler-resolved import graph and its read-only source seam |

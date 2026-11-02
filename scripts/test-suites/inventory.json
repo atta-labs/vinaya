@@ -120,9 +120,10 @@
       "id": "lockfile",
       "kind": "lockfile",
       "paths": ["bun.lock"],
+      "format": "bun-lock",
       "readers": [
         {
-          "kind": "raw-bytes",
+          "kind": "semantic",
           "suites": [
             "cli",
             "log-server",
@@ -137,7 +138,7 @@
           ]
         }
       ],
-      "reason": "The lockfile decides every installed dependency every suite runs against."
+      "reason": "The lockfile decides every installed dependency every suite runs against; it is read as its dependency identity, so a workspace folder or local path move alone changes no installed dependency."
     },
     {
       "id": "config-probe-program",
@@ -162,6 +163,13 @@
       "paths": ["packages/sources/tests/fixtures/golden-tranche-snapshot.md"],
       "readers": [{ "kind": "raw-bytes", "tests": ["packages/sources/src/golden-forge-vs-file.test.ts"] }],
       "reason": "The golden comparison reads the snapshot's bytes from disk."
+    },
+    {
+      "id": "bun-lock-fixtures",
+      "kind": "fixture",
+      "paths": ["scripts/test-suites/fixtures/bun-lock/"],
+      "readers": [{ "kind": "raw-bytes", "tests": ["scripts/test-suites/inventory-check.test.ts"] }],
+      "reason": "The inventory test reads real lockfiles from before and after two workspace moves from disk, outside any import."
     },
     {
       "id": "aeg-core-test-fixtures",
