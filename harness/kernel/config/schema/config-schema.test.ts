@@ -86,7 +86,9 @@ describe('the kernel configuration resolvers', () => {
   })
 
   test('header references resolve from the environment, an unset one to the empty string', () => {
-    expect(resolveLogsHeaderValues({ A: 'Bearer ${T}', B: '${MISSING}' }, { T: 'tok' })).toEqual({
+    // A literal `${NAME}` reference, written with `$` concatenated so it is never read as a template placeholder.
+    const reference = (name: string) => `$${'{'}${name}}`
+    expect(resolveLogsHeaderValues({ A: `Bearer ${reference('T')}`, B: reference('MISSING') }, { T: 'tok' })).toEqual({
       A: 'Bearer tok',
       B: ''
     })
