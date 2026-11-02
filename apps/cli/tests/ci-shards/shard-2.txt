@@ -36,3 +36,4 @@ tests/lib/push-progress.test.ts
 tests/lib/push-progress-observer.test.ts
 tests/conformance/packed-push-progress.test.ts
 tests/placement.test.ts
+tests/config-golden.test.ts
