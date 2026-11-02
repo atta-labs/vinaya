@@ -3,6 +3,7 @@
 // changed since. Pure decisions are tested directly; the recorder is driven
 // for real against a throwaway git repository.
 import { describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -14,8 +15,11 @@ import {
   chooseNativeBase,
   chooseTests,
   computeVerificationContext,
+  isAncestor,
+  type MergeAwareReads,
   type NativeBaseInputs,
   nativePassingRecord,
+  type TestRunnerFacts,
   decideSelection,
   type FailedTestsRecord,
   parseFailedTestFiles,
@@ -40,6 +44,7 @@ import {
   addedOrRenamedFilesSinceRemoteBase,
   changedFileDiffsSinceRemoteBase,
   changedFilesSinceRemoteBase,
+  cleanMergeOnto,
   type ReadFailure,
   removedFilesSinceRemoteBase
 } from '../../src/lib/remote-base'
@@ -1051,5 +1056,237 @@ describe('the native push: its base, its obligations and its proof', () => {
       { note: { ...note(['a.test.ts@default']), native: undefined } }
     ])
       expect(proof(over as never)).toBeNull()
+  })
+})
+
+describe('merge-aware base', () => {
+  const BEFORE = 'context-before-the-merge'
+  const NOW = 'context-after-the-merge'
+  const FACTS: TestRunnerFacts = { suite: 'cli', runner: 'bun', cwd: 'apps/cli', preload: null, environment: {} }
+  const gitEnv: NodeJS.ProcessEnv = { ...process.env }
+  for (const key of Object.keys(gitEnv)) if (key.startsWith('GIT_')) delete gitEnv[key]
+  const run = (dir: string, args: string[]) =>
+    execFileSync('git', args, { cwd: dir, encoding: 'utf8', env: gitEnv }).trim()
+  const commitFile = (dir: string, file: string, content: string, message: string) => {
+    mkdirSync(dirname(join(dir, file)), { recursive: true })
+    writeFileSync(join(dir, file), content)
+    run(dir, ['add', '--', file])
+    run(dir, ['commit', '--quiet', '-m', message])
+  }
+
+  // A branch with a recorded commit, a default-branch commit editing the suite declarations merged into it, and one
+  // branch commit after the merge.
+  function fixture(options: { main?: Record<string, string>; extraMerge?: boolean } = {}) {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-merge-aware-')))
+    run(dir, ['init', '--quiet', '--initial-branch=main'])
+    run(dir, ['config', 'user.email', 'test@example.com'])
+    run(dir, ['config', 'user.name', 'Test'])
+    commitFile(dir, 'scripts/test-suites/inventory.json', '{"include":["a"]}\n', 'Initial commit')
+    commitFile(dir, 'shared.txt', 'one\ntwo\nthree\n', 'A shared file')
+    const mergeBase = run(dir, ['rev-parse', 'HEAD'])
+    run(dir, ['checkout', '--quiet', '-b', 'task/x/1'])
+    commitFile(dir, 'shared.txt', 'ONE\ntwo\nthree\n', 'Branch edit of the shared file')
+    commitFile(dir, 'apps/cli/src/recorded.ts', 'recorded\n', 'Recorded branch commit')
+    const recordHead = run(dir, ['rev-parse', 'HEAD'])
+    run(dir, ['checkout', '--quiet', 'main'])
+    for (const [file, content] of Object.entries(
+      options.main ?? {
+        'scripts/test-suites/inventory.json': '{"include":["a","b"]}\n',
+        'apps/cli/src/brought.ts': 'x\n'
+      }
+    ))
+      commitFile(dir, file, content, `Default-branch edit of ${file}`)
+    run(dir, ['checkout', '--quiet', 'task/x/1'])
+    run(dir, ['merge', '--quiet', '--no-ff', '--no-edit', 'main'])
+    const merge = run(dir, ['rev-parse', 'HEAD'])
+    if (options.extraMerge) {
+      run(dir, ['checkout', '--quiet', 'main'])
+      commitFile(dir, 'apps/cli/src/later.ts', 'later\n', 'Another default-branch commit')
+      run(dir, ['checkout', '--quiet', 'task/x/1'])
+      run(dir, ['merge', '--quiet', '--no-ff', '--no-edit', 'main'])
+    }
+    commitFile(dir, 'apps/cli/src/after.ts', 'after\n', 'Branch commit after the merge')
+    return { dir, mergeBase, recordHead, merge, test: join(dir, 'apps/cli/tests/a.test.ts') }
+  }
+
+  type Fixture = ReturnType<typeof fixture>
+  const reads = (f: Fixture, over: Partial<MergeAwareReads> = {}): MergeAwareReads => ({
+    cleanMergeOnto: (head) => cleanMergeOnto(f.dir, head),
+    contextAtRecord: () => BEFORE,
+    factsAtRecord: () => FACTS,
+    factsNow: () => FACTS,
+    ...over
+  })
+  const failedRecord = (f: Fixture, over: Partial<FailedTestsRecord> = {}): FailedTestsRecord => ({
+    version: 1,
+    head: f.recordHead,
+    branch: 'task/x/1',
+    failed: [f.test],
+    recordedAt: '2026-10-30T00:00:00.000Z',
+    selectionCompleted: true,
+    context: BEFORE,
+    ...over
+  })
+  const passingRecord = (f: Fixture, over: Partial<PassingRecord> = {}): PassingRecord => ({
+    version: 2,
+    kind: 'passed',
+    head: f.recordHead,
+    branch: 'task/x/1',
+    selection: [f.test],
+    selectionCompleted: true,
+    context: BEFORE,
+    recordedAt: '2026-10-30T00:00:00.000Z',
+    ...over
+  })
+  const choose = (f: Fixture, over: Partial<NativeBaseInputs> = {}) =>
+    chooseNativeBase({
+      repoRoot: f.dir,
+      head: run(f.dir, ['rev-parse', 'HEAD']),
+      branch: 'task/x/1',
+      mergeBase: f.mergeBase,
+      failed: null,
+      passing: null,
+      context: NOW,
+      inputsClean: true,
+      isAncestor: (ancestor) => isAncestor(f.dir, ancestor, 'HEAD'),
+      exists: () => true,
+      changedBetween: (from) => changedBetween(f.dir, from, 'HEAD'),
+      mergeAware: reads(f),
+      ...over
+    })
+  const widened = (f: Fixture, choice: ReturnType<typeof choose>) => {
+    expect(choice).toMatchObject({ base: f.mergeBase, kind: 'merge-base' })
+    return choice
+  }
+  const OTHER = 'the last refused push ran under another or unreadable verification context'
+
+  it('a record, a merge editing the suite declarations and one branch commit build on the merge', () => {
+    const f = fixture()
+    try {
+      const choice = choose(f, { failed: failedRecord(f) })
+      expect(choice).toMatchObject({ base: f.merge, kind: 'rerun', obligations: [f.test] })
+      expect(changedBetween(f.dir, choice.base, 'HEAD')).toEqual([join(f.dir, 'apps/cli/src/after.ts')])
+      expect(changedBetween(f.dir, f.mergeBase, 'HEAD')?.length).toBeGreaterThan(1)
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a verified pass whose head the merge has as first parent builds on the merge', () => {
+    const f = fixture()
+    try {
+      expect(choose(f, { passing: passingRecord(f) })).toMatchObject({ base: f.merge, kind: 'since-green' })
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a verification digest that moved widens and keeps the obligations', () => {
+    const f = fixture()
+    try {
+      const moved = reads(f, { contextAtRecord: () => 'digest-moved-by-bunfig-or-lockfile' })
+      const choice = widened(f, choose(f, { failed: failedRecord(f), mergeAware: moved }))
+      expect(choice).toMatchObject({ obligations: [f.test], reason: OTHER })
+      expect(choose(f, { passing: passingRecord(f), mergeAware: moved }).reason).toBe(
+        'the passing run had another verification context'
+      )
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a recorded test whose runner facts moved with the merge widens', () => {
+    const f = fixture()
+    try {
+      for (const moved of [
+        { ...FACTS, runner: 'vitest' },
+        { ...FACTS, cwd: 'apps/other' },
+        { ...FACTS, preload: 'setup.ts' },
+        { ...FACTS, suite: 'other' },
+        { ...FACTS, environment: { TZ: 'UTC' } }
+      ])
+        widened(f, choose(f, { failed: failedRecord(f), mergeAware: reads(f, { factsNow: () => moved }) }))
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a recorded test absent from either inventory widens', () => {
+    const f = fixture()
+    try {
+      for (const over of [{ factsAtRecord: () => null }, { factsNow: () => null }])
+        widened(f, choose(f, { failed: failedRecord(f), mergeAware: reads(f, over) }))
+      widened(f, choose(f, { failed: failedRecord(f, { failed: ['/elsewhere/a.test.ts'] }), exists: () => true }))
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('plans a test the head inventory lacks', () => {
+    const f = fixture()
+    try {
+      const lacking = reads(f, { factsNow: (id) => (id.endsWith('a.test.ts') ? null : FACTS) })
+      const choice = widened(f, choose(f, { failed: failedRecord(f), mergeAware: lacking }))
+      expect(choice.obligations).toEqual([f.test])
+      expect(choose(f, { passing: passingRecord(f), mergeAware: lacking }).kind).toBe('merge-base')
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a second push after a narrowed run, nothing else moved, narrows again', () => {
+    const f = fixture()
+    try {
+      const narrowedHead = run(f.dir, ['rev-parse', 'HEAD'])
+      commitFile(f.dir, 'apps/cli/src/next.ts', 'next\n', 'Another branch commit')
+      const choice = choose(f, { failed: failedRecord(f, { head: narrowedHead, context: NOW }) })
+      expect(choice).toMatchObject({ base: narrowedHead, kind: 'rerun', obligations: [f.test] })
+      expect(changedBetween(f.dir, choice.base, 'HEAD')).toEqual([join(f.dir, 'apps/cli/src/next.ts')])
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a merge where both sides edited one file widens', () => {
+    const f = fixture({ main: { 'shared.txt': 'one\ntwo\nTHREE\n' } })
+    try {
+      expect(run(f.dir, ['show', `${f.merge}:shared.txt`])).toBe('ONE\ntwo\nTHREE')
+      widened(f, choose(f, { failed: failedRecord(f) }))
+      widened(f, choose(f, { passing: passingRecord(f) }))
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('every other shape gives the base chosen before the merge-aware rule', () => {
+    const second = fixture({ extraMerge: true })
+    try {
+      widened(second, choose(second, { failed: failedRecord(second) }))
+      widened(second, choose(second, { passing: passingRecord(second) }))
+    } finally {
+      rmSync(second.dir, { recursive: true, force: true })
+    }
+    const config = fixture({ main: { [ROOT_CONFIG_FILENAME]: '{}\n' } })
+    try {
+      expect(choose(config, { failed: failedRecord(config) }).reason).toBe(
+        'the changes since the refused push could not be narrowed'
+      )
+      widened(config, choose(config, { failed: failedRecord(config) }))
+    } finally {
+      rmSync(config.dir, { recursive: true, force: true })
+    }
+    const f = fixture()
+    try {
+      for (const over of [
+        { mergeAware: reads(f, { cleanMergeOnto: () => null }) },
+        { mergeAware: undefined },
+        { changedBetween: () => null }
+      ])
+        widened(f, choose(f, { failed: failedRecord(f), ...over }))
+      widened(f, choose(f, { failed: failedRecord(f, { selectionCompleted: false }) }))
+      widened(f, choose(f, { failed: failedRecord(f, { context: undefined }) }))
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
   })
 })

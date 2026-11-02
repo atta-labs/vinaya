@@ -63,6 +63,7 @@ import {
   readPassingRecord,
   SELECTION_NOTE,
   type SelectionNote,
+  type TestRunnerFacts,
   verificationInputsDirty,
   writeJsonUnderGit
 } from '../../apps/cli/src/lib/pre-push-failed-tests.js'
@@ -71,7 +72,7 @@ import {
   recordGreenTestRun
 } from '../../harness/processes/vinaya-strict/tools/pr-report/pr-report-engine.js'
 import { nativeRunCommand, parseNativeRunCommand } from '../../apps/cli/src/lib/pre-push-test-runner.js'
-import { resolveRemoteBase } from '../../apps/cli/src/lib/remote-base.js'
+import { cleanMergeOnto, resolveRemoteBase } from '../../apps/cli/src/lib/remote-base.js'
 import {
   DEFAULT_CONFIGURATION,
   groupNativeTests,
@@ -258,7 +259,24 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
   if (!mergeBase) throw new Error(`no merge base between ${remoteBase} and ${head}`)
   const headView = readTestInventory(repoRoot, { head }).head
   const inputsClean = verificationInputsDirty(repoRoot) === false
-  const context = nativeContext(computeVerificationContext(repoRoot)?.digest ?? null, headView.contextIdentity)
+  const verification = computeVerificationContext(repoRoot)?.digest ?? null
+  const context = nativeContext(verification, headView.contextIdentity)
+  const viewAt = (revision: string): InventoryView | null => {
+    try {
+      return readTestInventory(repoRoot, { head: revision }).head
+    } catch {
+      return null
+    }
+  }
+  const factsIn = (view: InventoryView | null, id: string): TestRunnerFacts | null => {
+    const test = view?.tests.find((t) => t.id === id)
+    return test ? test : null
+  }
+  const recordViews = new Map<string, InventoryView | null>()
+  const recordView = (revision: string) => {
+    if (!recordViews.has(revision)) recordViews.set(revision, viewAt(revision))
+    return recordViews.get(revision) ?? null
+  }
   const choice = chooseNativeBase({
     repoRoot,
     head,
@@ -270,7 +288,16 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
     inputsClean,
     isAncestor: (ancestor) => isAncestor(repoRoot, ancestor, head),
     exists: existsSync,
-    changedBetween: (from) => changedBetween(repoRoot, from, head)
+    changedBetween: (from) => changedBetween(repoRoot, from, head),
+    mergeAware: {
+      cleanMergeOnto: (recordHead) => cleanMergeOnto(repoRoot, recordHead),
+      contextAtRecord: (recordHead) => {
+        const view = recordView(recordHead)
+        return view ? nativeContext(verification, view.contextIdentity) : null
+      },
+      factsAtRecord: (recordHead, id) => factsIn(recordView(recordHead), id),
+      factsNow: (id) => factsIn(headView, id)
+    }
   })
   const relative = (path: string) => path.slice(repoRoot.length + 1)
   const obligations = choice.obligations.map(relative)

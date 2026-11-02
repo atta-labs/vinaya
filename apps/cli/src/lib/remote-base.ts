@@ -105,13 +105,51 @@ function startingRemoteBase(repoRoot: string): string {
   return 'HEAD~1'
 }
 
-/** The second parent of the newest first-parent merge after `start` that `start` does not already hold, else `start`. */
-function mergedCommitAfter(repoRoot: string, start: string): string {
-  const merges = git(repoRoot, ['rev-list', '--first-parent', '--merges', `${start}..HEAD`])
-  for (const merge of merges
+/** The merge commits on HEAD's first-parent chain after `start`, newest first; empty when none or when the read fails. */
+export function firstParentMerges(repoRoot: string, start: string): string[] {
+  return git(repoRoot, ['rev-list', '--first-parent', '--merges', `${start}..HEAD`])
     .split('\n')
     .map((s) => s.trim())
-    .filter(Boolean)) {
+    .filter(Boolean)
+}
+
+const nameList = (out: string): string[] =>
+  out
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+/**
+ * The newest first-parent merge after `recordHead` when its first parent is `recordHead` and it is a clean union of
+ * its two sides, else `null`. Clean: the merge has two parents, and every file it changed relative to its first
+ * parent was changed by the second parent's side since their merge base and holds the second parent's version —
+ * a resolved conflict, or an edit made in the merge itself, is not clean. Any failed read answers `null`.
+ */
+export function cleanMergeOnto(repoRoot: string, recordHead: string): string | null {
+  const merge = firstParentMerges(repoRoot, recordHead)[0]
+  if (!merge) return null
+  const failure: ReadFailure = { failed: false }
+  const first = git(repoRoot, ['rev-parse', '--verify', '--quiet', `${merge}^1`], failure)
+  const second = git(repoRoot, ['rev-parse', '--verify', '--quiet', `${merge}^2`], failure)
+  const recorded = git(repoRoot, ['rev-parse', '--verify', '--quiet', `${recordHead}^{commit}`], failure)
+  const third = git(repoRoot, ['rev-parse', '--verify', '--quiet', `${merge}^3`])
+  if (failure.failed || !first || !second || first !== recorded || third) return null
+  const base = git(repoRoot, ['merge-base', first, second], failure)
+  const brought = nameList(git(repoRoot, ['diff', '--name-only', '--no-renames', base, second], failure))
+  const changed = nameList(git(repoRoot, ['diff', '--name-only', '--no-renames', first, merge], failure))
+  if (failure.failed || !base) return null
+  for (const file of changed) {
+    if (!brought.includes(file)) return null
+    const same: ReadFailure = { failed: false }
+    git(repoRoot, ['diff', '--quiet', second, merge, '--', file], same)
+    if (same.failed) return null
+  }
+  return merge
+}
+
+/** The second parent of the newest first-parent merge after `start` that `start` does not already hold, else `start`. */
+function mergedCommitAfter(repoRoot: string, start: string): string {
+  for (const merge of firstParentMerges(repoRoot, start)) {
     const merged = git(repoRoot, ['rev-parse', '--verify', '--quiet', `${merge}^2`])
     if (!merged) continue
     // `--is-ancestor` answers through its exit status alone: a non-zero exit is "not an ancestor".
