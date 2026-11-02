@@ -3331,7 +3331,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // its `attempted`/`observed`/`verified` lines through instead — a
   // separate sink built by the installed factory, with its own `pendingWrites`/
   // `drainChain`, that this closure's own `drain()` cannot see. Every abrupt
-  // exit below drains both, never just the one this closure happens to own.
+  // exit below drains both, never just the one this closure happens to own;
+  // a default sink no `log()` has built yet has nothing in flight to drain.
   const drainAllLogSinks = (): Promise<void> => Promise.all([drainLoopLogSink(), drainLogSink()]).then(() => undefined)
   // `loopLogPathFor`'s own `repo` parameter never affects the path it
   // returns (kept on the signature only for callers that already resolved
