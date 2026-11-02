@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import type { ReviewBinding, ReviewerRole } from '../../src/lib/review-result'
+import type {
+  ReviewBinding,
+  ReviewerRole
+} from '../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 import {
   admitClean,
   gradeItem,

@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type ControlStoreDeps, defaultControlStoreDeps, readEffect, StaleEpochWriteError } from '@attalabs/aeg-core'
-import type { DispatchTeeRecoveryDeps } from '../../../src/lib/dispatch'
+import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import {
   acquireOwnership,
   authenticateWorkerInvocation,

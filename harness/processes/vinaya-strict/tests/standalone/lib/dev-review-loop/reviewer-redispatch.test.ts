@@ -15,7 +15,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import { buildWriteAccessScope, type DispatchOpts } from '../../../../../../../apps/cli/src/lib/dispatch.js'
+import { buildWriteAccessScope, type DispatchOpts } from '../../../../loops/dev-review/dispatch/dispatch.js'
 import {
   CLEAN_SECURITY,
   cleanupWorlds,

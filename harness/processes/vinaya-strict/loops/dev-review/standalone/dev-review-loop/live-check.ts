@@ -22,8 +22,8 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { DevReviewLoopEventInput, LiveRecordEntry, LiveRecordLine, LoopState } from '@attalabs/aeg-core'
 import { buildCheckEnv } from '../../../../../../../apps/cli/src/checks/runner.js'
-import { AGENT_VENDOR_NAMES, type AgentVendor } from '../../../../../../../apps/cli/src/lib/dispatch.js'
-import { sanitizeForgeLogTail } from '../../../../../../../apps/cli/src/lib/task-tools/pr-facts.js'
+import { AGENT_VENDOR_NAMES, type AgentVendor } from '../../dispatch/dispatch.js'
+import { sanitizeForgeLogTail } from '../../run-control/pr-facts.js'
 import {
   CLAUDE_KEYCHAIN_SERVICE,
   CODEX_KEYCHAIN_SERVICE,

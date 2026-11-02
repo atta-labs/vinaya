@@ -152,12 +152,12 @@ import {
   upsertDeferredFindingsIssue,
   type DeferredFindingEntry,
   type DeferredFindingsIssueRef
-} from '../../../../apps/cli/src/lib/forge-write'
+} from '../tools/task-contract/forge/forge-write'
 import {
   validateDeveloperTurnResult,
   type DeveloperTurnResult,
   type DeveloperTurnSchemaContext
-} from '../../../../apps/cli/src/lib/developer-turn-result'
+} from './developer/developer-turn-result'
 import {
   classifyReviewOutcome,
   manifestDigest,
@@ -165,7 +165,7 @@ import {
   reviewBlockerNeedsRuling,
   type ReviewResult,
   type ReviewRunFacts
-} from '../../../../apps/cli/src/lib/review-result'
+} from './code-reviewer/review-result'
 
 // The mechanical actions, decisions and role launchers of the developer
 // review Flow. Each action adapts one function the review loop already

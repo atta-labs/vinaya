@@ -10,7 +10,13 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { AGENT_VENDORS, type AgentVendor, isAgentVendor } from '../lib/agent-vendors.js'
-import { buildInitOps, CONFIG_PATH, type HookDir, type InitContext, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
+import {
+  buildInitOps,
+  CONFIG_PATH,
+  type HookDir,
+  type InitContext,
+  TRACKED_HOOK_DIR
+} from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import { type ManagedManifest, readRepoCiSetup, VinayaConfigSchema } from '../lib/config.js'
 import {
@@ -31,7 +37,7 @@ import {
   planRegistryRow,
   renderConfigProjectEntryDiffLine,
   renderRegistryRowDiffLine
-} from '../lib/registry-write.js'
+} from '../../../../harness/processes/vinaya-strict/artifacts/registry-write.js'
 
 export type InitDeps = {
   detectRepo: () => Promise<RepoInfo | null>

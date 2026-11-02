@@ -9,7 +9,7 @@ import {
   kebabTitle,
   nextDecisionRecordNumber,
   renderDecisionRecord
-} from '../src/lib/decision-records'
+} from '../../../harness/processes/vinaya-strict/artifacts/decision-records'
 import { spawnBudgetedAsync, stripVinayaEnv } from './lib/process-fixture'
 
 const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')

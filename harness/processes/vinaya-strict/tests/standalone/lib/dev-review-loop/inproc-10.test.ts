@@ -51,7 +51,7 @@ import {
   renderNoPushStopComment,
   renderPauseComment
 } from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import type { DispatchHandle, UsageLimit } from '../../../../../../../apps/cli/src/lib/dispatch.js'
+import type { DispatchHandle, UsageLimit } from '../../../../loops/dev-review/dispatch/dispatch.js'
 import {
   cleanupWorlds,
   controlDir,

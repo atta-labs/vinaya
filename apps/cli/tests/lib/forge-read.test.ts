@@ -12,12 +12,12 @@ import {
   readIssueBody,
   readIssueComments
 } from '../../src/lib/forge-read'
-import { fetchIssueComments } from '../../src/lib/dispatch-task'
+import { fetchIssueComments } from '../../../../harness/processes/vinaya-strict/tools/task-contract/dispatch-task'
 import {
   fetchFrozenBrief,
   resolveIssueObjectives
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch'
-import { fetchForgeIssueContext } from '../../src/lib/forge-write'
+import { fetchForgeIssueContext } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
 const COUNT = 250
 const BODY_BYTES = 5 * 1024

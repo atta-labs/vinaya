@@ -44,7 +44,7 @@ import {
   getProcessSnapshot,
   resolveDispatchTimeoutMs,
   type UsageLimit
-} from '../../../../apps/cli/src/lib/dispatch'
+} from '../loops/dev-review/dispatch/dispatch'
 import {
   classifyChildLiveness,
   fetchIssueRulings,
@@ -101,9 +101,9 @@ import {
   usageLimitResetFromDetail,
   usageLimitWaitMs
 } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
-import { crossRunnerRefusal } from '../../../../apps/cli/src/lib/task-run-engine'
+import { crossRunnerRefusal } from '../loops/dev-review/run-control/task-run-engine'
 import type { HeldCleanVerdict } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import type { ParsedLaunch } from '../../../../apps/cli/src/lib/dispatch'
+import type { ParsedLaunch } from '../loops/dev-review/dispatch/dispatch'
 import type { LegExit } from '../executing/log-events'
 
 // What the Engine runner does around a run, apart from the run itself: the one

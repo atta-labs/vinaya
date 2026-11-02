@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
 import { isOperatorGranted, OPERATOR_TOOL_GRANT, TASK_TOOL_CATALOG, TASK_TOOL_NAMES } from '@attalabs/aeg-core'
-import { discoverRoleNames, renderAgentSkill, roleAllowedTools } from '../../src/lib/agents-skills-emitter.js'
+import {
+  discoverRoleNames,
+  renderAgentSkill,
+  roleAllowedTools
+} from '../../../../harness/processes/vinaya-strict/integration/agents-skills-emitter.js'
 import { refuseUngrantedTool } from '../../src/lib/task-tools/router.js'
-import { createTaskToolsMcpServer } from '../../src/lib/task-tools/server.js'
+import { createTaskToolsMcpServer } from '../../../../harness/processes/vinaya-strict/integration/server.js'
 
 /**
  * The Operator's grant is one fact with four representations that must never

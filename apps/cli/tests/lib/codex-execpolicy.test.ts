@@ -19,7 +19,7 @@ import { describe, it, expect } from 'bun:test'
 import { mkdtempSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, delimiter } from 'node:path'
-import { buildCodexExecpolicyRules } from '../../src/lib/dispatch.js'
+import { buildCodexExecpolicyRules } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { spawnSyncBudgeted, stripVinayaEnv, PROCESS_FIXTURE_BUDGET_MS } from './process-fixture.js'
 
 /** The `codex` binary on PATH, or `null` when the host carries none. */

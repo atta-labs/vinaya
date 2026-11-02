@@ -41,7 +41,7 @@ import {
   markedCommentBody,
   postMarkedCommentOrThrow,
   reconcileGhComment
-} from '../../../../../../../apps/cli/src/lib/forge-write.js'
+} from '../../../../tools/task-contract/forge/forge-write.js'
 import { log } from '../../../../../../../apps/cli/src/lib/log-sink.js'
 import {
   isRateLimitPauseDetail,

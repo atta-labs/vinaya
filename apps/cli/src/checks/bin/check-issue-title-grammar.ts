@@ -8,7 +8,7 @@
  * grade and is never selected into a pull-request workflow.
  *
  * scope: full, ownWorkflow: true — invoked by name only from
- * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` (the Issue write
+ * `harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts`'s `runIssueChecks` (the Issue write
  * gate's runner), never from `vinaya check --all`.
  */
 

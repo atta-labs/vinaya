@@ -44,7 +44,7 @@
 
 import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from './mcp-protocol.js'
 import { DEV_TOOLS_MCP_SERVER_NAME, DISPATCH_CAPABILITY_ARGUMENT } from './dev-tools-names.js'
-import type { FailedCheckLog } from './pr-facts.js'
+import type { FailedCheckLog } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/pr-facts.js'
 import { AGENT_TOOL_CATALOG, DEV_TOOL_CATALOG, DEV_TOOL_NAMES, serveTool } from './tool-catalog.js'
 import { type GrantedRole, isToolGranted, ROLE_TOOL_GRANTS, servedTools } from './role-grants.js'
 import { validatesJsonSchema } from './result-proof.js'

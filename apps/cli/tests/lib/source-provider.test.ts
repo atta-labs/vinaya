@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { classifyDocumentationSource, REQUIRED_SOURCE_MISSING_REASONS } from '@attalabs/aeg-core'
-import { deliveredDocumentation } from '../../src/lib/dispatch.js'
+import { deliveredDocumentation } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import {
   appendSourceDeliveryReceipt,
   countedSourceIds,

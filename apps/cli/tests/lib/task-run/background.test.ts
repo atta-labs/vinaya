@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { type ControlStoreDeps, readCurrentOwnership, readEffect, readRun, writeEffect } from '@attalabs/aeg-core'
-import type { ProcessSnapshot } from '../../../src/lib/dispatch.js'
+import type { ProcessSnapshot } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { fenceStartedEffectsAsUncertain } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import {
   BackgroundUnsupportedError,
@@ -13,8 +13,8 @@ import {
   type SpawnedController,
   type StartBackgroundRunDeps,
   startBackgroundRun
-} from '../../../src/lib/task-run-background.js'
-import type { RunTaskInput } from '../../../src/lib/task-run.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-background.js'
+import type { RunTaskInput } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.js'
 
 /**
  * `startBackgroundRun` driven entirely with injected deps — a real

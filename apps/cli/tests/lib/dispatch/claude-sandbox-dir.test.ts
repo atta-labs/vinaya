@@ -2,7 +2,11 @@ import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CLAUDE_SANDBOX_PREFIX, mintClaudeScratchDir, releaseClaudeScratchDir } from '../../../src/lib/dispatch'
+import {
+  CLAUDE_SANDBOX_PREFIX,
+  mintClaudeScratchDir,
+  releaseClaudeScratchDir
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import type { StopReport } from '../../../src/lib/process-registry'
 import { currentOwner, readOwnerMarker, writeOwnerMarker } from '../../../src/lib/test-temp'
 import { fixtureDir } from '../test-temp-fixture'

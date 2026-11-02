@@ -535,6 +535,33 @@ describe('a relocated dependency is unchanged, never growth', () => {
       'apps/cli/src/lib/task-tools/cancel.ts: counts 1, base 0 — above its base entry'
     )
   })
+
+  test('a claim anchor re-pointed to its moved file keeps its count, and a new claim naming a process path is growth', () => {
+    const claim = (path: string): string => `// AEG:CLAIM: ${path} contains:export function dispatchRole(\n`
+    const { root, base } = plantedRepository({
+      'apps/cli/src/lib/dispatch.ts': `export function dispatchRole() {}\n${BODY}\n`,
+      'packages/sources/src/commands.ts': `${claim('apps/cli/src/lib/dispatch.ts')}${BODY}\n`
+    })
+    expect(countTree(root)).toEqual({})
+    commitBaseline(root, {
+      ...move(
+        root,
+        'apps/cli/src/lib/dispatch.ts',
+        'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts'
+      ),
+      'packages/sources/src/commands.ts': `${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts')}${BODY}\n`
+    })
+    expect(countTree(root)).toEqual({ 'packages/sources/src/commands.ts': 1 })
+    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 0, headTotal: 0 })
+
+    commitBaseline(root, {
+      'harness/processes/vinaya-strict/loops/dev-review/dispatch/seats.ts': `export function dispatchRole() {}\n${BODY}\n`,
+      'packages/sources/src/commands.ts': `${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts')}${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/seats.ts')}${BODY}\n`
+    })
+    expect(compareBase(root, base).failures[0]).toContain(
+      'packages/sources/src/commands.ts: counts 1, base 0 — above its base entry'
+    )
+  })
 })
 
 // ── Ownership transfer with a forwarding entry ──────────────────────────────

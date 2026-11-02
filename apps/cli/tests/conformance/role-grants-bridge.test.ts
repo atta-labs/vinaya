@@ -7,7 +7,7 @@ import { stageProofCodexHome } from '../../src/lib/task-tools/dev-proof.js'
 import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host.js'
 import { devToolsMcpConfigFileBody, devToolsSocketPath } from '../../src/lib/task-tools/dev-tools-registration.js'
 import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
-import { MCP_PROTOCOL_VERSION } from '../../src/lib/task-tools/server.js'
+import { MCP_PROTOCOL_VERSION } from '../../../../harness/processes/vinaya-strict/integration/server.js'
 import { PROCESS_FIXTURE_BUDGET_MS, stripVinayaEnv } from '../lib/process-fixture.js'
 import { liveBridgeInvocation, startInitializeWitness, VINAYA_CLI_ENTRY } from './role-grants-live.js'
 

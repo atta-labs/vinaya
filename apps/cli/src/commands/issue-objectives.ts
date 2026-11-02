@@ -11,7 +11,7 @@ import {
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
-import { prepareTaskOrIssue } from '../lib/dispatch-task.js'
+import { prepareTaskOrIssue } from '../../../../harness/processes/vinaya-strict/tools/task-contract/dispatch-task.js'
 import { isForgeReadOversize, readIssueComments, readIssueFields } from '../lib/forge-read.js'
 import { printJson } from '../lib/envelope'
 import {
@@ -23,7 +23,7 @@ import {
   refuseUnlessPrincipal,
   resolvePrincipalsOrRefuse,
   writeValidatedIssueEdit
-} from '../lib/forge-write'
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
 const RETRY =
   'vinaya issue objectives edit <n> --add "<sentence>" | --drop O<k> | --replace O<k> "<sentence>" --reason "<text>"'

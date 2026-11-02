@@ -1,6 +1,6 @@
 /**
  * `vinaya task-tools serve` — runs the shared task-tools MCP server
- * (`apps/cli/src/lib/task-tools/server.ts`) over stdio, the ONE command both
+ * (`harness/processes/vinaya-strict/integration/server.ts`) over stdio, the ONE command both
  * runtime adapters (`.mcp.json` for Claude, `[mcp_servers]` for Codex) register.
  * It speaks newline-delimited JSON-RPC 2.0 on stdin/stdout and nothing else —
  * every human-facing line the rest of the CLI prints would corrupt the
@@ -13,12 +13,12 @@
  * still answers every read tool and refuses `task_start`.
  */
 
-import { ownVersion } from '../lib/artifacts.js'
+import { ownVersion } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import { devToolsBridgeCommand } from '../lib/task-tools/dev-tools-bridge.js'
 import { devToolsProofCommand } from '../lib/task-tools/dev-proof.js'
 import { resultProofCommand } from '../lib/task-tools/result-proof.js'
 import { reviewResultProofCommand } from '../lib/task-tools/review-result-proof.js'
-import { serveTaskToolsStdio } from '../lib/task-tools/server.js'
+import { serveTaskToolsStdio } from '../../../../harness/processes/vinaya-strict/integration/server.js'
 
 export async function taskToolsServeCommand(_args: string[]): Promise<void> {
   await serveTaskToolsStdio(ownVersion())

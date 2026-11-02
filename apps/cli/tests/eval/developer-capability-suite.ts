@@ -40,7 +40,10 @@ import {
   type Task,
   validateTask
 } from '../../src/lib/dev-review-eval/contracts'
-import { validateDeveloperTurnResult, type DeveloperTurnResult } from '../../src/lib/developer-turn-result'
+import {
+  validateDeveloperTurnResult,
+  type DeveloperTurnResult
+} from '../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result'
 import {
   manifestDigest,
   sha256Digest,

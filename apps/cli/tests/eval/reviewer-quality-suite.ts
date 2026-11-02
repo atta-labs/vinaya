@@ -18,7 +18,7 @@ import {
   type ReviewBinding,
   type ReviewerRole,
   validateReviewResult
-} from '../../src/lib/review-result'
+} from '../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 
 export const CODE_SUITE = { name: 'code-reviewer-quality.l5', version: 1, layer: 'L5' } as const
 export const SECURITY_SUITE = { name: 'security-reviewer-quality.l5', version: 1, layer: 'L5' } as const
@@ -109,7 +109,7 @@ const canonical = (value: unknown): string =>
 
 const graderImplementation = [
   readFileSync(join(import.meta.dir, 'reviewer-quality-suite.ts')),
-  readFileSync(join(REPO_ROOT, 'apps/cli/src/lib/review-result.ts')),
+  readFileSync(join(REPO_ROOT, 'harness/processes/vinaya-strict/executing/code-reviewer/review-result.ts')),
   Buffer.from(JSON.stringify(REVIEWER_SEVERITIES))
 ]
 export const REVIEW_QUALITY_GRADER: CodeGraderIdentity = {

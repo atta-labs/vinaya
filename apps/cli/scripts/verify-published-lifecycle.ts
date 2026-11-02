@@ -539,7 +539,7 @@ export const EXEMPTIONS: Record<string, string> = {
     "which this script's shared fixtureDir can supply. Its own guards — repo-root cwd, clean worktree, " +
     'BASE_SHA override, head binding — are each proven against the real binary in ' +
     'tests/commands/pr-verify-evidence-cwd.test.ts and the comparison logic in ' +
-    'src/commands/pr-verify-evidence-logic.test.ts.',
+    'harness/processes/vinaya-strict/tools/pr-report/pr-verify-evidence-logic.test.ts.',
   tokens:
     "`tokens` collects a role's usage from the host's own session transcript, which no fixture directory has: " +
     'the pointer file is written by a Stop hook during a real agent session, and `--transcript` needs a real ' +
@@ -606,25 +606,26 @@ export const EXEMPTIONS: Record<string, string> = {
     'tests/commands/brief-render.test.ts.',
   'task dispatch':
     '`task dispatch` checks the authenticated forge identity, posts the frozen brief as an Issue comment (a FORGE ' +
-    'WRITE) and can start a Developer session. Its logic is proven in tests/commands/dispatch-task.test.ts and ' +
-    'tests/lib/dispatch-task.test.ts.',
+    'WRITE) and can start a Developer session. Its logic is proven in harness/processes/vinaya-strict/tests/commands/dispatch-task.test.ts and ' +
+    'harness/processes/vinaya-strict/tests/lib/dispatch-task.test.ts.',
   'task brief':
     '`task brief` posts the frozen brief as an Issue comment — a FORGE WRITE against a real Issue. Its logic is ' +
     'proven in tests/commands/task.test.ts.',
   'task run':
     '`task run` makes FORGE WRITES and starts a live Developer session on a SUBSCRIPTION LOGIN, neither of which ' +
-    "this script's credential-free boundary allows. Its logic is proven in tests/commands/task-run.test.ts, " +
-    'tests/lib/task-run.test.ts and tests/task-run-engine.test.ts.',
+    "this script's credential-free boundary allows. Its logic is proven in harness/processes/vinaya-strict/tests/commands/task-run.test.ts, " +
+    'harness/processes/vinaya-strict/tests/lib/task-run.test.ts and harness/processes/vinaya-strict/tests/task-run-engine.test.ts.',
   'task switch':
     "`task switch` resolves the task on the FORGE and moves its Engine checkpoint in the machine's task runtime " +
-    'folder, outside the scratch root. Its logic is proven in tests/lib/task-switch.test.ts.',
+    'folder, outside the scratch root. Its logic is proven in harness/processes/vinaya-strict/tests/lib/task-switch.test.ts.',
   'task status':
     '`task status` lists every open task Issue on the FORGE before it prints anything — a FORGE READ with no ' +
-    'offline path. Its logic is proven in tests/commands/task-status.test.ts and tests/lib/task-status.test.ts.',
+    'offline path. Its logic is proven in harness/processes/vinaya-strict/tests/commands/task-status.test.ts and ' +
+    'harness/processes/vinaya-strict/tests/lib/task-status.test.ts.',
   'task sweep':
     "`task sweep` classifies folders by FORGE state and deletes from the machine's Vinaya home, which lies outside " +
     "the scratch root, so a real run would delete the invoking user's own task folders. Its logic is proven in " +
-    'tests/commands/task-sweep.test.ts and tests/lib/task-sweep.test.ts.',
+    'harness/processes/vinaya-strict/tests/commands/task-sweep.test.ts and harness/processes/vinaya-strict/tests/lib/task-sweep.test.ts.',
   'task-tools result-proof':
     '`task-tools result-proof` runs LIVE AGENT DISPATCHES on a SUBSCRIPTION LOGIN. Its logic is proven in ' +
     'tests/lib/task-tools/result-proof.test.ts.',
@@ -659,7 +660,7 @@ export const EXEMPTIONS: Record<string, string> = {
     'the npm registry. Its logic is proven in src/commands/release.test.ts.',
   dispatch:
     '`dispatch` starts a HEADLESS AGENT SESSION on a SUBSCRIPTION LOGIN. Its logic is proven in ' +
-    'tests/commands/dispatch.test.ts and tests/lib/dispatch.test.ts.',
+    'harness/processes/vinaya-strict/tests/commands/dispatch.test.ts and the three dispatch test files under harness/processes/vinaya-strict/tests/lib/dispatch/.',
   'dev-review-loop':
     '`dev-review-loop` makes FORGE WRITES and runs LIVE Developer and reviewer sessions on a SUBSCRIPTION LOGIN. ' +
     'Its logic is proven in tests/commands/dev-review-loop.test.ts and ' +

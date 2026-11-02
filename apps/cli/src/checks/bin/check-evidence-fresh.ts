@@ -34,7 +34,7 @@
  * where `git rev-parse HEAD` IS the real head; this check runs in CI, so it
  * self-resolves the real head via `gh pr view --json headRefOid`, the same
  * pattern already live at `.github/workflows/vinaya-review-verdict.yml:47`
- * and `apps/cli/src/lib/artifacts.ts`. Every recomputation is anchored on
+ * and `harness/processes/vinaya-strict/integration/artifacts.ts`. Every recomputation is anchored on
  * that resolved sha, not on `HEAD` — a `git diff origin/main...HEAD` in CI
  * would resolve the merge base to `origin/main`'s tip rather than the fork
  * point, spuriously red-lining any PR whose base has since advanced over

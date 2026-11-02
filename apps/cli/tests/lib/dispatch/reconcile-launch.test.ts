@@ -4,7 +4,11 @@ import {
   reconcileLaunch,
   type ReconcileLaunchDeps
 } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch'
-import type { LaunchRecord, ParsedLaunch, ProcessSnapshot } from '../../../src/lib/dispatch'
+import type {
+  LaunchRecord,
+  ParsedLaunch,
+  ProcessSnapshot
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -404,7 +408,18 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
     )
     chmodSync(join(binDir, 'claude'), 0o755)
 
-    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const dispatchLib = join(
+      CLI_ROOT,
+      '..',
+      '..',
+      'harness',
+      'processes',
+      'vinaya-strict',
+      'loops',
+      'dev-review',
+      'dispatch',
+      'dispatch.ts'
+    )
     const orphanScript = join(cwd, 'make-orphan.ts')
     writeFileSync(
       orphanScript,

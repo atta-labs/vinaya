@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 import type { AgentVendor } from '../../../src/lib/agent-vendors.js'
-import { BODY_CHECKS_WORKFLOW_PATH, buildInitOps, CHECKS_WORKFLOW_PATH } from '../../../src/lib/artifacts.js'
+import {
+  BODY_CHECKS_WORKFLOW_PATH,
+  buildInitOps,
+  CHECKS_WORKFLOW_PATH
+} from '../../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import type { VendoredVinaya } from '../../../src/lib/self-host.js'
 
 // Task-files-v1 6, O2: no workflow uploads a log artifact or runs a

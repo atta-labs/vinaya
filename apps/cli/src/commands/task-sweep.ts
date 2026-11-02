@@ -5,7 +5,7 @@
  */
 
 import { printJson } from '../lib/envelope.js'
-import { runTaskSweep } from '../lib/task-sweep.js'
+import { runTaskSweep } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-sweep.js'
 
 function parseArgs(args: string[]): { includeLegacy: boolean; json: boolean } {
   let includeLegacy = false

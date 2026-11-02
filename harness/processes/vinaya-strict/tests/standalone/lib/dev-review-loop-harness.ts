@@ -55,7 +55,7 @@ import type {
   DispatchFailureReason,
   DispatchHandle,
   ReviewerTurnOutput
-} from '../../../../../../apps/cli/src/lib/dispatch.js'
+} from '../../../loops/dev-review/dispatch/dispatch.js'
 import type { DeveloperTurnOutput } from '../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import type { DevToolContext } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server.js'
 import {
@@ -68,7 +68,7 @@ import {
   type DeferredFindingEntry,
   type DeferredFindingsIssueRef,
   markedCommentBody
-} from '../../../../../../apps/cli/src/lib/forge-write.js'
+} from '../../../tools/task-contract/forge/forge-write.js'
 import {
   DEFAULT_REVIEW_POLICY,
   type IssueSurface,

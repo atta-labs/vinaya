@@ -25,8 +25,8 @@ import { enforcementControlsActive } from '../../../../apps/cli/src/lib/enforcem
 import { probeAgentSandbox } from '../../../../apps/cli/src/lib/worker-boundary'
 import { handoffFindings } from '../loops/dev-review/standalone/dev-review-loop'
 import { runCliChecks } from '../../../../harness/kernel/gates/checks/run-checks'
-import { validateDeveloperTurnResult } from '../../../../apps/cli/src/lib/developer-turn-result'
-import { classifyReviewOutcome } from '../../../../apps/cli/src/lib/review-result'
+import { validateDeveloperTurnResult } from '../executing/developer/developer-turn-result'
+import { classifyReviewOutcome } from '../executing/code-reviewer/review-result'
 import {
   ACTION_BINDINGS,
   classifyDeveloperOutput,

@@ -24,8 +24,8 @@ import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import type { UpgradeDeps } from '../src/commands/upgrade.js'
 import { runUpgrade, translateHookPaths } from '../src/commands/upgrade.js'
-import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../src/lib/artifacts.js'
-import { CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
+import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../../../harness/processes/vinaya-strict/integration/artifacts.js'
+import { CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
 import type { ManagedManifest } from '../src/lib/config.js'
 import {
   activeRawHooks,

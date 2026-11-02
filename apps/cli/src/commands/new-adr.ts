@@ -1,4 +1,4 @@
-import { createDecisionRecord } from '../lib/decision-records.js'
+import { createDecisionRecord } from '../../../../harness/processes/vinaya-strict/artifacts/decision-records.js'
 
 const USAGE = 'Usage: vinaya new adr <title>  (e.g. vinaya new adr Use one rule set for both prose checks)'
 

@@ -15,7 +15,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../lib/artifacts.js'
+import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import { type ManagedManifest, VinayaConfigSchema } from '../lib/config.js'
 import { detectGitRepo, readCoreHooksPath, type RepoInfo, unsetCoreHooksPath } from '../lib/detect.js'
 import { applyEject, planEject, renderEjectDiff } from '../lib/ops.js'

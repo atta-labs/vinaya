@@ -36,8 +36,8 @@ import { randomUUID } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ownVersion } from '../artifacts.js'
-import { buildCodexExecpolicyRules } from '../dispatch.js'
+import { ownVersion } from '../../../../../harness/processes/vinaya-strict/integration/artifacts.js'
+import { buildCodexExecpolicyRules } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import {
   buildWorkerEnv,
   realConfinementPlatformDeps,

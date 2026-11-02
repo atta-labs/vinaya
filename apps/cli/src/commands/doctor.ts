@@ -44,10 +44,10 @@ import {
   ROLES_FOLDER_PLACEHOLDER_PATH,
   starterConfig,
   TRACKED_HOOK_DIR
-} from '../lib/artifacts.js'
-import { CLAUDE_COMMAND_PATH } from '../lib/claude-command-emitter.js'
-import { CLAUDE_SETTINGS_PATH } from '../lib/claude-stop-hook-emitter.js'
-import { GEMINI_COMMAND_PATH } from '../lib/gemini-command-emitter.js'
+} from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
+import { CLAUDE_COMMAND_PATH } from '../../../../harness/processes/vinaya-strict/integration/claude-command-emitter.js'
+import { CLAUDE_SETTINGS_PATH } from '../../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
+import { GEMINI_COMMAND_PATH } from '../../../../harness/processes/vinaya-strict/integration/gemini-command-emitter.js'
 import { type DoctrineSource, resolveDoctrineRootInfo } from './doctrine.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
@@ -99,10 +99,10 @@ import { localGateControl } from '../lib/local-gate-control.js'
 import { printJson } from '../lib/envelope.js'
 import { planGhPathFix } from '../lib/gh-path.js'
 import { checksMissingEnvDeclaration, envDeclarationWarning } from '../lib/env-lint.js'
-import { PROJECTS_REGISTRY_PATH } from '../lib/registry-write.js'
+import { PROJECTS_REGISTRY_PATH } from '../../../../harness/processes/vinaya-strict/artifacts/registry-write.js'
 import { markerLines, renderBlock, resolveManagedBlockPath } from '../lib/ops.js'
 import { packageRoot } from '../lib/package-root.js'
-import { probeClaudeSandboxOnHost } from '../lib/dispatch.js'
+import { probeClaudeSandboxOnHost } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import {
   type ConfinementPlatformDeps,
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,

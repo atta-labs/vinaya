@@ -7,7 +7,7 @@
  * numbering is a property of a task Issue's own body, never a pull request's.
  *
  * scope: full, ownWorkflow: true — invoked by name only from
- * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` (the Issue write
+ * `harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts`'s `runIssueChecks` (the Issue write
  * gate's runner), never from `vinaya check --all`.
  * The coherence sweep never spawns this executable, but its R1 rule runs the
  * same rule function, `checkIssueObjectives`, directly — both in

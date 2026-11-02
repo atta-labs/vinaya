@@ -5,7 +5,10 @@ import { boundaryPinnedFiles, DEFAULT_COLLISION_THRESHOLD, NO_GATE_CUTOVERS } fr
 import type { CheckError } from '../../src/checks/contract'
 import { resolveDoctrineRoot } from '../../src/commands/doctrine'
 import type { BriefSection } from '../../src/lib/config'
-import { validateForgeWrite, validateIssueContent } from '../../src/lib/forge-write'
+import {
+  validateForgeWrite,
+  validateIssueContent
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
 /**
  * The Issue-rationale template is the body every planner copies, and the Issue

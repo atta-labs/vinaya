@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import type { GateRow } from '@attalabs/aeg-core'
 import { extractImportRecords, resolveRelativeImport, walkFiles } from './test-selector.js'
 
@@ -12,6 +12,8 @@ import { extractImportRecords, resolveRelativeImport, walkFiles } from './test-s
  */
 
 const CLI_SOURCE_DIR = 'apps/cli/src'
+/** Where the run control, dispatch, task-contract and emitter source the CLI runs lives now. */
+const PROCESSES_DIR = 'harness/processes'
 const LOG_SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
 const LOG_SINK_PRODUCER_NAMES: readonly string[] = ['log', 'logSync']
 
@@ -48,7 +50,10 @@ export function blockingGateFiles(ring0Rows: readonly GateRow[], existsFn: (path
 
 /** The CLI package's import graph (repo-relative paths) and the files that import the sink's logging functions. */
 export function gatherLogProducerGraph(root: string): { producers: Set<string>; imports: Map<string, string[]> } {
-  const files = walkFiles(join(root, CLI_SOURCE_DIR)).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+  const files = [
+    ...walkFiles(join(root, CLI_SOURCE_DIR)),
+    ...walkFiles(join(root, PROCESSES_DIR)).filter((f) => !relative(root, f).split(sep).includes('tests'))
+  ].filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
   const known = new Set(files)
   const sink = join(root, LOG_SINK_PATH)
   const producers = new Set<string>([LOG_SINK_PATH])

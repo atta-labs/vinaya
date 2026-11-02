@@ -4,7 +4,7 @@ import {
   type DeveloperTurnContext,
   developerTurnResultJsonSchema,
   validateDeveloperTurnResult
-} from '../../../src/lib/developer-turn-result.js'
+} from '../../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result.js'
 import {
   accountEnv,
   CASE_TIME_LIMIT_LABEL,

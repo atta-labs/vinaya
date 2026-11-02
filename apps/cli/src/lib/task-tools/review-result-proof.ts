@@ -54,7 +54,7 @@ import {
   vendorResumeArgs,
   vendorSessionArgs,
   writeDispatchSettingsAt
-} from '../dispatch.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import {
   type CompletedReview,
   classifyReviewOutcome,
@@ -67,7 +67,7 @@ import {
   type ReviewOutcome,
   RoundReviews,
   reviewResultJsonSchema
-} from '../review-result.js'
+} from '../../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result.js'
 import {
   buildWorkerEnv,
   realConfinementPlatformDeps,

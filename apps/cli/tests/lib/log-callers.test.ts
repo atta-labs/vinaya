@@ -29,7 +29,7 @@ import ts from 'typescript'
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
 const SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
-const DISPATCH_PATH = 'apps/cli/src/lib/dispatch.ts'
+const DISPATCH_PATH = 'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts'
 const DEV_REVIEW_LOOP_PATH = 'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts'
 const DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH =
   'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts'
@@ -42,10 +42,10 @@ const DEV_REVIEW_LOOP_PAUSE_RESUME_PATH =
 const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH =
   'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/journal-history.ts'
 const LOG_SYNC_FOLDER_SOURCE_PATH = 'apps/cli/src/lib/log-sync-folder-source.ts'
-const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
-const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
+const TASK_TOOLS_RESUME_PATH = 'harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts'
+const TASK_TOOLS_CANCEL_PATH = 'harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts'
 const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
-const FLOW_V2_EVENTS_PATH = 'apps/cli/src/lib/flow-v2-events.ts'
+const FLOW_V2_EVENTS_PATH = 'harness/processes/vinaya-strict/loops/dev-review/flow-v2-events.ts'
 /**
  * The webhook destination is the sink's own delivery mechanism for a
  * `logs.url` server destination, not a second kind of caller: it reads the
@@ -256,11 +256,29 @@ function sourceFiles(dir: string, prefix: string): [string, string][] {
 /** The standalone driver's own source, moved out of `apps/cli/src` into the process. */
 const STANDALONE_DRIVER_SRC = 'harness/processes/vinaya-strict/loops/dev-review/standalone'
 
-/** Every non-test `.ts`/`.tsx` file under `apps/cli/src`, the standalone driver and each `packages/<name>/src`, repo-relative. */
+/** The run control, dispatch, task-contract, emitter and artifact source, moved out of `apps/cli/src` into the process. */
+const MOVED_SRC_FOLDERS = [
+  'tools',
+  'artifacts',
+  'integration',
+  'executing/developer',
+  'executing/code-reviewer',
+  'retrospecting/archivist',
+  'loops/dev-review/run-control',
+  'loops/dev-review/dispatch',
+  'loops/dev-review/actions'
+].map((folder) => `harness/processes/vinaya-strict/${folder}`)
+const MOVED_SRC_FILES = ['loops/dev-review/flow-v2-events.ts', 'loops/dev-review/review-gate-input.ts'].map(
+  (file) => `harness/processes/vinaya-strict/${file}`
+)
+
+/** Every non-test `.ts`/`.tsx` file under `apps/cli/src`, the standalone driver, the moved source and each `packages/<name>/src`, repo-relative. */
 function allSourceFiles(): [string, string][] {
   const out: [string, string][] = [
     ...sourceFiles(join(REPO_ROOT, 'apps/cli/src'), 'apps/cli/src'),
-    ...sourceFiles(join(REPO_ROOT, STANDALONE_DRIVER_SRC), STANDALONE_DRIVER_SRC)
+    ...sourceFiles(join(REPO_ROOT, STANDALONE_DRIVER_SRC), STANDALONE_DRIVER_SRC),
+    ...MOVED_SRC_FOLDERS.flatMap((folder) => sourceFiles(join(REPO_ROOT, folder), folder)),
+    ...MOVED_SRC_FILES.map((file): [string, string] => [file, join(REPO_ROOT, file)])
   ]
   const packagesDir = join(REPO_ROOT, 'packages')
   for (const pkg of readdirSync(packagesDir, { withFileTypes: true })) {

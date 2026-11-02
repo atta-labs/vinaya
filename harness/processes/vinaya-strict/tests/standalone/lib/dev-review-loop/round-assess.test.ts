@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { budgetMarkerStep } from '../../../../../../../apps/cli/src/lib/artifacts'
+import { budgetMarkerStep } from '../../../../integration/artifacts'
 import {
   assertDispatchOrEscalate,
   assessRateLimitedRed,
@@ -31,7 +31,7 @@ import {
   rateLimitWaitMs,
   spendsInfrastructureRetry
 } from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess'
-import type { DispatchHandle } from '../../../../../../../apps/cli/src/lib/dispatch'
+import type { DispatchHandle } from '../../../../loops/dev-review/dispatch/dispatch'
 
 function failedHandle(failureReason: DispatchHandle['failureReason']): DispatchHandle {
   return { exitCode: 1, durationMs: 1, usage: null, resumeId: null, timedOut: false, failureReason }

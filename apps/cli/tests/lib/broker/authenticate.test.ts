@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import type { DispatchTeeRecoveryDeps } from '../../../src/lib/dispatch'
+import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import {
   authenticateOperatorInvocation,
   authenticateWorkerInvocation,

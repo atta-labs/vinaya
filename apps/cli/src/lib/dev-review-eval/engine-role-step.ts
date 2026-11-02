@@ -37,7 +37,7 @@ import {
 } from '../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { SqliteCheckpointer } from '../../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import type { LoadedProcess } from '../../../../../harness/kernel/dev-process-socket/loader/load-process'
-import type { DispatchHandle } from '../dispatch'
+import type { DispatchHandle } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import {
   readClaudeTurnOutput,
   readCodexTurnOutput

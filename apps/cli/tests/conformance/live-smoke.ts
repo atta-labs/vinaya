@@ -63,7 +63,7 @@ import {
 } from './harness.js'
 import { acquireOwnership, consumeResolutionOnce, defaultControlStoreDeps } from '@attalabs/aeg-core'
 import { tasksExecutionRoot } from '../../src/lib/run-paths.js'
-import { claudeMcpJsonFile } from '../../src/lib/task-tools/adapters.js'
+import { claudeMcpJsonFile } from '../../../../harness/processes/vinaya-strict/integration/adapters.js'
 
 const ISSUE = 9301
 const PR = 9601

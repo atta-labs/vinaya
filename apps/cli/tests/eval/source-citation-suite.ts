@@ -22,7 +22,7 @@ import {
   parseDeveloperTurnResult,
   semanticErrors,
   type DeveloperTurnResult
-} from '../../src/lib/developer-turn-result'
+} from '../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result'
 import { passHatK } from '../../src/lib/dev-review-eval/estimators'
 import {
   readClaudeTurnOutput,

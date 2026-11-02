@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import type { VendoredVinaya } from '../../src/lib/self-host.js'
-import { codexMcpServersToml } from '../../src/lib/task-tools/adapters.js'
-import { TASK_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/server.js'
+import { codexMcpServersToml } from '../../../../harness/processes/vinaya-strict/integration/adapters.js'
+import { TASK_TOOLS_MCP_SERVER_NAME } from '../../../../harness/processes/vinaya-strict/integration/server.js'
 import { ABS_BIN, defineConformanceSuite } from './harness.js'
 import { defineLiveGrantCases } from './role-grants-live.js'
 

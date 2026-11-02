@@ -1,0 +1,6112 @@
+/**
+ * `dispatchRole` — the Vinaya Log's `dispatch` family chokepoint (Linear
+ * "Tech spec — The Vinaya Log" rev 4, §8, §20; `apps/cli/specs/log.md`).
+ * Starts one of two vendors' headless CLI as a child process with
+ * attribution (`VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND`) plus
+ * this driver's own pid (`VINAYA_DRIVER_PID`, so a role that lists processes
+ * recognizes its own launcher rather than reading it as a competing run) set
+ * on its environment only — never on this process's own `process.env` — and
+ * records `dispatched` / `outcome_received` / `dispatch_failed` through
+ * `log()`, using the SAME `run_id` the child's own later `vinaya` calls (its
+ * Stop hook, a nested dispatch inside a loop) will carry, so a report joins
+ * them.
+ *
+ * Vendor headless flags were confirmed against each binary's own `--help` on
+ * the authoring machine, not guessed:
+ *
+ *   - `claude -p --output-format json` — print mode, prompt via stdin (no
+ *     positional argument), a single JSON object on stdout whose
+ *     `usage.input_tokens`/`usage.output_tokens` matches the shape
+ *     `claude-stop-hook-emitter.ts`'s transcript-parsing precedent expects.
+ *     Confirmed live: a real `claude -p --output-format json` run's stdout
+ *     carried exactly that shape on this machine — no `usage: null` fallback
+ *     was needed.
+ *   - `codex exec --sandbox workspace-write --json -` — Codex's documented
+ *     least-privilege edit sandbox lets a normal dispatch modify its assigned
+ *     worktree while retaining the trailing `-` stdin sentinel (never the
+ *     prompt text on argv), one JSONL event per
+ *     line. Confirmed live: the terminal `turn.completed` event carries
+ *     `usage: { input_tokens, output_tokens, ... }` — the same field names
+ *     as Claude's, so it is parsed the same way rather than left `null`.
+ *
+ * **The generic "no specific, identifiable forge outcome" gap this module
+ * doc used to disclose is closed:**
+ * `DispatchOutcomeSchema`'s `completed` variant (`packages/aeg-core/src/log/schema.ts`)
+ * carries no invented identifier at all — a
+ * successful dispatch's `outcome_received` line now reports `{ type:
+ * 'completed' }` honestly, never the `{ type: 'plan', issues: [] }`
+ * placeholder borrowed from an unrelated variant this module used to emit.
+ *
+ * Every attempt also emits a `role_attempt`
+ * `'attempted'` line (`kind: 'role_attempt'`) — the run's own normalized
+ * outcome (`completed`/`incomplete`/`infrastructure_failed`/`timed_out`/
+ * `capability_refused`, from `classifyRoleAttemptOutcome`, below), its retry
+ * ordinal (`LaunchRecord.attempt`, the same per-scope counter this file
+ * already keeps for recovery), and the same `effect_id`/`model`/`usage`
+ * every `dispatch` line for the same attempt carries — and a `usage`
+ * `'observed'` line (`kind: 'usage'`) carrying input/output/cache broken out
+ * separately, `semantics: 'cumulative'` (one dispatch is one full vendor
+ * invocation; the parsed line already represents that invocation's own
+ * running total, never a delta between two observations), and an explicit
+ * `unknown_reason` string whenever a vendor's own stream gives this launcher
+ * nothing to report — never a bare `null` with no account of why.
+ */
+
+import { randomUUID, createHash } from 'node:crypto'
+import {
+  accessSync,
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
+import { chmodSync, createWriteStream } from 'node:fs'
+import {
+  currentOwner,
+  removeTree,
+  type SweepDeps,
+  sweepOwnedDirs,
+  writeOwnerMarker
+} from '../../../../../../apps/cli/src/lib/test-temp'
+import { execFileSync, spawn } from 'node:child_process'
+import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { homedir, hostname as osHostname, tmpdir } from 'node:os'
+import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
+import {
+  DOCUMENTATION_READ_MIN_SIZE,
+  FETCH_DOCUMENTATION_TOOL
+} from '../../../../../../apps/cli/src/lib/task-tools/fetch-documentation.js'
+import {
+  countedSourceIds,
+  readRequiredSourceManifest,
+  readSourceDeliveryReceipts,
+  SOURCE_STORE_DIRNAME,
+  sourceReceiptsPath,
+  sourceStoreDir
+} from '../../../../../../apps/cli/src/lib/source-manifest.js'
+import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
+import { createLogSink, drainLogSpool, resolveLogAppendPath } from '../../../../../../apps/cli/src/lib/log-sink.js'
+import { appendRoleLine } from '../../../../../../apps/cli/src/lib/loop-log.js'
+import { createAgentStreamRenderer } from '../../../../../../apps/cli/src/lib/agent-stream.js'
+import {
+  formatAgentDetails,
+  formatAgentLine,
+  type AgentLineMark
+} from '../../../../../../apps/cli/src/lib/agent-line.js'
+import { developerTurnResultJsonSchema } from '../../../executing/developer/developer-turn-result.js'
+import { reviewResultJsonSchema, type ReviewerRole } from '../../../executing/code-reviewer/review-result.js'
+import {
+  type DeliveredDocumentation,
+  type DeveloperTurnOutput,
+  normalizeSourceIdentity,
+  type TurnResultAdapter,
+  readClaudeTurnOutput,
+  readCodexTurnOutput
+} from '../standalone/dev-review-loop/turn-result.js'
+import { loadConfig } from '../../../../../../apps/cli/src/lib/config.js'
+import {
+  RUN_AREA_DIRNAMES,
+  runPath,
+  RUNTIME_DIR_ENV_KEY,
+  runtimeDirForRepo,
+  runtimeDirForThisRepo,
+  type RunScope,
+  scopeFromSegment,
+  tasksExecutionRoot
+} from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { basename, dirname, join } from 'node:path'
+import {
+  CLAUDE_KEYCHAIN_SERVICE,
+  CLAUDE_SANDBOX_ALLOWED_DOMAINS,
+  agentConfigProtectedSubpaths,
+  controllerStoreReachableBy,
+  type OpenedAgentConfigEntry,
+  resolveOpenedAgentConfigPaths,
+  buildCodexHooksMarketplace,
+  buildWorkerEnv,
+  containerBoundaryRefusal,
+  containerClaudeLogin,
+  type ContainerBoundaryProbe,
+  LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
+  REAL_CONTAINER_BOUNDARY_PROBE,
+  probeAgentSandbox,
+  REAL_WORKER_BOUNDARY_DEPS,
+  runRealSandboxProbe,
+  type SandboxProbePlan,
+  type SandboxProbeRunner,
+  resolveBunInstallCacheDir,
+  resolveClaudeConfinement,
+  resolveCodexConfinement,
+  resolveGitCommonDir,
+  reuseStagedCodexHome,
+  stageCodexPolicyHome,
+  type ClaudeSandboxSettings,
+  type ConfinementPlatformDeps,
+  type ConfinementRequest,
+  type SandboxProbeResult
+} from '../../../../../../apps/cli/src/lib/worker-boundary.js'
+import { agentControlsRefusal } from '../../../../../../apps/cli/src/lib/enforcement-controls.js'
+import { repoRoot } from '../../../../../../apps/cli/src/lib/diff-evidence.js'
+import {
+  type BridgeInvocation,
+  CLAUDE_DEV_TOOLS_ENV,
+  claudeDevToolsArgs,
+  codexDevToolsConfigToml,
+  devToolsMcpConfigFileBody,
+  watchClaudeDevToolsStart
+} from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-registration.js'
+
+/**
+ * Terminal colour, applied only at the point a line is written to a real
+ * interactive stream — never where the line is produced, so
+ * the dispatch-output tee (`openOutputTee`, which never sees these lines at
+ * all) and any piped/non-TTY consumer keep reading exactly the bytes they
+ * read before this task. `NO_COLOR` (https://no-color.org) is honored by
+ * presence alone, any value including empty, not by its truthiness.
+ */
+export const ANSI_RESET = '\x1b[0m'
+
+/** One fixed colour per role, never per vendor — the reader is separating who is speaking, not which binary ran. */
+export const ROLE_ANSI: Record<Role, string> = {
+  planner: '\x1b[34m', // blue
+  developer: '\x1b[36m', // cyan
+  'code-reviewer': '\x1b[35m', // magenta
+  security: '\x1b[31m', // red
+  principal: '\x1b[33m', // yellow
+  archivist: '\x1b[32m', // green
+  architect: '\x1b[93m' // bright yellow
+}
+
+/** The coordinator's own colour — distinct from every role above, so a lifecycle/loop line reads as the loop's without reading the text. */
+export const LOOP_ANSI = '\x1b[90m' // bright black / grey
+
+export function colourEnabled(stream: { isTTY?: boolean }): boolean {
+  return Boolean(stream.isTTY) && process.env.NO_COLOR === undefined
+}
+
+/**
+ * `[role] <line>` — one call per already-split physical line; a caller with
+ * multi-line rendered text splits it first so every line carries its own
+ * prefix. Coloured only when `stream` is a live TTY and `NO_COLOR` is
+ * unset (`colourEnabled`); otherwise the same prefixed text with no escape
+ * codes, which is what a piped consumer or a non-interactive run sees.
+ */
+export function colourAgentLine(
+  role: Role,
+  line: string,
+  stream: { isTTY?: boolean },
+  mark: AgentLineMark = 'working'
+): string {
+  const prefixed = formatAgentLine(role, line, { mark, unicode: Boolean(stream.isTTY) })
+  return colourEnabled(stream) ? `${ROLE_ANSI[role]}${prefixed}${ANSI_RESET}` : prefixed
+}
+
+/**
+ * The loop/lifecycle style — no added prefix, since this family's own
+ * text already names the role (`[vinaya dispatch <id>] <role> via <agent>:
+ * …`, or the loop's own `vinaya dev-review-loop: …`); restyled, never
+ * stacked with a second prefix. Same TTY/`NO_COLOR` gate as `colourAgentLine`.
+ */
+export function colourLoopLine(line: string, stream: { isTTY?: boolean }): string {
+  return colourEnabled(stream) ? `${LOOP_ANSI}${line}${ANSI_RESET}` : line
+}
+
+export const AGENT_VENDOR_NAMES = ['claude', 'codex'] as const
+export type AgentVendor = (typeof AGENT_VENDOR_NAMES)[number]
+
+export function isAgentVendor(value: string): value is AgentVendor {
+  return (AGENT_VENDOR_NAMES as readonly string[]).includes(value)
+}
+
+/**
+ * The three-value vocabulary `aeg-root/roles/planner.md` names for a task's
+ * "Suggested agent-class" (high/mid/fast) — the Planner's sizing judgment,
+ * confirmed or overridden by whoever dispatches at brief time
+ * (`aeg-root/skills/brief-authoring/SKILL.md`). Not a model catalogue: this
+ * is the fixed, small vocabulary a rationale field is written in, never an
+ * enumeration of every model any vendor accepts.
+ */
+export const AGENT_CLASS_VALUES = ['high', 'mid', 'fast'] as const
+export type AgentClass = (typeof AGENT_CLASS_VALUES)[number]
+
+export function isAgentClass(value: string): value is AgentClass {
+  return (AGENT_CLASS_VALUES as readonly string[]).includes(value)
+}
+
+export type DispatchOpts = {
+  task?: number
+  pr?: number
+  round?: number
+  /** Receives each complete vendor stdout line for a caller-owned evaluation trace. */
+  observeStdoutLine?: (line: string) => void
+  /** Finding ids this Developer turn may report, resolved by the loop's handoff. */
+  turnResultKnownFindingIds?: readonly string[]
+  /** The vendor's own session/thread identifier from a prior dispatch's `resumeId`, to resume that exact session instead of starting fresh. */
+  resumeId?: string
+  /**
+   * The model to run, passed to `agent`'s own binary through that vendor's
+   * own `--model` flag — confirmed present on all three vendors' own
+   * `--help` output, not assumed. Omitted entirely (no flag added) when the
+   * caller names none: the vendor then runs whatever its own default model
+   * is, exactly as before this task. The caller's choice here always wins
+   * over any class-derived default a higher layer (`dispatch-task.ts`)
+   * might otherwise have resolved — this function never re-derives one.
+   */
+  model?: string
+  /**
+   * The prompt's source file path — required by the brief's stated shape.
+   * Unused by any of the three vendors' own invocation today (all three
+   * accept the prompt on stdin, confirmed above); kept for a future vendor
+   * whose headless mode needs a real file argument instead, and so the
+   * caller's `--prompt-file` value has one obvious place to travel through.
+   */
+  promptFile: string
+  /**
+   * O6: when given, every lifecycle line this call
+   * writes to the terminal (`writeLifecycle`) and every rendered agent-event
+   * line is ALSO mirrored, plainly (no ANSI), to this path — the driver's
+   * own role-prefixed stream, appended across relaunches. The caller
+   * (`dev-review-loop.ts`) resolves this once per loop run, from the same
+   * `~/.vinaya/loops/<owner>-<repo>/<issue>.log` convention
+   * `loop-log.ts` names.
+   */
+  roleLogPath?: string
+  /**
+   * O1/O2: the child's own working
+   * directory — never set before this, which meant every dispatched
+   * role's shell ran from wherever THIS process's own `cwd` happened to be,
+   * not from any content this task actually names. `dev-review-loop.ts`'s
+   * reviewer dispatch is the first caller to pass one (a per-reviewer
+   * scratch copy of the round's shared, read-only candidate — see
+   * `dev-review-loop/reviewer-isolation.ts`); every other caller omits it,
+   * which keeps `spawn`'s own default (inherit this process's `cwd`)
+   * unchanged for the developer role and every pre-existing dispatch site.
+   */
+  cwd?: string
+  /**
+   * O1/O3: marks this dispatch as an unattended start —
+   * a driver launching a Developer, Reviewer or operational agent with
+   * nobody watching each tool call, as opposed to an Operator running
+   * `vinaya dispatch` by hand. An unattended start runs inside
+   * `apps/cli/specs/isolation.md`'s OS-level boundary wherever one is
+   * supported (macOS) and REFUSES, before ever spawning, if it cannot be
+   * established there (`worker-boundary.ts`'s `isWorkerBoundaryAvailable`) —
+   * never a silent fallback to full environment inheritance (isolation.md
+   * §3, "Refusal conditions"). There is no setting that turns it off. On a
+   * host with no supported mechanism a Claude start runs as it always has;
+   * a Codex start refuses there too, since its per-run `CODEX_HOME` exists
+   * only inside the boundary.
+   */
+  unattended?: boolean
+  /**
+   * Additional ABSOLUTE directories this dispatch's own confined child needs
+   * to READ+WRITE beyond the outbox/resume-record files every unattended
+   * dispatch already gets — Claude's sandbox lists them in
+   * `filesystem.allowWrite` and Codex receives them as writable roots. A path
+   * this module has no hardcoded opinion about, so the caller names it
+   * directly, the same "generic primitive, caller supplies the
+   * dispatch-specific shape" posture `extraWritableFiles` already takes. A
+   * directory-level grant, so the caller must name a directory already scoped
+   * to this one dispatch. A code or security reviewer needs none: it returns
+   * its review as native structured output and writes no result file.
+   */
+  extraWritableDirs?: readonly string[]
+  /**
+   * O3: absolute paths of files outside the Developer's own worktree the
+   * driver grants THIS dispatch, by exact path, under that round's own
+   * Developer folder inside the task's folder (`run-paths.ts`'s `{ area:
+   * 'developer', round, file: ... }`). No loop dispatch names any now: the
+   * turn result that once travelled as the confidence and round-response
+   * files arrives as the CLI's native structured output. `role === 'developer'`
+   * is the only caller this ever applies to: granted alongside the
+   * Developer's own worktree `directory` scope, by exact path, in every
+   * write-scope mechanism a confining dispatch has (`buildWriteAccessScope`,
+   * below, and `worker-boundary.ts`'s Seatbelt profile) — never a directory
+   * grant, since nothing else in that folder is this dispatch's to write.
+   * Omitted on every dispatch for a role other than `developer`.
+   */
+  developerFiles?: readonly string[]
+  /**
+   * The objectives/brief/ruling/policy identity
+   * this attempt is being judged against, when the caller already resolved
+   * one (`dev-review-loop.ts`'s own `ReviewInputManifest`, for a reviewer
+   * dispatch) — threaded straight into every line this call logs
+   * (`meta.input_versions`). Omitted by every caller with no such identity
+   * to give (the generic launcher never resolves one itself) — those lines
+   * carry the honest all-`null` default they always did.
+   */
+  inputVersions?: {
+    manifestVersion?: 2 | null
+    objectivesVersion?: string | null
+    briefHash?: string | null
+    rulingOrdinal?: number | null
+    policyDigest?: string | null
+    pauseBoundRuling?: { rulingId: string; pauseId: string; contentDigest: string } | null
+  }
+  /**
+   * The configuration directories the task's own Surface opens for this
+   * agent, relative to the worktree (`surfaceOpenedAgentConfigPaths`,
+   * `dev-review-loop.ts`) — resolved once per round from the same
+   * `resolveTaskSurface` read, and passed only for the `developer` role.
+   * Honoured only for a `developer` dispatch with a `cwd`: the driver
+   * resolves them against that worktree (`resolveOpenedAgentConfigPaths`),
+   * creating a missing `/**` directory, and grants the result to Claude as
+   * the write-access scope's `openedSubpaths` and to Codex as extra
+   * writable roots. Omitted or empty (every other caller, and a task whose
+   * Surface names none) keeps every configuration path denied. Never
+   * resolved inside this module itself: Surface is an Issue-level fact this
+   * generic launcher has no business fetching on its own.
+   */
+  agentConfigOpened?: readonly OpenedAgentConfigEntry[]
+  /**
+   * O2: the driver-run dev-tools MCP server's bridge invocation for THIS
+   * dispatch — a `dev-bridge --socket <path>` relay the agent's own MCP client
+   * spawns inside its sandbox, which pipes to the server the driver hosts
+   * outside it (`task-tools/dev-tools-host.ts`). Set only by the review loop,
+   * once the driver has started the host for this turn: for the `developer`
+   * role every turn, and for a reviewer role when the round has required
+   * sources, whose host serves only `read_source`. When present, this call registers the server through
+   * the vendor's OWN per-dispatch channel — Claude via `--strict-mcp-config
+   * --mcp-config <file>` (so the worktree's committed `.mcp.json` is never
+   * loaded), Codex via a `[mcp_servers.<name>]` table in the staged
+   * `config.toml` — and nothing else. Omitted by every other caller and dispatch,
+   * which registers no dev-tools server and changes no argv.
+   */
+  devToolsBridge?: { command: string; args: readonly string[] }
+  /**
+   * Container mode, set only by the evaluation's layer-`G` trial entry when
+   * the trial runs inside a container that is its own sandbox; no command and
+   * no environment variable sets it. In container mode a Claude dispatch
+   * authenticates from the subscription token in `CLAUDE_CODE_OAUTH_TOKEN`
+   * (`containerClaudeLogin`), and an unattended Claude dispatch without its
+   * own sandbox is not refused as unconfined when the container is the
+   * boundary (`containerBoundaryRefusal`). Omitted, every dispatch behaves as
+   * it always has.
+   */
+  containerMode?: boolean
+}
+
+/**
+ * `'signal'`: the driver's own shutdown path terminated this
+ * launch's child on `SIGTERM`/`SIGINT` — distinct from `'crash'` (the child
+ * died on its own) so recovery can read it as a cancelled attempt, never an
+ * infrastructure failure of the child's own making.
+ *
+ * `'unbound'`: the child exited — on a timeout kill or on
+ * its own, any exit code — having never once bound a vendor session
+ * (`launch.resumeId` stayed `null` for the whole run, and the completed
+ * `stdoutBuf` still parses to no session either). Distinct from `'crash'`/
+ * `'timeout'`, which both mean the vendor came up and did SOME work before
+ * dying: a dispatch that never produced a working vendor session at all
+ * (measured live: a `sandbox-exec` child whose vendor output file stayed at
+ * 0 bytes for its entire life) is a different, more actionable failure —
+ * recovery should not treat it the same as an ordinary crash mid-session.
+ */
+/**
+ * `'connection-failed'` (O2) — the vendor's
+ * own stdout carried at least one connection-retry signal
+ * (`sawVendorConnectionRetry`, below) before the child ended non-zero or
+ * timed out, AND a session was already bound: the vendor could not reach
+ * its backend, never a developer decision, and the session it bound is
+ * still resumable. Classified from a launch that DID bind a session only —
+ * one that never bound at all keeps reading `'unbound'`, since there is no
+ * exact session for the driver's own re-dispatch (O2's whole point) to
+ * resume. Confirmed live, `claude` CLI 2.1.197: pointing `ANTHROPIC_BASE_URL`
+ * at an unreachable host produces
+ * `{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,...}`
+ * lines on stdout — never stderr, so this reads the SAME buffer
+ * `parseUsage`/`parseResumeId` already scan, never violating this file's own
+ * "stderr content never decides success or failure" rule (`handleChildExit`'s
+ * own doc comment, above). Vendor-agnostic by construction — Codex's
+ * own stream shapes never emit this marker, so the scan is always a no-op
+ * for them, never a guessed classification for an unconfirmed vendor's own
+ * shape (the vendor tables themselves are unchanged).
+ */
+export type DispatchFailureReason =
+  | 'timeout'
+  | 'crash'
+  | 'refused'
+  | 'signal'
+  | 'unbound'
+  | 'connection-failed'
+  | 'startup-failed'
+  | 'authentication-failed'
+  | 'hook-setup-failed'
+  | 'usage-limit'
+
+/**
+ * An agent's subscription usage limit, read from the vendor's own output:
+ * the agent, the vendor's full message, and the reset time in epoch
+ * milliseconds (`null` when the output names none).
+ */
+export type UsageLimit = { agent: AgentVendor; message: string; resetAtMs: number | null }
+
+/**
+ * A dispatch refused before the agent started because the agent's own
+ * sandbox could not run the probe command on this host: the agent, and the
+ * probe's own error (`probeAgentSandbox`, `worker-boundary.ts`).
+ */
+export type SandboxProbeRefusal = { agent: AgentVendor; error: string }
+
+/**
+ * A reviewer's structured output as its adapter read it, plus the stream's
+ * terminal outcome and the provider's error text (absent on a hand-built
+ * fixture handle, read as none).
+ */
+export type ReviewerTurnOutput = DeveloperTurnOutput & { terminal?: string | null; errors?: readonly string[] }
+
+export type DispatchHandle = {
+  exitCode: number | null
+  /** A bounded copy of the vendor process's stderr for diagnostics; callers must redact it before publication. */
+  stderr?: string
+  durationMs: number
+  usage: { input: number; output: number } | null
+  /**
+   * The cache tokens of the same usage object `usage` is read from: Claude's
+   * `cache_read_input_tokens` and `cache_creation_input_tokens`; Codex's
+   * `cached_input_tokens` as read, creation `0`. Codex counts cached input
+   * inside its `input_tokens`, so `usage.input` stays that raw figure here and
+   * a reader wanting uncached input subtracts `read` itself. Absent on a
+   * hand-built fixture handle and on a dispatch that never ran a vendor.
+   */
+  cacheUsage?: { read: number; creation: number } | null
+  /** The vendor's own session/thread identifier, parsed from a successful dispatch's stdout — `null` on any failure path or an unparseable shape. */
+  resumeId: string | null
+  timedOut: boolean
+  /** Set only when the dispatch did not reach a normal `outcome_received`. */
+  failureReason?: DispatchFailureReason
+  /** Set exactly when `failureReason` is `'usage-limit'`. */
+  usageLimit?: UsageLimit
+  /** Set exactly when `failureReason` is `'refused'` because the agent's sandbox probe failed on this host. */
+  sandboxProbeRefusal?: SandboxProbeRefusal
+  /**
+   * The same `effect_id` this attempt's own `dispatch`/`role_attempt`/`usage`
+   * lines already carry — optional so a hand-built fixture value in an
+   * existing test keeps type-checking, but always set on a real return from
+   * `dispatchRole`. Lets a caller that only sees this handle (never the
+   * `log()` calls themselves) correlate a failure it detects downstream
+   * back to the exact attempt that produced it, rather than inventing a
+   * fresh, unjoinable id.
+   */
+  effectId?: string
+  /**
+   * A Developer dispatch's turn result as its adapter read it off the stream
+   * (Claude `--json-schema`, Codex `--output-schema`) — set on every
+   * completed Developer dispatch, `adapter: null` for a vendor with no native
+   * structured output. Unvalidated: only the loop's controller accepts it.
+   */
+  turnOutput?: DeveloperTurnOutput
+  /**
+   * A reviewer's native structured final output, unvalidated until the loop
+   * binds it to the round, with the stream's own terminal outcome and the
+   * error text the provider reported — what tells a provider error or an
+   * exhausted context apart from a result that is simply missing.
+   */
+  reviewOutput?: ReviewerTurnOutput
+  /** A Developer dispatch's delivered Documentation manifest and the reads its gate counted (`deliveredDocumentation`). */
+  documentation?: DeliveredDocumentation
+}
+
+/**
+ * Give Codex's nested `workspace-write` sandbox the same caller-scoped
+ * directories already granted by Vinaya's outer worker boundary.
+ *
+ * Fresh `codex exec` accepts `--add-dir`. `codex exec resume` does not, but
+ * does accept the documented dotted `--config` override, so resumed sessions
+ * receive the same roots through `sandbox_workspace_write.writable_roots`.
+ * Developer artifacts are individual files at the outer boundary; Codex's
+ * inner boundary accepts directories, so only each file's real parent is
+ * added here. The outer Seatbelt profile remains the authoritative exact-file
+ * restriction.
+ */
+export function addCodexWritableDirs(
+  args: readonly string[],
+  extraWritableDirs: readonly string[],
+  resumed: boolean,
+  developerFiles: readonly string[] = []
+): string[] {
+  const requestedDirs = [...extraWritableDirs, ...developerFiles.map((file) => dirname(file))]
+  if (requestedDirs.length === 0) return [...args]
+  const jsonIndex = args.indexOf('--json')
+  const insertionIndex = jsonIndex === -1 ? args.length : jsonIndex
+  const canonicalDirs = requestedDirs.map((dir) => {
+    let canonical = dir
+    try {
+      canonical = realpathSync(dir)
+    } catch {
+      // Boundary construction performs the authoritative fail-closed path
+      // validation; preserve its diagnostic rather than throwing here.
+    }
+    return canonical
+  })
+  const uniqueDirs = [...new Set(canonicalDirs)]
+  const writableArgs = resumed
+    ? ['--config', `sandbox_workspace_write.writable_roots=${JSON.stringify(uniqueDirs)}`]
+    : uniqueDirs.flatMap((dir) => ['--add-dir', dir])
+  return [...args.slice(0, insertionIndex), ...writableArgs, ...args.slice(insertionIndex)]
+}
+
+/**
+ * Four hours — matches `dispatch.timeoutMs`'s documented default in
+ * `VinayaConfigSchema`. Raised from the original one hour:
+ * a real dispatched agent turn was found live still working past the
+ * thirty-minute mark, and a one-hour ceiling gives too little margin before
+ * a genuinely working agent is killed mid-task. The ceiling itself stays —
+ * an unbounded dispatch is how a hung agent runs forever unnoticed — just
+ * long enough now that reaching it is a real signal, not routine noise.
+ */
+export const DEFAULT_TIMEOUT_MS = 14_400_000
+
+/** Twenty minutes — the default ceiling for the two review roles. */
+export const DEFAULT_REVIEWER_TIMEOUT_MS = 1_200_000
+
+type DispatchTimeoutConfig = { timeoutMs?: number; reviewerTimeoutMs?: number } | undefined
+
+/** Selects a ceiling by role, independently of the agent vendor running it. */
+export function resolveDispatchTimeoutMs(role: Role, config: DispatchTimeoutConfig): number {
+  return role === 'code-reviewer' || role === 'security'
+    ? (config?.reviewerTimeoutMs ?? DEFAULT_REVIEWER_TIMEOUT_MS)
+    : (config?.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+}
+
+/**
+ * Default grace window between `SIGTERM` and `SIGKILL` once the ceiling
+ * fires — overridable via `dispatch.killGraceMs` (`VinayaConfigSchema`) so a
+ * test proving the escalation itself happens does not have to pay this real
+ * wall time to observe it.
+ */
+const SIGKILL_GRACE_MS = 5_000
+
+/** First visible wait follows a call that has produced no result for ten seconds. */
+export const FIRST_WAIT_LINE_MS = 10_000
+/** Further wait lines are deliberately sparse, even for an hour-long command. */
+export const WAIT_LINE_INTERVAL_MS = 30_000
+/** @deprecated Kept as the public cadence name for callers that imported it. */
+export const HEARTBEAT_INTERVAL_MS = WAIT_LINE_INTERVAL_MS
+
+/**
+ * How long before the deadline the approaching-timeout warning fires.
+ * Capped at 5 minutes so a short `dispatch.timeoutMs` (e.g. a test's 2500ms)
+ * still gets a warning inside its own ceiling rather than one scheduled past
+ * it and never firing.
+ */
+export function timeoutWarningLeadMs(timeoutMs: number): number {
+  return Math.min(300_000, Math.floor(timeoutMs / 2))
+}
+
+/**
+ * Tees the child's raw stdout/stderr bytes to a machine-local file so a
+ * human can read what the agent is doing while it is still running —
+ * never inside the repository tree (a dispatch's own worktree could be
+ * mid-rebase or reviewed by someone else) and never a replacement for the
+ * in-memory `stdoutBuf` the exit handler parses for outcome data. Failure to
+ * create the file (an unwritable home, a full disk) degrades to a silent
+ * no-op tee, matching this module's "never throws" posture — losing the
+ * human-readable copy is not a reason to fail the dispatch itself.
+ */
+/** Hard ceiling on one run's teed output. A four-hour run's stdout is unbounded otherwise. */
+export const MAX_TEE_BYTES = 8 * 1024 * 1024
+
+/**
+ * A run's own output, teed to a file a human can read WHILE the run is alive.
+ *
+ * Three properties are load-bearing, and all three are security properties —
+ * this file persists the full stdout AND stderr of a credentialed subprocess
+ * that runs arbitrary shell commands mid-task (`env`, reading a `.env`,
+ * `gh auth token`), so its raw bytes are exactly the bytes that must never
+ * reach disk unscrubbed:
+ *
+ *  1. **Redacted.** Every chunk goes through `@attalabs/aeg-core`'s `redact` —
+ *     the same function every outbox line already passes through — so a
+ *     GitHub token or an `Authorization: Bearer` value is replaced before it
+ *     is written, and an absolute path under the home directory is rewritten
+ *     to `~/…`. Chunk boundaries can split a token, so a tail of the previous
+ *     chunk is carried and re-scanned rather than trusting chunk alignment.
+ *  2. **Owner-only, and inside its own directory.** The file is created 0600
+ *     in a 0700 directory, and `effectId` is refused unless it is a plain
+ *     identifier — a caller passing a traversal string gets no file at all,
+ *     rather than a file written wherever the string resolved to.
+ *  3. **Bounded, and never fatal.** Writing stops at `MAX_TEE_BYTES`, and a
+ *     write-time failure (a full disk mid-run) degrades this to a no-op
+ *     instead of throwing: an async `stream.write` error would otherwise be
+ *     unhandled and take down the dispatch this tee only observes.
+ */
+export function openOutputTee(
+  effectId: string,
+  scope: RunScope = 'unscoped'
+): {
+  write: (chunk: Buffer) => void
+  end: () => void
+  path: string | null
+} {
+  const inert = { write: () => {}, end: () => {}, path: null }
+  // Refuse anything that is not a plain id BEFORE it reaches `join`, so a
+  // traversal string can never resolve outside the intended directory.
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(effectId)) return inert
+  try {
+    const dir = runPath(runtimeDirForThisRepo(), scope, { area: 'output' })
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    // `mkdirSync`'s mode applies only when it creates the directory — an
+    // existing one keeps whatever permissions it already had, which for a
+    // directory created before this hardening is world-readable.
+    chmodSync(dir, 0o700)
+    const path = join(dir, `${effectId}.log`)
+    const stream = createWriteStream(path, { flags: 'a', mode: 0o600 })
+    let broken = false
+    let written = 0
+    let carry = ''
+    // A stream error is asynchronous; without this listener it is an
+    // unhandled 'error' event, which is fatal to the process.
+    stream.on('error', () => {
+      broken = true
+    })
+    const home = homedir()
+    return {
+      write: (chunk: Buffer) => {
+        if (broken || written >= MAX_TEE_BYTES) return
+        try {
+          const text = carry + chunk.toString('utf8')
+          // Keep a tail unwritten so a secret straddling two chunks is still
+          // matched whole on the next pass; flush it at `end`.
+          const cut = Math.max(0, text.length - 256)
+          const emit = redact(text.slice(0, cut), home)
+          carry = text.slice(cut)
+          if (emit.length === 0) return
+          written += Buffer.byteLength(emit)
+          stream.write(emit)
+        } catch {
+          broken = true
+        }
+      },
+      end: () => {
+        try {
+          if (!broken && carry.length > 0) stream.write(redact(carry, home))
+          stream.end()
+        } catch {
+          broken = true
+        }
+      },
+      path
+    }
+  } catch {
+    return inert
+  }
+}
+
+/**
+ * O1: the one shell surface a dispatched agent must never use — a
+ * backgrounded command — refused before the tool call executes, not asked
+ * nicely in a prompt. Confirmed live against this machine's own
+ * `~/.claude/settings.json` and the installed `claude` binary itself (not
+ * guessed): `permissions.deny` rules match only a Bash call's COMMAND TEXT
+ * (`Bash(<pattern>)`) — there is no bare permission-rule syntax for a
+ * structured field like `tool_input.run_in_background`. A `PreToolUse` hook
+ * is the one mechanism that receives the tool's full structured input and
+ * can decide on that field: its output contract
+ * (`hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision:
+ * 'allow'|'deny'|'ask', permissionDecisionReason }`) and the
+ * `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":…}]}]}`
+ * wiring shape are both read straight out of the installed binary's own
+ * strings (it ships an equivalent example hook, `matcher: 'Bash'` running a
+ * read-only-`gh` script) — not assumed.
+ *
+ * This is generated fresh per `dispatchRole` call (this function's own
+ * "per-dispatch" — every dispatch, every role, always the same content) and
+ * wired in only for `claude`: Codex's `exec --help` exposes no
+ * settings-injection flag at all.
+ */
+export const BACKGROUND_DENY_REASON =
+  'Dispatched sessions cannot run shell commands in the background — run this command in the foreground instead.'
+
+/**
+ * Round-2 HIGH: `run_in_background === true` is the SDK's own
+ * flag for a backgrounded tool call, but a dispatched agent can background a
+ * process by shell shape alone, with `run_in_background` left `false` — a
+ * trailing `&` (never `&&`, a legitimate chain operator), or a command that
+ * launches its process through `nohup`, `disown`, or `setsid`. This is the
+ * shared detector the hook script below embeds verbatim (as a string — it
+ * runs inside a generated `.mjs` file, not this module), so the fixtures in
+ * `dispatch.test.ts` exercise the exact same source the shipped hook runs,
+ * never a parallel reimplementation that could silently drift from it.
+ *
+ * Quote-stripping is naive (no escape handling) — good enough to keep a
+ * quoted `&` inside an `echo` argument, e.g. `echo "job &"`, from a false
+ * deny, without attempting a full shell parse.
+ */
+export function backgroundShapeDetectorSource(): string {
+  return [
+    'function stripQuoted(s) {',
+    "  return s.replace(/'[^']*'/g, '').replace(/\"[^\"]*\"/g, '');",
+    '}',
+    'function commandBackgrounds(command) {',
+    "  if (typeof command !== 'string') return false;",
+    '  const bare = stripQuoted(command).trimEnd();',
+    '  if (/(^|[^&])&$/.test(bare)) return true;',
+    '  if (/(^|[;&|]|\\s)nohup\\s/.test(bare)) return true;',
+    '  if (/\\bdisown\\b/.test(bare)) return true;',
+    '  if (/(^|[;&|]|\\s)setsid\\s/.test(bare)) return true;',
+    '  return false;',
+    '}'
+  ].join('\n')
+}
+
+/**
+ * The runtime twin of `isWholeSuiteTestPlanLine`
+ * (`@attalabs/aeg-core`'s `issue-validation.ts`) — same four whole-suite
+ * shapes (a bare `bun test`, `bun test` on a directory, any `bunx turbo
+ * test` form, `vitest run` on a package), reimplemented here rather than
+ * imported because this source runs embedded, as a string, inside the
+ * generated `.mjs` hook script (same posture as `backgroundShapeDetectorSource`
+ * above) — a dispatched agent's own Bash calls, never an Issue body. A
+ * dispatched developer's own Test plan already names the file(s) their own
+ * work proves; the pre-push hook and CI are the only sanctioned whole-suite
+ * runs (`roles/developer.md`).
+ */
+export function wholeSuiteTestCommandDetectorSource(): string {
+  return [
+    'function maskQuoted(s) {',
+    "  return s.replace(/'[^']*'/g, (m) => 'x'.repeat(m.length)).replace(/\"[^\"]*\"/g, (m) => 'x'.repeat(m.length));",
+    '}',
+    // A shell comment or a chained `;`/`&&`/`||`/newline statement can plant
+    // a real test-file path AFTER (or beside) the runner invocation it never
+    // actually reaches — `bun test # apps/cli/foo.test.ts` and
+    // `bun test; echo apps/cli/foo.test.ts` both still run a bare `bun test`
+    // as their effective first command. Judging the whole raw string let
+    // both through (security review, found live); judging one statement at
+    // a time, comments stripped, does not. A newline is a statement
+    // separator here too (round 4 security review, HIGH, found live): a
+    // command whose text embeds `\n` followed by a forbidden git subcommand
+    // otherwise passes as one un-split statement, since `;`/`&&`/`||` never
+    // appear in it at all.
+    'function stripLineComment(s) {',
+    '  const idx = maskQuoted(s).indexOf("#");',
+    '  return idx === -1 ? s : s.slice(0, idx);',
+    '}',
+    'function commandStatements(command) {',
+    '  const masked = maskQuoted(command);',
+    '  const statements = [];',
+    '  let last = 0;',
+    '  const re = /;|&&|\\|\\||\\n/g;',
+    '  let m;',
+    '  while ((m = re.exec(masked)) !== null) {',
+    '    statements.push(command.slice(last, m.index));',
+    '    last = m.index + m[0].length;',
+    '  }',
+    '  statements.push(command.slice(last));',
+    '  return statements;',
+    '}',
+    'function commandRunsWholeSuite(command) {',
+    "  if (typeof command !== 'string') return false;",
+    '  for (const raw of commandStatements(command)) {',
+    '    const stmt = stripLineComment(raw);',
+    '    if (/\\bbunx\\s+turbo\\s+test\\b/i.test(stmt)) return true;',
+    '    if (/\\bbun\\s+test\\b/i.test(stmt) || /\\bvitest\\s+run\\b/i.test(stmt)) {',
+    '      if (!/[^\\s\'"]+\\.(?:test|spec)\\.[jt]sx?\\b/i.test(stmt)) return true;',
+    '    }',
+    '  }',
+    '  return false;',
+    '}'
+  ].join('\n')
+}
+
+export const SUITE_RUN_DENY_REASON =
+  'Dispatched sessions cannot run a test runner with no test-file argument — name the specific *.test.*/*.spec.* file(s) this Part proves. The pre-push hook’s selected-tests run and CI are the only sanctioned whole-suite runs.'
+
+/**
+ * Round 3 security review, HIGH — found live: `buildRolePermissions`'s own
+ * `deny` entries (`Bash(git push --force*)`, `Bash(git commit --no-verify*)`,
+ * etc.) are literal command-string-PREFIX matches, exactly like every other
+ * entry the settings-file engine supports (this file's own doc comment on
+ * `buildRolePermissions` already cites the confirmed-live `Bash(<prefix>)`/
+ * `Bash(<prefix>:*)`/`Bash(<glob> *)` grammar) — so an ordinary alternate
+ * spelling never matches ANY deny entry at all and resolves through the
+ * broader `Bash(git push:*)`/`Bash(git commit:*)` allow with an empty
+ * `permission_denials` array: `git push origin --force` (the flag after the
+ * remote/branch, not right after `push`), `git push origin +feature:main`
+ * (git's own force-refspec syntax — no `--force`/`-f` flag exists at all),
+ * `git commit -am fix --no-verify` (the flag after other short options).
+ * A prefix-matched string can never generalize over argument ORDER the way
+ * this needs to. Detected here instead — the SAME `PreToolUse` hook
+ * mechanism `commandRunsWholeSuite` (above) already proves live for exactly
+ * this class of check (a whole-suite test run has the identical
+ * argument-order problem: `bun test --coverage <file>` is fine, `bun test`
+ * alone is not, and no fixed prefix distinguishes them) — real token
+ * inspection in JS, not a settings-file pattern. Reuses `commandStatements`/
+ * `stripLineComment` from `wholeSuiteTestCommandDetectorSource`'s own
+ * embedded copy (both already land in the SAME generated script), rather
+ * than a second inline reimplementation.
+ */
+function gitForceOrSkipVerifyDetectorSource(): string {
+  return [
+    'function statementTokens(stmt) {',
+    '  return stmt.trim().split(/\\s+/).filter(Boolean);',
+    '}',
+    'function commandForcesGitOrSkipsVerify(command) {',
+    "  if (typeof command !== 'string') return false;",
+    '  for (const raw of commandStatements(command)) {',
+    '    const stmt = stripLineComment(raw);',
+    '    const tokens = statementTokens(stmt);',
+    "    if (tokens[0] !== 'git') continue;",
+    '    const sub = tokens[1];',
+    "    if (sub === 'push') {",
+    '      for (let i = 2; i < tokens.length; i++) {',
+    '        const t = tokens[i];',
+    "        if (t === '-f' || t === '--force') return true;",
+    "        if (t === '--force-with-lease' || t.indexOf('--force-with-lease=') === 0) return true;",
+    "        if (t === '--no-verify') return true;",
+    // A push refspec argument starting with `+` (e.g. `+feature:main`,
+    // `+HEAD:main`) is git's OWN force-push syntax — no `--force`/`-f` flag
+    // is present at all in this shape, confirmed against git's own
+    // `git-push` documentation ("a plus sign ... has the same effect as
+    // --force").
+    "        if (t.charAt(0) === '+' && t.length > 1) return true;",
+    '      }',
+    "    } else if (sub === 'commit') {",
+    '      for (let i = 2; i < tokens.length; i++) {',
+    '        const t = tokens[i];',
+    "        if (t === '--no-verify' || t === '-n') return true;",
+    // A combined short-flag cluster (`-an`, `-na`, …) containing `n` — git
+    // commit's own short options never use `n` for anything else, so any
+    // cluster carrying it is `-n`/`--no-verify` combined with other flags.
+    "        if (/^-[a-zA-Z]+$/.test(t) && t.slice(1).indexOf('n') !== -1) return true;",
+    '      }',
+    '    }',
+    '  }',
+    '  return false;',
+    '}'
+  ].join('\n')
+}
+
+export const GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON =
+  'Dispatched sessions cannot force-push (in any spelling, including a `+refspec`) or skip commit/push hooks (`--no-verify`/`-n`) — this is enforced by argument inspection, not a settings-file pattern, so no flag ordering or alternate spelling defeats it.'
+
+/**
+ * Defense in depth beside the pre-push hook, not the only guard: the
+ * pre-push hook only ever sees an actual `git push`, at the git
+ * level, after a dispatched session has already committed and staged it;
+ * this catches the ATTEMPT one layer earlier, at the Bash tool call itself,
+ * before either subcommand ever runs. Origin: a developer session worked in
+ * the shared main checkout (rather than its own worktree) and ran a hard
+ * reset and pushes there, because the write-access policy only ever GRANTS
+ * a path inside the worktree and never DENIES one outside it (see
+ * `writeAccessHookScript`'s own O4 fix, alongside this one) — this closes
+ * the git-command half of that same gap.
+ *
+ * Resolved via real `git` calls (`-C <dir>`, so this never depends on the
+ * hook process's own cwd matching the command's), never a settings-file
+ * pattern — the same reasoning `gitForceOrSkipVerifyDetectorSource`'s own
+ * doc comment gives for needing real argument inspection over a fixed
+ * prefix. `cwd` starts at `process.cwd()` (this dispatch's own working
+ * directory — `spawnCwd` at `dispatchRole`'s own call site) and is updated
+ * by a leading `cd <dir>` statement before it, so `cd
+ * /path/to/main-checkout && git push` is caught even when the session's own
+ * ambient cwd is the worktree; a `cd` target this naive regex cannot parse
+ * (quoted, env-var expansion) simply leaves `cwd` unchanged rather than
+ * throwing.
+ *
+ * Fails OPEN on every uncertainty — the SAME posture
+ * `checkMainBranchRefusal`'s own doc comment states for its `defaultBranch:
+ * null` case ("a check whose job is refusing risky actions must not itself
+ * risk refusing a legitimate one it cannot actually evaluate"): a detached
+ * HEAD, an unresolvable `origin/HEAD`, or a `cwd` that is not a git
+ * checkout at all each read as "nothing to refuse," never a false deny.
+ * This hook reads the remote-tracking `origin/HEAD` alone, so it passes
+ * where `check-main-branch-refusal.ts` — which also falls back to the
+ * remote-tracking `origin/main` and `origin/master` — can still refuse; the current branch is read the
+ * same way by both.
+ */
+function defaultBranchCommitOrPushDetectorSource(): string {
+  return [
+    "const cp = require('child_process');",
+    "const path = require('path');",
+    'function gitOutput(cwd, args) {',
+    '  try {',
+    "    return cp.execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();",
+    '  } catch { return null; }',
+    '}',
+    'function currentBranchAt(cwd) {',
+    "  const b = gitOutput(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']);",
+    "  return b === null || b === '' ? null : b;",
+    '}',
+    'function defaultBranchAt(cwd) {',
+    "  const ref = gitOutput(cwd, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);",
+    "  if (ref === null || ref === '') return null;",
+    "  const branch = ref.slice('origin/'.length);",
+    "  return branch === '' ? null : branch;",
+    '}',
+    'function commandCommitsOrPushesOnDefaultBranch(command) {',
+    "  if (typeof command !== 'string') return false;",
+    '  let cwd = process.cwd();',
+    '  for (const raw of commandStatements(command)) {',
+    '    const stmt = stripLineComment(raw).trim();',
+    '    const cdMatch = /^cd\\s+(\\S+)/.exec(stmt);',
+    '    if (cdMatch) { cwd = path.resolve(cwd, cdMatch[1]); continue; }',
+    '    const tokens = statementTokens(stmt);',
+    "    if (tokens[0] !== 'git') continue;",
+    '    const sub = tokens[1];',
+    "    if (sub !== 'commit' && sub !== 'push') continue;",
+    '    const current = currentBranchAt(cwd);',
+    '    if (current === null) continue;',
+    '    const def = defaultBranchAt(cwd);',
+    '    if (def === null) continue;',
+    '    if (current === def) return true;',
+    '  }',
+    '  return false;',
+    '}'
+  ].join('\n')
+}
+
+export const COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON =
+  "Dispatched sessions cannot commit or push while the shell's working directory is a checkout on this repo's default branch — do this from a worktree instead. This is defense in depth beside the pre-push hook, not the only guard."
+
+/**
+ * The subagent tool (`Agent`/`Task` — both names are checked, as a
+ * dispatched session may see either) defaults `run_in_background` to true,
+ * so an unattended developer session that never sets it explicitly would
+ * otherwise background every subagent it spawns — the same failure mode
+ * `BACKGROUND_DENY_REASON` closes for Bash, applied to the other tool that
+ * can start background work.
+ */
+export const SUBAGENT_BACKGROUND_DENY_REASON =
+  'Dispatched sessions cannot run a subagent in the background — pass run_in_background: false (or omit it) and run it in the foreground instead.'
+
+function denyOutput(reason: string): string {
+  return (
+    '      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: ' +
+    "'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: " +
+    JSON.stringify(reason) +
+    ' } }));'
+  )
+}
+
+/** `denyOutput`'s counterpart — used only by `writeAccessHookScript`, which grants rather than refuses. */
+function allowOutput(reason: string): string {
+  return (
+    '      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: ' +
+    "'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: " +
+    JSON.stringify(reason) +
+    ' } }));'
+  )
+}
+
+function backgroundDenyHookScript(): string {
+  return [
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    const e = JSON.parse(d);',
+    backgroundShapeDetectorSource(),
+    wholeSuiteTestCommandDetectorSource(),
+    gitForceOrSkipVerifyDetectorSource(),
+    defaultBranchCommitOrPushDetectorSource(),
+    '    const input = e.tool_input || {};',
+    "    if (e.tool_name === 'Bash' && (input.run_in_background === true || commandBackgrounds(input.command))) {",
+    denyOutput(BACKGROUND_DENY_REASON),
+    "    } else if (e.tool_name === 'Bash' && commandRunsWholeSuite(input.command)) {",
+    denyOutput(SUITE_RUN_DENY_REASON),
+    "    } else if (e.tool_name === 'Bash' && commandForcesGitOrSkipsVerify(input.command)) {",
+    denyOutput(GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON),
+    "    } else if (e.tool_name === 'Bash' && commandCommitsOrPushesOnDefaultBranch(input.command)) {",
+    denyOutput(COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON),
+    "    } else if ((e.tool_name === 'Agent' || e.tool_name === 'Task') && input.run_in_background === true) {",
+    denyOutput(SUBAGENT_BACKGROUND_DENY_REASON),
+    '    }',
+    '  } catch {',
+    '    // not a JSON line — never block on a shape this hook does not understand',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
+ * True for a `## Documentation` source shaped as a URL — the only shape a
+ * `WebFetch` call can ever answer for. An in-repo path (a spec, a role doc)
+ * is read via `Read`, which this task's O2 names no hook for; mechanizing
+ * "was this URL fetched" only ever applies to the URL-shaped subset. Same
+ * `https?://` test `doc-owners.ts`'s `isUrlPointer` already uses, duplicated
+ * rather than imported — that module is out of this task's surface and the
+ * test is a one-line literal, not a shared grammar worth a cross-file wire.
+ */
+function isDocumentationUrl(source: string): boolean {
+  return /^https?:\/\//i.test(source.trim())
+}
+
+/**
+ * Which of `sources`' URL-shaped entries never appear (as a normalized
+ * prefix match — a trailing slash or `#fragment` on either side never
+ * causes a false miss) in `fetchedUrls` — the `WebFetch` URLs the
+ * `PostToolUse` hook already recorded for this session. Pure, exported for
+ * unit testing; the generated Stop hook script below duplicates this exact
+ * logic inline (it must run standalone, no workspace module resolution —
+ * same posture `backgroundShapeDetectorSource` already takes).
+ */
+export function unreadDocumentationSources(
+  sources: IssueDocumentationSource[],
+  fetchedUrls: string[]
+): IssueDocumentationSource[] {
+  const normalize = (u: string) => u.trim().split('#')[0]!.replace(/\/+$/, '')
+  const fetched = new Set(fetchedUrls.map(normalize))
+  return sources.filter((s) => isDocumentationUrl(s.source) && !fetched.has(normalize(s.source)))
+}
+
+/**
+ * Extracts the `## Documentation` sources this dispatch's own prompt names,
+ * for a `developer` dispatch only — the entry-gate obligation `roles/
+ * developer.md` states is the Developer's alone, never another role's. A
+ * fresh (round 1) developer dispatch's prompt IS the frozen brief text
+ * (`dispatch-task.ts`'s `prep.brief`), which now carries `## Documentation`
+ * verbatim (`brief-render.ts`'s `renderDocumentation`) right after
+ * Objectives. A resumed/round-2+ prompt (a review-finding fix, never the
+ * full brief again) simply has no such heading, `parseIssueDocumentation`
+ * returns not-ok, and this degrades to `[]` — no re-imposed obligation on a
+ * later round, since the sources were already read to reach round 1's PR.
+ */
+function documentationSourcesFromPrompt(role: Role, prompt: string): IssueDocumentationSource[] {
+  if (role !== 'developer') return []
+  const parsed = parseIssueDocumentation(prompt)
+  if (!parsed.ok || parsed.value.kind !== 'sources') return []
+  return parsed.value.sources
+}
+
+/**
+ * The required sources a `developer` dispatch carries: the controller's
+ * prepared manifest for this task when one exists — so every round and every
+ * resume carries the same sources, whatever its prompt says — else the
+ * prompt's own `## Documentation` section, for a dispatch no loop prepared.
+ */
+function requiredDocumentationSources(role: Role, prompt: string, storeDir: string): IssueDocumentationSource[] {
+  if (role !== 'developer') return []
+  const manifest = readRequiredSourceManifest(storeDir)
+  if (manifest !== null && manifest.sources.length > 0) {
+    return manifest.sources.map((s) => ({
+      source: s.requirementText,
+      mechanism: s.governs,
+      objectiveIds: s.objectiveIds
+    }))
+  }
+  return documentationSourcesFromPrompt(role, prompt)
+}
+
+/** The receipts file of the task whose folder is `taskDir` — its controller-owned source store, inside `control/`. */
+function taskSourceReceiptsPath(taskDir: string): string {
+  return sourceReceiptsPath(join(taskDir, RUN_AREA_DIRNAMES.control, SOURCE_STORE_DIRNAME))
+}
+
+/**
+ * The smallest response, in bytes, the Documentation read-gate counts as a read: a login page, an error page or an empty shell falls below it. Owned by `fetch-documentation.ts`, so the `WebFetch` check and the driver's read receipt apply one value.
+ */
+export { DOCUMENTATION_READ_MIN_SIZE }
+
+/** How the driver's `fetch_documentation` tool appears to each agent: Claude prefixes MCP tools with `mcp__<server>__`. */
+const FETCH_DOCUMENTATION_TOOL_FOR_CLAUDE = `mcp__vinaya-dev-tools__${FETCH_DOCUMENTATION_TOOL}`
+
+/**
+ * The stand-alone hook-script source that reads the controller's delivery
+ * receipts (`source-manifest.ts`) and returns the set of source identities
+ * delivered and not refused. Only the controller writes that file, in the
+ * task's source store outside every sandbox. The hook reads it only so it
+ * stops asking for a source already delivered — no completion decision
+ * reads the hook. Same normalization as the hooks' own `normalize`.
+ */
+function receiptSourcesSnippet(receiptsPath: string): string {
+  return [
+    '    const receiptSources = new Set();',
+    '    try {',
+    `      for (const line of fs.readFileSync(${JSON.stringify(receiptsPath)}, 'utf8').split('\\n')) {`,
+    '        if (!line) continue;',
+    "        try { const r = JSON.parse(line); if (r && typeof r.source === 'string' && r.decision !== 'refused') receiptSources.add(normalize(r.source)); } catch {}",
+    '      }',
+    '    } catch {}'
+  ].join('\n')
+}
+
+/**
+ * The `PostToolUse` hook that records every `WebFetch` URL for this session
+ * — O2. Appends one JSON line (`{url, finalUrl, status, size}`, the response facts the Stop hook grades) per call to a per-run log
+ * file keyed by `VINAYA_RUN_ID` (never a fixed global path: two tasks
+ * dispatched concurrently, an observed live pattern on this box, would
+ * otherwise share one file and each would see the other's fetches). Exit
+ * code 2 is not honored on `PostToolUse` at all (confirmed against
+ * code.claude.com/docs/en/hooks: "There is no way to block or undo a tool
+ * call after it succeeds") — this hook only ever records, and always exits
+ * 0, matching that constraint rather than attempting a block it structurally
+ * cannot perform.
+ */
+export function documentationLogHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    const e = JSON.parse(d);',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    const input = e.tool_input || e.tool_input_json || e.input || {};',
+    '    const urls = [];',
+    "    const visit = (v) => { if (typeof v === 'string') { const m = v.match(/https?:\\/\\/[^\\s\\\"'<>]+/g); if (m) urls.push(...m); } else if (Array.isArray(v)) v.forEach(visit); else if (v && typeof v === 'object') Object.values(v).forEach(visit); };",
+    "    if (typeof input.url === 'string') urls.push(input.url); else visit(input);",
+    "    const r = e.tool_response && typeof e.tool_response === 'object' ? e.tool_response : {};",
+    "    const num = (v) => { const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v; return typeof n === 'number' && Number.isFinite(n) ? n : null; };",
+    '    const status = num(r.status) ?? num(r.code);',
+    "    const size = num(r.bytes) ?? num(r.size) ?? (typeof r.result === 'string' ? r.result.length : null);",
+    "    const finalUrl = typeof r.url === 'string' ? r.url : null;",
+    '    if (runId && urls.length > 0) {',
+    `      const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    "      try { for (const url of urls) fs.appendFileSync(logPath, JSON.stringify({ url, finalUrl, status, size }) + '\\n', { mode: 0o600 }); } catch {}",
+    '    }',
+    '  } catch {',
+    '    // not a JSON line — never fail a hook whose only job is to record',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
+ * Codex-only receipt logger. Codex documents `Bash` as a supported
+ * `PostToolUse` route, unlike its built-in web search. The generated prompt
+ * requires this route to use `curl -L <URL>` for documentation sources. The
+ * hook accepts only a successful curl command that names the required URL;
+ * arbitrary Bash/apply_patch payloads containing a URL cannot satisfy it.
+ */
+function codexDocumentationLogHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    const e = JSON.parse(d);',
+    "    if (e.tool_name !== 'Bash') { process.exit(0); }",
+    '    const response = e.tool_response;',
+    "    const responseText = typeof response === 'string' ? response : JSON.stringify(response || '');",
+    '    const successful = response != null && response.isError !== true && response.error == null && responseText.length > 2;',
+    '    if (!successful) { process.exit(0); }',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    "    const command = e.tool_input && typeof e.tool_input.command === 'string' ? e.tool_input.command : '';",
+    '    const match = command.trim().match(/^curl\\s+-L\\s+([\'"]?)(https?:\\/\\/[^\\s\'"<>;&|]+)\\1$/);',
+    '    if (!match) { process.exit(0); }',
+    '    if (runId) {',
+    `      const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    "      fs.appendFileSync(logPath, JSON.stringify({ url: match[2], tool: 'Bash/curl' }) + '\\n', { mode: 0o600 });",
+    '    }',
+    '  } catch {',
+    '    // Invalid payloads never create a receipt.',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
+ * The `Stop` hook that refuses to let the turn end while a `## Documentation`
+ * source named in this dispatch's own brief was never fetched —
+ * O2. Reads the per-run sources file `writeDispatchSettings` wrote (dormant,
+ * exit 0, when absent or empty: a task whose brief carried no Documentation
+ * section, or none of it URL-shaped, owes nothing here) and the log file the
+ * `PostToolUse` hook above wrote, and exits 2 — "prevents Claude from
+ * stopping, continues the conversation" (code.claude.com/docs/en/hooks) —
+ * naming every unread source on stderr when the two disagree. Enforcement is
+ * this hook's, never the Developer's own judgement call about whether it
+ * read enough.
+ */
+export function documentationStopHookScript(
+  dir: string,
+  receiptsPath: string = taskSourceReceiptsPath(dirname(dirname(dir)))
+): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    JSON.parse(d);',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    if (!runId) { process.exit(0); }',
+    `    const sourcesPath = ${JSON.stringify(join(dir, 'documentation-sources-'))} + runId + '.json';`,
+    `    const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    '    let sources = [];',
+    "    try { sources = JSON.parse(fs.readFileSync(sourcesPath, 'utf8')); } catch { sources = []; }",
+    '    if (!Array.isArray(sources) || sources.length === 0) { process.exit(0); }',
+    '    let entries = [];',
+    '    try {',
+    "      entries = fs.readFileSync(logPath, 'utf8')",
+    "        .split('\\n')",
+    '        .filter(Boolean)',
+    '        .map((line) => { try { return JSON.parse(line); } catch { return null; } })',
+    "        .filter((x) => x && typeof x.url === 'string');",
+    '    } catch { entries = []; }',
+    "    const normalize = (u) => String(u).trim().split('#')[0].replace(/\\/+$/, '');",
+    receiptSourcesSnippet(receiptsPath),
+    '    const isUrl = (s) => /^https?:\\/\\//i.test(String(s).trim());',
+    '    const hostOf = (u) => { try { return new URL(String(u).trim()).host.toLowerCase(); } catch { return null; } };',
+    `    const minSize = ${DOCUMENTATION_READ_MIN_SIZE};`,
+    '    const whyNotRead = (x, source) => {',
+    "      if (typeof x.status !== 'number') return 'the fetch recorded no HTTP status';",
+    "      if (x.status < 200 || x.status > 299) return 'the fetch returned HTTP ' + x.status;",
+    '      const want = hostOf(source);',
+    "      const got = typeof x.finalUrl === 'string' ? hostOf(x.finalUrl) : null;",
+    "      if (!got) return 'the fetch recorded no final URL';",
+    "      if (got !== want) return 'the fetch ended on another host (' + got + ', not ' + want + ')';",
+    "      if (typeof x.size !== 'number') return 'the fetch recorded no content size';",
+    "      if (x.size < minSize) return 'the fetch returned only ' + x.size + ' bytes (minimum ' + minSize + ')';",
+    '      return null;',
+    '    };',
+    '    const problems = [];',
+    '    for (const s of sources) {',
+    '      if (!isUrl(s.source)) continue;',
+    '      if (receiptSources.has(normalize(s.source))) continue;',
+    '      const mine = entries.filter((x) => normalize(x.url) === normalize(s.source));',
+    `      if (mine.length === 0) { problems.push('- ' + s.source + ' (governs: ' + s.mechanism + '): never fetched via WebFetch or ${FETCH_DOCUMENTATION_TOOL_FOR_CLAUDE}'); continue; }`,
+    '      const reasons = mine.map((x) => whyNotRead(x, s.source));',
+    '      if (reasons.some((r) => r === null)) continue;',
+    "      problems.push('- ' + s.source + ' (governs: ' + s.mechanism + '): fetched but did not count — ' + reasons[reasons.length - 1]);",
+    '    }',
+    '    if (problems.length > 0) {',
+    "      process.stderr.write('The brief\\'s `## Documentation` section names a source with no counted read. Fetch it via WebFetch (a fetch counts only when it succeeded, stayed on the source\\'s host and returned real content) or via the driver\\'s fetch_documentation tool (counts when it succeeded and returned real text, wherever the page redirected) before ending the turn, and record the mechanism/version it confirms:\\n' + problems.join('\\n') + '\\n');",
+    '      process.exit(2);',
+    '    }',
+    '  } catch {',
+    '    // an unreadable/malformed hook payload never blocks a Stop this hook cannot evaluate',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+export function codexDocumentationStopHookScript(
+  dir: string,
+  receiptsPath: string = taskSourceReceiptsPath(dirname(dirname(dirname(dir))))
+): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    JSON.parse(d);',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    if (!runId) { process.exit(0); }',
+    `    const sourcesPath = ${JSON.stringify(join(dir, 'documentation-sources-'))} + runId + '.json';`,
+    `    const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    "    let sources = []; try { sources = JSON.parse(fs.readFileSync(sourcesPath, 'utf8')); } catch {}",
+    "    let fetchedUrls = []; try { fetchedUrls = fs.readFileSync(logPath, 'utf8').split('\\n').filter(Boolean).map((line) => { try { return JSON.parse(line).url; } catch { return null; } }).filter((u) => typeof u === 'string'); } catch {}",
+    "    const normalize = (u) => String(u).trim().split('#')[0].replace(/\\/+$/, '');",
+    '    const fetched = new Set(fetchedUrls.map(normalize));',
+    receiptSourcesSnippet(receiptsPath),
+    '    for (const source of receiptSources) fetched.add(source);',
+    "    const unread = Array.isArray(sources) ? sources.filter((s) => /^https?:\\/\\//i.test(String(s.source || '').trim()) && !fetched.has(normalize(s.source))) : [];",
+    '    if (unread.length > 0) {',
+    "      const names = unread.map((s) => '- ' + s.source + ' (governs: ' + s.mechanism + ')').join('\\n');",
+    "      process.stdout.write(JSON.stringify({ decision: 'block', reason: 'Read every required Documentation URL before completing, with the fetch_documentation tool (or curl -L <URL> in Bash when the host is reachable):\\n' + names }) + '\\n');",
+    '      process.exit(0);',
+    '    }',
+    '  } catch {}',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
+ * The Documentation a Developer dispatch was given, and the deliveries the
+ * controller recorded — read back after the turn by the driver from the
+ * task's controller-owned source store (`storeDir`) and nothing else. The
+ * sources are the prepared manifest's; a dispatch no loop prepared falls back
+ * to the per-run sources file the dispatch itself wrote in `dir`. The counted
+ * deliveries are the store's receipts whose revision policy did not refuse
+ * them: a `WebFetch` or `curl` the agent's own hooks logged, and any file a
+ * worker could write, are never read here, so a fabricated receipt has no
+ * effect. The controller requires a counted delivery behind every required
+ * source a `completed` result reports, a repository source included.
+ */
+export function deliveredDocumentation(dir: string | null, runId: string, storeDir: string): DeliveredDocumentation {
+  const manifest = readRequiredSourceManifest(storeDir)
+  let sources: string[] = []
+  if (manifest !== null && manifest.sources.length > 0) {
+    sources = manifest.sources.map((s) => s.requirementText)
+  } else if (dir !== null) {
+    let fallback: unknown = []
+    try {
+      fallback = JSON.parse(readFileSync(join(dir, `documentation-sources-${runId}.json`), 'utf8'))
+    } catch {
+      fallback = []
+    }
+    sources = Array.isArray(fallback)
+      ? fallback
+          .map((m) => (m && typeof m === 'object' ? (m as { source?: unknown }).source : null))
+          .filter((m): m is string => typeof m === 'string')
+      : []
+  }
+  return {
+    sources,
+    countedReads: countedSourceIds(readSourceDeliveryReceipts(sourceReceiptsPath(storeDir))).map(
+      normalizeSourceIdentity
+    )
+  }
+}
+
+function writeCodexDispatchHooks(
+  runId: string,
+  documentation: IssueDocumentationSource[],
+  scope: RunScope,
+  role: Role
+): string | null {
+  try {
+    return writeCodexHookFiles(
+      join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role, 'codex'),
+      runId,
+      documentation
+    )
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Writes the Codex Documentation read-gate's files into `dir`
+ * (`<task hooks area>/<role>/codex`) and returns the `hooks.json` path. The
+ * Stop hook reads the controller's delivery receipts from the task's source
+ * store (`control/sources/`), only to stop asking for a delivered source.
+ */
+export function writeCodexHookFiles(
+  dir: string,
+  runId: string,
+  documentation: IssueDocumentationSource[],
+  receiptsPath: string = taskSourceReceiptsPath(dirname(dirname(dirname(dir))))
+): string {
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  chmodSync(dir, 0o700)
+  const logScript = join(dir, 'documentation-log.mjs')
+  const stopScript = join(dir, 'documentation-stop.mjs')
+  writeFileSync(logScript, codexDocumentationLogHookScript(dir), { mode: 0o600 })
+  writeFileSync(stopScript, codexDocumentationStopHookScript(dir, receiptsPath), { mode: 0o600 })
+  // Written only when this prompt names sources, as the Claude settings
+  // do. A loop's dispatches share one run id, so rewriting the manifest as
+  // `[]` on a later prompt with no Documentation section changed a file the
+  // after-turn check protects, and blamed the Developer for the driver's
+  // own write.
+  if (documentation.length > 0) {
+    writeFileSync(join(dir, `documentation-sources-${runId}.json`), JSON.stringify(documentation), { mode: 0o600 })
+  }
+  const hooksPath = join(dir, 'hooks.json')
+  writeFileSync(
+    hooksPath,
+    JSON.stringify(
+      {
+        hooks: {
+          PostToolUse: [
+            {
+              matcher: '^Bash$',
+              hooks: [{ type: 'command', command: `bun "${logScript}"` }]
+            }
+          ],
+          Stop: [{ hooks: [{ type: 'command', command: `bun "${stopScript}"` }] }]
+        }
+      },
+      null,
+      2
+    ),
+    { mode: 0o600 }
+  )
+  return hooksPath
+}
+
+/**
+ * The ceiling this repo's own doctrine commands can genuinely need —
+ * `roles/developer.md` records the real gate suite running "past ten
+ * minutes" on a real Test Plan, above the installed binary's own default
+ * `BASH_MAX_TIMEOUT_MS` ceiling (10 minutes, confirmed live against the
+ * installed binary's strings) — and the Bash tool's own hard client-side cap
+ * (1800000ms / 30 minutes, from its tool description). Set to that same
+ * hard cap: raising it further would have no effect, and this is already
+ * above every doctrine command on record.
+ */
+const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
+
+/**
+ * Bump this whenever the allow/deny shape below changes, OR the behavior of
+ * a hook `writeDispatchSettings` wires alongside it changes (the bump to
+ * `v2`: `writeAccessHookScript` now denies a `directory`-scoped Write/Edit
+ * outside its granted worktree instead of falling through, and
+ * `backgroundDenyHookScript` now also denies a `git commit`/`git push`
+ * whose working directory is a checkout on the default branch; the bump to
+ * `v4`: `writeAccessHookScript` now also denies an `exact-files`-scoped
+ * Write/Edit outside its granted hand-off files instead of falling through —
+ * neither touches `buildRolePermissions`'s own `allow`/`deny` arrays, but all
+ * are as much "the written policy" as those arrays are; the bump to `v6`:
+ * the Developer's `gh` allow narrows from a blanket `Bash(gh:*)` to the
+ * enumerated subcommands O7 actually needs (`gh pr create/edit/view/comment/
+ * diff`, `gh issue view/comment`) — `gh` runs outside the sandbox
+ * (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`), so this allow-list was the only
+ * remaining gate against `gh api`/`gh pr merge`/`gh secret`/`gh repo` (round
+ * 2 security review, HIGH) — and added a `Bash(git pull:*)` permission.
+ * The exclusion list is now empty; both fetch and pull run sandboxed because
+ * Git can execute a worker-chosen program during a fetch.
+ * `writeDispatchSettings`'s own first lifecycle line for a role names it, so
+ * a run's own log says which policy shape it started under without needing
+ * to diff `dispatch.ts` against the run's own timestamp.
+ */
+export const PERMISSION_POLICY_VERSION = 'v6'
+
+type RolePermissions = { allow: string[]; deny: string[] }
+
+const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
+
+/**
+ * The machine's own security and system state is not a dispatched role's to
+ * change. Origin, observed live: a dispatched security reviewer testing
+ * Keychain behaviour ran `security create-keychain` followed by `security
+ * default-keychain -s` on a temporary keychain, then deleted that keychain —
+ * which left the login keychain neither the default nor in the search list.
+ * From that moment `gh` read an invalid token and the `claude` CLI read no
+ * login at all, so every run on that machine died with "Not logged in" until
+ * the keychain list was restored by hand, some eight hours later. The
+ * Seatbelt boundary that would have contained it (§§3–4 of
+ * `apps/cli/specs/isolation.md`) was switched off on that host, so the
+ * dispatched role's own permission policy was the only barrier there was.
+ *
+ * Expressed as `permissions.deny` entries in the host's OWN `Bash(<command>:*)`
+ * grammar, and nothing else — the host matches each part of a compound
+ * command against them itself. Confirmed live against the installed binary
+ * (2.1.258), running a REAL `claude -p` against a settings file carrying
+ * exactly these entries: `echo start && security list-keychains` came back
+ * with a POPULATED `permission_denials` array and `result: "User deny
+ * permission. Command not run."`, and so did `true | sudo -n launchctl
+ * list`, `echo a; crontab -l`, `echo three && git config --system --get
+ * user.name` and `echo four && networksetup -listallnetworkservices`. The
+ * repository-scoped `git config` Step 0 itself runs is untouched: `echo five
+ * && git config --get push.autoSetupRemote` resolved with an EMPTY
+ * `permission_denials` array and its real output.
+ *
+ * Whole commands, not subcommands, wherever no doctrine command needs the
+ * family at all — `security` in full (the Keychain reads Vinaya's own
+ * credential paths make run in Vinaya's own code, `find-generic-password` in
+ * `worker-boundary.ts` and the log-credential lookup, never through a
+ * dispatched agent's shell), `defaults` in full rather than `defaults write`
+ * alone. `git config` is the one family split by scope, because the
+ * repository scope is a dispatched role's own business.
+ *
+ * **This is a floor, not a sandbox** — the same limit `roles/developer.md`
+ * and `roles/security.md` state in one line. A deny entry matches a command
+ * PREFIX, so the floor is what the host's own matcher reaches: it does not
+ * reach a command wearing a wrapper word, one an unusual flag order puts
+ * ahead of the matched prefix, another interpreter, an alias, or a script
+ * file the session wrote and then runs. The containment for those is the
+ * worker sandbox, and turning it back on is its own task. A hand-written
+ * parser of shell text is not that containment either: every tokenizer tried
+ * here was defeated by the next spelling found, so none is kept.
+ */
+const MACHINE_STATE_DENY_RULES: readonly string[] = [
+  'Bash(security:*)',
+  'Bash(launchctl:*)',
+  'Bash(defaults:*)',
+  'Bash(systemsetup:*)',
+  'Bash(networksetup:*)',
+  'Bash(pmset:*)',
+  'Bash(dscl:*)',
+  'Bash(crontab:*)',
+  'Bash(chsh:*)',
+  'Bash(git config --global:*)',
+  'Bash(git config --system:*)',
+  'Bash(sudo:*)'
+]
+
+/**
+ * The settings-file counterpart to `writeDispatchSettings`'s
+ * existing hooks — an explicit, per-role `permissions.allow`/`deny` block, so
+ * a dispatched role's Bash calls resolve against a WRITTEN policy rather than
+ * falling through to whatever permission mode the host process happens to
+ * default to (`isolation.md` §2's "second, narrower precedent" — this is a
+ * third). Confirmed live against the installed `claude` binary (2.1.258):
+ * `permissions.allow`/`deny` entries use the SAME `Bash(<prefix>)`/
+ * `Bash(<prefix>:*)`/`Bash(<glob> *)` grammar `denyOutput`'s own doc comment
+ * already cites for `~/.claude/settings.json`, and a `deny` entry wins over a
+ * broader `allow` entry that also matches — verified live in an isolated
+ * fixture repo: `{"allow":["Bash(git commit:*)"],"deny":["Bash(git commit
+ * --no-verify*)"]}` let a plain `git commit` through with an empty
+ * `permission_denials` array, and refused `git commit --no-verify -am …`
+ * with a populated one, from the SAME settings file, under the SAME (default,
+ * non-interactive `-p`) permission mode — proving the narrower deny overrides
+ * the broader allow rather than the command merely falling through to
+ * "unlisted." A command this fixture never runs through this mechanism at
+ * all — no `--permission-mode` flag on record here either — is why an
+ * UNLISTED command still resolves through the host's own interactive
+ * classifier exactly as before this task; only a role's own doctrine-named
+ * commands get an explicit answer.
+ *
+ * **This function covers Bash only — never `Write`/`Edit`.** A round-2 review
+ * live-verified that `permissions.allow` entries shaped `Write(<path>/**)` /
+ * `Edit(<path>/**)` / `Write(<exact/file>)` do NOT grant a real, non-interactive
+ * `Write`/`Edit` call on the installed binary (2.1.258): every path-scoped
+ * variant tried (a trailing `/**`, `/*`, a bare directory, a `//`-prefixed
+ * absolute form, an exact relative filename) still left the call denied; only
+ * the degenerate `Write(*)` (equivalent to no scoping at all) or a bare
+ * `Write`/`Edit` with no parenthesized argument ever came back with an empty
+ * `permission_denials` array. So a real Write/Edit grant, scoped to a
+ * directory or an exact file, is expressed a different way entirely — see
+ * `buildWriteAccessScope` and `writeAccessHookScript`, below, which use the
+ * SAME `PreToolUse` hook mechanism `backgroundDenyHookScript` already proves
+ * live for Bash/Agent/Task, matched on `Write|Edit` instead.
+ *
+ * `developer` gets the version-control/forge/package/test commands
+ * `roles/developer.md`/`roles/developer/reference.md` name it running
+ * (worktree creation, fetch, add/commit/push, `gh pr`/`issue` read+write, the
+ * package manager, the test runner, this repo's own `verify-*` bin scripts
+ * and its `vinaya` CLI entry point) — plus a deny list for exactly what
+ * `roles/developer.md`/`reference.md` forbid: a force push in any of its
+ * spellings, `--no-verify` on a commit or push, `git stash` (worktree
+ * discipline — stash refs are shared across a repo's worktrees), a hard
+ * reset, `rm -rf`, and `MACHINE_STATE_DENY_RULES` — none of which any
+ * doctrine command needs.
+ *
+ * `code-reviewer`/`security` get no allow rule at all: no `gh`, and no git
+ * command either, because the staged read-only checkout they review carries no
+ * version-control metadata, so a read-only git command there has nothing to
+ * read. The driver stages the pull request's own body, its diff
+ * against its base, and the prior round's findings as files inside the
+ * reviewer's own read-only checkout (`reviewer-dispatch.ts`'s
+ * `candidateInputPieces`/`reviewer-isolation.ts`'s
+ * `writeReviewerCandidateInputs`), so a dispatched review pass has no
+ * remaining doctrine reason to hold a forge credential or call `gh` at all —
+ * `roles/reviewer.md`/`roles/security.md`'s dispatched case now says so.
+ * `gh` in full (never a per-subcommand allow/deny split, the same whole-family
+ * posture `MACHINE_STATE_DENY_RULES` already takes for `security`/`launchctl`)
+ * is denied below, defense-in-depth alongside the forge-write/package/test
+ * commands a Reviewer has no doctrine reason to run — rather than left to fall
+ * through as merely unlisted. Both roles carry `MACHINE_STATE_DENY_RULES` too
+ * — the role that broke this machine's keychain was a security reviewer.
+ *
+ * Every other role (`planner`/`principal`/`archivist`/`architect`) gets no
+ * rules at all — this task's own Objectives name only these three roles, and
+ * an empty policy leaves an unlisted command resolving exactly as it did
+ * before this task, never a silent new restriction on a role this brief
+ * never asked to scope.
+ */
+export function buildRolePermissions(role: Role): RolePermissions {
+  if (role === 'developer') {
+    return {
+      allow: [
+        'Bash(git worktree add:*)',
+        'Bash(git worktree list:*)',
+        'Bash(git fetch:*)',
+        'Bash(git pull:*)',
+        'Bash(git status:*)',
+        'Bash(git diff:*)',
+        'Bash(git log:*)',
+        'Bash(git show:*)',
+        'Bash(git add:*)',
+        'Bash(git commit:*)',
+        // O4: the Developer holds NO forge write. It no longer gets a
+        // `git push` or any `gh` permission allow — it publishes, opens its
+        // PR, updates the body, refreshes evidence, reads its PR and runs
+        // checks ONLY through the driver-run dev-tools (`task-tools/
+        // dev-tools-host.ts`), which run the credentialed forge operations in
+        // the driver, outside the sandbox. A dispatch test asserts the absence
+        // of `git push`/`gh` here (`dispatch.test.ts`). `git commit` stays —
+        // the driver's `publish_changes` tool commits the worktree the agent
+        // prepared, and a local commit touches no forge credential.
+        'Bash(git config:*)',
+        'Bash(git branch:*)',
+        'Bash(git checkout:*)',
+        'Bash(git merge:*)',
+        'Bash(git rebase:*)',
+        'Bash(bun install:*)',
+        'Bash(bun run:*)',
+        'Bash(bun test:*)',
+        'Bash(bun packages/aeg-core/bin/verify-dispatch.ts:*)',
+        'Bash(bun packages/aeg-core/bin/verify-docs.ts:*)',
+        'Bash(bun packages/aeg-core/bin/verify-task.ts:*)',
+        'Bash(bun apps/cli/src/index.ts:*)'
+      ],
+      deny: [
+        // O4: the whole `git push` and `gh` families are denied — the
+        // Developer holds no forge write and publishes only through the
+        // driver-run dev-tools. Denying them outright (not merely leaving them
+        // ungranted) is the explicit floor a prompt-injected turn hits, and
+        // what the dispatch test asserts.
+        'Bash(git push:*)',
+        'Bash(gh:*)',
+        // `--no-verify`/`-n` stay forbidden for the commit the `publish_changes`
+        // tool makes from the worktree — a narrower deny wins over the broader
+        // `git commit:*` allow above (confirmed live, this function's doc).
+        'Bash(git commit --no-verify*)',
+        'Bash(git commit -n*)',
+        'Bash(git stash*)',
+        'Bash(git reset --hard*)',
+        'Bash(rm -rf*)',
+        // Kept in its original glob form beside `MACHINE_STATE_DENY_RULES`'s
+        // own `Bash(sudo:*)`, which is narrower: the glob also covers
+        // `sudoedit`, and a policy revision is no place to give coverage back.
+        'Bash(sudo*)',
+        ...MACHINE_STATE_DENY_RULES
+      ]
+    }
+  }
+  if (role === 'code-reviewer' || role === 'security') {
+    return {
+      // No git allow: the staged checkout has no version-control metadata.
+      allow: [],
+      deny: [
+        'Bash(git push:*)',
+        'Bash(git commit:*)',
+        'Bash(git add:*)',
+        // O2: no `gh` subcommand at all — the driver stages the pull
+        // request's body, diff and prior findings as files instead
+        // (`reviewer-dispatch.ts`'s `candidateInputPieces`), so a dispatched
+        // review pass has no remaining doctrine reason to hold a forge
+        // credential. The whole family, never a per-subcommand split — the
+        // same posture `MACHINE_STATE_DENY_RULES` already takes for
+        // `security`/`launchctl`.
+        'Bash(gh:*)',
+        'Bash(bun install:*)',
+        'Bash(bun test:*)',
+        'Bash(bun run:*)',
+        // A dispatched reviewer never runs the
+        // agent-config scanner itself — the driver runs it outside the
+        // reviewer's trust and hands the result to the security prompt. `npx`
+        // is the scanner's own launcher (`npx ... ecc-agentshield scan`); it,
+        // and the package install it implies, have no doctrine reason for
+        // either review role, so both are denied rather than left unlisted.
+        'Bash(npx:*)',
+        ...MACHINE_STATE_DENY_RULES
+      ]
+    }
+  }
+  return EMPTY_ROLE_PERMISSIONS
+}
+
+/** The one machine-state command family the Claude side splits by scope. */
+const GIT_CONFIG_TOKENS = ['git', 'config'] as const
+
+/**
+ * The Codex-side counterpart to `buildRolePermissions`' machine-state `deny`
+ * block — the SAME floor `MACHINE_STATE_DENY_RULES` gives a Claude Code
+ * dispatch, translated into Codex's own per-run command-policy grammar so a
+ * `vinaya dispatch <role> --agent codex` run refuses the same commands a
+ * `--agent claude` run of that role refuses (keychain, services, global
+ * settings). Returns the text of an execpolicy `.rules` file, or `null` for a
+ * role that carries no floor on the Claude side either.
+ *
+ * **Mechanism, established live against the installed binary (`codex-cli
+ * 0.152.1`).** Codex has no `permissions.deny` list; its per-run command
+ * policy is an execpolicy `.rules` file written in a small Starlark dialect —
+ * `prefix_rule(pattern = [...tokens], decision = "forbidden", …)` — which
+ * Codex discovers by scanning `<CODEX_HOME>/rules/*.rules` at startup (no
+ * `config.toml` key points at it; it is directory-discovered). `worker-boundary.ts`
+ * writes this text into THIS run's own staged `CODEX_HOME/rules/`, never the
+ * operator's `~/.codex`. The refusal was proven without a real
+ * `security`/`launchctl` call, with Codex's own dry-run checker:
+ *
+ *     $ codex execpolicy check --rules vinaya-machine-state.rules \
+ *         security default-keychain -s /tmp/x.keychain
+ *     {"matchedRules":[{"prefixRuleMatch":{"matchedPrefix":["security"],
+ *       "decision":"forbidden", …}}],"decision":"forbidden"}
+ *     $ codex execpolicy check --rules vinaya-machine-state.rules \
+ *         git config push.autoSetupRemote true
+ *     {"matchedRules":[]}          # repository-scoped git config: not forbidden
+ *
+ * `decision = "forbidden"` "blocks execution without prompting" (Codex's own
+ * docs); the whole list came back `forbidden`, and every doctrine command a
+ * Developer runs (`git commit`/`git push`/`gh pr create`/repository-scoped
+ * `git config`, which Step 0 itself runs) came back with no forbidding rule —
+ * the same scope split the Claude side draws between `Bash(git config
+ * --global:*)`/`Bash(git config --system:*)` and `Bash(git config:*)`.
+ *
+ * **Never a second list.** The commands and the role gating are BOTH read back
+ * out of `buildRolePermissions(role).deny` (filtered to the
+ * `MACHINE_STATE_DENY_RULES` entries), so this function owns neither: a role
+ * that carries no floor there carries none here, and a command added to
+ * `MACHINE_STATE_DENY_RULES` appears in both policies at once. Each
+ * `Bash(<prefix>:*)` glob becomes one `prefix_rule` whose `pattern` is
+ * `<prefix>` split on whitespace (`Bash(security:*)` → `["security"]`;
+ * `Bash(git config --global:*)` → `["git","config","--global"]`). Codex's
+ * prefix match is token-for-token — the same family/prefix match the host's
+ * own `Bash(<prefix>:*)` grammar performs, so this is the same floor with the
+ * same disclosed limit (`roles/developer.md`): a command reached under a
+ * wrapper word, through another interpreter, or with an unusual flag order is
+ * not caught, and the worker sandbox is the containment for those.
+ *
+ * Every rule carries a `match` example, and each git-config-scope rule a
+ * `not_match` proving repository-scoped `git config` stays allowed; Codex
+ * validates both when it loads the file (live-confirmed: a wrong example fails
+ * the load), so a mistranslation — or a later widening of the git-config
+ * prefix to `["git","config"]`, which would refuse Step 0 — fails the file's
+ * own load rather than shipping a silent parity hole.
+ */
+export function buildCodexExecpolicyRules(role: Role): string | null {
+  const deny = buildRolePermissions(role).deny
+  const machineRules = MACHINE_STATE_DENY_RULES.filter((rule) => deny.includes(rule))
+  if (machineRules.length === 0) return null
+
+  const justification = 'machine-state command denied for a dispatched role — the operator runs this, not the agent'
+  const lines: string[] = [
+    `# Vinaya machine-state deny floor for a dispatched Codex run — permission policy ${PERMISSION_POLICY_VERSION}.`,
+    '# Generated from MACHINE_STATE_DENY_RULES (apps/cli/src/lib/dispatch.ts), the SAME list a Claude',
+    '# Code dispatch denies via permissions.deny — do not edit by hand. Codex discovers it from',
+    "# <CODEX_HOME>/rules/*.rules at startup; it is written into this run's own staged CODEX_HOME,",
+    "# never the operator's ~/.codex. Mechanism/syntax established live against codex-cli 0.152.1.",
+    ''
+  ]
+  for (const rule of machineRules) {
+    const tokens = rule.slice('Bash('.length, -':*)'.length).split(/\s+/).filter(Boolean)
+    const isGitConfigScope =
+      tokens.length > GIT_CONFIG_TOKENS.length && GIT_CONFIG_TOKENS.every((token, i) => tokens[i] === token)
+    const notMatch = isGitConfigScope ? `, not_match = ${JSON.stringify([[...GIT_CONFIG_TOKENS, 'x']])}` : ''
+    lines.push(
+      `prefix_rule(pattern = ${JSON.stringify(tokens)}, decision = "forbidden", ` +
+        `justification = ${JSON.stringify(justification)}, match = ${JSON.stringify([[...tokens, 'x']])}${notMatch})`
+    )
+  }
+  return `${lines.join('\n')}\n`
+}
+
+export type WriteAccessScope =
+  | {
+      kind: 'directory'
+      allowedDir: string
+      extraFiles: string[]
+      protectedSubpaths: string[]
+      openedSubpaths: string[]
+    }
+  | { kind: 'exact-files'; paths: string[] }
+
+/**
+ * The real grant behind O1's Write/Edit half, now that `buildRolePermissions`'s
+ * own doc comment records that a `permissions.allow` path pattern never
+ * actually grants one — a directory for the developer (its own worktree), or
+ * no file at all for a reviewer/security dispatch: a reviewer returns its
+ * ReviewResult as native structured output, so its `exact-files` scope is
+ * empty and every Write and Edit it attempts is denied. Every role outside
+ * these three gets `null` — no hook wiring, no file written, matching
+ * `buildRolePermissions`'s own "no rules at all" posture for a role this
+ * task's Objectives never named.
+ *
+ * Paths are realpath'd here, once, before they are ever written to disk or
+ * compared against — the same "every substituted path must be canonicalized"
+ * discipline `isolation.md` §3 already states for its own Seatbelt profile:
+ * a worktree or work directory that resolves through a symlinked alias (this
+ * host's own `/tmp` → `/private/tmp` is the standing example) would otherwise
+ * make every real Write/Edit call's own resolved path fail to match the
+ * unresolved directory this function was handed. A path that does not exist
+ * yet degrades to its own raw, unresolved form rather than throwing — never
+ * fatal to the dispatch this scope is only ever a defense-in-depth layer for.
+ *
+ * `developerFiles` (O3): the Developer's own
+ * `directory` scope additionally carries `extraFiles` — the exact paths the
+ * driver named for this round, outside the worktree — never widened
+ * to a directory grant, since nothing else under that round's Developer
+ * folder is this dispatch's to write. Ignored for every other role: a
+ * reviewer/security dispatch's own `exact-files` scope is unaffected.
+ *
+ * **`developerFiles` is resolved through its own PARENT, never `real()`
+ * (round 2 review, MAJOR).** Every entry is a file that does not exist yet
+ * at scope-build time (the Developer has not written it this round) — `real()`'s
+ * `realpathSync(p)` throws on the whole, not-yet-existing path and falls back
+ * to it RAW, unresolved. `writeAccessHookScript`'s own live comparison, below,
+ * resolves the opposite way: `realpathSync(path.dirname(filePath))` (the
+ * PARENT, which does exist — `dev-review-loop.ts`'s `dispatchDeveloper` calls
+ * `ensureRunDir` on it before this dispatch ever runs) joined with the
+ * basename. A `runtimeDir` that traverses a symlinked ancestor (`/var` →
+ * `/private/var`, this reference's own documented example) would make the two
+ * sides disagree — this function's own raw, unresolved grant never matching
+ * the hook's resolved comparison — and deny the Developer's own legitimate
+ * write. `realFile` mirrors the hook's exact
+ * resolution so both sides compute the identical string.
+ *
+ * `protectedSubpaths` (O3): absolute, inside
+ * `allowedDir`, resolved (realpath'd) the same way `allowedDir` itself is —
+ * the agent's own configuration paths (`.claude/`, `.mcp.json`) to keep
+ * DENIED for Write/Edit even though they sit inside the developer's own
+ * otherwise-granted worktree. Empty (every pre-O3 caller) grants
+ * `allowedDir` fully, unmodified.
+ *
+ * `openedSubpaths`: absolute, real directories inside `protectedSubpaths`
+ * that the task's own Surface opened (`resolveOpenedAgentConfigPaths`,
+ * `worker-boundary.ts`, already resolved and symlink-checked by the
+ * caller). The write hook allows a protected path that lies inside one of
+ * them; every other protected path stays denied. The caller resolves the
+ * Surface; this function stays a generic scope builder with no opinion of
+ * its own about which paths are agent configuration.
+ */
+export function buildWriteAccessScope(
+  role: Role,
+  allowedDir: string,
+  developerFiles: readonly string[] = [],
+  protectedSubpaths: readonly string[] = [],
+  openedSubpaths: readonly string[] = []
+): WriteAccessScope | null {
+  const real = (p: string): string => {
+    try {
+      return realpathSync(p)
+    } catch {
+      return p
+    }
+  }
+  const realFile = (p: string): string => {
+    try {
+      return join(realpathSync(dirname(p)), basename(p))
+    } catch {
+      return real(p)
+    }
+  }
+  // A protected path that does not exist yet (no `.claude/` in the worktree)
+  // cannot be realpath'd itself; resolve it through its parent, or a
+  // worktree reached through a symlink leaves it unresolved and the hook's
+  // resolved target never matches it.
+  const realExistingOrParent = (p: string): string => (existsSync(p) ? real(p) : realFile(p))
+  if (role === 'developer') {
+    return {
+      kind: 'directory',
+      allowedDir: real(allowedDir),
+      extraFiles: developerFiles.map(realFile),
+      protectedSubpaths: protectedSubpaths.map(realExistingOrParent),
+      openedSubpaths: openedSubpaths.map(real)
+    }
+  }
+  if (role === 'code-reviewer' || role === 'security') return { kind: 'exact-files', paths: [] }
+  return null
+}
+
+export const WRITE_OUTSIDE_WORKTREE_DENY_REASON =
+  "Dispatched sessions cannot write or edit a file outside the developer's own worktree — this policy grants a path inside the worktree and denies everything else, rather than falling through to the host's own classifier for an out-of-scope path."
+
+/**
+ * `exact-files` scope's own counterpart to `WRITE_OUTSIDE_WORKTREE_DENY_REASON`
+ * — a code-reviewer/security dispatch, which writes no file at all.
+ */
+export const WRITE_OUTSIDE_HANDOFF_FILES_DENY_REASON =
+  "Dispatched reviewer sessions cannot write or edit any file — a reviewer hands off its review as its native structured result, so this policy grants no path and denies every write, rather than falling through to the host's own classifier."
+
+/**
+ * O3: the `directory` scope's own deny reason for
+ * a path inside the worktree that is ALSO inside `scope.protectedSubpaths`
+ * — the agent's own configuration paths, kept denied unless the task's
+ * Surface names them as this task's own work (`buildWriteAccessScope`'s own
+ * doc comment).
+ */
+export const WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON =
+  "Dispatched sessions cannot write or edit this agent's own configuration path — this task's Surface does not name it, so it stays protected even though it sits inside the developer's own worktree."
+
+/**
+ * The `PreToolUse` hook that grants a real `Write`/`Edit` call — matched on
+ * `Write|Edit`, never folded into `backgroundDenyHookScript`'s own
+ * `Bash|Agent|Task` matcher, since the two check entirely different tool
+ * shapes. Reads the per-run scope file `writeDispatchSettings` wrote (keyed
+ * by `runId`, same reasoning `documentationLogHookScript`'s own doc comment
+ * gives: two tasks dispatched concurrently on this box must never share one
+ * file) and resolves `tool_input.file_path`'s own containing directory via
+ * `fs.realpathSync` before comparing — a target file that does not exist yet
+ * (the normal case for a fresh `Write`) still has a real, existing parent
+ * directory to resolve through.
+ *
+ * **A path outside the written scope now DENIES, rather than falling
+ * through — for EITHER scope kind.** Before O4, every out-of-scope path
+ * (both scope kinds) fell through silently, "exactly like
+ * `backgroundDenyHookScript`'s own 'silent otherwise' posture" — this hook's
+ * job was only ever to GRANT a real capability the built-in engine cannot
+ * express, never to add a new restriction. The origin incident (a developer
+ * session working in the shared main checkout instead of its own worktree)
+ * showed that posture leaves the door open: an out-of-worktree Write/Edit
+ * simply resolved through the host's own default classifier, which can allow
+ * it in a non-interactive dispatch. O4 closed this for `directory` scope (the
+ * developer role's own worktree grant). **`exact-files` scope (a
+ * reviewer/security dispatch's own three hand-off files) now denies the
+ * same way (round 2 BLOCKER fix)** — the prior posture ("UNCHANGED, since O4
+ * scopes this rule to 'a developer session'") left exactly the gap O4 had
+ * just closed for the Developer open for the Reviewer/Security roles: a
+ * reviewer/security Write/Edit outside its three named files resolved
+ * through the host's own default classifier instead of this hook's own
+ * written restriction. Both scope kinds now deny explicitly outside their
+ * own grant — a real, written restriction, not a silent gap, for every
+ * unattended role this hook is wired for.
+ *
+ * **`directory` scope's own `extraFiles` (O3).** A `directory`-scoped write additionally allows an exact match on
+ * one of `scope.extraFiles` — the exact paths the driver named for this
+ * round, outside the worktree — before falling through to the deny above.
+ * Never a directory grant: only these exact, driver-named files.
+ *
+ * **`directory` scope's own `protectedSubpaths` (O3).** A path inside the worktree that is ALSO inside one of
+ * `scope.protectedSubpaths` (the agent's own configuration paths) denies
+ * with its own reason (`WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON`), checked
+ * BEFORE the general in-worktree allow — so a `.claude/**`/`.mcp.json` path
+ * this task's Surface does not name stays denied even though the rest of
+ * the worktree is granted. Never affects `extraFiles` — those files are named
+ * by the driver, never by this protection.
+ *
+ * **`directory` scope's own `openedSubpaths`.** Checked inside the protected
+ * match, by membership: a protected path that also lies inside one of
+ * `scope.openedSubpaths` (a configuration directory the task's Surface
+ * opened) is not a protected match, so the in-worktree allow applies to it.
+ * A path outside every opened directory keeps its protected deny.
+ */
+export function writeAccessHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "const path = require('path');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    const e = JSON.parse(d);',
+    "    if (e.tool_name !== 'Write' && e.tool_name !== 'Edit') { process.exit(0); }",
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    if (!runId) { process.exit(0); }',
+    `    const scopePath = ${JSON.stringify(join(dir, 'write-access-'))} + runId + '.json';`,
+    '    let scope;',
+    "    try { scope = JSON.parse(fs.readFileSync(scopePath, 'utf8')); } catch { process.exit(0); }",
+    '    const filePath = e.tool_input && e.tool_input.file_path;',
+    "    if (typeof filePath !== 'string') { process.exit(0); }",
+    '    let real;',
+    '    try {',
+    '      const realParent = fs.realpathSync(path.dirname(filePath));',
+    '      real = path.join(realParent, path.basename(filePath));',
+    '    } catch { real = filePath; }',
+    '    const underPath = (target, base) => target === base || target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);',
+    '    let allowed = false;',
+    '    let protectedMatch = false;',
+    "    if (scope.kind === 'directory') {",
+    '      const inDir = underPath(real, scope.allowedDir);',
+    '      const isExtraFile = Array.isArray(scope.extraFiles) && scope.extraFiles.includes(real);',
+    '      protectedMatch =',
+    '        Array.isArray(scope.protectedSubpaths) && scope.protectedSubpaths.some((p) => underPath(real, p)) &&',
+    '        !(Array.isArray(scope.openedSubpaths) && scope.openedSubpaths.some((p) => underPath(real, p)));',
+    '      allowed = (inDir && !protectedMatch) || isExtraFile;',
+    "    } else if (scope.kind === 'exact-files' && Array.isArray(scope.paths)) {",
+    '      allowed = scope.paths.includes(real);',
+    '    }',
+    '    if (allowed) {',
+    allowOutput("in-scope for this role's written write-access policy"),
+    "    } else if (scope.kind === 'directory' && protectedMatch) {",
+    denyOutput(WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON),
+    "    } else if (scope.kind === 'directory') {",
+    denyOutput(WRITE_OUTSIDE_WORKTREE_DENY_REASON),
+    "    } else if (scope.kind === 'exact-files') {",
+    denyOutput(WRITE_OUTSIDE_HANDOFF_FILES_DENY_REASON),
+    '    }',
+    '  } catch {',
+    '    // an unreadable/malformed hook payload never blocks a call this hook cannot evaluate',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
+ * Writes this dispatch's settings file and the hook script it references,
+ * owner-only inside an owner-only directory (same hardening posture as
+ * `openOutputTee`'s tee file). Never throws: an unwritable home degrades to
+ * `null` — no `--settings` flag added, matching this module's "never throws"
+ * posture — rather than failing the dispatch over a missing deny rule.
+ *
+ * The `env` block and the widened `PreToolUse` matcher are dispatch's OWN
+ * execution posture, carried on the settings file every
+ * dispatched session loads — so a session started with no operator export
+ * (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`/`BASH_MAX_TIMEOUT_MS`, previously a
+ * manual pre-launch step) inherits the same posture automatically. The
+ * matcher covers every tool that can start background work: `Bash` (a
+ * backgrounded shell command) and the subagent tool, under both names a
+ * dispatched session may see it by (`Agent`, `Task` — confirmed live against
+ * the installed binary's own strings) — its own `run_in_background` flag
+ * defaults to true, so an agent that never sets it explicitly would
+ * otherwise background every subagent it spawns.
+ *
+ * `documentation` (O2) wires the second enforcement pair this
+ * settings file carries: a `PostToolUse` hook that logs every `WebFetch` URL
+ * and a `Stop` hook that refuses to let the turn end while a URL-shaped
+ * `## Documentation` source this dispatch's own brief named was never
+ * fetched. Both scripts are static/generic (the same content on every call,
+ * like `deny-background-bash.mjs`) — only the per-run SOURCES file this
+ * writes is call-specific, keyed by `runId` rather than a fixed name,
+ * because two tasks dispatched concurrently on this box (an observed live
+ * pattern, not hypothetical) would otherwise share one file and each would
+ * see the other's obligation. `runId` must be the same id threaded onto the
+ * child's `VINAYA_RUN_ID` env var by the caller, or the hooks can never find
+ * the file this call wrote. An empty/absent `documentation` list writes no
+ * sources file at all — the Stop hook reads that as "nothing owed" and never
+ * blocks, the same seam-is-dormant-when-absent posture `doc-owners.ts`
+ * already uses.
+ *
+ * `role` feeds `buildRolePermissions` to add this same file's third
+ * enforcement block, `permissions.allow`/`deny` — see that function's own
+ * doc comment for the per-role shape and the live proof behind it.
+ * `role`/`allowedDir`/`developerFiles` together feed `buildWriteAccessScope`
+ * to wire a FOURTH block, the `Write|Edit` `PreToolUse` hook — see that
+ * function's own doc comment for why a settings-file path pattern could not
+ * carry this grant instead.
+ *
+ * **This call's own directory is scoped by `role` (round-2 security review,
+ * CRITICAL fix).** Before this fix, `dir` was keyed by task/PR scope alone —
+ * a single `settings.json` (and the hook scripts and per-run files beside
+ * it) shared by EVERY role dispatched for the same task. `dev-review-loop.ts`
+ * dispatches its code-reviewer and security roles CONCURRENTLY
+ * (`Promise.all`), each calling this function with a DIFFERENT `role` —
+ * whichever call's `writeFileSync` landed last won for
+ * BOTH already-spawned `claude --settings <path>` processes, since both
+ * pointed at the identical path and the vendor process reads it at its own
+ * startup, not at the moment this function returns. That race could hand
+ * one role the other's own Bash allow/deny list and Write/Edit hand-off-file
+ * scope — exactly the "keep read access and their own hand-off files and
+ * nothing more" boundary O1 exists to hold. Nesting `role` as this
+ * directory's own final path segment gives every concurrently-dispatched
+ * role its own exclusive settings file and hook scripts — no shared
+ * mutable path for two roles to race on at all.
+ */
+export function writeDispatchSettings(
+  runId: string,
+  documentation: IssueDocumentationSource[] = [],
+  scope: RunScope = 'unscoped',
+  role: Role = 'developer',
+  allowedDir = '.',
+  developerFiles: readonly string[] = [],
+  /**
+   * O1/O2: the Claude-native sandbox block `resolveClaudeConfinement`
+   * resolved for THIS dispatch, when it is confined — `null` for every
+   * attended dispatch and for an unattended one running unconfined (Linux
+   * without `bubblewrap`/`socat`). Embeds `settings.sandbox` and folds
+   * `permissionsDeny` into `buildRolePermissions(role)`'s own `deny` array,
+   * so the ONE settings file this function already writes carries the
+   * sandbox boundary alongside the existing hooks/permissions blocks, never
+   * a second file a confined `claude --settings` would also have to be told
+   * to load. This is also the ONE place `network.strictAllowlist: true` gets
+   * added — `buildClaudeSandboxSettings`'s own return value carries no such
+   * key (see its doc comment: a shape constraint from another task's
+   * sandbox-conformance suite, not a behavior change) — so this real,
+   * written settings file is the only thing that has to carry it for a host
+   * outside the allowlist to be refused rather than prompted for in this
+   * non-interactive dispatch.
+   */
+  confinement: ClaudeSandboxSettings | null = null,
+  /**
+   * O3: ABSOLUTE agent-configuration paths
+   * (`.claude/`, `.mcp.json` — `worker-boundary.ts`'s
+   * `agentConfigProtectedSubpaths`) to keep write-denied even though they
+   * sit inside the developer's own worktree. Empty (every pre-O3 caller)
+   * grants the worktree fully, unmodified — see `buildWriteAccessScope`'s
+   * own doc comment.
+   */
+  agentConfigProtectedSubpaths: readonly string[] = [],
+  /**
+   * ABSOLUTE configuration directories the task's own Surface opened
+   * (`resolveOpenedAgentConfigPaths`), allowed inside the protected ones.
+   */
+  agentConfigOpenedSubpaths: readonly string[] = []
+): string | null {
+  try {
+    const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role)
+    return writeDispatchSettingsAt(
+      dir,
+      runId,
+      documentation,
+      role,
+      allowedDir,
+      developerFiles,
+      confinement,
+      agentConfigProtectedSubpaths,
+      agentConfigOpenedSubpaths
+    )
+  } catch {
+    return null
+  }
+}
+
+/**
+ * `writeDispatchSettings`, writing into a directory the caller names instead of
+ * this task's runtime hooks area — the same settings file, hooks and per-run
+ * files, for a caller (the structured-result live proof) that must reproduce a
+ * Developer dispatch's settings without touching a real task's runtime folder.
+ */
+export function writeDispatchSettingsAt(
+  dir: string,
+  runId: string,
+  documentation: IssueDocumentationSource[] = [],
+  role: Role = 'developer',
+  allowedDir = '.',
+  developerFiles: readonly string[] = [],
+  confinement: ClaudeSandboxSettings | null = null,
+  agentConfigProtectedSubpaths: readonly string[] = [],
+  agentConfigOpenedSubpaths: readonly string[] = []
+): string | null {
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    chmodSync(dir, 0o700)
+    const scriptPath = join(dir, 'deny-background-bash.mjs')
+    writeFileSync(scriptPath, backgroundDenyHookScript(), { mode: 0o600 })
+    const documentationLogScriptPath = join(dir, 'documentation-log.mjs')
+    writeFileSync(documentationLogScriptPath, documentationLogHookScript(dir), { mode: 0o600 })
+    const documentationStopScriptPath = join(dir, 'documentation-stop.mjs')
+    writeFileSync(documentationStopScriptPath, documentationStopHookScript(dir), { mode: 0o600 })
+    if (documentation.length > 0) {
+      const sourcesPath = join(dir, `documentation-sources-${runId}.json`)
+      writeFileSync(sourcesPath, JSON.stringify(documentation), { mode: 0o600 })
+    }
+    const writeAccessScope = buildWriteAccessScope(
+      role,
+      allowedDir,
+      developerFiles,
+      agentConfigProtectedSubpaths,
+      agentConfigOpenedSubpaths
+    )
+    const writeAccessScriptPath = join(dir, 'write-access.mjs')
+    const preToolUseHooks = [
+      {
+        matcher: 'Bash|Agent|Task',
+        hooks: [{ type: 'command', command: `bun "${scriptPath}"` }]
+      }
+    ]
+    if (writeAccessScope !== null) {
+      writeFileSync(writeAccessScriptPath, writeAccessHookScript(dir), { mode: 0o600 })
+      const writeAccessPath = join(dir, `write-access-${runId}.json`)
+      writeFileSync(writeAccessPath, JSON.stringify(writeAccessScope), { mode: 0o600 })
+      preToolUseHooks.push({
+        matcher: 'Write|Edit',
+        hooks: [{ type: 'command', command: `bun "${writeAccessScriptPath}"` }]
+      })
+    }
+    const settingsPath = join(dir, 'settings.json')
+    const rolePermissions = buildRolePermissions(role)
+    const permissions =
+      confinement === null
+        ? rolePermissions
+        : { allow: rolePermissions.allow, deny: [...rolePermissions.deny, ...confinement.permissionsDeny] }
+    const settings = {
+      env: {
+        CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+        // O6 (issue-706): the SAME constant as the maximum, from the SAME
+        // object literal, so the two can never drift apart. Without a
+        // default equal to the ceiling, a command that names no timeout of
+        // its own (a `git push` whose pre-push hook runs for minutes, a long
+        // test run) is killed at the client's own 2-minute default and
+        // retried — observed live, twice in one round, as `Exit code 143 —
+        // Command timed out after 2m 0s`.
+        BASH_DEFAULT_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS,
+        BASH_MAX_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS
+      },
+      permissions,
+      ...(confinement === null
+        ? {}
+        : {
+            sandbox: {
+              ...confinement.sandbox,
+              network: { ...confinement.sandbox.network, strictAllowlist: true }
+            }
+          }),
+      hooks: {
+        PreToolUse: preToolUseHooks,
+        PostToolUse: [
+          {
+            matcher: 'WebFetch',
+            hooks: [{ type: 'command', command: `bun "${documentationLogScriptPath}"` }]
+          }
+        ],
+        Stop: [
+          {
+            hooks: [{ type: 'command', command: `bun "${documentationStopScriptPath}"` }]
+          }
+        ]
+      }
+    }
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { mode: 0o600 })
+    return settingsPath
+  } catch {
+    return null
+  }
+}
+
+type UsageParser = (stdout: string) => { input: number; output: number } | null
+
+/** A vendor's own genuine receipt of which model executed, or `null` when this vendor's stdout carries no such field — never guessed from the requested `--model` value. */
+type ModelParser = (stdout: string) => string | null
+
+/**
+ * Claude's own confirmed-live receipt of which model actually ran: a real
+ * `claude -p --output-format json` run's stdout carries a top-level
+ * `modelUsage` object whose key IS the resolved, canonical model name —
+ * `{"modelUsage":{"claude-sonnet-5":{"canonicalModel":"claude-sonnet-5",…}}}`
+ * even when the alias `sonnet` (never `claude-sonnet-5`) was the requested
+ * `--model` value (confirmed live: requesting `sonnet` still keys
+ * `modelUsage` by `claude-sonnet-5`). Scanned from the end, same reason
+ * `parseClaudeUsage` is. More than one key (a run spanning two models) joins
+ * both rather than picking one arbitrarily.
+ */
+export function parseClaudeModel(stdout: string): string | null {
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as { modelUsage?: Record<string, unknown> }
+      const keys = obj.modelUsage ? Object.keys(obj.modelUsage) : []
+      if (keys.length > 0) return keys.join(',')
+    } catch {
+      // not a JSON line — keep scanning backwards, never a guessed shape
+    }
+  }
+  return null
+}
+
+/**
+ * Codex's own `--json` stream carries no model field in any event, at any
+ * verbosity — confirmed live against a real `codex exec --json --model
+ * gpt-5.6-sol -` run's full event stream (`thread.started`, `turn.started`,
+ * `item.completed`, `turn.completed`): none of the four carries a `model`
+ * key anywhere. There is no vendor receipt to read for this vendor, ever —
+ * this is a fact about Codex's own output shape, not a gap in this parser.
+ */
+function parseCodexModel(_stdout: string): string | null {
+  return null
+}
+
+export function parseClaudeUsage(stdout: string): { input: number; output: number } | null {
+  // `stream-json` prints one event per line and the terminal event carries
+  // `usage`; scanned from the end for the same reason `parseCodexUsage` is.
+  // A single whole-blob `json` payload is one line, so it parses here too —
+  // this reads both forms rather than trading one for the other.
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as {
+        usage?: { input_tokens?: unknown; output_tokens?: unknown }
+      }
+      const u = obj.usage
+      if (u && typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+        return { input: u.input_tokens, output: u.output_tokens }
+      }
+    } catch {
+      // not a JSON line — keep scanning backwards, never a guessed shape
+    }
+  }
+  return null
+}
+
+/** The cache tokens of the same terminal `usage` object `parseClaudeUsage` reads, or `null` when no such object parsed. */
+export function parseClaudeCacheUsage(stdout: string): { read: number; creation: number } | null {
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as {
+        usage?: {
+          input_tokens?: unknown
+          output_tokens?: unknown
+          cache_read_input_tokens?: unknown
+          cache_creation_input_tokens?: unknown
+        }
+      }
+      const u = obj.usage
+      if (u && typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+        return {
+          read: typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : 0,
+          creation: typeof u.cache_creation_input_tokens === 'number' ? u.cache_creation_input_tokens : 0
+        }
+      }
+    } catch {
+      // not a JSON line — keep scanning backwards, never a guessed shape
+    }
+  }
+  return null
+}
+
+/** The cached input of the same `turn.completed` usage `parseCodexUsage` reads — Codex reports no cache creation, so it is `0` — or `null` when no such event parsed. */
+export function parseCodexCacheUsage(stdout: string): { read: number; creation: number } | null {
+  const lines = stdout.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const raw = (lines[i] ?? '').trim()
+    if (!raw) continue
+    try {
+      const obj = JSON.parse(raw) as {
+        type?: unknown
+        usage?: { input_tokens?: unknown; output_tokens?: unknown; cached_input_tokens?: unknown }
+      }
+      if (obj.type === 'turn.completed' && obj.usage) {
+        const u = obj.usage
+        if (typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+          return { read: typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : 0, creation: 0 }
+        }
+      }
+    } catch {
+      // not a JSON line — Codex's own stdout is JSONL only, but never trust it blindly
+    }
+  }
+  return null
+}
+
+/** Codex's `--json` mode prints one event per line; the terminal `turn.completed` event carries `usage`. Scanned from the end since it is always the last event of a successful turn. */
+function parseCodexUsage(stdout: string): { input: number; output: number } | null {
+  const lines = stdout.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const raw = (lines[i] ?? '').trim()
+    if (!raw) continue
+    try {
+      const obj = JSON.parse(raw) as {
+        type?: unknown
+        usage?: { input_tokens?: unknown; output_tokens?: unknown }
+      }
+      if (obj.type === 'turn.completed' && obj.usage) {
+        const u = obj.usage
+        if (typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+          return { input: u.input_tokens, output: u.output_tokens }
+        }
+      }
+    } catch {
+      // not a JSON line — Codex's own stdout is JSONL only, but never trust it blindly
+    }
+  }
+  return null
+}
+
+/** The `usage` family's own richer shape — input/output/cache, each independently nullable, plus an explicit reason whenever nothing was observed. Never defaults an unread unit to `0`. */
+export type UsageObservation = {
+  units: { input: number | null; output: number | null; cache: number | null }
+  unknownReason: string | null
+}
+type UsageUnitsParser = (stdout: string) => UsageObservation
+
+const NO_USAGE_UNITS: UsageObservation['units'] = { input: null, output: null, cache: null }
+
+/**
+ * Same terminal-line scan as `parseClaudeUsage`, extended to also read the
+ * Anthropic Messages API's own cache fields — `cache_creation_input_tokens`/
+ * `cache_read_input_tokens`, present (0 when unused) on every real `usage`
+ * object this vendor emits, summed into one `cache` figure since the log's
+ * `usage` family carries one cache count, not the two-way creation/read
+ * split. Never a second scan of `stdout`: reads the exact JSON object
+ * `parseClaudeUsage` already parses, just more of its fields.
+ */
+export function parseClaudeUsageUnits(stdout: string): UsageObservation {
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as {
+        usage?: {
+          input_tokens?: unknown
+          output_tokens?: unknown
+          cache_creation_input_tokens?: unknown
+          cache_read_input_tokens?: unknown
+        }
+      }
+      const u = obj.usage
+      if (u && typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+        const cacheCreation = typeof u.cache_creation_input_tokens === 'number' ? u.cache_creation_input_tokens : 0
+        const cacheRead = typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : 0
+        return {
+          units: { input: u.input_tokens, output: u.output_tokens, cache: cacheCreation + cacheRead },
+          unknownReason: null
+        }
+      }
+    } catch {
+      // not a JSON line — keep scanning backwards, never a guessed shape
+    }
+  }
+  return {
+    units: NO_USAGE_UNITS,
+    unknownReason: 'claude emitted no stream-json line carrying a `usage.input_tokens`/`usage.output_tokens` pair'
+  }
+}
+
+/** The `usage` event's `source` for figures read from a Claude session transcript rather than from the dispatch's own stream. */
+export const CLAUDE_TRANSCRIPT_USAGE_SOURCE = 'claude-transcript'
+
+/** A transcript larger than this is not read: a dispatch never waits on a huge file, it records unknown with that reason. */
+const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024
+
+/** The shape of a session identifier Claude writes; anything else never reaches a path join. */
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
+
+/**
+ * Reads a Claude dispatch's token usage from the session's own transcript —
+ * `<configDir>/projects/<project>/<sessionId>.jsonl`, which Claude appends to
+ * as the session runs, so it holds the usage of a dispatch that was killed,
+ * timed out or crashed before its stream printed a terminal usage line. The
+ * file is located by the session identifier alone (the project directory name
+ * is Claude's own encoding of the working directory and is not re-derived), the
+ * identifier must match `SESSION_ID_PATTERN`, and the resolved file must sit
+ * inside the real `projects` directory. Only summed units leave this function —
+ * never a prompt or a message. Units are summed once per unique message
+ * (`summarizeTranscript`); `cache` is creation plus read, as the stream reader
+ * does. A missing, oversized, unreadable or message-less transcript is
+ * unknown with a reason, never zero.
+ */
+export function readClaudeTranscriptUsage(sessionId: string | null, configDir: string): UsageObservation {
+  const unknown = (why: string): UsageObservation => ({
+    units: NO_USAGE_UNITS,
+    unknownReason: `session transcript fallback: ${why}`
+  })
+  if (sessionId === null)
+    return unknown('the dispatch never learned a session identifier, so no transcript could be located')
+  if (!SESSION_ID_PATTERN.test(sessionId))
+    return unknown('the session identifier is not a plain identifier, so no transcript path was formed')
+
+  let projectsDir: string
+  try {
+    projectsDir = realpathSync(join(configDir, 'projects'))
+  } catch {
+    return unknown(`no projects directory under ${configDir}`)
+  }
+  let projectDirs: string[]
+  try {
+    projectDirs = readdirSync(projectsDir)
+  } catch {
+    return unknown('the projects directory could not be listed')
+  }
+  for (const projectDir of projectDirs) {
+    let file: string
+    try {
+      file = realpathSync(join(projectsDir, projectDir, `${sessionId}.jsonl`))
+    } catch {
+      continue
+    }
+    if (!file.startsWith(`${projectsDir}/`)) continue
+    let text: string
+    try {
+      if (statSync(file).size > MAX_TRANSCRIPT_BYTES) return unknown('the transcript is larger than the read bound')
+      text = readFileSync(file, 'utf8')
+    } catch {
+      return unknown('the transcript could not be read')
+    }
+    const summary = summarizeTranscript(text)
+    if (summary.messageCount === 0) return unknown('the transcript held no assistant message with usage')
+    const c = summary.components
+    return {
+      units: {
+        input: c.inputTokens,
+        output: c.outputTokens,
+        cache: c.cacheCreationInputTokens + c.cacheReadInputTokens
+      },
+      unknownReason: null
+    }
+  }
+  return unknown(`no transcript for session ${sessionId} under ${projectsDir}`)
+}
+
+/**
+ * The stream's own usage when it carried one, else — for Claude only — the
+ * session transcript's. Never both: they describe the same session, so the
+ * transcript is a fallback, never an addition. When neither yields usage the
+ * units stay unknown and the reason names both sources that were tried.
+ */
+export function resolveClaudeUsageUnits(
+  streamUnits: UsageObservation,
+  sessionId: string | null,
+  configDir: string
+): { observation: UsageObservation; source: 'stream' | typeof CLAUDE_TRANSCRIPT_USAGE_SOURCE } {
+  if (streamUnits.unknownReason === null) return { observation: streamUnits, source: 'stream' }
+  const fromTranscript = readClaudeTranscriptUsage(sessionId, configDir)
+  if (fromTranscript.unknownReason === null) {
+    return { observation: fromTranscript, source: CLAUDE_TRANSCRIPT_USAGE_SOURCE }
+  }
+  return {
+    observation: {
+      units: NO_USAGE_UNITS,
+      unknownReason: `${streamUnits.unknownReason}; ${fromTranscript.unknownReason}`
+    },
+    source: 'stream'
+  }
+}
+
+/**
+ * Codex's own `usage` object carries more than `input_tokens`/`output_tokens`
+ * (module doc above: "the same field names as Claude's… `usage: {
+ * input_tokens, output_tokens, … }`") — `cached_input_tokens`, when present,
+ * is read the same defensive way the other optional fields on this object
+ * already are: absent reads as "nothing cached," never as "unknown," since
+ * the object itself DID parse.
+ */
+export function parseCodexUsageUnits(stdout: string): UsageObservation {
+  const lines = stdout.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const raw = (lines[i] ?? '').trim()
+    if (!raw) continue
+    try {
+      const obj = JSON.parse(raw) as {
+        type?: unknown
+        usage?: { input_tokens?: unknown; output_tokens?: unknown; cached_input_tokens?: unknown }
+      }
+      if (obj.type === 'turn.completed' && obj.usage) {
+        const u = obj.usage
+        if (typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+          const cache = typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : null
+          return { units: { input: u.input_tokens, output: u.output_tokens, cache }, unknownReason: null }
+        }
+      }
+    } catch {
+      // not a JSON line — Codex's own stdout is JSONL only, but never trust it blindly
+    }
+  }
+  return {
+    units: NO_USAGE_UNITS,
+    unknownReason: 'codex emitted no parseable `turn.completed` event carrying a usage pair'
+  }
+}
+
+/**
+ * O2 — true when `stdout` carries at least
+ * one `{"type":"system","subtype":"api_retry",...}` line: the vendor's own
+ * signal that it could not reach its backend and was retrying internally
+ * before this process ever saw the child exit or time out. Confirmed live
+ * (claude CLI 2.1.197, `ANTHROPIC_BASE_URL` pointed at an unreachable host).
+ * Scans the SAME `stdoutBuf` every other vendor-output reader here already
+ * does — never stderr (this file's own "stderr content never decides
+ * success or failure" rule, `handleChildExit`'s doc comment) — and is
+ * vendor-agnostic: Codex never emits this shape, so it is always
+ * `false` for them, never a guess about a vendor's own unconfirmed output.
+ */
+/**
+ * Why a dispatch whose child exited non-zero (or was ended by the driver)
+ * failed, in precedence order: a usage limit is a wait, a dev-tools start
+ * failure the driver detected is `startup-failed` even though the session
+ * it ended may never have bound, then an unbound session, a connection
+ * retry, and otherwise a crash.
+ */
+export function exitFailureReason(input: {
+  usageLimit: boolean
+  devToolsStartFailed: boolean
+  neverBoundSession: boolean
+  connectionRetry: boolean
+}): DispatchFailureReason {
+  if (input.usageLimit) return 'usage-limit'
+  if (input.devToolsStartFailed) return 'startup-failed'
+  if (input.neverBoundSession) return 'unbound'
+  if (input.connectionRetry) return 'connection-failed'
+  return 'crash'
+}
+
+export function sawVendorConnectionRetry(stdout: string): boolean {
+  for (const line of stdout.split('\n')) {
+    if (!line.includes('"api_retry"')) continue
+    try {
+      const obj = JSON.parse(line) as { type?: unknown; subtype?: unknown }
+      if (obj.type === 'system' && obj.subtype === 'api_retry') return true
+    } catch {
+      // not a JSON line — keep scanning
+    }
+  }
+  return false
+}
+
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+
+function clockHours(hour: number, meridiem: string): number {
+  return (hour % 12) + (meridiem.toUpperCase() === 'PM' ? 12 : 0)
+}
+
+/**
+ * The reset time a Codex usage-limit message names after "try again at":
+ * the explicit date and time ("Oct 20th, 2026 6:25 PM") when it carries one,
+ * otherwise the next occurrence of the clock time ("5:55 PM"), both in the
+ * machine's local time. `null` when the message names no time.
+ */
+export function parseCodexUsageLimitReset(message: string, nowMs: number): number | null {
+  const at = /try again at ([^.]*?\b(?:AM|PM))/i.exec(message)?.[1]
+  if (!at) return null
+  const dated = /([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(at)
+  if (dated) {
+    const month = MONTHS.indexOf((dated[1] as string).slice(0, 3).toLowerCase())
+    if (month >= 0) {
+      return new Date(
+        Number(dated[3]),
+        month,
+        Number(dated[2]),
+        clockHours(Number(dated[4]), dated[6] as string),
+        Number(dated[5])
+      ).getTime()
+    }
+  }
+  const clock = /(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(at)
+  if (!clock) return null
+  const now = new Date(nowMs)
+  const candidate = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    clockHours(Number(clock[1]), clock[3] as string),
+    Number(clock[2])
+  )
+  if (candidate.getTime() <= nowMs) candidate.setDate(candidate.getDate() + 1)
+  return candidate.getTime()
+}
+
+/**
+ * Did this run end because the agent's subscription usage limit was reached?
+ * Read only from the vendor's own output, never the exit code alone.
+ *
+ * Codex: a non-zero exit after an `error` or `turn.failed` event whose
+ * message contains "usage limit" (the stable part; the full message is kept).
+ * Claude Code: a `rate_limit_event` whose `status` is `rejected` with
+ * `isUsingOverage` `false`, followed by the run ending — a non-zero exit or a
+ * `result` with `is_error: true`. An `allowed`, `allowed_warning` or
+ * overage-backed rejection while the run goes on never classifies it.
+ */
+export function detectUsageLimit(
+  agent: AgentVendor,
+  stdout: string,
+  exitCode: number | null,
+  nowMs: number
+): UsageLimit | null {
+  if (agent === 'codex') {
+    if (exitCode === 0) return null
+    let found: string | null = null
+    for (const raw of stdout.split('\n')) {
+      if (!raw.includes('usage limit')) continue
+      try {
+        const obj = JSON.parse(raw) as { type?: unknown; message?: unknown; error?: { message?: unknown } }
+        const message = obj.type === 'error' ? obj.message : obj.type === 'turn.failed' ? obj.error?.message : undefined
+        if (typeof message === 'string' && message.toLowerCase().includes('usage limit')) found = message
+      } catch {
+        // not a JSON line — keep scanning
+      }
+    }
+    return found === null ? null : { agent, message: found, resetAtMs: parseCodexUsageLimitReset(found, nowMs) }
+  }
+  if (agent === 'claude') {
+    let rejected: { resetsAt: number | null; type: string } | null = null
+    let resultIsError = false
+    let resultText: string | null = null
+    for (const raw of stdout.split('\n')) {
+      if (!raw.includes('"rate_limit_event"') && !raw.includes('"result"')) continue
+      try {
+        const obj = JSON.parse(raw) as {
+          type?: unknown
+          is_error?: unknown
+          result?: unknown
+          rate_limit_info?: { status?: unknown; isUsingOverage?: unknown; resetsAt?: unknown; rateLimitType?: unknown }
+        }
+        if (obj.type === 'rate_limit_event') {
+          const info = obj.rate_limit_info
+          if (info?.status === 'rejected' && info.isUsingOverage === false) {
+            rejected = {
+              resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt : null,
+              type: typeof info.rateLimitType === 'string' ? info.rateLimitType : 'usage'
+            }
+          } else {
+            // A later event that is not a limit means the run got past it.
+            rejected = null
+          }
+        } else if (obj.type === 'result') {
+          resultIsError = obj.is_error === true
+          resultText = typeof obj.result === 'string' ? obj.result : null
+        }
+      } catch {
+        // not a JSON line — keep scanning
+      }
+    }
+    if (rejected === null || !(exitCode !== 0 || resultIsError)) return null
+    return {
+      agent,
+      message: resultText ?? `Claude Code ${rejected.type} limit reached (rate_limit_event rejected)`,
+      resetAtMs: rejected.resetsAt === null ? null : rejected.resetsAt * 1000
+    }
+  }
+  return null
+}
+
+export function parseClaudeResumeId(stdout: string): string | null {
+  // Same two-form tolerance as `parseClaudeUsage`: the terminal event of a
+  // `stream-json` run carries `session_id`, and a whole-blob `json` payload
+  // is simply the single line.
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as { session_id?: unknown }
+      if (typeof obj.session_id === 'string') return obj.session_id
+    } catch {
+      // not a JSON line — keep scanning backwards
+    }
+  }
+  return null
+}
+
+export function parseCodexResumeId(stdout: string): string | null {
+  for (const raw of stdout.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    try {
+      const obj = JSON.parse(line) as { type?: unknown; thread_id?: unknown }
+      if (obj.type === 'thread.started' && typeof obj.thread_id === 'string') return obj.thread_id
+    } catch {
+      // not a JSON line — same defensive posture as parseCodexUsage
+    }
+  }
+  return null
+}
+
+/**
+ * Where a successful dispatch's own vendor resume identifier is durably
+ * recorded, keyed by repo + role + vendor + the task/PR this run was
+ * attributed to — so a later, separate `vinaya dispatch` invocation (a
+ * different terminal, possibly days later) can find the id needed to
+ * answer a stopped agent through `--resume <id> --prompt-file <answer>`,
+ * instead of the id living only in the window that printed it (a
+ * Principal ruling: answer through the resume path that already
+ * exists — `--resume`/`--prompt-file` are already parsed — never a live
+ * channel held open on a blocking read).
+ *
+ * The repo segment — `${owner}-${repo}`, or `unresolved`
+ * when `resolveRepo()` can't (mirrors `outboxPathFor`'s own repo-null
+ * convention, `log-sink.ts`) — is load-bearing, not decoration: `task` here
+ * is the caller's resolved forge Issue number (`dispatchTask` passes its
+ * own `issue`, never the tranche-local ordinal `n` — see its own call
+ * site), and two DIFFERENT repositories can both have an Issue numbered the
+ * same. Without the repo segment, tranche A's task 9 (repo X, some Issue)
+ * and tranche B's task 9 (repo Y, the same Issue number) would overwrite the same
+ * `developer-claude-issue12.json`, handing an operator resuming one the
+ * other's session.
+ *
+ * Deliberately NOT the Vinaya Log's own `dispatch` family:
+ * `DispatchOutcomeSchema` (`packages/aeg-core/src/log/schema.ts`) has no
+ * member for "here is a vendor session id" — every variant names a specific
+ * forge outcome (`pr_opened`, `verdict`, …). `pr_opened`, `round_pushed` and
+ * `verdict` are declared with no producer yet, and `escalation`, `brief`,
+ * `plan` and `archive` likewise appear only in tests and test fixtures today,
+ * with no producer. The schema, `.strict()` throughout, is out of this
+ * task's own surface (see this file's module doc on the `outcome_received`
+ * placeholder). A second, narrower durable file —
+ * machine-local, the same `~/.vinaya/` home `dispatch-output`'s tee already
+ * uses — is the destination that needs no schema change.
+ */
+/**
+ * Same guard `log-sink.ts`'s private `isSafeRepoSegment` applies before
+ * splicing a `resolveRepo()` result into its own outbox path — duplicated
+ * here rather than imported, since `log-sink.ts` is out of this task's
+ * `## Surface`. `resolveRepo()` can return an `AEG_REPO` env value parsed by
+ * `parseOwnerRepo` (`@attalabs/aeg-forge-state`), which accepts anything
+ * shaped `owner/repo` — including a `repo` half containing `../` — so a
+ * segment failing this check is treated exactly like a null `resolveRepo()`
+ * result (`unresolved`), never spliced unchecked into a filesystem path.
+ */
+/**
+ * Which task folder this dispatch's own files belong in. The scope used to
+ * be part of a FILENAME in one flat per-repository directory
+ * (`<role>-<agent>-issue<n>.json`), which is why a confined role's write
+ * grant on that directory exposed every sibling task's and role's record;
+ * it is the folder now, so a grant on this dispatch's own file reaches
+ * nothing else.
+ */
+function scopeOf(task?: number, pr?: number): RunScope {
+  if (task !== undefined) return task
+  if (pr !== undefined) return { pr }
+  return 'unscoped'
+}
+
+/**
+ * This dispatch's own vendor session record:
+ * `<runtimeDir>/tasks-execution/<scope>/sessions/<role>-<agent>.json`.
+ *
+ * The repository segment the old path carried is gone from the filename
+ * because the runtime directory itself is already per-repository (a
+ * configured one belongs to one repo; the default one keeps the segment) —
+ * so two repositories sharing an Issue number still get two records, for
+ * the same reason as before.
+ */
+function resumeRecordPathFor(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): string {
+  return runPath(runtimeDirForRepo(repo), scopeOf(task, pr), {
+    area: 'sessions',
+    file: `${role}-${agent}.json`
+  })
+}
+
+export type ResumeRecord = {
+  resumeId: string
+  role: Role
+  agent: AgentVendor
+  repo: { owner: string; repo: string } | null
+  task: number | null
+  pr: number | null
+  round: number | null
+  effectId: string
+  capturedAt: string
+}
+
+/**
+ * A launch's lifecycle status (O1). `'launched'` is written to the durable
+ * record BEFORE the child is spawned, so a launch has a durable identity the
+ * instant it begins — even the attempt that a crash interrupts before the
+ * vendor ever reports a session. `'completed'` once the child exits cleanly;
+ * `'interrupted'` when a timeout, a crash, or a capability refusal ended it.
+ * The vendor session id binds onto the SAME record the moment the stream
+ * first reports it, WITHOUT changing status (a still-`'launched'` record can
+ * already carry a bound `resumeId`). An interrupted launch is never deleted —
+ * it keeps its intent record, and any session id already bound, so recovery
+ * (`dev-review-loop/developer-dispatch.ts`) can reconcile it rather than
+ * losing session identity to the interruption.
+ */
+export type LaunchStatus = 'launched' | 'completed' | 'interrupted'
+
+/**
+ * The durable launch record `dispatchRole` writes for one attempt (O1) — the
+ * "run, attempt, role" launch intent, plus the vendor session id bound onto
+ * it as soon as it is observable, plus the child identity recovery probes to
+ * find a still-live launch (O3). Machine-local, in the same `~/.vinaya/`
+ * home the tee and the outbox already use, keyed by repo+role+vendor+scope,
+ * for the SAME reason this module keeps the vendor session id out of the
+ * Vinaya Log's own `DispatchOutcomeSchema` (see this file's module doc): no
+ * strict, versioned schema — the log's, or the control store's own
+ * (`packages/aeg-core/src/control-store/records.ts`) — carries
+ * a `role`, an `attempt`, or a vendor `sessionId` field, and this record is
+ * this launcher's own concern, not a control-store ownership epoch the
+ * generic launcher has no business claiming (the loop's own control-store
+ * adoption is deferred — `apps/cli/specs/loop.md`).
+ */
+export type LaunchRecord = {
+  runId: string
+  role: Role
+  agent: AgentVendor
+  repo: { owner: string; repo: string } | null
+  task: number | null
+  pr: number | null
+  round: number | null
+  /** The "attempt" half of "run, attempt, role" — a monotonic per-scope counter, incremented from the prior launch record for this same repo+role+vendor+scope, so a resumed or re-dispatched attempt is distinguishable from the one it followed. */
+  attempt: number
+  effectId: string
+  /** The dispatcher's own pid — this process, the one that launched. */
+  dispatcherPid: number
+  /** The spawned vendor child's pid, set the moment `spawn` returns — the identity recovery probes to tell a still-live launch from a finished one (O3). `null` until the child is actually spawned (a pre-spawn refusal never sets it). */
+  childPid: number | null
+  /** The child's own process start time, snapshotted (`getProcessSnapshot`) the instant `spawn` returns — O3. Compared back against the SAME pid's current start time at recovery time so a pid the OS has since recycled for an unrelated process is never mistaken for this launch's own child. `null` when the snapshot could not be taken (never blocks the dispatch). */
+  childStartedAt: string | null
+  /** The child's own command name, snapshotted alongside `childStartedAt` — the second identity signal O3 asks for ("start time and/or command line"). `null` when unavailable. */
+  childCommand: string | null
+  host: string
+  startedAt: string
+  status: LaunchStatus
+  /** The vendor session id, bound the moment the stream first reports it (O1) — `null` until then, and left `null` on an attempt interrupted before its session was ever observable (the honest "no session to resume" case recovery pauses on). */
+  resumeId: string | null
+  boundAt: string | null
+  finishedAt: string | null
+  failureReason: DispatchFailureReason | null
+}
+
+/**
+ * The three-way read of a launch record, mirroring the control store's own
+ * `ParsedRecord` discipline (`packages/aeg-core/src/control-store/records.ts`):
+ * `'corrupt'` (something is written but does not parse as a launch record) is
+ * never conflated with `'absent'` (nothing was ever written) — the exact
+ * distinction recovery needs to tell "no launch to reconcile" apart from "a
+ * launch happened but its record is unreadable."
+ */
+export type ParsedLaunch =
+  | { status: 'ok'; record: LaunchRecord }
+  | { status: 'absent' }
+  | { status: 'corrupt'; reason: string }
+
+function coerceLaunchRecord(json: unknown): LaunchRecord | null {
+  if (typeof json !== 'object' || json === null) return null
+  const o = json as Record<string, unknown>
+  // A launch record — or a pre-this-task `ResumeRecord` on disk, tolerated so
+  // an in-flight resume survives this task landing — is identified by its
+  // `role`/`agent` strings; every lifecycle field missing from an old record
+  // is filled with the honest default (`resumeId` present → `'completed'`,
+  // since only a successful dispatch ever wrote the old shape).
+  if (typeof o.role !== 'string' || typeof o.agent !== 'string') return null
+  const resumeId = typeof o.resumeId === 'string' && o.resumeId.length > 0 ? o.resumeId : null
+  const status: LaunchStatus =
+    o.status === 'launched' || o.status === 'completed' || o.status === 'interrupted'
+      ? o.status
+      : resumeId
+        ? 'completed'
+        : 'launched'
+  const num = (v: unknown): number | null => (typeof v === 'number' ? v : null)
+  const failureReason =
+    o.failureReason === 'timeout' ||
+    o.failureReason === 'crash' ||
+    o.failureReason === 'refused' ||
+    o.failureReason === 'signal' ||
+    o.failureReason === 'unbound' ||
+    o.failureReason === 'connection-failed' ||
+    o.failureReason === 'startup-failed' ||
+    o.failureReason === 'authentication-failed' ||
+    o.failureReason === 'hook-setup-failed' ||
+    o.failureReason === 'usage-limit'
+      ? o.failureReason
+      : null
+  return {
+    runId: typeof o.runId === 'string' ? o.runId : '',
+    role: o.role as Role,
+    agent: o.agent as AgentVendor,
+    repo: typeof o.repo === 'object' && o.repo !== null ? (o.repo as { owner: string; repo: string }) : null,
+    task: num(o.task),
+    pr: num(o.pr),
+    round: num(o.round),
+    attempt: typeof o.attempt === 'number' ? o.attempt : 1,
+    effectId: typeof o.effectId === 'string' ? o.effectId : '',
+    dispatcherPid: num(o.dispatcherPid) ?? 0,
+    childPid: num(o.childPid),
+    // Absent on any record written before this task — `null` is the honest
+    // "no identity captured" reading, never a fabricated match or mismatch.
+    childStartedAt: typeof o.childStartedAt === 'string' ? o.childStartedAt : null,
+    childCommand: typeof o.childCommand === 'string' ? o.childCommand : null,
+    host: typeof o.host === 'string' ? o.host : '',
+    startedAt: typeof o.startedAt === 'string' ? o.startedAt : typeof o.capturedAt === 'string' ? o.capturedAt : '',
+    status,
+    resumeId,
+    boundAt: typeof o.boundAt === 'string' ? o.boundAt : typeof o.capturedAt === 'string' ? o.capturedAt : null,
+    finishedAt: typeof o.finishedAt === 'string' ? o.finishedAt : null,
+    failureReason
+  }
+}
+
+/**
+ * Overwrites the one launch record for this repo+role+vendor+scope. Never
+ * throws, matching this module's "never throws" posture: an unwritable home
+ * degrades to no durable record, the same failure mode `openOutputTee`
+ * already accepts for its own file. Only the most recent launch for a scope
+ * is ever the one worth reconciling, so there is nothing to append to.
+ */
+function writeLaunchRecord(record: LaunchRecord): string | null {
+  try {
+    const path = resumeRecordPathFor(
+      record.role,
+      record.agent,
+      record.repo,
+      record.task ?? undefined,
+      record.pr ?? undefined
+    )
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    chmodSync(dirname(path), 0o700)
+    writeFileSync(path, JSON.stringify(record, null, 2), { mode: 0o600 })
+    return path
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Reads back the launch record last written for this exact
+ * repo+role+vendor+scope — `'absent'` when none exists, `'corrupt'` when one
+ * exists but does not parse (never conflated, per `ParsedLaunch`). Never
+ * throws (same posture as `writeLaunchRecord`). Recovery
+ * (`dev-review-loop/developer-dispatch.ts`, O3) reads this to reconcile a
+ * prior launch before continuing.
+ */
+export function readLaunchRecord(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): ParsedLaunch {
+  let raw: string
+  try {
+    raw = readFileSync(resumeRecordPathFor(role, agent, repo, task, pr), 'utf8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'absent' }
+    return {
+      status: 'corrupt',
+      reason: `unreadable launch record: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+  let json: unknown
+  try {
+    json = JSON.parse(raw)
+  } catch (err) {
+    return {
+      status: 'corrupt',
+      reason: `invalid JSON (torn write?): ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+  const record = coerceLaunchRecord(json)
+  if (!record) return { status: 'corrupt', reason: 'not a launch record (missing role/agent)' }
+  return { status: 'ok', record }
+}
+
+/**
+ * The bound-session view of the launch record, for the callers that only need
+ * a resumable vendor session id (the loop's own round-1 attach/resume seams,
+ * O4) — `null` when no launch exists, its record is corrupt, or the
+ * launch was interrupted before its session was ever bound (no session to
+ * resume). An interrupted-but-bound launch now yields its session id here,
+ * where before this task only a cleanly-completed one did — the session
+ * identity a mid-turn crash used to lose (O1).
+ */
+export function readResumeRecord(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): ResumeRecord | null {
+  const parsed = readLaunchRecord(role, agent, repo, task, pr)
+  if (parsed.status !== 'ok') return null
+  const r = parsed.record
+  if (!r.resumeId) return null
+  return {
+    resumeId: r.resumeId,
+    role: r.role,
+    agent: r.agent,
+    repo: r.repo,
+    task: r.task,
+    pr: r.pr,
+    round: r.round,
+    effectId: r.effectId,
+    capturedAt: r.boundAt ?? r.startedAt
+  }
+}
+
+/** A pid's own identity facts, read fresh off the OS — never trusted from a launch record alone (O3): `ppid` is what tells recovery whether a still-alive child is still parented to the driver that spawned it (O2), `startedAt`/`command` are what tells it whether this pid is even the SAME process the launch record named, rather than one the OS has since recycled for something unrelated. */
+export type ProcessSnapshot = { ppid: number; startedAt: string | null; command: string | null }
+
+/** One `ps -o <format> -p <pid>` field, trimmed — `null` when `ps` refuses the pid (it doesn't exist) or prints nothing. `=` suffixes on every format string suppress the header row on both BSD (macOS) and GNU (Linux) `ps`, so a single blank/absent line unambiguously means "no such process." */
+function psField(pid: number, format: string): string | null {
+  try {
+    const out = execFileSync('ps', ['-p', String(pid), '-o', format], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const line = out
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0)
+    return line ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * O3: a live snapshot of `pid`'s own identity — `null` when no process
+ * answers at that pid at all. `ppid`/`comm` are single-token fields, safe to
+ * read with their own `ps` call each; `lstart` carries embedded spaces (a
+ * full timestamp), so it is never combined with the others into one
+ * multi-field `-o` format that a naive whitespace split could misparse.
+ * Uses the system `ps` rather than a dependency: every supported platform
+ * (macOS, Linux) ships one.
+ */
+export function getProcessSnapshot(pid: number): ProcessSnapshot | null {
+  const ppidRaw = psField(pid, 'ppid=')
+  if (ppidRaw === null) return null
+  const ppid = Number.parseInt(ppidRaw, 10)
+  if (!Number.isFinite(ppid)) return null
+  return { ppid, startedAt: psField(pid, 'lstart='), command: psField(pid, 'comm=') }
+}
+
+/**
+ * O3 (a HIGH security-review finding): does `snapshot` (a LIVE
+ * re-read of a pid) still match the identity `record` captured for that
+ * same pid at spawn time? The one identity guard both callers that ever
+ * treat a pid as this launch's own child now share — `dev-review-loop/
+ * developer-dispatch.ts`'s `classifyChildLiveness` (recovery, reading a
+ * PRIOR launch back) and `terminateLaunchedChildOnShutdown` below (the
+ * driver's own shutdown path, acting on a launch it is ENDING) — so a
+ * recycled pid is refused identically on both paths, never signaled just
+ * because the recovery-side check happens to live somewhere else. A field
+ * `record` DID capture must be read back and agree; one it never captured
+ * (any record written before this task) has nothing to check and is
+ * trusted as before — the `ppid`/liveness half of the decision is each
+ * caller's own concern, not this function's.
+ */
+export function matchesCapturedIdentity(
+  record: Pick<LaunchRecord, 'childStartedAt' | 'childCommand'>,
+  snapshot: ProcessSnapshot
+): boolean {
+  if (record.childStartedAt !== null) {
+    if (snapshot.startedAt === null || record.childStartedAt !== snapshot.startedAt) return false
+  }
+  if (record.childCommand !== null) {
+    if (snapshot.command === null || record.childCommand !== snapshot.command) return false
+  }
+  return true
+}
+
+/** Bounded grace between the two escalating signals `terminateChildWithGrace` sends — the same order of magnitude as `SIGKILL_GRACE_MS` (the dispatch timeout's own escalation), reused here for a driver-initiated termination rather than a child that overran its own ceiling. */
+const TERMINATE_GRACE_MS = 2_000
+
+function pidAliveHere(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Blocking, in-process sleep — the same `Atomics.wait` idiom `dev-review-loop/gate-reading.ts`'s own `sleepSyncMs` already uses, restated here rather than imported across that module boundary (its own doc comment: moved out of `dev-review-loop.ts` verbatim, kept self-contained). */
+function sleepSyncMs(ms: number): void {
+  if (ms <= 0) return
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * `SIGTERM`, a bounded grace period, then `SIGKILL` only if still alive —
+ * the same escalation `dispatchRole`'s own timeout path already applies to
+ * a child that overran its ceiling, reused here for a driver-initiated
+ * termination: the driver's own shutdown path (O1) terminating its
+ * dispatched child, and recovery (O2) reaping a child abandoned by a driver
+ * that died without reaching that shutdown path. Best-effort throughout: a
+ * pid already gone by either signal is silently treated as done, never an
+ * error — the goal (no orphan survives) is already met in that case.
+ */
+export function terminateChildWithGrace(pid: number, graceMs: number = TERMINATE_GRACE_MS): void {
+  try {
+    process.kill(pid, 'SIGTERM')
+  } catch {
+    return
+  }
+  sleepSyncMs(graceMs)
+  if (pidAliveHere(pid)) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // Already gone between the check and the signal — fine.
+    }
+  }
+}
+
+/** How long `captureSettledChildSnapshot` polls for a spawned child's OWN exec chain to land before trusting its identity — bounded, same order of magnitude as `TERMINATE_GRACE_MS`. */
+const IDENTITY_SETTLE_BUDGET_MS = 1_000
+/** Poll interval within that budget. */
+const IDENTITY_SETTLE_POLL_MS = 20
+
+/**
+ * O3 (a MAJOR code-review finding): `childCommand`/`childStartedAt`
+ * used to be captured from a single `getProcessSnapshot` read the instant
+ * `spawn()` returned. A vendor CLI installed through a typical npm shebang
+ * launcher (`#!/usr/bin/env node`) does not settle into its final image in
+ * that one kernel-triggered exec: the kernel execs `env` off the shebang
+ * line, and `env` itself then performs a SECOND, user-space `execve` into
+ * `node`. A read taken before that second exec lands can capture `env`'s own
+ * identity rather than the process that actually survives — precisely the
+ * two-hop race `writeIdentityStableFakeBinary`'s doc comment (in
+ * `dispatch.test.ts`) claimed only a synthetic test binary could hit; a real
+ * `#!/usr/bin/env node` install hits it too. A pid's start time is set once,
+ * at fork, and does not move across `execve` — only `comm` is unstable here
+ * — so this polls until two consecutive reads agree on `command`, or the
+ * budget elapses, and keeps the latest read either way. Never returns `null`
+ * once a live process has answered at least once; still returns the FIRST
+ * read if the process is gone by the next poll (a vendor CLI that exits
+ * within this budget is not the case this guards).
+ */
+export function captureSettledChildSnapshot(pid: number): ProcessSnapshot | null {
+  let snapshot = getProcessSnapshot(pid)
+  if (snapshot === null) return null
+  const deadline = Date.now() + IDENTITY_SETTLE_BUDGET_MS
+  while (Date.now() < deadline) {
+    sleepSyncMs(IDENTITY_SETTLE_POLL_MS)
+    const next = getProcessSnapshot(pid)
+    if (next === null) return snapshot
+    if (next.command === snapshot.command) return next
+    snapshot = next
+  }
+  return snapshot
+}
+
+/**
+ * O1: called by the driver's own `SIGTERM`/`SIGINT` handler,
+ * before it exits. A launch record still reading `'launched'` (a dispatch
+ * genuinely in flight when the signal arrived) has its child terminated —
+ * on this host, best-effort — and is patched to `'interrupted'`, so the
+ * next start finds a truthful record and no orphan left behind for it to
+ * trip over (the Defect this task closes). A record that already reads
+ * `'completed'`/`'interrupted'` (the dispatch's own exit handler in this
+ * same file already settled it before the signal arrived) is left
+ * untouched — there is nothing left to terminate or reclassify. A missing
+ * or corrupt record is likewise left alone: there is no in-flight launch to
+ * account for.
+ *
+ * Round 4 security review, HIGH: the signal handlers register early — a
+ * driver killed before it ever reaches its OWN recovery step still has this
+ * called on its next start's shutdown, against whatever record is on disk,
+ * which could be a stale one an EARLIER process instance left behind
+ * (itself `SIGKILL`ed before reaching this same path). `record.childPid` is
+ * therefore never signaled on identity alone: `getProcessSnapshot` re-reads
+ * the live pid and `matchesCapturedIdentity` — the SAME identity guard
+ * `classifyChildLiveness` applies on the recovery side — must agree before
+ * `terminateChildWithGrace` ever runs. No live process at that pid, or one
+ * that fails the identity match (the OS has recycled it for something
+ * unrelated), is left untouched: there is nothing of this launch's own left
+ * to terminate, and the record is patched exactly as if there had been.
+ */
+export function terminateLaunchedChildOnShutdown(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): void {
+  const parsed = readLaunchRecord(role, agent, repo, task, pr)
+  if (parsed.status !== 'ok') return
+  const record = parsed.record
+  if (record.status !== 'launched') return
+
+  if (record.childPid !== null && record.host === osHostname()) {
+    const snapshot = getProcessSnapshot(record.childPid)
+    if (snapshot !== null && matchesCapturedIdentity(record, snapshot)) {
+      terminateChildWithGrace(record.childPid)
+    }
+  }
+
+  writeLaunchRecord({
+    ...record,
+    status: 'interrupted',
+    finishedAt: new Date().toISOString(),
+    failureReason: 'signal'
+  })
+}
+
+/**
+ * Writes the Developer launch record for a turn a runner launched itself — the
+ * Engine runner's executor spawns the vendor child, so `dispatchRole` never
+ * writes one. The Broker authenticates the Developer's pushes against this
+ * record, exactly as for a `dispatchRole` launch. Returns the run id the turn
+ * is recorded under.
+ */
+export function recordRunnerDeveloperLaunch(input: {
+  agent: AgentVendor
+  repo: { owner: string; repo: string } | null
+  task: number
+  round: number | null
+}): string {
+  const runId = randomUUID()
+  writeLaunchRecord({
+    runId,
+    role: 'developer',
+    agent: input.agent,
+    repo: input.repo,
+    task: input.task,
+    pr: null,
+    round: input.round,
+    attempt: nextAttempt('developer', input.agent, input.repo, input.task),
+    effectId: randomUUID(),
+    dispatcherPid: process.pid,
+    childPid: null,
+    childStartedAt: null,
+    childCommand: null,
+    host: osHostname(),
+    startedAt: new Date().toISOString(),
+    status: 'launched',
+    resumeId: null,
+    boundAt: null,
+    finishedAt: null,
+    failureReason: null
+  })
+  return runId
+}
+
+/**
+ * Closes the Developer launch record a runner wrote with `recordRunnerDeveloperLaunch`, once that turn's agent
+ * has finished: completed, with the vendor session bound, so a later run resumes that exact session instead of
+ * reading the turn as an interrupted launch. A record for another run is left as it is.
+ */
+export function completeRunnerDeveloperLaunch(input: {
+  agent: AgentVendor
+  repo: { owner: string; repo: string } | null
+  task: number
+  runId: string
+  resumeId: string | null
+}): void {
+  const parsed = readLaunchRecord('developer', input.agent, input.repo, input.task)
+  if (parsed.status !== 'ok' || parsed.record.runId !== input.runId) return
+  const now = new Date().toISOString()
+  writeLaunchRecord({
+    ...parsed.record,
+    status: 'completed',
+    resumeId: input.resumeId,
+    boundAt: input.resumeId === null ? parsed.record.boundAt : now,
+    finishedAt: now
+  })
+}
+
+/** The next per-scope attempt number — one past the prior launch record for this scope, or `1` when none exists or it is corrupt (a corrupt prior never blocks a fresh attempt from starting). */
+function nextAttempt(
+  role: Role,
+  agent: AgentVendor,
+  repo: { owner: string; repo: string } | null,
+  task?: number,
+  pr?: number
+): number {
+  const parsed = readLaunchRecord(role, agent, repo, task, pr)
+  return parsed.status === 'ok' ? parsed.record.attempt + 1 : 1
+}
+
+/**
+ * `recoverUsageFromDispatchTee`'s I/O, injected the same way
+ * `MeteringCapabilityDeps` is (`claude-code-transcript.ts`) — a fixture
+ * stands in a fake env, a fake set of launch-record files, and fake tee
+ * bytes without touching this machine's real `~/.vinaya/`.
+ */
+export type DispatchTeeRecoveryDeps = {
+  env: Record<string, string | undefined>
+  /** Every session-record JSON file path this run's runtime directory currently holds, across every task folder, role and agent — the `tasks-execution/<scope>/sessions/` layout, already walked. */
+  listLaunchRecordPaths: () => string[]
+  readFile: (path: string) => string
+}
+
+/** Real, runtime-directory-backed deps for production use — never throws; an unreadable/absent task folder degrades to an empty list, matching this module's "never throws" posture. */
+export function realDispatchTeeRecoveryDeps(): DispatchTeeRecoveryDeps {
+  return {
+    env: process.env,
+    listLaunchRecordPaths: () => {
+      const runtime = runtimeDirForThisRepo()
+      const out: string[] = []
+      let scopes: string[]
+      try {
+        scopes = readdirSync(tasksExecutionRoot(runtime))
+      } catch {
+        return out
+      }
+      for (const scope of scopes) {
+        const sessionsDir = runPath(runtime, scopeFromSegment(scope), { area: 'sessions' })
+        let files: string[]
+        try {
+          files = readdirSync(sessionsDir)
+        } catch {
+          continue
+        }
+        for (const f of files) if (f.endsWith('.json')) out.push(join(sessionsDir, f))
+      }
+      return out
+    },
+    readFile: (path: string) => readFileSync(path, 'utf8')
+  }
+}
+
+export type DispatchTeeRecovery = { summary: TranscriptSummary; teePath: string }
+
+/**
+ * Walks every launch record this machine currently holds
+ * (`deps.listLaunchRecordPaths`) and returns the first one satisfying
+ * `predicate`, or `null` if none does — a torn/unreadable file along the
+ * way is skipped, never thrown. The one shared walk both
+ * `recoverUsageFromDispatchTee` and `launchRecordMatchesRun` build their own
+ * narrower match on top of, so the two never drift into two slightly
+ * different readings of the same on-disk record.
+ */
+function findMatchingLaunchRecord(
+  deps: DispatchTeeRecoveryDeps,
+  predicate: (record: LaunchRecord) => boolean
+): LaunchRecord | null {
+  for (const path of deps.listLaunchRecordPaths()) {
+    let raw: string
+    try {
+      raw = deps.readFile(path)
+    } catch {
+      continue
+    }
+    let json: unknown
+    try {
+      json = JSON.parse(raw)
+    } catch {
+      continue
+    }
+    const record = coerceLaunchRecord(json)
+    if (record && predicate(record)) return record
+  }
+  return null
+}
+
+/**
+ * True only when a launch record exists naming EXACTLY this
+ * `(runId, role, task)` triple — the cross-check `broker.ts`'s
+ * `authenticateWorkerInvocation` needs before trusting a dispatched child's
+ * own claimed `VINAYA_TASK`. `VINAYA_ROLE`/`VINAYA_TASK` are read from the
+ * SAME caller-controlled environment this module's own doc already warns a
+ * compromised or merely buggy Worker can set to anything (this file's
+ * header comment); accepting them alone never proves the controller
+ * actually dispatched this child for the task it claims. A launch record is
+ * written by the controller itself, before the child is ever spawned
+ * (`dispatchRole`, below) — `runId` is the one identifier `dispatchRole`
+ * generates and the child never chooses, so a forged `task` for a REAL
+ * `runId` finds no launch record at that (runId, role, task) triple: the
+ * one the controller actually wrote sits at the child's true task, not the
+ * one it is now claiming.
+ */
+export function launchRecordMatchesRun(
+  deps: DispatchTeeRecoveryDeps,
+  runId: string,
+  role: Role,
+  task: number
+): boolean {
+  return findMatchingLaunchRecord(deps, (r) => r.runId === runId && r.role === role && r.task === task) !== null
+}
+
+/**
+ * O1: recovers a dispatched session's real usage from the
+ * coordinator's own tee'd copy of that session's stdout (`openOutputTee`),
+ * for the case its OWN transcript pointer never resolved at all — the
+ * sanctioned `no-transcript-resolved` case `resolveMeteringCapability`
+ * (`claude-code-transcript.ts`, out of this task's surface) already
+ * produces, unchanged. The tee holds the vendor's raw stream — for Claude,
+ * `--output-format stream-json`, the identical per-message
+ * `{type:"assistant", message:{id, usage}}` shape a real transcript file
+ * carries — so `summarizeTranscript` (aeg-core's already-shipped,
+ * already-tested dedup-by-message-id-then-sum reader) applies to it
+ * unchanged; this function's own job is only to find the right file.
+ *
+ * Matched by `VINAYA_RUN_ID` alone — the one identifier this process and
+ * its own dispatcher already agree on (set on the child's env at spawn,
+ * read back here) — never by guessing which repo or which vendor launched
+ * it. `null` on anything short of a full recovery: no run/role/task
+ * attribution in this process's own env, no launch record naming that
+ * exact run, no tee file, or a tee holding zero usable messages. Never
+ * estimates — a `null` here changes nothing about the caller's existing
+ * incapable verdict.
+ */
+export function recoverUsageFromDispatchTee(deps: DispatchTeeRecoveryDeps): DispatchTeeRecovery | null {
+  const runId = deps.env.VINAYA_RUN_ID
+  const role = deps.env.VINAYA_ROLE
+  const taskRaw = deps.env.VINAYA_TASK
+  if (!runId || !role || !taskRaw) return null
+  const task = Number(taskRaw)
+  if (!Number.isInteger(task)) return null
+
+  const record = findMatchingLaunchRecord(
+    deps,
+    (r) => r.runId === runId && r.role === role && r.task === task && !!r.effectId
+  )
+  const effectId = record?.effectId ?? null
+  // Same shape the tee was refused for at write time (`openOutputTee`) — a
+  // launch record is this module's own, never untrusted input, but the
+  // `effectId` field still gets the same guard before it reaches a path
+  // join, on principle.
+  if (!effectId || !/^[A-Za-z0-9_-]{1,128}$/.test(effectId)) return null
+
+  const teePath = runPath(runtimeDirForThisRepo(), scopeOf(task), { area: 'output', file: `${effectId}.log` })
+  let teeText: string
+  try {
+    teeText = deps.readFile(teePath)
+  } catch {
+    return null
+  }
+
+  const summary = summarizeTranscript(teeText)
+  return summary.messageCount > 0 ? { summary, teePath } : null
+}
+
+type VendorSpec = {
+  binary: string
+  /** `model` appended via this vendor's own `--model` flag when given, omitted entirely otherwise — never a separate switch elsewhere. */
+  args: (model?: string) => string[]
+  resumeArgs: (id: string, model?: string) => string[]
+  parseUsage: UsageParser
+  /** The `usage` family's own richer read of the SAME stdout `parseUsage` scans — input/output/cache, honest `unknownReason` when nothing was observed. */
+  parseUsageUnits: UsageUnitsParser
+  /** The cache read and creation tokens of the SAME usage object `parseUsage` reads. */
+  parseCacheUsage: (stdout: string) => { read: number; creation: number } | null
+  /** This vendor's own genuine receipt of which model ran (O2), or `null` when it emits none — never the requested `--model` value echoed back. */
+  parseModel: ModelParser
+  parseResumeId: (stdout: string) => string | null
+  /** One line of this vendor's own stream, rendered for a human, or `null` for an event worth nothing on screen. */
+  renderEvent: (obj: Record<string, unknown>) => string | null
+  /**
+   * This vendor's own model for each `AgentClass`, used only when a caller
+   * names no explicit model and a task's rationale resolves to a class.
+   * Deliberately partial, not a model catalogue: filled only where a
+   * real, non-stale mapping exists — Claude's own `--model` help text
+   * documents these three as aliases that always track its "latest" model
+   * per tier, so the mapping never goes stale as new Claude models ship.
+   * Codex publishes no such alias layer (`codex --help` shows a bare
+   * `--model <value>` with no enumerated or aliased values, confirmed live)
+   * — inventing a version-pinned mapping would be the stale catalogue this task's own
+   * Stop-and-escalate condition names, so both stay empty: a task naming
+   * neither vendor's own model runs that vendor's default, same as before
+   * this task, rather than resolving to a name that will go stale.
+   */
+  classModels: Partial<Record<AgentClass, string>>
+}
+
+/**
+ * One line of the vendor's own stream, rendered for a human, or `null` for an
+ * event that carries nothing worth showing.
+ *
+ * Vendor-agnostic by construction: each vendor already declares how to read
+ * its own structured channel (`parseUsage`, `parseResumeId`), and this is the
+ * third member of that same family. The operator sees the agent working
+ * whichever vendor was dispatched, and no vendor's format leaks past its own
+ * renderer.
+ *
+ * The cause this exists for is NOT vendor-specific: the child is spawned onto
+ * pipes, so no vendor sees a TTY and every one of them falls back to a
+ * buffered batch mode that prints nothing until it exits. Requesting the
+ * streaming form of the structured channel is what restores the view without
+ * a pseudo-terminal — which this bundled CLI cannot carry (`node-pty` is a
+ * native addon) and which would cost `parseUsage` the structured figures it
+ * reads.
+ */
+export function renderClaudeEvent(obj: Record<string, unknown>): string | null {
+  const type = obj.type
+  if (type === 'assistant' || type === 'user') {
+    const msg = obj.message as { content?: unknown } | undefined
+    const content = Array.isArray(msg?.content) ? (msg?.content as Record<string, unknown>[]) : []
+    const out: string[] = []
+    for (const block of content) {
+      if (block.type === 'text' && typeof block.text === 'string' && block.text.trim().length > 0) {
+        out.push(block.text.trim())
+      } else if (block.type === 'tool_use' && typeof block.name === 'string') {
+        const input = block.input as Record<string, unknown> | undefined
+        // The one field that says WHICH thing the tool acted on, when there
+        // is one — a path, a command, a pattern. Never the whole payload:
+        // a file write's `content` is the file, and belongs in the tee.
+        const subject =
+          (typeof input?.file_path === 'string' && input.file_path) ||
+          (typeof input?.command === 'string' && input.command) ||
+          (typeof input?.pattern === 'string' && input.pattern) ||
+          (typeof input?.path === 'string' && input.path) ||
+          ''
+        const trimmed = subject.length > 120 ? `${subject.slice(0, 117)}...` : subject
+        out.push(trimmed ? `⚙ ${block.name}: ${trimmed}` : `⚙ ${block.name}`)
+      }
+      // Every other block kind — a tool result above all — renders nothing:
+      // results are the bulk of a run and the tee already holds them verbatim.
+    }
+    return out.length > 0 ? out.join('\n') : null
+  }
+  if (type === 'system' && obj.subtype === 'init') return '⏵ session started'
+  if (typeof obj.stop_reason === 'string') return `⏹ ${obj.stop_reason}`
+  return null
+}
+
+/** Codex prints one event per line under `--json`; its item text is the human-facing part. */
+export function renderCodexEvent(obj: Record<string, unknown>): string | null {
+  const type = typeof obj.type === 'string' ? obj.type : ''
+  if (type.endsWith('.completed') || type.endsWith('.started')) return `⏵ ${type}`
+  const item = obj.item as { text?: unknown } | undefined
+  return typeof item?.text === 'string' && item.text.trim().length > 0 ? item.text.trim() : null
+}
+
+const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
+  claude: {
+    binary: 'claude',
+    // `stream-json` is the SAME structured channel as `json`, emitted one
+    // event per line as it happens instead of one blob at exit — so the
+    // operator sees the work and `parseUsage` still reads real figures.
+    // `--verbose` is required by the CLI whenever `-p` is paired with
+    // `stream-json`; without it the flag combination is refused.
+    // `--model <model>` confirmed live via `claude --help`: "Provide an
+    // alias for the latest model (e.g. 'fable', 'opus', or 'sonnet') or a
+    // model's full name (e.g. 'claude-fable-5')." Placed after the
+    // established flags, never before them — no vendor here parses these
+    // options positionally, confirmed by the existing resume-argv tests
+    // this task leaves passing unchanged when no model is given.
+    args: (model) => ['-p', '--verbose', '--output-format', 'stream-json', ...(model ? ['--model', model] : [])],
+    resumeArgs: (id, model) => [
+      '-p',
+      '-r',
+      id,
+      '--verbose',
+      '--output-format',
+      'stream-json',
+      ...(model ? ['--model', model] : [])
+    ],
+    parseUsage: parseClaudeUsage,
+    parseUsageUnits: parseClaudeUsageUnits,
+    parseCacheUsage: parseClaudeCacheUsage,
+    parseModel: parseClaudeModel,
+    parseResumeId: parseClaudeResumeId,
+    renderEvent: renderClaudeEvent,
+    // Confirmed live (`claude --help`): these are the vendor's own aliases
+    // for "the latest model at this tier" — never a version-pinned name, so
+    // this mapping does not go stale as Claude ships new models.
+    classModels: { high: 'opus', mid: 'sonnet', fast: 'haiku' }
+  },
+  codex: {
+    binary: 'codex',
+    // `-m, --model <MODEL>` confirmed live via `codex exec --help` — a bare
+    // string with no enumerated or aliased values (unlike `--sandbox`,
+    // which does list `[possible values: ...]` in the same help output).
+    // `codex exec` defaults to read-only. The documented `workspace-write`
+    // sandbox is the narrow permission normal Developer dispatches need to
+    // edit their assigned worktree; it preserves saved subscription login and
+    // the JSONL/stdin protocol below. Reviewer scratch directories are not Git
+    // repositories, so unattended roles also skip Codex's interactive repo
+    // trust check; the Vinaya worker boundary still supplies confinement.
+    args: (model) => [
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
+      ...(model ? ['--model', model] : []),
+      '--json',
+      '-'
+    ],
+    // `codex exec resume --help` intentionally does not accept `--sandbox`:
+    // it resumes the session's established tool policy. Keep the resume argv
+    // to Codex's documented subcommand shape rather than passing an invalid
+    // flag after a successful first turn.
+    resumeArgs: (id, model) => [
+      'exec',
+      'resume',
+      id,
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
+      ...(model ? ['--model', model] : []),
+      '--json',
+      '-'
+    ],
+    parseUsage: parseCodexUsage,
+    parseUsageUnits: parseCodexUsageUnits,
+    parseCacheUsage: parseCodexCacheUsage,
+    parseModel: parseCodexModel,
+    parseResumeId: parseCodexResumeId,
+    renderEvent: renderCodexEvent,
+    // No non-stale alias layer to resolve a class into (see `VendorSpec`'s
+    // own doc comment) — a real invocation's own configured model
+    // (`codex doctor`) is a version-pinned string, not a "latest" alias.
+    classModels: {}
+  }
+}
+
+/**
+ * O4: the text a Developer turn's own author (the agent) WROTE, pulled
+ * out of its raw vendor stream for the after-turn credential scan — its own
+ * messages and the tool invocations it issued (a path, a command, a pattern),
+ * and NEVER the contents of a file it read or a command's output. This is not a
+ * new parse: it reuses each vendor's OWN `renderEvent` (`VENDOR_TABLE`), the
+ * exact per-line renderer the driver already streams to the operator and the
+ * role log — and that renderer deliberately renders a tool RESULT (a file read,
+ * a command's output: "the bulk of a run") as nothing, so what comes back here
+ * is only what the agent itself authored. A line the vendor's renderer cannot
+ * parse contributes nothing (never a guess), the same defensive posture every
+ * other reader of this stream takes. The scan reading THIS, rather than the raw
+ * tee, is what stops this repository's own credential-shaped test FIXTURES from
+ * tripping a false refusal the moment a Developer turn merely READS one.
+ */
+export function developerWrittenTextFromVendorOutput(raw: string, agent: AgentVendor): string {
+  const renderEvent = VENDOR_TABLE[agent].renderEvent
+  const out: string[] = []
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    let obj: Record<string, unknown>
+    try {
+      obj = JSON.parse(trimmed) as Record<string, unknown>
+    } catch {
+      // Not a structured event line — never guessed at, the same posture
+      // `parseClaudeUsage`/`parseCodexUsage` take reading this same stream.
+      continue
+    }
+    try {
+      const rendered = renderEvent(obj)
+      if (rendered) out.push(rendered)
+    } catch {
+      // A malformed event the renderer rejected — skipped, never fatal.
+    }
+  }
+  return out.join('\n')
+}
+
+/**
+ * Confirmed live, not assumed: `claude --model`'s own help text names
+ * `fable`/`opus`/`sonnet` as aliases (haiku is the same family's fourth
+ * tier), and its "full name" example (`claude-fable-5`) establishes the
+ * `claude-` prefix every full Claude model name carries.
+ * Codex publishes no equivalent naming convention to check against — a real
+ * run's own configured model (`codex doctor`: `gpt-5.6-sol`) is one instance,
+ * not a rule, so Codex is never treated as a shape to detect, only as the
+ * vendor a wrongly-shaped Claude model can be refused FROM.
+ */
+const CLAUDE_MODEL_ALIASES = new Set(['fable', 'opus', 'sonnet', 'haiku'])
+
+export function identifyVendorFromModelShape(model: string): AgentVendor | null {
+  const lower = model.toLowerCase()
+  if (CLAUDE_MODEL_ALIASES.has(lower) || lower.startsWith('claude-')) return 'claude'
+  return null
+}
+
+/**
+ * A task's suggested agent-class resolved to this vendor's own concrete
+ * model — `null` when this vendor has no verified, non-stale mapping
+ * for that class (see `VendorSpec.classModels`'s own doc comment), never a
+ * guessed model name.
+ */
+export function resolveClassModel(agent: AgentVendor, agentClass: AgentClass): string | null {
+  return VENDOR_TABLE[agent].classModels[agentClass] ?? null
+}
+
+/** A fresh session's argv exactly as a dispatch builds it — for a live proof that must not hand-build different flags. */
+export function vendorSessionArgs(agent: AgentVendor, model?: string): string[] {
+  return VENDOR_TABLE[agent].args(model)
+}
+
+/** A resumed session's argv exactly as a dispatch builds it, for the same reason as `vendorSessionArgs`. */
+export function vendorResumeArgs(agent: AgentVendor, resumeId: string, model?: string): string[] {
+  return VENDOR_TABLE[agent].resumeArgs(resumeId, model)
+}
+
+/**
+ * Resolves the vendor binary to an absolute path, or `null` when it is
+ * absent from `PATH` (`which` exits non-zero) or present but not executable
+ * (`accessSync` throws) — both refused by name before any spawn attempt, and
+ * before the `dispatched` log line (O1; Part 1 defeat cases).
+ */
+function resolveExecutable(binary: string): string | null {
+  try {
+    const path = execFileSync('which', [binary], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    if (!path) return null
+    accessSync(path, fsConstants.X_OK)
+    return path
+  } catch {
+    return null
+  }
+}
+
+function promptHashOf(prompt: string): string {
+  return `sha256:${createHash('sha256').update(prompt).digest('hex')}`
+}
+
+/** What one agent launch used, read from its own stdout the way every dispatch reads it. */
+export interface DispatchUsageReading {
+  /** Input and output tokens, or `null` when the stream carried no usage. */
+  usage: { input: number; output: number } | null
+  /** The cache read and creation tokens of the same usage object. */
+  cacheUsage: { read: number; creation: number } | null
+  /** The `usage` family's units, with the reason when nothing was observed. */
+  units: UsageObservation
+  /** The `usage` event's `source`: the vendor, or the Claude transcript it fell back to. */
+  source: string
+  /** The vendor's own receipt of which model ran, or `null` when it emits none. */
+  model: string | null
+}
+
+/**
+ * Reads one launch's usage from its stdout. Usage comes from the `tail` (the vendor prints its terminal usage line
+ * last); the session id, when none was bound while the launch ran, from the `head`. The stream is the primary source:
+ * only a Claude launch whose stream carried no usage line falls back to the session's own transcript.
+ */
+export function readDispatchUsage(
+  agent: AgentVendor,
+  stdout: { tail: string; head?: string; sessionId?: string | null },
+  configDir: string = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+): DispatchUsageReading {
+  const vendor = VENDOR_TABLE[agent]
+  const head = stdout.head ?? stdout.tail
+  const streamUnits = vendor.parseUsageUnits(stdout.tail)
+  const resolved =
+    agent === 'claude'
+      ? resolveClaudeUsageUnits(streamUnits, stdout.sessionId ?? vendor.parseResumeId(head), configDir)
+      : { observation: streamUnits, source: 'stream' as const }
+  return {
+    usage: vendor.parseUsage(stdout.tail),
+    cacheUsage: vendor.parseCacheUsage(stdout.tail),
+    units: resolved.observation,
+    source: resolved.source === 'stream' ? agent : resolved.source,
+    model: vendor.parseModel(head)
+  }
+}
+
+/**
+ * The generic launcher's own honest classification
+ * — never `@attalabs/aeg-core`'s `normalizeOutcome`, which requires
+ * `artifactsPresent`/`postconditionsMet` this generic function has no way to
+ * check (that verification is a per-role caller's own concern, e.g. the
+ * dev-review-loop's PR-open check — out of this file's boundary). Mirrors
+ * the SAME manner-of-death precedence `normalizeOutcome` documents (refused,
+ * then timed out, then crashed, take priority over a bare exit code), but
+ * stops at `completed`/`incomplete` on the two signals this file actually
+ * observes — a clean exit is `completed` here, the honest limit of what a
+ * generic launcher can say; a caller with a real postcondition to check
+ * reads this alongside its own, never as a replacement for it.
+ */
+export function classifyRoleAttemptOutcome(
+  refused: boolean,
+  timedOut: boolean,
+  crashed: boolean,
+  exitCode: number | null
+): RoleAttemptOutcome {
+  if (refused) return 'capability_refused'
+  if (timedOut) return 'timed_out'
+  if (crashed) return 'infrastructure_failed'
+  return exitCode === 0 ? 'completed' : 'incomplete'
+}
+
+/**
+ * `log()` is fire-and-forget (`log-sink.ts`'s own `.then()` chain, no
+ * returned promise — task 1's shipped, frozen interface). Without waiting
+ * for a line to actually land, a caller that exits promptly after a failed
+ * dispatch (`dispatchCommand`'s own `process.exit(1)`) can abandon the write
+ * mid-flight, silently losing the very `dispatch_failed` line O2 requires.
+ * This mirrors `apps/cli/src/commands/log.ts`'s `waitForOwnLine` discipline
+ * (that helper is private to that file, so this is its own scoped copy),
+ * matched on `run_id` + `effect_id` + `kind` + `event` — not `run_id` alone.
+ *
+ * **`run_id` alone is not unique to one dispatch (a code-review finding).**
+ * A dispatched role's own `vinaya dispatch` call (a nested
+ * dispatch — no loop feature required, reachable today) inherits its
+ * parent's `VINAYA_RUN_ID` via the child's env (by design, so a report can
+ * join every line under one run) — `createLogSink`'s own `runId = deps.env().
+ * VINAYA_RUN_ID || randomUUID()` picks that inherited value straight back
+ * up. Two dispatches sharing one `run_id` racing this same outbox file could
+ * match EACH OTHER's `dispatched`/`outcome_received` line on `run_id` +
+ * `kind` + `event` alone, resolving early on a line that was never this
+ * call's own — reintroducing the exact "a concurrent process's write read as
+ * mine" bug class this polling exists to close (`log.ts`'s own
+ * `tailHasOwnLine` doc comment). `effect_id` (`randomUUID()`, generated once
+ * per `dispatchRole` call, present on every line that call logs) is the
+ * value actually unique per invocation; matching on it too closes this.
+ */
+function hasOwnDispatchLine(path: string, priorSize: number, runId: string, effectId: string, event: string): boolean {
+  let buf: Buffer
+  try {
+    buf = readFileSync(path)
+  } catch {
+    return false
+  }
+  if (buf.byteLength <= priorSize) return false
+  for (const raw of buf.subarray(priorSize).toString('utf8').split('\n')) {
+    if (!raw) continue
+    try {
+      const obj = JSON.parse(raw) as {
+        meta?: { run_id?: unknown }
+        effect_id?: unknown
+        kind?: unknown
+        event?: unknown
+      }
+      if (obj.meta?.run_id === runId && obj.effect_id === effectId && obj.kind === 'dispatch' && obj.event === event) {
+        return true
+      }
+    } catch {
+      // not a JSON line — never trusted blindly
+    }
+  }
+  return false
+}
+
+async function waitForDispatchLine(
+  path: string,
+  priorSize: number,
+  runId: string,
+  effectId: string,
+  event: string,
+  timeoutMs = 2000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (hasOwnDispatchLine(path, priorSize, runId, effectId, event)) return
+    await new Promise((r) => setTimeout(r, 5))
+  }
+  // Best-effort durability wait, not a correctness gate — `log()` itself
+  // never throws, and a timeout here (an unwritable outbox, an unresolvable
+  // repo) is already `log()`'s own silently-warned failure mode.
+}
+
+function sizeOfSafe(path: string): number {
+  try {
+    return readFileSync(path).byteLength
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Round 6 security review: the environment decision for a confined Codex
+ * child's spawn, extracted so it is unit-testable without a real confined
+ * dispatch. The live-verified defect this closes:
+ *
+ * CRITICAL — `codexHomeDir` (when set) already carries a real, working
+ * `auth.json` written by `codex login --with-access-token`; ALSO setting
+ * `CODEX_ACCESS_TOKEN` on that exact process breaks bearer auth entirely
+ * (every turn: HTTP 401 "Missing bearer or basic authentication in
+ * header"), while `CODEX_HOME` alone authenticates correctly. This never
+ * sets `CODEX_ACCESS_TOKEN`, and no credential value of any kind reaches a
+ * confined child's environment — the staged `CODEX_HOME` is the whole
+ * route.
+ */
+/**
+ * Round 6 review, MAJOR: a failed `codex login --with-access-token` step
+ * (`worker-boundary.ts`'s `Codex subscription login failed:` reason) is the
+ * SAME class of authentication failure as the bounded preflight's own
+ * refusal (`Codex subscription authentication preflight failed:`) — both
+ * mean no usable Codex session was established — and must classify the
+ * same way, not fall through to the generic `startup-failed`. Extracted so
+ * the classification is unit-testable without a real boundary refusal.
+ */
+export function codexBoundaryFailureReason(agent: AgentVendor, boundaryFailureReason: string): DispatchFailureReason {
+  if (agent !== 'codex') return 'startup-failed'
+  if (
+    boundaryFailureReason.startsWith('Codex subscription authentication preflight failed:') ||
+    boundaryFailureReason.startsWith('Codex subscription login failed:')
+  ) {
+    return 'authentication-failed'
+  }
+  // Round 7 review, BLOCKER: a failed `codex plugin marketplace add`/`codex
+  // plugin add` step (`worker-boundary.ts`'s `Codex documentation-gate hook
+  // install failed:`) means the Documentation read-gate could not be wired
+  // for this dispatch — a hook-setup failure, not an authentication one; the
+  // brief's own O3 requires refusing rather than silently downgrading the
+  // gate when hook/configuration setup fails.
+  if (boundaryFailureReason.startsWith('Codex documentation-gate hook install failed:')) {
+    return 'hook-setup-failed'
+  }
+  return 'startup-failed'
+}
+
+/**
+ * O3: why a confined dispatch found no subscription login, as the operator
+ * reads it — where this looked, and the command that signs in. Never an API
+ * key: no agent authenticates with one, so there is no second route to
+ * suggest. Pure, so the wording is asserted without a real refusal.
+ */
+export function missingSubscriptionLoginReason(
+  agent: AgentVendor,
+  env: Readonly<Record<string, string | undefined>> = process.env
+): string {
+  if (agent === 'claude') {
+    const configDir = env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+    return (
+      `no Claude subscription login found at ${join(configDir, '.credentials.json')} ` +
+      '(the Claude config directory — CLAUDE_CONFIG_DIR when set, else ~/.claude) ' +
+      `or in the macOS Keychain entry "${CLAUDE_KEYCHAIN_SERVICE}". ` +
+      'Sign in as the operator with `claude` and its `/login`, then dispatch again.'
+    )
+  }
+  if (agent === 'codex') {
+    const codexHome = env.CODEX_HOME ?? join(homedir(), '.codex')
+    return (
+      `no Codex subscription login found at ${join(codexHome, 'auth.json')} ` +
+      "or in this host's credential store. Sign in as the operator with `codex login`, then dispatch again."
+    )
+  }
+  throw new Error(`Unknown agent '${agent}' — expected claude or codex`)
+}
+
+/**
+ * The pre-spawn Linux sandbox probe's platform and runner. A test swaps both
+ * to prove the refusal and the pass without a Linux host or a real agent.
+ */
+export const LINUX_SANDBOX_PROBE_DEPS: { platform: NodeJS.Platform; run: SandboxProbeRunner } = {
+  platform: process.platform,
+  run: runRealSandboxProbe
+}
+
+/**
+ * The host facts container mode's boundary rule reads (`containerBoundaryRefusal`).
+ * A test swaps the probe to prove each condition without a container.
+ */
+export const CONTAINER_BOUNDARY_PROBE_DEPS: { probe: ContainerBoundaryProbe } = {
+  probe: REAL_CONTAINER_BOUNDARY_PROBE
+}
+
+/** The socket directory of a dispatch's own driver-run dev-tools bridge (`--socket <path>`), or `null` without one. */
+export function bridgeSocketDir(bridge: { args: readonly string[] } | null | undefined): string | null {
+  const index = bridge?.args.indexOf('--socket') ?? -1
+  const socket = index < 0 ? undefined : bridge?.args[index + 1]
+  return socket === undefined ? null : dirname(socket)
+}
+
+/**
+ * Whether an unattended Claude dispatch whose own sandbox is unavailable is
+ * refused as unconfined, and whether a container is its boundary instead.
+ * A confined dispatch, or any other agent, is never refused here. An
+ * unconfined one is refused exactly as on a host unless container mode holds
+ * (`containerBoundaryRefusal`); `reason` names the failing container-mode
+ * condition when the dispatch asked for container mode, else `null`. The
+ * Linux sandbox probe runs only for a confined dispatch, so a dispatch the
+ * container confines runs no probe.
+ */
+export function claudeUnconfinedVerdict(
+  input: {
+    agent: AgentVendor
+    confinement: { confined: boolean } | null
+    containerMode: boolean
+    ownSocketDir: string | null
+  },
+  probe: ContainerBoundaryProbe = CONTAINER_BOUNDARY_PROBE_DEPS.probe
+): { refused: boolean; containerIsBoundary: boolean; runsSandboxProbe: boolean; reason: string | null } {
+  const runsSandboxProbe = input.confinement?.confined === true
+  if (input.agent !== 'claude' || input.confinement?.confined !== false) {
+    return { refused: false, containerIsBoundary: false, runsSandboxProbe, reason: null }
+  }
+  const refusal = containerBoundaryRefusal(
+    { containerMode: input.containerMode, ownSocketDir: input.ownSocketDir },
+    probe
+  )
+  if (refusal === null) return { refused: false, containerIsBoundary: true, runsSandboxProbe, reason: null }
+  return { refused: true, containerIsBoundary: false, runsSandboxProbe, reason: input.containerMode ? refusal : null }
+}
+
+/** What the dispatch's pre-spawn Claude sandbox probe found on this host, run outside any dispatch. */
+export type HostSandboxProbeOutcome =
+  | { readonly kind: 'unconfined'; readonly warning: string }
+  | { readonly kind: 'settings-unwritten' }
+  | { readonly kind: 'probed'; readonly result: SandboxProbeResult; readonly unixSocketFilterOff: boolean }
+
+/**
+ * The confinement request an unattended Claude dispatch hands to
+ * `resolveClaudeConfinement` — built from the same options `dispatchRole`
+ * receives. Any directory the caller names in `extraWritableDirs` rides
+ * along, so the sandbox's commands can write it too; Codex receives the same
+ * directories (`addCodexWritableDirs`).
+ */
+export function claudeConfinementRequest(
+  role: Role,
+  agent: AgentVendor,
+  opts: Pick<DispatchOpts, 'cwd' | 'extraWritableDirs'>,
+  scratchDir: string,
+  controllerOwnedDirs: readonly string[] = []
+): ConfinementRequest {
+  return {
+    role,
+    agent,
+    worktreeDir: opts.cwd ?? repoRoot() ?? process.cwd(),
+    scratchDir,
+    allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS,
+    extraWritableDirs: opts.extraWritableDirs ?? [],
+    ...(controllerOwnedDirs.length > 0 ? { controllerOwnedDirs } : {})
+  }
+}
+
+/**
+ * The dispatch's own pre-spawn Claude sandbox probe, run outside any dispatch:
+ * the same confinement resolution, the same settings writer and the same
+ * probe environment, against a throwaway directory under the OS temp
+ * directory that is removed before this returns — so a host's readiness is
+ * known before any task is launched, without a task's runtime folder.
+ */
+export async function probeClaudeSandboxOnHost(input: {
+  readonly repoRoot: string
+  readonly binaryPath: string
+  readonly platform: ConfinementPlatformDeps
+  readonly run: SandboxProbeRunner
+}): Promise<HostSandboxProbeOutcome> {
+  const scratchDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-host-sandbox-probe-')))
+  try {
+    const confinement = resolveClaudeConfinement(
+      {
+        role: 'developer',
+        agent: 'claude',
+        worktreeDir: input.repoRoot,
+        scratchDir,
+        allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
+      },
+      input.platform
+    )
+    if (!confinement.confined) return { kind: 'unconfined', warning: confinement.warning }
+    const settingsPath = writeDispatchSettingsAt(
+      join(scratchDir, 'hooks'),
+      'host-sandbox-probe',
+      [],
+      'developer',
+      input.repoRoot,
+      [],
+      confinement.settings
+    )
+    if (settingsPath === null) return { kind: 'settings-unwritten' }
+    const result = await probeAgentSandbox(
+      {
+        agent: 'claude',
+        binaryPath: input.binaryPath,
+        cwd: input.repoRoot,
+        env: buildWorkerEnv(process.env, {
+          GH_TELEMETRY: '0',
+          ...confinedClaudeEnvExtras(confinement.scratchDir, confinement.pathOverride)
+        }),
+        settingsPath
+      },
+      { platform: input.platform.platform, run: input.run }
+    )
+    return { kind: 'probed', result, unixSocketFilterOff: confinement.unixSocketFilterOff }
+  } finally {
+    rmSync(scratchDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * The environment overrides a confined Claude child carries on top of the
+ * named allowlist — shared by the real spawn and the pre-spawn probe, so the
+ * probe's sandboxed command sees what the dispatch's commands will.
+ */
+function confinedClaudeEnvExtras(scratchDir: string, pathOverride: string | undefined): Record<string, string> {
+  return {
+    TMPDIR: scratchDir,
+    TMP: scratchDir,
+    TEMP: scratchDir,
+    // Claude Code keeps its own working files under `/tmp/claude-<uid>` and
+    // ignores `TMPDIR` for them, so its own override must name the same
+    // granted scratch directory.
+    CLAUDE_CODE_TMPDIR: scratchDir,
+    // O4: turbo's cache-miss write goes inside the granted scratch, never the
+    // repo-root `.turbo/` the sandbox denies. O5: and its telemetry ping
+    // (`telemetry.vercel.com`) is disabled, so `bun run typecheck`'s own
+    // `turbo` run is not blocked by the confined egress allowlist. Both keys
+    // ride `confinedTurboEnv`, the SAME object Codex spreads via
+    // `codexSpawnEnvExtras` — the two agents' turbo env can never drift apart.
+    ...confinedTurboEnv(scratchDir),
+    // O2: `resolveGitFirstPath`'s result puts the real `git` ahead of the
+    // `/usr/bin/git` xcrun shim on macOS.
+    ...(pathOverride !== undefined ? { PATH: pathOverride } : {})
+  }
+}
+
+/**
+ * Round 5 Principal ruling: a live Mac run found `bun install
+ * --frozen-lockfile` failing under Codex's own sandbox with "bun is unable
+ * to write files to tempdir: EPERM" in the sandbox-conformance suite's own
+ * `codexSession()` (`sandbox-launch.ts`), which rebuilds Codex's spawn env
+ * independently of `dispatchRole` rather than sharing this function — the
+ * TMPDIR/TMP/TEMP override a real Codex dispatch already carried (pointed
+ * at its own writable scratch directory) folded into this ONE shared,
+ * exported function instead of staying an inline object literal only
+ * `dispatchRole` built, so both callers carry the identical override rather
+ * than risking one quietly drifting from the other (found live: the
+ * conformance harness's own hand-rolled copy named `TMPDIR` alone, never
+ * `TMP`/`TEMP`). `scratchDir` is `null` for an attended dispatch or any
+ * non-Codex agent, same as `codexHomeDir`.
+ */
+export function codexSpawnEnvExtras(
+  agent: AgentVendor,
+  codexHomeDir: string | null,
+  scratchDir: string | null = null
+): { attribution: Record<string, string> } {
+  const isCodex = agent === 'codex'
+  return {
+    attribution: {
+      ...(isCodex && codexHomeDir !== null ? { CODEX_HOME: codexHomeDir } : {}),
+      ...(isCodex && scratchDir !== null
+        ? { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir, ...confinedTurboEnv(scratchDir) }
+        : {})
+    }
+  }
+}
+
+/**
+ * O4: the turbo filesystem cache directory for a confined dispatch, inside
+ * its OWN granted scratch (writable) rather than the default `.turbo/` at the
+ * main repository root — which is outside the worktree/scratch the sandbox
+ * grants, so a cache MISS (any PR that changes a package) died there with
+ * `IO error: failed to create directory .../vinaya/.turbo/`. `bun run
+ * typecheck` runs `turbo`, and `turbo`'s `--cache-dir` has this env override
+ * (`TURBO_CACHE_DIR`); pointing it inside the scratch sends every cache-miss
+ * write where the sandbox already allows writes, never a repository-root
+ * grant. Set for both confined agents' children (here for Codex via
+ * `codexSpawnEnvExtras`, and in `dispatchRole`'s Claude branch) and mirrored
+ * by the conformance harness (`sandbox-launch.ts`) so the suite judges the
+ * same redirect the driver ships.
+ */
+export function confinedTurboCacheDir(scratchDir: string): string {
+  return join(scratchDir, 'turbo-cache')
+}
+
+/**
+ * O5: the full set of turbo environment overrides EVERY confined
+ * Developer carries, for Claude and for Codex alike — the cache-directory
+ * redirect above, AND `TURBO_TELEMETRY_DISABLED`. `turbo` (which `bun run
+ * typecheck` invokes) pings `telemetry.vercel.com` on startup; a confined
+ * dispatch's egress is destination-allowlisted and does NOT include that host,
+ * so the ping is blocked and `bun run typecheck` fails outright with "Network
+ * access to \"telemetry.vercel.com\" was blocked" — found live on a confined
+ * Codex Developer. Disabling telemetry removes the ping entirely. Returned as
+ * ONE object both agents' confined-env builders spread, so the two can never
+ * drift apart (the same anti-drift reason `codexSpawnEnvExtras` folded the
+ * TMPDIR/cache overrides into one shared function).
+ */
+export function confinedTurboEnv(scratchDir: string): Record<string, string> {
+  return {
+    TURBO_CACHE_DIR: confinedTurboCacheDir(scratchDir),
+    // turbo reads this exact variable; `1` disables its telemetry collector and
+    // the startup network ping that a confined sandbox's allowlist blocks.
+    TURBO_TELEMETRY_DISABLED: '1'
+  }
+}
+
+/** The variables a run sets to name the runner, process and agent runtime its Log events come from. */
+export const LOG_IDENTITY_ENV_KEYS = [
+  'VINAYA_PROCESS_ID',
+  'VINAYA_PROCESS_VERSION',
+  'VINAYA_PROCESS_DIGEST',
+  'VINAYA_RUNNER_ID',
+  'VINAYA_RUNNER_VERSION',
+  'VINAYA_RUNTIME'
+] as const
+
+/** The set, non-empty `LOG_IDENTITY_ENV_KEYS` of `sourceEnv` — nothing for a process no run launched. */
+export function logIdentityEnv(sourceEnv: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const key of LOG_IDENTITY_ENV_KEYS) {
+    const value = sourceEnv[key]
+    if (value !== undefined && value !== '') env[key] = value
+  }
+  return env
+}
+
+/** Why a reviewer dispatch that asks to resume a session is refused. */
+export const REVIEWER_RESUME_REFUSED_REASON =
+  'a code or security reviewer runs only on a fresh, non-resumed session; resuming a reviewer session, to repair its output or for any other reason, is refused'
+
+/** Whether this dispatch is a code or security reviewer asking to continue an earlier provider session. */
+export function isReviewerResume(role: Role, resumeId: string | undefined): boolean {
+  return (role === 'code-reviewer' || role === 'security') && resumeId !== undefined
+}
+
+/** The name prefix of a Claude dispatch's sandbox scratch directory in the OS temp dir. */
+export const CLAUDE_SANDBOX_PREFIX = 'vinaya-claude-sandbox-'
+
+/**
+ * Mints a Claude dispatch's sandbox scratch directory, marked with this driver as its owner. First it sweeps the
+ * scratch directories earlier drivers left behind when they died before their own cleanup ran (a killed driver
+ * never reaches `finish()`): one is removed only when its owning driver is gone, after that driver's registered
+ * processes are stopped. A directory with no marker, or a live owner's, is never touched. Every sweep failure is
+ * reported through `report`.
+ */
+export async function mintClaudeScratchDir(
+  runToken: string,
+  report: (line: string) => void,
+  parent: string = tmpdir(),
+  sweepDeps: Partial<SweepDeps> = {}
+): Promise<string> {
+  const swept = await sweepOwnedDirs(parent, { ...sweepDeps, select: (name) => name.startsWith(CLAUDE_SANDBOX_PREFIX) })
+  for (const { dir, error } of swept.failed)
+    report(`could not remove an abandoned sandbox scratch directory ${dir}: ${error}`)
+  const dir = realpathSync(mkdtempSync(join(parent, CLAUDE_SANDBOX_PREFIX)))
+  writeOwnerMarker(dir, currentOwner(runToken))
+  return dir
+}
+
+/**
+ * Removes a Claude dispatch's sandbox scratch directory, read-only subdirectories included (a plain recursive
+ * remove cannot unlink entries of a directory the sandboxed agent made read-only). A failure is reported, and the
+ * marked directory is left for a later sweep.
+ */
+export function releaseClaudeScratchDir(dir: string, report: (line: string) => void): void {
+  const error = removeTree(dir)
+  if (error !== null) report(`could not remove the sandbox scratch directory ${dir}: ${error}`)
+}
+
+/**
+ * Starts `agent`'s headless mode for `role`, attributes the child's
+ * environment, and records the dispatch through `log()`. Never throws — a
+ * missing/non-executable binary, a crash, or a timeout all resolve the
+ * returned promise with a `DispatchHandle` describing the failure, matching
+ * `log()`'s own "never throws" posture (`log-sink.ts`).
+ */
+export async function dispatchRole(
+  role: Role,
+  agent: AgentVendor,
+  prompt: string,
+  opts: DispatchOpts
+): Promise<DispatchHandle> {
+  // Shared with `resolveLogAppendPath` below, verbatim — the sink's own
+  // destination resolution reads `VINAYA_ROLE` to decide whether THIS call
+  // counts as unattended (`isUnattendedProcess`), so the two must see the
+  // identical synthetic env or they can resolve two different destinations
+  // whenever a human runs `vinaya dispatch` by hand with a non-default
+  // `logs` setting still only declared locally.
+  // Construction reads the environment before the launch record exists.
+  let sinkAttempt: number | undefined
+  const sinkEnv = (): NodeJS.ProcessEnv => ({
+    ...process.env,
+    VINAYA_ROLE: role,
+    VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
+    VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined,
+    ...(opts.pr !== undefined ? { VINAYA_PR: String(opts.pr) } : {}),
+    VINAYA_ATTEMPT: sinkAttempt === undefined ? undefined : String(sinkAttempt)
+  })
+  const { log, runId } = createLogSink({
+    env: sinkEnv,
+    provenance: 'parent_attributed',
+    inputVersions: () => opts.inputVersions
+  })
+
+  // O2: this dispatch's dev-tools bridge, normalized to the mutable
+  // `BridgeInvocation` the registration helpers take — `null` for every
+  // caller/role that registers no driver-run server (the common case). When
+  // set, Claude gets `--strict-mcp-config --mcp-config <file>` below and Codex
+  // gets a `[mcp_servers.<name>]` table in its staged `config.toml`.
+  const devToolsBridge: BridgeInvocation | null = opts.devToolsBridge
+    ? { command: opts.devToolsBridge.command, args: [...opts.devToolsBridge.args] }
+    : null
+
+  // Mirrors `log()`'s own repo resolution so this file knows where to poll
+  // for its own lines. Primes `resolveRepo()`'s process-wide cache, so
+  // `log()`'s own internal call below resolves the identical value — the
+  // one case that could still diverge is an `AEG_REPO`/remote value that
+  // fails `log-sink.ts`'s private `isSafeRepoSegment` guard (an
+  // intentionally malicious value), where the wait below simply times out
+  // harmlessly rather than mis-locating the file.
+  const repo = await resolveRepo().catch(() => null)
+  const issue = opts.task ?? null
+  const outboxPath = await resolveLogAppendPath(repo, issue, { env: sinkEnv })
+
+  const effectId = randomUUID()
+  const vendor = VENDOR_TABLE[agent]
+  const start = Date.now()
+  const writeLifecycle = (words: string, mark: AgentLineMark = 'working', details: readonly string[] = []): void => {
+    const plainWords = words.replace(/^\[vinaya dispatch [^\]]+\] [^:]+:\s*/, '')
+    const resolvedMark =
+      mark === 'working' && /\b(refused|failed|ceiling|sigkill|unbound|exited)\b/i.test(plainWords) ? 'failed' : mark
+    process.stderr.write(`${colourAgentLine(role, plainWords, process.stderr, resolvedMark)}\n`)
+    for (const detail of formatAgentDetails(details)) process.stderr.write(`${detail}\n`)
+    if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, plainWords, details, resolvedMark)
+  }
+  const roundField = opts.round !== undefined ? { round: opts.round } : {}
+  // O2: never the vendor name (`agent`) — that is the defect this task
+  // closes. This is a REQUEST label, never an observation: `requested:<x>`
+  // when a model was named, `'default'` when none was — both explicitly
+  // marked placeholders for "here is what was asked for, not confirmed as
+  // what ran," distinguishable on read from the bare, unprefixed model name
+  // `outcomeModel` below records once the vendor's own receipt confirms it.
+  // Used for every log line before the child's own report can be read
+  // (`dispatched`, every `dispatch_failed` path) and as the fallback for
+  // `outcome_received` when the vendor gives no receipt at all (Codex,
+  // always; Claude, on an unparseable payload).
+  const resolvedModel = opts.model !== undefined ? `requested:${opts.model}` : 'default'
+
+  // O1: persist the launch intent — run, attempt, role — BEFORE anything
+  // else can spawn, refuse, or fail. From here on every exit path patches
+  // this ONE record rather than writing a fresh one, so an interrupted
+  // attempt keeps its intent (and any session id later bound onto it) instead
+  // of losing session identity to the interruption. `dispatcherPid`/`host`
+  // are the identity a pre-spawn attempt still has; `childPid`/`resumeId`
+  // fill in only once the child is spawned and the stream reports its session.
+  let launch: LaunchRecord = {
+    runId,
+    role,
+    agent,
+    repo,
+    task: opts.task ?? null,
+    pr: opts.pr ?? null,
+    round: opts.round ?? null,
+    attempt: nextAttempt(role, agent, repo, opts.task, opts.pr),
+    effectId,
+    dispatcherPid: process.pid,
+    childPid: null,
+    childStartedAt: null,
+    childCommand: null,
+    host: osHostname(),
+    startedAt: new Date(start).toISOString(),
+    status: 'launched',
+    resumeId: null,
+    boundAt: null,
+    finishedAt: null,
+    failureReason: null
+  }
+  /** Merge `patch` into the launch record and rewrite it durably — never throws (see `writeLaunchRecord`); a lost write degrades to a staler record, never a failed dispatch. */
+  const patchLaunch = (patch: Partial<LaunchRecord>): void => {
+    launch = { ...launch, ...patch }
+    writeLaunchRecord(launch)
+  }
+  writeLaunchRecord(launch)
+  sinkAttempt = launch.attempt
+
+  // A reviewer's result is valid only from a fresh session: refused before
+  // any spawn, so a resumed reviewer session can never deliver a review.
+  if (isReviewerResume(role, opts.resumeId)) {
+    const durationMs = Date.now() - start
+    const priorSize = sizeOfSafe(outboxPath)
+    log({
+      kind: 'dispatch',
+      event: 'dispatch_failed',
+      payload: {},
+      target_role: role,
+      model: resolvedModel,
+      ...roundField,
+      effect_id: effectId,
+      reason: 'refused',
+      usage: null,
+      duration_ms: durationMs
+    })
+    writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${REVIEWER_RESUME_REFUSED_REASON}`)
+    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+    return {
+      exitCode: null,
+      durationMs,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason: 'refused',
+      effectId
+    }
+  }
+
+  // O4: refused before any spawn, by name, naming the vendor that rejected
+  // it and what it accepts — never a bare rejection. Checked before the
+  // binary-on-PATH check below so a wrongly-shaped model is refused even
+  // when the vendor binary itself is present and executable.
+  if (opts.model !== undefined) {
+    const foreignVendor = identifyVendorFromModelShape(opts.model)
+    if (foreignVendor !== null && foreignVendor !== agent) {
+      const durationMs = Date.now() - start
+      const priorSize = sizeOfSafe(outboxPath)
+      log({
+        kind: 'dispatch',
+        event: 'dispatch_failed',
+        payload: {},
+        target_role: role,
+        model: resolvedModel,
+        ...roundField,
+        effect_id: effectId,
+        reason: 'refused',
+        usage: null,
+        duration_ms: durationMs
+      })
+      log({
+        kind: 'role_attempt',
+        event: 'attempted',
+        payload: {},
+        actor: agent,
+        attempt: launch.attempt,
+        effect_id: effectId,
+        model: resolvedModel,
+        outcome: classifyRoleAttemptOutcome(true, false, false, null),
+        usage: null,
+        duration_ms: durationMs
+      })
+      log({
+        kind: 'usage',
+        event: 'observed',
+        payload: {},
+        model: resolvedModel,
+        source: agent,
+        semantics: 'cumulative',
+        units: NO_USAGE_UNITS,
+        unknown_reason: 'dispatch refused before any vendor process started (model shape mismatch)',
+        duration_ms: durationMs
+      })
+      writeLifecycle(
+        `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — model '${opts.model}' is a ${foreignVendor} model; ` +
+          `${agent} does not accept it. ${agent} accepts its own model names (never a ${foreignVendor} alias or a ` +
+          `'${foreignVendor}-' full name).`
+      )
+      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+      await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+      return {
+        exitCode: null,
+        durationMs,
+        usage: null,
+        resumeId: null,
+        timedOut: false,
+        failureReason: 'refused',
+        effectId
+      }
+    }
+  }
+
+  const binaryPath = resolveExecutable(vendor.binary)
+  if (binaryPath === null) {
+    const durationMs = Date.now() - start
+    const priorSize = sizeOfSafe(outboxPath)
+    log({
+      kind: 'dispatch',
+      event: 'dispatch_failed',
+      payload: {},
+      target_role: role,
+      model: resolvedModel,
+      ...roundField,
+      effect_id: effectId,
+      reason: 'refused',
+      usage: null,
+      duration_ms: durationMs
+    })
+    log({
+      kind: 'role_attempt',
+      event: 'attempted',
+      payload: {},
+      actor: agent,
+      attempt: launch.attempt,
+      effect_id: effectId,
+      model: resolvedModel,
+      outcome: classifyRoleAttemptOutcome(true, false, false, null),
+      usage: null,
+      duration_ms: durationMs
+    })
+    log({
+      kind: 'usage',
+      event: 'observed',
+      payload: {},
+      model: resolvedModel,
+      source: agent,
+      semantics: 'cumulative',
+      units: NO_USAGE_UNITS,
+      unknown_reason: 'dispatch refused before any vendor process started (binary not resolvable on PATH)',
+      duration_ms: durationMs
+    })
+    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+    return {
+      exitCode: null,
+      durationMs,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason: 'refused',
+      effectId
+    }
+  }
+
+  // O1 (task 4): Codex's own `workspace-write` sandbox needs a scratch
+  // directory "alongside the primary workspace" (`codex exec --help`'s own
+  // `--add-dir` wording — the task worktree itself is the implicit, always-
+  // writable primary workspace, so it needs no explicit grant) — minted
+  // before `addCodexWritableDirs` below so it can be threaded through the
+  // SAME fresh/resumed-safe mechanism a reviewer's own work directory
+  // already uses, rather than a second, parallel writable-roots path. Removed
+  // in `finish()` below alongside every other dispatch-scoped temp resource,
+  // the same `mkdtemp`-in-`tmpdir()` discipline `claudeScratchDir` uses.
+  const codexRequireIsolation = agent === 'codex' && opts.unattended === true
+  const codexScratchDir = codexRequireIsolation
+    ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-codex-sandbox-')))
+    : null
+  // Round 3 Principal ruling: the driver now creates the task worktree,
+  // outside any sandbox, before every Developer dispatch — round 1 included
+  // (`dev-review-loop.ts`'s `createTaskWorktree`) — so `opts.cwd` is always
+  // the real worktree here, never the repo root a round-1 bootstrap used to
+  // fall back to. A linked worktree's `.git` resolves into the repository's
+  // git common dir, which git itself writes on an ordinary `status`/`commit`
+  // (the index lock, `HEAD`, `ORIG_HEAD`), not only on a ref-creating
+  // `worktree add` — `resolveGitCommonDir` (`worker-boundary.ts`) is the SAME
+  // resolver `buildClaudeSandboxSettings` already uses for Claude, reused
+  // here rather than re-derived, in place of the narrower, Codex-only
+  // `codexGitMetadataWritableDirs` this replaces. `null` when `opts.cwd` is
+  // absent (no worktree to confine to) or `git` cannot resolve one —
+  // contributes nothing extra to the grant, the same best-effort posture
+  // every other optional grant in this module already takes.
+  const codexGitCommonDir = codexRequireIsolation && opts.cwd !== undefined ? resolveGitCommonDir(opts.cwd) : null
+  // Round 4 Principal ruling: `bun install` writes its package cache under
+  // the operator's real home (`resolveBunInstallCacheDir`, `worker-
+  // boundary.ts`) — the same gap `codexGitCommonDir` above closes for git's
+  // own metadata, now closed for bun's cache too, only when this dispatch
+  // actually enforces Codex's own sandbox.
+  const codexBunCacheDir = codexRequireIsolation ? resolveBunInstallCacheDir() : null
+  // The configuration directories this task's Surface opened, resolved
+  // against the worktree once, here in the driver, before either agent is
+  // launched: symlink-checked, a missing `/**` directory created. The same
+  // list reaches both agents — Codex as extra writable roots below, Claude as
+  // its write-access scope's `openedSubpaths` — so one Surface gives one
+  // answer whichever agent runs.
+  const agentConfigOpenedPaths =
+    role === 'developer' && opts.cwd !== undefined
+      ? resolveOpenedAgentConfigPaths(opts.cwd, opts.agentConfigOpened ?? [])
+      : []
+  const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
+  const baseArgs =
+    agent === 'codex'
+      ? addCodexWritableDirs(
+          vendorArgs,
+          [
+            ...(opts.extraWritableDirs ?? []),
+            ...(codexScratchDir !== null ? [codexScratchDir] : []),
+            ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+            ...(codexBunCacheDir !== null ? [codexBunCacheDir] : []),
+            ...agentConfigOpenedPaths
+          ],
+          opts.resumeId !== undefined,
+          opts.developerFiles ?? []
+        )
+      : vendorArgs
+  // O1/O2/O4 (task 4): Codex's own confinement decision — resolved through
+  // the SAME provider-neutral interface Claude already uses
+  // (`ConfinementRequest`/`resolveCodexConfinement`, `worker-boundary.ts`)
+  // rather than wrapping the whole process in the hand-built Seatbelt
+  // profile `resolveWorkerBoundaryLaunch` built (that function and its
+  // profile-building helpers remain in `worker-boundary.ts`, unreferenced
+  // from this file now — deleting them is a later task, by Principal
+  // decision; this task only stops APPLYING that profile to Codex). Unlike
+  // Claude, a `codexConfinement.ok === false` result is always a pre-spawn
+  // REFUSAL (O4), never a silent unconfined fallback — Codex carries no
+  // per-dispatch floor outside this boundary the way Claude's settings file
+  // does.
+  // O1/O2/O5 (task 3): Claude's own confinement decision — resolved through
+  // the provider-neutral interface (`ConfinementRequest`/
+  // `resolveClaudeConfinement`) rather than this function branching on
+  // platform itself. `null` for every non-Claude agent and every attended
+  // dispatch; otherwise always a resolution. A `confined: false` resolution
+  // is refused before spawning below: an unconfined same-UID worker could
+  // reach another task's driver-run dev-tools socket. The scratch
+  // directory is minted fresh per dispatch, the same `mkdtemp`-in-`tmpdir()`
+  // discipline `resolveWorkerBoundaryLaunch`'s own `scratchTmpDir` already
+  // uses, and is removed in `finish()` below alongside every other
+  // dispatch-scoped temp resource.
+  const claudeScratchDir =
+    agent === 'claude' && opts.unattended === true ? await mintClaudeScratchDir(effectId, writeLifecycle) : null
+  // The task's required-source store — the manifest and every delivery
+  // receipt — is controller-owned: a Developer's sandbox never writes it.
+  // Claude's sandbox names it in `denyWrite`; for both agents the dispatch
+  // refuses below when a writable root would reach it.
+  const sourceStore = sourceStoreDir(runtimeDirForRepo(repo), scopeOf(opts.task, opts.pr))
+  const claudeConfinement =
+    agent === 'claude' && opts.unattended === true && claudeScratchDir !== null
+      ? resolveClaudeConfinement(
+          claudeConfinementRequest(role, agent, opts, claudeScratchDir, role === 'developer' ? [sourceStore] : [])
+        )
+      : null
+  if (claudeConfinement !== null && !claudeConfinement.confined) {
+    // O5: named in the run's own output (`writeLifecycle`, which mirrors to
+    // the terminal and `roleLogPath`'s driver.log) AND the Vinaya Log.
+    // Round 2 review, MAJOR: `writeLifecycle` alone never reaches the Log —
+    // it never calls `log()` — so this ALSO records a real `operation`
+    // event, the same established "an infrastructure-level fact, not a
+    // dispatch outcome" family `broker.ts`'s own `operationEvent` helper
+    // already writes (`kind: 'operation'`, `event: 'completed'`); `result:
+    // 'unavailable'` is this family's own documented answer for exactly
+    // this case — a mechanism that could not be established. `target`
+    // names the missing tool(s), never a free-text message (the schema's
+    // own fields carry no prose slot, and `OperationResult` already says
+    // WHAT happened); the full warning text stays in `writeLifecycle`'s own
+    // line, which is what an operator actually reads.
+    writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: WARNING — ${claudeConfinement.warning}`)
+    log({
+      kind: 'operation',
+      event: 'completed',
+      payload: {},
+      operation: 'claude-sandbox-confinement',
+      target: claudeConfinement.missingTools.length > 0 ? claudeConfinement.missingTools.join(',') : null,
+      result: 'unavailable',
+      error_class: null
+    })
+  }
+  // O1/O2/O4: resolved once, here — `null` for every non-Codex agent and
+  // every attended dispatch. The actual pre-spawn REFUSAL this carries when
+  // `ok === false` is raised below, alongside this task's staged `CODEX_HOME`
+  // (O1–O3, O7) — a dispatch that cannot establish EITHER one refuses with
+  // one combined message rather than two separate failure points.
+  const codexConfinement =
+    codexRequireIsolation && codexScratchDir !== null
+      ? resolveCodexConfinement({
+          role,
+          agent,
+          // Round 3 Principal ruling: never a repo-root bootstrap fallback —
+          // the driver always creates and passes the task worktree, round 1
+          // included, before an unattended Codex dispatch starts.
+          worktreeDir: opts.cwd ?? process.cwd(),
+          scratchDir: codexScratchDir,
+          allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
+        })
+      : null
+  // O6: a CONFINED dispatch's own log-spool directory, inside its granted
+  // scratch (writable), where its `log()` calls land — the real log folder
+  // (`<runtimeDir>/logs/`) is outside the worktree/scratch the sandbox grants,
+  // so a direct append there died with "log outbox target could not be
+  // opened". `VINAYA_LOG_SPOOL_DIR` (below, on the confined child's env)
+  // points `log()` here; this trusted driver drains it to the real folder
+  // after the turn, outside the sandbox (`finish()` → `drainLogSpool`). `null`
+  // for an unconfined dispatch, which reaches the real folder directly.
+  const confinedScratchDir =
+    codexRequireIsolation && codexScratchDir !== null
+      ? codexScratchDir
+      : claudeConfinement?.confined === true
+        ? claudeConfinement.scratchDir
+        : null
+  const logSpoolDir = confinedScratchDir !== null ? join(confinedScratchDir, 'log-spool') : null
+  if (logSpoolDir !== null) {
+    try {
+      mkdirSync(logSpoolDir, { recursive: true })
+    } catch {
+      // best-effort; the confined child's own `appendLine` also mkdirs it.
+    }
+  }
+  // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
+  // Codex is not silently included. Computed here, once, before the
+  // 'dispatched' log line — moved up from inside the spawn `Promise`
+  // so the SAME final `spawnArgs` (baseArgs plus `--settings`)
+  // is what an unattended start's boundary resolution wraps below, rather
+  // than wrapping a pre-settings argv and reconciling the two later.
+  const documentationSources = requiredDocumentationSources(role, prompt, sourceStore)
+  const codexDocumentationGuidance =
+    agent === 'codex' && documentationSources.some((source) => isDocumentationUrl(source.source))
+      ? `\n\nCodex documentation receipt: read every URL in \`## Documentation\` with the dev-tools \`${FETCH_DOCUMENTATION_TOOL}\` tool before ending this turn — the driver fetches the page outside your sandbox and records the read. \`curl -L <URL>\` in a Bash tool call also counts when the host is reachable from the sandbox; a \`curl\` your sandbox blocks never means the source cannot be opened — read it with \`${FETCH_DOCUMENTATION_TOOL}\`. Built-in web search is not a receipt route for this dispatch.\n`
+      : ''
+  // The directory a Developer's `Write`/`Edit` rules are scoped to — this
+  // policy is written on EVERY host and EVERY run (unlike either vendor's
+  // own, unattended-only sandbox resolution above), so it needs a value even
+  // when neither `opts.cwd` nor `repoRoot()` resolves — `process.cwd()` is
+  // never wrong for a settings-file glob the way it would be for a sandbox's
+  // own hard refusal-on-unresolvable semantics.
+  const permissionAllowedDir = opts.cwd ?? repoRoot() ?? process.cwd()
+  const dispatchSettingsPath =
+    agent === 'claude'
+      ? writeDispatchSettings(
+          runId,
+          documentationSources,
+          scopeOf(opts.task, opts.pr),
+          role,
+          permissionAllowedDir,
+          opts.developerFiles ?? [],
+          claudeConfinement?.confined === true ? claudeConfinement.settings : null,
+          agentConfigProtectedSubpaths(permissionAllowedDir, agent),
+          agentConfigOpenedPaths
+        )
+      : null
+  const codexHooksPath =
+    agent === 'codex' ? writeCodexDispatchHooks(runId, documentationSources, scopeOf(opts.task, opts.pr), role) : null
+  // The schema requires the sources the driver's after-turn check demands:
+  // the run's manifest, which the first turn wrote and a later turn (whose
+  // prompt has no Documentation section) kept. Read through the same
+  // function the check uses; a dispatch with no manifest directory (neither
+  // Claude nor Codex settings written) falls back to the prompt's sources.
+  const manifestDir =
+    dispatchSettingsPath !== null
+      ? dirname(dispatchSettingsPath)
+      : codexHooksPath !== null
+        ? dirname(codexHooksPath)
+        : null
+  const developerTurnSchema =
+    role === 'developer'
+      ? developerTurnResultJsonSchema({
+          knownFindingIds: opts.turnResultKnownFindingIds ?? [],
+          requiredSources:
+            manifestDir !== null
+              ? deliveredDocumentation(manifestDir, runId, sourceStore).sources
+              : documentationSources.map((source) => source.source)
+        })
+      : null
+  const reviewerRole: ReviewerRole | null =
+    role === 'code-reviewer' ? 'code-reviewer' : role === 'security' ? 'security-reviewer' : null
+  const reviewerTurnSchema = reviewerRole === null ? null : reviewResultJsonSchema(reviewerRole)
+  // O1/O2: the machine-state deny floor a Claude dispatch carries
+  // as `permissions.deny`, translated into Codex's execpolicy `.rules` grammar
+  // for the SAME role. In-memory here (no I/O, so no dispatch-time failure to
+  // fail-closed on). `null` for a role that carries no floor on the Claude
+  // side. `stageCodexPolicyHome` (below) stages it into a `CODEX_HOME/rules/`,
+  // never the operator's `~/.codex`, for EVERY Codex dispatch — attended or
+  // unattended alike — so the floor rides every Codex dispatch the way a
+  // Claude dispatch's deny policy rides `--settings`.
+  const codexExecpolicyRules = agent === 'codex' ? buildCodexExecpolicyRules(role) : null
+  // O1–O3, O7 (task 4): the `CODEX_HOME` that carries the floor, below, is
+  // the SAME home an unattended dispatch's own sandbox/network-proxy policy
+  // (`codexConfinement`, above) stages into — one staging call, one home,
+  // for both concerns. `null` when the operator has no `~/.codex/auth.json`
+  // to re-home from — the lifecycle line then says the floor was not applied
+  // rather than claiming a protection that is not there.
+  // O1–O3, O7 (task 4): this task's own staged `CODEX_HOME` — the
+  // sandbox/network-proxy policy plus a COPY (never a symlink, O7) of the
+  // operator's real `auth.json` for an unattended dispatch (persistent
+  // across rounds, like Claude's own staged config dir — `codexStagedConfigDir`,
+  // keyed by role+agent exactly as `claudeConfinement`'s sibling staging is);
+  // an attended dispatch keeps the pre-existing, per-run-id, machine-state-
+  // floor-only home this task does not confine (`stageCodexPolicyHome`'s own
+  // `sandboxConfigToml`-omitted behavior, byte-for-byte unchanged). Both
+  // paths share the one `stageCodexPolicyHome` call site below.
+  const codexStagedConfigDir = codexRequireIsolation
+    ? runPath(runtimeDirForRepo(repo), scopeOf(opts.task, opts.pr), {
+        area: 'sessions',
+        file: `${role}-${agent}-config`
+      })
+    : undefined
+  const codexHomeTargetDir =
+    agent === 'codex'
+      ? codexStagedConfigDir !== undefined
+        ? join(codexStagedConfigDir, 'codex-home')
+        : join(
+            runPath(runtimeDirForThisRepo(), scopeOf(opts.task, opts.pr), { area: 'hooks' }),
+            role,
+            'codex-home',
+            runId
+          )
+      : null
+  // O2 (round 2 review, Reviewer MAJOR / Security HIGH, F1, unchanged by this
+  // task): a round whose task-scoped home already carries a staged session
+  // reuses it rather than re-running the auth preflight/hooks-install chain —
+  // `codex plugin add` is not idempotent against an already-installed
+  // plugin, so reuse is also the only safe path. Only ever true for the
+  // task-scoped (unattended) home; an attended dispatch's per-run-id
+  // directory is always fresh.
+  // A reused home keeps its login copy only while the operator's own login is
+  // not newer: a re-login since the home was staged replaces the copy.
+  const reusedCodexHome =
+    codexHomeTargetDir !== null && codexStagedConfigDir !== undefined
+      ? reuseStagedCodexHome({ realHome: homedir(), codexHome: codexHomeTargetDir })
+      : null
+  const codexHomeAlreadyStaged = reusedCodexHome !== null
+  let codexHomeFailureReason: string | null = null
+  let codexHomeDir: string | null = codexHomeAlreadyStaged ? codexHomeTargetDir : null
+  if (agent === 'codex' && codexExecpolicyRules !== null && !codexHomeAlreadyStaged) {
+    const staged = stageCodexPolicyHome({
+      targetDir: codexHomeTargetDir as string,
+      realHome: homedir(),
+      execpolicyRules: codexExecpolicyRules,
+      ...(codexRequireIsolation && codexConfinement?.ok === true
+        ? {
+            // O2: the dev-tools `[mcp_servers.<name>]` table (with the
+            // per-server approval key) rides the SAME staged `config.toml` as
+            // the sandbox config — the one home a confined Codex reads — so the
+            // worktree's committed `.mcp.json` plays no part. The socket path
+            // the loop passes is stable per task, so a reused `CODEX_HOME`
+            // (`codexHomeAlreadyStaged`) keeps a still-valid registration.
+            sandboxConfigToml: devToolsBridge
+              ? codexDevToolsConfigToml(devToolsBridge, codexConfinement.configToml)
+              : codexConfinement.configToml
+          }
+        : {})
+    })
+    if (staged === null) {
+      if (codexRequireIsolation) codexHomeFailureReason = missingSubscriptionLoginReason('codex')
+    } else {
+      codexHomeDir = staged.codexHome
+      // O1 (round 2 review, BLOCKER, unchanged by this task): prove the
+      // freshly-staged (copied, O7) credential actually authenticates
+      // BEFORE the real dispatch — a session that cannot be used would
+      // otherwise hang silently to the dispatch's own timeout ceiling with
+      // zero output. Only for an unattended dispatch freshly staging this
+      // round; an attended dispatch's machine-state-only home carries no
+      // sandbox policy to prove and ran no preflight before this task either.
+      if (codexRequireIsolation) {
+        const preflight = REAL_WORKER_BOUNDARY_DEPS.runCodexAuthPreflight!({
+          binaryPath,
+          codexHome: codexHomeDir,
+          cwd: codexHomeDir,
+          realHome: homedir()
+        })
+        if (!preflight.ok) {
+          codexHomeFailureReason = `Codex subscription authentication preflight failed: ${preflight.reason}`
+          codexHomeDir = null
+        } else if (codexHooksPath !== null) {
+          // O3 (round 7 review, BLOCKER, unchanged by this task): the
+          // Documentation read-gate's hooks plugin, installed into this
+          // SAME staged home — see `buildCodexHooksMarketplace`'s own doc
+          // comment for why a bare `hooks.json` write is never discovered.
+          const hooksContent = readFileSync(codexHooksPath, 'utf8')
+          const marketplaceDir = join(codexStagedConfigDir as string, 'codex-hooks-marketplace')
+          buildCodexHooksMarketplace(marketplaceDir, hooksContent)
+          const install = REAL_WORKER_BOUNDARY_DEPS.runCodexPluginInstall!({
+            binaryPath,
+            codexHome: codexHomeDir,
+            marketplaceDir
+          })
+          if (!install.ok) {
+            codexHomeFailureReason = `Codex documentation-gate hook install failed: ${install.reason}`
+            codexHomeDir = null
+          }
+        }
+      }
+    }
+  }
+  // O4: an unattended Codex dispatch refuses before any spawn when EITHER
+  // its own sandbox/network-proxy mechanism is unavailable (`codexConfinement`)
+  // OR this task's own staged `CODEX_HOME` could not be established — one
+  // combined refusal, before the 'dispatched' event, matching the fail-closed
+  // shape every other pre-spawn refusal in this function already takes.
+  const codexUnattendedFailureReason: string | null = !codexRequireIsolation
+    ? null
+    : codexConfinement !== null && !codexConfinement.ok
+      ? codexConfinement.reason
+      : codexHomeFailureReason
+  // Every root a confined Developer's commands may write — Claude's
+  // `allowWrite` plus the linked worktree's git common dir Claude's sandbox
+  // grants on its own, or Codex's primary workspace plus its added roots and
+  // `/tmp`, which Codex's workspace-write mode leaves writable unless its
+  // `exclude_slash_tmp` is set (its `$TMPDIR` is the scratch directory).
+  const workerWritableRoots: string[] =
+    claudeConfinement?.confined === true
+      ? [
+          ...claudeConfinement.settings.sandbox.filesystem.allowWrite,
+          ...(opts.cwd !== undefined ? [resolveGitCommonDir(opts.cwd)].filter((d): d is string => d !== null) : [])
+        ]
+      : codexRequireIsolation && codexConfinement?.ok === true && codexUnattendedFailureReason === null
+        ? [
+            '/tmp',
+            opts.cwd ?? process.cwd(),
+            ...(opts.extraWritableDirs ?? []),
+            ...(codexScratchDir !== null ? [codexScratchDir] : []),
+            ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+            ...(codexBunCacheDir !== null ? [codexBunCacheDir] : []),
+            ...(opts.developerFiles ?? []).map((file) => dirname(file))
+          ]
+        : []
+  const sourceStoreWritableRoot =
+    role === 'developer' && opts.unattended === true
+      ? controllerStoreReachableBy(sourceStore, workerWritableRoots)
+      : null
+  const sourceStoreReachError =
+    sourceStoreWritableRoot === null
+      ? null
+      : `the task's required-source store ${sourceStore} is inside the worker's writable root ${sourceStoreWritableRoot}, ` +
+        'so a worker could forge or erase its receipts; move the runtime directory outside every writable root'
+  // The first lifecycle line this role's dispatch writes —
+  // every earlier `writeLifecycle` call in this function sits behind an
+  // early-return refusal branch (binary not resolvable, non-Claude
+  // Documentation degrade) that a normal Claude dispatch never reaches.
+  if (dispatchSettingsPath !== null) {
+    // O2/O5: the SAME line a Claude dispatch always wrote before this task,
+    // now also naming whether Claude Code's own native sandbox is confining
+    // this dispatch — `confined` on every macOS run and on a Linux run with
+    // `bubblewrap`/`socat`; the `claudeConfinement !== null && !confined`
+    // branch above already wrote its own WARNING line for the remaining
+    // case, so this one states the positive fact rather than repeating it.
+    const sandboxNote =
+      claudeConfinement?.confined === true ? " — Claude Code's own sandbox is confining this dispatch's tools" : ''
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} written to ${dispatchSettingsPath}${sandboxNote}`
+    )
+  } else if (agent === 'codex' && codexExecpolicyRules !== null && codexHomeDir !== null) {
+    // O1/O3: a Codex dispatch of a floor-carrying role carries the SAME
+    // machine-state policy under the SAME version string, through Codex's own
+    // mechanism — an execpolicy `.rules` file (`prefix_rule(..., decision =
+    // "forbidden")`) staged into this run's own `CODEX_HOME/rules/`, never the
+    // operator's `~/.codex`. Staged by `stageCodexPolicyHome` above, whether
+    // or not this dispatch is also confined by this task's own sandbox
+    // policy — so the log reads the same whenever the floor is in force.
+    const sandboxNote =
+      codexRequireIsolation && codexConfinement?.ok === true
+        ? " — Codex's own workspace-write sandbox and network proxy are confining this dispatch"
+        : ''
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} — machine-state commands (keychain, services, global settings) denied via Codex execpolicy staged into this run's CODEX_HOME/rules${sandboxNote}`
+    )
+  } else if (agent === 'codex' && codexExecpolicyRules !== null) {
+    // Rules were generated, but no `CODEX_HOME` could carry them this round —
+    // no re-homable `~/.codex/auth.json` (`stageCodexPolicyHome`), or (an
+    // unattended dispatch only) the auth preflight/hooks-install chain
+    // failed. So the Codex child runs against the operator's own `~/.codex`
+    // with no floor. Stated honestly, never as a protected run (round 2
+    // review, Security MEDIUM F2) — an unattended dispatch never reaches this
+    // branch at all, since `codexUnattendedFailureReason` below refuses it
+    // before any spawn instead.
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: machine-state execpolicy ${PERMISSION_POLICY_VERSION} generated but NOT staged this run — no CODEX_HOME (no re-homable ~/.codex login); machine-state commands are NOT denied for this agent`
+    )
+  } else if (agent !== 'claude') {
+    // The Claude-side policy also wires a `PreToolUse` hook that judges every
+    // statement of a command; the Codex side above matches only the
+    // machine-state deny floor, not that hook (the sibling
+    // `writeCodexDispatchHooks` wires a `PostToolUse` logger and a `Stop`
+    // gate, neither of which can refuse a call before it runs). This branch
+    // is what remains: a Codex dispatch of a role that carries
+    // no floor on the Claude side either. Before the Documentation read-gate's
+    // own fix such a dispatch ran silently; an absence this consequential is stated in the
+    // log, in the same first lifecycle position where a Claude dispatch names
+    // its policy (round 4 security review, MEDIUM).
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: NO permission policy — machine-state commands (keychain, services, global settings) are NOT denied for this agent; only claude carries policy ${PERMISSION_POLICY_VERSION}`
+    )
+  }
+  // Round 5 review, MEDIUM: an unattended Claude dispatch whose settings
+  // write failed (a disk/permission fault under this task's own hooks
+  // directory) previously dropped `--settings` silently and launched
+  // anyway — the PreToolUse background-deny hook the brief names a trap to
+  // preserve would never load, with no refusal and no surfaced error,
+  // unlike O3's own boundary-unavailable path. Fail closed here the same
+  // way: refuse before any spawn, exactly as the binary-not-resolvable and
+  // boundary-unavailable refusals below do. Unlike `codexRequireIsolation`
+  // (gated to Codex's own OS-level boundary, task 3 does not touch), this
+  // settings file carries the background-deny hook on EVERY unattended
+  // Claude dispatch regardless of platform or sandbox availability — task
+  // 3 removes the old platform-gated condition on this half of the check,
+  // which previously left a Linux Claude dispatch free to launch unguarded
+  // when the write failed.
+  if (
+    (agent === 'claude' && opts.unattended === true && dispatchSettingsPath === null) ||
+    (agent === 'codex' && opts.unattended === true && codexRequireIsolation && codexHooksPath === null)
+  ) {
+    const failureReason: DispatchFailureReason = 'hook-setup-failed'
+    const durationMs = Date.now() - start
+    const priorSize = sizeOfSafe(outboxPath)
+    log({
+      kind: 'dispatch',
+      event: 'dispatch_failed',
+      payload: {},
+      target_role: role,
+      model: resolvedModel,
+      ...roundField,
+      effect_id: effectId,
+      // The forge envelope has only the generic pre-spawn `refused` event;
+      // the launch record/handle retain the actionable terminal subtype.
+      reason: 'refused',
+      usage: null,
+      duration_ms: durationMs
+    })
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the PreToolUse ` +
+        "background-deny hook's settings file, which could not be written into this task's own hooks directory"
+    )
+    // O1/O2: never leak the scratch directory minted for Claude's own
+    // confinement (above) on this early refusal — `finish()`'s own cleanup
+    // is never reached from this `return`.
+    if (claudeScratchDir !== null) releaseClaudeScratchDir(claudeScratchDir, writeLifecycle)
+    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
+    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+    return {
+      exitCode: null,
+      durationMs,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason,
+      effectId
+    }
+  }
+  // O1/O4 (task 4): an unattended Codex dispatch refuses before any spawn
+  // when its own sandbox/network-proxy mechanism is unavailable, or this
+  // task's own staged `CODEX_HOME` (credential, auth preflight, hooks
+  // install) could not be established — named above as
+  // `codexUnattendedFailureReason`. This replaces the pre-task-4
+  // `resolveWorkerBoundaryLaunch`/boundary-unavailable refusal with the same
+  // fail-closed shape, classified through the same `codexBoundaryFailureReason`
+  // this repo's own Codex refusals have always used. The same pre-spawn
+  // refusal path prevents an unconfined Claude worker from reaching another
+  // task's driver-run bridge.
+  // A driver-run dev-tools host carries task-scoped forge authority. An
+  // unconfined, same-UID worker can reach ANOTHER task's Unix socket even when
+  // it was not given a bridge of its own. Refuse every unattended Claude
+  // dispatch without confinement, before spawning any agent process.
+  // Container mode: a container holding this one task is the boundary in
+  // place of Claude's own sandbox, only when every condition of
+  // `containerBoundaryRefusal` holds; otherwise this refusal applies as on a
+  // host.
+  const claudeVerdict = claudeUnconfinedVerdict({
+    agent,
+    confinement: claudeConfinement,
+    containerMode: opts.containerMode === true,
+    ownSocketDir: bridgeSocketDir(devToolsBridge)
+  })
+  const containerIsBoundary = claudeVerdict.containerIsBoundary
+  const unconfinedClaude = agent === 'claude' && claudeConfinement?.confined === false && claudeVerdict.refused
+  // Container mode's only Claude login is the subscription token named in
+  // `CLAUDE_CODE_OAUTH_TOKEN`; outside container mode it is `null` and the
+  // token is never read.
+  const containerLogin = containerClaudeLogin(process.env, opts.containerMode === true && agent === 'claude')
+  const containerLoginError =
+    opts.containerMode === true && agent === 'claude' && opts.unattended === true && containerLogin === null
+      ? 'container mode authenticates Claude only from the subscription token in CLAUDE_CODE_OAUTH_TOKEN, which is unset'
+      : null
+  if (containerIsBoundary) {
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: container mode — this one-task container is the boundary, ` +
+        "so the dispatch runs without Claude Code's own sandbox and no driver-run socket of another task exists"
+    )
+  }
+  if (claudeConfinement?.confined === true && claudeConfinement.unixSocketFilterOff) {
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: the sandbox's Unix-socket filter is off on this host ` +
+        `(${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1) — sandboxed commands may connect to Unix sockets they can reach; ` +
+        'every other sandbox setting is unchanged and the driver-tool socket directory stays unreadable'
+    )
+  }
+  // On Linux the sandbox's tools can be installed and still fail to start a
+  // command — a kernel that refuses its Unix-socket seccomp step fails every
+  // sandboxed Bash call while file tools keep working. So one trivial command
+  // runs through the agent's real sandbox, with this dispatch's own settings,
+  // and a failure refuses before the agent starts, quoting the sandbox's own
+  // error. Never a fallback to an unconfined run.
+  let sandboxProbeError: string | null = null
+  // The agent adapter's own per-dispatch controls — the settings and hook
+  // scripts it just wrote — must exist and be readable before an unattended
+  // agent starts; an inactive one refuses here, naming the control and its
+  // remedy, exactly like the probe below.
+  const agentControlsError = agentControlsRefusal(agent, opts.unattended === true, {
+    claudeSettingsPath: dispatchSettingsPath,
+    codexHooksPath
+  })
+  if (
+    agentControlsError === null &&
+    !unconfinedClaude &&
+    containerLoginError === null &&
+    codexUnattendedFailureReason === null &&
+    sourceStoreReachError === null
+  ) {
+    const probeCwd = opts.cwd ?? process.cwd()
+    const plan: SandboxProbePlan | null =
+      agent === 'claude' && claudeConfinement?.confined === true && dispatchSettingsPath !== null
+        ? {
+            agent: 'claude',
+            binaryPath,
+            cwd: probeCwd,
+            env: buildWorkerEnv(process.env, {
+              GH_TELEMETRY: '0',
+              ...confinedClaudeEnvExtras(claudeConfinement.scratchDir, claudeConfinement.pathOverride),
+              ...(containerLogin ?? {})
+            }),
+            settingsPath: dispatchSettingsPath
+          }
+        : agent === 'codex' && codexRequireIsolation && codexConfinement?.ok === true && codexHomeDir !== null
+          ? {
+              agent: 'codex',
+              binaryPath,
+              cwd: probeCwd,
+              env: buildWorkerEnv(process.env, {
+                GH_TELEMETRY: '0',
+                ...codexSpawnEnvExtras(agent, codexHomeDir, codexScratchDir).attribution
+              }),
+              configToml: codexConfinement.configToml,
+              withWritableDirs: (args) =>
+                addCodexWritableDirs(
+                  args,
+                  [
+                    ...(codexScratchDir !== null ? [codexScratchDir] : []),
+                    ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+                    ...(codexBunCacheDir !== null ? [codexBunCacheDir] : [])
+                  ],
+                  true
+                )
+            }
+          : null
+    if (plan !== null) {
+      const probe = await probeAgentSandbox(plan, LINUX_SANDBOX_PROBE_DEPS)
+      if (!probe.ok) sandboxProbeError = probe.error
+    }
+    if (sandboxProbeError !== null) {
+      log({
+        kind: 'operation',
+        event: 'completed',
+        payload: {},
+        operation: 'linux-sandbox-probe',
+        target: agent,
+        result: 'unavailable',
+        error_class: null
+      })
+    }
+  }
+  if (
+    codexUnattendedFailureReason !== null ||
+    unconfinedClaude ||
+    containerLoginError !== null ||
+    sandboxProbeError !== null ||
+    agentControlsError !== null ||
+    sourceStoreReachError !== null
+  ) {
+    const storeOrLoginError = sourceStoreReachError !== null || containerLoginError !== null
+    const failureReason: DispatchFailureReason =
+      unconfinedClaude || sandboxProbeError !== null || agentControlsError !== null || storeOrLoginError
+        ? 'refused'
+        : codexBoundaryFailureReason(agent, codexUnattendedFailureReason!)
+    const durationMs = Date.now() - start
+    const priorSize = sizeOfSafe(outboxPath)
+    log({
+      kind: 'dispatch',
+      event: 'dispatch_failed',
+      payload: {},
+      target_role: role,
+      model: resolvedModel,
+      ...roundField,
+      effect_id: effectId,
+      reason: 'refused',
+      usage: null,
+      duration_ms: durationMs
+    })
+    writeLifecycle(
+      unconfinedClaude
+        ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended Claude requires a confined worker sandbox while driver-run dev-tools are available; ${claudeConfinement?.warning ?? 'confinement unavailable'}${claudeVerdict.reason === null ? '' : ` The container is not the boundary: ${claudeVerdict.reason}.`}`
+        : containerLoginError !== null
+          ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${containerLoginError}`
+          : sourceStoreReachError !== null && codexUnattendedFailureReason === null
+            ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${sourceStoreReachError}`
+            : agentControlsError !== null
+              ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — a required enforcement control is inactive, so the agent was not started:\n${agentControlsError}`
+              : sandboxProbeError !== null
+                ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${agent}'s sandbox could not run a probe command on this host, so the agent was not started: ${sandboxProbeError}`
+                : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
+                  `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
+    )
+    // O1: never leak the scratch directory minted for Codex's own
+    // confinement (above) on this early refusal.
+    if (codexScratchDir !== null) {
+      try {
+        rmSync(codexScratchDir, { recursive: true, force: true })
+      } catch {
+        // best-effort, same reasoning as `finish()`'s own cleanup.
+      }
+    }
+    if (claudeScratchDir !== null) releaseClaudeScratchDir(claudeScratchDir, writeLifecycle)
+    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
+    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+    // The probe's refusal travels typed, beside the shared `'refused'`
+    // reason, only when it is the cause the refusal line above names.
+    const sandboxProbeRefusal =
+      !unconfinedClaude &&
+      containerLoginError === null &&
+      sourceStoreReachError === null &&
+      agentControlsError === null &&
+      sandboxProbeError !== null
+        ? { sandboxProbeRefusal: { agent, error: sandboxProbeError } }
+        : {}
+    return {
+      exitCode: null,
+      durationMs,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason,
+      effectId,
+      ...sandboxProbeRefusal
+    }
+  }
+  // O2: Claude's per-dispatch dev-tools registration — a driver-written
+  // `--mcp-config` file passed with `--strict-mcp-config`, so that file is the
+  // ONLY MCP source this session loads and the worktree's committed `.mcp.json`
+  // is never read. Written into this dispatch's own Claude scratch (minted for
+  // every unattended Claude start, confined or not), which the sandbox grants
+  // read access to — the SAME place the O1 proof wrote it and proved reachable
+  // from inside the sandbox on macOS. No `--allowedTools` narrowing: the
+  // driver-run server itself lists and accepts only the dispatched role's
+  // granted tools (`task-tools/role-grants.ts`).
+  const devToolsClaudeArgs =
+    agent === 'claude' && devToolsBridge !== null && claudeScratchDir !== null
+      ? (() => {
+          const mcpConfigPath = join(claudeScratchDir, 'dev-tools.mcp.json')
+          writeFileSync(mcpConfigPath, devToolsMcpConfigFileBody(devToolsBridge), { mode: 0o600 })
+          return claudeDevToolsArgs(mcpConfigPath)
+        })()
+      : []
+  // O1: every Developer dispatch, first and resumed alike, asks for its turn
+  // result as the CLI's own native structured final output — Claude Code
+  // `--json-schema <schema>`, Codex `--output-schema <file>` — with the one
+  // schema `developer-turn-result.ts` generates, so the shape the provider is
+  // given and the shape the driver accepts are the same zod value. One
+  // authority per adapter: no result file, no report tool, no Stop hook in
+  // the path.
+  // A code or security reviewer asks the same way for its own role's
+  // ReviewResult schema (`review-result.ts`), always on a fresh session.
+  const turnResultAdapter: TurnResultAdapter | null =
+    role !== 'developer' && reviewerRole === null
+      ? null
+      : agent === 'claude'
+        ? 'claude --json-schema'
+        : agent === 'codex'
+          ? 'codex --output-schema'
+          : null
+  const turnSchemaDir =
+    turnResultAdapter === 'codex --output-schema'
+      ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-turn-result-')))
+      : null
+  const turnResultArgs = (args: string[]): string[] => {
+    const outputSchema = developerTurnSchema ?? reviewerTurnSchema
+    if (turnResultAdapter === 'claude --json-schema') {
+      return [...args, '--json-schema', JSON.stringify(outputSchema)]
+    }
+    if (turnSchemaDir !== null) {
+      const schemaPath = join(
+        turnSchemaDir,
+        role === 'developer' ? 'developer-turn-result.schema.json' : 'review-result.schema.json'
+      )
+      writeFileSync(schemaPath, `${JSON.stringify(outputSchema, null, 2)}\n`, { mode: 0o600 })
+      // Codex's argv ends with `-` (read the prompt from stdin): the flag goes before it.
+      return args[args.length - 1] === '-'
+        ? [...args.slice(0, -1), '--output-schema', schemaPath, '-']
+        : [...args, '--output-schema', schemaPath]
+    }
+    return args
+  }
+  const spawnArgs = dispatchSettingsPath
+    ? [...turnResultArgs([...baseArgs, ...devToolsClaudeArgs]), '--settings', dispatchSettingsPath]
+    : turnResultArgs([...baseArgs, ...devToolsClaudeArgs])
+
+  {
+    const priorSize = sizeOfSafe(outboxPath)
+    log({
+      kind: 'dispatch',
+      event: 'dispatched',
+      payload: {},
+      target_role: role,
+      model: resolvedModel,
+      ...roundField,
+      effect_id: effectId,
+      prompt_hash: promptHashOf(prompt)
+    })
+    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatched')
+  }
+
+  const dispatchConfig = loadConfig()?.dispatch
+  const timeoutMs = resolveDispatchTimeoutMs(role, dispatchConfig)
+  const killGraceMs = dispatchConfig?.killGraceMs ?? SIGKILL_GRACE_MS
+
+  return new Promise<DispatchHandle>((resolve) => {
+    // O1/O2 (task 4): Codex is no longer wrapped in `sandbox-exec -f <profile>
+    // <binary> <args…>` — it spawns its own binary directly, exactly like an
+    // attended dispatch always has, carrying its OWN confinement (sandbox
+    // mode, writable roots, network proxy) through its staged `CODEX_HOME`
+    // and `spawnArgs`' own `--add-dir`/`--config` overrides
+    // (`addCodexWritableDirs`) instead. `opts.cwd` — the task worktree — is
+    // Codex's own "primary workspace," writable by construction under
+    // `workspace-write` with no profile of this repo's own to apply.
+    const spawnCommand = binaryPath
+    const spawnCommandArgs = spawnArgs
+    const spawnCwd = opts.cwd
+    const attribution = {
+      VINAYA_RUN_ID: runId,
+      VINAYA_ROLE: role,
+      VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
+      VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined,
+      // GitHub CLI telemetry goes to a host deliberately outside the confined
+      // worker allowlist. Disable it for every child so governed `gh` effects
+      // do not fail after their intended forge request has completed.
+      GH_TELEMETRY: '0',
+      // This process — the one that launched this role, and so the role's own
+      // driver: the `vinaya task run` / `dev-review-loop` process whose own
+      // loop-log header already names this same `process.pid` (`loop-log.ts`'s
+      // `appendRunStartMarker`), and the same value this launch record's
+      // `dispatcherPid` carries. A dispatched role that lists processes finds
+      // that driver and, without this value, has no way to tell its own
+      // launcher from a second, competing run on the same branch — so it
+      // stops to ask. Set for EVERY dispatched role, beside the attribution
+      // above, never only the developer.
+      VINAYA_DRIVER_PID: String(process.pid),
+      // Round 2 review, MAJOR: the runtime directory THIS trusted controller
+      // already resolved, so the child never resolves one of its own and the
+      // two can never disagree. A child that re-derived it would reach a
+      // different answer whenever `loadTrustAnchorConfig()` came back null
+      // (gh offline or unauthenticated) — falling back to the default while
+      // the controller honoured a configured value, and so reading a tree
+      // nobody wrote to. It also saves the child a network round trip.
+      [RUNTIME_DIR_ENV_KEY]: runtimeDirForRepo(repo),
+      // The run's producer identity, when a run named one (the standalone
+      // driver's `setStandaloneLogIdentity`): the role's own `vinaya` calls
+      // and hooks log under the same runner, process and runtime as its
+      // driver, and its runtime is the agent this dispatch starts. Unset
+      // outside a run, so a hand dispatch keeps the defaults.
+      ...logIdentityEnv(process.env),
+      ...(process.env.VINAYA_RUNTIME ? { VINAYA_RUNTIME: agent } : {})
+    }
+    const codexEnvExtras = agent === 'codex' ? codexSpawnEnvExtras(agent, codexHomeDir, codexScratchDir) : null
+    const child = spawn(spawnCommand, spawnCommandArgs, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...(spawnCwd ? { cwd: spawnCwd } : {}),
+      env: codexRequireIsolation
+        ? // O1/O2 (task 4): the SAME named-allowlist discipline the old
+          // Seatbelt wrap used (`buildWorkerEnv`, never a blanket spread) —
+          // an operator secret outside this allowlist (a forge token, a
+          // cloud credential) must not reach a tool Codex itself spawns,
+          // even though Codex's own OS-level confinement no longer comes
+          // from a profile this repo builds. No credential value at all:
+          // the staged, COPIED `auth.json` (O7) inside `CODEX_HOME` is the
+          // whole route; `TMPDIR`/`TMP`/`TEMP` are folded in by
+          // `codexEnvExtras` below too (round 5 Principal ruling), pointed
+          // at the SAME scratch directory `addCodexWritableDirs` already
+          // grants.
+          buildWorkerEnv(process.env, {
+            ...attribution,
+            ...codexEnvExtras!.attribution,
+            // O6: spool this confined dispatch's log events into its granted
+            // scratch; the driver delivers them after the turn (`finish()`).
+            ...(logSpoolDir !== null ? { VINAYA_LOG_SPOOL_DIR: logSpoolDir } : {})
+          })
+        : claudeConfinement?.confined === true
+          ? // Round 2 security review, CRITICAL: a confined Claude dispatch
+            // was spawned through the UNCONFINED branch below (a bare
+            // `{ ...process.env }` spread) — Claude Code's own sandbox
+            // confines only its tools' filesystem and network, never their
+            // ENVIRONMENT, so every operator secret in this process's own
+            // env (a forge token, a cloud credential) reached the Bash
+            // tool's own child/subagent/MCP processes and could be
+            // exfiltrated over any of the sandbox's ALLOWED hosts (a `git
+            // push` to an attacker-controlled repo on `github.com`, say —
+            // exactly the gap §4a's own "Egress is destination-allowlisted,
+            // not content-inspected" line discloses, widened here from a
+            // theoretical residual gap to the operator's WHOLE environment).
+            // `buildWorkerEnv` is the SAME named-allowlist discipline the
+            // Codex boundary above already uses — `HOME` stays in the
+            // allowlist (unlike the old Seatbelt path, nothing here denies
+            // reading it), so Claude's own unconfined main process still
+            // resolves its real OAuth session and `gh`'s own config-based
+            // auth exactly as before; only the SPAWNED CHILD's env changes,
+            // narrowing it to the same eight keys every other confined
+            // dispatch already carries.
+            buildWorkerEnv(process.env, {
+              ...attribution,
+              ...confinedClaudeEnvExtras(claudeConfinement.scratchDir, claudeConfinement.pathOverride),
+              // A settled dev-tools status in the init event (`CLAUDE_DEV_TOOLS_ENV`).
+              ...(devToolsClaudeArgs.length > 0 ? CLAUDE_DEV_TOOLS_ENV : {}),
+              // O6: spool this confined dispatch's log events into its granted
+              // scratch; the driver delivers them after the turn (`finish()`).
+              ...(logSpoolDir !== null ? { VINAYA_LOG_SPOOL_DIR: logSpoolDir } : {}),
+              // Container mode's subscription token, by name; `null` on a host.
+              ...(containerLogin ?? {})
+            })
+          : containerIsBoundary
+            ? // Container mode with the container as the boundary: the same
+              // named allowlist as a confined dispatch, never the parent's
+              // whole environment, plus the subscription token by name — so
+              // no API-key variable the container holds reaches the child.
+              buildWorkerEnv(process.env, {
+                ...attribution,
+                ...(devToolsClaudeArgs.length > 0 ? CLAUDE_DEV_TOOLS_ENV : {}),
+                ...(containerLogin ?? {})
+              })
+            : {
+                ...process.env,
+                ...attribution,
+                // O1 (round 2 review, F1, unchanged by this task): an attended
+                // Codex dispatch points at the run-scoped `CODEX_HOME`
+                // `stageCodexPolicyHome` built (the operator's `~/.codex`
+                // symlinked through, plus this run's rules), so the
+                // machine-state floor is discovered even with no sandbox
+                // policy applied. Omitted (child keeps the inherited/operator
+                // home) when nothing was staged — a non-Codex dispatch, or no
+                // re-homable login.
+                ...(codexHomeDir ? { CODEX_HOME: codexHomeDir } : {}),
+                ...(devToolsClaudeArgs.length > 0 ? CLAUDE_DEV_TOOLS_ENV : {})
+              }
+    })
+
+    // O1/O3: bind the child's own identity onto the launch record right
+    // after `spawn` returns it — this is what recovery probes to tell a
+    // still-live launch from a finished one, so it must be durable even if
+    // the driver dies in the very next tick (a crash between spawn and
+    // session binding). The snapshot (O3) is taken via
+    // `captureSettledChildSnapshot`, not a single immediate read: a vendor
+    // CLI launched through a shebang (`#!/usr/bin/env node`) can still be
+    // mid-exec the instant `spawn` returns, and a snapshot taken right then
+    // can describe the launcher rather than the process that survives — see
+    // that function's own doc comment. Recovery compares a LATER snapshot of
+    // the same pid back against these two fields to tell this exact,
+    // settled process apart from whatever the OS has since recycled the pid
+    // for.
+    if (typeof child.pid === 'number') {
+      const snapshot = captureSettledChildSnapshot(child.pid)
+      patchLaunch({
+        childPid: child.pid,
+        childStartedAt: snapshot?.startedAt ?? null,
+        childCommand: snapshot?.command ?? null
+      })
+    }
+
+    let settled = false
+    let timedOut = false
+    // Set synchronously the moment the OS reports the child has exited —
+    // O5. This is read by the heartbeat below to stop reporting
+    // elapsed time about a process that is gone; it is set well before
+    // `finish()` runs (which only happens after `handleChildExit`'s own
+    // awaits complete), closing the race the round-2 security review found:
+    // `finish()` alone clearing the timer left a window where the heartbeat
+    // could still fire once for an already-dead child.
+    let childExited = false
+    let killTimer: ReturnType<typeof setTimeout> | undefined
+    let stdoutBuf = ''
+    const MAX_STDOUT_BYTES = 1_000_000
+    let stderrBuf = ''
+    const MAX_STDERR_BYTES = 64_000
+    // The turn result and the terminal usage line ride the stream's LAST
+    // events, which a long session pushes past `stdoutBuf`'s head-only cap —
+    // so every dispatch also keeps the stream's tail, the same size, for the
+    // turn-result adapter and the usage readers.
+    let stdoutTail = ''
+    // Set when a Claude session's own init event reports the dev-tools server
+    // failed or skipped (`claudeDevToolsStartFailure`): the driver then ends
+    // the session and the dispatch fails as `startup-failed`, the same way a
+    // Codex start fails on its `required` server.
+    const devToolsStart = watchClaudeDevToolsStart((failure) => {
+      writeLifecycle(
+        `[vinaya dispatch ${effectId}] ${role} via ${agent}: ${failure} — ending the session, which cannot reach its tools`
+      )
+      child.kill('SIGTERM')
+    })
+
+    // `'exit'` (below) can fire before the LAST already-in-flight `'data'`
+    // chunk from the DIRECT child is delivered — the OS process-exit
+    // notification and the pipe's own data delivery are two independent
+    // event sources, and nothing orders one ahead of the other (CI, round
+    // 3: observed live as an intermittent empty `usage`/`resumeId` on a
+    // vendor that had already flushed a complete line before exiting).
+    // `STDOUT_DRAIN_GRACE_MS` gives that last chunk a bounded chance to
+    // land before `stdoutBuf` is read for `usage`/`resumeId` — resolved
+    // immediately, with no added latency, the instant `'end'` actually
+    // fires (the overwhelmingly common case for a child that closes its
+    // own stdout); bounded rather than awaiting `'end'` outright so a
+    // vendor's own grandchild inheriting and holding the pipe open (the
+    // exact scenario `'exit'` was chosen over `'close'` to survive — see
+    // that doc comment below) still returns promptly instead of hanging.
+    let stdoutEnded = false
+    const STDOUT_DRAIN_GRACE_MS = 200
+    function waitForStdoutDrain(): Promise<void> {
+      if (stdoutEnded) return Promise.resolve()
+      return new Promise((res) => {
+        const timer = setTimeout(res, STDOUT_DRAIN_GRACE_MS)
+        child.stdout.once('end', () => {
+          clearTimeout(timer)
+          res()
+        })
+      })
+    }
+
+    const outputTee = openOutputTee(effectId, scopeOf(opts.task, opts.pr))
+    if (outputTee.path !== null) {
+      writeLifecycle('started')
+    }
+
+    // Whatever has arrived since the last complete line. The vendor's stream
+    // is line-delimited but a chunk can split one, so a partial tail is held
+    // back rather than parsed and discarded.
+    let renderCarry = ''
+    const streamRenderer = createAgentStreamRenderer(
+      agent,
+      { worktree: opts.cwd ?? process.cwd(), home: homedir() },
+      vendor.renderEvent
+    )
+    child.stdout.on('data', (chunk: Buffer) => {
+      // Teed off the SAME chunk the parser below consumes, never taken from
+      // it: `stdoutBuf` still sees every byte, capped exactly as before.
+      outputTee.write(chunk)
+      if (stdoutBuf.length < MAX_STDOUT_BYTES) stdoutBuf += chunk.toString('utf8')
+      stdoutTail = `${stdoutTail}${chunk.toString('utf8')}`.slice(-MAX_STDOUT_BYTES)
+
+      // Show the work as it happens. Rendering must never be able to end the
+      // run it is only observing, so every failure here is swallowed: a
+      // malformed line, an unexpected shape, a renderer that throws.
+      renderCarry += chunk.toString('utf8')
+      const lines = renderCarry.split('\n')
+      renderCarry = lines.pop() ?? ''
+      for (const line of lines) {
+        if (line.trim().length === 0) continue
+        try {
+          opts.observeStdoutLine?.(line)
+        } catch {
+          // An observer cannot alter the dispatch it is measuring.
+        }
+        if (devToolsClaudeArgs.length > 0) devToolsStart.onLine(line)
+        // O1: bind the vendor session id onto the launch record the MOMENT the
+        // stream first reports it — not only at exit — so an attempt the
+        // driver's own death interrupts mid-turn still carries a resumable
+        // session for recovery, instead of losing it to the interruption.
+        // Bound once (`launch.resumeId === null` guards it); parsed per line
+        // through the SAME vendor reader the exit path uses, never a second
+        // shape. Wrapped so a binding failure can never end the run it observes.
+        if (launch.resumeId === null) {
+          try {
+            const id = vendor.parseResumeId(line)
+            if (id !== null) patchLaunch({ resumeId: id, boundAt: new Date().toISOString() })
+          } catch {
+            // not a session-bearing line — keep reading, never fatal
+          }
+        }
+        try {
+          for (const { words, mark, details, callId, commandFrom } of streamRenderer.render(
+            JSON.parse(line) as Record<string, unknown>
+          )) {
+            process.stderr.write(`${colourAgentLine(role, words, process.stderr, mark)}\n`)
+            for (const detail of formatAgentDetails(details)) process.stderr.write(`${detail}\n`)
+            // Security (round 2 review, HIGH): the words and details are agent
+            // output, the same untrusted-bytes hazard `openOutputTee`'s `redact`
+            // pass exists for — `appendRoleLine` redacts before it reaches disk.
+            if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, words, details, mark, { callId, commandFrom })
+          }
+        } catch {
+          // not a JSON line, or a renderer that refused it — never fatal
+        }
+      }
+    })
+    child.stdout.once('end', () => {
+      stdoutEnded = true
+    })
+    // Still never inspected for outcome (O2/constraints: stderr content
+    // never decides success or failure, only exit code does) — but no
+    // longer discarded outright, so a human reading the tee file sees it.
+    child.stderr.on('data', (chunk: Buffer) => {
+      outputTee.write(chunk)
+      stderrBuf = `${stderrBuf}${chunk.toString('utf8')}`.slice(-MAX_STDERR_BYTES)
+    })
+
+    // Print mode (O1's motivating trap) may emit nothing on stdout until
+    // the very end — the heartbeat is deliberately independent of the
+    // child's own output, so liveness is reported even when there is
+    // nothing yet to tee.
+    //
+    // O5: verifies the child is actually still alive
+    // (`childExited`) before reporting elapsed time, rather than measuring
+    // wall-clock alone — a real production case measured a heartbeat that
+    // kept printing "still running" at 60s/120s/180s/240s about a
+    // `sandbox-exec` child whose vendor output stayed empty for its whole
+    // life, because nothing here ever checked the child. `childExited` is
+    // set synchronously the moment the `exit` event fires, below — this
+    // guard is therefore self-clearing on the very next tick even in the
+    // (already-closed) race window before `finish()` itself clears the
+    // timer.
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined
+    const waitLine = (): void => {
+      if (childExited) {
+        if (heartbeatTimer) clearInterval(heartbeatTimer)
+        return
+      }
+      const elapsedS = Math.round((Date.now() - start) / 1000)
+      writeLifecycle(`waiting ${elapsedS}s…`, 'waiting')
+    }
+    const firstWaitTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      waitLine()
+      heartbeatTimer = setInterval(waitLine, WAIT_LINE_INTERVAL_MS)
+    }, FIRST_WAIT_LINE_MS)
+
+    const warnLeadMs = timeoutWarningLeadMs(timeoutMs)
+    const warnTimer: ReturnType<typeof setTimeout> = setTimeout(
+      () => {
+        writeLifecycle(
+          `[vinaya dispatch ${effectId}] ${role} via ${agent}: approaching timeout — SIGTERM in ~${Math.round(warnLeadMs / 1000)}s unless it finishes first`
+        )
+      },
+      Math.max(timeoutMs - warnLeadMs, 0)
+    )
+
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true
+      writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: ceiling reached — sending SIGTERM`)
+      child.kill('SIGTERM')
+      killTimer = setTimeout(() => {
+        writeLifecycle(
+          `[vinaya dispatch ${effectId}] ${role} via ${agent}: still alive after SIGTERM — sending SIGKILL`
+        )
+        child.kill('SIGKILL')
+      }, killGraceMs)
+    }, timeoutMs)
+
+    /**
+     * O1/O3: a completed Developer dispatch's turn result exactly as its
+     * adapter read it off the stream's tail, plus the Documentation the
+     * dispatch delivered and the reads its gate counted — handed to the loop's
+     * controller unjudged. Nothing for any other role.
+     */
+    function developerTurnFacts(): Pick<DispatchHandle, 'turnOutput' | 'documentation'> {
+      if (role !== 'developer') return {}
+      const documentation =
+        agent === 'claude' && dispatchSettingsPath !== null
+          ? deliveredDocumentation(dirname(dispatchSettingsPath), runId, sourceStore)
+          : agent === 'codex' && codexHooksPath !== null
+            ? deliveredDocumentation(dirname(codexHooksPath), runId, sourceStore)
+            : { sources: [], countedReads: [] }
+      if (turnResultAdapter === null) return { turnOutput: { adapter: null, raw: null, event: null }, documentation }
+      const read =
+        turnResultAdapter === 'claude --json-schema'
+          ? readClaudeTurnOutput(stdoutTail)
+          : readCodexTurnOutput(stdoutTail)
+      return { turnOutput: { adapter: turnResultAdapter, raw: read.raw, event: read.event }, documentation }
+    }
+
+    function reviewerTurnFacts(): Pick<DispatchHandle, 'reviewOutput'> {
+      if (reviewerRole === null || turnResultAdapter === null) return {}
+      const read =
+        turnResultAdapter === 'claude --json-schema'
+          ? readClaudeTurnOutput(stdoutTail)
+          : readCodexTurnOutput(stdoutTail)
+      return {
+        reviewOutput: {
+          adapter: turnResultAdapter,
+          raw: read.raw,
+          event: read.event,
+          terminal: read.terminal,
+          errors: read.errors
+        }
+      }
+    }
+
+    async function finish(handle: DispatchHandle, event: string, priorSize: number): Promise<void> {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutTimer)
+      if (killTimer) clearTimeout(killTimer)
+      clearTimeout(firstWaitTimer)
+      if (heartbeatTimer) clearInterval(heartbeatTimer)
+      clearTimeout(warnTimer)
+      outputTee.end()
+      // O6: deliver the confined dispatch's spooled log events to the real log
+      // folder (`<runtimeDir>/logs/`) from this trusted driver, OUTSIDE the
+      // sandbox — BEFORE the scratch that holds the spool is removed below.
+      // The confined child could not reach that folder itself; this is the
+      // "delivered after the turn by the driver" half of O6. Best-effort: a
+      // drain fault never blocks `finish()`.
+      if (logSpoolDir !== null) {
+        try {
+          // Deliver ONLY this dispatch's OWN `<owner>-<repo>/<issue>.ndjson`
+          // spool file — never another task's path the confined agent may
+          // have written into its writable spool (round 3 security, LOW).
+          drainLogSpool(logSpoolDir, join(runtimeDirForRepo(repo), 'logs'), repo, opts.task ?? null)
+        } catch {
+          // best-effort, same reasoning as the scratch cleanup below.
+        }
+      }
+      // O1/O2: the scratch directory minted for a Claude or Codex dispatch's
+      // own confinement (`claudeScratchDir`/`codexScratchDir`, above) never
+      // outlives the dispatch that created it — best-effort, matching every
+      // other filesystem-bookkeeping concern in this file (`removeIfPresent`,
+      // `reviewer-isolation.ts`'s own posture), never blocking `finish()` on
+      // a filesystem fault.
+      if (claudeScratchDir !== null) releaseClaudeScratchDir(claudeScratchDir, writeLifecycle)
+      for (const scratchDir of [codexScratchDir, turnSchemaDir]) {
+        if (scratchDir === null) continue
+        try {
+          rmSync(scratchDir, { recursive: true, force: true })
+        } catch {
+          // best-effort, same reasoning as above.
+        }
+      }
+      // The corresponding `log()` call already ran, with `priorSize` taken
+      // right before it — this just confirms it landed before the caller
+      // can possibly exit the process out from under it.
+      await waitForDispatchLine(outboxPath, priorSize, runId, effectId, event)
+      resolve({ ...handle, stderr: stderrBuf })
+    }
+
+    child.on('error', () => {
+      // A spawn-time error surfacing asynchronously after we already
+      // committed to `dispatched` (e.g. the binary vanished between the
+      // pre-check and the spawn) — reported as a crash, never as `refused`,
+      // since `refused` is reserved for the pre-spawn check above.
+      childExited = true
+      clearTimeout(firstWaitTimer)
+      if (heartbeatTimer) clearInterval(heartbeatTimer)
+      const durationMs = Date.now() - start
+      const priorSize = sizeOfSafe(outboxPath)
+      log({
+        kind: 'dispatch',
+        event: 'dispatch_failed',
+        payload: {},
+        target_role: role,
+        model: resolvedModel,
+        ...roundField,
+        effect_id: effectId,
+        reason: 'crash',
+        usage: null,
+        duration_ms: durationMs
+      })
+      log({
+        kind: 'role_attempt',
+        event: 'attempted',
+        payload: {},
+        actor: agent,
+        attempt: launch.attempt,
+        effect_id: effectId,
+        model: resolvedModel,
+        outcome: classifyRoleAttemptOutcome(false, false, true, null),
+        usage: null,
+        duration_ms: durationMs
+      })
+      log({
+        kind: 'usage',
+        event: 'observed',
+        payload: {},
+        model: resolvedModel,
+        source: agent,
+        semantics: 'cumulative',
+        units: NO_USAGE_UNITS,
+        unknown_reason: 'the vendor process errored before any output could be read',
+        duration_ms: durationMs
+      })
+      // O1: an interrupted attempt keeps its intent record — patched, never
+      // deleted; any session id already bound mid-stream is preserved by the
+      // merge, so recovery can still resume it.
+      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'crash' })
+      void finish(
+        { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'crash', effectId },
+        'dispatch_failed',
+        priorSize
+      )
+    })
+
+    async function handleChildExit(code: number | null, durationMs: number): Promise<void> {
+      // Bounded wait for any already-in-flight stdout chunk to land before
+      // `stdoutBuf` is read below (`waitForStdoutDrain`'s own doc comment) —
+      // `durationMs` was already captured at the real moment of exit, above,
+      // unaffected by this wait.
+      await waitForStdoutDrain()
+
+      // O10 — a run's token record survives the manner of its death. The
+      // parent captures usage from `stdoutTail` HERE, at the moment it ends
+      // the child, on every exit path (a clean success, a timeout kill, a
+      // non-zero crash) — never only on the success path below. `stdoutTail`
+      // already holds the last bytes the child printed before it died
+      // (bounded at `MAX_STDOUT_BYTES`), so a partial-but-complete usage line
+      // a vendor flushed just before SIGTERM/SIGKILL landed is not lost
+      // merely because the run itself didn't exit cleanly. `parseUsage` on
+      // an empty or usage-less buffer already returns `null` — the same
+      // honest "no figures" outcome the timeout/crash paths hardcoded
+      // before, just no longer hardcoded when real figures ARE present.
+      // Usage is read from the tail, not the head: the vendor prints its
+      // terminal usage line last, past the head cap on a long session. The
+      // session id and model stay read from the head, where they are printed.
+      const {
+        usage,
+        cacheUsage,
+        units: usageUnits,
+        source: usageSource
+      } = readDispatchUsage(agent, {
+        tail: stdoutTail,
+        head: stdoutBuf,
+        sessionId: launch.resumeId
+      })
+      // The SAME survives-the-manner-of-death
+      // treatment `usage` already gets, extended to the vendor's own model
+      // receipt and the richer `usage`-family units — read once here, from
+      // the same buffer, and reused by whichever branch below actually logs.
+      const reportedModel = vendor.parseModel(stdoutBuf)
+      const attemptModel = reportedModel ?? resolvedModel
+      // O5: this dispatch never produced a working vendor
+      // session — checked against the SAME two sources every other resumeId
+      // read in this function already uses (the stream-bound `launch.resumeId`,
+      // then a final read of the completed buffer), so "never bound" here
+      // means exactly what it means everywhere else in this file.
+      const neverBoundSession = launch.resumeId === null && vendor.parseResumeId(stdoutBuf) === null
+
+      if (timedOut) {
+        const priorSize = sizeOfSafe(outboxPath)
+        log({
+          kind: 'dispatch',
+          event: 'dispatch_failed',
+          payload: {},
+          target_role: role,
+          model: resolvedModel,
+          ...roundField,
+          effect_id: effectId,
+          reason: 'timeout',
+          usage,
+          duration_ms: durationMs
+        })
+        log({
+          kind: 'role_attempt',
+          event: 'attempted',
+          payload: {},
+          actor: agent,
+          attempt: launch.attempt,
+          effect_id: effectId,
+          model: attemptModel,
+          outcome: classifyRoleAttemptOutcome(false, true, false, code),
+          usage,
+          duration_ms: durationMs
+        })
+        log({
+          kind: 'usage',
+          event: 'observed',
+          payload: {},
+          model: attemptModel,
+          source: usageSource,
+          semantics: 'cumulative',
+          units: usageUnits.units,
+          unknown_reason: usageUnits.unknownReason,
+          duration_ms: durationMs
+        })
+        // O1: keep the intent record, and bind whatever session the child did
+        // report before the ceiling killed it (mid-stream, or a final line in
+        // `stdoutBuf`) — an interrupted attempt no longer loses its session.
+        //
+        // O5: a dispatch that never bound a session at all is
+        // named `'unbound'` here, distinct from an ordinary `'timeout'` that
+        // at least got a vendor session running — this is CLI-local
+        // bookkeeping (`DispatchHandle.failureReason`/the launch record),
+        // never the `dispatch_failed` log event's own `reason` field above
+        // (that field's schema lives in `@attalabs/aeg-core`, out of this
+        // task's surface, and keeps reporting the real event class —
+        // `'timeout'` — unchanged).
+        //
+        // O2: `'connection-failed'` only when
+        // a session WAS bound — a re-dispatch needs an exact session to
+        // resume, and `'unbound'` already covers the no-session case with
+        // its own, more specific meaning.
+        const failureReason = neverBoundSession
+          ? 'unbound'
+          : sawVendorConnectionRetry(stdoutBuf)
+            ? 'connection-failed'
+            : 'timeout'
+        if (neverBoundSession) {
+          writeLifecycle(
+            `[vinaya dispatch ${effectId}] ${role} via ${agent}: never produced a working vendor session before the ceiling was reached — failing now as 'unbound', not reporting further elapsed time`
+          )
+        }
+        patchLaunch({
+          status: 'interrupted',
+          finishedAt: new Date().toISOString(),
+          failureReason,
+          resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
+        })
+        void finish(
+          { exitCode: code, durationMs, usage, cacheUsage, resumeId: null, timedOut: true, failureReason, effectId },
+          'dispatch_failed',
+          priorSize
+        )
+        return
+      }
+
+      // An agent's subscription usage limit, read from the vendor's own
+      // output before any other non-zero classification: a limit is a wait
+      // for a reset, never a crash.
+      const usageLimit = detectUsageLimit(agent, stdoutBuf, code, Date.now())
+      const devToolsStartFailure = devToolsStart.failure()
+      if (code !== 0 || usageLimit !== null || devToolsStartFailure !== null) {
+        const priorSize = sizeOfSafe(outboxPath)
+        log({
+          kind: 'dispatch',
+          event: 'dispatch_failed',
+          payload: {},
+          target_role: role,
+          model: resolvedModel,
+          ...roundField,
+          effect_id: effectId,
+          reason: usageLimit !== null ? 'usage_limit' : 'crash',
+          ...(usageLimit !== null
+            ? {
+                usage_limit: {
+                  agent: usageLimit.agent,
+                  reset_at: usageLimit.resetAtMs === null ? null : new Date(usageLimit.resetAtMs).toISOString()
+                }
+              }
+            : {}),
+          usage,
+          duration_ms: durationMs
+        })
+        log({
+          kind: 'role_attempt',
+          event: 'attempted',
+          payload: {},
+          actor: agent,
+          attempt: launch.attempt,
+          effect_id: effectId,
+          model: attemptModel,
+          outcome: classifyRoleAttemptOutcome(false, false, true, code),
+          usage,
+          duration_ms: durationMs
+        })
+        log({
+          kind: 'usage',
+          event: 'observed',
+          payload: {},
+          model: attemptModel,
+          source: usageSource,
+          semantics: 'cumulative',
+          units: usageUnits.units,
+          unknown_reason: usageUnits.unknownReason,
+          duration_ms: durationMs
+        })
+        // O1: same as the timeout path — interrupted, intent kept, session
+        // bound from whatever the child managed to report before it crashed.
+        //
+        // O5: same `'unbound'` distinction as the timeout branch
+        // above — a child that exited on its own without ever binding a
+        // session names that failure specifically, rather than the generic
+        // `'crash'` every other non-zero exit gets.
+        //
+        // O2: same `'connection-failed'`
+        // classification as the timeout branch above.
+        const failureReason = exitFailureReason({
+          usageLimit: usageLimit !== null,
+          devToolsStartFailed: devToolsStartFailure !== null,
+          neverBoundSession,
+          connectionRetry: sawVendorConnectionRetry(stdoutBuf)
+        })
+        if (neverBoundSession && usageLimit === null && devToolsStartFailure === null) {
+          writeLifecycle(
+            `[vinaya dispatch ${effectId}] ${role} via ${agent}: exited (code ${code}) without ever producing a working vendor session — failing now as 'unbound'`
+          )
+        }
+        patchLaunch({
+          status: 'interrupted',
+          finishedAt: new Date().toISOString(),
+          failureReason,
+          resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
+        })
+        void finish(
+          {
+            exitCode: code,
+            durationMs,
+            usage,
+            cacheUsage,
+            resumeId: null,
+            timedOut: false,
+            failureReason,
+            ...(usageLimit !== null ? { usageLimit } : {}),
+            effectId
+          },
+          'dispatch_failed',
+          priorSize
+        )
+        return
+      }
+
+      // O1: the session id, bound onto the launch record already if the stream
+      // reported it mid-run, or read now from the completed buffer as the
+      // fallback. The SAME record the launch intent was written to is marked
+      // `completed`, never a fresh success-only record.
+      const resumeId = launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
+      patchLaunch({
+        status: 'completed',
+        finishedAt: new Date().toISOString(),
+        resumeId
+      })
+      if (resumeId !== null) {
+        writeLifecycle(
+          `[vinaya dispatch ${effectId}] ${role} via ${agent}: resumable — session recorded (attempt ${launch.attempt})`
+        )
+      }
+      // O2: the vendor's own genuine receipt of what ran, read only now that
+      // the child has actually produced output — never guessed from the
+      // requested `--model` value, and always preferred over it when present,
+      // even when no model was named at all (a vendor's own default is still
+      // a real observation once reported). Falls back to the pre-completion
+      // request label (`resolvedModel`) only when this vendor emits no
+      // receipt (Codex, always) or the payload didn't parse.
+      const priorSize = sizeOfSafe(outboxPath)
+      log({
+        kind: 'dispatch',
+        event: 'outcome_received',
+        payload: {},
+        target_role: role,
+        model: attemptModel,
+        ...roundField,
+        effect_id: effectId,
+        // O1: no invented forge identifier — see module doc.
+        outcome: { type: 'completed' },
+        usage,
+        duration_ms: durationMs
+      })
+      log({
+        kind: 'role_attempt',
+        event: 'attempted',
+        payload: {},
+        actor: agent,
+        attempt: launch.attempt,
+        effect_id: effectId,
+        model: attemptModel,
+        outcome: classifyRoleAttemptOutcome(false, false, false, code),
+        usage,
+        duration_ms: durationMs
+      })
+      log({
+        kind: 'usage',
+        event: 'observed',
+        payload: {},
+        model: attemptModel,
+        source: usageSource,
+        semantics: 'cumulative',
+        units: usageUnits.units,
+        unknown_reason: usageUnits.unknownReason,
+        duration_ms: durationMs
+      })
+      void finish(
+        {
+          exitCode: code,
+          durationMs,
+          usage,
+          cacheUsage,
+          resumeId,
+          timedOut: false,
+          effectId,
+          ...developerTurnFacts(),
+          ...reviewerTurnFacts()
+        },
+        'outcome_received',
+        priorSize
+      )
+    }
+
+    // `exit`, never `close`: `close` waits for every stdio stream to see
+    // EOF, which never happens when the vendor's own child spawns a
+    // background helper that inherits its stdout/stderr (found live,
+    // authoring this task — a `cat > /dev/null &`-shaped grandchild in a
+    // test fixture held the pipe open forever after a SIGKILL, hanging
+    // `dispatchRole`'s returned promise permanently even though the direct
+    // child was already dead). `exit` fires the moment the process itself
+    // terminates, independent of any descendant still holding the pipe —
+    // the correct signal for a process-supervisor ceiling that must never
+    // hang regardless of what the vendor's own process tree does.
+    child.on('exit', (code) => {
+      // Set BEFORE the async `handleChildExit` runs (O5) — the
+      // heartbeat above reads this on its very next tick, which can land
+      // before `handleChildExit`'s own awaits (and therefore `finish()`,
+      // which also clears this timer) complete.
+      childExited = true
+      clearInterval(heartbeatTimer)
+      void handleChildExit(code, Date.now() - start).finally(() => {
+        // `exit` deliberately does not wait for stdio `close`, but Node will
+        // still keep these local pipe handles referenced when a vendor's
+        // reparented helper inherited the far end. Once the direct child's
+        // terminal output has been classified and persisted, nothing may
+        // arrive from that child again: release our ends so a completed
+        // dispatch cannot keep the controller process alive indefinitely.
+        child.stdin.destroy()
+        child.stdout.destroy()
+        child.stderr.destroy()
+      })
+    })
+
+    child.stdin.write(`${prompt}${codexDocumentationGuidance}`)
+    child.stdin.end()
+  })
+}

@@ -10,7 +10,7 @@ import {
   pauseBoundRulingDigest,
   policyDigest
 } from '@attalabs/aeg-core'
-import { resolveFrozenPauseBoundRuling } from '../../src/lib/review-gate-input.js'
+import { resolveFrozenPauseBoundRuling } from '../../../../harness/processes/vinaya-strict/loops/dev-review/review-gate-input.js'
 
 /**
  * The digest `check-review-gate.ts` resolves when the default branch's

@@ -25,7 +25,7 @@ const REPO_ROOT = join(import.meta.dir, '..', '..', '..')
  * - `apps/cli/src/commands/doctrine.ts` — the one file that must keep
  *   naming the retired role, in order to refuse a request for it and point
  *   the caller at `planner`.
- * - `apps/cli/src/lib/dispatch-task.ts` — quotes `aeg-root/process.md`'s own
+ * - `harness/processes/vinaya-strict/tools/task-contract/dispatch-task.ts` — quotes `aeg-root/process.md`'s own
  *   Phase 5 verbatim, and `aeg-root/**` is out of this task's surface (task
  *   4's doctrine rewrite); editing the quote to disagree with the doctrine
  *   it quotes would be the actual regression.
@@ -34,13 +34,13 @@ const SCAN_ROOTS = ['packages/aeg-core/src', 'packages/aeg-forge-state/src', 'pa
 
 const ALLOWLISTED_FILES = new Set([
   'apps/cli/src/commands/doctrine.ts',
-  'apps/cli/src/lib/dispatch-task.ts',
+  'harness/processes/vinaya-strict/tools/task-contract/dispatch-task.ts',
   // The retirement DECLARATION itself (`RETIRED_ROLE_NAMES`). Retiring a
   // role means naming it exactly once, in the place that states it is
   // retired — the alternative is inferring retirement from a role file's
   // absence, which is the bug this task fixed: the file deliberately
   // outlives the code, so absence proves nothing.
-  'apps/cli/src/lib/agents-skills-emitter.ts'
+  'harness/processes/vinaya-strict/integration/agents-skills-emitter.ts'
 ])
 
 const NAME_PATTERN = /\bbrief[- ]author\b/i
@@ -73,7 +73,10 @@ describe('no-brief-author — brief-author is retired as a role id (plan-brief-v
   })
 
   it('the retirement declaration still names it — the allowlist entry is load-bearing, not a blanket exemption', () => {
-    const content = readFileSync(join(REPO_ROOT, 'apps/cli/src/lib/agents-skills-emitter.ts'), 'utf8')
+    const content = readFileSync(
+      join(REPO_ROOT, 'harness/processes/vinaya-strict/integration/agents-skills-emitter.ts'),
+      'utf8'
+    )
     expect(content).toContain('RETIRED_ROLE_NAMES')
     expect(content).toContain('brief-author')
   })

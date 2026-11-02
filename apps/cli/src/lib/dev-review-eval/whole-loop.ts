@@ -48,7 +48,7 @@ import {
   type VerdictExtraction
 } from '@attalabs/aeg-core'
 import { NO_LOCAL_TESTS_MARKER } from '../pre-push-test-runner'
-import type { ReviewerRole } from '../review-result'
+import type { ReviewerRole } from '../../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 import { PROTECTED_REPOSITORY, REPOSITORY_NAME } from './freeze-record'
 import { GENERIC_GRADERS } from './generic-graders'
 import { type NeutralCase, validateNeutralCase } from './neutral-case'

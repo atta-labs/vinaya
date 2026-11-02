@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it, mock } from 'bun:test'
 import { resolveDoctrineRoot } from '../src/commands/doctrine.js'
-import { discoverRoleNames } from '../src/lib/agents-skills-emitter.js'
-import { doctrinePointer, pointerRoleNames } from '../src/lib/artifacts.js'
+import { discoverRoleNames } from '../../../harness/processes/vinaya-strict/integration/agents-skills-emitter.js'
+import { doctrinePointer, pointerRoleNames } from '../../../harness/processes/vinaya-strict/integration/artifacts.js'
 // Imported from the SAME specifier artifacts.ts uses, so the mock.module
 // interception below is provably live (see the sanity assertion) — a mock
 // that silently failed to resolve would make the byte-identity test pass

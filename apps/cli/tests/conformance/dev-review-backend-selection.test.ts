@@ -16,7 +16,7 @@ import {
   readRollbackRehearsals,
   type RollbackRehearsalRecord,
   terminateAndRestart
-} from '../../src/lib/backend-rollback.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/backend-rollback.js'
 /** The configuration a run reads its runner from. */
 type VinayaConfig = NonNullable<ReturnType<NonNullable<RunTaskDeps['runnerConfig']>>>
 import {
@@ -25,7 +25,11 @@ import {
   readPauseState
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { runtimeDir as runtimeDirForThisRepo } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
-import { CrossRunnerRefusedError, runTask, type RunTaskDeps } from '../../src/lib/task-run.js'
+import {
+  CrossRunnerRefusedError,
+  runTask,
+  type RunTaskDeps
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.js'
 import {
   crossRunnerInFlightText,
   crossRunnerRefusalReason,
@@ -33,9 +37,9 @@ import {
   engineRunnerScriptPath,
   readTaskRunner,
   recordTaskRunner
-} from '../../src/lib/task-run-engine.js'
-import { runnerReadingFor } from '../../src/lib/task-status.js'
-import { resumeContinuation } from '../../src/lib/task-tools/resume.js'
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-engine.js'
+import { runnerReadingFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.js'
+import { resumeContinuation } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/resume.js'
 import {
   cleanupWorlds,
   makeWorld,

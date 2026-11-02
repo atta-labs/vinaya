@@ -1,0 +1,2073 @@
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { buildPrincipalTestPlanWaitErrors } from '../../../../../apps/cli/src/checks/bin/check-principal-test-plan-wait'
+import { CHECK_SCHEMA_VERSION, type CheckError } from '../../../../../apps/cli/src/checks/contract'
+import { sha256Hex } from '../../../../../apps/cli/src/lib/effects'
+import {
+  DEFAULT_COLLISION_THRESHOLD,
+  checkIntroducedCommandsCovered,
+  checkMilestoneAttach,
+  checkIntroducedConfigKeysCovered,
+  checkTestPlanDeveloperRunnable
+} from '@attalabs/aeg-core'
+import {
+  collectTaskIssueErrors,
+  DEFERRED_FINDINGS_LABEL,
+  deferredFindingsMarker,
+  type GhRunner,
+  isPendingOnlyFailure,
+  readCommandReference,
+  readPinnedFileImporters,
+  renderDeferredFindingsIssueBody,
+  tokenExistsInTree,
+  reconcileGhComment,
+  runIssueChecks,
+  type TaskIssueValidationDeps,
+  upsertDeferredFindingsIssue,
+  validateForgeWrite,
+  validateIssueContent
+} from '../../tools/task-contract/forge/forge-write'
+import { readFileSync } from 'node:fs'
+import { resolveMilestoneAttachTarget } from '@attalabs/aeg-forge-state'
+import { COMMANDS } from '@attalabs/vinaya-sources'
+
+const CLI_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', 'apps', 'cli')
+const REPO_ROOT = join(CLI_ROOT, '..', '..')
+const INDEX = join(CLI_ROOT, 'src', 'index.ts')
+const FAKE_PRINCIPAL_OWED_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', 'fake-principal-owed-check.cjs')
+
+// ---------------------------------------------------------------------------
+// O1 — the write gate runs every group over one body and refuses once with
+// the union of findings, instead of stopping at the first group.
+//
+// `collectTaskIssueErrors` (`issue create`/`issue edit`'s own aggregation
+// core) is the unit under test — real for the schema and content groups
+// (both pure, no I/O), injected for the rendered-brief-shape and registry
+// groups (both need live forge/filesystem/template state that a fixture-less
+// unit test should not have to stand up — the CLI-level `pr create`/
+// `issue create` suites already exercise those for real).
+// ---------------------------------------------------------------------------
+
+// The three forced-companion rules are exercised in
+// `packages/aeg-core/src/issue-validation.test.ts` against fixture references;
+// here they are handed their dormant (nothing-in-this-tree) facts, so these
+// cases keep grading exactly the check each one names.
+const DORMANT_COMMAND_REFERENCE = { file: null, binary: 'vinaya', commands: [], text: '' }
+const DORMANT_CONFIG_REFERENCE = { files: [], keys: [], text: '' }
+
+/** The default branch's `vinaya.config.json` the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`) is served, base64-encoded as the contents API returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
+/** The `gh` stub line answering that read; every stub below that reaches a Principal-deciding path carries it. */
+const PRINCIPALS_GH_LINE = `if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi`
+
+/**
+ * Puts a `gh` on `PATH` that answers only the Principal read, and names the
+ * repository through `GITHUB_REPOSITORY`, for a fixture that stubs no other
+ * `gh` call; returns the function that restores both.
+ */
+function servePrincipalsConfig(): () => void {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-principals-gh-'))
+  writeFileSync(join(dir, 'gh'), `#!/bin/sh\n${PRINCIPALS_GH_LINE}\nexit 1\n`)
+  execFileSync('chmod', ['+x', join(dir, 'gh')])
+  const originalPath = process.env.PATH
+  const originalRepository = process.env.GITHUB_REPOSITORY
+  process.env.PATH = `${dir}:${process.env.PATH ?? ''}`
+  process.env.GITHUB_REPOSITORY = 'test-owner/test-repo'
+  return () => {
+    process.env.PATH = originalPath
+    if (originalRepository === undefined) delete process.env.GITHUB_REPOSITORY
+    else process.env.GITHUB_REPOSITORY = originalRepository
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+describe('collectTaskIssueErrors — one gate sequence, every group, one refusal (O1)', () => {
+  let cwd: string
+  let originalCwd: string
+
+  beforeEach(() => {
+    // Isolated from the real repo's own `vinaya.config.json` (whose
+    // `briefSchema.issue.sections` requires far more than this fixture
+    // means to exercise) — an empty section set here means the schema
+    // group's ONLY possible finding is title grammar, which always runs
+    // regardless of config. A real (if tiny) git repo, with a tracked file
+    // under `apps/cli`, so `checkSurfaceGlobsResolve`'s `in: apps/cli` glob
+    // resolves — this fixture means to name exactly one content-group
+    // defect (the Surface-versus-Test-plan one), not a second, unrelated one.
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-collect-task-issue-errors-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    mkdirSync(join(cwd, 'apps', 'cli'), { recursive: true })
+    writeFileSync(join(cwd, 'apps', 'cli', 'dummy.ts'), '')
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  // Surface `out:` and a Test plan command line both name
+  // `apps/cli/src/checks/foo.test.ts` — `apps/cli/src/checks` is excluded by
+  // `out:`, so `checkObjectivesRespectBoundary` (the `issue-content` group)
+  // refuses it. `Docs to keep coherent` carries the `no-doc-surface`
+  // sentinel so the OTHER content check this body would otherwise also trip
+  // (`checkRationaleNamesDocs`) stays quiet — this fixture means to name
+  // exactly one content-group defect, not two.
+  const surfaceVsTestPlanBody = [
+    '## Surface',
+    '',
+    'in: apps/cli',
+    'out: apps/cli/src/checks',
+    '',
+    '## Test plan',
+    '',
+    '```',
+    'bun test apps/cli/src/checks/foo.test.ts → 0 fail',
+    '```',
+    '',
+    '**Docs to keep coherent** — no-doc-surface.'
+  ].join('\n')
+
+  const fakeConsumerTestFinding: CheckError = {
+    schema: CHECK_SCHEMA_VERSION,
+    check: 'brief-shape',
+    severity: 'error',
+    message:
+      'brief-validation consumer tests: §4 names a path under packages/aeg-core/, and apps/cli depends on @attalabs/aeg-core, but no test path under apps/cli is named in §4 — name one, or add `consumer-tests: none — <reason>`.',
+    agent_recovery_prompt:
+      'Refused for: `brief-validation consumer tests: §4 names a path under packages/aeg-core/, and apps/cli depends on @attalabs/aeg-core, but no test path under apps/cli is named in §4 — name one, or add `consumer-tests: none — <reason>`.` — Name a test path under apps/cli in §4, or add the `consumer-tests: none — <reason>` sentinel, then re-run `vinaya issue create --validate-only …`.'
+  }
+
+  it("a body failing title grammar, a Surface-versus-Test-plan rule, and the rendered brief's consumer-test rule is refused once with three findings", async () => {
+    const deps: TaskIssueValidationDeps = {
+      computeRenderedBriefErrors: async () => ({ errors: [fakeConsumerTestFinding], skipped: null }),
+      runIssueChecks: async () => []
+    }
+
+    const { errors } = await collectTaskIssueErrors(
+      surfaceVsTestPlanBody,
+      'not a valid title',
+      [],
+      'vinaya issue create --validate-only …',
+      null,
+      undefined,
+      deps
+    )
+
+    expect(errors.length).toBe(3)
+    expect(errors.map((e) => e.check).sort()).toEqual(['brief-shape', 'forge-title', 'issue-content'])
+  })
+
+  it('the same body with all three defects fixed passes in one run', async () => {
+    const fixedBody = [
+      '## Surface',
+      '',
+      'in: apps/cli',
+      // No longer overlaps the Test plan's named path.
+      'out: apps/cli/src/other',
+      '',
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/src/checks/foo.test.ts → 0 fail',
+      '```',
+      '',
+      '**Docs to keep coherent** — no-doc-surface.'
+    ].join('\n')
+
+    const deps: TaskIssueValidationDeps = {
+      computeRenderedBriefErrors: async () => ({ errors: [], skipped: null }),
+      runIssueChecks: async () => []
+    }
+
+    const { errors } = await collectTaskIssueErrors(
+      fixedBody,
+      'Feat: a well-formed title',
+      [],
+      'vinaya issue create --validate-only …',
+      null,
+      undefined,
+      deps
+    )
+
+    expect(errors).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Issue gate grades a single-fix Issue — no tranche label — against the
+// single-fix rationale form, and a tranche task Issue against all eight fields.
+// ---------------------------------------------------------------------------
+
+describe('the issueRationale builtin grades the single-fix form when the labels carry no tranche', () => {
+  let cwd: string
+  let originalCwd: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-single-fix-rationale-'))
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({ briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }] } } }),
+      'utf8'
+    )
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    mkdirSync(join(cwd, 'apps', 'cli'), { recursive: true })
+    writeFileSync(join(cwd, 'apps', 'cli', 'dummy.ts'), '')
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  // Every rationale field except Sizing, Project(s) + blast radius and
+  // Dependency rationale.
+  const singleFixBody = [
+    '**Project:** cli',
+    '',
+    "## Planner's rationale",
+    '',
+    '**Boundary** — One fix. Pinned files: `apps/cli/dummy.ts`.',
+    '',
+    '**Traps to avoid** — Do not widen it.',
+    '',
+    '**Suggested agent-class** — mid.',
+    '',
+    '**Stop-and-escalate** — If a second file is needed, stop.',
+    '',
+    '**Docs to keep coherent** — no-doc-surface.'
+  ].join('\n')
+
+  const deps: TaskIssueValidationDeps = {
+    computeRenderedBriefErrors: async () => ({ errors: [], skipped: null }),
+    runIssueChecks: async () => []
+  }
+
+  const rationaleFindings = (errors: CheckError[]) =>
+    errors.filter((e) => e.check === 'brief-schema' && e.message.includes('rationale field not found'))
+
+  it('validateForgeWrite passes the single-fix body with `singleFix` and refuses the three tranche-only fields without it', () => {
+    const base = { body: singleFixBody, title: null, changedFiles: [], retryCommand: 'vinaya issue create …' }
+    const sections = [{ builtin: 'issueRationale' as const }]
+    expect(validateForgeWrite({ ...base, sections, singleFix: true })).toEqual([])
+    const full = validateForgeWrite({ ...base, sections })
+    expect(full.map((e) => e.message.split(':')[0]).sort()).toEqual([
+      'issue-validation Dependency rationale',
+      'issue-validation Project(s) + blast radius',
+      'issue-validation Sizing'
+    ])
+  })
+
+  it('`issue create` with no tranche label accepts the single-fix body', async () => {
+    const { errors } = await collectTaskIssueErrors(
+      singleFixBody,
+      'Fix(cli): a single fix',
+      ['vinaya/type:fix'],
+      'vinaya issue create --validate-only …',
+      null,
+      undefined,
+      deps
+    )
+    expect(rationaleFindings(errors)).toEqual([])
+  })
+
+  it('`issue create` with a tranche label still refuses the body for each of the three tranche-only fields', async () => {
+    const { errors } = await collectTaskIssueErrors(
+      singleFixBody,
+      '[some-tranche-v1] 1 — a task',
+      ['vinaya/tranche:some-tranche-v1', 'vinaya/type:fix'],
+      'vinaya issue create --validate-only …',
+      null,
+      undefined,
+      deps
+    )
+    expect(rationaleFindings(errors)).toHaveLength(3)
+  })
+
+  it('a single-fix body missing the Suggested agent-class is still refused', async () => {
+    const body = singleFixBody.replace('**Suggested agent-class** — mid.\n\n', '')
+    expect(body).not.toBe(singleFixBody)
+    const { errors } = await collectTaskIssueErrors(
+      body,
+      'Fix(cli): a single fix',
+      ['vinaya/type:fix'],
+      'vinaya issue create --validate-only …',
+      null,
+      undefined,
+      deps
+    )
+    const findings = rationaleFindings(errors)
+    expect(findings).toHaveLength(1)
+    expect(findings[0]?.message).toContain('issue-validation Suggested agent-class')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Round-3 review finding (MEDIUM) — a `gh` fetch failure inside the O5
+// sibling-overlap lookup used to call `refuse()` directly, discarding every
+// finding `collectTaskIssueErrors` had already pushed into its union (the
+// schema group's own findings, computed just before this lookup runs) —
+// recreating the exact stop-at-first-group cost O1 exists to remove, one
+// layer down inside the content group. The fetch failure must fold into the
+// SAME union instead.
+// ---------------------------------------------------------------------------
+
+describe('a gh fetch failure inside the content group folds into the union instead of discarding prior findings', () => {
+  let cwd: string
+  let originalCwd: string
+  let originalPath: string | undefined
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-sibling-fetch-failure-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
+
+    // A fake `gh` that fails `issue list` (the O5 sibling-overlap query) but
+    // answers nothing else — the point is this ONE lookup failing, not a
+    // general forge outage.
+    const gh = join(cwd, 'gh')
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  echo "gh: network unreachable" >&2
+  exit 1
+fi
+exit 1
+`
+    )
+    execFileSync('chmod', ['+x', gh])
+
+    originalPath = process.env.PATH
+    process.env.PATH = `${cwd}:${process.env.PATH ?? ''}`
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    process.env.PATH = originalPath
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it("keeps the schema group's own findings when the sibling-overlap fetch fails, refusing once with both", async () => {
+    const deps: TaskIssueValidationDeps = {
+      computeRenderedBriefErrors: async () => ({ errors: [], skipped: null }),
+      runIssueChecks: async () => []
+    }
+
+    const { errors } = await collectTaskIssueErrors(
+      // `no-doc-surface` sentinel keeps `checkRationaleNamesDocs` quiet — this
+      // fixture means to name exactly one content-group defect via the
+      // fetch failure itself, not a second, unrelated one.
+      '**Docs to keep coherent** — no-doc-surface.',
+      'not a valid title', // trips the schema group's title-grammar check
+      [],
+      'vinaya issue create --validate-only …',
+      null,
+      // `--milestone` given explicitly short-circuits milestone RESOLUTION
+      // (no `gh` call needed to resolve one) straight to the sibling-overlap
+      // fetch, which the fake `gh` above fails.
+      { kind: 'create', ghArgs: ['--milestone', 'v1'] },
+      deps
+    )
+
+    expect(errors.length).toBe(2)
+    const checks = errors.map((e) => e.check).sort()
+    expect(checks).toEqual(['forge-fetch', 'forge-title'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Round-3 review finding (MINOR) — the O2 audit below exercises
+// `validateForgeWrite`'s and `validateIssueContent`'s real output, but the
+// rendered-brief-shape group's real (non-injected) output was only ever
+// proven compliant by a hand-built fixture. This drives the REAL render
+// path (`collectTaskIssueErrors`'s default deps, no injection) against a
+// body missing `## Stop conditions` — a genuine render gap — so the
+// `brief-render` finding this produces carries `nameTheFix`'s ACTUAL
+// wrapping, not a stand-in.
+// ---------------------------------------------------------------------------
+
+describe('the real (non-injected) rendered-brief-shape group also names its own fix', () => {
+  let cwd: string
+  let originalCwd: string
+  let originalAegRepo: string | undefined
+
+  const RATIONALE = [
+    "## Task Issue — Planner's rationale",
+    '',
+    '**Boundary** — In: nothing real. Out: nothing.',
+    '',
+    '**Sizing** — n/a, test fixture.',
+    '',
+    '**Project(s) + blast radius** — `Project: cli`. No shared-primitive fan-out.',
+    '',
+    '**Dependency rationale** — `Depends-on: —`; `Conflicts-with: —`.',
+    '',
+    '**Traps to avoid** — n/a.',
+    '',
+    '**Suggested agent-class** — fast — test fixture.',
+    '',
+    '**Stop-and-escalate** — n/a.',
+    '',
+    '**Docs to keep coherent** — no-doc-surface.'
+  ].join('\n')
+
+  // Deliberately missing `## Stop conditions` — a section the brief renderer
+  // requires past its own cutover — so rendering this body genuinely fails
+  // (`rendered.ok === false`), producing a real `brief-render` finding.
+  const bodyMissingStopConditions = [
+    '**Project:** cli',
+    '',
+    '## Objectives',
+    '',
+    'O1. The fixture exercises the real render path.',
+    '',
+    '## Surface',
+    '',
+    'in: aeg-root',
+    'out: —',
+    '',
+    '## Parts',
+    '',
+    'Part 1 (O1) — the only part, citing the only objective.',
+    '',
+    '## Test plan',
+    '',
+    'Test Plan: unit-tests-only',
+    '',
+    RATIONALE
+  ].join('\n')
+
+  let restorePrincipals: () => void = () => {}
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-real-render-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    mkdirSync(join(cwd, 'aeg-root', 'templates'), { recursive: true })
+    cpSync(
+      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
+      join(cwd, 'aeg-root', 'templates', 'brief-template.md')
+    )
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+
+    originalAegRepo = process.env.AEG_REPO
+    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+    restorePrincipals = servePrincipalsConfig()
+  })
+
+  afterEach(() => {
+    restorePrincipals()
+    process.chdir(originalCwd)
+    process.env.AEG_REPO = originalAegRepo
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it('a real render-gap finding quotes the gap and states the fix, not just the rule', async () => {
+    // No `deps` override — `computeRenderedBriefErrors` runs the REAL
+    // `validateRenderedBriefForIssue`, exercising its own `nameTheFix` calls.
+    const { errors } = await collectTaskIssueErrors(
+      bodyMissingStopConditions,
+      'Feat: a well-formed title',
+      [],
+      'vinaya issue create --validate-only …',
+      null
+    )
+
+    const renderFindings = errors.filter((e) => e.check === 'brief-render' || e.check === 'brief-shape')
+    expect(renderFindings.length).toBeGreaterThan(0)
+    for (const e of renderFindings) expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Issue #849 (O1/O2/O3) — the plan-time write gate renders the brief exactly as
+// dispatch does, in EVERY repository (not only Vinaya's own) and at task CREATE
+// time. The fixture is an adopter repo with NO `aeg-root/` of its own — the
+// exact shape that installs Vinaya from the registry: it has the PACKAGED
+// template dispatch renders from, and nothing more. It is given the body that
+// dispatch refused at brief render (the `## Surface` `in:` resolves to a tracked
+// file, but the Boundary names none of them to pin) and must be refused HERE,
+// at create, with dispatch's own message; a corrected body passes; and a
+// checkout that genuinely cannot render reports WHY, never a silent pass.
+// ---------------------------------------------------------------------------
+
+describe('the plan-time gate renders as dispatch does — adopter with no aeg-root, at create time (Issue #849)', () => {
+  let cwd: string
+  let originalCwd: string
+  let originalAegRepo: string | undefined
+
+  const RATIONALE = (boundary: string): string =>
+    [
+      "## Task Issue — Planner's rationale",
+      '',
+      `**Boundary** — ${boundary}`,
+      '',
+      '**Sizing** — n/a, test fixture.',
+      '',
+      '**Project(s) + blast radius** — `Project: cli`. No shared-primitive fan-out.',
+      '',
+      '**Dependency rationale** — `Depends-on: —`; `Conflicts-with: —`.',
+      '',
+      '**Traps to avoid** — n/a.',
+      '',
+      '**Suggested agent-class** — fast — test fixture.',
+      '',
+      '**Stop-and-escalate** — n/a.',
+      '',
+      '**Docs to keep coherent** — no-doc-surface.'
+    ].join('\n')
+
+  const bodyWithBoundary = (boundary: string): string =>
+    [
+      '**Project:** cli',
+      '',
+      '## Objectives',
+      '',
+      'O1. The plan-time gate renders the brief exactly as dispatch does.',
+      '',
+      '## Documentation',
+      '',
+      'None.',
+      '',
+      '## Surface',
+      '',
+      'in: src',
+      'out: —',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the only part, citing the only objective.',
+      '',
+      '## Test plan',
+      '',
+      'Test Plan: unit-tests-only',
+      '',
+      '## Stop conditions',
+      '',
+      '- None.',
+      '',
+      RATIONALE(boundary)
+    ].join('\n')
+
+  // The incident: the Surface `in:` resolves to a tracked file, but the
+  // Boundary names none of them to pin — exactly what dispatch refuses.
+  const incidentBody = bodyWithBoundary('In: the plan-time gate itself, described in prose only. Out: nothing.')
+  // Corrected: the Boundary names the real in-scope file, so a premise pin exists.
+  const correctedBody = bodyWithBoundary('In: `src/fixture.ts`, the committed source file. Out: nothing.')
+
+  // The exact substring of `brief-render.ts`'s premise-pins refusal —
+  // dispatch's own message, which this gate must now reproduce.
+  const PREMISE_PINS_MESSAGE = 'the Boundary names none of them to pin'
+
+  let restorePrincipals: () => void = () => {}
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-adopter-no-aeg-root-'))
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({ briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }] } } }),
+      'utf8'
+    )
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    // A tracked file under the Surface `in:` glob — but DELIBERATELY no
+    // `aeg-root/` of its own. If this gate still switched itself off for a
+    // missing workspace `aeg-root/` (the O1 bug), the incident below would
+    // falsely pass and this test would prove nothing.
+    mkdirSync(join(cwd, 'src'), { recursive: true })
+    writeFileSync(join(cwd, 'src', 'fixture.ts'), 'export const fixture = true\n')
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+
+    originalAegRepo = process.env.AEG_REPO
+    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+    restorePrincipals = servePrincipalsConfig()
+  })
+
+  afterEach(() => {
+    restorePrincipals()
+    process.chdir(originalCwd)
+    if (originalAegRepo === undefined) delete process.env.AEG_REPO
+    else process.env.AEG_REPO = originalAegRepo
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it("refuses a tranche-task CREATE (no Issue number yet) with dispatch's premise-pins message (O1, O2)", async () => {
+    const { errors, renderSkipped } = await collectTaskIssueErrors(
+      incidentBody,
+      '[demo] 1 — the incident, at create time',
+      ['vinaya/tranche:demo'],
+      'vinaya issue create --validate-only …',
+      null // no Issue number — a create
+    )
+    // The render RAN: no local `aeg-root/` did not switch the gate off (O1).
+    expect(renderSkipped).toBeNull()
+    const renderFinding = errors.find((e) => e.check === 'brief-render' && e.message.includes(PREMISE_PINS_MESSAGE))
+    expect(renderFinding, JSON.stringify(errors)).toBeDefined()
+    expect(renderFinding?.severity).toBe('error')
+  }, 60000)
+
+  it('passes the same tranche-task CREATE once the Boundary names the real in-scope file (O1, O2)', async () => {
+    const { errors, renderSkipped } = await collectTaskIssueErrors(
+      correctedBody,
+      '[demo] 1 — the incident, corrected',
+      ['vinaya/tranche:demo'],
+      'vinaya issue create --validate-only …',
+      null
+    )
+    expect(renderSkipped).toBeNull()
+    // No render finding — the draft brief renders and premise-pins are satisfied.
+    expect(
+      errors.some((e) => e.check === 'brief-render'),
+      JSON.stringify(errors)
+    ).toBe(false)
+  }, 60000)
+
+  it('refuses a backlog CREATE (no tranche label) with the same message — the fix is adopter-wide, not tranche-only (O1)', async () => {
+    const { errors, renderSkipped } = await collectTaskIssueErrors(
+      incidentBody,
+      'Fix: the incident on a backlog Issue',
+      [],
+      'vinaya issue create --validate-only …',
+      null
+    )
+    expect(renderSkipped).toBeNull()
+    expect(errors.some((e) => e.check === 'brief-render' && e.message.includes(PREMISE_PINS_MESSAGE))).toBe(true)
+  }, 60000)
+
+  it('when the render cannot run (no resolvable repo), reports the skip reason and no brief-render finding (O3)', async () => {
+    delete process.env.AEG_REPO // this fixture's origin is unresolvable, so the repo no longer resolves
+    const { errors, renderSkipped } = await collectTaskIssueErrors(
+      incidentBody,
+      '[demo] 1 — the incident',
+      ['vinaya/tranche:demo'],
+      'vinaya issue create --validate-only …',
+      null
+    )
+    expect(renderSkipped).not.toBeNull()
+    expect(renderSkipped).toMatch(/owner\/repo/)
+    expect(errors.some((e) => e.check === 'brief-render')).toBe(false)
+  }, 60000)
+})
+
+// ---------------------------------------------------------------------------
+// O2 (Issue #588) — an unmerged `Depends-on` or an open `Conflicts-with` PR
+// is a fact about the forge right now, not a defect in the Issue being
+// edited: the write gate's rendered-brief validation folds it in as
+// `severity: 'warning'` and does not refuse the edit for it alone.
+// `task run`/`dispatchTask` (`dispatch-task.test.ts`) is untouched by this —
+// it never reads the new classification field and keeps refusing on the
+// same render gap exactly as before.
+// ---------------------------------------------------------------------------
+
+describe('an unmerged Depends-on folds into the write gate as informational, never a refusal (O2, Issue #588)', () => {
+  let tmpDir: string
+  let localDir: string
+  let originalCwd: string
+  let originalAegRepo: string | undefined
+  let originalPath: string | undefined
+  let originalRepository: string | undefined
+
+  const RATIONALE_WITH_OPEN_DEPENDENCY = [
+    "## Task Issue — Planner's rationale",
+    '',
+    // issue-657, O3 — the render now refuses when the Surface resolves to a
+    // tracked file but the Boundary names none of them; this fixture's own
+    // `## Surface` `in: aeg-root` resolves to the fixture's own committed
+    // `aeg-root/templates/brief-template.md`, so the Boundary must name a
+    // real file to keep this fixture isolating the ONE dependency-not-merged
+    // blocker, not a premise-pins one.
+    "**Boundary** — In: `aeg-root/templates/brief-template.md`, the fixture's own committed doctrine file. Out: nothing.",
+    '',
+    // Every check whose scope covers the pinned doctrine file carries a decision.
+    ...[
+      'reader-resolvable-prose',
+      'retired-vocabulary',
+      'doctrine-portability',
+      'doctrine-no-procedures',
+      'doc-claims',
+      'quoted-command',
+      'workspace-escape'
+    ].map((c) => `- \`${c}\`: the fixture edits no prose, so it satisfies this check.`),
+    '',
+    '**Sizing** — n/a, test fixture.',
+    '',
+    '**Project(s) + blast radius** — `Project: cli`. No shared-primitive fan-out.',
+    '',
+    '**Dependency rationale** — `Depends-on: #999`; `Conflicts-with: —`.',
+    '',
+    '**Traps to avoid** — n/a.',
+    '',
+    '**Suggested agent-class** — fast — test fixture.',
+    '',
+    '**Stop-and-escalate** — n/a.',
+    '',
+    '**Docs to keep coherent** — no-doc-surface.'
+  ].join('\n')
+
+  // A COMPLETE body (every section `renderBrief` requires, unlike
+  // `bodyMissingStopConditions` above) — the fixture means to isolate the ONE
+  // dependency-not-merged blocker as the render's only gap, not conflate it
+  // with a genuine shape defect.
+  const bodyWithOpenDependency = [
+    '**Project:** cli',
+    '',
+    '## Objectives',
+    '',
+    'O1. The fixture exercises the real render path against a real, open (not-merged) dependency edge.',
+    '',
+    '## Documentation',
+    '',
+    'None — no externally-normative source governs this task.',
+    '',
+    '## Surface',
+    '',
+    'in: aeg-root',
+    'out: —',
+    '',
+    '## Parts',
+    '',
+    'Part 1 (O1) — the only part, citing the only objective.',
+    '',
+    '## Test plan',
+    '',
+    'Test Plan: unit-tests-only',
+    '',
+    '## Stop conditions',
+    '',
+    '- n/a.',
+    '',
+    RATIONALE_WITH_OPEN_DEPENDENCY
+  ].join('\n')
+
+  beforeEach(() => {
+    // A clone, not a bare `git init` — `assembleAndRenderBriefForIssue` first
+    // asserts HEAD equals the remote default branch tip
+    // (`checkStaleAgainstRemote`), which needs a resolvable `origin`; the
+    // clone's local file-path remote resolves it with no live network call,
+    // same fixture shape `brief-assembly.test.ts`'s own
+    // `assembleAndRenderBriefForIssue` describe block already uses.
+    tmpDir = mkdtempSync(join(tmpdir(), 'vinaya-open-dependency-'))
+    const remoteDir = join(tmpDir, 'remote')
+    localDir = join(tmpDir, 'local')
+    mkdirSync(remoteDir, { recursive: true })
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: remoteDir })
+    execFileSync('git', ['config', 'user.email', 'a@example.com'], { cwd: remoteDir })
+    execFileSync('git', ['config', 'user.name', 'A'], { cwd: remoteDir })
+    mkdirSync(join(remoteDir, 'aeg-root', 'templates'), { recursive: true })
+    cpSync(
+      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
+      join(remoteDir, 'aeg-root', 'templates', 'brief-template.md')
+    )
+    writeFileSync(
+      join(remoteDir, 'vinaya.config.json'),
+      JSON.stringify({ briefSchema: { issue: { sections: [] } } }),
+      'utf8'
+    )
+    execFileSync('git', ['add', '.'], { cwd: remoteDir })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd: remoteDir })
+    execFileSync('git', ['clone', '-q', remoteDir, localDir], { cwd: tmpDir })
+    execFileSync('git', ['config', 'user.email', 'a@example.com'], { cwd: localDir })
+    execFileSync('git', ['config', 'user.name', 'A'], { cwd: localDir })
+
+    // A fake `gh` answering Issue #999's own state — open, closed by no
+    // merged pull request — the live "not merged yet" fact this fixture
+    // means to exercise for real, never a stand-in string. It also answers
+    // the two listings the pinned-file collision gate makes (this fixture's
+    // Boundary pins a real file, so that gate runs) with an empty forge: the
+    // fixture isolates the ONE dependency-not-merged blocker, never a fetch
+    // failure on top of it.
+    const gh = join(localDir, 'gh')
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+${PRINCIPALS_GH_LINE}
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  echo '{"state":"OPEN","stateReason":null,"closedByPullRequestsReferences":[]}'
+  exit 0
+fi
+if [ "$2" = "list" ]; then
+  echo '[]'
+  exit 0
+fi
+exit 1
+`
+    )
+    execFileSync('chmod', ['+x', gh])
+
+    originalAegRepo = process.env.AEG_REPO
+    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalRepository = process.env.GITHUB_REPOSITORY
+    process.env.GITHUB_REPOSITORY = 'test-owner/test-repo'
+    originalPath = process.env.PATH
+    process.env.PATH = `${localDir}:${process.env.PATH ?? ''}`
+    originalCwd = process.cwd()
+    process.chdir(localDir)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    process.env.AEG_REPO = originalAegRepo
+    if (originalRepository === undefined) delete process.env.GITHUB_REPOSITORY
+    else process.env.GITHUB_REPOSITORY = originalRepository
+    process.env.PATH = originalPath
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('is reported with `severity: "warning"`, naming the dependency, and blocks nothing', async () => {
+    const { errors } = await collectTaskIssueErrors(
+      bodyWithOpenDependency,
+      'Feat: a well-formed title',
+      [],
+      'vinaya issue edit …',
+      null
+    )
+
+    const dependencyFinding = errors.find((e) => e.message.includes('depends on') && e.message.includes('#999'))
+    expect(dependencyFinding).toBeDefined()
+    expect(dependencyFinding?.severity).toBe('warning')
+
+    // The fixture names exactly one live fact (the open dependency) — every
+    // finding this run produces must be that same warning, never a refusal.
+    const blocking = errors.filter((e) => e.severity !== 'warning')
+    expect(blocking).toEqual([])
+  })
+
+  // Round 2 review, BLOCKER — the plan-time premise gate filtered deferred
+  // premises out, and then this SAME write re-checked them, unfiltered,
+  // through the pre-write brief render. These two run the whole
+  // `issue create`/`issue edit` aggregation with the REAL render path (default
+  // deps), which is the only place that regression was ever visible: a unit
+  // test of the content gate alone cannot see it.
+  const bodyWithDeferredPremise = bodyWithOpenDependency.replace(
+    RATIONALE_WITH_OPEN_DEPENDENCY,
+    [
+      '## Premises',
+      '',
+      'after #999: `aeg-root/templates/brief-template.md` contains `a literal the template does not carry`',
+      '',
+      RATIONALE_WITH_OPEN_DEPENDENCY
+    ].join('\n')
+  )
+
+  it('never asserts a deferred premise, on the real render path the write gate runs', async () => {
+    const { errors } = await collectTaskIssueErrors(
+      bodyWithDeferredPremise,
+      'Feat: a well-formed title',
+      [],
+      'vinaya issue edit …',
+      null
+    )
+
+    expect(errors.filter((e) => /premise/i.test(e.message))).toEqual([])
+    const blocking = errors.filter((e) => e.severity !== 'warning')
+    expect(blocking).toEqual([])
+  })
+
+  it('never asserts a deferred premise on the tranche-draft create render either', async () => {
+    const { errors } = await collectTaskIssueErrors(
+      bodyWithDeferredPremise,
+      '[demo] 1 — a well-formed tranche task title',
+      ['vinaya/tranche:demo'],
+      'vinaya issue create …',
+      null
+    )
+
+    expect(errors.filter((e) => /premise/i.test(e.message))).toEqual([])
+  })
+
+  it('still asserts the same premise, on that same path, once the `after` prefix is gone', async () => {
+    const { errors } = await collectTaskIssueErrors(
+      bodyWithDeferredPremise.replace('after #999: ', ''),
+      'Feat: a well-formed title',
+      [],
+      'vinaya issue edit …',
+      null
+    )
+
+    expect(errors.some((e) => e.message.includes('premise 1 binds'))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// O2 — every recovery prompt names its own fix, not its rule: it quotes the
+// specific finding it refuses (never merely the check's static rule text)
+// and states the edit that clears it.
+// ---------------------------------------------------------------------------
+
+/** True only when `finding`'s recovery prompt both quotes the finding it refuses AND states a concrete edit — never a bare restatement of the rule. */
+function recoveryNamesItsFix(finding: CheckError): boolean {
+  const quotesTheFinding = finding.agent_recovery_prompt.includes(finding.message)
+  const isJustTheRuleRestated = finding.agent_recovery_prompt.trim() === finding.message.trim()
+  const namesAnEdit = /\b(Add|Remove|Delete|Fix|Rewrite|Move|Widen|Narrow|Drop|Correct|Name)\b/.test(
+    finding.agent_recovery_prompt
+  )
+  return quotesTheFinding && !isJustTheRuleRestated && namesAnEdit
+}
+
+describe('every brief-schema/issue-content recovery prompt names its own fix (O2)', () => {
+  // A representative registry of gate messages: one fixture per builtin/
+  // content-check family already exercised elsewhere in this test suite,
+  // reused here rather than re-derived, so this audit tracks the real
+  // registry of messages `forge-write.ts` emits.
+  it('every finding from a title-grammar failure quotes the bad title and states the fix', () => {
+    const errors = validateForgeWrite({
+      body: 'irrelevant',
+      title: 'not a valid title',
+      sections: [],
+      changedFiles: [],
+      retryCommand: 'vinaya pr create --validate-only …'
+    })
+    expect(errors.length).toBeGreaterThan(0)
+    for (const e of errors) expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('every finding from a missing built-in section quotes the diagnosis and states the fix', () => {
+    const errors = validateForgeWrite({
+      body: 'Nothing here.',
+      title: null,
+      sections: [{ builtin: 'tier' }, { builtin: 'testPlan' }, { builtin: 'surfaceMap' }],
+      changedFiles: [],
+      retryCommand: 'vinaya pr create --validate-only …'
+    })
+    expect(errors.length).toBe(3)
+    for (const e of errors) expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('every finding from a missing rationale field quotes the field and states the fix', () => {
+    const errors = validateForgeWrite({
+      body: 'A task Issue body carrying none of the eight rationale fields.',
+      title: null,
+      sections: [{ builtin: 'issueRationale' }],
+      changedFiles: [],
+      retryCommand: 'vinaya issue create --validate-only …'
+    })
+    expect(errors.length).toBe(8)
+    for (const e of errors) expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('every finding from a Surface-versus-Test-plan violation quotes the line and states the fix', () => {
+    const body = [
+      '## Surface',
+      '',
+      'in: apps/cli',
+      'out: apps/cli/src/checks',
+      '',
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/src/checks/foo.test.ts → 0 fail',
+      '```',
+      '',
+      '**Docs to keep coherent** — no-doc-surface.'
+    ].join('\n')
+    const errors = validateIssueContent({
+      body,
+      labels: [],
+      sharedPackages: [],
+      projectPaths: [],
+      retryCommand: 'vinaya issue create --validate-only …',
+      issueNumber: null,
+      briefSectionsSinceIssue: null,
+      resolvesToFile: () => true,
+      readFile: () => null,
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD,
+      commandReference: DORMANT_COMMAND_REFERENCE,
+      configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
+      existsInTree: () => false
+    })
+    expect(errors.length).toBe(1)
+    for (const e of errors) expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('a finding whose recovery prompt only restates the rule fails this same audit', () => {
+    const ruleOnly: CheckError = {
+      schema: CHECK_SCHEMA_VERSION,
+      check: 'brief-schema',
+      severity: 'error',
+      message: 'brief-schema tier: no `Tier:` field found in the body header.',
+      // Bare restatement of the rule — no quote of a specific finding beyond
+      // the rule itself, no edit named.
+      agent_recovery_prompt: 'brief-schema tier: no `Tier:` field found in the body header.'
+    }
+    expect(recoveryNamesItsFix(ruleOnly)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// `runIssueChecks` (O1) — returns findings instead of refusing, so
+// `collectTaskIssueErrors` can fold its registry-check group into the same
+// union every other group contributes to.
+// ---------------------------------------------------------------------------
+
+describe('runIssueChecks returns findings rather than refusing (O1)', () => {
+  it("resolves an empty array for a subject every registered `validates: 'issue'` check passes", async () => {
+    const errors = await runIssueChecks({
+      body: "## Objectives\n\nO1. Something happens.\n\n## Planner's rationale\n\nsome rationale\n",
+      labels: ['vinaya/tranche:demo-v1'],
+      title: 'Feat: a well-formed title',
+      issueNumber: null,
+      currentMilestoneTitle: null,
+      resolvedMilestoneTitle: null,
+      retryCommand: 'vinaya issue create'
+    })
+    expect(errors).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The content gate refuses three facts the shape checks never graded: a
+// `**Project:**` name with no registry row, a Test plan line the dispatched
+// Developer cannot run, and an in-repository Documentation path the checkout
+// does not contain. Each body with the defect is refused, the same body
+// without it passes, and every refusal names its fix.
+// ---------------------------------------------------------------------------
+
+describe('validateIssueContent refuses an unregistered project, an unrunnable Test plan line, and a missing Documentation path', () => {
+  const REGISTRY = [
+    { name: 'cli', path: 'apps/cli' },
+    { name: 'aeg-core', path: 'packages/aeg-core' }
+  ]
+  const CHECKOUT: Record<string, string> = { 'aeg-root/roles/planner.md': '# Planner' }
+
+  function issueBody(opts: { project?: string; testPlanLine?: string; documentation?: string }): string {
+    return [
+      '## Documentation',
+      '',
+      opts.documentation ?? '- aeg-root/roles/planner.md — the entry gate this task makes real (O1)',
+      '',
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/tests/lib/forge-write.test.ts → 0 fail',
+      ...(opts.testPlanLine ? [opts.testPlanLine] : []),
+      '```',
+      '',
+      '**Docs to keep coherent** — no-doc-surface.',
+      `**Project:** ${opts.project ?? 'aeg-core, cli'}`
+    ].join('\n')
+  }
+
+  function gate(body: string, projectPaths = REGISTRY): CheckError[] {
+    return validateIssueContent({
+      body,
+      labels: [],
+      sharedPackages: [],
+      projectPaths,
+      retryCommand: 'vinaya issue create --validate-only …',
+      issueNumber: null,
+      briefSectionsSinceIssue: null,
+      resolvesToFile: () => true,
+      readFile: (path) => CHECKOUT[path] ?? null,
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD,
+      commandReference: DORMANT_COMMAND_REFERENCE,
+      configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
+      existsInTree: () => false
+    })
+  }
+
+  it('passes the body that carries none of the three defects', () => {
+    expect(gate(issueBody({}))).toEqual([])
+  })
+
+  it('refuses a project with no registry row, naming it and the registered rows', () => {
+    const errors = gate(issueBody({ project: 'aeg-core, nonexistent' }))
+    expect(errors.length).toBe(1)
+    const [e] = errors as [CheckError]
+    expect(e.message).toContain('nonexistent')
+    expect(e.message).toContain('registered: cli, aeg-core')
+    expect(e.agent_recovery_prompt).toContain('names a project the registry lists')
+    expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('leaves a repository with no registry unaffected', () => {
+    expect(gate(issueBody({ project: 'nonexistent' }), [])).toEqual([])
+  })
+
+  it('refuses a Test plan line that merges a pull request, naming the line', () => {
+    const line = 'gh pr merge 12 --squash'
+    const errors = gate(issueBody({ testPlanLine: line }))
+    expect(errors.length).toBe(1)
+    const [e] = errors as [CheckError]
+    expect(e.message).toContain(line)
+    expect(e.message).toContain('the dispatched Developer cannot run')
+    expect(e.agent_recovery_prompt).toContain('Rewrite the named `## Test plan` line')
+    expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('refuses a Documentation path the checkout lacks, naming the path', () => {
+    const errors = gate(
+      issueBody({ documentation: '- aeg-root/roles/missing.md — a spec that was never written (O1)' })
+    )
+    expect(errors.length).toBe(1)
+    const [e] = errors as [CheckError]
+    expect(e.message).toContain('`aeg-root/roles/missing.md`')
+    expect(e.agent_recovery_prompt).toContain('Correct the named `## Documentation` path')
+    expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+})
+
+describe('the Developer-runnable rule reads the command reference, never a typed list', () => {
+  const reference = readCommandReference()
+  const plan = (line: string): string => ['## Test plan', '', '```', line, '```', ''].join('\n')
+  const verdict = (line: string) => checkTestPlanDeveloperRunnable(plan(line), reference)
+
+  it('carries every command declaration through readCommandReference', () => {
+    expect(reference.commands.map((c) => [c.name, c.needs])).toEqual(COMMANDS.map((c) => [c.name, c.needs]))
+  })
+
+  it('refuses exactly the commands that declare a need, in both spellings', () => {
+    for (const command of COMMANDS) {
+      for (const prefix of ['bun apps/cli/src/index.ts', 'vinaya']) {
+        const refused = verdict(`${prefix} ${command.name}`).status === 'fail'
+        expect(refused, `${prefix} ${command.name}`).toBe(command.needs.length > 0)
+      }
+    }
+  })
+
+  it.each([
+    'bun apps/cli/src/index.ts brief render loop-determinism-cleanup-v1 4',
+    'bun apps/cli/src/index.ts task status',
+    'bun apps/cli/src/index.ts issue create --validate-only --body-file x.md'
+  ])('refuses `%s`, naming the need', (line) => {
+    const result = verdict(line)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('needs a forge credential')
+  })
+
+  it.each([
+    'bun test apps/cli/tests/lib/forge-write.test.ts',
+    'bun apps/cli/src/index.ts check --all',
+    'bun apps/cli/src/index.ts doctrine --role developer --print'
+  ])('accepts `%s`', (line) => {
+    expect(verdict(line)).toEqual({ status: 'pass', errors: [] })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// `reconcileGhComment` (security review, round 2, HIGH) — the `gh`-backed
+// `EffectReconciler` `apps/cli/src/lib/effects.ts`'s `EffectExecutor` calls
+// on recovery. A fake `gh` answers `{issue,pr} view --json comments` with a
+// fixed comment list, and the default branch's `vinaya.config.json` with
+// `principals: ['daniboomerang']` — the Principal list the reconciler reads.
+// ---------------------------------------------------------------------------
+
+describe('reconcileGhComment (security review, round 2, HIGH: principal-authored match only)', () => {
+  let cwd: string
+  let originalPath: string | undefined
+  let commentsFile: string
+
+  function writeComments(comments: { body: string; url?: string; author?: { login: string } }[]): void {
+    writeFileSync(commentsFile, JSON.stringify({ comments }), 'utf8')
+  }
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-reconcile-gh-comment-'))
+    commentsFile = join(cwd, 'comments.json')
+    writeComments([])
+
+    const gh = join(cwd, 'gh')
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+${PRINCIPALS_GH_LINE}
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  cat "${commentsFile}"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  cat "${commentsFile}"
+  exit 0
+fi
+echo "gh: not found" >&2
+exit 1
+`
+    )
+    execFileSync('chmod', ['+x', gh])
+
+    originalPath = process.env.PATH
+    process.env.PATH = `${cwd}:${process.env.PATH ?? ''}`
+  })
+
+  afterEach(() => {
+    process.env.PATH = originalPath
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  const identity = { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('the body') }
+
+  it('confirms a digest match authored by an allowlisted principal', () => {
+    writeComments([{ body: 'the body', url: 'https://example.com/c/1', author: { login: 'daniboomerang' } }])
+    const result = reconcileGhComment('pr', '1')(identity)
+    expect(result).toEqual({ outcome: 'confirmed', url: 'https://example.com/c/1' })
+  })
+
+  it('does NOT confirm a byte-identical body authored by a non-principal — a spoofed comment is not evidence the real post landed', () => {
+    writeComments([{ body: 'the body', url: 'https://example.com/c/1', author: { login: 'some-other-commenter' } }])
+    const result = reconcileGhComment('pr', '1')(identity)
+    expect(result).toEqual({ outcome: 'absent' })
+  })
+
+  it('does NOT confirm a digest match with no author at all', () => {
+    writeComments([{ body: 'the body', url: 'https://example.com/c/1' }])
+    const result = reconcileGhComment('pr', '1')(identity)
+    expect(result).toEqual({ outcome: 'absent' })
+  })
+
+  it('reports absent when a successful read carries no matching principal-authored body', () => {
+    writeComments([{ body: 'a different body', author: { login: 'daniboomerang' } }])
+    const result = reconcileGhComment('pr', '1')(identity)
+    expect(result).toEqual({ outcome: 'absent' })
+  })
+
+  it('reports ambiguous, never absent, when gh itself fails', () => {
+    const gh = join(cwd, 'gh')
+    writeFileSync(gh, `#!/bin/sh\necho "gh: network unreachable" >&2\nexit 1\n`)
+    execFileSync('chmod', ['+x', gh])
+    const result = reconcileGhComment('pr', '1')(identity)
+    expect(result.outcome).toBe('ambiguous')
+  })
+
+  it('reports ambiguous, never absent, when the JSON does not parse', () => {
+    writeFileSync(commentsFile, 'not json', 'utf8')
+    const result = reconcileGhComment('issue', '552')(identity)
+    expect(result.outcome).toBe('ambiguous')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// task driver-lifecycle-v1/5 — `runBodyChecks` excludes a `principalOwed`
+// check's failure from the body-write refusal decision ONLY when every error
+// it reported is `pending: true`, matching `isRunFailed`'s
+// (`commands/check.ts`) own rule exactly. `refuse()` calls `process.exit(1)`
+// directly (see the comment above the O1 describe block in
+// `tests/forge-write.test.ts`), so the refusal path is exercised as a real
+// subprocess — `vinaya pr edit <n> --validate-only` — never in-process. A
+// fake `gh` answers the one `gh pr view` call `pr edit` makes; a
+// config-registered fixture check (`fake-principal-owed-check.cjs`) stands in
+// for `test-plan`'s real pending/structural distinction, driven by a marker
+// in the body so the three outcomes (pending-only, structural, mixed) are
+// each independently reproducible without a live PR.
+// ---------------------------------------------------------------------------
+
+describe("runBodyChecks — a principalOwed check's pending-only failure never refuses (O1/O2)", () => {
+  let cwd: string
+  let bodyPath: string
+
+  function bodyWithCase(marker: string): string {
+    return ['**Project:** cli', '', '## Fixture case', '', marker, ''].join('\n')
+  }
+
+  function writeVinayaConfig(): void {
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({
+        briefSchema: { pr: { sections: [] } },
+        checks: {
+          'fixture/principal-owed': {
+            run: 'node',
+            args: [FAKE_PRINCIPAL_OWED_CHECK, 'fixture/principal-owed'],
+            scope: 'full',
+            validates: 'body',
+            principalOwed: true,
+            env: { PR_BODY: { optional: true } }
+          },
+          // The same fixture binary, registered WITHOUT `principalOwed` —
+          // standing in for `principal-test-plan-wait`, whose every error is
+          // `pending: true` and which must never carry that flag (it would
+          // turn its own red green at the gate). Driven by the fixture's
+          // `CASE_UNFLAGGED_*` marker family, so the entry above stays
+          // passing for these bodies and vice versa (the fixture reads its own
+          // name from `argv[2]` to keep the two entries from ever reporting on
+          // one body together).
+          'fixture/unflagged-wait': {
+            run: 'node',
+            args: [FAKE_PRINCIPAL_OWED_CHECK, 'fixture/unflagged-wait'],
+            scope: 'full',
+            validates: 'body',
+            env: { PR_BODY: { optional: true } }
+          }
+        }
+      }),
+      'utf8'
+    )
+  }
+
+  function writeFakeGh(): void {
+    const gh = join(cwd, 'gh')
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  echo '{"headRefName":"fix/fixture","files":[]}'
+  exit 0
+fi
+exit 1
+`
+    )
+    execFileSync('chmod', ['+x', gh])
+  }
+
+  function runPrEdit(): { status: number; stderr: string } {
+    try {
+      execFileSync('bun', [INDEX, 'pr', 'edit', 'one', '--validate-only', '--body-file', bodyPath], {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${cwd}:${process.env.PATH ?? ''}` },
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      return { status: 0, stderr: '' }
+    } catch (e) {
+      const err = e as { status?: number; stderr?: string }
+      return { status: err.status ?? 1, stderr: String(err.stderr ?? '') }
+    }
+  }
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-body-checks-principal-owed-'))
+    writeVinayaConfig()
+    writeFakeGh()
+    bodyPath = join(cwd, 'pr-body.md')
+  })
+
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it('does not refuse when the only failure is a principalOwed check reporting all-pending errors (O1)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_PENDING_ONLY'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(0)
+  })
+
+  it('still refuses a structural failure on the same principalOwed check — no pending errors at all (O2)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_STRUCTURAL'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('"check":"fixture/principal-owed"')
+  })
+
+  it('still refuses when the same principalOwed check reports a mix of pending and non-pending errors (O2)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_MIXED'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('"check":"fixture/principal-owed"')
+  })
+
+  // -------------------------------------------------------------------------
+  // The write path's exclusion reads `CheckError.pending` alone
+  // (`isPendingOnlyFailure`), never the `principalOwed` spec flag — so a check
+  // that reports a wait state but must KEEP making a run red (the real one:
+  // `principal-test-plan-wait`) does not refuse a body write either. Same
+  // harness, same fixture binary, one config entry without the flag.
+  // -------------------------------------------------------------------------
+
+  it('does not refuse an all-pending failure on a check that is NOT principalOwed (O1)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_UNFLAGGED_PENDING_ONLY'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(0)
+  })
+
+  it('still refuses a structural failure on that same unflagged check — no pending errors at all (O3)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_UNFLAGGED_STRUCTURAL'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('"check":"fixture/unflagged-wait"')
+  })
+
+  it('still refuses when that same unflagged check reports a mix of pending and non-pending errors (O3)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_UNFLAGGED_MIXED'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('"check":"fixture/unflagged-wait"')
+  })
+
+  // Boundary guard, not this rule's behavior: `collectBodyCheckErrors`
+  // aggregates emitted `CheckError`s, so a check that fails emitting none
+  // (a timeout, a malformed stderr) contributes no finding and lets the write
+  // through — pre-existing, true before the exclusion rule existed, recorded
+  // here so a future change to the rule cannot be mistaken for its cause.
+  it('surfaces no finding for a check that fails emitting no error at all — pre-existing, not the exclusion rule', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_UNFLAGGED_SILENT_FAILURE'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The rule itself, against the REAL wait-state check's REAL errors: the
+// `pr edit` harness above can only reach `principal-test-plan-wait` through a
+// live PR (it is `requiresOpenPr`, so `--validate-only`'s `localOnly` run
+// skips it), and the production incident this closes was exactly that check
+// refusing `vinaya pr report --push`. `buildPrincipalTestPlanWaitErrors` is
+// the same function its bin calls, so this binds the real errors to the real
+// exclusion predicate with no fixture standing in for either half.
+// ---------------------------------------------------------------------------
+
+describe('isPendingOnlyFailure — the real principal wait state never refuses a body write (O1/O3)', () => {
+  const BODY_WITH_UNTICKED_PRINCIPAL = [
+    'Closes #1',
+    '',
+    '## Test Plan',
+    '',
+    '- [x] [agent] `bun test` → 0 fail',
+    '- [ ] [principal] Open the PR in a signed-in browser and confirm the block reads fresh',
+    ''
+  ].join('\n')
+
+  it("excludes principal-test-plan-wait's own errors — every one of them is pending", () => {
+    const errors = buildPrincipalTestPlanWaitErrors(BODY_WITH_UNTICKED_PRINCIPAL, 'task/x')
+    expect(errors.length).toBeGreaterThan(0)
+    expect(errors.every((e) => e.pending === true)).toBe(true)
+    expect(isPendingOnlyFailure(errors)).toBe(true)
+  })
+
+  it('never excludes an empty error list — a check that failed silently still refuses', () => {
+    expect(isPendingOnlyFailure([])).toBe(false)
+  })
+
+  it('never excludes a mix of pending and non-pending errors', () => {
+    const pendingError = buildPrincipalTestPlanWaitErrors(BODY_WITH_UNTICKED_PRINCIPAL, 'task/x')[0] as CheckError
+    const structural: CheckError = {
+      schema: CHECK_SCHEMA_VERSION,
+      check: pendingError.check,
+      severity: 'error',
+      message: 'structural failure on the same check',
+      agent_recovery_prompt: 'fix the body'
+    }
+    expect(isPendingOnlyFailure([pendingError, structural])).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The tree-side halves of the forced-companion rules: which files really
+// import a Boundary-pinned module, and whether a token already exists in the
+// tree. Both run against a fixture git tree built here, never this
+// repository's own — a real import moving must not be able to flip a case.
+// ---------------------------------------------------------------------------
+
+describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
+  let fixture: string
+
+  const write = (path: string, content: string) => {
+    const full = join(fixture, path)
+    mkdirSync(join(full, '..'), { recursive: true })
+    writeFileSync(full, content)
+  }
+
+  beforeEach(() => {
+    fixture = mkdtempSync(join(tmpdir(), 'vinaya-importers-'))
+    execFileSync('git', ['init', '-q'], { cwd: fixture })
+    write('packages/core/src/gate.ts', 'export const gate = 1\n')
+    write('packages/core/src/index.ts', "export { gate } from './gate'\n")
+    write('apps/cli/src/commands/issue.ts', "import { gate } from '../../../../packages/core/src/gate'\n")
+    // Same basename, different file — a basename-only match would call every
+    // importer of THIS one an importer of the pinned file above.
+    write('apps/cli/src/lib/gate.ts', 'export const other = 2\n')
+    write('apps/cli/src/lib/user.ts', "import { other } from './gate'\n")
+    // Not a module at all: its importers are never imports of it.
+    write('apps/cli/specs/gate.md', '# gate\n')
+    // A non-TypeScript module, imported only from another non-TypeScript one —
+    // invisible while the search pathspec was narrower than the extensions a
+    // pinned file may carry.
+    write('packages/core/src/legacy.mjs', 'export const legacy = 3\n')
+    write('packages/core/scripts/run.mjs', "import { legacy } from '../src/legacy.mjs'\n")
+    // A basename carrying its own dot.
+    write('packages/core/src/config.schema.ts', 'export const schema = 4\n')
+    write('apps/cli/src/commands/read.ts', "import { schema } from '../../../../packages/core/src/config.schema'\n")
+    // An ordinary English word a command could be named after, and a longer
+    // flag a shorter one must not be excused by.
+    write('packages/core/src/fsops.ts', "import { rename } from 'node:fs/promises'\nexport { rename }\n")
+    write('apps/cli/src/commands/deep.ts', "export const FLAGS = ['--deeper']\n")
+    // A dotted token this tree already spells out — code that exists, never a key a task introduces.
+    write('apps/cli/src/lib/settings.ts', 'export const retries = settings.retries\n')
+    // Readers that name a pinned file by path string, which no import specifier shows.
+    write('apps/cli/specs/mirror.md', '# mirror\n')
+    write(
+      'apps/cli/src/lib/mirror-read.ts',
+      "const text = readFileSync(join(root, 'apps/cli/specs/mirror.md'), 'utf8')\n"
+    )
+    write(
+      'apps/cli/src/lib/mirror-relative.ts',
+      "const text = readFileSync(join(__dirname, '../../specs/mirror.md'), 'utf8')\n"
+    )
+    write('apps/cli/src/lib/mirror-comment.ts', '// see apps/cli/specs/mirror.md\nexport const x = 1\n')
+    write('apps/cli/src/lib/mirror-other.ts', "const text = readFileSync(join(root, 'docs/specs/mirror.md'), 'utf8')\n")
+    write('apps/cli/src/lib/mirror-prose.ts', "export const NOTE = 'Reads `apps/cli/specs/mirror.md` when present'\n")
+    write('apps/cli/tests/fixtures/mirror-fixture.ts', "export const f = 'apps/cli/specs/mirror.md'\n")
+    execFileSync('git', ['add', '-A'], { cwd: fixture })
+    execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
+  })
+
+  afterEach(() => {
+    rmSync(fixture, { recursive: true, force: true })
+  })
+
+  const bodyPinning = (path: string) =>
+    [
+      "## Planner's rationale",
+      '',
+      `**Boundary** — In: the gate. Pinned files: \`${path}\`. Out: nothing else.`,
+      '',
+      '## Objectives',
+      '',
+      'O1. The gate refuses the body.',
+      '',
+      '## Surface',
+      '',
+      'in: packages/core/src',
+      'out: apps/log-server'
+    ].join('\n')
+
+  it('names only the importers whose specifier resolves to the pinned file', () => {
+    const result = readPinnedFileImporters(bodyPinning('packages/core/src/gate.ts'), fixture)
+    expect(result).toEqual([
+      {
+        file: 'packages/core/src/gate.ts',
+        importers: ['apps/cli/src/commands/issue.ts', 'packages/core/src/index.ts']
+      }
+    ])
+  })
+
+  it('searches every importable extension, not only TypeScript', () => {
+    expect(readPinnedFileImporters(bodyPinning('packages/core/src/legacy.mjs'), fixture)).toEqual([
+      { file: 'packages/core/src/legacy.mjs', importers: ['packages/core/scripts/run.mjs'] }
+    ])
+  })
+
+  it('resolves a pinned file whose own basename carries a dot', () => {
+    expect(readPinnedFileImporters(bodyPinning('packages/core/src/config.schema.ts'), fixture)).toEqual([
+      { file: 'packages/core/src/config.schema.ts', importers: ['apps/cli/src/commands/read.ts'] }
+    ])
+  })
+
+  it('finds no importer for a pinned file that is not an importable module', () => {
+    expect(readPinnedFileImporters(bodyPinning('apps/cli/specs/gate.md'), fixture)).toEqual([
+      { file: 'apps/cli/specs/gate.md', importers: [] }
+    ])
+  })
+
+  it('counts a file that reads a pinned specification by path string, and ignores comments, fixtures and other paths', () => {
+    expect(readPinnedFileImporters(bodyPinning('apps/cli/specs/mirror.md'), fixture)).toEqual([
+      {
+        file: 'apps/cli/specs/mirror.md',
+        importers: ['apps/cli/src/lib/mirror-read.ts', 'apps/cli/src/lib/mirror-relative.ts']
+      }
+    ])
+  })
+
+  it('is dormant outside a git repository', () => {
+    expect(readPinnedFileImporters(bodyPinning('packages/core/src/gate.ts'), '')).toEqual([])
+  })
+
+  it('answers tokenExistsInTree from that same tree, and false everywhere outside a repository', () => {
+    const inTree = tokenExistsInTree(fixture)
+    expect(inTree('export const gate')).toBe(true)
+    expect(inTree('--never-shipped')).toBe(false)
+    expect(tokenExistsInTree('')('export const gate')).toBe(false)
+  })
+
+  // The rules' own refusals, run against the REAL tree probe rather than a
+  // stub — the arrangement where a tree answer can suppress a refusal, and so
+  // the only one that proves it cannot suppress the wrong ones.
+  const commandReference = {
+    file: 'packages/sources/src/commands.ts',
+    binary: 'vinaya',
+    commands: [
+      { name: 'issue create', flags: ['--body-file'], needs: ['forge'] },
+      { name: 'check', flags: ['--all', '--deeper'], needs: [] }
+    ],
+    text: ''
+  }
+  const objective = (text: string) =>
+    [
+      "## Planner's rationale",
+      '',
+      '**Boundary** — In: the gate. Out: nothing else.',
+      '',
+      '## Objectives',
+      '',
+      `O1. ${text}`,
+      '',
+      '## Surface',
+      '',
+      'in: packages/core/src',
+      'out: apps/log-server',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the new thing happens.'
+    ].join('\n')
+
+  it('refuses an introduced command even though its own word is all over the tree', () => {
+    const result = checkIntroducedCommandsCovered(
+      objective('`vinaya issue rename` renames the Issue.'),
+      commandReference,
+      tokenExistsInTree(fixture)
+    )
+    expect(tokenExistsInTree(fixture)('rename')).toBe(true)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`vinaya issue rename`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+  })
+
+  it('refuses a brand-new configuration key the tree has never carried, in any wording', () => {
+    const configReference = {
+      files: ['packages/sources/src/config-reference.ts', 'apps/cli/src/lib/config.ts'],
+      keys: ['logs', 'reviewPolicy.maxRounds'],
+      text: 'A folder (`logs.folder`) or a server (`logs.url`), never both.'
+    }
+    const inTree = tokenExistsInTree(fixture)
+    for (const wording of [
+      'Add a setting `telemetry.endpoint` for event routing.',
+      'A new configuration key `telemetry.endpoint` names where events go.'
+    ]) {
+      const refused = checkIntroducedConfigKeysCovered(objective(wording), configReference, inTree)
+      expect(refused.status).toBe('fail')
+      expect(refused.errors[0]).toContain('`telemetry.endpoint`')
+    }
+    expect(inTree('telemetry.endpoint')).toBe(false)
+
+    // A dotted token the fixture tree does spell out is code that exists, not a key this task introduces.
+    expect(inTree('settings.retries')).toBe(true)
+    expect(
+      checkIntroducedConfigKeysCovered(
+        objective('`settings.retries` already bounds the retry loop.'),
+        configReference,
+        inTree
+      ).status
+    ).toBe('pass')
+  })
+
+  it('refuses an introduced flag the tree does not carry, and excuses one it does', () => {
+    const inTree = tokenExistsInTree(fixture)
+    const refused = checkIntroducedCommandsCovered(
+      objective('`vinaya check --deep` runs the slow lens.'),
+      commandReference,
+      inTree
+    )
+    expect(refused.status).toBe('fail')
+    expect(refused.errors[0]).toContain('`--deep`')
+    const excused = checkIntroducedCommandsCovered(
+      objective('`vinaya check --other-shipped` runs the other lens.'),
+      commandReference,
+      () => true
+    )
+    expect(excused.status).toBe('pass')
+  })
+
+  it('matches a whole token, so a longer one in the tree never excuses a shorter one', () => {
+    const inTree = tokenExistsInTree(fixture)
+    expect(inTree('--deeper')).toBe(true)
+    expect(inTree('--deep')).toBe(false)
+  })
+
+  it('stops probing the tree past its cap, answering "already shipped" rather than refusing', () => {
+    const inTree = tokenExistsInTree(fixture)
+    const answers = Array.from({ length: 60 }, (_, i) => inTree(`--absent-flag-${i}`))
+    // Under the cap the tree's real answer comes back; past it the cheap,
+    // refuses-nothing one does, so a flooded body costs a bounded number of greps.
+    expect(answers[0]).toBe(false)
+    expect(answers[answers.length - 1]).toBe(true)
+    expect(answers.filter((answer) => answer === false).length).toBe(40)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #854 — `upsertDeferredFindingsIssue`: one backlog Issue per pull request for
+// the findings a round set aside, found by a body marker naming the pull
+// request (never by title), idempotent on a republish (O2).
+// ---------------------------------------------------------------------------
+
+/** A fake forge over one in-memory issue store; records every `gh` invocation so a test can assert what was and was not written. */
+function fakeForge(labelPresent = true): {
+  gh: GhRunner
+  calls: string[][]
+  issues: Array<{ number: number; body: string; state: string }>
+} {
+  const calls: string[][] = []
+  const issues: Array<{ number: number; body: string; state: string }> = []
+  let labelExists = labelPresent
+  let nextNumber = 4242
+  const bodyFileArg = (args: string[]): string => readFileSync(args[args.indexOf('--body-file') + 1] as string, 'utf8')
+  const gh: GhRunner = (args) => {
+    calls.push(args)
+    if (args[0] === 'label' && args[1] === 'list')
+      return JSON.stringify(labelExists ? [{ name: DEFERRED_FINDINGS_LABEL }] : [])
+    if (args[0] === 'label' && args[1] === 'create') {
+      labelExists = true
+      return ''
+    }
+    // findDeferredFindingsIssue lists via `gh api --paginate … --jq '.[] | {number, body, state}'`,
+    // which streams one NDJSON object per issue; REST reports state lower-case.
+    if (args[0] === 'api')
+      return issues
+        .map((i) => JSON.stringify({ number: i.number, body: i.body, state: i.state.toLowerCase() }))
+        .join('\n')
+    if (args[0] === 'issue' && args[1] === 'create') {
+      const number = nextNumber++
+      issues.push({ number, body: bodyFileArg(args), state: 'OPEN' })
+      return `https://github.com/o/r/issues/${number}`
+    }
+    if (args[0] === 'issue' && args[1] === 'edit') {
+      const target = issues.find((i) => i.number === Number(args[2]))!
+      target.body = bodyFileArg(args)
+      return `https://github.com/o/r/issues/${target.number}`
+    }
+    if (args[0] === 'issue' && args[1] === 'reopen') {
+      issues.find((i) => i.number === Number(args[2]))!.state = 'OPEN'
+      return ''
+    }
+    throw new Error(`fakeForge: unexpected gh call: ${args.join(' ')}`)
+  }
+  return { gh, calls, issues }
+}
+
+const OUTSIDE = {
+  round: 1,
+  reviewer: 'reviewer',
+  severity: 'MAJOR',
+  location: 'x.ts:1',
+  reason: 'outside-surface' as const,
+  description: 'outside description'
+}
+const UNCHANGED = {
+  round: 2,
+  reviewer: 'security',
+  severity: 'MEDIUM',
+  location: 'y.ts:2',
+  reason: 'unchanged-line' as const,
+  description: 'unchanged description'
+}
+
+describe('upsertDeferredFindingsIssue — one tracking Issue per pull request (#854)', () => {
+  it('creates the Issue listing each finding, labelled and marked, when none exists (O1)', () => {
+    const forge = fakeForge()
+    const ref = upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE, UNCHANGED] }, forge.gh)
+    expect(ref.issue).toBe(4242)
+    expect(forge.issues).toHaveLength(1)
+    const body = forge.issues[0]!.body
+    // O1: the marker names the pull request, and every finding is listed with
+    // its severity, `file:line` and reason (the shared reason wording).
+    expect(body).toContain(deferredFindingsMarker(55))
+    // O1: each line names the reviewer that reported it, its severity, file:line and reason.
+    expect(body).toContain('- round 1 — reviewer — MAJOR x.ts:1 — outside the Surface — outside description')
+    expect(body).toContain('- round 2 — security — MEDIUM y.ts:2 — unchanged line — unchanged description')
+    // Fixed backlog label, no tranche label, so no plan gate applies.
+    const createCall = forge.calls.find((a) => a[0] === 'issue' && a[1] === 'create')!
+    expect(createCall).toContain('--label')
+    expect(createCall[createCall.indexOf('--label') + 1]).toBe(DEFERRED_FINDINGS_LABEL)
+    expect(createCall.some((a) => a.startsWith('vinaya/tranche:'))).toBe(false)
+  })
+
+  it('updates the SAME Issue on a republish of the same pull request, never a second (O2)', () => {
+    const forge = fakeForge()
+    const first = upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    // A second publication with a grown deferred set, same pull request.
+    const second = upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE, UNCHANGED] }, forge.gh)
+    expect(second.issue).toBe(first.issue)
+    expect(forge.issues).toHaveLength(1)
+    expect(forge.calls.filter((a) => a[0] === 'issue' && a[1] === 'create')).toHaveLength(1)
+    // The republish edited the one Issue to the new deferred set.
+    expect(forge.calls.some((a) => a[0] === 'issue' && a[1] === 'edit')).toBe(true)
+    expect(forge.issues[0]!.body).toContain('y.ts:2')
+  })
+
+  it('finds its Issue by marker, not title — a different PR opens its own (O2)', () => {
+    const forge = fakeForge()
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    upsertDeferredFindingsIssue({ prNumber: 66, entries: [OUTSIDE] }, forge.gh)
+    expect(forge.issues).toHaveLength(2)
+    expect(forge.issues[0]!.body).toContain(deferredFindingsMarker(55))
+    expect(forge.issues[1]!.body).toContain(deferredFindingsMarker(66))
+  })
+
+  it('a republish with the identical deferred set edits nothing (idempotent no-op)', () => {
+    const forge = fakeForge()
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    expect(forge.calls.filter((a) => a[0] === 'issue' && a[1] === 'edit')).toHaveLength(0)
+  })
+
+  it('reopens a closed tracking Issue before updating it, so the backlog record is live again', () => {
+    const forge = fakeForge()
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    forge.issues[0]!.state = 'CLOSED'
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE, UNCHANGED] }, forge.gh)
+    expect(forge.calls.some((a) => a[0] === 'issue' && a[1] === 'reopen')).toBe(true)
+    expect(forge.issues[0]!.state).toBe('OPEN')
+  })
+
+  it('creates the fixed label when the forge lacks it, then creates the Issue', () => {
+    const forge = fakeForge(false)
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    expect(forge.calls.some((a) => a[0] === 'label' && a[1] === 'create' && a[2] === DEFERRED_FINDINGS_LABEL)).toBe(
+      true
+    )
+    expect(forge.issues).toHaveLength(1)
+  })
+
+  it('renders `(no location)` for a finding that carried none', () => {
+    const body = renderDeferredFindingsIssueBody(7, [
+      {
+        round: 1,
+        reviewer: 'reviewer',
+        severity: 'BLOCKER',
+        location: '',
+        reason: 'outside-surface',
+        description: 'description without a location'
+      }
+    ])
+    expect(body).toContain(
+      '- round 1 — reviewer — BLOCKER (no location) — outside the Surface — description without a location'
+    )
+  })
+})
+
+describe('readPinnedFileImporters — through a workspace package name', () => {
+  let fixture: string
+
+  const write = (path: string, content: string) => {
+    const full = join(fixture, path)
+    mkdirSync(join(full, '..'), { recursive: true })
+    writeFileSync(full, content)
+  }
+
+  beforeEach(() => {
+    fixture = mkdtempSync(join(tmpdir(), 'vinaya-pkg-importers-'))
+    execFileSync('git', ['init', '-q'], { cwd: fixture })
+    write('packages/core/package.json', JSON.stringify({ name: '@fx/core', main: './src/index.ts' }))
+    write(
+      'packages/core/src/gate.ts',
+      'export const gate = 1\nexport function check(): void {}\nexport type GateKind = string\n'
+    )
+    write('packages/core/src/other.ts', 'export const other = 2\n')
+    write(
+      'packages/core/src/index.ts',
+      "export { gate, check as gateCheck } from './gate'\nexport type { GateKind } from './gate'\nexport * from './other'\n"
+    )
+    // Named binding, multi-line, from the package name.
+    write('apps/cli/src/uses-gate.ts', "import {\n  other,\n  gate\n} from '@fx/core'\n")
+    // An alias in the index matches by its alias; the original name is `check`.
+    write('apps/cli/src/uses-alias.ts', "import { gateCheck } from '@fx/core'\n")
+    // A type-only import is still an import.
+    write('apps/cli/src/uses-type.ts', "import type { GateKind } from '@fx/core'\n")
+    // Same package, only a binding the pinned module does not export.
+    write('apps/cli/src/uses-other.ts', "import { other } from '@fx/core'\n")
+    // Namespace import names no binding.
+    write('apps/cli/src/uses-namespace.ts', "import * as core from '@fx/core'\n")
+    // A package subpath whose exports target is a module itself, with a default-plus-named import.
+    write('packages/sub/package.json', JSON.stringify({ name: '@fx/sub', exports: { './leaf': './src/leaf.ts' } }))
+    write('packages/sub/src/leaf.ts', 'export const leaf = 1\n')
+    write('apps/cli/src/uses-leaf.ts', "import dflt, { leaf } from '@fx/sub/leaf'\n")
+    write('apps/cli/src/relative.ts', "import { gate } from '../../../packages/core/src/gate'\n")
+    execFileSync('git', ['add', '-A'], { cwd: fixture })
+    execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
+  })
+
+  afterEach(() => {
+    rmSync(fixture, { recursive: true, force: true })
+  })
+
+  const bodyPinning = (path: string) =>
+    [
+      "## Planner's rationale",
+      '',
+      `**Boundary** — In: the gate. Pinned files: \`${path}\`. Out: nothing else.`,
+      '',
+      '## Objectives',
+      '',
+      'O1. The gate refuses the body.',
+      '',
+      '## Surface',
+      '',
+      'in: packages/core/src',
+      'out: apps/log-server'
+    ].join('\n')
+
+  it('lists a file importing a shared binding by the package name, and the relative importer as before', () => {
+    const [result] = readPinnedFileImporters(bodyPinning('packages/core/src/gate.ts'), fixture)
+    expect(result?.importers).toEqual([
+      'apps/cli/src/relative.ts',
+      'apps/cli/src/uses-alias.ts',
+      'apps/cli/src/uses-gate.ts',
+      'apps/cli/src/uses-type.ts',
+      'packages/core/src/index.ts'
+    ])
+  })
+
+  it('does not list a file importing from the package only bindings the pinned module does not export', () => {
+    const [result] = readPinnedFileImporters(bodyPinning('packages/core/src/gate.ts'), fixture)
+    expect(result?.importers).not.toContain('apps/cli/src/uses-other.ts')
+    expect(result?.importers).not.toContain('apps/cli/src/uses-namespace.ts')
+  })
+
+  it("resolves an `export *` re-export through the pinned module's own exports", () => {
+    const [result] = readPinnedFileImporters(bodyPinning('packages/core/src/other.ts'), fixture)
+    expect(result?.importers).toEqual([
+      'apps/cli/src/uses-gate.ts',
+      'apps/cli/src/uses-other.ts',
+      'packages/core/src/index.ts'
+    ])
+  })
+
+  it('lists a caller of a package subpath that targets the pinned module itself', () => {
+    const [result] = readPinnedFileImporters(bodyPinning('packages/sub/src/leaf.ts'), fixture)
+    expect(result?.importers).toEqual(['apps/cli/src/uses-leaf.ts'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Milestone-attach rule runs on the edit path only. The registry runner is
+// a spy so the test reads exactly the two Milestone inputs it receives; the
+// real rule is then applied to them with `checkMilestoneAttach`.
+// ---------------------------------------------------------------------------
+describe('collectTaskIssueErrors — Milestone attach on edit', () => {
+  const TASK_LABELS = ['vinaya/tranche:adopted-v1', 'vinaya/type:fix']
+  const TARGET = 'Adopted tranche'
+  // Shaped the way `milestone adopt` leaves the forge: legacy Milestone titled
+  // with the slug is closed, the target is open and declares the intent line.
+  const ADOPTED_MILESTONES = [
+    { number: 1, title: 'adopted-v1', description: null, state: 'closed' as const },
+    {
+      number: 2,
+      title: TARGET,
+      description: '### Tranche intents\n\n- adopted-v1: ship the adopted work',
+      state: 'open' as const
+    }
+  ]
+
+  let cwd: string
+  let originalCwd: string
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-milestone-attach-edit-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    writeFileSync(join(cwd, 'seed.txt'), '')
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+  afterEach(() => {
+    process.chdir(originalCwd)
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  async function run(
+    source: Parameters<typeof collectTaskIssueErrors>[5],
+    live: { ok: true; title: string | null } | { ok: false },
+    resolved: string | null
+  ) {
+    const seen: Array<{ current: string | null; resolved: string | null }> = []
+    const deps: TaskIssueValidationDeps = {
+      computeRenderedBriefErrors: async () => ({ errors: [], skipped: null }),
+      runIssueChecks: async (input) => {
+        seen.push({ current: input.currentMilestoneTitle, resolved: input.resolvedMilestoneTitle })
+        return checkMilestoneAttach(input.labels, input.currentMilestoneTitle, input.resolvedMilestoneTitle).errors.map(
+          (message) => ({
+            schema: CHECK_SCHEMA_VERSION,
+            check: 'issue-milestone-attach',
+            severity: 'error' as const,
+            message,
+            agent_recovery_prompt: ''
+          })
+        )
+      },
+      readIssueMilestone: () => live,
+      resolveLabelMilestone: () => resolved
+    }
+    const { errors } = await collectTaskIssueErrors('', 'Fix(cli): x', TASK_LABELS, 'retry', 7, source, deps)
+    return { seen: seen[0], attach: errors.filter((e) => e.check === 'issue-milestone-attach') }
+  }
+
+  it('refuses an Issue in no Milestone, naming the target', async () => {
+    const { attach } = await run({ kind: 'edit', issueRef: '7' }, { ok: true, title: null }, TARGET)
+    expect(attach).toHaveLength(1)
+    expect(attach[0]?.message).toContain(`"${TARGET}"`)
+  })
+
+  it('refuses an Issue in a different Milestone', async () => {
+    const { attach } = await run({ kind: 'edit', issueRef: '7' }, { ok: true, title: 'Other' }, TARGET)
+    expect(attach).toHaveLength(1)
+  })
+
+  it('passes an Issue already in the resolved Milestone', async () => {
+    const { attach } = await run({ kind: 'edit', issueRef: '7' }, { ok: true, title: TARGET }, TARGET)
+    expect(attach).toEqual([])
+  })
+
+  it('passes an edit that sets the resolved Milestone itself', async () => {
+    const { attach, seen } = await run(
+      { kind: 'edit', issueRef: '7', ghArgs: ['--milestone', TARGET] },
+      { ok: true, title: null },
+      TARGET
+    )
+    expect(attach).toEqual([])
+    expect(seen?.current).toBe(TARGET)
+  })
+
+  it('passes a tranche with no open Milestone', async () => {
+    const { attach } = await run({ kind: 'edit', issueRef: '7' }, { ok: true, title: null }, null)
+    expect(attach).toEqual([])
+  })
+
+  it('stays dormant when the live Milestone read fails', async () => {
+    const { attach, seen } = await run({ kind: 'edit', issueRef: '7' }, { ok: false }, TARGET)
+    expect(attach).toEqual([])
+    expect(seen?.resolved).toBeNull()
+  })
+
+  it('never runs the comparison on create', async () => {
+    const { attach, seen } = await run({ kind: 'create', ghArgs: [] }, { ok: true, title: null }, TARGET)
+    expect(attach).toEqual([])
+    expect(seen).toEqual({ current: null, resolved: null })
+  })
+
+  it('an adopted tranche, Issue in the open target, passes with the real resolver', async () => {
+    const target = resolveMilestoneAttachTarget(ADOPTED_MILESTONES, 'adopted-v1')
+    expect(target?.title).toBe(TARGET)
+    const { attach } = await run({ kind: 'edit', issueRef: '7' }, { ok: true, title: TARGET }, target?.title ?? null)
+    expect(attach).toEqual([])
+  })
+})

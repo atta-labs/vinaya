@@ -40,7 +40,7 @@ describe('turbo.json — the test task is never cached (O1)', () => {
       writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@fixture/a', scripts: { test: RUN_SCRIPT } }))
 
       // Issue #660, O3 round 5 (reviewer MINOR F2) — the same budget/
-      // diagnostic discipline `apps/cli/tests/commands/dispatch-task.test.ts`'s
+      // diagnostic discipline `harness/processes/vinaya-strict/tests/commands/dispatch-task.test.ts`'s
       // `runTaskDispatch` already applies to its own `Bun.spawn` call: no
       // built-in `timeout`/`killSignal` option on this async API, so a
       // manual timer kills a genuinely stuck `turbo` run and the diagnostic

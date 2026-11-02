@@ -8,7 +8,7 @@ import {
   postMarkedComment,
   refuse,
   refuseUnlessPrincipal
-} from '../lib/forge-write'
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
 const RETRY = 'vinaya pr rule <pr> --file <ruling.md>'
 

@@ -57,7 +57,7 @@ import {
   loadHeldOutCases as loadCitationHeldOut,
   type SourceCitationCase
 } from '../../../tests/eval/source-citation-suite'
-import type { ReviewerRole } from '../review-result'
+import type { ReviewerRole } from '../../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 import type { Quarantine } from './contracts'
 import type { GradingSpec, OracleSpec } from './harbor-grade'
 import { checkedQuarantine, HarborResultsRefused, QUARANTINE_METADATA } from './harbor-results'

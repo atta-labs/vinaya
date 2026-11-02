@@ -32,7 +32,10 @@ import {
   VINAYA_RENDERER_VERSION,
   type VinayaTrialRecord
 } from '../../src/lib/dev-review-eval/vinaya-renderer'
-import { REVIEWER_ROLES, REVIEWER_SEVERITIES } from '../../src/lib/review-result'
+import {
+  REVIEWER_ROLES,
+  REVIEWER_SEVERITIES
+} from '../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 import { ROLE_TOOL_GRANTS } from '../../src/lib/task-tools/role-grants'
 import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
 import {
@@ -674,8 +677,8 @@ describe('the renderer version', () => {
 
   it('changes when a source file the mapping depends on changes', () => {
     for (const path of [
-      'apps/cli/src/lib/review-result.ts',
-      'apps/cli/src/lib/developer-turn-result.ts',
+      'harness/processes/vinaya-strict/executing/code-reviewer/review-result.ts',
+      'harness/processes/vinaya-strict/executing/developer/developer-turn-result.ts',
       'apps/cli/src/lib/dev-review-eval/neutral-case.ts',
       'apps/cli/src/lib/task-tools/role-grants.ts',
       'packages/aeg-core/src/issue-validation.ts'

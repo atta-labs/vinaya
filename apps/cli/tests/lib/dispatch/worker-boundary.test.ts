@@ -15,7 +15,7 @@ import { homedir, tmpdir } from 'node:os'
 import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { addCodexWritableDirs } from '../../../src/lib/dispatch'
+import { addCodexWritableDirs } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import { devToolsSocketRoot } from '../../../src/lib/task-tools/dev-tools-registration'
 import {
   buildWorkerEnv,

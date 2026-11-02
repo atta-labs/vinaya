@@ -39,7 +39,7 @@ permitted/forbidden lists and the security rationale behind each.
 
 | Actor | Role | Boundary enforced by |
 | ----- | ---- | --------------------- |
-| Controller | Runs `devReviewLoop`/`task run`; holds the Operator's own forge login and model credentials; the only actor that spawns Worker, Reviewer and repository subprocesses | `apps/cli/src/lib/dispatch.ts`, `dev-review-loop.ts` |
+| Controller | Runs `devReviewLoop`/`task run`; holds the Operator's own forge login and model credentials; the only actor that spawns Worker, Reviewer and repository subprocesses | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `dev-review-loop.ts` |
 | Worker (Developer) | Reads/writes its own worktree; runs the declared toolchain; pushes and opens a PR on its own branch only | `apps/cli/src/lib/worker-boundary.ts` (Seatbelt sandbox on Darwin, always on where supported) |
 | Reviewer | Reads the repository at a judged head; writes findings to a driver-chosen work directory; never holds any forge-write credential | Same `worker-boundary.ts` profile, with every forge-write grant denied |
 | Operator | The task-scoped external client described in Section A | `packages/aeg-core/src/task-tools.ts`'s `OPERATOR_TOOL_GRANT` + `apps/cli/src/lib/task-tools/router.ts`'s `refuseUngrantedTool` |
@@ -55,8 +55,8 @@ vendor.
 
 Two runtime adapters, one shared server: `packages/aeg-core/src/task-tools.ts`'s
 six registered tools are served by exactly one process
-(`apps/cli/src/lib/task-tools/server.ts`, MCP protocol `2025-06-18`,
-newline-delimited JSON-RPC over stdio) — `apps/cli/src/lib/task-tools/adapters.ts`'s
+(`harness/processes/vinaya-strict/integration/server.ts`, MCP protocol `2025-06-18`,
+newline-delimited JSON-RPC over stdio) — `harness/processes/vinaya-strict/integration/adapters.ts`'s
 `claudeMcpJsonConfig`/`codexMcpServersToml` differ only in how each runtime
 is TOLD to launch that one server (Claude's project-root `.mcp.json`;
 Codex's user-home `~/.codex/config.toml`), never in the server, the
@@ -82,12 +82,12 @@ The six registered tools and their handlers:
 
 | Tool | Handler | What it does |
 | ---- | ------- | ------------- |
-| `task_start` | `apps/cli/src/lib/task-tools/start.ts` | Starts the dev-review-loop for an explicitly selected, already-frozen task, attended; idempotent per request identity. Also continues a stopped run, including a pause whose Principal ruling is already posted — which it hands to `task_resume`'s own authentication rather than relaunching past it. A pause still awaiting a ruling is refused, naming where the ruling goes, the marker and the command. |
-| `task_status` | `apps/cli/src/lib/task-tools/handlers.ts` | Reads a task's current loop state (running/paused/published/exited/no driver); never explains why. Lists a planned backlog task — an open Issue with a frozen brief and no run yet — as `not started`, from one forge search per listing. |
-| `task_escalation_read` | `apps/cli/src/lib/task-tools/read.ts` | Reads the full escalation packet for a paused task — reason, round inputs, attempted recovery, permitted next actions — for a pause raised before any pull request whose Developer asked for `widen_surface`, the Planner's `vinaya task run … --widen-surface <glob,...> --reason <text>` with the globs the Developer named; never resumes or cancels. |
-| `task_resume` | `apps/cli/src/lib/task-tools/resume.ts` | Continues a paused run once a Principal ruling, read fresh from the forge, authenticates it. Refuses a pre-pull-request `widen_surface` escalation, naming the Planner's `task run … --widen-surface` command: widening a Surface supersedes the brief, which the Operator never does. |
-| `task_cancel` | `apps/cli/src/lib/task-tools/cancel.ts` | Stops a paused run, fencing in-flight effects it can no longer safely complete; repeated calls replay the same outcome idempotently. |
-| `task_pr_read` | `apps/cli/src/lib/task-tools/pr-read.ts` | Reads the selected task's pull request, its check rollup and its Principal-authored comments, resolved from the task's own branch; a read only, never a write. |
+| `task_start` | `harness/processes/vinaya-strict/loops/dev-review/run-control/start.ts` | Starts the dev-review-loop for an explicitly selected, already-frozen task, attended; idempotent per request identity. Also continues a stopped run, including a pause whose Principal ruling is already posted — which it hands to `task_resume`'s own authentication rather than relaunching past it. A pause still awaiting a ruling is refused, naming where the ruling goes, the marker and the command. |
+| `task_status` | `harness/processes/vinaya-strict/loops/dev-review/run-control/handlers.ts` | Reads a task's current loop state (running/paused/published/exited/no driver); never explains why. Lists a planned backlog task — an open Issue with a frozen brief and no run yet — as `not started`, from one forge search per listing. |
+| `task_escalation_read` | `harness/processes/vinaya-strict/loops/dev-review/run-control/read.ts` | Reads the full escalation packet for a paused task — reason, round inputs, attempted recovery, permitted next actions — for a pause raised before any pull request whose Developer asked for `widen_surface`, the Planner's `vinaya task run … --widen-surface <glob,...> --reason <text>` with the globs the Developer named; never resumes or cancels. |
+| `task_resume` | `harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts` | Continues a paused run once a Principal ruling, read fresh from the forge, authenticates it. Refuses a pre-pull-request `widen_surface` escalation, naming the Planner's `task run … --widen-surface` command: widening a Surface supersedes the brief, which the Operator never does. |
+| `task_cancel` | `harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts` | Stops a paused run, fencing in-flight effects it can no longer safely complete; repeated calls replay the same outcome idempotently. |
+| `task_pr_read` | `harness/processes/vinaya-strict/loops/dev-review/run-control/pr-read.ts` | Reads the selected task's pull request, its check rollup and its Principal-authored comments, resolved from the task's own branch; a read only, never a write. |
 
 ## D — Event ownership
 
@@ -97,28 +97,28 @@ family the schema declares, the file(s) that actually call `log()` with
 that kind today — "ownership" in the literal sense: which file is on the
 hook when a family's shape needs to change. Each producer file named in the table is bound to a literal it still holds.
 
-<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:kind: 'role_attempt' -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:kind: 'role_attempt' -->
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts contains:kind: 'dev_review_loop' -->
 <!-- AEG:CLAIM: apps/cli/src/checks/runner.ts contains:kind: 'gate' -->
-<!-- AEG:CLAIM: apps/cli/src/lib/task-tools/resume.ts contains:kind: 'operation' -->
-<!-- AEG:CLAIM: apps/cli/src/lib/task-tools/cancel.ts contains:kind: 'operation' -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts contains:kind: 'operation' -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts contains:kind: 'operation' -->
 <!-- AEG:CLAIM: apps/cli/src/lib/broker.ts contains:operationEvent -->
 <!-- AEG:CLAIM: apps/cli/src/lib/effects.ts contains:kind: 'effect' -->
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts contains:kind: 'handoff' -->
 <!-- AEG:CLAIM: apps/cli/src/lib/log-custom.ts contains:kind: 'custom' -->
 <!-- AEG:CLAIM: apps/cli/src/lib/log-custom.ts contains:kind: 'operation' -->
-<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:kind: 'operation' -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:kind: 'operation' -->
 <!-- AEG:CLAIM: apps/cli/src/lib/cli-operation-log.ts contains:kind: 'operation' -->
 
 | Kind | Producer(s) | Records |
 | ---- | ----------- | ------- |
-| `dispatch` | `apps/cli/src/lib/dispatch.ts` (`dispatchRole`) | A vendor CLI launch, its outcome, and the usage it reported. |
+| `dispatch` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts` (`dispatchRole`) | A vendor CLI launch, its outcome, and the usage it reported. |
 | `dev_review_loop` | `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts` | The round-by-round loop lifecycle — start, gate, verdicts, pause/resume/cancel, journal. |
 | `forge_write` | none today | Declared in the schema so an already-posted comment line still parses; no file emits it — the comment-posting flush and the artifact commands are removed, and logs never reach a tracker or a code host. |
 | `gate` | `apps/cli/src/checks/runner.ts` | One check's terminal outcome (pass/fail/wait/skip/invalid/unavailable/timeout/cancelled). |
-| `operation` | `apps/cli/src/lib/task-tools/resume.ts`, `cancel.ts`, `apps/cli/src/lib/broker.ts`, `apps/cli/src/lib/dispatch.ts`, `apps/cli/src/lib/log-custom.ts`, `apps/cli/src/lib/cli-operation-log.ts` | A normalized tool-call or broker-authorized operation's outcome (ok/error/refused/timeout/cancelled/unavailable) — this is the family a registered task tool's own call emits; `conformance.md` Section D captures one real instance. |
-| `usage` | `apps/cli/src/lib/dispatch.ts` | Vendor token usage, every unit nullable rather than defaulted to zero when a vendor doesn't report one. |
-| `role_attempt` | `apps/cli/src/lib/dispatch.ts`, `dev-review-loop.ts` | A dispatched role's own normalized attempt outcome, distinct from the Controller-side `dispatch` view of the same attempt. |
+| `operation` | `harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts`, `cancel.ts`, `apps/cli/src/lib/broker.ts`, `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `apps/cli/src/lib/log-custom.ts`, `apps/cli/src/lib/cli-operation-log.ts` | A normalized tool-call or broker-authorized operation's outcome (ok/error/refused/timeout/cancelled/unavailable) — this is the family a registered task tool's own call emits; `conformance.md` Section D captures one real instance. |
+| `usage` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts` | Vendor token usage, every unit nullable rather than defaulted to zero when a vendor doesn't report one. |
+| `role_attempt` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `dev-review-loop.ts` | A dispatched role's own normalized attempt outcome, distinct from the Controller-side `dispatch` view of the same attempt. |
 | `handoff` | `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts` | A human escalation, raised and resolved. |
 | `effect` | `apps/cli/src/lib/effects.ts` | A generic external effect's attempted/observed/verified outcome, additive to `forge_write`, never replacing it. |
 | `custom` | `apps/cli/src/lib/log-custom.ts` (`emitCustomEvent`) | An operator-declared event, named and shaped by the loaded configuration. |

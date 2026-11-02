@@ -5,8 +5,8 @@ import { parse } from 'yaml'
 import { compileFlow, type StepsFlow } from '@atta/engine'
 import { buildAgentSpawnStateGraph } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
-import { developerTurnResultJsonSchema } from '../../../../apps/cli/src/lib/developer-turn-result'
-import { reviewResultJsonSchema } from '../../../../apps/cli/src/lib/review-result'
+import { developerTurnResultJsonSchema } from '../executing/developer/developer-turn-result'
+import { reviewResultJsonSchema } from '../executing/code-reviewer/review-result'
 
 function camelize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(camelize)

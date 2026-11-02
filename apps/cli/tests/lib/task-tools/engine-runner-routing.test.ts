@@ -14,8 +14,14 @@ import {
   readPauseState,
   writeDriverLock
 } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import { engineRunNote, runnerReadingFor } from '../../../src/lib/task-status.js'
-import { runTask, type RunTaskDeps } from '../../../src/lib/task-run.js'
+import {
+  engineRunNote,
+  runnerReadingFor
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.js'
+import {
+  runTask,
+  type RunTaskDeps
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.js'
 import {
   crossRunnerRefusalReason,
   engineRunDirectory,
@@ -23,10 +29,13 @@ import {
   readTaskRunner,
   recordTaskRunner,
   taskRunnerRecordPath
-} from '../../../src/lib/task-run-engine.js'
-import { createTaskCancelHandler } from '../../../src/lib/task-tools/cancel.js'
-import { readEscalationPacket } from '../../../src/lib/task-tools/read.js'
-import { createTaskResumeHandler, resumeContinuation } from '../../../src/lib/task-tools/resume.js'
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-engine.js'
+import { createTaskCancelHandler } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.js'
+import { readEscalationPacket } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/read.js'
+import {
+  createTaskResumeHandler,
+  resumeContinuation
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/resume.js'
 import { claimResume, liveResumeDeps } from '../../../../../harness/processes/vinaya-strict/bin/run-lifecycle.js'
 import {
   parseResumeArgs,

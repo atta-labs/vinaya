@@ -28,7 +28,7 @@
  * is the path to that command's captured stdout+stderr.
  */
 import { readFileSync } from 'node:fs'
-import { recordGreenTestRun } from './pr-report-engine.js'
+import { recordGreenTestRun } from '../../../../harness/processes/vinaya-strict/tools/pr-report/pr-report-engine.js'
 
 async function main(): Promise<void> {
   const command = process.argv[2]

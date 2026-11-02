@@ -6,7 +6,11 @@
  * through a real dispatched attempt end to end.
  */
 import { describe, expect, it } from 'vitest'
-import { classifyRoleAttemptOutcome, parseClaudeUsageUnits, parseCodexUsageUnits } from '../../../src/lib/dispatch.js'
+import {
+  classifyRoleAttemptOutcome,
+  parseClaudeUsageUnits,
+  parseCodexUsageUnits
+} from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 
 describe('parseClaudeUsageUnits', () => {
   it('sums cache_creation_input_tokens and cache_read_input_tokens into one cache figure', () => {

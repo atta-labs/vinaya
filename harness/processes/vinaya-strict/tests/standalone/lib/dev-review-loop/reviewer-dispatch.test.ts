@@ -9,8 +9,8 @@ import {
   readManifest,
   type ReviewInputManifest
 } from '@attalabs/aeg-core'
-import type { DispatchHandle } from '../../../../../../../apps/cli/src/lib/dispatch'
-import type { CompletedReview, ReviewResult } from '../../../../../../../apps/cli/src/lib/review-result'
+import type { DispatchHandle } from '../../../../loops/dev-review/dispatch/dispatch'
+import type { CompletedReview, ReviewResult } from '../../../../executing/code-reviewer/review-result'
 import { defaultRunSecurityScanSubprocess } from '../../../../loops/dev-review/standalone/dev-review-loop'
 import {
   AGENT_CONFIG_GLOBS,

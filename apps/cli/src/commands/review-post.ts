@@ -110,7 +110,11 @@ import {
 import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolveReviewPolicy } from '../lib/config'
 import { printJson } from '../lib/envelope'
 import { isForgeReadOversize, readIssueComments } from '../lib/forge-read'
-import { makeCheckError, refuse, resolvePrincipalsOrRefuse } from '../lib/forge-write'
+import {
+  makeCheckError,
+  refuse,
+  resolvePrincipalsOrRefuse
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
 // --- shared finding grammar ---------------------------------------------------
 

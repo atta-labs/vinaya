@@ -12,14 +12,14 @@ import {
   type ReportResult,
   runReportForOpenPr,
   UnresolvableMergeBaseError
-} from '../lib/pr-report-engine.js'
-import { runBodyChecks } from '../lib/forge-write'
+} from '../../../../harness/processes/vinaya-strict/tools/pr-report/pr-report-engine.js'
+import { runBodyChecks } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
 // Re-exported so every existing import of this command file's own path
 // (`apps/cli/src/checks/bin/check-evidence-fresh.ts`'s `agentCommandText`/
 // `extractAgentCommandLines`, `apps/cli/src/commands/pr-verify-evidence.ts`'s
 // `buildReport`, this command's own test suite) keeps resolving unchanged —
-// see `apps/cli/src/lib/pr-report-engine.ts`'s own module doc.
+// see `harness/processes/vinaya-strict/tools/pr-report/pr-report-engine.ts`'s own module doc.
 export {
   agentCommandText,
   anyGateFailed,
@@ -54,11 +54,11 @@ export {
   testRunCacheKey,
   testRunStateKey,
   UnresolvableMergeBaseError
-} from '../lib/pr-report-engine.js'
+} from '../../../../harness/processes/vinaya-strict/tools/pr-report/pr-report-engine.js'
 
 /**
  * `vinaya pr report` — the CLI surface over the `AEG:EVIDENCE` engine
- * (`apps/cli/src/lib/pr-report-engine.ts`): argv
+ * (`harness/processes/vinaya-strict/tools/pr-report/pr-report-engine.ts`): argv
  * parsing, console I/O, and `process.exit` only. Every computation lives in
  * the engine, which the loop's driver (`harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts`)
  * also calls directly, in-process — a command never calls a command

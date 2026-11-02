@@ -13,7 +13,7 @@ import {
   resolveSections,
   resolveShippableArgs,
   validateForgeWrite
-} from '../lib/forge-write'
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 import { checkBareDigits } from '../checks/body-bare-digits-logic'
 import type { CheckError } from '../checks/contract'
 

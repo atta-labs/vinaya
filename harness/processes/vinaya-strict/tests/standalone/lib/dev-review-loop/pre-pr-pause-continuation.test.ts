@@ -33,7 +33,7 @@ import {
   writePauseState
 } from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { rateLimitPauseDetail } from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess.js'
-import { type RunTaskDeps, runTask } from '../../../../../../../apps/cli/src/lib/task-run.js'
+import { type RunTaskDeps, runTask } from '../../../../loops/dev-review/run-control/task-run.js'
 import {
   cleanupWorlds,
   makeInProcessDeps,

@@ -11,7 +11,7 @@ import {
   type TestRunCache,
   type TestRunCacheRecord,
   testRunCacheKey
-} from '../../../../../../apps/cli/src/lib/pr-report-engine'
+} from '../../../tools/pr-report/pr-report-engine'
 import { nativeRunCommand, readyTestCommand } from '../../../../../../apps/cli/src/lib/pre-push-test-runner'
 import {
   READY_TESTS_DEFERRED_RECORD,

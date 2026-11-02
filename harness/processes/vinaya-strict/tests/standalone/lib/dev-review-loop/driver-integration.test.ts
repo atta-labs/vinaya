@@ -47,7 +47,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join, relative } from 'node:path'
 import { heldVerdictPath } from '../../../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
 import { reviewerCandidateInputPaths } from '../../../../loops/dev-review/standalone/dev-review-loop/reviewer-isolation.js'
-import { renderDeferredFindingsIssueBody } from '../../../../../../../apps/cli/src/lib/forge-write.js'
+import { renderDeferredFindingsIssueBody } from '../../../../tools/task-contract/forge/forge-write.js'
 import { buildReexecArgs, setStandaloneLogIdentity } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
 import { objectivesVersion, REVIEW_FINDING_DESCRIPTION_MAX_LENGTH } from '@attalabs/aeg-core'
 import {

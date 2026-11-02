@@ -31,7 +31,7 @@
  * `VINAYA_PUSH_REFS`: the generated `pre-push` hook reads
  * git's own pre-push stdin (`<local ref> <local sha> <remote ref> <remote
  * sha>` per line) into this env var before running `check --all --local`
- * — see `prePushBody` in `apps/cli/src/lib/artifacts.ts`. When set, it
+ * — see `prePushBody` in `harness/processes/vinaya-strict/integration/artifacts.ts`. When set, it
  * lets the predicate tell a tag-only push (`git push origin --tags`) apart
  * from a push that also carries a branch ref; unset (a commit, via
  * `--diff-only`, or a bare `check` invocation) it behaves exactly as

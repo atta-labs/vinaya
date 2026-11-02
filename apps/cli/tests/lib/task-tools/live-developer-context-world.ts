@@ -1,7 +1,7 @@
 import { defaultControlStoreDeps, type IssueSurface } from '@attalabs/aeg-core'
 import { authenticateWorkerInvocation, ProtectedPathError, requestEffect, scopeTarget } from '../../../src/lib/broker'
-import type { DispatchTeeRecoveryDeps } from '../../../src/lib/dispatch'
-import type { LiveDeveloperContextLoopDeps } from '../../../src/lib/task-tools/live-developer-context'
+import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
+import type { LiveDeveloperContextLoopDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/actions/live-developer-context'
 
 export const BRANCH = 'task/t/8'
 export const BASE = 'base-0'

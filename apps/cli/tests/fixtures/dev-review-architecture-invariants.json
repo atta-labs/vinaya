@@ -152,7 +152,7 @@
         "reason": "Landed with the Developer turn result's migration onto each CLI's native structured output (Issue #1125): the adapter readers, the controller that alone accepts a result, the immutable attempt records and the typed pause; loop.md's \"The Developer's turn result\" section describes it."
       },
       {
-        "path": "apps/cli/tests/lib/dev-review-loop/developer-turn-result.test.ts",
+        "path": "harness/processes/vinaya-strict/tests/lib/dev-review-loop/developer-turn-result.test.ts",
         "kind": "test",
         "reason": "The controller's acceptance rules, the records every consumer reads, and the loop's correction, typed-pause and confidence paths, landed in the same change."
       },
@@ -510,7 +510,7 @@
         }
       ],
       "tests": [
-        "apps/cli/tests/lib/dev-review-loop/developer-turn-result.test.ts",
+        "harness/processes/vinaya-strict/tests/lib/dev-review-loop/developer-turn-result.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-helpers.test.ts"
       ],
@@ -767,14 +767,14 @@
           "symbol": "classifyChildLiveness"
         },
         {
-          "path": "apps/cli/src/lib/dispatch.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts",
           "symbol": "terminateLaunchedChildOnShutdown"
         }
       ],
       "tests": [
         "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dispatch/reconcile-launch.test.ts",
-        "apps/cli/tests/lib/dispatch.test.ts"
+        "harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-child-process.test.ts"
       ],
       "loopSpec": ["A killed driver leaves no orphan"],
       "reason": "Revision 17 section 16.15: cancellation terminates owned process trees with bounded escalation.",
@@ -892,12 +892,12 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/task-tools/developer-dev-tools-context.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/actions/developer-dev-tools-context.ts",
           "symbol": "createDeveloperDevToolContext"
         }
       ],
       "tests": [
-        "apps/cli/tests/lib/task-tools/developer-dev-tools-context.test.ts",
+        "harness/processes/vinaya-strict/tests/lib/task-tools/developer-dev-tools-context.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-5.test.ts"
       ],
       "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
@@ -953,12 +953,12 @@
       "scenarios": ["happy-path", "uncertain-effects"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/task-tools/developer-dev-tools-context.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/actions/developer-dev-tools-context.ts",
           "symbol": "createDeveloperDevToolContext"
         }
       ],
       "tests": [
-        "apps/cli/tests/lib/task-tools/developer-dev-tools-context.test.ts",
+        "harness/processes/vinaya-strict/tests/lib/task-tools/developer-dev-tools-context.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-5.test.ts"
       ],
       "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
@@ -980,7 +980,7 @@
         }
       ],
       "tests": [
-        "apps/cli/tests/lib/task-tools/developer-dev-tools-context.test.ts",
+        "harness/processes/vinaya-strict/tests/lib/task-tools/developer-dev-tools-context.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/push-hook-refusal-output.test.ts"
       ],
       "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
@@ -1230,7 +1230,7 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/forge-write.ts",
+          "path": "harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts",
           "symbol": "upsertDeferredFindingsIssue"
         }
       ],
@@ -1248,11 +1248,11 @@
       "scenarios": ["isolation-refusal"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dispatch.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts",
           "symbol": "documentationStopHookScript"
         }
       ],
-      "tests": ["apps/cli/tests/lib/dispatch.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-vinaya-policy.test.ts"],
       "loopSpec": ["The Documentation read-gate"],
       "reason": "Revision 17 section 16.7 names this read-gate advisory: its receipts sit in the worker's reach, and controller-owned delivery receipts recorded against the run's required-source manifest replace it as the guarantee.",
       "scope": "product"
@@ -1361,7 +1361,7 @@
       "scenarios": ["reviewer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dispatch.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts",
           "symbol": "isReviewerResume"
         },
         {
@@ -1387,7 +1387,7 @@
       "scenarios": ["invalid-reviews", "reviewer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/review-result.ts",
+          "path": "harness/processes/vinaya-strict/executing/code-reviewer/review-result.ts",
           "symbol": "classifyReviewOutcome"
         }
       ],
@@ -1621,12 +1621,12 @@
       "scenarios": ["isolation-refusal"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dispatch.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts",
           "symbol": "buildRolePermissions"
         }
       ],
       "tests": [
-        "apps/cli/tests/lib/dispatch.test.ts",
+        "harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-vinaya-policy.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/reviewer-dispatch.test.ts"
       ],
       "loopSpec": ["Reviewer isolation \u2014 one immutable candidate, isolated scratch space"],
@@ -2746,7 +2746,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/task-tools/developer-dev-tools-context.ts"
+          "path": "harness/processes/vinaya-strict/loops/dev-review/actions/developer-dev-tools-context.ts"
         }
       ],
       "tests": [
@@ -2783,7 +2783,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dispatch.ts"
+          "path": "harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts"
         },
         {
           "path": "apps/cli/src/lib/task-tools/fetch-documentation.ts"
@@ -2806,7 +2806,7 @@
       "scenarios": ["stale-evidence"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/task-tools/pr-facts.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/run-control/pr-facts.ts",
           "symbol": "readFailedCheckLogs"
         }
       ],
@@ -2942,11 +2942,11 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/detached-launch.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/run-control/detached-launch.ts",
           "symbol": "launchDetached"
         }
       ],
-      "tests": ["apps/cli/tests/lib/detached-launch.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tests/lib/detached-launch.test.ts"],
       "loopSpec": [],
       "reason": "Shipped: every driver launch is detached through one helper. An incidental consequence of how the standalone driver was started; the Engine path owns run lifetime itself. Reclassified from `accident` to `implementation-accident`: nothing promises it and the Engine path need not reproduce it."
     },
@@ -3164,7 +3164,7 @@
       ],
       "tests": [
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/pre-pr-pause-continuation.test.ts",
-        "apps/cli/tests/lib/task-tools/resume.test.ts"
+        "harness/processes/vinaya-strict/tests/lib/task-tools/resume.test.ts"
       ],
       "loopSpec": ["Pause and `--resume`", "The driver never ends on a pause"],
       "reason": "Before it, every exit from such a pause refused and named another exit that refused, and the driver ended unwatched, so the automatic rate-limit resume never fired. Revision 17 section 16.11: an infrastructure pause, rate limit included, is automatic recovery that resumes by itself within its bound."
@@ -3241,7 +3241,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/forge-write.ts",
+          "path": "harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts",
           "symbol": "validateIssueContent"
         },
         {
@@ -3264,7 +3264,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/forge-write.ts",
+          "path": "harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts",
           "symbol": "validateIssueContent"
         }
       ],
@@ -3302,7 +3302,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/forge-write.ts",
+          "path": "harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts",
           "symbol": "validateIssueContent"
         },
         {
@@ -3348,7 +3348,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/brief-assembly.ts"
+          "path": "harness/processes/vinaya-strict/tools/task-contract/brief-assembly.ts"
         }
       ],
       "tests": [],
@@ -3366,11 +3366,11 @@
       "scenarios": ["isolation-refusal"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dispatch.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts",
           "symbol": "buildCodexExecpolicyRules"
         },
         {
-          "path": "apps/cli/src/lib/dispatch.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts",
           "symbol": "buildRolePermissions"
         }
       ],
@@ -3446,7 +3446,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/task-run.ts"
+          "path": "harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.ts"
         }
       ],
       "tests": [],
@@ -3505,7 +3505,7 @@
           "path": "apps/cli/src/commands/issue.ts"
         },
         {
-          "path": "apps/cli/src/lib/forge-write.ts",
+          "path": "harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts",
           "symbol": "findMilestoneAttachTargetForSlug"
         }
       ],
@@ -4129,7 +4129,7 @@
       "id": "DEF-38",
       "summary": "The Issue write gate accepts an unregistered Project although planner doctrine says it is refused; an Issue's Project resolves against the registry at write.",
       "code": {
-        "path": "apps/cli/src/lib/forge-write.ts",
+        "path": "harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts",
         "locator": "validateIssueContent"
       },
       "spec": {
@@ -4144,7 +4144,7 @@
       "id": "DEF-39",
       "summary": "The Issue write gate accepts Test plan lines only a human operator can run (starting a task, merging, posting a ruling, pushing, logging into a server); every Test plan line is runnable by the dispatched Developer.",
       "code": {
-        "path": "apps/cli/src/lib/forge-write.ts",
+        "path": "harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts",
         "locator": "validateIssueContent"
       },
       "spec": {
@@ -4174,7 +4174,7 @@
       "id": "DEF-41",
       "summary": "Conflicts-with completeness is described as a warning the Issue write gate prints, and the gate never calls it; a warning the doctrine describes is printed.",
       "code": {
-        "path": "apps/cli/src/lib/forge-write.ts",
+        "path": "harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts",
         "locator": "validateIssueContent"
       },
       "spec": {
@@ -4219,7 +4219,7 @@
       "id": "DEF-44",
       "summary": "Codex receives only the machine-state denials while Claude Code is also refused push, the forge CLI, hook-skipping commits, stash, hard reset, recursive delete and sudo; both adapters are refused the same commands.",
       "code": {
-        "path": "apps/cli/src/lib/dispatch.ts",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts",
         "locator": "buildCodexExecpolicyRules"
       },
       "spec": {
@@ -4408,7 +4408,10 @@
     {
       "id": "AMB-07",
       "question": "May a republish after a restart shrink an existing deferred-findings Issue?",
-      "citations": ["apps/cli/src/lib/forge-write.ts", "apps/cli/specs/loop.md"],
+      "citations": [
+        "harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts",
+        "apps/cli/specs/loop.md"
+      ],
       "rulingStatus": "ruled",
       "ruling": "No. A republish only appends to a deferred-findings Issue, and each entry carries the finding text, not only its location."
     },
