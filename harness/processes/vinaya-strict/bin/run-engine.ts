@@ -117,12 +117,12 @@ import {
 } from '../../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { createReadSourceTool } from '../../../../apps/cli/src/lib/task-tools/read-source'
 import {
-  createLogSink,
   drainLogSink,
   LOG_FOLDER_ONLY_ENV,
   type LogSinkDeps,
   type LaunchLogAttribution
 } from '../../../../apps/cli/src/lib/log-sink'
+import { createVinayaLogSink, installVinayaLogSinkFactory } from '../integration/log/log-sink-factory'
 import { setEngineLogIdentity } from './engine-log-identity'
 import {
   abortableSleep,
@@ -3024,7 +3024,7 @@ export function liveRecovery(input: {
 
 /** Engine events use the same destination-resolving sink as the standalone runner. */
 export function createEngineLogSink(overrides: Partial<LogSinkDeps> = {}) {
-  return createLogSink(overrides)
+  return createVinayaLogSink(overrides)
 }
 
 /** Remove the former local-only override so child processes resolve the configured destination too. */
@@ -3450,6 +3450,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 if (import.meta.main) {
   // The composition root: kernel code reads configuration through the provider this installs, before the run starts.
   installVinayaConfigProvider()
+  installVinayaLogSinkFactory()
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {

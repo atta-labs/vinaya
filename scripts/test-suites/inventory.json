@@ -357,6 +357,35 @@
       "reason": "The forge-write and pull-request report tests moved into the process with their code; they read the CLI's forge body fixtures from disk and start its fake body checks as programs, outside any import."
     },
     {
+      "id": "log-header-recording",
+      "kind": "fixture",
+      "paths": ["apps/cli/tests/fixtures/log-headers/recorded-headers.json"],
+      "format": "json",
+      "readers": [{ "kind": "semantic", "tests": ["apps/cli/tests/lib/log-sink-factory.test.ts"] }],
+      "reason": "The header parity test compares the parsed event headers its probes write with this recording, read from disk."
+    },
+    {
+      "id": "log-sink-factory-programs",
+      "kind": "spawn",
+      "paths": ["harness/processes/vinaya-strict/integration/log/", "apps/cli/src/lib/log-sink.ts"],
+      "readers": [
+        {
+          "kind": "code",
+          "tests": [
+            "apps/cli/tests/lib/log-sink-factory.test.ts",
+            "apps/cli/tests/lib/log-sink-no-sync-spawn.test.ts",
+            "apps/cli/tests/lib/log-sink.test.ts",
+            "apps/cli/tests/lib/log-destination.test.ts",
+            "harness/processes/vinaya-strict/tests/integration/log/branch-issue.test.ts",
+            "harness/processes/vinaya-strict/tests/integration/log/log-sink-factory.test.ts",
+            "harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts",
+            "apps/cli/tests/checks/runner/cancelled.test.ts"
+          ]
+        }
+      ],
+      "reason": "Each test writes a program that imports the Log client or the process's sink factory and branch reader by path and starts it with bun, outside any import; the factory folder and the client are named whole, and what they import in turn reaches these tests only through their own imports, the conservative reading."
+    },
+    {
       "id": "process-dispatch-narration-fixture",
       "kind": "fixture",
       "paths": ["apps/cli/tests/fixtures/loop-narration/codex-developer-stream.jsonl"],

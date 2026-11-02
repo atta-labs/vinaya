@@ -469,6 +469,9 @@ import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '@att
 import { writePauseState } from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { cancelDevReviewLoop, ReplayedResolutionError } from '../../../loops/dev-review/standalone/dev-review-loop.js'
 import { runtimeDir } from '../../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
+import { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-factory.js'
+// This program is an entry point: it installs the process's Log sink factory, as the command line does.
+installVinayaLogSinkFactory()
 import { controlStoreRoot } from '../../../../../../apps/cli/src/lib/effects.js'
 
 const ISSUE = 558
@@ -581,6 +584,9 @@ import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '@att
 import { writePauseState } from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { cancelDevReviewLoop } from '../../../loops/dev-review/standalone/dev-review-loop.js'
 import { runtimeDir } from '../../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
+import { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-factory.js'
+// This program is an entry point: it installs the process's Log sink factory, as the command line does.
+installVinayaLogSinkFactory()
 import { controlStoreRoot } from '../../../../../../apps/cli/src/lib/effects.js'
 import { log } from '../../../../../../apps/cli/src/lib/log-sink.js'
 import { createTaskResumeHandler } from '../../../loops/dev-review/run-control/resume.js'

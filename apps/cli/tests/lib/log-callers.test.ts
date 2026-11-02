@@ -137,6 +137,14 @@ const CLI_OPERATION_LOG_PATH = 'apps/cli/src/lib/cli-operation-log.ts'
  * type, to resolve where to read from — never where to write to.
  */
 const LOG_SYNC_PATH = 'apps/cli/src/lib/log-sync.ts'
+/**
+ * The process's sink factory builds every sink the product uses
+ * (`createLogSink`, with the process's branch reader) and installs the
+ * default one's factory; the branch reader beside it imports only the sink's
+ * lookup deadline. Neither calls `log()` nor touches the outbox path.
+ */
+const LOG_SINK_FACTORY_PATH = 'harness/processes/vinaya-strict/integration/log/log-sink-factory.ts'
+const LOG_BRANCH_ISSUE_PATH = 'harness/processes/vinaya-strict/integration/log/branch-issue.ts'
 /** Exactly what `DOCTOR_PATH` is allowed to take from the sink module (sorted). */
 const DOCTOR_SINK_IMPORTS = [
   'FolderFallbackRecord',
@@ -169,7 +177,9 @@ const CALLER_ALLOWLIST = new Set([
   LOG_EMIT_PATH,
   CLI_ENTRY_PATH,
   CLI_OPERATION_LOG_PATH,
-  LOG_SYNC_PATH
+  LOG_SYNC_PATH,
+  LOG_SINK_FACTORY_PATH,
+  LOG_BRANCH_ISSUE_PATH
 ])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_WEBHOOK_DRAIN_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([

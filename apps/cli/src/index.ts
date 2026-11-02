@@ -11,7 +11,7 @@ import { checkCommand } from './commands/check.js'
 import { commitMsgCommand } from './commands/commit-msg.js'
 import { demoBreakCommand } from './commands/demo.js'
 import { devReviewLoopCommand } from './commands/dev-review-loop.js'
-import { dispatchCommand } from './commands/dispatch.js'
+import { dispatchCommand, installVinayaLogSinkFactory } from './commands/dispatch.js'
 import { doctorCommand } from './commands/doctor.js'
 import { logEmitCommand } from './commands/log-emit.js'
 import { logSelftestCommand } from './commands/log-selftest.js'
@@ -111,6 +111,10 @@ function maybeDeferToAuthorRepoSource(): void {
   }
   process.exit(result.status ?? 1)
 }
+
+// The Log client builds its default sink from an installed factory, never on
+// its own: the process's factory, installed here before anything logs.
+installVinayaLogSinkFactory()
 
 // Before ANY command runs, and before the author-repo re-exec below (which
 // passes `env: process.env` to its child), make `gh` reachable when the

@@ -34,6 +34,20 @@ import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const LOG_SINK = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+// The sink the product builds: the process factory, with its branch reader.
+const LOG_SINK_FACTORY = join(
+  import.meta.dir,
+  '..',
+  '..',
+  '..',
+  '..',
+  'harness',
+  'processes',
+  'vinaya-strict',
+  'integration',
+  'log',
+  'log-sink-factory.ts'
+)
 
 const PROBE = `
 const cp = require('node:child_process')
@@ -44,7 +58,10 @@ for (const name of ['execFileSync', 'spawnSync', 'execSync']) {
     throw new Error('synchronous spawn on the log path: ' + name)
   }
 }
-await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nconst { log } = await import(${JSON.stringify(LOG_SINK)})
+await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()
+const { installVinayaLogSinkFactory } = await import(${JSON.stringify(LOG_SINK_FACTORY)})
+installVinayaLogSinkFactory()
+const { log } = await import(${JSON.stringify(LOG_SINK)})
 log({
   kind: 'dispatch',
   event: 'dispatched',
@@ -141,9 +158,10 @@ describe('log() never makes a synchronous spawn', () => {
 //   - the read is silent — its fallback warning would otherwise land on the
 //     stdout that `vinaya dispatch --json` and every check own.
 const ANCHOR_PROBE = `
-await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nconst { createLogSink } = await import(${JSON.stringify(LOG_SINK)})
+await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()
+const { createVinayaLogSink } = await import(${JSON.stringify(LOG_SINK_FACTORY)})
 const eventEnv = process.env.PROBE_EVENT_ROLE ? { ...process.env, VINAYA_ROLE: process.env.PROBE_EVENT_ROLE } : process.env
-const { log } = createLogSink({ env: () => eventEnv })
+const { log } = createVinayaLogSink({ env: () => eventEnv })
 log({
   kind: 'dispatch',
   event: 'dispatched',
@@ -259,9 +277,10 @@ describe('the default-branch logs read belongs to the process, and is silent', (
 // builds — `dispatchRole` and the loop driver each build a fresh sink per
 // call, and a persistently broken destination must not warn once per call.
 const WARN_PROBE = `
-await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nconst { createLogSink } = await import(${JSON.stringify(LOG_SINK)})
+await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()
+const { createVinayaLogSink } = await import(${JSON.stringify(LOG_SINK_FACTORY)})
 for (let i = 0; i < 3; i++) {
-  const { log } = createLogSink()
+  const { log } = createVinayaLogSink()
   log({
     kind: 'dispatch',
     event: 'dispatched',

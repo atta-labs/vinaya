@@ -31,7 +31,8 @@ import {
   logsCredentialMissing,
   resolveLogAppendPath,
   resolveLogDestinationFrom,
-  type LogSinkDeps
+  type LogSinkDeps,
+  type LogSinkOverrides
 } from '../../src/lib/log-sink.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from './process-fixture'
 
@@ -409,6 +410,7 @@ describe('log-sink — a folder fallback prints its reason exactly once (O2)', (
         cwd: () => dir,
         env: () => ({}) as NodeJS.ProcessEnv,
         resolveRepo: async () => ({ owner: 'acme', repo: 'widget' }),
+        resolveBranchIssue: async () => null,
         stderr: (m) => stderr.push(m),
         // The exact shape `resolveLogDestinationFrom` returns for the Mac case:
         // a folder fallback carrying why the configured server was not used.
@@ -606,7 +608,8 @@ describe('resolveLogAppendPath — mirrors log()’s own destination resolution'
   it('a folder destination resolves to <folder>/<repo>/<issue>.ndjson', async () => {
     const path = await resolveLogAppendPath(REPO, 404, {
       resolveLogDestination: () => ({ kind: 'folder', folder: '/srv/logs' }),
-      env: () => ({})
+      env: () => ({}),
+      resolveBranchIssue: () => Promise.resolve(null)
     })
     expect(path).toBe('/srv/logs/atta-labs-vinaya/404.ndjson')
   })
@@ -615,7 +618,8 @@ describe('resolveLogAppendPath — mirrors log()’s own destination resolution'
     const path = await resolveLogAppendPath(REPO, 404, {
       resolveLogDestination: () => ({ kind: 'server', url: 'https://example.com/ingest' }),
       outboxRoot: () => '/queue',
-      env: () => ({})
+      env: () => ({}),
+      resolveBranchIssue: () => Promise.resolve(null)
     })
     expect(path).toBe('/queue/atta-labs-vinaya/404.ndjson')
   })
@@ -673,7 +677,7 @@ const DISPATCHED = {
   prompt_hash: 'sha256:abc'
 }
 
-function sinkDeps(overrides: Partial<LogSinkDeps> = {}): { dir: string; deps: Partial<LogSinkDeps> } {
+function sinkDeps(overrides: Partial<LogSinkDeps> = {}): { dir: string; deps: LogSinkOverrides } {
   const dir = tempDir()
   return {
     dir,
@@ -686,6 +690,8 @@ function sinkDeps(overrides: Partial<LogSinkDeps> = {}): { dir: string; deps: Pa
       env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
       resolveRepo: () => Promise.resolve({ owner: 'atta-labs', repo: 'vinaya' }),
       vinayaVersion: () => '0.24.1',
+      // Every event here names its task (`VINAYA_TASK`), so the branch reader is never asked.
+      resolveBranchIssue: () => Promise.resolve(null),
       stderr: () => {},
       ...overrides
     }
@@ -758,6 +764,19 @@ function initGitRepo(cwd: string): void {
 }
 
 const LOG_SINK_PATH = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+const LOG_SINK_FACTORY_PATH = join(
+  import.meta.dir,
+  '..',
+  '..',
+  '..',
+  '..',
+  'harness',
+  'processes',
+  'vinaya-strict',
+  'integration',
+  'log',
+  'log-sink-factory.ts'
+)
 
 /**
  * Runs a fresh `bun` subprocess that logs one `dispatched` event through a
@@ -783,6 +802,7 @@ async function runServerDestinationScript(home: string, cwd: string, url: string
     `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { createLogSink } from ${JSON.stringify(LOG_SINK_PATH)}
     const { log } = createLogSink({
       env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
+      resolveBranchIssue: async () => null,
       resolveLogDestination: () => ({ kind: 'server', url: ${JSON.stringify(url)} })
     })
     log({
@@ -895,7 +915,10 @@ async function runAbruptExitScript(cwd: string, home: string, drainOnExit: boole
   const script = join(cwd, `run-log-abrupt-${effectId}.ts`)
   writeFileSync(
     script,
-    `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { drainLogSink, log } from ${JSON.stringify(LOG_SINK_PATH)}
+    `import { drainLogSink, log } from ${JSON.stringify(LOG_SINK_PATH)}
+    await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()
+    import { installVinayaLogSinkFactory } from ${JSON.stringify(LOG_SINK_FACTORY_PATH)}
+    installVinayaLogSinkFactory()
     setInterval(() => {}, 60000)
     process.on('SIGTERM', async () => {
       ${drainOnExit ? 'await drainLogSink()' : ''}

@@ -10,6 +10,8 @@ Nothing here runs an agent or decides acceptance. Those come later; this layer g
 
 The harness is internal tooling. No CLI entry, command or other library module imports it — only the harness itself and tests do. `apps/cli/tests/eval/not-shipped.test.ts` walks every source file in the repository, reads its imports with the TypeScript compiler's pre-processor (static imports, re-exports, `import()` and `require`), and fails on any importer outside `apps/cli/src/lib/dev-review-eval/` and the tests. Because the published CLI bundles only what its entry reaches, nothing of the harness ships.
 
+Each program of the harness run on its own (`step-one.ts`, `whole-loop.ts`, `harbor-trial.ts`, `harbor-tasks.ts`, `harbor-grade.ts`, `harbor-results.ts`) is an entry point to the Log as the CLI is: before its command starts it installs the Vinaya process's Log sink factory (`installVinayaLogSinkFactory`, re-exported from `step-one.ts`), so a Log event any code it reaches records goes to the sink the product builds, never refused for want of one (`apps/cli/specs/log.md`, "The process supplies the reader").
+
 ## Contracts
 
 Every value crossing a port is plain data. Each has a validator returning either `{ ok: true, value }` or `{ ok: false, refusal }`, where the refusal carries a typed `code`, the dotted `path` of the offending field, and a one-line `detail`.

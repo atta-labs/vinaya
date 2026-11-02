@@ -17,6 +17,7 @@ import {
   buildCodexExecpolicyRules,
   codexSpawnEnvExtras,
   dispatchRole,
+  installVinayaLogSinkFactory,
   type AgentVendor
 } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import { publishingInstructionLine } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop'
@@ -48,6 +49,9 @@ import {
   type VinayaProcessInput,
   type VinayaTrialRecord
 } from './vinaya-renderer'
+
+// The process Log sink factory, for this folder's entry programs to install.
+export { installVinayaLogSinkFactory }
 
 export const STEP_ONE_SUITES = [
   'developer-capability.l5',
@@ -2526,6 +2530,8 @@ export async function runStepOneCommand(
 }
 
 if (import.meta.main) {
+  // An entry point: Log events reach the sink the process factory builds.
+  installVinayaLogSinkFactory()
   runStepOneCommand(process.argv.slice(2))
     .then((outcome) => process.exit(outcome.ok ? 0 : 2))
     .catch((error) => {
