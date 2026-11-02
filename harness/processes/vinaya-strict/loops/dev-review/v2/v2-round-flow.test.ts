@@ -649,13 +649,32 @@ for (const agent of AGENTS) {
       )
       expect(observed.outcome).toBe('completed')
       expect(observed.spawns.developer).toBe(2)
-      expect(proofOutcomes(observed)).toEqual(['single-parent', 'proven'])
-      expect(observed.prompts.developer[1]).toContain('single-parent commit, not a merge of the default branch')
+      expect(proofOutcomes(observed)).toEqual(['main-tip-missing', 'proven'])
+      expect(observed.prompts.developer[1]).toContain("does not contain the default branch's tip")
       expect(observed.prompts.developer[1]).toContain('- sample.ts')
       expect(observed.spawns['code-reviewer']).toBe(1)
       for (const prompt of [...observed.prompts['code-reviewer'], ...observed.prompts['security-reviewer']])
         expect(prompt).not.toContain(wording)
       expect(observed.world.gateRunsAtDeveloper).toEqual([0, 0])
+    })
+
+    test('a merge of main followed by one more commit reaches the reviewers on the first proof', async () => {
+      const observed = await runV2(
+        agent,
+        conflictReentry((attempt, world) => ({
+          output: confident(90),
+          act: () => {
+            if (attempt === 1) {
+              world.mergeMain(true)
+              world.commit(true)
+            }
+          }
+        }))
+      )
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(1)
+      expect(proofOutcomes(observed)).toEqual(['proven'])
+      expect(observed.spawns['code-reviewer']).toBe(1)
     })
 
     test('an unchanged head is sent back, and the same unproven repair twice pauses with no reviewer run', async () => {
@@ -921,11 +940,19 @@ describe('conflictRepairFailure on real git histories', () => {
     expect(proof(repo, resolveMerge(repo, repo.tip), { remote: repo.before })?.code).toBe('unpublished')
   })
 
-  test('a single-parent commit is not a merge', () => {
+  test('a single-parent commit that does not contain the tip is not proven', () => {
     const repo = setUpRepo()
     repo.write('reworded\n')
     repo.git('commit', '-q', '-am', 'reword')
-    expect(proof(repo, repo.git('rev-parse', 'HEAD'))?.code).toBe('single-parent')
+    expect(proof(repo, repo.git('rev-parse', 'HEAD'))?.code).toBe('main-tip-missing')
+  })
+
+  test('a resolved merge of the tip followed by one more commit is proven', () => {
+    const repo = setUpRepo()
+    resolveMerge(repo, repo.tip)
+    repo.write('fixed\n')
+    repo.git('commit', '-q', '-am', 'fix on top')
+    expect(proof(repo, repo.git('rev-parse', 'HEAD'))).toBeNull()
   })
 
   test('a merge whose parents leave out the fetched main tip is not proven', () => {

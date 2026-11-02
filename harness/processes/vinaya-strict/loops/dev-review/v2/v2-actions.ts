@@ -1414,7 +1414,6 @@ export interface ConflictRepairFailure {
     | 'unreadable-head'
     | 'unpublished'
     | 'unchanged-head'
-    | 'single-parent'
     | 'main-tip-missing'
     | 'unresolved-index'
     | 'main-unreadable'
@@ -1433,8 +1432,8 @@ const isAncestor = (cwd: string, ancestor: string, descendant: string): boolean 
 
 /**
  * The local half of a conflict repair's proof, read from the task worktree with plain git: the published head moved
- * and is a merge commit; one of its merged parents is the default branch's tip fetched for the repair (or a later
- * commit of the default branch that contains it); the index holds no unresolved entry; and the head merges cleanly
+ * and contains the default branch's tip fetched for the repair (the tip is an ancestor of the head: the merge itself,
+ * a later commit on top of it, or a merge of a later default-branch commit); the index holds no unresolved entry; and the head merges cleanly
  * with the default branch's tip fetched now. Null when every part holds.
  */
 export function conflictRepairFailure(input: {
@@ -1456,25 +1455,11 @@ export function conflictRepairFailure(input: {
     }
   if (head === headBefore)
     return { code: 'unchanged-head', reason: `the head ${head} did not move, so no merge was published`, files: [] }
-  const parents = (gitIn(cwd, ['rev-list', '--parents', '-n', '1', head]).stdout ?? '').trim().split(/\s+/).slice(1)
-  if (parents.length < 2)
-    return {
-      code: 'single-parent',
-      reason: `the head ${head} is a single-parent commit, not a merge of the default branch`,
-      files: []
-    }
   const tip = input.mainTip ?? freshTip
-  const merged = parents.slice(1)
-  if (
-    tip === null ||
-    !merged.some(
-      (parent) =>
-        parent === tip || (freshTip !== null && isAncestor(cwd, tip, parent) && isAncestor(cwd, parent, freshTip))
-    )
-  )
+  if (tip === null || !isAncestor(cwd, tip, head))
     return {
       code: 'main-tip-missing',
-      reason: `the merge ${head}'s parents (${parents.join(', ')}) do not include the default branch's tip ${tip ?? '(unreadable)'}`,
+      reason: `the head ${head} does not contain the default branch's tip ${tip ?? '(unreadable)'}`,
       files: []
     }
   const unresolved = gitIn(cwd, ['ls-files', '-u'])

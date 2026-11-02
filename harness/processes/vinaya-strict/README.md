@@ -19,7 +19,7 @@ flow and refuses a different one.
 The v2 flow reads an open pull request's mergeability in its reconcile step: a
 conflicting one is recorded and sent to the Developer as its first turn, and
 its `prove-conflict-repair` step proves the Developer's merge (a published
-merge commit including the fetched default-branch tip, no unresolved index
+head containing the fetched default-branch tip, no unresolved index
 entry, a clean merge with the default branch fetched again, a `MERGEABLE`
 pull request) before any local check or reviewer judges it
 (`apps/cli/specs/loop.md`, "Version 2: a conflict re-entry starts with the
