@@ -2528,6 +2528,8 @@ export function createRoleLaunchers(options: {
   model?: string
   /** Claude's sandbox may use Unix sockets (the Linux host opt-in); the Codex adapter has no such filter. */
   allowUnixSockets?: boolean
+  /** Seconds each role's dev-tools calls may run; the generators never go below the shared default, which an absent value keeps. */
+  devToolsTimeoutSec?: number
   /** Copy the operator's Codex subscription login into each Codex role's generated CODEX_HOME (a live run). */
   stageCodexLogin?: boolean
   /** The ceiling in milliseconds each role launches with, by role name; a role absent from it keeps the executor's own bound. */
@@ -2544,7 +2546,8 @@ export function createRoleLaunchers(options: {
       outputSchema: JSON.parse(readFileSync(outputSchemaPath, 'utf8')),
       mcpCommand: options.mcpCommands?.[role] ?? options.mcpCommand,
       variables: options.variables,
-      allowUnixSockets: options.allowUnixSockets
+      allowUnixSockets: options.allowUnixSockets,
+      ...(options.devToolsTimeoutSec === undefined ? {} : { devToolsTimeoutSec: options.devToolsTimeoutSec })
     }
     const generated: GeneratedAgentConfig =
       options.vendor === 'claude-code' ? generateClaudeSettings(grants, paths) : generateCodexConfig(grants, paths)
