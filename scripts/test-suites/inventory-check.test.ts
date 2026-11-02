@@ -16,19 +16,24 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
 import { SUITE_INPUTS } from '../../apps/cli/tests/sandbox-conformance/command-sources.ts'
+import { changedInputReaders as libraryChangedInputReaders } from '../../apps/cli/src/lib/verification/index.ts'
 import {
   buildInventoryView,
+  bunLockParser,
   changedInputReaders,
   diffTestIdentities,
   INVENTORY_PATH,
+  type InputImpact,
   type InventoryDeclarations,
   InventoryError,
   type InventoryView,
   layoutOf,
   memoryReader,
   nativeGroups,
-  readTestInventory
+  readTestInventory,
+  stableJson
 } from './inventory-check.ts'
+import { repositoryPolicy } from './repository-selection.ts'
 
 const REPO_ROOT = join(import.meta.dir, '..', '..')
 
@@ -434,6 +439,87 @@ describe('a configuration change reaches each reader by how it reads', () => {
     expect(impact.readers).toEqual([])
     expect(impact.unknown[0]?.reason).toContain('no declared edge')
   })
+})
+
+// ── The lockfile ───────────────────────────────────────────────────────────
+
+describe('the lockfile is read as its dependency identity, so a path move alone reaches no reader', () => {
+  const { head } = readTestInventory(REPO_ROOT)
+  const policy = repositoryPolicy(REPO_ROOT, 'HEAD', head, 'local', 'one')
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, 'fixtures', 'bun-lock', name), 'utf8')
+  const moves = ['harness-kernel', 'process-folder'].map((move) => ({
+    move,
+    before: fixture(`${move}.before.lock`),
+    after: fixture(`${move}.after.lock`)
+  }))
+  const lockfileReaders = [
+    ...new Set(head.edges.filter((e) => e.source === 'lockfile' && e.input === 'bun.lock').flatMap((e) => e.readers))
+  ].sort()
+  const reachedThroughLockfile = (impact: InputImpact) =>
+    [...new Set(impact.readers.filter((r) => r.edge === 'lockfile').map((r) => r.test))].sort()
+  const viaWrapper = (before: string, after: string) =>
+    reachedThroughLockfile(changedInputReaders(head, head, { path: 'bun.lock', before, after }))
+  const viaPolicy = (before: string, after: string) =>
+    reachedThroughLockfile(
+      libraryChangedInputReaders(head, head, { path: 'bun.lock', before, after }, policy.parsers ?? {})
+    )
+  /** One fixture's text with `from` replaced once by `to`, failing loudly when `from` is absent. */
+  const edit = (text: string, from: string, to: string) => {
+    if (!text.includes(from)) throw new Error(`the lockfile fixture holds no ${JSON.stringify(from)}`)
+    return text.replace(from, to)
+  }
+
+  test('the committed lockfile input is a semantic bun-lock reader over every suite', () => {
+    const edges = head.edges.filter((e) => e.source === 'lockfile')
+    expect(edges.length).toBeGreaterThan(0)
+    expect(edges.every((e) => e.readerKind === 'semantic' && e.format === 'bun-lock')).toBe(true)
+    expect(lockfileReaders.length).toBeGreaterThan(0)
+  })
+
+  test('the selection policy carries the one bun-lock parser the inventory wrapper uses', () => {
+    expect(policy.parsers?.['bun-lock']).toBe(bunLockParser)
+  })
+
+  for (const { move, before, after } of moves)
+    test(`the real ${move} move parses to an equal identity and selects nothing through the lockfile`, () => {
+      expect(before).not.toBe(after)
+      expect(stableJson(bunLockParser(after))).toBe(stableJson(bunLockParser(before)))
+      expect(viaWrapper(before, after)).toEqual([])
+      expect(viaPolicy(before, after)).toEqual([])
+    })
+
+  const { before: lock } = moves[0] as (typeof moves)[number]
+  const identityChanges: [string, string, string][] = [
+    ['a changed configVersion', lock, edit(lock, '"configVersion": 0,', '"configVersion": 1,')],
+    [
+      'a link: replacing a tarball',
+      lock,
+      edit(
+        lock,
+        '"@atta/engine": "file:../apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz"',
+        '"@atta/engine": "link:../apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz"'
+      )
+    ],
+    [
+      'a removed trustedDependencies entry',
+      edit(lock, '"configVersion": 0,', '"configVersion": 0,\n  "trustedDependencies": ["esbuild", "workerd"],'),
+      edit(lock, '"configVersion": 0,', '"configVersion": 0,\n  "trustedDependencies": ["esbuild"],')
+    ],
+    ['a one-version bump of a registry package', lock, edit(lock, '["zod@4.6.7", ""', '["zod@4.6.8", ""')],
+    ['a changed integrity', lock, edit(lock, '"sha512-g8W2D2kU6a8untc', '"sha512-h8W2D2kU6a8untc')],
+    [
+      'an added package',
+      lock,
+      edit(lock, '"packages": {\n', '"packages": {\n    "left-pad": ["left-pad@1.3.0", "", {}, "sha512-x"],\n')
+    ],
+    ['a malformed lockfile', lock, '{ "lockfileVersion": 1, not a lockfile']
+  ]
+  for (const [what, before, after] of identityChanges)
+    test(`${what} selects every lockfile reader`, () => {
+      expect(after).not.toBe(before)
+      expect(viaWrapper(before, after)).toEqual(lockfileReaders)
+      expect(viaPolicy(before, after)).toEqual(lockfileReaders)
+    })
 })
 
 // ── Base and head ──────────────────────────────────────────────────────────

@@ -36,7 +36,7 @@ export type EdgeKind =
   | 'provider'
 
 /** The formats a semantic or parsed-keys reader's input is parsed in. */
-export type InputFormat = 'json' | 'toml' | 'text'
+export type InputFormat = 'json' | 'toml' | 'bun-lock' | 'text'
 
 /** Governance policy: what must run or hold whatever changed — never a dependency. */
 export type PolicyDeclaration = {
