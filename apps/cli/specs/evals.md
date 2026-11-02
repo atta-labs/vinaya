@@ -602,7 +602,7 @@ known-bad records, calling no model.
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:export async function executeLayerGTrial( -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:export const CLAUDE_HARNESS_INTERNAL_TOOLS: readonly string[] = ['StructuredOutput', 'ToolSearch', 'TodoWrite'] -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:export const CLAUDE_COORDINATION_TOOLS: readonly string[] = [ -->
-<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:import { publishingInstructionLine } from '../dev-review-loop' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:import { publishingInstructionLine } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop' -->
 
 Nothing a trial's workspace controls runs on the host. Every step that runs
 in or over it — the dependency install before the agent starts, staging and
