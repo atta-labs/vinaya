@@ -318,7 +318,12 @@ still lives under the machine-local Vinaya home regardless
 separate deps — `LoopDeps.runtimeDir` and `LoopDeps.resolveLogAppendPath`
 (the exact path THIS process's own `log()` calls will land at, for polling
 its own line landing) — they were one, which is how this driver's own
-per-task files ended up inside the telemetry outbox to begin with.
+per-task files ended up inside the telemetry outbox to begin with. The
+driver's own loop-event sink and a cancel's sink are built by the process's
+Log sink factory (`createVinayaLogSink`), and the real
+`LoopDeps.resolveLogAppendPath` is its mirror (`resolveVinayaLogAppendPath`),
+so both read the task a branch names through the same process-supplied
+reader (`apps/cli/specs/log.md`, "The process supplies the reader").
 
 `vinaya task sweep --include-legacy` is the one reader of a folder an
 earlier layout left behind — a run in flight when

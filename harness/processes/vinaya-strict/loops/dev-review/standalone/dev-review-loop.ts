@@ -140,13 +140,8 @@ import {
 import { controlStoreRoot } from '../../../../../../apps/cli/src/lib/effects.js'
 import { resolveRoleDoctrineText } from '../../../integration/roles/plan.js'
 import { validatePrBodyForCreate } from '../../../../../../apps/cli/src/commands/pr.js'
-import {
-  createLogSink,
-  drainLogSink,
-  log as logToDefaultSink,
-  resolveLogAppendPath,
-  type LogSinkDeps
-} from '../../../../../../apps/cli/src/lib/log-sink.js'
+import { drainLogSink, log as logToDefaultSink, type LogSinkDeps } from '../../../../../../apps/cli/src/lib/log-sink.js'
+import { createVinayaLogSink, resolveVinayaLogAppendPath } from '../../../integration/log/log-sink-factory.js'
 import { crossRunnerRefusal, PROCESS_FOLDER_IN_CHECKOUT } from '../run-control/task-run-engine.js'
 import {
   conflictReentryEvent,
@@ -612,14 +607,14 @@ export type LoopDeps = {
   /**
    * The exact path THIS process's `log()` calls for `task` land at — a
    * folder destination's own file, or the local retry queue ahead of a
-   * server drain (`log-sink.ts`'s `resolveLogAppendPath`). Used only to know
+   * server drain (`resolveVinayaLogAppendPath`). Used only to know
    * where to poll for an event's own line landing (`logEvents`, below) —
    * the loop never reads this file back for anything else, and never
    * flushes or otherwise publishes it: events reach the configured `logs`
    * destination live, as they are logged.
    */
   resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
-  /** Overrides for this run's own loop-event sink (`createLogSink`); absent, the sink's defaults. */
+  /** Overrides for this run's own loop-event sink (`createVinayaLogSink`); absent, the sink's defaults. */
   logSink?: Partial<LogSinkDeps>
   repoRoot: () => string
   gitRevParseOriginMain: () => string
@@ -2644,7 +2639,7 @@ export function defaultDeps(): LoopDeps {
     createTaskWorktreeFromRemote,
     readResumeRecord: (task, agent, repo) => realReadResumeRecord('developer', agent, repo, task),
     runtimeDir,
-    resolveLogAppendPath,
+    resolveLogAppendPath: resolveVinayaLogAppendPath,
     repoRoot: defaultRepoRoot,
     gitRevParseOriginMain: defaultGitRevParseOriginMain,
     gitIsAncestor: defaultGitIsAncestor,
@@ -3319,15 +3314,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // run-start marker and a line saying the sweep is running land in the
   // loop log AND on stderr first. A driver that still has many folders
   // left to classify must never look silent while it works through them.
-  const { log, runId, drain: drainLoopLogSink } = createLogSink(d.logSink)
+  const { log, runId, drain: drainLoopLogSink } = createVinayaLogSink(d.logSink)
   if (!process.env.VINAYA_RUN_ID) process.env.VINAYA_RUN_ID = runId
   // O3: two independent sink instances can both have a `log()` call in
   // flight when this driver is about to exit — this closure's own
-  // `createLogSink()` instance above (the round/pause events `logEvents`
+  // `createVinayaLogSink()` instance above (the round/pause events `logEvents`
   // emits) and the module-level default sink (`../../../../../../apps/cli/src/lib/log-sink.js`'s plain
   // `log`/`drainLogSink`), which `effects.ts`'s `EffectExecutor` writes
   // its `attempted`/`observed`/`verified` lines through instead — a
-  // separate `createLogSink()` call, with its own `pendingWrites`/
+  // separate sink built by the installed factory, with its own `pendingWrites`/
   // `drainChain`, that this closure's own `drain()` cannot see. Every abrupt
   // exit below drains both, never just the one this closure happens to own.
   const drainAllLogSinks = (): Promise<void> => Promise.all([drainLoopLogSink(), drainLogSink()]).then(() => undefined)
@@ -8408,7 +8403,7 @@ export type CancelDeps = {
   findOpenPrForBranch: typeof findOpenPrForBranch
   runtimeDir: () => string
   resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
-  /** Overrides for the cancel event's own sink (`createLogSink`); absent, the sink's defaults. */
+  /** Overrides for the cancel event's own sink (`createVinayaLogSink`); absent, the sink's defaults. */
   logSink?: Partial<LogSinkDeps>
   resolveRepo: () => Promise<{ owner: string; repo: string } | null>
   terminateInFlightLaunchesOnShutdown: (
@@ -8432,7 +8427,7 @@ function defaultCancelDeps(): CancelDeps {
     fetchNewestIssueRulingAuthor,
     findOpenPrForBranch,
     runtimeDir,
-    resolveLogAppendPath,
+    resolveLogAppendPath: resolveVinayaLogAppendPath,
     resolveRepo: () => resolveRepo().catch(() => null),
     sleep: defaultSleep,
     terminateInFlightLaunchesOnShutdown: defaultTerminateInFlightLaunchesOnShutdown
@@ -8628,7 +8623,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   // destination once, on its first write, so in a long-lived process whose
   // first write resolved another repo this line would land away from
   // `cancelOutboxPath` and the wait below would run out its bound.
-  const cancelSink = createLogSink({ ...d.logSink, resolveRepo: async () => repo })
+  const cancelSink = createVinayaLogSink({ ...d.logSink, resolveRepo: async () => repo })
   try {
     cancelSink.log(cancelEvent)
     await waitForOwnLoopLine(cancelOutboxPath, priorSize, cancelSink.runId, cancelEvent, d.sleep)

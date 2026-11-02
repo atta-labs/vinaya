@@ -4,8 +4,9 @@
  * hostname and git call lives here; `packages/aeg-core/src/log/` stays pure
  * (schema, envelope, redaction) and never writes.
  *
- * `log()` never throws. Every failure path returns; at most one
- * `process.stderr.write` per process, guarded by a module-level flag.
+ * `log()` never throws once its default sink factory is installed. Every
+ * failure path returns; at most one `process.stderr.write` per process,
+ * guarded by a module-level flag.
  */
 
 import { execFile } from 'node:child_process'
@@ -27,7 +28,7 @@ import {
 import { hostname as osHostname, homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { resolveRepo as resolveRepoDefault, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
+import { resolveRepo as resolveRepoDefault } from '@attalabs/aeg-forge-state'
 import {
   buildHeader,
   type HeaderInput,
@@ -179,15 +180,31 @@ export type LogSinkDeps = {
   inputVersions: () => LogSinkInputVersions | undefined
   /**
    * The Issue the checked-out branch names, for an event whose process
-   * carries no `VINAYA_TASK` — the real default is `resolveBranchIssue`
-   * (one `git` read, and one `gh` read to confirm what it named, asked of the
-   * `<owner>/<repo>` handed in: the repository the event will be FILED
-   * under, never whatever the directory's git remote happens to name).
-   * Called at most once per process per working directory and repository,
-   * lazily: a process whose events already name their task never calls it at
-   * all, and a second sink reading the same pair reuses the first answer.
+   * carries no `VINAYA_TASK`, asked of the `<owner>/<repo>` handed in: the
+   * repository the event will be FILED under. Required, with no default: the
+   * sink knows no task model, so whoever builds a sink supplies the reader
+   * (the process's sink factory supplies its branch reader), and building one
+   * without it is refused rather than quietly recording no Issue.
+   * Called at most once per sink, lazily: a process whose events already
+   * name their task never calls it at all.
    */
   resolveBranchIssue: (repo: string | null) => Promise<number | null>
+  /**
+   * Whether `resolveBranchIssue` answers a process-wide fact — what branch is
+   * checked out in the sink's `cwd` — so its answer is shared by every sink
+   * of this process reading the same directory and repository, read at most
+   * once per process (`branchIssueByCwd`). A sink factory sets it for the
+   * reader it supplies; a caller's own reader leaves it unset and keeps its
+   * answer to itself.
+   */
+  shareBranchIssue?: boolean
+  /**
+   * The sink's `run_id`, fixed by its builder; absent, the sink reads
+   * `VINAYA_RUN_ID` from its `env` when it is built, or takes a fresh id. The
+   * module-level default sink passes the identity read when this module was
+   * loaded, so building it lazily on first use names the same run it always did.
+   */
+  runId?: string
   /**
    * The full commit id the sink's `cwd` checkout's `HEAD` names, or `null`
    * when it cannot be resolved — the real default is `resolveHeadSha` (one
@@ -788,227 +805,6 @@ async function resolveDoctrine(cwd: string, vinayaVersion: string): Promise<stri
   }
 }
 
-/**
- * The two branch shapes this doctrine addresses a task by — `task/issue-<n>`
- * for a tranche-less backlog Issue, `task/<tranche>/<n>` for a tranche task
- * (`harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.ts`'s `branchForRef`, the same two shapes
- * `developerBranchFor` derives). Pure: a branch name in, a claim about what
- * it names out — no I/O, so the shape rule itself is testable without a
- * checkout or a forge.
- */
-export type TaskBranchRef = { kind: 'issue'; issue: number } | { kind: 'tranche'; tranche: string; taskId: string }
-
-/** Only these characters may reach `gh`'s argv as a label segment — a branch name is not a trusted value, and a tranche slug is always this shape. */
-const TRANCHE_SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
-
-export function taskRefFromBranch(branch: string): TaskBranchRef | null {
-  const backlog = /^task\/issue-(\d+)$/.exec(branch)
-  if (backlog) {
-    // A branch name is a value a role types, not a bounded number: ~310
-    // digits parse to `Infinity` and 20 digits to a non-integer float, and
-    // `LogEventSchema`'s `subject.issue: z.number().int()` refuses both —
-    // which drops the WHOLE event, for every event this process logs, since
-    // the resolved value is cached. So an unbounded parse here would let a
-    // branch name silence a process's entire audit trail. The environment
-    // path guards exactly this on the same field (`issueFromTask`'s
-    // `Number.isInteger`, `envelope.ts`); this is that guard, on this path.
-    const issue = Number(backlog[1])
-    return Number.isSafeInteger(issue) && issue > 0 ? { kind: 'issue', issue } : null
-  }
-  const tranche = /^task\/([^/]+)\/([^/]+)$/.exec(branch)
-  if (tranche && TRANCHE_SLUG_PATTERN.test(tranche[1] ?? '')) {
-    return { kind: 'tranche', tranche: tranche[1] as string, taskId: tranche[2] as string }
-  }
-  return null
-}
-
-/** Generous, not a bound — the same limit `task-status.ts` reads open task Issues with; one tranche has never held more. */
-const TRANCHE_ISSUE_LIST_LIMIT = 200
-
-/**
- * The Issue a `task/<tranche>/<n>` branch names, read from the forge the one
- * way this doctrine derives it anywhere else: the `vinaya/tranche:<slug>`
- * label plus the `[<slug>] <n> — …` title, parsed by the SAME
- * `resolveTaskIssueRef` the task list and the task tools already share
- * rather than a second, drifting copy of the title rule here. `--state all`,
- * not `open`: a branch stays checked out after its Issue closes, and an
- * event emitted there still belongs to that task.
- *
- * Run IN the sink's own working directory, never the process's: `gh`
- * resolves which repository to ask from the git remote of the directory it
- * runs in, and a sink configured with a `cwd` of its own (the shape the loop
- * harness and the log fixtures use) must not read one checkout's branch and
- * another checkout's Issues.
- */
-async function issueForTrancheTask(
-  tranche: string,
-  taskId: string,
-  cwd: string,
-  repo: string | null
-): Promise<number | null> {
-  let stdout: string
-  try {
-    ;({ stdout } = await execFileAsync(
-      'gh',
-      [
-        'issue',
-        'list',
-        '--state',
-        'all',
-        '--label',
-        `vinaya/tranche:${tranche}`,
-        '--json',
-        'number,title,labels',
-        '--limit',
-        String(TRANCHE_ISSUE_LIST_LIMIT),
-        // From the already-resolved repository, never the directory's remote
-        // — the same reason `confirmBacklogIssue` passes it.
-        ...(repo === null ? [] : ['--repo', repo])
-      ],
-      {
-        cwd,
-        encoding: 'utf8',
-        maxBuffer: 8 * 1024 * 1024,
-        // The child dies WITH the deadline, not just the promise the caller
-        // is waiting on: `withDeadline` answers `null` at the call site, but
-        // a hanging, proxied or unauthenticated `gh` left running holds the
-        // event loop open and delays this process's own exit long past it —
-        // on the pre-push-hook path, the very path this feature exists for
-        // (round 3 security review, LOW).
-        timeout: LOG_CONTEXT_LOOKUP_DEADLINE_MS,
-        killSignal: 'SIGKILL'
-      }
-    ))
-  } catch {
-    return null
-  }
-  let issues: Array<{ number: number; title: string; labels: Array<{ name: string }> }>
-  try {
-    issues = JSON.parse(stdout)
-  } catch {
-    return null
-  }
-  for (const issue of issues) {
-    const ref = resolveTaskIssueRef(
-      issue.title,
-      issue.labels.map((l) => l.name)
-    )
-    if (ref && ref.trancheSlug === tranche && ref.taskId === taskId) return issue.number
-  }
-  return null
-}
-
-/**
- * A branch-named Issue, answered on the forge's terms: `'confirmed'` when the
- * Issue exists in the repository the event will be FILED under, `'denied'`
- * when that repository says it does not, and `'unknown'` when the forge could
- * not be asked at all.
- *
- * The three-way answer is the whole point. A branch name is caller-supplied
- * (a pushed branch, a fork's, a reviewer's checkout), so a number the forge
- * DENIES must never be filed — that is the attribution harm the confirmation
- * exists to prevent. But a `gh` that is missing, unauthenticated, offline or
- * rate-limited has said nothing about the number, and treating its silence as
- * denial would throw away exactly what this fallback is for: a local pre-push
- * run, on a task branch, on a machine with no forge access, whose branch
- * names its task unambiguously (the objective's own words: a `task/issue-<n>`
- * branch gives `<n>`). Silence therefore leaves the branch's own claim
- * standing, and `meta.provenance` stays `'unavailable'` either way — the
- * event never claims the forge agreed.
- *
- * `--repo` is passed from the ALREADY-RESOLVED repository, never left to the
- * directory's git remote: `meta.repo` and the outbox file come from
- * `resolveRepo()`, whose first source is `AEG_REPO`, so asking a different
- * repository would confirm a number in one place and file it in another
- * (round 5 review, MINOR). With no resolved repository to name, `gh`'s own
- * directory-derived default is all there is.
- */
-type BacklogConfirmation = 'confirmed' | 'denied' | 'unknown'
-
-async function confirmBacklogIssue(issue: number, cwd: string, repo: string | null): Promise<BacklogConfirmation> {
-  let stdout: string
-  try {
-    ;({ stdout } = await execFileAsync(
-      'gh',
-      ['issue', 'view', String(issue), '--json', 'number', ...(repo === null ? [] : ['--repo', repo])],
-      {
-        cwd,
-        encoding: 'utf8',
-        timeout: LOG_CONTEXT_LOOKUP_DEADLINE_MS,
-        killSignal: 'SIGKILL'
-      }
-    ))
-  } catch (err) {
-    // `gh` exits non-zero for both "no such Issue" and "I could not ask" —
-    // only its own message tells them apart, and only the first is a denial.
-    const stderr = typeof (err as { stderr?: unknown }).stderr === 'string' ? (err as { stderr: string }).stderr : ''
-    return /could not resolve|not found|no such|does not exist/i.test(stderr) ? 'denied' : 'unknown'
-  }
-  try {
-    return (JSON.parse(stdout) as { number?: unknown }).number === issue ? 'confirmed' : 'denied'
-  } catch {
-    return 'unknown'
-  }
-}
-
-/**
- * The Issue the CHECKED-OUT branch names, or `null` when it names none —
- * what fills `subject.issue` for an event whose process carries no
- * `VINAYA_TASK` (the pre-push hook's and CI's own `vinaya check` runs, which
- * is most of what a log server actually holds). `null` is the honest answer
- * for a branch that is not a task branch, a checkout `git` cannot read, and
- * a tranche task whose Issue the forge will not name — never a guessed
- * number.
- *
- * Called at most ONCE per process per working-directory-and-repository pair
- * (memoised in `branchIssueByCwd`, `null` included) and only when an event's
- * own `VINAYA_TASK` is absent, so a process that
- * already knows its task makes no forge call at all; the one call it can
- * make is bounded by `LOG_CONTEXT_LOOKUP_DEADLINE_MS` at the call site, so a
- * slow or unauthenticated `gh` delays no event past that deadline and drops
- * none. Async throughout (`execFileAsync`, never `execFileSync`) — the same
- * no-synchronous-spawn rule the sink's shared context already holds
- * (`tests/lib/log-sink-no-sync-spawn.test.ts`).
- */
-export async function resolveBranchIssue(
-  cwd: string,
-  env: NodeJS.ProcessEnv = process.env,
-  repo: string | null = null
-): Promise<number | null> {
-  let branch: string
-  try {
-    branch = (
-      await execFileAsync('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], {
-        encoding: 'utf8',
-        // Same rule as the `gh` read below: the child dies with the
-        // deadline rather than outliving the answer.
-        timeout: LOG_CONTEXT_LOOKUP_DEADLINE_MS,
-        killSignal: 'SIGKILL'
-      })
-    ).stdout.trim()
-  } catch {
-    return null
-  }
-  // A CI job triggered by a pull request checks out the merge commit in
-  // DETACHED HEAD, where `rev-parse --abbrev-ref HEAD` answers the literal
-  // string `HEAD` and no branch is checked out at all — so CI, named
-  // alongside the pre-push hook as the reason this fallback exists, would
-  // record `issue: null` forever without this line. The head ref the CI
-  // system itself reports for the pull request is the branch that checkout
-  // came from (`GITHUB_HEAD_REF`, set on a `pull_request` event and empty on
-  // every other), and it goes through the IDENTICAL shape rules and the
-  // identical verification below. It is not a stronger claim than a local
-  // branch name — both are caller-supplied, both leave
-  // `meta.provenance: 'unavailable'` — it is the same claim, read where git
-  // cannot make it.
-  const named = branch === 'HEAD' ? (env.GITHUB_HEAD_REF ?? '') : branch
-  const ref = taskRefFromBranch(named)
-  if (ref === null) return null
-  if (ref.kind === 'tranche') return await issueForTrancheTask(ref.tranche, ref.taskId, cwd, repo)
-  // `'unknown'` keeps the branch's own number: see `confirmBacklogIssue`.
-  return (await confirmBacklogIssue(ref.issue, cwd, repo)) === 'denied' ? null : ref.issue
-}
-
 function readVinayaVersion(): string {
   try {
     const pkg = JSON.parse(readFileSync(join(packageRoot(import.meta.url), 'package.json'), 'utf8')) as {
@@ -1171,15 +967,17 @@ export function drainLogSpool(
  * needs to poll for its own line landing (`dispatch.ts`'s `dispatchRole`,
  * `dev-review-loop.ts`'s `logEvents`) watches the SAME file `log()` actually
  * writes to, whichever destination is configured. Not memoized — callers
- * that need this call it once per process, not once per event.
+ * that need this call it once per process, not once per event. Takes the
+ * same required branch-to-Issue reader a sink does, and is refused without
+ * one (`requireBranchIssueResolver`).
  */
 export async function resolveLogAppendPath(
   repo: { owner: string; repo: string } | null,
   issue: number | null,
-  overrides: Partial<
-    Pick<LogSinkDeps, 'resolveLogDestination' | 'outboxRoot' | 'env' | 'cwd' | 'resolveBranchIssue'>
-  > = {}
+  overrides: Partial<Pick<LogSinkDeps, 'resolveLogDestination' | 'outboxRoot' | 'env' | 'cwd' | 'shareBranchIssue'>> &
+    Pick<LogSinkDeps, 'resolveBranchIssue'>
 ): Promise<string> {
+  requireBranchIssueResolver(overrides?.resolveBranchIssue, 'resolveLogAppendPath')
   const deps = { ...defaultDeps(), ...overrides }
   const destination = await deps.resolveLogDestination(repo, deps.env())
   const root = destination.kind === 'folder' ? destination.folder : deps.outboxRoot()
@@ -1201,11 +999,8 @@ export async function resolveLogAppendPath(
     issue === null && !deps.env().VINAYA_TASK && branchIssueFallbackEnabled
       ? await branchIssueRead(
           `${deps.cwd()}\u0000${safeRepoSlug(repo) ?? ''}`,
-          () =>
-            overrides.resolveBranchIssue !== undefined
-              ? overrides.resolveBranchIssue(safeRepoSlug(repo))
-              : resolveBranchIssue(deps.cwd(), deps.env(), safeRepoSlug(repo)),
-          overrides.resolveBranchIssue === undefined
+          () => overrides.resolveBranchIssue(safeRepoSlug(repo)),
+          overrides.shareBranchIssue === true
         )
       : null
   return outboxPathFor({ outboxRoot: () => root }, repo, issue ?? branchIssue)
@@ -1275,7 +1070,8 @@ const branchIssueByCwd = new Map<string, Promise<number | null>>()
 const branchIssueSettledByCwd = new Map<string, number | null>()
 
 /**
- * The bounded read, shared across this process when it is the REAL one and
+ * The bounded read, shared across this process when its reader is the one a
+ * sink factory marks as reading the real branch (`shareBranchIssue`), and
  * kept private when a caller injected its own.
  *
  * The distinction is not a test affordance: "what branch is checked out in
@@ -1329,10 +1125,24 @@ export function setBranchIssueFallback(enabled: boolean): void {
 }
 
 /**
- * `resolveBranchIssue` is deliberately NOT one of these: its real default
- * has to follow the SINK's own `cwd`, which only exists once the overrides
- * are merged, so `createLogSink` binds it there (and `resolveLogAppendPath`
- * binds its own, below, against the same `cwd`).
+ * Refuses a sink, or an append-path mirror, built with no branch-to-Issue
+ * reader. The sink has no reader of its own to fall back on, and answering
+ * "no Issue" in its place would silently file every task-less event under
+ * `none` — so the missing dependency is named instead.
+ */
+function requireBranchIssueResolver(resolver: unknown, builder: string): void {
+  if (typeof resolver !== 'function') {
+    throw new Error(
+      `${builder}: the resolveBranchIssue dependency is required — build Log sinks through the installed log sink factory, which supplies it`
+    )
+  }
+}
+
+/**
+ * `resolveBranchIssue` is deliberately NOT one of these: the sink has no
+ * reader of its own, so every caller supplies one (`requireBranchIssueResolver`).
+ * `resolveHeadSha`'s real default has to follow the SINK's own `cwd`, which
+ * only exists once the overrides are merged, so `createLogSink` binds it there.
  */
 function defaultDeps(): Omit<LogSinkDeps, 'resolveBranchIssue' | 'resolveHeadSha'> {
   return {
@@ -1483,27 +1293,33 @@ function appendLine(path: string, line: string, warn: (message: string) => void)
   }
 }
 
-/** Injectable for tests; the default instance below is wired to the real reads (env, git, the resolved `logs` destination). */
-export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
+/** What a sink is built from: any dependency may be overridden, and the branch-to-Issue reader must be given. */
+export type LogSinkOverrides = Partial<LogSinkDeps> & Pick<LogSinkDeps, 'resolveBranchIssue'>
+
+/** One Log sink: what `createLogSink` returns and what a log sink factory builds. */
+export type LogSink = {
   log: (e: LogEventInput, attribution?: LaunchLogAttribution) => void
   logSync: (e: LogEventInput, opts?: LogSyncOptions) => void
   runId: string
   warmup: () => void
   drain: () => Promise<void>
   resetContext: () => void
-} {
+}
+
+/**
+ * Builds one sink from its dependencies: every read defaults to the real one
+ * (env, git, the resolved `logs` destination) except the branch-to-Issue
+ * reader, which the caller must give — a sink factory gives its own. Refused
+ * with an error naming `resolveBranchIssue` when it is missing.
+ */
+export function createLogSink(overrides: LogSinkOverrides): LogSink {
+  requireBranchIssueResolver(overrides?.resolveBranchIssue, 'createLogSink')
   const deps: LogSinkDeps = {
     ...defaultDeps(),
-    // Bound here, not in `defaultDeps`, so the branch and the repository an
-    // event is attributed to are read from the SAME directory every other
-    // read this sink makes uses (`resolveDoctrine(deps.cwd(), …)`) — a sink
-    // given a `cwd` of its own never reports its own `meta.repo` from one
-    // checkout and its branch-derived `subject.issue` from another.
-    resolveBranchIssue: (repo) => resolveBranchIssue(deps.cwd(), deps.env(), repo),
     resolveHeadSha: () => resolveHeadSha(deps.cwd()),
     ...overrides
   }
-  const runId = deps.env().VINAYA_RUN_ID || randomUUID()
+  const runId = overrides.runId ?? (deps.env().VINAYA_RUN_ID || randomUUID())
   // Opaque per-process identifier (O1) — one per sink instance, same
   // lifetime as `runId`, but a distinct concept: `runId` correlates a
   // dispatch chain across processes, `processId` names exactly this one.
@@ -1535,17 +1351,18 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     return doctrineCache
   }
 
-  // The Issue the checked-out branch names — the REAL read resolved at most
-  // ONCE per process per working directory (`branchIssueByCwd`), its result
-  // (a `null` "this branch names none" included) reused by every later event
-  // and by every other sink this process builds, and only ever reached for by
-  // an event whose own `VINAYA_TASK` is absent. A sink given a reader of its
-  // own keeps that answer to itself — see `branchIssueRead`. Bounded here, at the one call site, by the same
-  // deadline the shared context's own lookups carry: a `gh` that is slow,
-  // unauthenticated, or missing altogether costs one deadline for the whole
-  // process and then answers `null` for good — never a per-event forge call,
-  // never a dropped event.
-  const readerIsReal = overrides.resolveBranchIssue === undefined
+  // The Issue the checked-out branch names — a shared reader
+  // (`shareBranchIssue`) resolved at most ONCE per process per working
+  // directory (`branchIssueByCwd`), its result (a `null` "this branch names
+  // none" included) reused by every later event and by every other sink this
+  // process builds, and only ever reached for by an event whose own
+  // `VINAYA_TASK` is absent. A sink given a reader of its own keeps that
+  // answer to itself — see `branchIssueRead`. Bounded here, at the one call
+  // site, by the same deadline the shared context's own lookups carry: a
+  // reader that is slow or fails costs one deadline for the whole process
+  // and then answers `null` for good — never a per-event forge call, never a
+  // dropped event.
+  const readerIsReal = deps.shareBranchIssue === true
   let ownBranchIssue: Promise<number | null> | undefined
   let ownBranchIssueSettled: number | null = null
   const branchIssueOnce = (repo: RepoRef | null): Promise<number | null> => {
@@ -2062,7 +1879,67 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   return { log, logSync, runId, warmup, drain, resetContext }
 }
 
-const defaultSink = createLogSink()
+/**
+ * Builds a Log sink with every dependency its composition supplies — the
+ * branch-to-Issue reader above all — from whatever the caller overrides. The
+ * process's own sink factory is one; a composition root installs it as the
+ * default sink's (`installDefaultLogSinkFactory`).
+ */
+export type LogSinkFactory = (overrides?: Partial<LogSinkDeps>) => LogSink
+
+/** The default sink's slot: the installed factory, and the one sink it builds on first use. */
+export type DefaultLogSinkSlot = {
+  install: (factory: LogSinkFactory) => void
+  /** The default sink, built from the installed factory on first use; refused with an error naming the missing factory when none is installed. */
+  sink: () => LogSink
+  /** The default sink if it has been built, `undefined` otherwise — never builds one. */
+  built: () => LogSink | undefined
+  runId: string
+}
+
+/**
+ * A slot for one process-wide default sink, built lazily from the factory a
+ * composition root installs, never at module load: this module names no
+ * task model, so it cannot build a sink on its own. The sink is built with
+ * `runId`, so building it late names the same run building it at load did.
+ * Installing again replaces the factory but never a sink already built.
+ */
+export function createDefaultLogSinkSlot(runId: string): DefaultLogSinkSlot {
+  let factory: LogSinkFactory | undefined
+  let sink: LogSink | undefined
+  return {
+    install: (next) => {
+      factory = next
+    },
+    sink: () => {
+      if (sink !== undefined) return sink
+      if (factory === undefined) {
+        throw new Error(
+          'vinaya log: no default log sink factory is installed — the entry point calls installDefaultLogSinkFactory before anything logs'
+        )
+      }
+      sink = factory({ runId })
+      return sink
+    },
+    built: () => sink,
+    runId
+  }
+}
+
+// Read at module load, as the default sink's own construction used to read
+// it: a driver that later sets `VINAYA_RUN_ID` for its children does not
+// rename this process's own default-sink run.
+const defaultSinkSlot = createDefaultLogSinkSlot(process.env.VINAYA_RUN_ID || randomUUID())
+
+/**
+ * Installs the factory the module-level default sink — and so `log`,
+ * `logSync`, `warmupLogSink` — is built from, on first use. Called once by
+ * each entry point (the CLI's, each process runner's) before any command or
+ * run starts.
+ */
+export function installDefaultLogSinkFactory(factory: LogSinkFactory): void {
+  defaultSinkSlot.install(factory)
+}
 
 /**
  * Test-only: drops the module-level default sink's own memoized `context()`
@@ -2072,15 +1949,17 @@ const defaultSink = createLogSink()
  * (`task-tools/resume.ts`/`cancel.ts`, `runner.ts`, `effects.ts`, `broker.ts`,
  * `pause-resume.ts`) shares this ONE sink instance, so a test isolating its
  * own env/cwd for a SECOND such call still needs this reset — the first
- * call's already-resolved destination otherwise survives untouched.
+ * call's already-resolved destination otherwise survives untouched. A
+ * default sink not built yet has nothing to reset.
  */
 export function resetDefaultLogSinkContext(): void {
-  defaultSink.resetContext()
+  defaultSinkSlot.built()?.resetContext()
 }
 
 /**
  * The current process's own `run_id` — fixed once, for the process lifetime,
- * at `defaultSink`'s construction (`VINAYA_RUN_ID` or a fresh `randomUUID()`).
+ * when this module loads (`VINAYA_RUN_ID` or a fresh `randomUUID()`), and
+ * the `run_id` the default sink is built with.
  * `dev-review-loop.ts`'s `cancelDevReviewLoop` reads this to tell its OWN
  * fire-and-forget `log()` call apart from a concurrent, unrelated process
  * appending to the same outbox file at the same moment (a code-review
@@ -2088,7 +1967,7 @@ export function resetDefaultLogSinkContext(): void {
  * on its own.
  */
 export function currentRunId(): string {
-  return defaultSink.runId
+  return defaultSinkSlot.runId
 }
 
 /**
@@ -2099,10 +1978,12 @@ export function currentRunId(): string {
  * ndjson line to the configured `logs` destination — a folder's own
  * `<repository>/<task>.ndjson` (the default, under this repository's own
  * `runtimeDir`), or the local retry queue ahead of a `logs.url` server drain
- * (`apps/cli/specs/log.md` § The destination). Returns `void`, never throws.
+ * (`apps/cli/specs/log.md` § The destination). Returns `void`, and never throws once a
+ * default sink factory is installed (`installDefaultLogSinkFactory`); with
+ * none installed it is refused with an error naming the missing factory.
  */
 export function log(e: LogEventInput): void {
-  defaultSink.log(e)
+  defaultSinkSlot.sink().log(e)
 }
 
 /**
@@ -2113,10 +1994,11 @@ export function log(e: LogEventInput): void {
  * an earlier `log()`), records `null` or `unknown` for what it has not, and
  * never delivers: a server destination's line waits in the local retry queue
  * for the next drain (`apps/cli/specs/log.md` § Recording at process exit).
- * Returns `void`, never throws.
+ * Returns `void`; refused, like `log()`, only when no default sink factory
+ * is installed.
  */
 export function logSync(e: LogEventInput, opts?: LogSyncOptions): void {
-  defaultSink.logSync(e, opts)
+  defaultSinkSlot.sink().logSync(e, opts)
 }
 
 /**
@@ -2128,7 +2010,7 @@ export function logSync(e: LogEventInput, opts?: LogSyncOptions): void {
  * every subsequent call in the same process.
  */
 export function warmupLogSink(): void {
-  defaultSink.warmup()
+  defaultSinkSlot.sink().warmup()
 }
 
 /**
@@ -2142,5 +2024,5 @@ export function warmupLogSink(): void {
  * per event.
  */
 export async function drainLogSink(): Promise<void> {
-  await defaultSink.drain()
+  await defaultSinkSlot.built()?.drain()
 }
