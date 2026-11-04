@@ -18,30 +18,36 @@ const KERNEL_DIR = 'harness/kernel'
 const LOG_SINK_PATHS = ['apps/cli/src/lib/log-sink.ts', 'harness/kernel/log/log-sink.ts'] as const
 const LOG_SINK_PRODUCER_NAMES: readonly string[] = ['log', 'logSync']
 
-const NOT_REACHED_BY_IMPORT_CHECK_BIN =
-  'a check bin: it runs only as a child of `vinaya check`, whose runner records one gate event per attempt, so no import of the sink is needed'
-const NOT_REACHED_STANDALONE_SCRIPT =
-  'a standalone script outside the CLI package: the import resolution cannot follow it and no CLI source imports it; invoked directly, it records nothing of its own'
+const G7_EXEMPTIONS_PATH = '.vinaya/g7-exemptions.json'
+
 /**
- * Files G7 lets reach no producer, each with the reason. A file that does reach
- * one, or is no longer a GitHub-writing or blocking-gate file, or has no reason
- * here, is itself a finding.
+ * The files G7 lets reach no producer, each with its reason, read from
+ * `.vinaya/g7-exemptions.json` in the repository being checked (keys are
+ * repository-relative paths, values are reasons). A file that does reach a
+ * producer, or is no longer a GitHub-writing or blocking-gate file, or has no
+ * reason there, is itself a finding. A missing file means no exemptions; an
+ * unreadable shape throws an error naming the file.
  */
-export const G7_EXEMPTIONS: Readonly<Record<string, string>> = {
-  'apps/cli/src/checks/bin/check-review-gate.ts': NOT_REACHED_BY_IMPORT_CHECK_BIN,
-  'apps/cli/src/checks/bin/check-main-branch-refusal.ts': NOT_REACHED_BY_IMPORT_CHECK_BIN,
-  'apps/cli/src/checks/bin/check-token-collection-wired.ts': NOT_REACHED_BY_IMPORT_CHECK_BIN,
-  'apps/cli/src/checks/resolver.ts':
-    'the pure step that decides which checks `vinaya check` runs; the runner it feeds records each run and the invocation records its own operation at exit',
-  'packages/aeg-core/bin/open-pr.ts': NOT_REACHED_STANDALONE_SCRIPT,
-  'packages/aeg-core/bin/open-issue.ts': NOT_REACHED_STANDALONE_SCRIPT,
-  'packages/aeg-core/bin/verify-dispatch.ts': NOT_REACHED_STANDALONE_SCRIPT,
-  'packages/aeg-core/bin/verify-task.ts': NOT_REACHED_STANDALONE_SCRIPT,
-  'packages/aeg-core/bin/check-branch-topology.ts': NOT_REACHED_STANDALONE_SCRIPT,
-  'packages/aeg-core/bin/check-push-target.ts': NOT_REACHED_STANDALONE_SCRIPT,
-  'packages/aeg-core/bin/check-first-push-dispatch.ts': NOT_REACHED_STANDALONE_SCRIPT,
-  'packages/aeg-core/src/brief-validation.ts':
-    'a pure library outside the CLI package: it makes no call of its own, and the import resolution does not follow a workspace package'
+export function readG7Exemptions(root: string): Record<string, string> {
+  const path = join(root, G7_EXEMPTIONS_PATH)
+  if (!existsSync(path)) return {}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (error) {
+    throw new Error(
+      `${G7_EXEMPTIONS_PATH} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${G7_EXEMPTIONS_PATH} must be one JSON object mapping each exempted path to its reason`)
+  }
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value !== 'string') throw new Error(`${G7_EXEMPTIONS_PATH}: the reason for "${key}" must be a string`)
+    out[key] = value
+  }
+  return out
 }
 
 /** The Ring-0 rows' TypeScript implementation files that exist: the blocking gates. */

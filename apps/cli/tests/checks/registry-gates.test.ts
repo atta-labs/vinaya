@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { checkG7, parseEnforcementRegistry, reachesProducer } from '@attalabs/aeg-core'
 import { findCrossingFiles, globCandidateFiles } from '../../src/lib/github-crossing-files.js'
-import { blockingGateFiles, G7_EXEMPTIONS, gatherLogProducerGraph } from '../../src/lib/log-producer-graph.js'
+import { blockingGateFiles, gatherLogProducerGraph, readG7Exemptions } from '../../src/lib/log-producer-graph.js'
 import { buildInitOps } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import { HOOK_DIRS, initHookPaths } from '../../src/lib/init-hook-paths.js'
 
@@ -158,14 +158,15 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       expect(crossingFiles).toHaveLength(0)
       expect(blockingFiles).toHaveLength(16)
       expect(reached).toHaveLength(4)
-      expect(Object.keys(G7_EXEMPTIONS)).toHaveLength(12)
+      const exemptions = readG7Exemptions(repoRoot)
+      expect(Object.keys(exemptions)).toHaveLength(12)
       const result = checkG7({
         enforcementMapPresent: true,
         crossingFiles,
         blockingFiles,
         producers,
         imports,
-        exemptions: G7_EXEMPTIONS,
+        exemptions,
         existsFn: existsSync
       })
       expect(result.findings).toEqual([])
@@ -176,8 +177,89 @@ describe('registry-gates G7 — anything that can block or write to the forge re
   })
 
   it('gives every exemption a stated reason', () => {
-    for (const [path, reason] of Object.entries(G7_EXEMPTIONS)) {
+    for (const [path, reason] of Object.entries(readG7Exemptions(repoRoot))) {
       expect(reason.trim().length, path).toBeGreaterThan(20)
+    }
+  })
+
+  it("loads exactly today's twelve path-to-reason pairs from the committed data file", () => {
+    const checkBin =
+      'a check bin: it runs only as a child of `vinaya check`, whose runner records one gate event per attempt, so no import of the sink is needed'
+    const script =
+      'a standalone script outside the CLI package: the import resolution cannot follow it and no CLI source imports it; invoked directly, it records nothing of its own'
+    expect(readG7Exemptions(repoRoot)).toEqual({
+      'apps/cli/src/checks/bin/check-review-gate.ts': checkBin,
+      'apps/cli/src/checks/bin/check-main-branch-refusal.ts': checkBin,
+      'apps/cli/src/checks/bin/check-token-collection-wired.ts': checkBin,
+      'apps/cli/src/checks/resolver.ts':
+        'the pure step that decides which checks `vinaya check` runs; the runner it feeds records each run and the invocation records its own operation at exit',
+      'packages/aeg-core/bin/open-pr.ts': script,
+      'packages/aeg-core/bin/open-issue.ts': script,
+      'packages/aeg-core/bin/verify-dispatch.ts': script,
+      'packages/aeg-core/bin/verify-task.ts': script,
+      'packages/aeg-core/bin/check-branch-topology.ts': script,
+      'packages/aeg-core/bin/check-push-target.ts': script,
+      'packages/aeg-core/bin/check-first-push-dispatch.ts': script,
+      'packages/aeg-core/src/brief-validation.ts':
+        'a pure library outside the CLI package: it makes no call of its own, and the import resolution does not follow a workspace package'
+    })
+  })
+
+  it('judges a planted root with the exemption list that root carries', () => {
+    const root = initFixture('registry-gates-g7-exemption-file')
+    const blocked = 'apps/cli/src/checks/bin/check-demo.ts'
+    const evaluate = () => {
+      const { producers, imports } = gatherLogProducerGraph(root)
+      return checkG7({
+        enforcementMapPresent: true,
+        crossingFiles: [],
+        blockingFiles: [blocked],
+        producers,
+        imports,
+        exemptions: readG7Exemptions(root),
+        existsFn: (p) => existsSync(join(root, p))
+      })
+    }
+    try {
+      mkdirSync(join(root, 'apps/cli/src/checks/bin'), { recursive: true })
+      writeFileSync(join(root, blocked), 'export const demo = 1\n')
+      const without = evaluate()
+      expect(without.status).toBe('fail')
+      expect(without.findings.map((f) => f.path)).toEqual([blocked])
+      mkdirSync(join(root, '.vinaya'), { recursive: true })
+      writeFileSync(
+        join(root, '.vinaya', 'g7-exemptions.json'),
+        JSON.stringify({ [blocked]: 'a demo check bin that reaches no producer on purpose, for this test' })
+      )
+      const withFile = evaluate()
+      expect(withFile.findings).toEqual([])
+      expect(withFile.status).toBe('pass')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('loads no exemptions from a root with no data file', () => {
+    const root = initFixture('registry-gates-g7-no-exemption-file')
+    try {
+      expect(readG7Exemptions(root)).toEqual({})
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['invalid JSON', '{ not json'],
+    ['a top-level array', '["a", "b"]'],
+    ['a non-string value', '{"apps/x.ts": 3}']
+  ])('refuses a data file holding %s, naming the file', (_label, text) => {
+    const root = initFixture('registry-gates-g7-bad-exemption-file')
+    try {
+      mkdirSync(join(root, '.vinaya'), { recursive: true })
+      writeFileSync(join(root, '.vinaya', 'g7-exemptions.json'), text)
+      expect(() => readG7Exemptions(root)).toThrow('.vinaya/g7-exemptions.json')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 
