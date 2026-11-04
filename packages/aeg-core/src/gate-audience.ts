@@ -30,7 +30,7 @@
  */
 
 /** A gate that adopters run, and the `coreCheckRegistry()` name it ships
- * under. `ring` mirrors `harness/processes/vinaya-strict/checks/registry.ts`'s `CORE_CHECK_RING`
+ * under. `ring` mirrors the process check list's `CORE_CHECK_RING`
  * value for that same name — duplicated here, not imported, because
  * `aeg-core` cannot import `apps/cli` (see this file's own module comment on
  * the dependency-cycle constraint `coreCheckRegistry()` runs into). Kept
@@ -107,7 +107,7 @@ export const SHIPPED_BIN_AUDIENCE: Record<string, GateAudience> = {}
  * `name` -> `ring` for every check registered in `coreCheckRegistry()` whose
  * bin lives under `apps/cli/src/checks/bin/` — the direct analogue of
  * `ShippedGate.ring` above, for the OTHER directory. Mirrors
- * `harness/processes/vinaya-strict/checks/registry.ts`'s `CORE_CHECK_RING` — duplicated, not
+ * the process check list's `CORE_CHECK_RING` — duplicated, not
  * imported, for the identical dependency-cycle reason `ShippedGate.ring`'s
  * own comment gives: `aeg-core` cannot import `apps/cli`. This is the
  * registry-derived fact `registry-scaffold.ts` reads to place a stub row for

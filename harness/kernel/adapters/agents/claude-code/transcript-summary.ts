@@ -1,6 +1,6 @@
 /**
  * report-tokens — the **portable** half of the token-report contract
- * (`aeg-root/tranche-model.md` §12, layers 1 and 3). No value this file reads,
+ * (the tranche model's token-report layers). No value this file reads,
  * computes or emits is host-specific: it defines the summary shape every
  * collection adapter must produce, and renders that shape into the frozen
  * `Tokens: …` grammar `parse-token-report.ts` reads back. A host is named
@@ -22,7 +22,7 @@
  * that host or any other. §12 records the retraction; the fix was to collect
  * from a real per-turn source instead.
  *
- * Pure — no `fs`, no `process.env`. The CLI shim (`bin/report-tokens.ts`)
+ * Pure — no `fs`, no `process.env`. The token-report program
  * does the I/O; these functions take values and produce the report.
  */
 
