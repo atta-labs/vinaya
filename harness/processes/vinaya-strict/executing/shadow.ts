@@ -24,6 +24,7 @@ export type ShadowClass = 'effect' | 'read' | 'run-local'
 export const BOUND_FUNCTION_CLASSES = {
   checkTaskDispatchReadiness: 'read',
   createTaskWorktree: 'effect',
+  installWorktreeDependencies: 'run-local',
   fetchSourceRevision: 'read',
   pullRequestView: 'read',
   findOpenPrForBranch: 'read',

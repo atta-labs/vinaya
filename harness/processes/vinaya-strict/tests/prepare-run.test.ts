@@ -365,6 +365,69 @@ describe('prepare-run proves the agent sandbox', () => {
   })
 })
 
+describe('prepare-run installs the task worktree dependencies', () => {
+  test('a passing start installs once, with the task worktree, after the worktree and before the probe', async () => {
+    const setupped = setup({ sandboxPlan: () => ({ agent: 'claude' }) as never })
+    const installed: string[] = []
+    setupped.task.bound = {
+      ...setupped.task.bound,
+      installWorktreeDependencies: (path: string) => {
+        setupped.calls.push('install')
+        installed.push(path)
+      }
+    }
+    expect((await setupped.run('vinaya.prepare-run')).exitCode).toBe(0)
+    expect(installed).toEqual([setupped.task.worktreePath])
+    expect(setupped.calls).toEqual(['readiness', 'worktree', 'install', 'probe'])
+    expect(setupped.recorded.calls).toEqual([])
+  })
+
+  test('a failed install pauses infrastructure naming the worktree, before the probe and any Developer turn', async () => {
+    const setupped = setup({ sandboxPlan: () => ({ agent: 'claude' }) as never })
+    setupped.task.bound = {
+      ...setupped.task.bound,
+      installWorktreeDependencies: () => {
+        setupped.calls.push('install')
+        throw new Error('dependency install failed (exit 1): lockfile had changes')
+      }
+    }
+    const result = await setupped.run('vinaya.prepare-run')
+    expect(result.exitCode).toBe(1)
+    const held = paused(setupped.runtimeDir)
+    expect(held).toMatchObject({ reason: 'infrastructure' })
+    expect(held!.detail).toContain(setupped.task.worktreePath)
+    expect(held!.detail).toContain('lockfile had changes')
+    expect(setupped.calls).toEqual(['readiness', 'worktree', 'install'])
+    expect(setupped.control.halted).toBe(true)
+  })
+
+  test('after a failed install, the resume runs prepare-run again and installs', async () => {
+    let fixed = false
+    let installsBeforeFix = -1
+    const installs: string[] = []
+    const run = await refuseThenResume(
+      (task) => {
+        task.bound = {
+          ...task.bound,
+          installWorktreeDependencies: (path: string) => {
+            installs.push(path)
+            if (!fixed) throw new Error('registry unreachable')
+          }
+        }
+      },
+      () => {
+        installsBeforeFix = installs.length
+        fixed = true
+      }
+    )
+    expect(run.paused.reason).toBe('paused')
+    expect(installsBeforeFix).toBe(1)
+    expect(run.setupped.recorded.calls).toContain('pause-state:infrastructure')
+    expect(run.resumed.reason).toBe('completed')
+    expect(installs).toEqual([run.setupped.task.worktreePath, run.setupped.task.worktreePath])
+  })
+})
+
 const source = (overrides: Partial<PreparedSource>): PreparedSource => ({
   sourceId: URL_SOURCE,
   canonicalUri: URL_SOURCE,
