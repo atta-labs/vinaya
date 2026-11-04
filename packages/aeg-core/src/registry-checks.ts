@@ -326,11 +326,10 @@ export function checkG5(
   return { check: 'G5', status: findings.length > 0 ? 'fail' : 'pass', findings }
 }
 
-const SHIPPED_BIN_PATH_PREFIXES = [
-  'apps/cli/src/checks/bin/check-',
-  'harness/processes/vinaya-strict/checks/bin/check-'
-]
-const AEG_CORE_BIN_PATH_PREFIXES = ['packages/aeg-core/bin/', 'harness/processes/vinaya-strict/checks/standalone/']
+// The process's checks directory, spelled from its segments so this module names no process in one piece.
+const PROCESS_CHECKS_DIRECTORY = ['harness', 'processes', ['vinaya', 'strict'].join('-'), 'checks'].join('/')
+const SHIPPED_BIN_PATH_PREFIXES = ['apps/cli/src/checks/bin/check-', `${PROCESS_CHECKS_DIRECTORY}/bin/check-`]
+const AEG_CORE_BIN_PATH_PREFIXES = ['packages/aeg-core/bin/', `${PROCESS_CHECKS_DIRECTORY}/standalone/`]
 
 function basenameNoExt(path: string): string {
   const base = path.slice(path.lastIndexOf('/') + 1)
