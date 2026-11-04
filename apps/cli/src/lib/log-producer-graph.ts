@@ -7,14 +7,15 @@ import { extractImportRecords, resolveRelativeImport, walkFiles } from './test-s
  * The inputs of the registry gates' seventh rule — anything able to block a
  * change or write to the forge reaches a log producer — gathered with the import
  * resolution the test selector already has, so no second source search exists.
- * A producer is a CLI source file, or one of the process folders' sources, that
+ * A producer is a CLI source file, or one of the process folders' or the kernel's sources, that
  * imports the sink's `log` or `logSync`; reaching one is confined to the CLI
- * package's own sources and the process folders' sources, leaving out any file
+ * package's own sources, the process folders' sources and the kernel's sources, leaving out any file
  * under a `tests` folder there and every `.test.ts` file.
  */
 
 const CLI_SOURCE_DIR = 'apps/cli/src'
 const PROCESSES_DIR = 'harness/processes'
+const KERNEL_DIR = 'harness/kernel'
 const LOG_SINK_PATH = 'harness/kernel/log/log-sink.ts'
 const LOG_SINK_PRODUCER_NAMES: readonly string[] = ['log', 'logSync']
 
@@ -53,7 +54,8 @@ export function blockingGateFiles(ring0Rows: readonly GateRow[], existsFn: (path
 export function gatherLogProducerGraph(root: string): { producers: Set<string>; imports: Map<string, string[]> } {
   const files = [
     ...walkFiles(join(root, CLI_SOURCE_DIR)),
-    ...walkFiles(join(root, PROCESSES_DIR)).filter((f) => !relative(root, f).split(sep).includes('tests'))
+    ...walkFiles(join(root, PROCESSES_DIR)).filter((f) => !relative(root, f).split(sep).includes('tests')),
+    ...walkFiles(join(root, KERNEL_DIR)).filter((f) => !relative(root, f).split(sep).includes('tests'))
   ].filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
   const known = new Set(files)
   const sink = join(root, LOG_SINK_PATH)
