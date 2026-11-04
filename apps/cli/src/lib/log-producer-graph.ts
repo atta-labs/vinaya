@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import type { GateRow } from '@attalabs/aeg-core'
 import { extractImportRecords, resolveRelativeImport, walkFiles } from './test-selector.js'
@@ -7,16 +7,15 @@ import { extractImportRecords, resolveRelativeImport, walkFiles } from './test-s
  * The inputs of the registry gates' seventh rule — anything able to block a
  * change or write to the forge reaches a log producer — gathered with the import
  * resolution the test selector already has, so no second source search exists.
- * A producer is a CLI source file, or one of the process folders' or the kernel's sources, that
- * imports the sink's `log` or `logSync`; reaching one is confined to the CLI
- * package's own sources, the process folders' sources and the kernel's sources, leaving out any file
+ * A producer is a CLI, process-folder or kernel source file that imports the
+ * sink's `log` or `logSync`; reaching one is confined to those sources, leaving out any file
  * under a `tests` folder there and every `.test.ts` file.
  */
 
 const CLI_SOURCE_DIR = 'apps/cli/src'
 const PROCESSES_DIR = 'harness/processes'
 const KERNEL_DIR = 'harness/kernel'
-const LOG_SINK_PATH = 'harness/kernel/log/log-sink.ts'
+const LOG_SINK_PATHS = ['apps/cli/src/lib/log-sink.ts', 'harness/kernel/log/log-sink.ts'] as const
 const LOG_SINK_PRODUCER_NAMES: readonly string[] = ['log', 'logSync']
 
 const NOT_REACHED_BY_IMPORT_CHECK_BIN =
@@ -50,16 +49,18 @@ export function blockingGateFiles(ring0Rows: readonly GateRow[], existsFn: (path
   return [...new Set(ring0Rows.map((r) => r.implementation).filter((p) => p.endsWith('.ts') && existsFn(p)))]
 }
 
-/** The import graph (repo-relative paths) of the CLI package and the process folders' non-test sources, and the files that import the sink's logging functions. */
+/** The import graph (repo-relative paths) of the CLI, process folders and kernel's non-test sources, and the files that import the sink's logging functions. */
 export function gatherLogProducerGraph(root: string): { producers: Set<string>; imports: Map<string, string[]> } {
   const files = [
     ...walkFiles(join(root, CLI_SOURCE_DIR)),
-    ...walkFiles(join(root, PROCESSES_DIR)).filter((f) => !relative(root, f).split(sep).includes('tests')),
-    ...walkFiles(join(root, KERNEL_DIR)).filter((f) => !relative(root, f).split(sep).includes('tests'))
+    ...[PROCESSES_DIR, KERNEL_DIR].flatMap((dir) =>
+      walkFiles(join(root, dir)).filter((f) => !relative(root, f).split(sep).includes('tests'))
+    )
   ].filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
   const known = new Set(files)
-  const sink = join(root, LOG_SINK_PATH)
-  const producers = new Set<string>([LOG_SINK_PATH])
+  const sinkPath = LOG_SINK_PATHS.find((path) => existsSync(join(root, path))) ?? LOG_SINK_PATHS[0]
+  const sink = join(root, sinkPath)
+  const producers = new Set<string>([sinkPath])
   const imports = new Map<string, string[]>()
   for (const file of files) {
     const deps: string[] = []
