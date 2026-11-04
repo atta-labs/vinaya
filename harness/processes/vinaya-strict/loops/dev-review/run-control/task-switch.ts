@@ -23,6 +23,7 @@ import {
 import { runtimeDir as thisRepoRuntimeDir } from '../standalone/dev-review-loop/reviewer-dispatch.js'
 import { appendDriverLine, loopLogPathFor } from '../../../../../../apps/cli/src/lib/loop-log.js'
 import { engineRunDirectory, readTaskRunner } from './task-run-engine.js'
+import { startBackgroundRun } from './task-run-background.js'
 
 /** The checkpoint file and the write-ahead-log siblings that must travel with it. */
 export const CHECKPOINT_FILES = ['checkpoints.sqlite', 'checkpoints.sqlite-wal', 'checkpoints.sqlite-shm'] as const
@@ -48,7 +49,19 @@ export type SwitchTaskDeps = {
   rewritePauseAgent: (task: number, agent: AgentVendor, model: string | undefined) => boolean
   logLine: (task: number, words: string) => void
   now: () => Date
+  /** Whether the task holds a pause record: a live driver that holds one is only waiting, not working a turn. */
+  holdsPause: (task: number) => boolean
+  /** Sends the driver a SIGTERM. */
+  stopDriver: (pid: number) => void
+  /** Waits `ms` between two reads of the driver's liveness. */
+  sleep: (ms: number) => Promise<void>
+  /** Starts the task's run in the background on the agent and model; returns the acknowledgement to print. */
+  startBackground: (task: number, agent: AgentVendor, model: string | undefined) => Promise<string>
 }
+
+/** How long a stopped driver has to exit, and how often that is checked. */
+export const DRIVER_EXIT_WAIT_MS = 30_000
+const DRIVER_EXIT_POLL_MS = 500
 
 export type SwitchTaskResult =
   | { kind: 'standalone'; message: string }
@@ -83,9 +96,25 @@ export async function switchTask(input: SwitchTaskInput, deps: SwitchTaskDeps): 
   }
   const pid = deps.liveDriverPid(task)
   if (pid !== null) {
-    return {
-      kind: 'refused',
-      message: `vinaya task switch: task ${task}'s driver (pid ${pid}) is still running; nothing was changed. Let it reach its pause, or stop it, then switch.`
+    if (!deps.holdsPause(task)) {
+      return {
+        kind: 'refused',
+        message: `vinaya task switch: task ${task}'s driver (pid ${pid}) is still running; nothing was changed. Let it reach its pause, or stop it, then switch.`
+      }
+    }
+    // The driver only waits in its held pause: it is stopped, and the switch goes on once it has exited.
+    deps.stopDriver(pid)
+    let waited = 0
+    while (deps.liveDriverPid(task) !== null && waited < DRIVER_EXIT_WAIT_MS) {
+      await deps.sleep(DRIVER_EXIT_POLL_MS)
+      waited += DRIVER_EXIT_POLL_MS
+    }
+    const stillAlive = deps.liveDriverPid(task)
+    if (stillAlive !== null) {
+      return {
+        kind: 'refused',
+        message: `vinaya task switch: task ${task}'s driver (pid ${stillAlive}) did not exit within ${DRIVER_EXIT_WAIT_MS / 1000} seconds of being stopped; nothing was changed.`
+      }
     }
   }
   const runDir = engineRunDirectory(task, deps.runtimeDir)
@@ -115,9 +144,10 @@ export async function switchTask(input: SwitchTaskInput, deps: SwitchTaskDeps): 
   const work = publishedWork
     ? 'Its branch and pull request are untouched; the next run continues them from the next round.'
     : 'It has no published work; the next run starts fresh.'
+  const acknowledgement = await deps.startBackground(task, agent, input.model)
   return {
     kind: 'switched',
-    message: `vinaya task switch: task ${task} now continues on ${agent} (${toModel}). ${where} ${work} Run: ${next}`,
+    message: `vinaya task switch: task ${task} now continues on ${agent} (${toModel}). ${where} ${work} Started: ${next} --background\n${acknowledgement}`,
     publishedWork,
     folder,
     moved: present
@@ -181,7 +211,24 @@ export function liveSwitchDeps(runtimeDir: string, published: SwitchTaskDeps['ha
       return true
     },
     logLine: (task, words) => appendDriverLine(loopLogPathFor(null, task, runtimeDir), words),
-    now: () => new Date()
+    now: () => new Date(),
+    holdsPause: (task) => readPauseState(runtimeDir, task) !== null,
+    stopDriver: (pid) => {
+      try {
+        process.kill(pid, 'SIGTERM')
+      } catch {
+        // Already gone: the exit wait sees it.
+      }
+    },
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    startBackground: async (task, agent, model) => {
+      const handle = await startBackgroundRun({ issue: task, agent, ...(model ? { model } : {}) })
+      return [
+        `vinaya task run: task ${handle.task} — background controller acknowledged (pid ${handle.pid}, run ${handle.runId})`,
+        `Follow with: vinaya task status --issue ${handle.task} --follow`,
+        `Log: ${handle.logPath}`
+      ].join('\n')
+    }
   }
 }
 
