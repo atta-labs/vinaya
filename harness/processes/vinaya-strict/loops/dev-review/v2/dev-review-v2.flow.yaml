@@ -41,9 +41,9 @@ steps:
     type: mechanical
     action: vinaya.classify-developer-output
     decision: { examine: validate-developer-output, if_true: develop, if_false: prove-conflict-repair, max_revisions: 3 }
-  # A turn that answered a conflict is proven before anything judges it: a merge commit whose parents include the
-  # default branch's fetched tip, no unresolved index entry, a clean merge with the default branch fetched now, and a
-  # MERGEABLE pull request. Unproven goes back to the Developer; with no conflict owed the step passes.
+  # A turn that answered a conflict is proven before anything judges it: a published head that contains the
+  # default branch's fetched tip (the tip is an ancestor of the head, so commits on top of the merge still count), no
+  # unresolved index entry, a clean merge with the default branch fetched now, and a MERGEABLE pull request. Unproven goes back to the Developer; with no conflict owed the step passes.
   - { id: prove-conflict-repair, type: mechanical, action: vinaya.v2-prove-conflict-repair }
   - id: classify-conflict-repair
     type: mechanical
