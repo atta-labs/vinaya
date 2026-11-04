@@ -89,6 +89,7 @@ import {
 } from '../loops/dev-review/standalone/dev-review-loop/publication'
 import {
   defaultDeps,
+  defaultInstallWorktreeDependencies,
   defaultRunSecurityScanSubprocess,
   defaultUpdatePrBody,
   deferredEntriesForRound,
@@ -297,6 +298,8 @@ export type HeldVerdictRole = 'reviewer' | 'security'
 export interface BoundFunctions {
   checkTaskDispatchReadiness: typeof checkTaskDispatchReadiness
   createTaskWorktree: typeof createTaskWorktree
+  /** Installs the task worktree's own dependencies; throws when the install fails. */
+  installWorktreeDependencies: typeof defaultInstallWorktreeDependencies
   fetchSourceRevision: typeof fetchSourceRevision
   /** Reads the branch's pull request for the checks' environment (`pullRequestCheckEnv`). */
   pullRequestView: (branch: string) => PullRequestView
@@ -2064,6 +2067,17 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
           detail: `the task is not ready to dispatch, so no worktree is created: ${readiness.output}`
         })
       ;(task.bound?.createTaskWorktree ?? createTaskWorktree)(task.branch)
+      // The worktree's own dependencies, installed on every start, before any agent step; a failure stops the run here.
+      try {
+        ;(task.bound?.installWorktreeDependencies ?? defaultInstallWorktreeDependencies)(task.worktreePath)
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        return refuse({
+          reason: 'infrastructure',
+          detail: `the dependencies of the task worktree ${task.worktreePath} could not be installed: ${reason}`,
+          error
+        })
+      }
       // The sandbox is proved by running a real command in it, before the first agent step.
       const plan = task.sandboxPlan?.() ?? null
       if (plan !== null) {
