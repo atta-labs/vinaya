@@ -18,7 +18,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.ts",
-        "sha256": "88601bedb87bb51af60f27534d8da8e80d5c8707394c1691a830fe01a7c934d9"
+        "sha256": "bc12a194405c91d5b358e6176c413df914f7bc34249e0c6d660cf3c7b0ab9ca2"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-publication.ts",
