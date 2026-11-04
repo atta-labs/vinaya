@@ -38,7 +38,7 @@ import {
 } from './local'
 
 // This suite is entirely aeg-core / node:fs — nothing here ever reaches the
-// Vinaya Log sink (`apps/cli/src/lib/log-sink.ts` lives in a different
+// Vinaya Log sink (`harness/kernel/log/log-sink.ts` lives in a different
 // package and is never imported from this directory), so every fault
 // fixture below runs with telemetry disabled by construction, not by an
 // env flag that would need remembering.

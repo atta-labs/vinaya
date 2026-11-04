@@ -9,7 +9,7 @@ import type { VendoredVinaya } from '../../../src/lib/self-host.js'
 
 // Task-files-v1 6, O2: no workflow uploads a log artifact or runs a
 // collector — telemetry reaches its configured destination live instead
-// (`apps/cli/specs/log.md` § The destination; § CI events reach the
+// (`harness/kernel/log/log.md` § The destination; § CI events reach the
 // destination only through a configured server).
 describe('generated vinaya-checks.yml: no log artifact, no collector', () => {
   function opsFor(selfHost: VendoredVinaya | null): ReturnType<typeof buildInitOps> {

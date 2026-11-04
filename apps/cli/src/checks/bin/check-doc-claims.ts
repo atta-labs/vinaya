@@ -40,7 +40,7 @@ const CHECK_NAME = 'doc-claims'
 const DOCTRINE_ROOT = loadConfig()?.proseGates?.doctrineRoot ?? 'aeg-root'
 
 /** The apps and packages pathspecs the standalone documentation verifier sweeps for its doc-claim bindings. */
-const SOURCE_PATHSPECS = ['apps/*.ts', 'apps/*.md', 'packages/*.ts', 'packages/*.md']
+const SOURCE_PATHSPECS = ['apps/*.ts', 'apps/*.md', 'harness/*.ts', 'harness/*.md', 'packages/*.ts', 'packages/*.md']
 
 /**
  * The doctrine pathspec for a root, relative to the repository (`process.cwd()`),

@@ -12,7 +12,7 @@ import {
 } from '../checks/resolver'
 import { CHECK_EXCLUDE_ENV, defaultParallelism, runChecks } from '../checks/runner'
 import { type ConfigLoadResult, configPath, loadConfigChecked } from '../lib/config'
-import { printJson } from '../lib/envelope'
+import { printJson } from '../../../../harness/kernel/effects/envelope'
 import { checkProgressWriter } from '../lib/push-progress'
 import { type ProseRulesPlan, proseRulesPlanSection } from '../lib/prose-rules-plan'
 import { buildRolePlan, type RolePlan } from '../../../../harness/processes/vinaya-strict/integration/roles/plan'
@@ -483,5 +483,5 @@ export function isRunFailed(outcomes: CheckOutcome[], specs: CheckSpec[]): boole
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  check: { date: '2026-09-05', callsToday: 5, retiresVia: 'runChecks' }
+  check: { date: '2026-09-05', callsToday: 4, retiresVia: 'runChecks' }
 }

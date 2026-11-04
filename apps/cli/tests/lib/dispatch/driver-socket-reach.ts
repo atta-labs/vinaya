@@ -15,7 +15,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { devToolsSocketPath, devToolsSocketRoot } from '../../../src/lib/task-tools/dev-tools-registration.js'
+import { devToolsSocketPath, devToolsSocketRoot } from '../../../../../harness/kernel/tools/dev-tools-registration.js'
 import {
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   type ClaudeSandboxSettings,
@@ -23,7 +23,7 @@ import {
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
   linuxUnixSocketFilterOptIn,
   resolveClaudeConfinement
-} from '../../../src/lib/worker-boundary.js'
+} from '../../../../../harness/kernel/isolation/worker-boundary.js'
 import { SANDBOX_RUNTIME_PACKAGE } from '../../sandbox-conformance/sandbox-launch.js'
 import { spawnBudgetedAsync } from '../process-fixture.js'
 

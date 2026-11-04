@@ -7,7 +7,7 @@ import {
   LOG_FOLDER_ONLY_ENV,
   resolveLogDestinationFrom,
   type LogSinkOverrides
-} from '../../src/lib/log-sink.js'
+} from '../../../../harness/kernel/log/log-sink.js'
 import { VinayaConfigSchema, type VinayaConfig } from '../../src/lib/config.js'
 import {
   configureEngineLogEnvironment,
@@ -117,7 +117,7 @@ describe('Log recording restrictions', () => {
       const root = mkdtempSync(join(tmpdir(), 'engine-log-server-'))
       roots.push(root)
       const url = `http://127.0.0.1:${server.port}/ingest`
-      const sinkPath = join(import.meta.dir, '../../src/lib/log-sink.ts')
+      const sinkPath = join(import.meta.dir, '../../../../harness/kernel/log/log-sink.ts')
       const runnerPath = join(import.meta.dir, '../../../../harness/processes/vinaya-strict/bin/run-engine.ts')
       const script = join(root, 'engine-sink.ts')
       writeFileSync(

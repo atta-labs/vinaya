@@ -3,14 +3,14 @@
  * Thin argv-parsing shim over
  * `dispatchRole` (`../lib/dispatch.js`) — the real spawn/timeout/attribution
  * logic lives there, including where its own log lines are delivered (the
- * `logs` setting, `../lib/log-sink.js`). This command runs no flush of its
+ * `logs` setting, `../../../../harness/kernel/log/log-sink.js`). This command runs no flush of its
  * own after the dispatch returns: events reach their configured destination
  * live, as `dispatchRole` emits them, so there is nothing left to ship in a
  * trailing step.
  */
 
 import { readFileSync } from 'node:fs'
-import { ROLE_VALUES, type Role } from '@attalabs/aeg-core'
+import { ROLE_VALUES, type Role } from '../../../../harness/kernel/log/schema'
 import {
   AGENT_VENDOR_NAMES,
   dispatchRole,
@@ -19,7 +19,7 @@ import {
   type AgentVendor
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { loadConfig } from '../lib/config.js'
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 
 // The process's Log sink factory, for the entry point to install before any command runs.
 export { installVinayaLogSinkFactory }
@@ -174,5 +174,5 @@ export async function dispatchCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  dispatch: { date: '2026-09-22', callsToday: 4, retiresVia: 'sharedCommandShell' }
+  dispatch: { date: '2026-09-22', callsToday: 3, retiresVia: 'sharedCommandShell' }
 }

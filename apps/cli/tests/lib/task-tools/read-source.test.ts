@@ -21,24 +21,24 @@ import {
   sourceReceiptsPath,
   sourceSnapshotPath,
   writeRequiredSourceManifest
-} from '../../../src/lib/source-manifest.js'
-import { gitObjectReader, prepareSources } from '../../../src/lib/source-provider.js'
-import { dispatchDevTool, reviewerDevToolContext } from '../../../src/lib/task-tools/dev-tools-server.js'
+} from '../../../../../harness/kernel/source-manifest.js'
+import { gitObjectReader, prepareSources } from '../../../../../harness/kernel/tools/source-provider.js'
+import { dispatchDevTool, reviewerDevToolContext } from '../../../../../harness/kernel/tools/dev-tools-server.js'
 import {
   createFetchDocumentationTool,
   type FetchDocumentationDeps,
   type FetchTarget,
   type RawResponse
-} from '../../../src/lib/task-tools/fetch-documentation.js'
+} from '../../../../../harness/kernel/tools/fetch-documentation.js'
 import {
   createReadSourceTool,
   pageEnd,
   READ_SOURCE_PAGE_BYTES,
   READ_SOURCE_TOOL,
   type ReadSourceResult
-} from '../../../src/lib/task-tools/read-source.js'
-import { isToolGranted, servedTools } from '../../../src/lib/task-tools/role-grants.js'
-import { AGENT_TOOL_CATALOG } from '../../../src/lib/task-tools/tool-catalog.js'
+} from '../../../../../harness/kernel/tools/read-source.js'
+import { isToolGranted, servedTools } from '../../../../../harness/kernel/tools/role-grants.js'
+import { AGENT_TOOL_CATALOG } from '../../../../../harness/kernel/tools/tool-catalog.js'
 import {
   driverAuthoredPromptText,
   lintReviewerPrompt,

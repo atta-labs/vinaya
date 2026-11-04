@@ -12,8 +12,8 @@ import {
   runDeterministicCase,
   sessionRuleViolations
 } from './adapter-contract.js'
+import { devBridgePath } from '../../src/lib/cli-entry.js'
 import {
-  CLI_ENTRY,
   caseOutcome,
   LIVE_PROOF_COMMANDS,
   liveContractBridge,
@@ -150,10 +150,10 @@ describe('the live command, one per adapter', () => {
     expect(detail).not.toContain(process.env.HOME ?? '')
   })
 
-  it('launches the tool-server bridge from the real CLI entry, never from the script that runs it', () => {
+  it('launches the tool-server bridge from the bridge program, never from the script that runs it', () => {
     const bridge = liveContractBridge('/tmp/vinaya-live.sock')
-    expect(bridge.args).toEqual([CLI_ENTRY, 'task-tools', 'dev-bridge', '--socket', '/tmp/vinaya-live.sock'])
-    expect(CLI_ENTRY.endsWith(join('apps', 'cli', 'src', 'index.ts'))).toBe(true)
+    expect(bridge.args).toEqual([devBridgePath(), '--socket', '/tmp/vinaya-live.sock'])
+    expect(devBridgePath().endsWith(join('harness', 'kernel', 'tools', 'host', 'dev-tools-bridge.ts'))).toBe(true)
     expect(bridge.args).not.toContain(process.argv[1])
   })
 

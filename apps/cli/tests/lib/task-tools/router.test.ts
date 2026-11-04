@@ -5,7 +5,7 @@ import {
   taskStatusHandler
 } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/handlers.js'
 import { taskPrReadHandler } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/pr-read.js'
-import { routeTaskToolIntent } from '../../../src/lib/task-tools/router.js'
+import { routeTaskToolIntent } from '../../../../../harness/kernel/tools/host/router.js'
 import { defaultTaskResumeHandler } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/resume.js'
 import { defaultTaskStartHandler } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/start.js'
 

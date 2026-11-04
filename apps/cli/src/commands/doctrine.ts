@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import matter from 'gray-matter'
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import { packageRoot } from '../lib/package-root.js'
 import { resolveRoleFile } from '../../../../harness/processes/vinaya-strict/integration/roles/plan.js'
 
@@ -260,5 +260,5 @@ export async function doctrineCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  doctrine: { date: '2026-09-05', callsToday: 2, retiresVia: 'sharedCommandShell' }
+  doctrine: { date: '2026-09-05', callsToday: 1, retiresVia: 'sharedCommandShell' }
 }

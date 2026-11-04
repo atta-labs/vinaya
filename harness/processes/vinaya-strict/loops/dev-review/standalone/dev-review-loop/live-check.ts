@@ -29,7 +29,7 @@ import {
   CODEX_KEYCHAIN_SERVICE,
   codexKeychainAccount,
   resolveOAuthConfigSourceDir
-} from '../../../../../../../apps/cli/src/lib/worker-boundary.js'
+} from '../../../../../../kernel/isolation/worker-boundary.js'
 
 /** How long one `[live]` line may run before the loop stops it and reads the round red. */
 export const LIVE_RUN_TIMEOUT_MS = 20 * 60_000

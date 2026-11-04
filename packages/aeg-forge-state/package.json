@@ -1,9 +1,7 @@
 {
   "name": "@attalabs/aeg-forge-state",
   "version": "0.41.0",
-  "publishConfig": {
-    "access": "public"
-  },
+  "private": true,
   "license": "FSL-1.1-ALv2",
   "repository": {
     "type": "git",

@@ -11,7 +11,8 @@ import {
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative } from 'node:path'
-import { beyondSurfacePaths, redact, withBeyondSurfaceBlock } from '@attalabs/aeg-core'
+import { beyondSurfacePaths, withBeyondSurfaceBlock } from '@attalabs/aeg-core'
+import { redact } from '../../../../../harness/kernel/log/redact'
 import {
   addCodexWritableDirs,
   buildCodexExecpolicyRules,
@@ -29,10 +30,18 @@ import {
   joinReviewerPromptPieces,
   roleDoctrinePieces
 } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import { runtimeDirForThisRepo } from '../run-paths'
-import { startDevToolsHost } from '../task-tools/dev-tools-host'
-import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
-import { buildWorkerEnv, containerClaudeLogin, stageCodexPolicyHome } from '../worker-boundary'
+import { runtimeDirForThisRepo } from '../../../../../harness/kernel/run-paths'
+import { startDevToolsHost } from '../../../../../harness/kernel/tools/host/dev-tools-host'
+import {
+  devToolsSocketPath,
+  driverDevBridgeInvocation
+} from '../../../../../harness/kernel/tools/dev-tools-registration'
+import { devBridgePath } from '../cli-entry.js'
+import {
+  buildWorkerEnv,
+  containerClaudeLogin,
+  stageCodexPolicyHome
+} from '../../../../../harness/kernel/isolation/worker-boundary'
 import { resolveRoleDoctrineText } from '../../../../../harness/processes/vinaya-strict/integration/roles/plan'
 import { vinayaToolGrantPolicy } from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies'
 import { prepareGradingCopy, testContamination, type Attribution, type HiddenInputs } from './contamination'
@@ -1187,7 +1196,7 @@ const NO_USAGE: StepOneUsage = {
  * the base commit, its prepared source entry and the controller's receipt.
  */
 async function injectedSources(repository: string, baseCommit: string, sourceIds: readonly string[]) {
-  const sourceManifest = await import('../source-manifest')
+  const sourceManifest = await import('../../../../../harness/kernel/source-manifest')
   const preparedAt = new Date(0).toISOString()
   const sources = sourceIds.map((sourceId) => {
     const content = fileAt(repository, baseCommit, sourceId)
@@ -1394,7 +1403,7 @@ async function runDeveloperTrial<T>(
       role: 'developer',
       toolGrants: vinayaToolGrantPolicy()
     })
-    const devToolsBridge = driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts'))
+    const devToolsBridge = driverDevBridgeInvocation(socketPath, devBridgePath())
     handle = await steps.dispatch('developer', adapterVendor(input.adapter), prompt, {
       promptFile: promptPath,
       cwd: staging.workspace,
@@ -1574,7 +1583,7 @@ async function runDeveloperInTree(
       role: 'developer',
       toolGrants: vinayaToolGrantPolicy()
     })
-    const devToolsBridge = driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts'))
+    const devToolsBridge = driverDevBridgeInvocation(socketPath, devBridgePath())
     if (container.backend === 'engine') {
       const { developerTurnResultJsonSchema } = await import(
         '../../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result'
@@ -1656,7 +1665,7 @@ async function executeDeveloper(
   const brief = context.developerBriefs.get(item.pullRequest)
   if (brief === undefined || suite.sha256(brief) !== item.brief.digest.replace(/^sha256:/, ''))
     throw new Error(`developer brief for pull request ${item.pullRequest} is absent or differs from its pinned digest`)
-  const sourceManifest = await import('../source-manifest')
+  const sourceManifest = await import('../../../../../harness/kernel/source-manifest')
   const delivered = await injectedSources(context.repository, item.baseCommit, item.requiredSources)
   const manifestBody = {
     schemaVersion: 1 as const,
@@ -1742,7 +1751,7 @@ async function runEngineReviewer(
       ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
       timeoutMs: context.timeoutMs,
       outputSchema: reviewResultJsonSchema(item.role),
-      devToolsBridge: driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts')),
+      devToolsBridge: driverDevBridgeInvocation(socketPath, devBridgePath()),
       ...(grantedCapabilities === undefined ? {} : { grantedCapabilities }),
       spawnFn: steps.engineSpawn,
       observeStdoutLine: streamObserver(transcript, container)
@@ -2219,7 +2228,7 @@ async function runAnswerCase(
   const doctrine = await trialDoctrineBlock(steps, doctrineRoleOf(request))
   if (!doctrine.ok) return { ok: false, unavailableReason: doctrine.unavailableReason, usage: NO_USAGE }
   const citation = await import('../../../tests/eval/source-citation-suite')
-  const sourceManifest = await import('../source-manifest')
+  const sourceManifest = await import('../../../../../harness/kernel/source-manifest')
   const { manifest, receipts } = citation.evidenceFor(item)
   const required = new Set(input.sources.filter((source) => source.required).map((source) => source.sourceId))
   const alsoDelivered = manifest.sources.filter((source) => !required.has(source.sourceId))
@@ -2284,7 +2293,7 @@ async function runAnswerCase(
       trial.adapter,
       parent,
       workspace,
-      driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts')),
+      driverDevBridgeInvocation(socketPath, devBridgePath()),
       developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: [...required] }),
       {
         ...(context.models['claude-code'] === undefined ? {} : { claudeModel: context.models['claude-code'] }),

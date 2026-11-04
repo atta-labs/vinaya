@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { LogEventSchema } from '@attalabs/aeg-core'
+import { LogEventSchema } from '../../../../harness/kernel/log/schema'
 import { spawnSync } from 'node:child_process'
 import {
   existsSync,
@@ -30,7 +30,7 @@ import {
   type LogSinkDeps,
   type LogSink,
   type LogSinkOverrides
-} from '../../src/lib/log-sink.js'
+} from '../../../../harness/kernel/log/log-sink.js'
 
 // `resolveDoctrine`'s `git` calls run inside `log()`'s `.then()` chain; in a
 // non-repo temp dir the first call fails (fast, but not instant), and a
@@ -626,7 +626,7 @@ describe('log-sink — the trust-anchor config is cached per repository (O1, O3)
       { mode: 0o755 }
     )
 
-    const sinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+    const sinkModule = join(import.meta.dir, '..', '..', '..', '..', 'harness', 'kernel', 'log', 'log-sink.ts')
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
@@ -1159,7 +1159,7 @@ describe('logSync — recording an event as the process ends (O1, O2, O3, O5)', 
 
   it('O2: the real default sink spawns no process at all, and the line lands before process.exit', () => {
     const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-logsync-nospawn-')))
-    const logSinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+    const logSinkModule = join(import.meta.dir, '..', '..', '..', '..', 'harness', 'kernel', 'log', 'log-sink.ts')
     const logSinkFactoryModule = join(
       import.meta.dir,
       '..',
@@ -1251,8 +1251,19 @@ const GATE_EVENT = {
 }
 
 describe('logSync — the next drain delivers it once (O4)', () => {
-  const LOG_SINK_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
-  const DRAIN_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-webhook-drain.ts')
+  const LOG_SINK_MODULE = join(import.meta.dir, '..', '..', '..', '..', 'harness', 'kernel', 'log', 'log-sink.ts')
+  const DRAIN_MODULE = join(
+    import.meta.dir,
+    '..',
+    '..',
+    '..',
+    '..',
+    'harness',
+    'kernel',
+    'log',
+    'client',
+    'log-webhook-drain.ts'
+  )
   const CONFIG_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'config.ts')
 
   function startServer(): { url: string; lines: Array<Record<string, any>>; stop: () => void } {
@@ -1355,7 +1366,7 @@ await drainOutboxToWebhook(404, ${JSON.stringify(server.url)})`
 })
 
 describe('log-sink — a missed trust-anchor read is retried and the run switches to the server (O1, O2, O3, O4)', () => {
-  const LOG_SINK_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+  const LOG_SINK_MODULE = join(import.meta.dir, '..', '..', '..', '..', 'harness', 'kernel', 'log', 'log-sink.ts')
 
   // Run in a child with its own HOME: the switch's server drain reads the
   // machine's retry queue, which must never be this test process's real one.
@@ -1609,7 +1620,7 @@ describe('log-sink — the default sink is built lazily from an installed factor
 
   it('a process that installs no factory has its first log() call refused, naming the factory', () => {
     const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-no-factory-')))
-    const logSinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+    const logSinkModule = join(import.meta.dir, '..', '..', '..', '..', 'harness', 'kernel', 'log', 'log-sink.ts')
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,

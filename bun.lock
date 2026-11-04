@@ -49,7 +49,7 @@
       "name": "@attalabs/log-server",
       "version": "0.0.0",
       "dependencies": {
-        "@attalabs/aeg-core": "workspace:*",
+        "@attalabs/harness": "workspace:*",
       },
       "devDependencies": {
         "@atta/typescript-config": "workspace:*",
@@ -108,6 +108,7 @@
       "dependencies": {
         "@atta/engine": "file:../../apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
         "@atta/executor-agent-spawn": "file:../../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
+        "@attalabs/aeg-forge-state": "workspace:*",
         "@attalabs/aeg-types": "workspace:*",
         "yaml": "2.9.0",
         "zod": "3.25.76",
@@ -141,6 +142,7 @@
       "dependencies": {
         "@attalabs/aeg-forge-state": "0.41.0",
         "@attalabs/aeg-types": "0.41.0",
+        "@attalabs/harness": "workspace:*",
         "gray-matter": "^4.0.3",
         "zod": "3.25.76",
       },

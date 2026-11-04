@@ -33,7 +33,7 @@ import {
   type AgentVendor
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { loadConfig } from '../lib/config.js'
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import {
   cancelDevReviewLoop,
   devReviewLoop,
@@ -198,5 +198,5 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'dev-review-loop': { date: '2026-09-15', callsToday: 7, retiresVia: 'sharedCommandShell' }
+  'dev-review-loop': { date: '2026-09-15', callsToday: 6, retiresVia: 'sharedCommandShell' }
 }

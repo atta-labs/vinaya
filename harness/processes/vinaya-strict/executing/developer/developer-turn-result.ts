@@ -29,7 +29,7 @@
  * required source left unreported — which a schema cannot express.
  */
 
-import { CONFIDENCE_REASON_MAX_LENGTH } from '@attalabs/aeg-core'
+import { CONFIDENCE_REASON_MAX_LENGTH } from '../../../../kernel/log/schema'
 import { z } from 'zod/v4'
 
 /** The one schema version this module produces and accepts. */

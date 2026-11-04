@@ -68,20 +68,20 @@ import {
   type EnforcementControl
 } from '../../../../apps/cli/src/lib/enforcement-controls'
 import { hookRoutingRepairLine, repairLocalGateControl } from '../../../../apps/cli/src/lib/local-gate-control'
-import { appendDriverLine, loopLogPathFor } from '../../../../apps/cli/src/lib/loop-log'
+import { appendDriverLine, loopLogPathFor } from '../../../kernel/log/client/loop-log'
 import {
   countedSourceIds,
   readSourceDeliveryReceipts,
   sourceReceiptsPath,
   sourceStoreDir
-} from '../../../../apps/cli/src/lib/source-manifest'
+} from '../../../kernel/source-manifest'
 import {
   prepareSources,
   RequiredSourcesUnavailable,
   type PrepareSourcesResult
-} from '../../../../apps/cli/src/lib/source-provider'
-import { probeAgentSandbox, type SandboxProbePlan } from '../../../../apps/cli/src/lib/worker-boundary'
-import { ensureRunDir, runPath } from '../../../../apps/cli/src/lib/run-paths'
+} from '../../../kernel/tools/source-provider'
+import { probeAgentSandbox, type SandboxProbePlan } from '../../../kernel/isolation/worker-boundary'
+import { ensureRunDir, runPath } from '../../../kernel/run-paths'
 import {
   postForgeEffectOnce,
   publishRound,

@@ -46,8 +46,8 @@ import {
   writeRun
 } from '@attalabs/aeg-core'
 import { launchSelfDetached } from './detached-launch.js'
-import { controlStoreRoot } from '../../../../../../apps/cli/src/lib/effects.js'
-import { markProcessUnattended } from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { controlStoreRoot } from '../../../../../kernel/effects/effects.js'
+import { markProcessUnattended } from '../../../../../kernel/run-paths.js'
 import {
   type AgentVendor,
   captureSettledChildSnapshot,
@@ -57,7 +57,7 @@ import {
   terminateChildWithGrace
 } from '../dispatch/dispatch.js'
 import { fenceStartedEffectsAsUncertain } from '../standalone/dev-review-loop/pause-resume.js'
-import { loopLogPathFor } from '../../../../../../apps/cli/src/lib/loop-log.js'
+import { loopLogPathFor } from '../../../../../kernel/log/client/loop-log.js'
 import { defaultRunTaskDeps, resolveIssueForRunTask, type RunTaskInput } from './task-run.js'
 
 /** `bg-<task>-<epoch>` — a single path-safe segment (`control-store/local.ts`'s `SAFE_ID_SEGMENT`), unique per epoch so a restart's fresh `writeRun` never collides with a prior, now-stale attempt's own record. */

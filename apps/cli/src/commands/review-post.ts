@@ -108,7 +108,7 @@ import {
   type VerdictExtraction
 } from '@attalabs/aeg-core'
 import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolveReviewPolicy } from '../lib/config'
-import { printJson } from '../lib/envelope'
+import { printJson } from '../../../../harness/kernel/effects/envelope'
 import { isForgeReadOversize, readIssueComments } from '../lib/forge-read'
 import {
   makeCheckError,
@@ -2227,5 +2227,5 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'review post': { date: '2026-09-11', callsToday: 10, retiresVia: 'devReviewLoop' }
+  'review post': { date: '2026-09-11', callsToday: 9, retiresVia: 'devReviewLoop' }
 }

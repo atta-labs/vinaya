@@ -24,15 +24,24 @@ import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { Role } from '@attalabs/aeg-core'
-import { type AgentLineMark, formatAgentLine, parseLineMeta } from './agent-line.js'
+import type { Role } from '../../../../harness/kernel/log/schema'
+import {
+  type AgentLineMark,
+  formatAgentLine,
+  parseLineMeta
+} from '../../../../harness/kernel/adapters/agents/agent-line.js'
 import {
   ANSI_RESET,
   colourEnabled,
   LOOP_ANSI,
   ROLE_ANSI
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
-import { type LoopLogRepo, followLoopLog, loopLogPathFor, loopsRoot } from './loop-log.js'
+import {
+  type LoopLogRepo,
+  followLoopLog,
+  loopLogPathFor,
+  loopsRoot
+} from '../../../../harness/kernel/log/client/loop-log.js'
 
 // --- stages -----------------------------------------------------------------
 

@@ -29,12 +29,12 @@ import {
   type VerdictExtraction
 } from '@attalabs/aeg-core'
 import { principalBodies } from '../../../../../../../apps/cli/src/commands/review-post.js'
-import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../../../../../../../apps/cli/src/lib/effects.js'
+import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../../../../../../kernel/effects/effects.js'
 import { type DeferredFindingsIssueRef, reconcileGhComment } from '../../../../tools/task-contract/forge/forge-write.js'
 import { sh } from './gate-reading.js'
 import { markerComments, principalAllowlist } from './developer-dispatch.js'
 import { heldVerdictPath, readIfExists } from './reviewer-dispatch.js'
-import { ensureRunDir, runPath } from '../../../../../../../apps/cli/src/lib/run-paths.js'
+import { ensureRunDir, runPath } from '../../../../../../kernel/run-paths.js'
 
 type ForgeEffectRecord = { effectId: string; status: 'started' | 'posted'; url?: string }
 

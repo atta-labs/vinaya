@@ -960,7 +960,7 @@ export const COMMANDS: readonly Command[] = [
     details: [
       "Reads the field values as ONE JSON object — `--json '<json>'` or piped on standard input, never positional arguments — and records them through `emitCustomEvent`, the same chokepoint every custom event goes through, so the refusal event and the redaction stay in one place.",
       'A declared event with every field present and of its declared type exits 0 and prints the event name and the kind of destination it was recorded toward (`folder`, `server`, or `none`) — never a field value. A refused event (an undeclared name, or a missing, extra, wrong-typed or too-long field) exits 1 and prints the reason class and the field names — never a value, since a rejected value may be the secret. A missing event name, unreadable JSON, or JSON that is not a flat object is a usage error: exit 2, before anything is recorded.',
-      'A process with only `VINAYA_WORK_REF` and `VINAYA_FLOW` set, and no Vinaya role or task, still gets a header carrying that work reference and way-of-working id — the same environment read every event already honours (`apps/cli/specs/log.md` § Attribution).'
+      'A process with only `VINAYA_WORK_REF` and `VINAYA_FLOW` set, and no Vinaya role or task, still gets a header carrying that work reference and way-of-working id — the same environment read every event already honours (`harness/kernel/log/log.md` § Attribution).'
     ],
     status: 'shipped'
   },

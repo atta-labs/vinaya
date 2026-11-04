@@ -13,7 +13,7 @@ import {
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { prepareTaskOrIssue } from '../../../../harness/processes/vinaya-strict/tools/task-contract/dispatch-task.js'
 import { isForgeReadOversize, readIssueComments, readIssueFields } from '../lib/forge-read.js'
-import { printJson } from '../lib/envelope'
+import { printJson } from '../../../../harness/kernel/effects/envelope'
 import {
   countMarkerComments,
   locateBody,
@@ -480,5 +480,5 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'issue objectives edit': { date: '2026-09-14', callsToday: 13, retiresVia: 'forgeWrite' }
+  'issue objectives edit': { date: '2026-09-14', callsToday: 12, retiresVia: 'forgeWrite' }
 }

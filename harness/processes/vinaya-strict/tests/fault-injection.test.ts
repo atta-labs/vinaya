@@ -24,7 +24,7 @@ import {
   usageLimitResetFromDetail,
   usageLimitWaitMs
 } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
-import { loopLogPathFor } from '../../../../apps/cli/src/lib/loop-log'
+import { loopLogPathFor } from '../../../kernel/log/client/loop-log'
 import {
   BRANCH,
   fakeDeps,

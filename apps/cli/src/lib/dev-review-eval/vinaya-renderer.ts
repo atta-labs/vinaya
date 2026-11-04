@@ -38,12 +38,12 @@ import {
   REVIEWER_SEVERITIES,
   type ReviewerRole
 } from '../../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
-import type { SourceDeliveryReceipt } from '../source-manifest'
+import type { SourceDeliveryReceipt } from '../../../../../harness/kernel/source-manifest'
 import {
   type GrantedRole,
   ROLE_TOOL_GRANTS
 } from '../../../../../harness/processes/vinaya-strict/integration/policies/roles'
-import { AGENT_TOOL_CATALOG } from '../task-tools/tool-catalog'
+import { AGENT_TOOL_CATALOG } from '../../../../../harness/kernel/tools/tool-catalog'
 import type { Digest } from './contracts'
 import {
   canonicalJson,
@@ -874,11 +874,11 @@ export const MAPPING_SOURCE_PATHS: readonly string[] = [
   'apps/cli/src/lib/dev-review-eval/contracts.ts',
   'harness/processes/vinaya-strict/executing/code-reviewer/review-result.ts',
   'harness/processes/vinaya-strict/executing/developer/developer-turn-result.ts',
-  'apps/cli/src/lib/task-tools/role-grants.ts',
+  'harness/kernel/tools/role-grants.ts',
   'harness/processes/vinaya-strict/integration/policies/roles.ts',
   'harness/kernel/adapters/agents/manifest.ts',
   'packages/aeg-core/src/review-policy.ts',
-  'packages/aeg-core/src/log/schema.ts',
+  'harness/kernel/log/schema.ts',
   'packages/aeg-core/src/issue-validation.ts',
   'packages/aeg-core/src/anchored-region.ts',
   'packages/aeg-forge-state/src/strip-code.ts'

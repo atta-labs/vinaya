@@ -5,8 +5,7 @@
  * (`scripts/package-compat/snapshot.json`).
  *
  * The published packages are the fixed release group of `.changeset/config.json`.
- * Each one is packed: the three aeg packages through the assemble step
- * (`assemble-pack.ts`), the source package with `npm pack`, and the command-line
+ * Each one is packed: a source package with `npm pack`, and the command-line
  * package from its built bundle and bundled doctrine. The tarballs are installed
  * together into a scratch folder with Bun — every `@attalabs/` package from its
  * local tarball, by dependency and by override, never from a registry — and the
@@ -41,7 +40,15 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import ts from 'typescript'
-import { ASSEMBLED_PACKAGES, assemblePack, type InternalModule } from './assemble-pack.ts'
+
+/** One reviewed internal module a tarball may gain or lose: where it ships in the package, the repository file it comes from, and why. */
+export type InternalModule = {
+  /** Package-relative module path in the tarball. */
+  path: string
+  /** Repository-relative authoritative file. */
+  source: string
+  reason: string
+}
 
 export const REPO_ROOT = realpathSync(join(import.meta.dir, '..', '..'))
 export const SNAPSHOT_PATH = 'scripts/package-compat/snapshot.json'
@@ -81,8 +88,6 @@ export type PackageFacts = {
 export type PackageSnapshot = PackageFacts & {
   /** Repository-relative package folder. */
   dir: string
-  /** Packed through the assemble step. */
-  assembled: boolean
   /** The reviewed allowlist: internal modules the file list may gain or lose. */
   internalModules: InternalModule[]
 }
@@ -103,7 +108,7 @@ export function serializeSnapshot(snapshot: Snapshot): string {
 
 // ── The published packages ──────────────────────────────────────────────────
 
-export type PublishedPackage = { name: string; dir: string; assembled: boolean }
+export type PublishedPackage = { name: string; dir: string }
 
 type Manifest = {
   name?: string
@@ -131,7 +136,7 @@ export function publishedPackages(root: string = REPO_ROOT): PublishedPackage[] 
   return names.map((name) => {
     const dir = dirs.get(name)
     if (!dir) throw new Error(`package-compat: ${name} is in the fixed release group but no workspace folder holds it`)
-    return { name, dir, assembled: ASSEMBLED_PACKAGES.has(name) }
+    return { name, dir }
   })
 }
 
@@ -221,16 +226,8 @@ export function packCommandLine(root: string, dir: string, stage: string, dest: 
 }
 
 /** One package's tarball, packed the way its kind ships. */
-export function packPackage(
-  root: string,
-  pkg: PublishedPackage,
-  scratch: string,
-  internalModules: readonly InternalModule[] = []
-): string {
+export function packPackage(root: string, pkg: PublishedPackage, scratch: string): string {
   const dest = join(scratch, 'tarballs')
-  if (pkg.assembled)
-    return assemblePack({ root, packageDir: pkg.dir, staging: mkdtempIn(scratch, 'assemble-'), dest, internalModules })
-      .tarball
   if (existsSync(join(root, pkg.dir, 'scripts', 'build.ts')))
     return packCommandLine(root, pkg.dir, mkdtempIn(scratch, 'stage-'), dest)
   return npmPack(join(root, pkg.dir), dest)
@@ -639,11 +636,10 @@ export function allowlistProblems(snapshot: Snapshot): string[] {
 export type CompatRun = InstalledFacts & { tarballs: Record<string, string>; installDir: string }
 
 /** Packs every published package into `scratch`, installs the tarballs there and reads their facts. */
-export function runCompat(scratch: string, root: string = REPO_ROOT, snapshot?: Snapshot): CompatRun {
+export function runCompat(scratch: string, root: string = REPO_ROOT): CompatRun {
   assertOutside(root, scratch)
   const tarballs: Record<string, string> = {}
-  for (const pkg of publishedPackages(root))
-    tarballs[pkg.name] = packPackage(root, pkg, scratch, snapshot?.packages[pkg.name]?.internalModules ?? [])
+  for (const pkg of publishedPackages(root)) tarballs[pkg.name] = packPackage(root, pkg, scratch)
   const installDir = join(scratch, 'install')
   installTarballs(root, installDir, tarballs)
   return { ...installedFacts(installDir, tarballs), tarballs, installDir }
@@ -656,7 +652,6 @@ export function snapshotOf(run: CompatRun, previous: Snapshot | null, root: stri
     const facts = run.facts[pkg.name] as PackageFacts
     packages[pkg.name] = {
       dir: pkg.dir,
-      assembled: pkg.assembled,
       internalModules: previous?.packages[pkg.name]?.internalModules ?? [],
       ...facts
     }
@@ -668,7 +663,7 @@ if (import.meta.main) {
   const scratch = mkdtempSync(join(tmpdir(), 'package-compat-'))
   try {
     const previous = existsSync(join(REPO_ROOT, SNAPSHOT_PATH)) ? readSnapshot() : null
-    const run = runCompat(scratch, REPO_ROOT, previous ?? undefined)
+    const run = runCompat(scratch, REPO_ROOT)
     if (run.problems.length > 0) {
       process.stderr.write(`${run.problems.join('\n')}\n`)
       process.exitCode = 1

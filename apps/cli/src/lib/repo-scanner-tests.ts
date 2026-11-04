@@ -135,15 +135,23 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   },
   { test: 'apps/cli/tests/import-boundary.test.ts', roots: ['apps/cli/'], trigger: 'content' },
   {
-    test: 'apps/cli/tests/lib/log-entry-paths.test.ts',
+    test: 'harness/processes/vinaya-strict/integration/log/client/log-entry-paths.test.ts',
     roots: ['.github/workflows/', '.vinaya/hooks/', '.claude/settings.json', 'vinaya.config.json'],
     trigger: 'content'
   },
-  { test: 'apps/cli/tests/lib/log-callers.test.ts', roots: ['.'], trigger: 'content' },
-  { test: 'apps/cli/tests/lib/log-sink-factory.test.ts', roots: ['.'], trigger: 'content' },
+  {
+    test: 'harness/processes/vinaya-strict/integration/log/client/log-callers.test.ts',
+    roots: ['.'],
+    trigger: 'content'
+  },
+  {
+    test: 'harness/processes/vinaya-strict/integration/log/log-sink-factory.test.ts',
+    roots: ['.'],
+    trigger: 'content'
+  },
   {
     test: 'apps/cli/tests/lib/log-sink-no-sync-spawn.test.ts',
-    roots: ['apps/cli/src/lib/log-sink.ts'],
+    roots: ['harness/kernel/log/log-sink.ts'],
     trigger: 'content'
   },
   { test: 'apps/cli/tests/lib/no-log-forge-writes.test.ts', roots: ['.'], trigger: 'content' },
@@ -166,7 +174,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   // Spelled in two halves: the retired role id this test hunts is refused
   // anywhere under a source directory, this table included.
   { test: `apps/cli/tests/no-brief-${'author'}.test.ts`, roots: ['.'], trigger: 'content' },
-  { test: 'apps/cli/tests/run-paths-only.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'harness/processes/vinaya-strict/integration/run-paths-only.test.ts', roots: ['.'], trigger: 'content' },
   { test: 'apps/cli/tests/surface-index.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
   { test: 'apps/cli/tests/surface-spec-exports.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
   {

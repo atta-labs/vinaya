@@ -36,8 +36,8 @@ import {
   developerWrittenTextFromVendorOutput,
   type DispatchTeeRecoveryDeps
 } from '../../../loops/dev-review/dispatch/dispatch.js'
-import { addedDiffLines, findCredentialPatterns } from '../../../../../../apps/cli/src/lib/worker-boundary.js'
-import { devToolsSocketRoot } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-registration.js'
+import { addedDiffLines, findCredentialPatterns } from '../../../../../kernel/isolation/worker-boundary.js'
+import { devToolsSocketRoot } from '../../../../../kernel/tools/dev-tools-registration.js'
 import {
   CLI_ROOT,
   collectLaunchedChildren,
@@ -192,7 +192,7 @@ describe('developerWrittenTextFromVendorOutput + the after-turn credential scan 
     join(CLI_ROOT, 'tests', 'lib', 'dispatch', 'worker-boundary.test.ts'),
     'utf8'
   )
-  const redactFixture = readFileSync(join(REPO_ROOT, 'packages', 'aeg-core', 'src', 'log', 'redact.test.ts'), 'utf8')
+  const redactFixture = readFileSync(join(REPO_ROOT, 'harness', 'kernel', 'log', 'redact.test.ts'), 'utf8')
 
   // A Claude `--output-format stream-json` tee for a turn that READ both
   // fixtures: the agent's own message, a `Read` tool_use naming each file (the
@@ -217,9 +217,7 @@ describe('developerWrittenTextFromVendorOutput + the after-turn credential scan 
       JSON.stringify({
         type: 'assistant',
         message: {
-          content: [
-            { type: 'tool_use', name: 'Read', input: { file_path: 'packages/aeg-core/src/log/redact.test.ts' } }
-          ]
+          content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'harness/kernel/log/redact.test.ts' } }]
         }
       }),
       JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: redactFixture }] } }),
@@ -649,7 +647,7 @@ describe('claudeUnconfinedVerdict — container mode, with fake probes', () => {
   })
 
   it("reads a dispatch's own socket directory from its bridge", () => {
-    expect(bridgeSocketDir({ args: ['entry', 'task-tools', 'dev-bridge', '--socket', join(own, 's.sock')] })).toBe(own)
+    expect(bridgeSocketDir({ args: ['entry', '--socket', join(own, 's.sock')] })).toBe(own)
     expect(bridgeSocketDir(null)).toBeNull()
   })
 })

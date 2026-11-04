@@ -42,9 +42,9 @@ import {
   readClaudeTurnOutput,
   readCodexTurnOutput
 } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result'
-import { DEV_TOOLS_MCP_SERVER_NAME } from '../task-tools/dev-tools-names'
-import type { BridgeInvocation } from '../task-tools/dev-tools-registration'
-import { containerClaudeLogin } from '../worker-boundary'
+import { DEV_TOOLS_MCP_SERVER_NAME } from '../../../../../harness/kernel/tools/dev-tools-names'
+import type { BridgeInvocation } from '../../../../../harness/kernel/tools/dev-tools-registration'
+import { containerClaudeLogin } from '../../../../../harness/kernel/isolation/worker-boundary'
 import { git } from './staging'
 import { capabilitiesForCase } from './vinaya-renderer'
 

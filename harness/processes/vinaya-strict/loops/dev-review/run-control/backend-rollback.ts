@@ -48,13 +48,9 @@ import {
   readDriverLock,
   readPauseState
 } from '../standalone/dev-review-loop/pause-resume.js'
-import type {
-  EffectIdentity,
-  EffectReconciler,
-  EffectReconcileResult
-} from '../../../../../../apps/cli/src/lib/effects.js'
+import type { EffectIdentity, EffectReconciler, EffectReconcileResult } from '../../../../../kernel/effects/effects.js'
 import { reconcileGhComment } from '../../../tools/task-contract/forge/forge-write.js'
-import { ensureRunDir, runPath } from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { ensureRunDir, runPath } from '../../../../../kernel/run-paths.js'
 import { engineRunInFlight } from './task-run-engine.js'
 import type { TaskToolCallResult } from './handlers.js'
 import type { CallerContext } from '../../../integration/server.js'

@@ -3,23 +3,19 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSyn
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  cacheContractCases,
-  normalizeStoredLine,
-  type DatasetRow,
-  type NormalizedLine,
-  type RowOrigin
-} from '@attalabs/aeg-core'
+import { cacheContractCases } from '../../../../harness/kernel/log/sync/cache-contract'
+import { normalizeStoredLine } from '../../../../harness/kernel/log/sync/normalize'
+import type { DatasetRow, NormalizedLine, RowOrigin } from '../../../../harness/kernel/log/sync/row'
 import {
   CACHE_FILE_NAME,
   CURRENT_SCHEMA_VERSION,
   LOCK_WAIT_MS,
   createSqliteCache
-} from '../../src/lib/log-cache-sqlite.js'
+} from '../../../../harness/kernel/log/client/log-cache-sqlite.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 
 // The durable SQLite backend against the shared contract and this backend's
-// own durability guarantees (`apps/cli/specs/log-sync.md`). Every case opens
+// own durability guarantees (`harness/kernel/log/log-sync.md`). Every case opens
 // its own temporary directory — a real file, never a fake — so what passes
 // here is what a real `vinaya` process would see.
 
@@ -389,7 +385,10 @@ describe('log-cache-sqlite — refusing a bad file or an unwritable directory (O
 
 describe('log-cache-sqlite — the lazy import (O7)', () => {
   it('no top-level import statement in this module names node:sqlite (only the open function may)', () => {
-    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'log-cache-sqlite.ts'), 'utf8')
+    const source = readFileSync(
+      join(import.meta.dir, '../../../../harness/kernel/log/client/log-cache-sqlite.ts'),
+      'utf8'
+    )
     const topLevelRuntimeImports = source
       .split('\n')
       .filter((line) => /^import\s+(?!type\b)/.test(line))
@@ -399,7 +398,7 @@ describe('log-cache-sqlite — the lazy import (O7)', () => {
 
   async function buildForNode(): Promise<string> {
     const built = await Bun.build({
-      entrypoints: [join(import.meta.dir, '..', '..', 'src', 'lib', 'log-cache-sqlite.ts')],
+      entrypoints: [join(import.meta.dir, '../../../../harness/kernel/log/client/log-cache-sqlite.ts')],
       target: 'node',
       format: 'esm',
       outdir: tmpDir()
@@ -446,7 +445,7 @@ describe('log-cache-sqlite — the lazy import (O7)', () => {
     const result = spawnSyncBudgeted('node', [driverScript], { encoding: 'utf8', env: stripVinayaEnv() })
     expect(result.status).toBe(0)
     // The module's own experimental warning is never silenced (traps,
-    // `apps/cli/specs/log-sync.md`) — proof the load genuinely reached
+    // `harness/kernel/log/log-sync.md`) — proof the load genuinely reached
     // real `node:sqlite`, not bun's.
     expect(result.stderr.toLowerCase()).toContain('sqlite')
 

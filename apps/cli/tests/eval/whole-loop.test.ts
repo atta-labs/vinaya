@@ -1,14 +1,9 @@
+import { parseIssueDocumentation } from '../../../../harness/kernel/issue-documentation'
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import {
-  checkIssueObjectives,
-  parseIssueDocumentation,
-  parseIssueParts,
-  parseIssueStopConditions,
-  parseIssueTestPlan
-} from '@attalabs/aeg-core'
+import { checkIssueObjectives, parseIssueParts, parseIssueStopConditions, parseIssueTestPlan } from '@attalabs/aeg-core'
 import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import { renderCase } from '../../src/lib/dev-review-eval/vinaya-renderer'
 import {

@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import type { AgentVendor } from '../dispatch/dispatch.js'
 import { isDriverPidAlive, readDriverLock } from '../standalone/dev-review-loop/pause-resume.js'
 import { cliPackageRoot } from '../../../../../../apps/cli/src/lib/package-root.js'
-import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../kernel/run-paths.js'
 import type { TaskRunner } from '../../../../../../apps/cli/src/lib/config.js'
 
 export const ENGINE_FALLBACK_NOTICE =

@@ -40,11 +40,12 @@ import {
   isPrincipal,
   MAX_RETURNED_TEXT_CHARS,
   parseDeveloperRoundMarker,
-  redact,
   type TaskPrCheck,
   type TaskPrReviewRecord,
   type TaskPrVerdict
 } from '@attalabs/aeg-core'
+import { redact } from '../../../../../kernel/log/redact'
+import type { FailedCheckLog } from '../../../../../kernel/tools/failed-check-log.js'
 import { markerComments } from '../standalone/dev-review-loop/developer-dispatch.js'
 import { judgeWorkflowRuns, type RestWorkflowRun, sh } from '../standalone/dev-review-loop/gate-reading.js'
 import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../../../../../../apps/cli/src/lib/principal-test-plan-wait-check-name.js'
@@ -129,7 +130,7 @@ const VERDICT_LABEL = /^([ \t]*(?:\*{1,3}|_{1,3})?)VERDICT:/gim
  *
  * 1. **Strip terminal colouring** — a runner colours its own log, and the
  *    escape bytes are noise at best.
- * 2. **Redact secrets** through `redact()` (`packages/aeg-core/src/log/redact.ts`),
+ * 2. **Redact secrets** through `redact()` (`harness/kernel/log/redact.ts`),
  *    this codebase's single redaction chokepoint — the same one the Vinaya
  *    Log applies before an event leaves the machine. A CI step that prints a
  *    token, an environment dump or a credential during a failing run must not
@@ -340,9 +341,6 @@ export function renderFailureExcerpt(check: string, runId: number, excerpt: stri
     fence
   ].join('\n')
 }
-
-/** One failed check run on a head, with its own sanitized job-log tail — `null` when the log could not be read. */
-export type FailedCheckLog = { check: string; runId: number; logTail: string | null }
 
 /**
  * Each failed check run's log tail, one `readJobLogTail` per run handed in —

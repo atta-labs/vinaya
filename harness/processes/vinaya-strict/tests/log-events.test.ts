@@ -6,16 +6,14 @@ import { resolve } from 'node:path'
 import { parse } from 'yaml'
 import {
   assessRound,
-  buildHeader,
   buildReviewInputManifest,
   DEFAULT_REVIEW_POLICY,
-  DevReviewLoopEventSchema,
-  HandoffEventSchema,
   initialLoopState,
-  RoleAttemptEventSchema,
   type LoopState,
   type Observations
 } from '@attalabs/aeg-core'
+import { buildHeader } from '../../../kernel/log/envelope'
+import { DevReviewLoopEventSchema, HandoffEventSchema, RoleAttemptEventSchema } from '../../../kernel/log/schema'
 import { createRunControl, type RunOutcome, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
 import {

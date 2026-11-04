@@ -164,7 +164,7 @@ export type ConfigIsolatedFixture = {
  * — and `cancelDevReviewLoop`, `devReviewLoop` and `runTask` all classify
  * their own process that way — whose local configuration declares no `logs`
  * setting at all still honours the DEFAULT BRANCH's own declared destination
- * (`resolveLogDestinationFrom`, `apps/cli/src/lib/log-sink.ts`), read over
+ * (`resolveLogDestinationFrom`, `harness/kernel/log/log-sink.ts`), read over
  * the forge with an identity taken from the Actions runner's own
  * `GITHUB_REPOSITORY` and the `origin` remote — never from the working
  * directory. So a child given an EMPTY configuration still delivered to

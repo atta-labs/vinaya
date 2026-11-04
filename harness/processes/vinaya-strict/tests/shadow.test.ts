@@ -5,8 +5,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { readDriverLock } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { join, resolve } from 'node:path'
 import ts from 'typescript'
-import { DEV_TOOL_NAMES, READ_SOURCE_TOOL } from '../../../../apps/cli/src/lib/task-tools/dev-tools-server'
-import type { DevToolContext } from '../../../../apps/cli/src/lib/task-tools/dev-tools-server'
+import { DEV_TOOL_NAMES, READ_SOURCE_TOOL } from '../../../kernel/tools/dev-tools-server'
+import type { DevToolContext } from '../../../kernel/tools/dev-tools-server'
 import type { BoundFunctions } from '../executing/actions'
 import { liveHandoffDeps, type HandoffDeps } from '../executing/handoff'
 import {
@@ -62,7 +62,7 @@ const REGISTRIES = [
     classes: BOUND_FUNCTION_CLASSES
   },
   { file: 'harness/processes/vinaya-strict/executing/handoff.ts', name: 'HandoffDeps', classes: HANDOFF_DEP_CLASSES },
-  { file: 'apps/cli/src/lib/task-tools/dev-tools-server.ts', name: 'DevToolContext', classes: DEV_TOOL_CLASSES }
+  { file: 'harness/kernel/tools/dev-tools-server.ts', name: 'DevToolContext', classes: DEV_TOOL_CLASSES }
 ] as const
 
 /** A recorder that keeps attempts in memory. */
@@ -99,7 +99,7 @@ describe('the shadow classification', () => {
       'pushTaskBranch'
     ]
     expect(classificationGaps(declared, BOUND_FUNCTION_CLASSES).unclassified).toEqual(['pushTaskBranch'])
-    const tools = [...declaredMembers('apps/cli/src/lib/task-tools/dev-tools-server.ts', 'DevToolContext'), 'mergePr']
+    const tools = [...declaredMembers('harness/kernel/tools/dev-tools-server.ts', 'DevToolContext'), 'mergePr']
     expect(classificationGaps(tools, DEV_TOOL_CLASSES).unclassified).toEqual(['mergePr'])
     const removed = declaredMembers('harness/processes/vinaya-strict/executing/handoff.ts', 'HandoffDeps').filter(
       (name) => name !== 'postPauseComment'

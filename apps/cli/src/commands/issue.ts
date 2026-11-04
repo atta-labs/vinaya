@@ -1,5 +1,5 @@
 import { findTrancheSlug, isTaskIssueBodyShaped, isTaskIssueLabelSet } from '@attalabs/aeg-core'
-import { printJson } from '../lib/envelope'
+import { printJson } from '../../../../harness/kernel/effects/envelope'
 import {
   type BodyResult,
   ForgeArgError,
@@ -161,6 +161,6 @@ export function issueSurfaceCommand(args: string[]): void {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'issue create': { date: '2026-09-11', callsToday: 10, retiresVia: 'forgeWrite' },
-  'issue edit': { date: '2026-09-11', callsToday: 11, retiresVia: 'forgeWrite' }
+  'issue create': { date: '2026-09-11', callsToday: 9, retiresVia: 'forgeWrite' },
+  'issue edit': { date: '2026-09-11', callsToday: 10, retiresVia: 'forgeWrite' }
 }

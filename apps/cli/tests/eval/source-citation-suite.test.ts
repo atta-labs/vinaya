@@ -6,7 +6,7 @@ import {
   semanticErrors,
   type DeveloperTurnResult
 } from '../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result'
-import { manifestDigest, sha256Digest, type SourceDeliveryReceipt } from '../../src/lib/source-manifest'
+import { manifestDigest, sha256Digest, type SourceDeliveryReceipt } from '../../../../harness/kernel/source-manifest'
 import {
   ADAPTERS,
   CASES_PATH,

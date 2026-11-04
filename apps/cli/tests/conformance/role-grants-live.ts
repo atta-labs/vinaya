@@ -4,22 +4,22 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { buildWorkerEnv } from '../../src/lib/worker-boundary.js'
+import { buildWorkerEnv } from '../../../../harness/kernel/isolation/worker-boundary.js'
 import { confinedTmpEnv, resolveProofConfinement, stageProofCodexHome } from '../../src/lib/task-tools/dev-proof.js'
-import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host.js'
+import { startDevToolsHost } from '../../../../harness/kernel/tools/host/dev-tools-host.js'
 import {
   type BridgeInvocation,
   claudeDevToolsArgs,
   devToolsMcpConfigFileBody,
   devToolsSocketPath,
   driverDevBridgeInvocation
-} from '../../src/lib/task-tools/dev-tools-registration.js'
-import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
-import { servedTools } from '../../src/lib/task-tools/role-grants.js'
+} from '../../../../harness/kernel/tools/dev-tools-registration.js'
+import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from '../../../../harness/kernel/tools/dev-tools-server.js'
+import { servedTools } from '../../../../harness/kernel/tools/role-grants.js'
 import type { GrantedRole } from '../../../../harness/processes/vinaya-strict/integration/policies/roles.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture.js'
 import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
+import { devBridgePath } from '../../src/lib/cli-entry.js'
 
 /**
  * Live grant conformance, shared by `claude.test.ts` and `codex.test.ts`: a
@@ -41,12 +41,9 @@ type LiveAgent = 'claude' | 'codex'
 
 const DEVELOPER_TOOL_PROBE = 'publish_changes'
 
-/** The vinaya CLI's own entry, which the staged bridge runs: under `bun test`, `process.argv[1]` is the test file, not the CLI. */
-export const VINAYA_CLI_ENTRY = fileURLToPath(new URL('../../src/index.ts', import.meta.url))
-
-/** The bridge a live session's MCP client spawns: the dispatch's own builder, pointed at the real CLI entry. */
+/** The bridge a live session's MCP client spawns: the dispatch's own builder, pointed at the bridge program. */
 export function liveBridgeInvocation(socketPath: string): BridgeInvocation {
-  return driverDevBridgeInvocation(socketPath, VINAYA_CLI_ENTRY)
+  return driverDevBridgeInvocation(socketPath, devBridgePath())
 }
 
 /** Calls `onMessage` with each JSON object in a newline-delimited JSON-RPC byte stream. */

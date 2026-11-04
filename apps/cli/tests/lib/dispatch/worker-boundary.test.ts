@@ -16,7 +16,7 @@ import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { addCodexWritableDirs } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
-import { devToolsSocketRoot } from '../../../src/lib/task-tools/dev-tools-registration'
+import { devToolsSocketRoot } from '../../../../../harness/kernel/tools/dev-tools-registration'
 import {
   buildWorkerEnv,
   CLAUDE_CONTAINER_TOKEN_ENV,
@@ -60,7 +60,7 @@ import {
   type LinuxSandboxToolDeps,
   type ConfinementRequest,
   type ProtectedPathEntry
-} from '../../../src/lib/worker-boundary'
+} from '../../../../../harness/kernel/isolation/worker-boundary'
 import { readlinkSync, lstatSync } from 'node:fs'
 import { vinayaWorkerBoundaryPolicies } from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies'
 

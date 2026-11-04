@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildPrincipalTestPlanWaitErrors } from '../../../../../apps/cli/src/checks/bin/check-principal-test-plan-wait'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../../../../apps/cli/src/checks/contract'
-import { sha256Hex } from '../../../../../apps/cli/src/lib/effects'
+import { sha256Hex } from '../../../../kernel/effects/effects'
 import {
   DEFAULT_COLLISION_THRESHOLD,
   checkIntroducedCommandsCovered,
@@ -1184,7 +1184,7 @@ describe('the Developer-runnable rule reads the command reference, never a typed
 
 // ---------------------------------------------------------------------------
 // `reconcileGhComment` (security review, round 2, HIGH) — the `gh`-backed
-// `EffectReconciler` `apps/cli/src/lib/effects.ts`'s `EffectExecutor` calls
+// `EffectReconciler` `harness/kernel/effects/effects.ts`'s `EffectExecutor` calls
 // on recovery. A fake `gh` answers `{issue,pr} view --json comments` with a
 // fixed comment list, and the default branch's `vinaya.config.json` with
 // `principals: ['daniboomerang']` — the Principal list the reconciler reads.

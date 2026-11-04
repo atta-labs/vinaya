@@ -65,8 +65,8 @@ import {
   hookRoutingRepairLine,
   repairLocalGateControl
 } from '../../../../../../../apps/cli/src/lib/local-gate-control.js'
-import { appendDriverLine, loopLogPathFor } from '../../../../../../../apps/cli/src/lib/loop-log.js'
-import { ensureRunDir, runPath } from '../../../../../../../apps/cli/src/lib/run-paths.js'
+import { appendDriverLine, loopLogPathFor } from '../../../../../../kernel/log/client/loop-log.js'
+import { ensureRunDir, runPath } from '../../../../../../kernel/run-paths.js'
 import { sh } from './gate-reading.js'
 import {
   type ForgeComment,

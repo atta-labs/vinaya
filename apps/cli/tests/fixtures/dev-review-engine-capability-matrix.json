@@ -187,8 +187,8 @@
     },
     "vinaya-isolation": {
       "kind": "repo-spec",
-      "path": "apps/cli/specs/isolation.md",
-      "url": "https://github.com/atta-labs/vinaya/blob/883b14afbe0181e4267a894c128f8734de7e2ace/apps/cli/specs/isolation.md",
+      "path": "harness/kernel/isolation/isolation.md",
+      "url": "https://github.com/atta-labs/vinaya/blob/883b14afbe0181e4267a894c128f8734de7e2ace/harness/kernel/isolation/isolation.md",
       "title": "Isolation — the task boundary a dispatched agent runs inside",
       "sections": [
         "1. The six boundaries",
@@ -215,8 +215,8 @@
     },
     "vinaya-worker-boundary": {
       "kind": "repo-source",
-      "path": "apps/cli/src/lib/worker-boundary.ts",
-      "url": "https://github.com/atta-labs/vinaya/blob/883b14afbe0181e4267a894c128f8734de7e2ace/apps/cli/src/lib/worker-boundary.ts",
+      "path": "harness/kernel/isolation/worker-boundary.ts",
+      "url": "https://github.com/atta-labs/vinaya/blob/883b14afbe0181e4267a894c128f8734de7e2ace/harness/kernel/isolation/worker-boundary.ts",
       "title": "Worker boundary: per-vendor confinement resolution"
     }
   },

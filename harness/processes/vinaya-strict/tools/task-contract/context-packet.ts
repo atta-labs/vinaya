@@ -20,7 +20,7 @@
  */
 
 import { taskToolError, type OperatorGrantedTool, type TaskToolError } from '@attalabs/aeg-core'
-import { routeTaskToolIntent } from '../../../../../apps/cli/src/lib/task-tools/router.js'
+import { routeTaskToolIntent } from '../../../../kernel/tools/host/router.js'
 
 export type ContextPacketRole = 'operator' | 'developer' | 'reviewer'
 

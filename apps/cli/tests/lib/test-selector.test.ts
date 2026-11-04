@@ -382,7 +382,7 @@ describe('the hook drops --concurrency=1 — selected files run together in one 
 })
 
 // Issue #660, O2 — two real 2026-09-19 pushes passed the pre-push hook and
-// then failed CI on `log-callers — O2` (apps/cli/tests/lib/log-callers.test.ts):
+// then failed CI on `log-callers — O2` (harness/processes/vinaya-strict/integration/log/client/log-callers.test.ts):
 // a repo-wide invariant test that walks every source file directly, so no
 // import edge from a changed file ever reaches it — reachability alone can
 // never select it, which is exactly the case `alwaysRun` exists for. Each
@@ -390,17 +390,17 @@ describe('the hook drops --concurrency=1 — selected files run together in one 
 // (`git diff --name-only <fork-point>...<head>` at the actual commits:
 // task-operator-v1/5's 93e25534 and task-files-v1/1's first push a6d9640c),
 // reproduced live against these commits to confirm log-callers — O2 does
-// fail on the unmodified tree (`bun test apps/cli/tests/lib/log-callers.test.ts`
+// fail on the unmodified tree (`bun test harness/processes/vinaya-strict/integration/log/client/log-callers.test.ts`
 // at each sha, offenders: `packages/aeg-core/src/control-store/local.ts`).
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
-const LOG_CALLERS_TEST = join(REPO_ROOT, 'apps/cli/tests/lib/log-callers.test.ts')
+const LOG_CALLERS_TEST = join(REPO_ROOT, 'harness/processes/vinaya-strict/integration/log/client/log-callers.test.ts')
 
 const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
   'task-operator-v1/5 — 93e25534, the control-store symlink fix': [
-    'apps/cli/src/lib/run-paths.ts',
+    'harness/kernel/run-paths.ts',
     'harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts',
     'harness/processes/vinaya-strict/loops/dev-review/run-control/start.ts',
-    'apps/cli/tests/lib/run-paths.test.ts',
+    'harness/processes/vinaya-strict/integration/run-paths.test.ts',
     'packages/aeg-core/src/control-store/index.ts',
     'packages/aeg-core/src/control-store/local.test.ts',
     'packages/aeg-core/src/control-store/local.ts',
@@ -408,8 +408,8 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
   ],
   'task-files-v1/1 — a6d9640c, the one-runtime-directory first push': [
     '.changeset/task-files-v1-1-one-runtime-directory.md',
-    'apps/cli/specs/isolation.md',
-    'apps/cli/specs/log.md',
+    'harness/kernel/isolation/isolation.md',
+    'harness/kernel/log/log.md',
     'apps/cli/specs/loop.md',
     'apps/cli/src/lib/config.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
@@ -418,10 +418,10 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.ts',
     'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts',
-    'apps/cli/src/lib/effects.ts',
-    'apps/cli/src/lib/log-sink.ts',
-    'apps/cli/src/lib/loop-log.ts',
-    'apps/cli/src/lib/run-paths.ts',
+    'harness/kernel/effects/effects.ts',
+    'harness/kernel/log/log-sink.ts',
+    'harness/kernel/log/client/loop-log.ts',
+    'harness/kernel/run-paths.ts',
     'harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.ts',
     'harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.ts',
     'harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts',
@@ -429,7 +429,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/processes/vinaya-strict/loops/dev-review/run-control/read.ts',
     'harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts',
     'harness/processes/vinaya-strict/loops/dev-review/run-control/start.ts',
-    'apps/cli/src/lib/worker-boundary.ts',
+    'harness/kernel/isolation/worker-boundary.ts',
     'apps/cli/tests/ci-shards/shard-2.txt',
     'apps/cli/tests/ci-shards/shard-3.txt',
     'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts',
@@ -439,14 +439,14 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-vinaya-policy.test.ts',
     'apps/cli/tests/lib/dispatch/launch-intent.test.ts',
     'apps/cli/tests/lib/dispatch/worker-boundary.test.ts',
-    'apps/cli/tests/lib/effects/executor.test.ts',
+    'harness/kernel/effects/executor.test.ts',
     'apps/cli/tests/lib/loop-log.test.ts',
-    'apps/cli/tests/lib/run-paths.test.ts',
+    'harness/processes/vinaya-strict/integration/run-paths.test.ts',
     'harness/processes/vinaya-strict/tests/lib/task-status.test.ts',
     'harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts',
     'harness/processes/vinaya-strict/tests/lib/task-tools/read.test.ts',
     'harness/processes/vinaya-strict/tests/lib/task-tools/resume.test.ts',
-    'apps/cli/tests/run-paths-only.test.ts',
+    'harness/processes/vinaya-strict/integration/run-paths-only.test.ts',
     'packages/aeg-core/src/control-store/local.test.ts',
     'packages/aeg-core/src/control-store/local.ts',
     'packages/sources/src/config-reference.ts'
@@ -2083,7 +2083,7 @@ describe('`import x = require(...)` degrades to the coarse edge under BOTH resol
 
 // Issue #702 — a test that spawns the built CLI as a subprocess names no
 // import of the code it exercises, so it was invisible to reachability
-// regardless of what changed: a change to `apps/cli/src/lib/log-sink.ts`
+// regardless of what changed: a change to `harness/kernel/log/log-sink.ts`
 // alone made `vinaya check --all` print a warning twenty-five times instead
 // of once, a real regression this repository's own pre-push selection never
 // had a chance to catch, caught only because CI runs everything.
@@ -2297,7 +2297,7 @@ describe('Issue #702, O3 — a spawn shape the classifier cannot read falls back
 })
 
 describe('Issue #702, O2 — the exact regression: a log-sink.ts-only change now selects check.test.ts', () => {
-  const LOG_SINK = join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts')
+  const LOG_SINK = join(REPO_ROOT, 'harness/kernel/log/log-sink.ts')
   const CHECK_TEST = join(REPO_ROOT, 'apps/cli/tests/commands/check.test.ts')
 
   it('check.test.ts imports neither log-sink.ts nor anything that does, and spawns the built CLI directly', () => {
@@ -2330,7 +2330,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
   // - A file `spawnEdgeOf` answers `'entrypoint'` for starts the CLI entrypoint.
   // - A `'fallback'` file `startedScriptsOf` reads starts only those scripts.
   // - Any other `'fallback'` file keeps the coarse folder edge.
-  const LOG_SINK = join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts')
+  const LOG_SINK = join(REPO_ROOT, 'harness/kernel/log/log-sink.ts')
   const program = { binary: 'bun', entrypoint: join(REPO_ROOT, 'apps/cli/src/index.ts') }
 
   function matchedTestFiles(): string[] {
@@ -2341,6 +2341,8 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
         ORIGIN_PATTERN,
         join(REPO_ROOT, 'apps/cli/tests'),
         join(REPO_ROOT, 'harness/processes/vinaya-strict/tests'),
+        join(REPO_ROOT, 'harness/processes/vinaya-strict/integration'),
+        join(REPO_ROOT, 'harness/kernel'),
         '--include=*.ts'
       ],
       { encoding: 'utf8' }
@@ -2384,9 +2386,15 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
     const testFiles = matched.filter(isTestFile)
     const { starts, reachesLogSink } = startsOf(testFiles)
 
+    // The coarse edge is a scan of the entrypoint's own source folder, so it keeps a change inside that folder and
+    // owes nothing to a change beside it (the Log client now lives in the kernel).
+    const coarseFolder = dirname(program.entrypoint)
     const owed = testFiles.filter((f) => {
       const start = starts.get(f)
-      return start !== undefined && (start.coarse || start.scripts.some(reachesLogSink))
+      return (
+        start !== undefined &&
+        (start.coarse ? LOG_SINK.startsWith(`${coarseFolder}/`) : start.scripts.some(reachesLogSink))
+      )
     })
     expect(owed.length).toBeGreaterThan(0)
     const selected = new Set(selectAffectedTestFiles(REPO_ROOT, [LOG_SINK]).selected)
@@ -2442,7 +2450,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // pinned-file collision threshold's own resolver), so a `config.ts` change
 // now selects that one extra suite. Same rule.
 //
-// Raised 24 → 25: `apps/cli/tests/lib/log-custom.test.ts` imports `config.ts`
+// Raised 24 → 25: `harness/processes/vinaya-strict/integration/log/client/log-custom.test.ts` imports `config.ts`
 // (to prove `logs.events` is refused at load) and `log-sink.ts` (to write a
 // custom event through a real sink) directly, so a change to either now
 // selects that one extra suite. Same rule.
@@ -2453,7 +2461,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // against a real, isolated sink), so a `log-sink.ts` change now selects that
 // one extra suite. Same rule.
 //
-// Raised 26 → 27 (`log-readers-v1` 6): `apps/cli/tests/lib/log-sync-folder-source.test.ts`
+// Raised 26 → 27 (`log-readers-v1` 6): `harness/kernel/log/client/log-sync-folder-source.test.ts`
 // imports `log-sink.ts` directly — `createLogSink`, to write the real,
 // hardened-appended fixture folders the folder source is proven against,
 // never a fake filesystem — so a `log-sink.ts` change now selects that one
@@ -2465,7 +2473,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // reading the real logged lines back), so a `log-sink.ts` change now selects
 // that one extra suite too. Same rule.
 //
-// Raised 28 → 29 (`log-readers-v1` 12): `apps/cli/tests/lib/log-readers-integration.test.ts`
+// Raised 28 → 29 (`log-readers-v1` 12): `harness/kernel/log/client/log-readers-integration.test.ts`
 // newly imports both `log-sink.ts` (`appendHardenedLine`/`outboxPathFor`, to
 // write real fixture folders the folder source reads) and `config.ts`
 // (`resolveLogsHeaderValues`, to resolve the fake server's read credential)
@@ -2498,9 +2506,9 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings (Issue #707, O1)', () => {
   it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 37 files', () => {
     const changed = [
-      join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts'),
+      join(REPO_ROOT, 'harness/kernel/log/log-sink.ts'),
       join(REPO_ROOT, 'apps/cli/src/lib/config.ts'),
-      join(REPO_ROOT, 'apps/cli/src/lib/run-paths.ts')
+      join(REPO_ROOT, 'harness/kernel/run-paths.ts')
     ]
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })
     // Runner selection and disabled-recording suites directly consume these modules too, and so does the

@@ -10,7 +10,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import type { LoopDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.js'
-import { type ProtectedPathEntry, startTurnWriteAttribution, taskControlDir } from '../../../src/lib/worker-boundary.js'
+import {
+  type ProtectedPathEntry,
+  startTurnWriteAttribution,
+  taskControlDir
+} from '../../../../../harness/kernel/isolation/worker-boundary.js'
 import {
   cleanupWorlds,
   controlDir,

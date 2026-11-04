@@ -41,7 +41,7 @@
  * so no existing import elsewhere in this codebase needed to change.
  */
 
-import { cliEntryPath } from '../../../../../../apps/cli/src/lib/cli-entry.js'
+import { cliEntryPath, devBridgePath } from '../../../../../../apps/cli/src/lib/cli-entry.js'
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { guardedSpawnSync } from './driver-tool-guard.js'
@@ -67,7 +67,7 @@ import {
   type CredentialFinding,
   type OpenedAgentConfigEntry,
   type TurnWriteAttribution
-} from '../../../../../../apps/cli/src/lib/worker-boundary.js'
+} from '../../../../../kernel/isolation/worker-boundary.js'
 import {
   activeBudgetMs,
   assessRound,
@@ -81,7 +81,6 @@ import {
   DEFAULT_REVIEW_POLICY,
   defaultControlStoreDeps,
   readEarliestOwnership,
-  DevReviewLoopEventSchema,
   initialLoopState,
   isConcludedJournal,
   type IssueSurface,
@@ -104,13 +103,13 @@ import {
   type ReconstructedJournal,
   type ReviewInputManifest,
   type ReviewPolicy,
-  type Role,
   type RoundHeadIdentity,
   type RoundStats,
   type TaskClock,
   type VerdictObservation,
   extractSourceRevision
 } from '@attalabs/aeg-core'
+import { DevReviewLoopEventSchema, type Role } from '../../../../../kernel/log/schema'
 import {
   AGENT_VENDOR_NAMES,
   type AgentVendor,
@@ -122,7 +121,7 @@ import {
   type ResumeRecord,
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from '../dispatch/dispatch.js'
-import { createBroker, type InvocationContext, scopeTarget } from '../../../../../../apps/cli/src/lib/broker.js'
+import { createBroker, type InvocationContext, scopeTarget } from '../../../../../kernel/tools/host/broker.js'
 import {
   vinayaBrokerPolicies,
   vinayaToolGrantPolicy,
@@ -141,10 +140,10 @@ import {
   postMarkedComment,
   upsertDeferredFindingsIssue
 } from '../../../tools/task-contract/forge/forge-write.js'
-import { controlStoreRoot } from '../../../../../../apps/cli/src/lib/effects.js'
+import { controlStoreRoot } from '../../../../../kernel/effects/effects.js'
 import { resolveRoleDoctrineText } from '../../../integration/roles/plan.js'
 import { validatePrBodyForCreate } from '../../../../../../apps/cli/src/commands/pr.js'
-import { drainLogSink, log as logToDefaultSink, type LogSinkDeps } from '../../../../../../apps/cli/src/lib/log-sink.js'
+import { drainLogSink, log as logToDefaultSink, type LogSinkDeps } from '../../../../../kernel/log/log-sink.js'
 import { createVinayaLogSink, resolveVinayaLogAppendPath } from '../../../integration/log/log-sink-factory.js'
 import { crossRunnerRefusal, PROCESS_FOLDER_IN_CHECKOUT } from '../run-control/task-run-engine.js'
 import {
@@ -156,7 +155,7 @@ import {
   keepDriverLock,
   seedLoopHistory
 } from './dev-review-loop/driver-lifecycle.js'
-import { ensureRunDir, markProcessUnattended, runPath } from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { ensureRunDir, markProcessUnattended, runPath } from '../../../../../kernel/run-paths.js'
 import { packageRoot } from '../../../../../../apps/cli/src/lib/package-root.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from '../run-control/task-sweep.js'
 import {
@@ -165,7 +164,7 @@ import {
   appendRunStartMarker,
   loopLogPathFor,
   narrateDriverEvent
-} from '../../../../../../apps/cli/src/lib/loop-log.js'
+} from '../../../../../kernel/log/client/loop-log.js'
 import { detectVendoredVinaya } from '../../../../../../apps/cli/src/lib/self-host.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
@@ -345,12 +344,13 @@ import {
   type DevPullRequestView,
   type DevToolContext,
   reviewerDevToolContext
-} from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server.js'
-import { createReadSourceTool } from '../../../../../../apps/cli/src/lib/task-tools/read-source.js'
+} from '../../../../../kernel/tools/dev-tools-server.js'
+import { createReadSourceTool } from '../../../../../kernel/tools/read-source.js'
 import type { GrantedRole } from '../../../integration/policies/roles.js'
-import { type FailedCheckLog, readFailedCheckLogs, readJobLogTail } from '../run-control/pr-facts.js'
-import { startDevToolsHost } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-host.js'
-import type { FetchDocumentationDeps } from '../../../../../../apps/cli/src/lib/task-tools/fetch-documentation.js'
+import type { FailedCheckLog } from '../../../../../kernel/tools/failed-check-log.js'
+import { readFailedCheckLogs, readJobLogTail } from '../run-control/pr-facts.js'
+import { startDevToolsHost } from '../../../../../kernel/tools/host/dev-tools-host.js'
+import type { FetchDocumentationDeps } from '../../../../../kernel/tools/fetch-documentation.js'
 import {
   appendSourceDeliveryReceipt,
   injectedDeliveryReceipts,
@@ -359,20 +359,20 @@ import {
   requiredSourcesPromptBlock,
   sourceReceiptsPath,
   sourceStoreDir
-} from '../../../../../../apps/cli/src/lib/source-manifest.js'
+} from '../../../../../kernel/source-manifest.js'
 import {
   gitObjectReader,
   prepareSources,
   RequiredSourcesUnavailable,
   realSourceProviderDeps,
   type SourceProviderDeps
-} from '../../../../../../apps/cli/src/lib/source-provider.js'
+} from '../../../../../kernel/tools/source-provider.js'
 import { ownVersion } from '../../../integration/artifacts.js'
 import {
   type BridgeInvocation,
   devToolsSocketPath,
   driverDevBridgeInvocation
-} from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-registration.js'
+} from '../../../../../kernel/tools/dev-tools-registration.js'
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import { resolveTrustAnchorSecurityScanCommand } from './dev-review-loop/security-scan-command.js'
 import {
@@ -1110,7 +1110,7 @@ function scanStreamToString(stream: Buffer | string | null | undefined): string 
  * head-verified candidate copy, appended as the final argument), with:
  *   - a CONSTRUCTED environment carrying only `WORKER_ENV_ALLOWLIST_KEYS` —
  *     the same baseline `checks/runner.ts`'s `buildCheckEnv` gives every check
- *     (`apps/cli/specs/isolation.md` §2), so NO forge credential
+ *     (`harness/kernel/isolation/isolation.md` §2), so NO forge credential
  *     (`GH_TOKEN`/`GITHUB_TOKEN`) ever reaches a scanner running
  *     pull-request-authored configuration;
  *   - the pinned command the config names (`npx --yes <pkg>@<version> scan`),
@@ -1142,7 +1142,7 @@ export function defaultRunSecurityScanSubprocess(command: readonly string[], sca
   // cwd, and no PR-committed or user npm config is on any path the resolver
   // walks. This is the config-steering half; a full OS sandbox against a
   // trusted package reading an absolute credential path is the worker
-  // boundary's own task (`apps/cli/specs/isolation.md` §§3–4), off on Linux.
+  // boundary's own task (`harness/kernel/isolation/isolation.md` §§3–4), off on Linux.
   let sandbox: string
   try {
     sandbox = mkdtempSync(join(tmpdir(), 'vinaya-scan-'))
@@ -2087,7 +2087,7 @@ async function defaultStartDevTools(input: {
     role: input.role ?? 'developer',
     toolGrants: vinayaToolGrantPolicy()
   })
-  return { bridge: driverDevBridgeInvocation(host.socketPath), close: () => host.close() }
+  return { bridge: driverDevBridgeInvocation(host.socketPath, devBridgePath()), close: () => host.close() }
 }
 
 /**
@@ -3326,7 +3326,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // O3: two independent sink instances can both have a `log()` call in
   // flight when this driver is about to exit — this closure's own
   // `createVinayaLogSink()` instance above (the round/pause events `logEvents`
-  // emits) and the module-level default sink (`../../../../../../apps/cli/src/lib/log-sink.js`'s plain
+  // emits) and the module-level default sink (`../../../../../kernel/log/log-sink.js`'s plain
   // `log`/`drainLogSink`), which `effects.ts`'s `EffectExecutor` writes
   // its `attempted`/`observed`/`verified` lines through instead — a
   // separate sink built by the installed factory, with its own `pendingWrites`/

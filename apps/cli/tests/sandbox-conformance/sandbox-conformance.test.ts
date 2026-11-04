@@ -1,6 +1,6 @@
 /**
  * The sandbox conformance suite — the proof of both agents' boundaries
- * (`apps/cli/specs/isolation.md`, "The conformance suite").
+ * (`harness/kernel/isolation/isolation.md`, "The conformance suite").
  *
  * Every command the Developer doctrine and the rendered brief tell a
  * Developer to run is an entry in `commands.json`; each runnable entry runs
@@ -43,18 +43,18 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
-import { sourceManifestPath, sourceReceiptsPath } from '../../src/lib/source-manifest.js'
+import { sourceManifestPath, sourceReceiptsPath } from '../../../../harness/kernel/source-manifest.js'
 import {
   createDispatchCapabilityTable,
   type DispatchCapabilityTable,
   startDevToolsHost
-} from '../../src/lib/task-tools/dev-tools-host.js'
-import { devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
+} from '../../../../harness/kernel/tools/host/dev-tools-host.js'
+import { devToolsSocketRoot } from '../../../../harness/kernel/tools/dev-tools-registration.js'
 import {
   type CapabilityRefusalEvent,
   type DevToolContext,
   devToolError
-} from '../../src/lib/task-tools/dev-tools-server.js'
+} from '../../../../harness/kernel/tools/dev-tools-server.js'
 import { expectGradingSandboxDenies, proveGradingSandbox } from '../eval/grading-sandbox-proof.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../lib/dispatch/driver-socket-reach.js'
 import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture.js'

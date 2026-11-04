@@ -53,7 +53,7 @@ import {
   type TaskLoopState,
   type TaskStatusRow
 } from './task-status.js'
-import { tasksExecutionRoot } from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
 import { widenSurfaceContinuationFor } from './task-run.js'
 import { engineContinuationCommand, readTaskRunner } from './task-run-engine.js'
 import { describeUsageLimitPause } from '../standalone/dev-review-loop/round-assess.js'

@@ -15,14 +15,11 @@ import {
   createDispatchCapabilityTable,
   startDevToolsHost,
   startReplaceableDevToolsHost
-} from '../../../../../apps/cli/src/lib/task-tools/dev-tools-host'
+} from '../../../../kernel/tools/host/dev-tools-host'
 import { readPauseState } from '../../loops/dev-review/standalone/dev-review-loop/pause-resume'
-import { devToolsSocketPath } from '../../../../../apps/cli/src/lib/task-tools/dev-tools-registration'
-import { READ_SOURCE_NOTICE } from '../../../../../apps/cli/src/lib/task-tools/read-source'
-import {
-  DISPATCH_CAPABILITY_ARGUMENT,
-  type DevToolContext
-} from '../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
+import { devToolsSocketPath } from '../../../../kernel/tools/dev-tools-registration'
+import { READ_SOURCE_NOTICE } from '../../../../kernel/tools/read-source'
+import { DISPATCH_CAPABILITY_ARGUMENT, type DevToolContext } from '../../../../kernel/tools/dev-tools-server'
 import {
   ACTION_BINDINGS,
   classifyGateResult,

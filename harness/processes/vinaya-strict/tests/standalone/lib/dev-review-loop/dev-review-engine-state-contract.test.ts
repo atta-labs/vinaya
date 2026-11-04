@@ -46,7 +46,7 @@ interface AmbiguityEntry {
 
 const ambiguities: AmbiguityEntry[] = JSON.parse(readFileSync(AMBIGUITY_FIXTURE_PATH, 'utf8')).ambiguities
 
-/** Shipped `<kind>:<event>` pairs `apps/cli/specs/log.md` documents today — never a family this model invents. */
+/** Shipped `<kind>:<event>` pairs `harness/kernel/log/log.md` documents today — never a family this model invents. */
 const SHIPPED_LOG_EVENTS = new Set([
   'dispatch:dispatched',
   'dispatch:outcome_received',

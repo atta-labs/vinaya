@@ -11,10 +11,10 @@
  * table, the role names) imports the implementation module that holds it.
  */
 
-import type { BrokerPolicies, ProtectedPathPolicy } from '../../../../../apps/cli/src/lib/broker.js'
-import type { ToolGrantPolicy } from '../../../../../apps/cli/src/lib/task-tools/role-grants.js'
-import type { RouterRolePolicy } from '../../../../../apps/cli/src/lib/task-tools/router.js'
-import type { WorkerBoundaryPolicies } from '../../../../../apps/cli/src/lib/worker-boundary.js'
+import type { BrokerPolicies, ProtectedPathPolicy } from '../../../../kernel/tools/host/broker.js'
+import type { ToolGrantPolicy } from '../../../../kernel/tools/role-grants.js'
+import type { RouterRolePolicy } from '../../../../kernel/tools/host/router.js'
+import type { WorkerBoundaryPolicies } from '../../../../kernel/isolation/worker-boundary.js'
 import type { DispatchTeeRecoveryDeps } from '../../loops/dev-review/dispatch/dispatch.js'
 import { vinayaLaunchRecordVerifier } from './launch-records.js'
 import { VINAYA_PROTECTED_PATHS } from './protected-paths.js'

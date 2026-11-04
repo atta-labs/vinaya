@@ -953,7 +953,7 @@ export async function dispatchTask(
   if (agent) {
     // `prep.issue`, never `n` — `dispatchRole`'s own `task`
     // opt is the resolved forge Issue number end to end (`VINAYA_TASK`
-    // parses to `subject.issue`, `packages/aeg-core/src/log/envelope.ts`;
+    // parses to `subject.issue`, `harness/kernel/log/envelope.ts`;
     // its resume-record key is `issue<n>`, `dispatch.ts`'s own
     // `resumeRecordPathFor`) — the same live-bug shape the comment above
     // already fixed for posting now applies here too: two tranches'

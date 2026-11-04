@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_COLLISION_THRESHOLD } from '@attalabs/aeg-core'
 import type { BriefSection } from '../../../../apps/cli/src/lib/config'
-import { resetTrustAnchorConfigMemo } from '../../../../apps/cli/src/lib/log-sink.js'
+import { resetTrustAnchorConfigMemo } from '../../../kernel/log/log-sink.js'
 import {
   ForgeArgError,
   collectBodyCheckErrors,

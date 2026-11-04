@@ -24,17 +24,23 @@ import { randomUUID } from 'node:crypto'
 import { hostname as osHostname, homedir } from 'node:os'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildHeader, LogEventSchema, redact } from '@attalabs/aeg-core'
+import { buildHeader } from '../../../../harness/kernel/log/envelope'
+import { LogEventSchema } from '../../../../harness/kernel/log/schema'
+import { redact } from '../../../../harness/kernel/log/redact'
 import { loadConfig, resolveLogsHeaderValues, type VinayaConfig } from '../lib/config.js'
-import { statsUrlFrom } from '../lib/log-sync-server-source.js'
+import { statsUrlFrom } from '../../../../harness/kernel/log/client/log-sync-server-source.js'
 import {
   logsCredentialMissing,
   type ResolvedLogDestination,
   describeFolderFallback,
   resolveUnattendedLogDestination,
   resolveUnattendedServerSetting
-} from '../lib/log-sink.js'
-import { localSchemaDigest, schemaDigestFromStats, schemaDigestMismatch } from '../lib/log-schema-digest.js'
+} from '../../../../harness/kernel/log/log-sink.js'
+import {
+  localSchemaDigest,
+  schemaDigestFromStats,
+  schemaDigestMismatch
+} from '../../../../harness/kernel/log/client/log-schema-digest.js'
 import { packageRoot } from '../lib/package-root.js'
 
 /** The fixed marker every self-test event carries, so a reader can exclude it from real telemetry (Traps). */
@@ -407,5 +413,5 @@ import type { SurfaceExemption } from '../lib/surface-exemption'
 // reader needs to see. The retirement target is a future `log-delivery.ts`
 // that owns "prove and deliver for this repo" behind one call.
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'log selftest': { date: '2026-10-01', callsToday: 9, retiresVia: 'logDeliveryChokepoint' }
+  'log selftest': { date: '2026-10-01', callsToday: 2, retiresVia: 'logDeliveryChokepoint' }
 }

@@ -1,6 +1,6 @@
 /**
  * `dispatchRole` — the Vinaya Log's `dispatch` family chokepoint (Linear
- * "Tech spec — The Vinaya Log" rev 4, §8, §20; `apps/cli/specs/log.md`).
+ * "Tech spec — The Vinaya Log" rev 4, §8, §20; `harness/kernel/log/log.md`).
  * Starts one of two vendors' headless CLI as a child process with
  * attribution (`VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND`) plus
  * this driver's own pid (`VINAYA_DRIVER_PID`, so a role that lists processes
@@ -31,7 +31,7 @@
  *
  * **The generic "no specific, identifiable forge outcome" gap this module
  * doc used to disclose is closed:**
- * `DispatchOutcomeSchema`'s `completed` variant (`packages/aeg-core/src/log/schema.ts`)
+ * `DispatchOutcomeSchema`'s `completed` variant (`harness/kernel/log/schema.ts`)
  * carries no invented identifier at all — a
  * successful dispatch's `outcome_received` line now reports `{ type:
  * 'completed' }` honestly, never the `{ type: 'plan', issues: [] }`
@@ -52,6 +52,7 @@
  * nothing to report — never a bare `null` with no account of why.
  */
 
+import { parseIssueDocumentation, type IssueDocumentationSource } from '../../../../../kernel/issue-documentation.js'
 import { randomUUID, createHash } from 'node:crypto'
 import {
   accessSync,
@@ -77,11 +78,12 @@ import {
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname, tmpdir } from 'node:os'
-import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
+import { summarizeTranscript } from '@attalabs/aeg-core'
+import { redact } from '../../../../../kernel/log/redact'
 import {
   DOCUMENTATION_READ_MIN_SIZE,
   FETCH_DOCUMENTATION_TOOL
-} from '../../../../../../apps/cli/src/lib/task-tools/fetch-documentation.js'
+} from '../../../../../kernel/tools/fetch-documentation.js'
 import {
   countedSourceIds,
   readRequiredSourceManifest,
@@ -89,19 +91,20 @@ import {
   SOURCE_STORE_DIRNAME,
   sourceReceiptsPath,
   sourceStoreDir
-} from '../../../../../../apps/cli/src/lib/source-manifest.js'
-import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
-import { drainLogSpool } from '../../../../../../apps/cli/src/lib/log-sink.js'
+} from '../../../../../kernel/source-manifest.js'
+import type { TranscriptSummary } from '@attalabs/aeg-core'
+import type { Role, RoleAttemptOutcome } from '../../../../../kernel/log/schema'
+import { drainLogSpool } from '../../../../../kernel/log/log-sink.js'
 import { createVinayaLogSink, resolveVinayaLogAppendPath } from '../../../integration/log/log-sink-factory.js'
 // The command line installs the process's sink factory through the dispatch module it already loads.
 export { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-factory.js'
-import { appendRoleLine } from '../../../../../../apps/cli/src/lib/loop-log.js'
+import { appendRoleLine } from '../../../../../kernel/log/client/loop-log.js'
 import { createAgentStreamRenderer } from '../../../../../../apps/cli/src/lib/agent-stream.js'
 import {
   formatAgentDetails,
   formatAgentLine,
   type AgentLineMark
-} from '../../../../../../apps/cli/src/lib/agent-line.js'
+} from '../../../../../kernel/adapters/agents/agent-line.js'
 import { developerTurnResultJsonSchema } from '../../../executing/developer/developer-turn-result.js'
 import { reviewResultJsonSchema, type ReviewerRole } from '../../../executing/code-reviewer/review-result.js'
 import {
@@ -122,7 +125,7 @@ import {
   type RunScope,
   scopeFromSegment,
   tasksExecutionRoot
-} from '../../../../../../apps/cli/src/lib/run-paths.js'
+} from '../../../../../kernel/run-paths.js'
 import { basename, dirname, join } from 'node:path'
 import {
   CLAUDE_KEYCHAIN_SERVICE,
@@ -153,7 +156,7 @@ import {
   type ConfinementPlatformDeps,
   type ConfinementRequest,
   type SandboxProbeResult
-} from '../../../../../../apps/cli/src/lib/worker-boundary.js'
+} from '../../../../../kernel/isolation/worker-boundary.js'
 import { agentControlsRefusal } from '../../../../../../apps/cli/src/lib/enforcement-controls.js'
 import { repoRoot } from '../../../../../../apps/cli/src/lib/diff-evidence.js'
 import {
@@ -163,7 +166,7 @@ import {
   codexDevToolsConfigToml,
   devToolsMcpConfigFileBody,
   watchClaudeDevToolsStart
-} from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-registration.js'
+} from '../../../../../kernel/tools/dev-tools-registration.js'
 
 /**
  * Terminal colour, applied only at the point a line is written to a real
@@ -297,7 +300,7 @@ export type DispatchOpts = {
    * a driver launching a Developer, Reviewer or operational agent with
    * nobody watching each tool call, as opposed to an Operator running
    * `vinaya dispatch` by hand. An unattended start runs inside
-   * `apps/cli/specs/isolation.md`'s OS-level boundary wherever one is
+   * `harness/kernel/isolation/isolation.md`'s OS-level boundary wherever one is
    * supported (macOS) and REFUSES, before ever spawning, if it cannot be
    * established there (`worker-boundary.ts`'s `isWorkerBoundaryAvailable`) —
    * never a silent fallback to full environment inheritance (isolation.md
@@ -369,7 +372,7 @@ export type DispatchOpts = {
   agentConfigOpened?: readonly OpenedAgentConfigEntry[]
   /**
    * O2: the driver-run dev-tools MCP server's bridge invocation for THIS
-   * dispatch — a `dev-bridge --socket <path>` relay the agent's own MCP client
+   * dispatch — the bridge program run with `--socket <path>`, which the agent's own MCP client
    * spawns inside its sandbox, which pipes to the server the driver hosts
    * outside it (`task-tools/dev-tools-host.ts`). Set only by the review loop,
    * once the driver has started the host for this turn: for the `developer`
@@ -1478,7 +1481,7 @@ const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
  * login at all, so every run on that machine died with "Not logged in" until
  * the keychain list was restored by hand, some eight hours later. The
  * Seatbelt boundary that would have contained it (§§3–4 of
- * `apps/cli/specs/isolation.md`) was switched off on that host, so the
+ * `harness/kernel/isolation/isolation.md`) was switched off on that host, so the
  * dispatched role's own permission policy was the only barrier there was.
  *
  * Expressed as `permissions.deny` entries in the host's OWN `Bash(<command>:*)`
@@ -2766,7 +2769,7 @@ export function parseCodexResumeId(stdout: string): string | null {
  * other's session.
  *
  * Deliberately NOT the Vinaya Log's own `dispatch` family:
- * `DispatchOutcomeSchema` (`packages/aeg-core/src/log/schema.ts`) has no
+ * `DispatchOutcomeSchema` (`harness/kernel/log/schema.ts`) has no
  * member for "here is a vendor session id" — every variant names a specific
  * forge outcome (`pr_opened`, `verdict`, …). `pr_opened`, `round_pushed` and
  * `verdict` are declared with no producer yet, and `escalation`, `brief`,

@@ -20,7 +20,7 @@ import {
  * the system credential stores' files (the macOS Keychain directory, the Linux keyring).
  *
  * This is the file route only. On macOS the Keychain also answers through securityd's IPC, which a filesystem
- * read-deny of `Library/Keychains` does not close — a disclosed gap (`apps/cli/specs/isolation.md`, Claude's
+ * read-deny of `Library/Keychains` does not close — a disclosed gap (`harness/kernel/isolation/isolation.md`, Claude's
  * own mechanism), not something these rules claim to hold. The SSH agent's authority comes from the agent
  * socket, reached through `SSH_AUTH_SOCK`; that variable never enters a role (the Engine's launch-env
  * allowlist passes only `PATH`/`HOME`/`USER`/`LOGNAME`), so the agent is the allowlist's to close, with the

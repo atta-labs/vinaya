@@ -30,10 +30,10 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { failedCheckLogsOnHead } from '../loops/dev-review/standalone/dev-review-loop'
-import { gitObjectReader, prepareSources } from '../../../../apps/cli/src/lib/source-provider'
-import { sourceReceiptsPath } from '../../../../apps/cli/src/lib/source-manifest'
-import type { FetchDocumentationDeps } from '../../../../apps/cli/src/lib/task-tools/fetch-documentation'
-import { taskControlDir } from '../../../../apps/cli/src/lib/worker-boundary'
+import { gitObjectReader, prepareSources } from '../../../kernel/tools/source-provider'
+import { sourceReceiptsPath } from '../../../kernel/source-manifest'
+import type { FetchDocumentationDeps } from '../../../kernel/tools/fetch-documentation'
+import { taskControlDir } from '../../../kernel/isolation/worker-boundary'
 import {
   BASE,
   BRANCH,
@@ -50,7 +50,7 @@ import { AGENT_EXIT_EVENT, createRoleLaunchers } from '../executing/actions'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
 import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import type { NodeLifecycle } from '../../../../harness/kernel/log/client/translate'
-import { devToolsSocketPath } from '../../../../apps/cli/src/lib/task-tools/dev-tools-registration'
+import { devToolsSocketPath } from '../../../kernel/tools/dev-tools-registration'
 import {
   classifyDeveloperOutput,
   classifyGateResult,
@@ -65,7 +65,7 @@ import {
   MAX_AUTOMATIC_CONFLICT_REENTRIES
 } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import { readPauseState } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
-import { loopLogPathFor } from '../../../../apps/cli/src/lib/loop-log'
+import { loopLogPathFor } from '../../../kernel/log/client/loop-log'
 import { SqliteCheckpointer } from '../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import { currentRunGeneration, runIdentityOfTask } from '../bin/run-lifecycle'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
@@ -93,7 +93,7 @@ import {
   ROLE_HOST_BRIDGES
 } from '../bin/run-engine'
 import { ROLE_NAMES } from '../../../../harness/kernel/adapters/agents/manifest'
-import { createDispatchCapabilityTable } from '../../../../apps/cli/src/lib/task-tools/dev-tools-host'
+import { createDispatchCapabilityTable } from '../../../kernel/tools/host/dev-tools-host'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const repoRoot = resolve(import.meta.dir, '../../../..')
@@ -180,9 +180,9 @@ describe('the dry run', () => {
 })
 
 describe('the relay shim', () => {
-  test('execs the repository CLI bridge on the host socket', () => {
-    expect(shimContent('/tmp/x/s.sock', '/usr/bin/bun', '/repo/apps/cli/src/index.ts')).toBe(
-      "#!/bin/sh\nexec '/usr/bin/bun' '/repo/apps/cli/src/index.ts' task-tools dev-bridge --socket '/tmp/x/s.sock'\n"
+  test('execs the bridge program on the host socket', () => {
+    expect(shimContent('/tmp/x/s.sock', '/usr/bin/bun', '/repo/harness/kernel/tools/host/dev-tools-bridge.ts')).toBe(
+      "#!/bin/sh\nexec '/usr/bin/bun' '/repo/harness/kernel/tools/host/dev-tools-bridge.ts' --socket '/tmp/x/s.sock'\n"
     )
   })
 
@@ -192,7 +192,7 @@ describe('the relay shim', () => {
 
   test("carries a dispatch's capability to the bridge while that dispatch runs", () => {
     expect(shimContent('/tmp/x/s.sock', '/bun', '/e.ts', 'cap-1')).toBe(
-      "#!/bin/sh\nexec '/bun' '/e.ts' task-tools dev-bridge --socket '/tmp/x/s.sock' --capability 'cap-1'\n"
+      "#!/bin/sh\nexec '/bun' '/e.ts' --socket '/tmp/x/s.sock' --capability 'cap-1'\n"
     )
   })
 })
@@ -423,7 +423,11 @@ describe('a stub run on the Engine path', () => {
     expect(calls.indexOf('host-start')).toBeLessThan(calls.indexOf('spawn:develop'))
     const shim = join(options.runtimeDir, 'engine-runs', '7', 'developer-dev-bridge.sh')
     expect(readFileSync(shim, 'utf8')).toBe(
-      shimContent(devToolsSocketPath('engine-7-developer'), process.execPath, join(repoRoot, 'apps/cli/src/index.ts'))
+      shimContent(
+        devToolsSocketPath('engine-7-developer'),
+        process.execPath,
+        join(repoRoot, 'harness/kernel/tools/host/dev-tools-bridge.ts')
+      )
     )
     expect(readFileSync(shim, 'utf8')).not.toContain('capability')
     expect(statSync(shim).mode & 0o111).not.toBe(0)

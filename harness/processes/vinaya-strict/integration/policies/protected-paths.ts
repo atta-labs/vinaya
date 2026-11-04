@@ -7,7 +7,7 @@
  */
 
 import { isProtectedAdminPath } from '@attalabs/aeg-core'
-import type { ProtectedPathPolicy } from '../../../../../apps/cli/src/lib/broker.js'
+import type { ProtectedPathPolicy } from '../../../../kernel/tools/host/broker.js'
 
 export const VINAYA_PROTECTED_PATHS: ProtectedPathPolicy = {
   isProtected: (normalizedPath) => isProtectedAdminPath(normalizedPath)

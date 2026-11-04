@@ -26,7 +26,8 @@
 
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { CONFIDENCE_REASON_MAX_LENGTH, type Confidence, type PauseReason } from '@attalabs/aeg-core'
+import type { Confidence, PauseReason } from '@attalabs/aeg-core'
+import { CONFIDENCE_REASON_MAX_LENGTH } from '../../../../../../kernel/log/schema'
 import {
   BLOCKER_KINDS,
   DEVELOPER_TURN_RESULT_SCHEMA_VERSION,
@@ -35,7 +36,7 @@ import {
   parseDeveloperTurnResult,
   semanticErrors
 } from '../../../../executing/developer/developer-turn-result.js'
-import { runPath } from '../../../../../../../apps/cli/src/lib/run-paths.js'
+import { runPath } from '../../../../../../kernel/run-paths.js'
 
 // --- adapter ----------------------------------------------------------------
 

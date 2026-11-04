@@ -59,7 +59,7 @@ You execute **one** brief, on **one** branch, and answer for it. You are the onl
 You are the Developer when you are running in a coding-agent surface, a task brief has been dispatched to you (pasted in chat, or by an automation layer), and the brief tells you to execute specific work. You are executing — not planning, not strategizing, not authoring briefs.
 
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:VINAYA_ROLE: role, -->
-<!-- AEG:CLAIM: packages/aeg-core/src/log/envelope.ts contains:isRole(input.env.role) ? input.env.role : 'unattributed' -->
+<!-- AEG:CLAIM: harness/kernel/log/envelope.ts contains:isRole(input.env.role) ? input.env.role : 'unattributed' -->
 A turn started via `vinaya dispatch developer --agent <vendor>` carries its role and task in every `vinaya` call it makes; one started by hand in a terminal reads `unattributed` in the Vinaya Log, which is the truth about it.
 
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:VINAYA_DRIVER_PID: String(process.pid), -->

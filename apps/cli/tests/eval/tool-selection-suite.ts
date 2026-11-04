@@ -59,7 +59,7 @@ import {
 import { unwrapShell } from '../../src/lib/loop-narration-codex'
 import { READ_ONLY_COMMANDS, READ_ONLY_FORBIDDEN } from '../../../../harness/kernel/adapters/agents/manifest'
 import { stripVinayaEnv } from '../lib/process-fixture'
-import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host'
+import { startDevToolsHost } from '../../../../harness/kernel/tools/host/dev-tools-host'
 import {
   CLAUDE_DEV_TOOLS_ENV,
   claudeDevToolName,
@@ -68,15 +68,20 @@ import {
   devToolsMcpConfigFileBody,
   devToolsSocketPath,
   driverDevBridgeInvocation
-} from '../../src/lib/task-tools/dev-tools-registration'
-import { DEV_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/dev-tools-names'
-import { type DevToolContext, type DevToolRefusal, dispatchDevTool } from '../../src/lib/task-tools/dev-tools-server'
-import { servedTools } from '../../src/lib/task-tools/role-grants'
+} from '../../../../harness/kernel/tools/dev-tools-registration'
+import { DEV_TOOLS_MCP_SERVER_NAME } from '../../../../harness/kernel/tools/dev-tools-names'
+import {
+  type DevToolContext,
+  type DevToolRefusal,
+  dispatchDevTool
+} from '../../../../harness/kernel/tools/dev-tools-server'
+import { servedTools } from '../../../../harness/kernel/tools/role-grants'
 import {
   type GrantedRole,
   ROLE_TOOL_GRANTS
 } from '../../../../harness/processes/vinaya-strict/integration/policies/roles'
-import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
+import { AGENT_TOOL_CATALOG } from '../../../../harness/kernel/tools/tool-catalog'
+import { devBridgePath } from '../../src/lib/cli-entry'
 import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies'
 
 // ── Suite identity and decision rule ────────────────────────────────────────
@@ -116,7 +121,6 @@ export const EVALUATED_TOOLS: readonly string[] = AGENT_TOOL_CATALOG.map((tool) 
 export const CASES_PATH = join(import.meta.dir, 'tool-selection-cases.json')
 export const HELD_OUT_PATH = join(import.meta.dir, 'tool-selection-held-out.json')
 const REPO_ROOT = join(import.meta.dir, '../../../..')
-const CLI_ENTRY = join(REPO_ROOT, 'apps/cli/src/index.ts')
 
 // ── Case data ───────────────────────────────────────────────────────────────
 
@@ -1175,7 +1179,7 @@ export async function liveTrial(
     context: world.context,
     role: c.role
   })
-  const bridge = driverDevBridgeInvocation(socketPath, CLI_ENTRY)
+  const bridge = driverDevBridgeInvocation(socketPath, devBridgePath())
   const started = Date.now()
   try {
     let result: { stdout: string; code: number | null; timedOut: boolean }

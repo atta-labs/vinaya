@@ -25,12 +25,12 @@
     {
       "id": "git-grep",
       "forms": ["git grep -n -iE"],
-      "run": "git grep -n -iE 'conformance|sandbox' -- apps/cli/specs/isolation.md"
+      "run": "git grep -n -iE 'conformance|sandbox' -- harness/kernel/isolation/isolation.md"
     },
     {
       "id": "bun-test-one-file",
       "forms": [],
-      "run": "bun test --timeout=30000 apps/cli/tests/isolation/isolation-contract.test.ts"
+      "run": "bun test --timeout=30000 harness/kernel/isolation/isolation-contract.test.ts"
     },
     { "id": "typecheck", "forms": ["bun run typecheck"], "run": "bun run typecheck" },
     { "id": "format-and-lint", "forms": ["bun run format-and-lint"], "run": "bun run format-and-lint" },

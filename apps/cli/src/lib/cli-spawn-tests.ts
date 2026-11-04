@@ -2,7 +2,7 @@
  * Detects a test file's own spawn of this repository's built CLI as a fresh
  * subprocess (`bun apps/cli/src/index.ts <args>`), so the selector can give it
  * one synthetic edge into the entrypoint's real import graph — measured live,
- * a one-file change to `apps/cli/src/lib/log-sink.ts` once passed the pre-push
+ * a one-file change to `harness/kernel/log/log-sink.ts` once passed the pre-push
  * hook and failed CI on exactly this class of test.
  *
  * The classifier is the selection library's (`verification/spawn-inputs.ts`,

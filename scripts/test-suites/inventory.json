@@ -33,8 +33,7 @@
       "kind": "workspace",
       "dir": "packages/aeg-core",
       "runner": "vitest",
-      "preload": null,
-      "fixtureExecutables": ["packages/aeg-core/src/log/fixtures/executions.test.ts"]
+      "preload": null
     },
     {
       "id": "aeg-forge-state",
@@ -58,7 +57,8 @@
       "kind": "workspace",
       "dir": "harness/kernel",
       "runner": "bun",
-      "preload": null
+      "preload": "apps/cli/tests/lib/test-env-preload.ts",
+      "fixtureExecutables": ["harness/kernel/log/fixtures/executions.test.ts"]
     },
     {
       "id": "process-vinaya",
@@ -189,7 +189,7 @@
             "apps/cli/tests/ci-limits-diagnostic.test.ts",
             "apps/cli/tests/ci-shards.test.ts",
             "apps/cli/tests/lib/ci-impact-plan.test.ts",
-            "apps/cli/tests/lib/log-entry-paths.test.ts",
+            "harness/processes/vinaya-strict/integration/log/client/log-entry-paths.test.ts",
             "apps/cli/tests/lib/ready-ci-workflow.test.ts",
             "harness/kernel/tests/architecture.test.ts",
             "scripts/package-compat/package-compat.test.ts",
@@ -238,7 +238,7 @@
           "kind": "raw-bytes",
           "tests": [
             "apps/cli/tests/ci-limits-diagnostic.test.ts",
-            "apps/cli/tests/lib/log-entry-paths.test.ts",
+            "harness/processes/vinaya-strict/integration/log/client/log-entry-paths.test.ts",
             "apps/cli/tests/lib/ready-ci-workflow.test.ts"
           ]
         }
@@ -359,23 +359,25 @@
     {
       "id": "log-header-recording",
       "kind": "fixture",
-      "paths": ["apps/cli/tests/fixtures/log-headers/recorded-headers.json"],
+      "paths": ["harness/processes/vinaya-strict/integration/log/fixtures/recorded-headers.json"],
       "format": "json",
-      "readers": [{ "kind": "semantic", "tests": ["apps/cli/tests/lib/log-sink-factory.test.ts"] }],
+      "readers": [
+        { "kind": "semantic", "tests": ["harness/processes/vinaya-strict/integration/log/log-sink-factory.test.ts"] }
+      ],
       "reason": "The header parity test compares the parsed event headers its probes write with this recording, read from disk."
     },
     {
       "id": "log-sink-factory-programs",
       "kind": "spawn",
-      "paths": ["harness/processes/vinaya-strict/integration/log/", "apps/cli/src/lib/log-sink.ts"],
+      "paths": ["harness/processes/vinaya-strict/integration/log/", "harness/kernel/log/log-sink.ts"],
       "readers": [
         {
           "kind": "code",
           "tests": [
-            "apps/cli/tests/lib/log-sink-factory.test.ts",
+            "harness/processes/vinaya-strict/integration/log/log-sink-factory.test.ts",
             "apps/cli/tests/lib/log-sink-no-sync-spawn.test.ts",
             "apps/cli/tests/lib/log-sink.test.ts",
-            "apps/cli/tests/lib/log-destination.test.ts",
+            "harness/processes/vinaya-strict/integration/log/log-destination.test.ts",
             "harness/processes/vinaya-strict/tests/integration/log/branch-issue.test.ts",
             "harness/processes/vinaya-strict/tests/integration/log/log-sink-factory.test.ts",
             "harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts",
@@ -400,7 +402,7 @@
     {
       "id": "process-dispatch-credential-shaped-sources",
       "kind": "fixture",
-      "paths": ["apps/cli/tests/lib/dispatch/worker-boundary.test.ts", "packages/aeg-core/src/log/redact.test.ts"],
+      "paths": ["apps/cli/tests/lib/dispatch/worker-boundary.test.ts", "harness/kernel/log/redact.test.ts"],
       "readers": [
         {
           "kind": "raw-bytes",

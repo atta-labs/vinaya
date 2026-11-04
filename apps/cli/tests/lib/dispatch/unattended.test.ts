@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSyncBudgeted } from '../process-fixture.js'
-import { FAKE_CLAUDE_PROBE_ANSWER } from './fake-sandbox-probe.js'
+import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../harness/kernel/isolation/dispatch/fake-sandbox-probe.js'
 
 /**
  * O3: `--unattended` (`DispatchOpts.unattended`) marks a `vinaya dispatch`
@@ -300,7 +300,7 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
  * proving O2 needs a fixture where the boundary actually RESOLVES: a real
  * (if minimal) git repo as `cwd`, so `repoRoot()` finds it and the round-1
  * Developer bootstrap grants the confined boundary a real, if read-only,
- * launch (`apps/cli/specs/isolation.md` §4 item 4). This is Issue #640's
+ * launch (`harness/kernel/isolation/isolation.md` §4 item 4). This is Issue #640's
  * own fixture shape, distinct from `buildFixture`'s deliberately-unavailable
  * one above.
  */

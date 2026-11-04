@@ -134,6 +134,14 @@ await build(
 )
 for (const f of libBinNames) normalizeExecutable(join(libOutdir, f.replace(/\.ts$/, '.js')))
 
+// The tool bridge is a program of its own, not a CLI command: an agent's sandbox
+// runs this one file (`node dist/kernel/tools/host/dev-tools-bridge.js --socket <path>`)
+// to reach the driver's dev-tools host, so a published install ships it beside the CLI.
+const bridgeSource = join(pkgRoot, '..', '..', 'harness', 'kernel', 'tools', 'host', 'dev-tools-bridge.ts')
+const bridgeOutdir = join(pkgRoot, 'dist', 'kernel', 'tools', 'host')
+await build([bridgeSource], bridgeOutdir)
+normalizeExecutable(join(bridgeOutdir, 'dev-tools-bridge.js'))
+
 console.log(
   `built dist/index.js + ${checkEntrypoints.length} check bin(s) + verify-dispatch in dist/checks/bin/ + ${libBinNames.length} lib bin(s) in dist/lib/ (external: ${external.join(', ') || 'none'})`
 )

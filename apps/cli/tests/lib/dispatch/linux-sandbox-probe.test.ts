@@ -1,6 +1,6 @@
 /**
  * The pre-spawn Linux sandbox probe and the host-level Unix-socket opt-in
- * (`apps/cli/specs/isolation.md`, "The Linux sandbox probe and the
+ * (`harness/kernel/isolation/isolation.md`, "The Linux sandbox probe and the
  * Unix-socket opt-in").
  *
  * The probe's decisions run here against a fake runner, on any host. The
@@ -30,10 +30,10 @@ import {
   SANDBOX_PROBE_MARKER,
   type SandboxProbeRun,
   type SandboxProbeRunner
-} from '../../../src/lib/worker-boundary.js'
+} from '../../../../../harness/kernel/isolation/worker-boundary.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from './driver-socket-reach.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture.js'
-import { FAKE_CLAUDE_PROBE_ANSWER } from './fake-sandbox-probe.js'
+import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../harness/kernel/isolation/dispatch/fake-sandbox-probe.js'
 
 const SECCOMP_ERROR =
   'apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted; caller must provide CAP_SYS_ADMIN): Permission denied'

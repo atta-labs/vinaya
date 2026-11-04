@@ -1,5 +1,5 @@
 /**
- * `drainOutboxToWebhook` end to end (`../../src/lib/log-webhook-drain.ts`)
+ * `drainOutboxToWebhook` end to end (`../../../../harness/kernel/log/client/log-webhook-drain.ts`)
  * — the one delivery mechanism a `logs.url` server destination uses — against
  * a real local HTTP server instead of a stubbed `gh`. Each call runs in its
  * own `bun` subprocess, never an in-process import: `GLOBAL_VINAYA_HOME`
@@ -35,12 +35,12 @@ import {
   acquireDrainLock,
   releaseDrainLock,
   renewDrainLock
-} from '../../src/lib/log-webhook-drain.js'
-import { OUTBOX_MAX_BYTES } from '../../src/lib/log-sink.js'
+} from '../../../../harness/kernel/log/client/log-webhook-drain.js'
+import { OUTBOX_MAX_BYTES } from '../../../../harness/kernel/log/log-sink.js'
 import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const DRAIN_MODULE = join(CLI_ROOT, 'src', 'lib', 'log-webhook-drain.ts')
+const DRAIN_MODULE = join(CLI_ROOT, '..', '..', 'harness', 'kernel', 'log', 'client', 'log-webhook-drain.ts')
 const OWNER_REPO_DIR = 'test-owner-test-repo'
 
 const tempDirs: string[] = []

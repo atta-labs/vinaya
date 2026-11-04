@@ -17,7 +17,7 @@ import {
   MissingWorkerBoundaryPolicyError,
   type ScratchNamePolicy,
   type WorkerBoundaryPolicies
-} from '../../src/lib/worker-boundary'
+} from '../../../../harness/kernel/isolation/worker-boundary'
 
 const ROLES: BoundaryRolePolicy = {
   // `north-star` carries its own hyphen, so it is listed ahead of anything its first segment could read as.

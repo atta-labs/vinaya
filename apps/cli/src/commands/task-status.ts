@@ -25,7 +25,7 @@
 
 import { StringDecoder } from 'node:string_decoder'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import { followTaskLog } from '../lib/follow-view.js'
 import {
   gatherSingleTaskStatus,
@@ -166,5 +166,5 @@ export async function taskStatusCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'task status': { date: '2026-09-12', callsToday: 4, retiresVia: 'taskStatus' }
+  'task status': { date: '2026-09-12', callsToday: 3, retiresVia: 'taskStatus' }
 }

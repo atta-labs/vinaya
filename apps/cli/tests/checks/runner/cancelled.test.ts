@@ -13,7 +13,7 @@ const RUN_AND_HANG = join(FIXTURES, 'run-and-hang.ts')
  * out-of-process, same as `runner.test.ts`'s own SIGINT-forwarding test —
  * sending SIGINT to the test runner itself would kill the whole suite. The
  * wrapper calls the REAL, un-injected `runChecks` (no `log` override), so
- * this is the real production singleton (`apps/cli/src/lib/log-sink.ts`'s
+ * this is the real production singleton (`harness/kernel/log/log-sink.ts`'s
  * `log`) actually writing — `isolatedConfigFixture`'s `HOME` is what makes
  * its output readable without touching the real machine's `~/.vinaya`.
  *

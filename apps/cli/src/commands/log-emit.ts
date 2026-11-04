@@ -2,7 +2,7 @@
 // makes to record its own declared event (O1/O2/O3). It reads the field
 // values as one JSON object — `--json '<json>'` or standard input, never
 // positional arguments, since the declared fields are flat and typed — and
-// records them through `emitCustomEvent` (`apps/cli/specs/log.md` § Custom
+// records them through `emitCustomEvent` (`harness/kernel/log/log.md` § Custom
 // events), the same chokepoint every other custom-event caller goes
 // through, so the refusal event and the redaction stay in one place.
 //
@@ -20,20 +20,20 @@
 // `VINAYA_FLOW` set, and no `VINAYA_ROLE`/`VINAYA_TASK`, already gets a
 // header carrying that work reference and flow id — `log()`'s own
 // `snapshot()` reads all four from the environment unconditionally, for
-// every caller (`apps/cli/specs/log.md` § Attribution).
+// every caller (`harness/kernel/log/log.md` § Attribution).
 
 import { join } from 'node:path'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { loadConfig, loadTrustAnchorConfigAsync } from '../lib/config.js'
-import { emitCustomEvent, type EmitCustomEventResult } from '../lib/log-custom.js'
+import { emitCustomEvent, type EmitCustomEventResult } from '../../../../harness/kernel/log/client/log-custom.js'
 import {
   drainLogSink,
   LOG_DESTINATION_ANCHOR_DEADLINE_MS,
   resolveLogDestinationFrom,
   withDeadline,
   type ResolvedLogDestination
-} from '../lib/log-sink.js'
-import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../lib/run-paths.js'
+} from '../../../../harness/kernel/log/log-sink.js'
+import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../../../../harness/kernel/run-paths.js'
 
 const USAGE = "Usage: vinaya log emit <event> --json '<json object>' (or pipe the JSON object on standard input)\n"
 
@@ -168,5 +168,5 @@ import type { SurfaceExemption } from '../lib/surface-exemption'
 // see. The retirement target is the same future `log-delivery.ts` those two
 // commands already name.
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'log emit': { date: '2026-10-01', callsToday: 9, retiresVia: 'logDeliveryChokepoint' }
+  'log emit': { date: '2026-10-01', callsToday: 2, retiresVia: 'logDeliveryChokepoint' }
 }

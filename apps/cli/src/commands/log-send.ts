@@ -23,7 +23,7 @@ import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { loadConfig, loadTrustAnchorConfigAsync } from '../lib/config.js'
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import {
   appendHardenedLine,
   describeFolderFallback,
@@ -32,9 +32,12 @@ import {
   resolveLogDestinationFrom,
   telemetryOutboxRoot,
   withDeadline
-} from '../lib/log-sink.js'
-import { drainOutboxToWebhook, type WebhookDrainOutcome } from '../lib/log-webhook-drain.js'
-import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../lib/run-paths.js'
+} from '../../../../harness/kernel/log/log-sink.js'
+import {
+  drainOutboxToWebhook,
+  type WebhookDrainOutcome
+} from '../../../../harness/kernel/log/client/log-webhook-drain.js'
+import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../../../../harness/kernel/run-paths.js'
 
 type RepoRef = { owner: string; repo: string } | null
 
@@ -226,5 +229,5 @@ import type { SurfaceExemption } from '../lib/surface-exemption'
 // reader needs to see. The retirement target is a future `log-delivery.ts` that
 // owns "deliver everything local for this repo" behind one call.
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'log send': { date: '2026-09-28', callsToday: 13, retiresVia: 'logDeliveryChokepoint' }
+  'log send': { date: '2026-09-28', callsToday: 2, retiresVia: 'logDeliveryChokepoint' }
 }

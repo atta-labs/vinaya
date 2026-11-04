@@ -14,7 +14,6 @@ tests/process-fixture-coverage.test.ts
 tests/lib/task-tools/operator-state-actions.test.ts
 tests/lib/task-tools/developer-ci-failure-detail.test.ts
 tests/commands/log-send.test.ts
-tests/lib/log-sync.test.ts
 tests/commands/sync.test.ts
 tests/lib/dispatch/linux-sandbox-probe.test.ts
 tests/lib/real-runtime-guard.test.ts

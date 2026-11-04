@@ -87,6 +87,34 @@ const TESTS_ROOT = join(fileURLToPath(new URL('.', import.meta.url)))
  * there: the production sources beside them are not this rule's subjects.
  */
 const COLOCATED_TESTS_ROOT = join(TESTS_ROOT, '..', 'src')
+/** The repository root, for the test files that moved out of this directory into the kernel and the process. */
+const REPOSITORY_ROOT = join(TESTS_ROOT, '..', '..', '..')
+/** The test files that moved out of this directory, repo-relative; the scan still reads them where they now live. */
+const MOVED_TESTS = [
+  'harness/kernel/adapters/agents/claude-code/loop-narration-claude.test.ts',
+  'harness/kernel/effects/envelope.test.ts',
+  'harness/kernel/effects/executor.test.ts',
+  'harness/kernel/isolation/dispatch/fake-sandbox-probe.ts',
+  'harness/kernel/isolation/isolation-contract.test.ts',
+  'harness/kernel/isolation/isolation-probe.test.ts',
+  'harness/kernel/log/client/log-readers-integration.test.ts',
+  'harness/kernel/log/client/log-sync-folder-source.test.ts',
+  'harness/kernel/log/client/log-sync-server-source.test.ts',
+  'harness/kernel/log/client/log-sync.test.ts',
+  'harness/kernel/tools/dev-tools-registration.test.ts',
+  'harness/kernel/tools/fetch-documentation-visible-text.test.ts',
+  'harness/processes/vinaya-strict/integration/log/client/cli-operation-log.test.ts',
+  'harness/processes/vinaya-strict/integration/log/client/log-callers.test.ts',
+  'harness/processes/vinaya-strict/integration/log/client/log-custom.test.ts',
+  'harness/processes/vinaya-strict/integration/log/client/log-entry-paths.test.ts',
+  'harness/processes/vinaya-strict/integration/log/log-destination.test.ts',
+  'harness/processes/vinaya-strict/integration/log/log-sink-factory.test.ts',
+  'harness/processes/vinaya-strict/integration/run-paths-only.test.ts',
+  'harness/processes/vinaya-strict/integration/run-paths.test.ts',
+  'harness/processes/vinaya-strict/integration/tools/dev-tools-server.test.ts',
+  'harness/processes/vinaya-strict/integration/tools/host/broker/operator-grants.test.ts',
+  'harness/processes/vinaya-strict/integration/tools/role-grants.test.ts'
+]
 /** The shared fixture helper itself: it DEFINES the isolation (and the budgeted spawn wrappers), so it is never one of its own subjects. */
 const HELPER_FILE = 'lib/process-fixture.ts'
 /** This file: it defines the rule, and carries a synthetic sample of every shape the rule forbids, so it is never one of its own subjects either. */
@@ -526,7 +554,7 @@ function isRepositoryRootedExpression(expression: string, roots: ReadonlySet<str
 /** A binding that READS a repository-rooted path holds that file's CONTENTS, not a directory — `const source = readFileSync(join(import.meta.dir, '..', 'src', …))` is a source-text assertion, and handing it to `indexOf` runs nothing. */
 const READS_THE_PATH = /\b(?:readFileSync|readdirSync|existsSync|statSync|readFile)\s*\(/
 
-/** A path whose last literal segment carries an extension names a FILE, never a working directory — `join(import.meta.dir, '..', 'src', 'lib', 'log-sink.ts')` is a module this file imports or interpolates, and nothing runs IN it. */
+/** A path whose last literal segment carries an extension names a FILE, never a working directory — `join(import.meta.dir, '..', 'harness', 'kernel', 'log', 'log-sink.ts')` is a module this file imports or interpolates, and nothing runs IN it. */
 const NAMES_A_FILE = new RegExp(`${QUOTE}[^\\u0027\\u0022\\u0060/]+\\.[A-Za-z0-9]+${QUOTE}\\s*\\)?\\s*$`)
 
 /**
@@ -599,7 +627,9 @@ function namesCarryingARepositoryRoot(code: string, seeds: ReadonlySet<string>):
 function siblingModuleCode(rel: string, specifier: string): string | null {
   const dir = rel.startsWith('src/')
     ? join(COLOCATED_TESTS_ROOT, rel.slice('src/'.length), '..')
-    : join(TESTS_ROOT, rel, '..')
+    : rel.startsWith('harness/')
+      ? join(REPOSITORY_ROOT, rel, '..')
+      : join(TESTS_ROOT, rel, '..')
   for (const candidate of [specifier, `${specifier}.ts`, `${specifier}/index.ts`, specifier.replace(/\.js$/, '.ts')]) {
     const abs = join(dir, candidate)
     if (/\.tsx?$/.test(abs) && existsSync(abs)) return scanSource(readFileSync(abs, 'utf8')).withStrings
@@ -1034,7 +1064,7 @@ const IN_PROCESS_SITE = 'calls a Vinaya Log producer in this process without mov
  *
  * The vocabulary is cross-checked against `lib/log-callers.test.ts`'s own
  * `PRODUCER_BOUNDARIES` by a test below, since that table is what
- * `apps/cli/specs/log.md` treats as the authoritative producer list and this
+ * `harness/kernel/log/log.md` treats as the authoritative producer list and this
  * one silently missed four of its boundaries (round 4 security review, LOW).
  */
 const SINK_PRODUCERS = ['log', 'drainLogSink', 'createLogSink'] as const
@@ -1208,7 +1238,11 @@ function repositoryWorkingDirectorySites(rel: string, source: ScannedSource): st
 
 /** Every file this scan walks: everything under this directory, plus the `*.test.ts` files colocated with the sources. */
 function everyTestTreeFile(): [string, string][] {
-  return [...walk(TESTS_ROOT, ''), ...walk(COLOCATED_TESTS_ROOT, 'src').filter(([rel]) => rel.endsWith('.test.ts'))]
+  return [
+    ...walk(TESTS_ROOT, ''),
+    ...walk(COLOCATED_TESTS_ROOT, 'src').filter(([rel]) => rel.endsWith('.test.ts')),
+    ...MOVED_TESTS.map((rel): [string, string] => [rel, join(REPOSITORY_ROOT, rel)])
+  ]
 }
 
 /** Every file under `apps/cli/tests` that reads a default log destination, paired with its own offending sites. */
@@ -1268,7 +1302,12 @@ describe("no test reads this repository's own log destination", () => {
   })
 
   it('the producer vocabulary covers every boundary log-callers.test.ts names — that table is the authoritative list', () => {
-    const callers = scanSource(readFileSync(join(TESTS_ROOT, 'lib/log-callers.test.ts'), 'utf8')).withStrings
+    const callers = scanSource(
+      readFileSync(
+        join(REPOSITORY_ROOT, 'harness/processes/vinaya-strict/integration/log/client/log-callers.test.ts'),
+        'utf8'
+      )
+    ).withStrings
     const boundaries = [...callers.matchAll(/name:\s*['"`]([^'"`]+)['"`]/g)].map((m) => m[1] as string)
     expect(boundaries.length).toBeGreaterThanOrEqual(7)
     const uncovered = boundaries.filter((boundary) => {
@@ -1375,7 +1414,7 @@ describe("no test reads this repository's own log destination", () => {
     expect(sitesFor(namespaced)).not.toEqual([])
     const chdired = `
       import { REPO_ROOT as ROOT } from './conformance/harness'
-      import { log } from './src/lib/log-sink.js'
+      import { log } from '../../../harness/kernel/log/log-sink.js'
       process.chdir(ROOT)
       ${AN_IN_PROCESS_PRODUCER}
       ${A_DEFAULT_READ}
@@ -1392,7 +1431,7 @@ describe("no test reads this repository's own log destination", () => {
     `
     expect(sitesFor(handedOn)).not.toEqual([])
     const chdired = `
-      import { log } from '../src/lib/log-sink.js'
+      import { log } from '../../../harness/kernel/log/log-sink.js'
       const repoRoot = join(import.meta.dir, '..', '..')
       process.chdir(join(repoRoot, 'apps'))
       ${AN_IN_PROCESS_PRODUCER}
@@ -1417,7 +1456,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('an INLINE chdir into this repository is the offence too — never read as a move out of it', () => {
     const sample = `
-      import { log } from '../src/lib/log-sink.js'
+      import { log } from '../../../harness/kernel/log/log-sink.js'
       process.chdir(join(import.meta.dir, '..', '..'))
       ${AN_IN_PROCESS_PRODUCER}
       ${A_DEFAULT_READ}
@@ -1449,7 +1488,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('a producer reached through a plain re-binding is flagged too — the two halves of this scan agree', () => {
     const sample = `
-      import { log } from '../src/lib/log-sink.js'
+      import { log } from '../../../harness/kernel/log/log-sink.js'
       const emit = log
       await emit({ operation: 'task_start' })
       ${A_DEFAULT_READ}
@@ -1469,7 +1508,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('a log producer called in this process is flagged: the test runner runs in the repository', () => {
     const sample = `
-      import { log } from '../src/lib/log-sink.js'
+      import { log } from '../../../harness/kernel/log/log-sink.js'
       ${AN_IN_PROCESS_PRODUCER}
       ${A_DEFAULT_READ}
     `
@@ -1478,13 +1517,13 @@ describe("no test reads this repository's own log destination", () => {
 
   it('…and so is one reached through an import alias, or through a namespace import', () => {
     const aliased = `
-      import { log as writeLog } from '../src/lib/log-sink.js'
+      import { log as writeLog } from '../../../harness/kernel/log/log-sink.js'
       await writeLog({ operation: 'task_start' })
       ${A_DEFAULT_READ}
     `
     expect(inProcessSites(aliased)).toHaveLength(1)
     const namespaced = `
-      import * as sink from '../src/lib/log-sink.js'
+      import * as sink from '../../../harness/kernel/log/log-sink.js'
       await sink.log({ operation: 'task_start' })
       ${A_DEFAULT_READ}
     `
@@ -1522,7 +1561,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('…and still flagged when the same file also spawns a properly isolated child, which used to excuse it wholesale', () => {
     const sample = `
-      import { log } from '../src/lib/log-sink.js'
+      import { log } from '../../../harness/kernel/log/log-sink.js'
       const fixture = isolatedConfigFixture('x-')
       const out = runFixtureScript(scriptPath, fixture.cwd, fixture.env)
       ${AN_IN_PROCESS_PRODUCER}
@@ -1533,7 +1572,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('a chdir INTO this repository is the offence, never the isolation', () => {
     const sample = `
-      import { log } from '../src/lib/log-sink.js'
+      import { log } from '../../../harness/kernel/log/log-sink.js'
       const repoRoot = join(import.meta.dir, '..', '..')
       process.chdir(repoRoot)
       ${AN_IN_PROCESS_PRODUCER}
@@ -1546,7 +1585,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('a chdir BACK into a captured directory is the restore idiom, not a move out', () => {
     const sample = `
-      import { log } from '../src/lib/log-sink.js'
+      import { log } from '../../../harness/kernel/log/log-sink.js'
       const original = process.cwd()
       afterEach(() => {
         process.chdir(original)
@@ -1559,7 +1598,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('a chdir in one function excuses nothing in another — every call is judged where it sits', () => {
     const sample = `
-      import { log } from '../src/lib/log-sink.js'
+      import { log } from '../../../harness/kernel/log/log-sink.js'
       function inItsOwnWorld() {
         process.chdir(world.repoRoot)
       }
@@ -1573,7 +1612,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('a chdir out of the repository before the call, in a block that encloses it, does excuse it', () => {
     const sample = `
-      import { log } from '../src/lib/log-sink.js'
+      import { log } from '../../../harness/kernel/log/log-sink.js'
       async function run() {
         process.chdir(world.repoRoot)
         ${AN_IN_PROCESS_PRODUCER}
@@ -1585,7 +1624,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('…and so does a wrapper this file defines whose own body moves the process, one hop away', () => {
     const sample = `
-      import { log } from '../src/lib/log-sink.js'
+      import { log } from '../../../harness/kernel/log/log-sink.js'
       export async function withWorldEnv(world, fn) {
         process.chdir(world.repoRoot)
         try {
@@ -1602,7 +1641,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('a sink built from deps of its own excuses the calls in its own scope — and nothing outside them', () => {
     const inScope = `
-      import { createLogSink } from '../src/lib/log-sink.js'
+      import { createLogSink } from '../../../harness/kernel/log/log-sink.js'
       it('writes where it was told', () => {
         const { log } = createLogSink({ outboxRoot: () => join(dir, 'queue'), home: () => dir })
         log(DISPATCHED)
@@ -1611,7 +1650,7 @@ describe("no test reads this repository's own log destination", () => {
     `
     expect(inProcessSites(inScope)).toEqual([])
     const leakedOutside = `
-      import { createLogSink, log } from '../src/lib/log-sink.js'
+      import { createLogSink, log } from '../../../harness/kernel/log/log-sink.js'
       it('writes where it was told', () => {
         const { log: ownLog } = createLogSink({ outboxRoot: () => join(dir, 'queue') })
         ownLog(DISPATCHED)
@@ -1631,7 +1670,7 @@ describe("no test reads this repository's own log destination", () => {
       'const childConfig = { resolveLogDestination: () => ({ kind: 0 }) }'
     ]) {
       const sample = `
-        import { log } from '../src/lib/log-sink.js'
+        import { log } from '../../../harness/kernel/log/log-sink.js'
         ${token}
         ${AN_IN_PROCESS_PRODUCER}
         ${A_DEFAULT_READ}
@@ -1648,7 +1687,7 @@ describe("no test reads this repository's own log destination", () => {
       'const options = { cwd: someTempDir }'
     ]) {
       const sample = `
-        import { log } from '../src/lib/log-sink.js'
+        import { log } from '../../../harness/kernel/log/log-sink.js'
         ${token}
         ${AN_IN_PROCESS_PRODUCER}
         ${A_DEFAULT_READ}
@@ -1663,7 +1702,7 @@ describe("no test reads this repository's own log destination", () => {
       "const advice = 'set logs: { folder: /somewhere } in vinaya.config.json'"
     ]) {
       const sample = `
-        import { log } from '../src/lib/log-sink.js'
+        import { log } from '../../../harness/kernel/log/log-sink.js'
         ${declaration}
         ${AN_IN_PROCESS_PRODUCER}
         ${A_DEFAULT_READ}
@@ -1676,7 +1715,7 @@ describe("no test reads this repository's own log destination", () => {
     const sample = [
       `const fixture = isolatedConfigFixture(${quoted('x-')})`,
       `const script = ${BACKTICK}`,
-      `import { log } from ${quoted('../../src/lib/log-sink.js')}`,
+      `import { log } from ${quoted('../../../harness/kernel/log/log-sink.js')}`,
       `await log({ operation: ${quoted('task_start')} })`,
       BACKTICK,
       'const out = runFixtureScript(scriptPath, fixture.cwd, fixture.env)',
@@ -1724,7 +1763,10 @@ describe("no test reads this repository's own log destination", () => {
   })
 
   it('…held against the real file that carried one: its own line survives the scan intact', () => {
-    const raw = readFileSync(join(TESTS_ROOT, 'run-paths-only.test.ts'), 'utf8')
+    const raw = readFileSync(
+      join(REPOSITORY_ROOT, 'harness/processes/vinaya-strict/integration/run-paths-only.test.ts'),
+      'utf8'
+    )
     const lines = raw.split('\n')
     const line = lines.findIndex((text) => text.trimStart().startsWith('return /') && text.includes('.test(line)'))
     expect(line).toBeGreaterThan(0)

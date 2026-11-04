@@ -11,6 +11,7 @@
  * comment already records three such copies disagreeing before consolidation.
  */
 
+import { parseIssueDocumentation, type IssueDocumentation } from '../../../../kernel/issue-documentation.js'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
@@ -26,7 +27,6 @@ import {
   fetchOpenIssuesByLabel,
   isTaskIssueLabelSet,
   objectivesOf,
-  parseIssueDocumentation,
   parseIssueParts,
   parseIssuePremises,
   parseIssueStopConditions,
@@ -43,7 +43,6 @@ import {
   type DispatchDependsOnFact,
   type DispatchGateInput,
   type DispatchPriorTrancheFact,
-  type IssueDocumentation,
   type IssuePart,
   type IssueSurface,
   type IssueTestPlan,

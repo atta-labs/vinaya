@@ -302,7 +302,7 @@ export function segmentTrustedOverflowUid(
  * this store's own `openSync`/`writeSync`/`renameSync`/`linkSync` next then
  * operates inside whatever real directory that symlink resolves to. Before
  * `runtimeDir` became a repo-configurable absolute path shared with other
- * local accounts (`apps/cli/src/lib/run-paths.ts`'s own doc comment names
+ * local accounts (`harness/kernel/run-paths.ts`'s own doc comment names
  * `/var/lib/vinaya/runs`), this whole tree sat under a fixed, per-repository,
  * user-owned default and a co-tenant able to pre-plant a symlink was out of
  * scope; a shared, configurable tree makes that co-tenant a real adversary
@@ -518,7 +518,7 @@ function assertSafeEscalationId(escalationId: string): void {
  * A task's own control records: `<root>/<task>/control/`.
  *
  * `root` is the directory holding one folder per task — the CLI passes
- * `<runtimeDir>/tasks-execution` (`apps/cli/src/lib/run-paths.ts`), so a
+ * `<runtimeDir>/tasks-execution` (`harness/kernel/run-paths.ts`), so a
  * task's control records sit in the `control/` subdirectory of the same
  * folder that holds its session records, its raw output and its per-round
  * reviewer files. The `control/` segment is what keeps those four classes
@@ -530,7 +530,7 @@ function assertSafeEscalationId(escalationId: string): void {
 /**
  * The subdirectory of a task's folder that holds its control records. Named
  * and exported so the CLI's own layout constant
- * (`apps/cli/src/lib/run-paths.ts`'s `RUN_AREA_DIRNAMES.control`) can be
+ * (`harness/kernel/run-paths.ts`'s `RUN_AREA_DIRNAMES.control`) can be
  * derived from this one rather than repeating the literal across a package
  * boundary, where nothing would catch the two drifting apart.
  */

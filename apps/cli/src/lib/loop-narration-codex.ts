@@ -13,7 +13,7 @@ import {
   relativePath,
   scrub,
   shorten
-} from './loop-narration-claude'
+} from '../../../../harness/kernel/adapters/agents/claude-code/loop-narration-claude'
 
 /**
  * Translates one Codex `--json` event into the same plain actions the Claude

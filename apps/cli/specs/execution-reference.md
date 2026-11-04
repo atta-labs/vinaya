@@ -5,7 +5,7 @@ Status: draft
 Scope: the maintained reference for where control passes on the task path
 — a planned Issue to a reviewed pull request, through the registered task
 tools, on both runtimes — and who owns each typed event that path emits.
-This is a register, not a second normative source: `apps/cli/specs/isolation.md`
+This is a register, not a second normative source: `harness/kernel/isolation/isolation.md`
 (process boundaries), `log.md` (event schema and families), `surface.md`
 (the CLI's own layering) and `conformance.md` (the concern-by-concern
 matrix and live acceptance evidence) are the actual authorities. This file
@@ -33,18 +33,18 @@ Section E, not silently absorbed into it.
 
 ## B — Process boundary
 
-`apps/cli/specs/isolation.md` is the authority; this table is a condensed
+`harness/kernel/isolation/isolation.md` is the authority; this table is a condensed
 pointer into it, not a restatement — read the source file for the full
 permitted/forbidden lists and the security rationale behind each.
 
 | Actor | Role | Boundary enforced by |
 | ----- | ---- | --------------------- |
 | Controller | Runs `devReviewLoop`/`task run`; holds the Operator's own forge login and model credentials; the only actor that spawns Worker, Reviewer and repository subprocesses | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `dev-review-loop.ts` |
-| Worker (Developer) | Reads/writes its own worktree; runs the declared toolchain; pushes and opens a PR on its own branch only | `apps/cli/src/lib/worker-boundary.ts` (Seatbelt sandbox on Darwin, always on where supported) |
+| Worker (Developer) | Reads/writes its own worktree; runs the declared toolchain; pushes and opens a PR on its own branch only | `harness/kernel/isolation/worker-boundary.ts` (Seatbelt sandbox on Darwin, always on where supported) |
 | Reviewer | Reads the repository at a judged head; writes findings to a driver-chosen work directory; never holds any forge-write credential | Same `worker-boundary.ts` profile, with every forge-write grant denied |
-| Operator | The task-scoped external client described in Section A | `packages/aeg-core/src/task-tools.ts`'s `OPERATOR_TOOL_GRANT` + `apps/cli/src/lib/task-tools/router.ts`'s `refuseUngrantedTool` |
+| Operator | The task-scoped external client described in Section A | `packages/aeg-core/src/task-tools.ts`'s `OPERATOR_TOOL_GRANT` + `harness/kernel/tools/host/router.ts`'s `refuseUngrantedTool` |
 | Repository subprocess | Reads/writes only what the Controller explicitly constructs into its environment | `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` (never `{ ...process.env }` spread) |
-| Broker | Grants Worker `branch-push`/`branch-lease-push`/`pr-open`/`pr-comment` (a `branch-lease-push` only to a `refs/heads/task/` target, and requested only by the driver's own publication) and Operator `task-execute`/`task-observe`; refuses `ruling-post`/`criteria-edit`/`protected-merge`/`review-publish` unconditionally to both | `apps/cli/src/lib/broker.ts` |
+| Broker | Grants Worker `branch-push`/`branch-lease-push`/`pr-open`/`pr-comment` (a `branch-lease-push` only to a `refs/heads/task/` target, and requested only by the driver's own publication) and Operator `task-execute`/`task-observe`; refuses `ruling-post`/`criteria-edit`/`protected-merge`/`review-publish` unconditionally to both | `harness/kernel/tools/host/broker.ts` |
 
 `dispatchRole` (`dispatch.ts`) is the one chokepoint every Worker/Reviewer
 subprocess launch passes through, regardless of vendor — the process
@@ -91,7 +91,7 @@ The six registered tools and their handlers:
 
 ## D — Event ownership
 
-`apps/cli/specs/log.md` is the schema authority; `packages/aeg-core/src/log/schema.ts`
+`harness/kernel/log/log.md` is the schema authority; `harness/kernel/log/schema.ts`
 is the source of truth for field shapes. This table names, for every
 family the schema declares, the file(s) that actually call `log()` with
 that kind today — "ownership" in the literal sense: which file is on the
@@ -102,13 +102,13 @@ hook when a family's shape needs to change. Each producer file named in the tabl
 <!-- AEG:CLAIM: apps/cli/src/checks/runner.ts contains:kind: 'gate' -->
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts contains:kind: 'operation' -->
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts contains:kind: 'operation' -->
-<!-- AEG:CLAIM: apps/cli/src/lib/broker.ts contains:operationEvent -->
-<!-- AEG:CLAIM: apps/cli/src/lib/effects.ts contains:kind: 'effect' -->
+<!-- AEG:CLAIM: harness/kernel/tools/host/broker.ts contains:operationEvent -->
+<!-- AEG:CLAIM: harness/kernel/effects/effects.ts contains:kind: 'effect' -->
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts contains:kind: 'handoff' -->
-<!-- AEG:CLAIM: apps/cli/src/lib/log-custom.ts contains:kind: 'custom' -->
-<!-- AEG:CLAIM: apps/cli/src/lib/log-custom.ts contains:kind: 'operation' -->
+<!-- AEG:CLAIM: harness/kernel/log/client/log-custom.ts contains:kind: 'custom' -->
+<!-- AEG:CLAIM: harness/kernel/log/client/log-custom.ts contains:kind: 'operation' -->
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:kind: 'operation' -->
-<!-- AEG:CLAIM: apps/cli/src/lib/cli-operation-log.ts contains:kind: 'operation' -->
+<!-- AEG:CLAIM: harness/kernel/log/client/cli-operation-log.ts contains:kind: 'operation' -->
 
 | Kind | Producer(s) | Records |
 | ---- | ----------- | ------- |
@@ -116,12 +116,12 @@ hook when a family's shape needs to change. Each producer file named in the tabl
 | `dev_review_loop` | `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts` | The round-by-round loop lifecycle — start, gate, verdicts, pause/resume/cancel, journal. |
 | `forge_write` | none today | Declared in the schema so an already-posted comment line still parses; no file emits it — the comment-posting flush and the artifact commands are removed, and logs never reach a tracker or a code host. |
 | `gate` | `apps/cli/src/checks/runner.ts` | One check's terminal outcome (pass/fail/wait/skip/invalid/unavailable/timeout/cancelled). |
-| `operation` | `harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts`, `cancel.ts`, `apps/cli/src/lib/broker.ts`, `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `apps/cli/src/lib/log-custom.ts`, `apps/cli/src/lib/cli-operation-log.ts` | A normalized tool-call or broker-authorized operation's outcome (ok/error/refused/timeout/cancelled/unavailable) — this is the family a registered task tool's own call emits; `conformance.md` Section D captures one real instance. |
+| `operation` | `harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts`, `cancel.ts`, `harness/kernel/tools/host/broker.ts`, `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `harness/kernel/log/client/log-custom.ts`, `harness/kernel/log/client/cli-operation-log.ts` | A normalized tool-call or broker-authorized operation's outcome (ok/error/refused/timeout/cancelled/unavailable) — this is the family a registered task tool's own call emits; `conformance.md` Section D captures one real instance. |
 | `usage` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts` | Vendor token usage, every unit nullable rather than defaulted to zero when a vendor doesn't report one. |
 | `role_attempt` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `dev-review-loop.ts` | A dispatched role's own normalized attempt outcome, distinct from the Controller-side `dispatch` view of the same attempt. |
 | `handoff` | `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts` | A human escalation, raised and resolved. |
-| `effect` | `apps/cli/src/lib/effects.ts` | A generic external effect's attempted/observed/verified outcome, additive to `forge_write`, never replacing it. |
-| `custom` | `apps/cli/src/lib/log-custom.ts` (`emitCustomEvent`) | An operator-declared event, named and shaped by the loaded configuration. |
+| `effect` | `harness/kernel/effects/effects.ts` | A generic external effect's attempted/observed/verified outcome, additive to `forge_write`, never replacing it. |
+| `custom` | `harness/kernel/log/client/log-custom.ts` (`emitCustomEvent`) | An operator-declared event, named and shaped by the loaded configuration. |
 
 Every event's own attribution is carried in its `meta` envelope
 (`log/schema.ts` schema v2: `event_id`, `process_id`, `actor_id`,

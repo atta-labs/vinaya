@@ -10,6 +10,10 @@
  * sources are read from a real throwaway git repository.
  */
 
+import {
+  classifyDocumentationSource,
+  REQUIRED_SOURCE_MISSING_REASONS
+} from '../../../../harness/kernel/issue-documentation.js'
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
@@ -24,7 +28,6 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { classifyDocumentationSource, REQUIRED_SOURCE_MISSING_REASONS } from '@attalabs/aeg-core'
 import { deliveredDocumentation } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import {
   appendSourceDeliveryReceipt,
@@ -40,7 +43,7 @@ import {
   sourceReceiptsPath,
   sourceSnapshotPath,
   sourceStoreDir
-} from '../../src/lib/source-manifest.js'
+} from '../../../../harness/kernel/source-manifest.js'
 import {
   gitObjectReader,
   prepareSources,
@@ -48,14 +51,17 @@ import {
   RequiredSourcesUnavailable,
   SourceReaderUnavailable,
   type SourceProviderDeps
-} from '../../src/lib/source-provider.js'
+} from '../../../../harness/kernel/tools/source-provider.js'
 import {
   type FetchDocumentationDeps,
   type FetchTarget,
   FetchTransportError,
   type RawResponse
-} from '../../src/lib/task-tools/fetch-documentation.js'
-import { buildClaudeSandboxSettings, controllerStoreReachableBy } from '../../src/lib/worker-boundary.js'
+} from '../../../../harness/kernel/tools/fetch-documentation.js'
+import {
+  buildClaudeSandboxSettings,
+  controllerStoreReachableBy
+} from '../../../../harness/kernel/isolation/worker-boundary.js'
 
 const tempDirs: string[] = []
 afterEach(() => {

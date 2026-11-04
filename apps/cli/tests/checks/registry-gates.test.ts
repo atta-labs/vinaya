@@ -314,7 +314,7 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       )
       write(
         join(root, 'harness', 'processes', 'demo', 'tests', 'helper.ts'),
-        "import { log } from '../../../../apps/cli/src/lib/log-sink.js'\nexport const helper = log\n"
+        "import { log } from '../../../../harness/kernel/log/log-sink.js'\nexport const helper = log\n"
       )
 
       const withModule = evaluate()

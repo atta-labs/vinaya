@@ -149,12 +149,7 @@ import {
   fetchNewestRulingOrdinal,
   fetchRulings
 } from '../standalone/dev-review-loop/developer-dispatch.js'
-import {
-  ensureRunDir,
-  runPath,
-  runtimeDirForThisRepo,
-  tasksExecutionRoot
-} from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
 import { repoRoot as gitRepoRoot } from '../../../../../../apps/cli/src/lib/diff-evidence.js'
 import {
   deriveLoopState,

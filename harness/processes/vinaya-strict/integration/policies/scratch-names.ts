@@ -7,7 +7,7 @@
  * Developer has no scratch copy at all.
  */
 
-import type { ScratchNamePolicy } from '../../../../../apps/cli/src/lib/worker-boundary.js'
+import type { ScratchNamePolicy } from '../../../../kernel/isolation/worker-boundary.js'
 import { isReviewerScratchName } from '../../loops/dev-review/standalone/dev-review-loop/reviewer-isolation.js'
 
 export const VINAYA_SCRATCH_NAMES: ScratchNamePolicy = {

@@ -15,7 +15,7 @@ import {
   resolveEscalation,
   writePauseState
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import { tasksExecutionRoot } from '../../src/lib/run-paths.js'
+import { tasksExecutionRoot } from '../../../../harness/kernel/run-paths.js'
 import { createTaskCancelHandler } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.js'
 import {
   createTaskResumeHandler,

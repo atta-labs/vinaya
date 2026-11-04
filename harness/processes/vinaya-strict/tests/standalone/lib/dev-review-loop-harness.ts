@@ -49,15 +49,15 @@ import {
   type RebaseOntoTipResult,
   runDriverLoop
 } from '../../../loops/dev-review/standalone/dev-review-loop.js'
-import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '../../../../../../apps/cli/src/lib/log-sink.js'
-import { resetRuntimeDirCache } from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '../../../../../kernel/log/log-sink.js'
+import { resetRuntimeDirCache } from '../../../../../kernel/run-paths.js'
 import type {
   DispatchFailureReason,
   DispatchHandle,
   ReviewerTurnOutput
 } from '../../../loops/dev-review/dispatch/dispatch.js'
 import type { DeveloperTurnOutput } from '../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
-import type { DevToolContext } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server.js'
+import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server.js'
 import {
   pauseMarker,
   renderNoPushStopComment,
@@ -1314,7 +1314,7 @@ export async function runDriverLoopInProcess(
  *    unattended `devReviewLoop` from resolving the DEFAULT BRANCH's `logs.url`
  *    server over the trust anchor: `resolveTrustAnchorLogsDestination` refuses a
  *    local folder the default branch does not declare and falls back to the
- *    default folder, never the server (`apps/cli/specs/log.md` § The
+ *    default folder, never the server (`harness/kernel/log/log.md` § The
  *    destination). A working directory alone never closed this — an unattended
  *    caller with NO local `logs` setting still honours whatever the default
  *    branch declares, so before this the harness delivered fake round events to

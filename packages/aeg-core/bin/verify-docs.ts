@@ -474,7 +474,15 @@ function runC7(only?: ReadonlySet<string>): void {
  * would silently shrink this corpus back below what the doctrine states and
  * re-open the gap above. Two lists, because there are two questions.
  */
-const C8_PATHSPECS = ['aeg-root/*.md', 'apps/*.ts', 'apps/*.md', 'packages/*.ts', 'packages/*.md']
+const C8_PATHSPECS = [
+  'aeg-root/*.md',
+  'apps/*.ts',
+  'apps/*.md',
+  'harness/*.ts',
+  'harness/*.md',
+  'packages/*.ts',
+  'packages/*.md'
+]
 
 /**
  * C8 — doc-claim bindings. A doctrine sentence or source comment stating what
@@ -530,7 +538,9 @@ function runC8(only?: ReadonlySet<string>): void {
 
 function runFullMode(): void {
   // F1 — every spec carries a Status block.
-  const specs = sh("git ls-files 'apps/**/specs/*.md'")
+  const specs = sh(
+    "git ls-files 'apps/**/specs/*.md' harness/kernel/isolation/isolation.md harness/kernel/log/log.md harness/kernel/log/log-sync.md"
+  )
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)

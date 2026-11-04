@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
-import { isProtectedAdminPath, normalizeTouchedPath, PROTECTED_ADMIN_PATHS } from './protected-paths'
+import { normalizeTouchedPath } from '@attalabs/harness/tools/host/touched-path'
+import { isProtectedAdminPath, PROTECTED_ADMIN_PATHS } from './protected-paths'
 
 describe('normalizeTouchedPath', () => {
   test.each([

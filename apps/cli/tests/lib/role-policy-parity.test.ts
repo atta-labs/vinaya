@@ -18,10 +18,15 @@ import {
   vinayaRouterPolicies,
   vinayaToolGrantPolicy
 } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies'
-import { createBroker, ProtectedPathError, scopeTarget, UngrantedOperationError } from '../../src/lib/broker'
-import { type DevToolContext, dispatchDevTool } from '../../src/lib/task-tools/dev-tools-server'
-import { grantedTools, isToolGranted, servedTools } from '../../src/lib/task-tools/role-grants'
-import { createTaskToolRouter } from '../../src/lib/task-tools/router'
+import {
+  createBroker,
+  ProtectedPathError,
+  scopeTarget,
+  UngrantedOperationError
+} from '../../../../harness/kernel/tools/host/broker'
+import { type DevToolContext, dispatchDevTool } from '../../../../harness/kernel/tools/dev-tools-server'
+import { grantedTools, isToolGranted, servedTools } from '../../../../harness/kernel/tools/role-grants'
+import { createTaskToolRouter } from '../../../../harness/kernel/tools/host/router'
 
 const noLog = (): void => {}
 

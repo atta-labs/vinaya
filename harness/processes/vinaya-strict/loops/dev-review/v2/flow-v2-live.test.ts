@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { DevToolContext } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
+import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server'
 import { gitPath, LAST_PUSH_RESULT, SELECTION_NOTE } from '../../../../../../apps/cli/src/lib/pre-push-failed-tests'
 import { PROGRESS_MARKER } from '../../../../../../apps/cli/src/lib/push-progress'
 import {

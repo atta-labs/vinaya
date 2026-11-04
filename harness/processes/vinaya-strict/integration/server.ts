@@ -39,13 +39,9 @@ import { Writable } from 'node:stream'
 import { defaultTaskCancelHandler } from '../loops/dev-review/run-control/cancel.js'
 import type { TaskToolCallResult } from '../loops/dev-review/run-control/handlers.js'
 import { taskEscalationReadHandler, taskStatusHandler } from '../loops/dev-review/run-control/handlers.js'
-import {
-  createMcpServerCore,
-  MCP_PROTOCOL_VERSION,
-  type McpServerCore
-} from '../../../../apps/cli/src/lib/task-tools/mcp-protocol.js'
+import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from '../../../kernel/tools/mcp-protocol.js'
 import { taskPrReadHandler } from '../loops/dev-review/run-control/pr-read.js'
-import { createTaskToolRouter } from '../../../../apps/cli/src/lib/task-tools/router.js'
+import { createTaskToolRouter } from '../../../kernel/tools/host/router.js'
 import { vinayaRouterPolicies } from './policies/vinaya-policies.js'
 import { defaultTaskResumeHandler } from '../loops/dev-review/run-control/resume.js'
 import { defaultTaskStartHandler } from '../loops/dev-review/run-control/start.js'

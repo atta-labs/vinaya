@@ -14,7 +14,7 @@
  */
 
 import { env, runInDurableObject, SELF } from 'cloudflare:test'
-import { logEventSchemaDigest } from '@attalabs/aeg-core/log'
+import { logEventSchemaDigest } from '@attalabs/harness/log/client/schema-digest'
 import { describe, expect, it } from 'vitest'
 import type { Env, RepoLog } from './repo-log'
 

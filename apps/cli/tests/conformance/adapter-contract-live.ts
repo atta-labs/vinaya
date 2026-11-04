@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { arch, homedir, tmpdir, type, userInfo } from 'node:os'
 import { join } from 'node:path'
-import { redact } from '@attalabs/aeg-core'
+import { redact } from '../../../../harness/kernel/log/redact'
 import {
   judgeTurnOutput,
   type TurnResultControllerContext,
@@ -19,12 +19,13 @@ import {
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { ownVersion } from '../../src/lib/own-version.js'
 import { proofContext } from '../../src/lib/task-tools/dev-proof.js'
-import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host.js'
+import { startDevToolsHost } from '../../../../harness/kernel/tools/host/dev-tools-host.js'
+import { devBridgePath } from '../../src/lib/cli-entry.js'
 import {
   type BridgeInvocation,
   devToolsSocketPath,
   driverDevBridgeInvocation
-} from '../../src/lib/task-tools/dev-tools-registration.js'
+} from '../../../../harness/kernel/tools/dev-tools-registration.js'
 import {
   accountEnv,
   beforeStdinMarker,
@@ -32,7 +33,7 @@ import {
   providerText,
   runChild
 } from '../../src/lib/task-tools/result-proof.js'
-import { buildWorkerEnv } from '../../src/lib/worker-boundary.js'
+import { buildWorkerEnv } from '../../../../harness/kernel/isolation/worker-boundary.js'
 import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture.js'
 import {
   ADAPTER_CONTRACT_CASES,
@@ -89,7 +90,7 @@ export const CLI_ENTRY = join(REPO_ROOT, 'apps', 'cli', 'src', 'index.ts')
  * CLI: the bridge would then never start and every Developer dispatch would fail at start.
  */
 export function liveContractBridge(socketPath: string): BridgeInvocation {
-  return driverDevBridgeInvocation(socketPath, CLI_ENTRY)
+  return driverDevBridgeInvocation(socketPath, devBridgePath())
 }
 
 /** The timeout case's child environment: the worker allowlist plus the account names the vendor's login reads. */

@@ -159,9 +159,9 @@ import {
   resolveReleaseActor,
   resolveTrustedPrincipals
 } from '../../../../../../apps/cli/src/lib/config'
-import { printJson } from '../../../../../../apps/cli/src/lib/envelope'
-import type { EffectIdentity, EffectReconcileResult } from '../../../../../../apps/cli/src/lib/effects.js'
-import { sha256Hex } from '../../../../../../apps/cli/src/lib/effects.js'
+import { printJson } from '../../../../../kernel/effects/envelope'
+import type { EffectIdentity, EffectReconcileResult } from '../../../../../kernel/effects/effects.js'
+import { sha256Hex } from '../../../../../kernel/effects/effects.js'
 
 // ---------------------------------------------------------------------------
 // Arg errors — a malformed `--body-file` is a refusal in the CheckError shape,
@@ -3137,7 +3137,7 @@ export function countMarkerComments(bodies: string[], prefix: string): number {
   return bodies.filter((b) => b.startsWith(prefix)).length
 }
 
-/** The exact bytes `postMarkedComment` posts — exported so a caller computing a payload digest for reconciliation (`EffectIdentity.payloadDigest`, `apps/cli/src/lib/effects.ts`) hashes the SAME string this function actually sends, rather than a hand-reconstructed copy that could drift from it. */
+/** The exact bytes `postMarkedComment` posts — exported so a caller computing a payload digest for reconciliation (`EffectIdentity.payloadDigest`, `harness/kernel/effects/effects.ts`) hashes the SAME string this function actually sends, rather than a hand-reconstructed copy that could drift from it. */
 export function markedCommentBody(marker: string, body: string): string {
   return `${marker}\n${body}\n`
 }
@@ -3191,7 +3191,7 @@ export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: str
 }
 
 /**
- * An `EffectReconciler` (`apps/cli/src/lib/effects.ts`) over `gh {issue,pr}
+ * An `EffectReconciler` (`harness/kernel/effects/effects.ts`) over `gh {issue,pr}
  * view --json comments`: fetches every comment on `ref`, and reports
  * `'confirmed'` (with that comment's own url) the instant a PRINCIPAL-
  * AUTHORED one's `body` hashes to `identity.payloadDigest` — exact-body

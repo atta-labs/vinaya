@@ -51,19 +51,19 @@ export const SUITE_INPUTS: readonly string[] = [
   'apps/cli/tests/lib/dispatch/driver-socket-reach.ts',
   // The driver code that builds each agent's sandbox settings.
   'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts',
-  'apps/cli/src/lib/worker-boundary.ts',
+  'harness/kernel/isolation/worker-boundary.ts',
   // The Engine's own launch-shape generators and the launcher the credential probes run inside.
   'harness/kernel/adapters/agents/',
   'harness/kernel/isolation/',
   'harness/processes/vinaya-strict/executing/',
-  'apps/cli/src/lib/task-tools/dev-tools-registration.ts',
+  'harness/kernel/tools/dev-tools-registration.ts',
   // The tool host and server the controller-boundary probes attack, with their per-dispatch capability check.
-  'apps/cli/src/lib/task-tools/dev-tools-host.ts',
-  'apps/cli/src/lib/task-tools/dev-tools-server.ts',
+  'harness/kernel/tools/host/dev-tools-host.ts',
+  'harness/kernel/tools/dev-tools-server.ts',
   // The process policies the tool host is built from: its grant table, and the boundary's role and scratch facts.
   'harness/processes/vinaya-strict/integration/policies/',
   // Where the task's required-source store lives, which both sandboxes must not write.
-  'apps/cli/src/lib/source-manifest.ts',
+  'harness/kernel/source-manifest.ts',
   // The Developer evaluation's grading sandbox, its proof and the test runner it confines.
   'apps/cli/src/lib/dev-review-eval/',
   'apps/cli/tests/eval/grading-sandbox-proof.ts',

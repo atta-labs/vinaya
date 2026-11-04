@@ -3,7 +3,7 @@
  * given as its `resolveBranchIssue` dependency: which task a checked-out
  * branch names, and which Issue the forge says that task is. It lives with
  * the process because the branch shapes and the task-Issue title rule are the
- * process's task model; the sink (`apps/cli/src/lib/log-sink.ts`) knows only
+ * process's task model; the sink (`harness/kernel/log/log-sink.ts`) knows only
  * that its resolver answers an Issue number or `null`.
  * `log-sink-factory.ts` beside this file binds it into each sink.
  */
@@ -11,7 +11,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
-import { LOG_CONTEXT_LOOKUP_DEADLINE_MS } from '../../../../../apps/cli/src/lib/log-sink.js'
+import { LOG_CONTEXT_LOOKUP_DEADLINE_MS } from '../../../../kernel/log/log-sink.js'
 
 const execFileAsync = promisify(execFile)
 

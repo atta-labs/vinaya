@@ -8,6 +8,7 @@
  * trees. Development tooling reads only the development cases and the public
  * held-out index; only an approved run opens the held-out file.
  */
+import { parseIssueDocumentation } from '../../../../harness/kernel/issue-documentation'
 import { createHash } from 'node:crypto'
 import {
   appendFileSync,
@@ -26,12 +27,11 @@ import {
   beyondSurfacePaths,
   defaultControlStoreDeps,
   globCoversPath,
-  parseIssueDocumentation,
   recordedBeyondSurfacePaths,
   TASK_TOOL_NAMES
 } from '@attalabs/aeg-core'
 
-import { ProtectedPathError, scopeTarget } from '../../src/lib/broker'
+import { ProtectedPathError, scopeTarget } from '../../../../harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from '../lib/broker/vinaya-broker'
 import {
   type CodeGraderIdentity,
@@ -50,12 +50,12 @@ import {
   sha256Digest,
   type RequiredSourceManifest,
   type SourceDeliveryReceipt
-} from '../../src/lib/source-manifest'
-import { documentationSourceId } from '../../src/lib/task-tools/fetch-documentation'
+} from '../../../../harness/kernel/source-manifest'
+import { documentationSourceId } from '../../../../harness/kernel/tools/fetch-documentation'
 import { ROLE_TOOL_GRANTS } from '../../../../harness/processes/vinaya-strict/integration/policies/roles'
-import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
+import { AGENT_TOOL_CATALOG } from '../../../../harness/kernel/tools/tool-catalog'
 import { selectAffectedTestFiles } from '../../src/lib/test-selector'
-import { agentOwnConfigSubpaths } from '../../src/lib/worker-boundary'
+import { agentOwnConfigSubpaths } from '../../../../harness/kernel/isolation/worker-boundary'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 import {
   type CallPredicate,

@@ -85,7 +85,7 @@ export interface NodeContract {
   timeoutPolicy: string
   failureBehavior: string
   cancellationBehavior: string
-  /** Log event kinds this node owns emitting, as `<kind>:<event>` pairs shipped by `apps/cli/specs/log.md` — never an invented family. */
+  /** Log event kinds this node owns emitting, as `<kind>:<event>` pairs shipped by `harness/kernel/log/log.md` — never an invented family. */
   lifecycleEvents: string[]
 }
 

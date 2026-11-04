@@ -25,10 +25,8 @@ tests/commands/task.test.ts
 tests/commands/upgrade-stop-hook.test.ts
 tests/commit-msg.test.ts
 tests/doctrine-resolution.test.ts
-tests/envelope.test.ts
 tests/lib/forge-read.test.ts
 tests/lib/codex-execpolicy.test.ts
-tests/lib/log-sync-folder-source.test.ts
 tests/lib/remote-base.test.ts
 tests/lib/test-selector.test.ts
 tests/new-adr.test.ts
@@ -37,7 +35,6 @@ tests/lib/push-progress-observer.test.ts
 tests/conformance/packed-push-progress.test.ts
 tests/placement.test.ts
 tests/config-golden.test.ts
-tests/lib/log-sink-factory.test.ts
 tests/lib/broker/policy-required.test.ts
 tests/lib/role-policy-parity.test.ts
 tests/lib/task-tools/policy-required.test.ts

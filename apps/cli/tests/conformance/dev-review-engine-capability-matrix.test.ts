@@ -370,7 +370,9 @@ describe('capability matrix (O4: confinement per adapter and platform, with the 
     for (const r of confinementRows) {
       expect(blank(r.sandbox) || blank(r.refusal) || blank(r.publication)).toBe(false)
       for (const tool of DRIVER_TOOLS) expect(r.publication).toContain(tool)
-      expect(r.citations.some((c) => matrix.sources[c.source]?.path === 'apps/cli/specs/isolation.md')).toBe(true)
+      expect(r.citations.some((c) => matrix.sources[c.source]?.path === 'harness/kernel/isolation/isolation.md')).toBe(
+        true
+      )
       for (const g of r.gaps ?? []) expect(NAMED_CONFINEMENT_GAPS as readonly string[]).toContain(g)
     }
   })

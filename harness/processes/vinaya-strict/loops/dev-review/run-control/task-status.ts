@@ -44,8 +44,8 @@ import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { resolveTrustedPrincipals, type TaskRunner } from '../../../../../../apps/cli/src/lib/config.js'
 import { readEngineRun, readTaskRunner, type EngineRunReading } from './task-run-engine.js'
 import { findOpenPrForBranch, runtimeDir } from '../standalone/dev-review-loop.js'
-import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from '../../../../../../apps/cli/src/lib/run-paths.js'
-import { loopLogPathFor, loopsRoot, type LoopLogRepo } from '../../../../../../apps/cli/src/lib/loop-log.js'
+import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
+import { loopLogPathFor, loopsRoot, type LoopLogRepo } from '../../../../../kernel/log/client/loop-log.js'
 import {
   newestStage,
   OVER_TYPICAL_MARK,

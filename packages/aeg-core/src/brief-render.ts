@@ -19,12 +19,12 @@
  * hand after render.
  */
 
+import type { IssueDocumentation } from '@attalabs/harness/issue-documentation'
 import { packagesNamedIn } from './brief-validation'
 import { deriveSection7 } from './derive-section7'
 import type { GateCutovers } from './gate-cutovers'
 import {
   globCoversPath,
-  type IssueDocumentation,
   type IssuePart,
   type IssuePremise,
   type IssueSurface,

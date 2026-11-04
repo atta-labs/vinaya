@@ -57,7 +57,7 @@ import {
   type RunScope,
   scopeFromSegment,
   tasksExecutionRoot
-} from '../../../../../../apps/cli/src/lib/run-paths.js'
+} from '../../../../../kernel/run-paths.js'
 
 function sh(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, {

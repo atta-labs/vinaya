@@ -231,15 +231,49 @@ type Located = { target: string; contribution: number }
 // repository root the way the claim check reads it.
 const CLAIM_ANCHOR_PATH = /AEG:CLAIM:\s*(\S+)\s+(?:contains|absent|sha256)\s*:/gi
 
+/** The spans of a source file's comments, line and block, leaving strings alone. */
+function commentSpans(source: string): Span[] {
+  const spans: Span[] = []
+  let i = 0
+  while (i < source.length) {
+    const c = source[i] ?? ''
+    const next = source[i + 1] ?? ''
+    if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1
+      while (j < source.length && source[j] !== c) j += source[j] === '\\' ? 2 : 1
+      i = j + 1
+    } else if (c === '/' && next === '/') {
+      const j = source.indexOf('\n', i)
+      const end = j === -1 ? source.length : j
+      spans.push({ start: i, end })
+      i = end
+    } else if (c === '/' && next === '*') {
+      const j = source.indexOf('*/', i + 2)
+      const end = j === -1 ? source.length : j + 2
+      spans.push({ start: i, end })
+      i = end
+    } else {
+      i++
+    }
+  }
+  return spans
+}
+
+// A repository path written in a comment: slash-separated segments, no spaces.
+const COMMENT_PATH = /[A-Za-z0-9_@.-]+(?:\/[A-Za-z0-9_@.-]+)+/g
+
 /**
- * Each string literal, and each claim anchor's path, that names a file or a package, with how many counted units it
- * carries. A claim anchor's path is located like a quoted path string, so re-pointing it to a moved file is a relocation.
+ * Each string literal, each claim anchor's path and each path written in a comment that names a file or a package, with
+ * how many counted units it carries. A claim anchor's or a comment's path is located like a quoted path string, so
+ * re-pointing it to a moved file is a relocation.
  */
 function locatedStrings(source: string, file: string, tree: Tree, units: Unit[]): Located[] {
   const located: Located[] = []
+  const quoted = new Set<number>()
   for (const match of source.matchAll(/(['"`])([^'"`\n]*)\1/g)) {
     const text = match[2] ?? ''
     const span = { start: (match.index ?? 0) + 1, end: (match.index ?? 0) + 1 + text.length }
+    quoted.add(span.start)
     const target = isCountedImport(text) && !text.startsWith('.') ? text : resolvePath(text, file, tree)
     if (target === null) continue
     located.push({ target, contribution: units.filter((u) => within(u, span)).length })
@@ -247,10 +281,22 @@ function locatedStrings(source: string, file: string, tree: Tree, units: Unit[])
   for (const match of source.matchAll(CLAIM_ANCHOR_PATH)) {
     const text = match[1] ?? ''
     const start = (match.index ?? 0) + match[0].indexOf(text)
+    quoted.add(start)
     const span = { start, end: start + text.length }
     const target = resolvePath(text, 'repository-root', tree)
     if (target === null) continue
     located.push({ target, contribution: units.filter((u) => within(u, span)).length })
+  }
+  for (const comment of commentSpans(source)) {
+    for (const match of source.slice(comment.start, comment.end).matchAll(COMMENT_PATH)) {
+      const text = (match[0] ?? '').replace(/[.-]+$/, '')
+      const start = comment.start + (match.index ?? 0)
+      if (quoted.has(start)) continue
+      const target = resolvePath(text, file, tree)
+      if (target === null) continue
+      const span = { start, end: start + text.length }
+      located.push({ target, contribution: units.filter((u) => within(u, span)).length })
+    }
   }
   return located
 }
@@ -447,18 +493,100 @@ function gitShow(root: string, rev: string, path: string): string | null {
   }
 }
 
-/** New path → old path, and old path → new path, from git's rename detection between the base and HEAD. */
-function renames(root: string, base: string): { from: Map<string, string>; to: Map<string, string> } {
+type Renames = {
+  /** New path → old path. */
+  from: Map<string, string>
+  /** Old path → new path. */
+  to: Map<string, string>
+  /** Files the change adds and git pairs with no base file. */
+  added: Set<string>
+  /** Base paths the change modifies, renames away or deletes. */
+  touched: Set<string>
+}
+
+/**
+ * New path → old path, and old path → new path, between the base and HEAD: git's rename detection, then a base file
+ * the change deletes paired with a head file it adds under the same file name when each is the only one of that name
+ * (a move that rewrote too much of the file for git to see it as the same file).
+ */
+function renames(root: string, base: string): Renames {
   const from = new Map<string, string>()
   const to = new Map<string, string>()
+  const added = new Set<string>()
+  const touched = new Set<string>()
+  const deleted = new Set<string>()
   for (const line of git(root, ['diff', '--find-renames', '--name-status', base, 'HEAD']).split('\n')) {
     const [status, old, renamed] = line.split('\t')
-    if (status?.startsWith('R') && old && renamed) {
+    if (!status || !old) continue
+    if (status.startsWith('R') && renamed) {
       from.set(renamed, old)
       to.set(old, renamed)
-    }
+      touched.add(old)
+    } else if (status === 'A') added.add(old)
+    else if (status === 'D') {
+      deleted.add(old)
+      touched.add(old)
+    } else if (status === 'M') touched.add(old)
   }
-  return { from, to }
+  const named = (paths: Set<string>): Map<string, string[]> => {
+    const byName = new Map<string, string[]>()
+    for (const path of paths)
+      byName.set(path.split('/').at(-1) ?? path, [...(byName.get(path.split('/').at(-1) ?? path) ?? []), path])
+    return byName
+  }
+  const deletedByName = named(deleted)
+  const addedByName = named(added)
+  for (const [name, gone] of deletedByName) {
+    const arrived = addedByName.get(name)
+    if (gone.length !== 1 || arrived?.length !== 1) continue
+    const [old] = gone
+    const [renamed] = arrived
+    if (old === undefined || renamed === undefined) continue
+    from.set(renamed, old)
+    to.set(old, renamed)
+    added.delete(renamed)
+  }
+  return { from, to, added, touched }
+}
+
+/** The workspace folder a retired package scope names, so an import of the package reads as an import of that folder. */
+function packageFolder(target: string): string | null {
+  const match = /^@attalabs\/([^/]+)/.exec(target)
+  return match ? `packages/${match[1]}` : null
+}
+
+type Sources = { base(path: string): string | null; head(path: string): string | null }
+
+/** The distinctive lines of a source: trimmed, long enough not to be a brace or a bare keyword. */
+const significantLines = (source: string): string[] =>
+  source
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length >= 12)
+
+/**
+ * Whether a head import target is a file the change moved or added out of the base import's target: a moved file whose
+ * base path is that target (or lies under it), or an added file with a line that the change took out of a base file
+ * that is the target (or lies under it) — a line the base file held and its head version no longer holds.
+ */
+function derivedFrom(
+  headTarget: string,
+  baseTarget: string,
+  env: { changes: Renames; baseTree: Tree; sources: Sources }
+): boolean {
+  const { changes, baseTree, sources } = env
+  const folder = packageFolder(baseTarget)
+  const inside = (path: string): boolean =>
+    path === baseTarget || path.startsWith(`${baseTarget}/`) || (folder !== null && path.startsWith(`${folder}/`))
+  const origin = changes.from.get(headTarget)
+  if (origin !== undefined) return inside(origin)
+  if (baseTree.isFile(headTarget) || !changes.added.has(headTarget)) return false
+  const arrived = significantLines(sources.head(headTarget) ?? '')
+  return [...changes.touched].filter(inside).some((file) => {
+    const had = new Set(significantLines(sources.base(file) ?? ''))
+    const has = new Set(significantLines(sources.head(mapTarget(file, changes.to)) ?? ''))
+    return arrived.some((line) => had.has(line) && !has.has(line))
+  })
 }
 
 /** A base-side target, carried through the renames to where it lives at the head. */
@@ -474,6 +602,56 @@ function mapTarget(target: string, to: Map<string, string>): string {
 }
 
 export type BaseComparison = { notice: string | null; failures: string[]; baseTotal: number; headTotal: number }
+
+type RelocationInput = {
+  source: string
+  path: string
+  baseSource: string
+  basePath: string
+  units: Unit[]
+  baseUnits: Unit[]
+}
+
+/**
+ * The adjustment to a file's head count for what the change only relocated, so moving code is never adding it:
+ * an import specifier, quoted path, claim anchor path or comment path that named a file the change moves and now names
+ * its new place counts what the base one counted (through git's renames and the same-name renames); and one counted
+ * import that became several, each of a file the change moves or adds out of the base import's target, counts as the
+ * one base import.
+ */
+function relocatedUnits(
+  input: RelocationInput,
+  env: { headTree: Tree; baseTree: Tree; changes: Renames; sources: Sources }
+): number {
+  const { headTree, baseTree, changes } = env
+  const pending = locatedStrings(input.baseSource, input.basePath, baseTree, input.baseUnits).map((l) => ({
+    ...l,
+    mapped: mapTarget(l.target, changes.to),
+    taken: false
+  }))
+  let adjustment = 0
+  const unmatched: Located[] = []
+  for (const located of locatedStrings(input.source, input.path, headTree, input.units)) {
+    const match = pending.find((p) => !p.taken && p.mapped === located.target)
+    if (match === undefined) {
+      unmatched.push(located)
+      continue
+    }
+    match.taken = true
+    adjustment += match.contribution - located.contribution
+  }
+  for (const located of unmatched) {
+    if (located.contribution === 0) continue
+    const origin = pending.find((p) => p.contribution > 0 && derivedFrom(located.target, p.target, env))
+    if (origin === undefined) continue
+    if (!origin.taken) {
+      origin.taken = true
+      adjustment += origin.contribution
+    }
+    adjustment -= located.contribution
+  }
+  return adjustment
+}
 
 /**
  * Compares the head tree's counts with the base commit's committed baseline.
@@ -499,9 +677,11 @@ export function compareBase(root: string, base: string): BaseComparison {
   const map = readOwnershipMap(root)
   const baseMapText = gitShow(root, base, OWNERSHIP_MAP_PATH)
   const baseMap = baseMapText === null ? {} : (JSON.parse(baseMapText) as OwnershipMap)
-  const { from, to } = renames(root, base)
+  const changes = renames(root, base)
+  const { from, to } = changes
   const readHead = (path: string): string | null =>
     existsSync(join(root, path)) ? readFileSync(join(root, path), 'utf8') : null
+  const sources: Sources = { base: (path) => gitShow(root, base, path), head: readHead }
 
   const failures = ownershipRefusals(map, readHead, headTree)
   if (failures.length > 0) return { notice: null, failures, baseTotal: total(baseBaseline), headTotal: 0 }
@@ -512,27 +692,28 @@ export function compareBase(root: string, base: string): BaseComparison {
   }
 
   let headTotal = 0
+  // What a file moved from a path the ratchet does not scan brings with it: counted nowhere in the base baseline.
+  let carriedIn = 0
   for (const path of scannedFiles(root)) {
     const source = readHead(path) ?? ''
     const units = countedUnits(source, excludedSpans(path, source, map, headTree))
     const basePath = baseTree.isFile(path) ? path : from.get(path)
     let effective = units.length
-    if (basePath !== undefined && units.length > 0) {
+    let allowance = (basePath === undefined ? 0 : (baseBaseline[basePath] ?? 0)) + (inherited.get(path) ?? 0)
+    if (basePath !== undefined) {
       const baseSource = gitShow(root, base, basePath) ?? ''
       const baseUnits = countedUnits(baseSource, excludedSpans(basePath, baseSource, baseMap, baseTree))
-      const pending = locatedStrings(baseSource, basePath, baseTree, baseUnits).map((l) => ({
-        ...l,
-        target: mapTarget(l.target, to)
-      }))
-      for (const located of locatedStrings(source, path, headTree, units)) {
-        const index = pending.findIndex((p) => p.target === located.target)
-        if (index === -1) continue
-        effective += (pending[index]?.contribution ?? 0) - located.contribution
-        pending.splice(index, 1)
+      if (basePath !== path && !isScanned(basePath)) {
+        allowance += baseUnits.length
+        carriedIn += baseUnits.length
       }
+      if (units.length > 0)
+        effective += relocatedUnits(
+          { source, path, baseSource, basePath, units, baseUnits },
+          { headTree, baseTree, changes, sources }
+        )
     }
     headTotal += effective
-    const allowance = (basePath === undefined ? 0 : (baseBaseline[basePath] ?? 0)) + (inherited.get(path) ?? 0)
     if (effective > allowance) {
       const why =
         basePath === undefined
@@ -543,7 +724,7 @@ export function compareBase(root: string, base: string): BaseComparison {
       failures.push(`${path}: counts ${effective}, base ${allowance} — ${why}. ${REMEDY}`)
     }
   }
-  const baseTotal = total(baseBaseline)
+  const baseTotal = total(baseBaseline) + carriedIn
   if (headTotal > baseTotal) {
     failures.push(`total: counts ${headTotal}, base ${baseTotal} — the head total is above the base total. ${REMEDY}`)
   }

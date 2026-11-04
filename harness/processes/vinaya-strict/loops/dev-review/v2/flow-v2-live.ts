@@ -14,7 +14,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
-import { type DevToolContext, devToolError } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server'
+import { type DevToolContext, devToolError } from '../../../../../kernel/tools/dev-tools-server'
 import { storagePushEvent } from '../flow-v2-events'
 import {
   FAILED_TESTS_RECORD,
@@ -51,7 +51,7 @@ import {
   type RequiredCiPolicy
 } from '../../../../../../apps/cli/src/lib/pre-push-ready-policy'
 import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../../apps/cli/src/lib/test-temp'
-import { appendLoopLogLine, loopLogPathFor } from '../../../../../../apps/cli/src/lib/loop-log'
+import { appendLoopLogLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log'
 import {
   appendProgressBytes,
   appendProgressRecord,

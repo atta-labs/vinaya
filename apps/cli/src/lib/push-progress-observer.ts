@@ -10,7 +10,7 @@
  * directory and only appends to the log; it never decides anything.
  */
 import { installVinayaConfigProvider } from './config.js'
-import { appendLoopLogLine } from './loop-log.js'
+import { appendLoopLogLine } from '../../../../harness/kernel/log/client/loop-log.js'
 import { ProgressReader } from './push-progress.js'
 
 // The composition root: the driver starts this program on its own, and the loop log and run paths it reaches read
