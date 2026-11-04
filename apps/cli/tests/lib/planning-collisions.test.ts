@@ -193,7 +193,8 @@ describe('buildCollisionPeers — which peers each scope compares against', () =
     files: files.map((path) => ({ path })),
     closingIssuesReferences: closes.map((n) => ({ number: n })),
     headRefName: extra.headRefName ?? `feature/pr-${number}`,
-    body: extra.body ?? ''
+    body: extra.body ?? '',
+    author: null as { login: string } | null
   })
 
   it('compares against both open task Issues and open pull requests at issue create/edit', () => {
@@ -202,50 +203,51 @@ describe('buildCollisionPeers — which peers each scope compares against', () =
       851,
       [issue(860, [A])],
       [pull(862, [B], [861])],
-      tracked
+      tracked,
+      null
     )
     expect(peers.map((p) => p.label)).toEqual(['task Issue #860', 'pull request #862 (task Issue #861)'])
   })
 
   it('compares against open pull requests ONLY at dispatch, even when Issue rows are supplied', () => {
-    const peers = buildCollisionPeers('pull-requests', 851, [issue(860, [A])], [pull(862, [B], [861])], tracked)
+    const peers = buildCollisionPeers('pull-requests', 851, [issue(860, [A])], [pull(862, [B], [861])], tracked, null)
     expect(peers.map((p) => p.label)).toEqual(['pull request #862 (task Issue #861)'])
   })
 
   it('drops the pull request that closes the subject Issue — that is the subject’s own branch', () => {
-    expect(buildCollisionPeers('pull-requests', 851, [], [pull(862, [A, B], [851])], tracked)).toEqual([])
+    expect(buildCollisionPeers('pull-requests', 851, [], [pull(862, [A, B], [851])], tracked, null)).toEqual([])
   })
 
   it('drops the subject’s own pull request by its task branch when the forge returns no closing reference', () => {
     const ownPull = pull(862, [A, B], [], { headRefName: 'task/issue-851' })
-    expect(buildCollisionPeers('pull-requests', 851, [], [ownPull], tracked)).toEqual([])
+    expect(buildCollisionPeers('pull-requests', 851, [], [ownPull], tracked, null)).toEqual([])
     // and the tranche branch shape resolves to the same trailing Issue number
     const tranchePull = pull(863, [A, B], [], { headRefName: 'task/role-reach/851' })
-    expect(buildCollisionPeers('pull-requests', 851, [], [tranchePull], tracked)).toEqual([])
+    expect(buildCollisionPeers('pull-requests', 851, [], [tranchePull], tracked, null)).toEqual([])
   })
 
   it('drops the subject’s own pull request by a `Closes #<n>` body line, case-insensitively, when the closing list is empty', () => {
     for (const keyword of ['Closes', 'fixes', 'RESOLVES']) {
       const ownPull = pull(862, [A, B], [], { body: `Some summary.\n\n${keyword} #851\n` })
-      expect(buildCollisionPeers('pull-requests', 851, [], [ownPull], tracked)).toEqual([])
+      expect(buildCollisionPeers('pull-requests', 851, [], [ownPull], tracked, null)).toEqual([])
     }
   })
 
   it('still compares a pull request that names no task Issue — branch and body match neither the subject nor a substring of it', () => {
     // #8510 must not match subject 851 through either the branch or the body.
     const other = pull(862, [A], [], { headRefName: 'task/issue-8510', body: 'Closes #8510\n' })
-    const peers = buildCollisionPeers('pull-requests', 851, [], [other], tracked)
+    const peers = buildCollisionPeers('pull-requests', 851, [], [other], tracked, null)
     expect(peers).toEqual([{ ref: 'pull/862', label: 'pull request #862', files: [A], conflictsWith: [] }])
   })
 
   it('drops the subject’s own Issue row', () => {
-    expect(buildCollisionPeers('issues-and-pull-requests', 851, [issue(851, [A, B])], [], tracked)).toEqual([])
+    expect(buildCollisionPeers('issues-and-pull-requests', 851, [issue(851, [A, B])], [], tracked, null)).toEqual([])
   })
 
   it('fills a pull request’s Conflicts-with from the task Issue it closes, in either scope', () => {
     const issues = [issue(860, [A], '#851')]
     for (const scope of ['issues-and-pull-requests', 'pull-requests'] as const) {
-      const peers = buildCollisionPeers(scope, 851, issues, [pull(862, [B], [860])], tracked)
+      const peers = buildCollisionPeers(scope, 851, issues, [pull(862, [B], [860])], tracked, null)
       const pr = peers.find((p) => p.label.startsWith('pull request'))
       expect(pr?.conflictsWith).toEqual(['#851'])
       expect(pr?.ref).toBe('860')
@@ -253,13 +255,48 @@ describe('buildCollisionPeers — which peers each scope compares against', () =
   })
 
   it('a pull request closing no Issue still becomes a peer, named by its own number', () => {
-    const peers = buildCollisionPeers('pull-requests', 851, [], [pull(862, [A])], tracked)
+    const peers = buildCollisionPeers('pull-requests', 851, [], [pull(862, [A])], tracked, null)
     expect(peers).toEqual([{ ref: 'pull/862', label: 'pull request #862', files: [A], conflictsWith: [] }])
+  })
+
+  describe('the Changesets release pull request', () => {
+    const ACTOR = 'github-actions[bot]'
+    const release = (author: string | null) => ({
+      ...pull(900, [A, B], [], { headRefName: 'changeset-release/main' }),
+      author: author === null ? null : { login: author }
+    })
+
+    it('is no peer in either scope when the release actor authored it', () => {
+      for (const scope of ['issues-and-pull-requests', 'pull-requests'] as const) {
+        expect(buildCollisionPeers(scope, 851, [], [release(ACTOR)], tracked, ACTOR)).toEqual([])
+      }
+    })
+
+    it('stays a peer when another login authored a pull request on the release branch', () => {
+      for (const scope of ['issues-and-pull-requests', 'pull-requests'] as const) {
+        const peers = buildCollisionPeers(scope, 851, [], [release('someone-else')], tracked, ACTOR)
+        expect(peers.map((p) => p.label)).toEqual(['pull request #900'])
+      }
+    })
+
+    it('stays a peer when no release actor is recognised', () => {
+      for (const scope of ['issues-and-pull-requests', 'pull-requests'] as const) {
+        const peers = buildCollisionPeers(scope, 851, [], [release(ACTOR)], tracked, null)
+        expect(peers.map((p) => p.label)).toEqual(['pull request #900'])
+      }
+    })
+
+    it('stays a peer when the release actor authored a pull request on another branch', () => {
+      const other = { ...pull(901, [A]), author: { login: ACTOR } }
+      expect(buildCollisionPeers('pull-requests', 851, [], [other], tracked, ACTOR).map((p) => p.label)).toEqual([
+        'pull request #901'
+      ])
+    })
   })
 
   it('skips an Issue that pins no file and one that is not task-shaped at all', () => {
     const notATask = { number: 870, body: 'Plain bug report, no rationale.', labels: [] }
     const pinsNothing = issue(871, [])
-    expect(buildCollisionPeers('issues-and-pull-requests', 851, [notATask, pinsNothing], [], tracked)).toEqual([])
+    expect(buildCollisionPeers('issues-and-pull-requests', 851, [notATask, pinsNothing], [], tracked, null)).toEqual([])
   })
 })

@@ -29,6 +29,7 @@ import { join, resolve, sep } from 'node:path'
 import { isForgeReadOversize, readIssueBody, readIssueComments } from '../../../../../../apps/cli/src/lib/forge-read'
 import {
   boundaryPinnedFiles,
+  CHANGESET_RELEASE_BRANCH,
   checkAutonomyClause,
   checkBlastRadiusScope,
   checkBoundaryClaimsNeedPremise,
@@ -101,6 +102,7 @@ import {
   type FrozenBriefCandidate,
   frozenSectionsChanged,
   isBriefShaped,
+  isChangesetsReleasePr,
   isPrincipal,
   isTaskBranch,
   isTaskIssueBodyShaped,
@@ -150,9 +152,11 @@ import {
   VinayaConfigSchema,
   loadConfig,
   loadConfigChecked,
+  loadTrustAnchorConfig,
   PrincipalsUnresolvedError,
   resolveCollisionThreshold,
   resolveGateCutovers,
+  resolveReleaseActor,
   resolveTrustedPrincipals
 } from '../../../../../../apps/cli/src/lib/config'
 import { printJson } from '../../../../../../apps/cli/src/lib/envelope'
@@ -2340,13 +2344,14 @@ type FetchCollisionPeersResult = { ok: true; value: CollisionPeers } | { ok: fal
 
 /** One open Issue, exactly as `gh issue list --json number,body,labels` returns it. */
 export type OpenIssueRow = { number: number; body: string; labels: Array<{ name: string }> }
-/** One open pull request, exactly as `gh pr list --json number,files,closingIssuesReferences,headRefName,body` returns it. */
+/** One open pull request, exactly as `gh pr list --json number,files,closingIssuesReferences,headRefName,body,author` returns it. */
 export type OpenPullRow = {
   number: number
   files: Array<{ path: string }>
   closingIssuesReferences: Array<{ number: number }>
   headRefName: string
   body: string
+  author: { login: string } | null
 }
 
 /**
@@ -2424,7 +2429,8 @@ export function buildCollisionPeers(
   subjectIssueNumber: number | null,
   issues: OpenIssueRow[],
   pulls: OpenPullRow[],
-  allTrackedFiles: string[]
+  allTrackedFiles: string[],
+  releaseActor: string | null
 ): TaskFileFacts[] {
   const conflictsByIssue = new Map<number, string[]>()
   const peers: TaskFileFacts[] = []
@@ -2446,6 +2452,12 @@ export function buildCollisionPeers(
   }
 
   for (const pull of pulls) {
+    // The Changesets release pull request is regenerated on every push to the
+    // default branch and is never a task to serialize against. It is
+    // recognised by branch AND author: anyone can push a branch with the
+    // release branch's name, so the branch alone never exempts a pull request.
+    if (releaseActor !== null && isChangesetsReleasePr(pull.headRefName, pull.author?.login ?? null, releaseActor))
+      continue
     const closes = pull.closingIssuesReferences[0]?.number ?? null
     // The subject's OWN pull request is never a peer of itself. The forge can
     // return an empty `closingIssuesReferences` even for a body that says
@@ -2524,7 +2536,7 @@ function fetchCollisionPeers(
         '--state',
         'open',
         '--json',
-        'number,files,closingIssuesReferences,headRefName,body',
+        'number,files,closingIssuesReferences,headRefName,body,author',
         '--limit',
         String(MAX_COLLISION_PULL_REQUESTS)
       ],
@@ -2539,13 +2551,21 @@ function fetchCollisionPeers(
   try {
     pulls = JSON.parse(prOut)
   } catch {
-    return failed('Could not parse `gh pr list --json number,files,closingIssuesReferences,headRefName,body` output.')
+    return failed(
+      'Could not parse `gh pr list --json number,files,closingIssuesReferences,headRefName,body,author` output.'
+    )
   }
+
+  // The release actor is a forge read: resolved only when a listed pull
+  // request sits on the release branch, so an ordinary listing makes none.
+  const releaseActor = pulls.some((pull) => pull.headRefName === CHANGESET_RELEASE_BRANCH)
+    ? resolveReleaseActor(loadTrustAnchorConfig())
+    : null
 
   return {
     ok: true,
     value: {
-      peers: buildCollisionPeers(scope, subjectIssueNumber, issues, pulls, allTrackedFiles),
+      peers: buildCollisionPeers(scope, subjectIssueNumber, issues, pulls, allTrackedFiles, releaseActor),
       capHit: pulls.length >= MAX_COLLISION_PULL_REQUESTS
     }
   }
