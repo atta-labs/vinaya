@@ -96,7 +96,7 @@ import type { Observation } from './dev-review-current-loop-adapter.js'
  * Missing behavior stays observable rather than being implemented by this
  * test adapter.
  */
-const PROCESS = loadProcess(resolve(import.meta.dir, '../../../../harness/processes/vinaya-strict'))
+const PROCESS = loadProcess(resolve(import.meta.dir, '../../../../harness/processes/vinaya-strict'), { flow: 'v1' })
 // The task and pull request the standalone harness's world names.
 const TASK = 9001
 /** The task every Engine scenario runs. */
