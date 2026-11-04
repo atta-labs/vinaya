@@ -352,6 +352,96 @@ describe('devReviewLoop — the developer flow still works on the loop-created b
     45000
   )
 })
+describe('createTaskWorktree — a fresh host resumes the remote task branch (real git, two clones of a bare remote)', () => {
+  const GIT_ENV = {
+    ...process.env,
+    GIT_AUTHOR_NAME: 't',
+    GIT_AUTHOR_EMAIL: 't@t',
+    GIT_COMMITTER_NAME: 't',
+    GIT_COMMITTER_EMAIL: 't@t'
+  }
+  const git = (cwd: string, ...args: string[]): string => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV })
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`)
+    return r.stdout.trim()
+  }
+  const TASK_BRANCH = 'task/resume-v1/1'
+
+  /** A bare remote, plus host A (which pushes the task branch with two commits) and a fresh host B. */
+  function twoHosts(): { remote: string; hostA: string; hostB: string; taskHead: string } {
+    const root = tempDir('resume-worktree-')
+    const remote = join(root, 'remote.git')
+    const hostA = join(root, 'a')
+    const hostB = join(root, 'b')
+    git(root, 'init', '--bare', '--initial-branch=main', remote)
+    git(root, 'clone', '--quiet', remote, hostA)
+    writeFileSync(join(hostA, 'f.txt'), 'base\n')
+    git(hostA, 'add', '.')
+    git(hostA, 'commit', '-q', '-m', 'base')
+    git(hostA, 'push', '-q', 'origin', 'HEAD:refs/heads/main')
+    git(hostA, 'checkout', '-q', '-b', TASK_BRANCH)
+    for (const n of ['one', 'two']) {
+      writeFileSync(join(hostA, `${n}.txt`), `${n}\n`)
+      git(hostA, 'add', '.')
+      git(hostA, 'commit', '-q', '-m', n)
+    }
+    git(hostA, 'push', '-q', 'origin', `HEAD:refs/heads/${TASK_BRANCH}`)
+    const taskHead = git(hostA, 'rev-parse', 'HEAD')
+    git(root, 'clone', '--quiet', remote, hostB)
+    return { remote, hostA, hostB, taskHead }
+  }
+
+  async function inHost<T>(
+    dir: string,
+    run: (
+      fn: typeof import('../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js').createTaskWorktree
+    ) => T
+  ): Promise<T> {
+    const { createTaskWorktree } = await import(
+      '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
+    )
+    const previous = process.cwd()
+    process.chdir(dir)
+    try {
+      return run(createTaskWorktree)
+    } finally {
+      process.chdir(previous)
+    }
+  }
+
+  it('starts the worktree at the remote task head and keeps its commits, never pushing a replacement', async () => {
+    const { remote, hostB, taskHead } = twoHosts()
+    await inHost(hostB, (create) => create(TASK_BRANCH))
+    expect(git(join(hostB, '.worktrees', TASK_BRANCH), 'rev-parse', 'HEAD')).toBe(taskHead)
+    expect(git(remote, 'rev-parse', `refs/heads/${TASK_BRANCH}`)).toBe(taskHead)
+    expect(git(join(hostB, '.worktrees', TASK_BRANCH), 'rev-parse', '--abbrev-ref', '@{u}')).toBe(
+      `origin/${TASK_BRANCH}`
+    )
+  })
+
+  it('a new task with no remote branch starts from the fetched default branch and creates the remote branch there', async () => {
+    const { remote, hostB } = twoHosts()
+    git(remote, 'branch', '-D', TASK_BRANCH)
+    const main = git(remote, 'rev-parse', 'refs/heads/main')
+    await inHost(hostB, (create) => create(TASK_BRANCH))
+    expect(git(join(hostB, '.worktrees', TASK_BRANCH), 'rev-parse', 'HEAD')).toBe(main)
+    expect(git(remote, 'rev-parse', `refs/heads/${TASK_BRANCH}`)).toBe(main)
+  })
+
+  it('refuses a local branch at another head, leaving the remote task branch untouched', async () => {
+    const { remote, hostB, taskHead } = twoHosts()
+    git(hostB, 'branch', TASK_BRANCH, 'origin/main')
+    await expect(inHost(hostB, (create) => create(TASK_BRANCH))).rejects.toThrow(/reconcile them/)
+    expect(git(remote, 'rev-parse', `refs/heads/${TASK_BRANCH}`)).toBe(taskHead)
+  })
+
+  it('refuses when the remote cannot be read, creating nothing', async () => {
+    const { remote, hostB } = twoHosts()
+    rmSync(remote, { recursive: true, force: true })
+    await expect(inHost(hostB, (create) => create(TASK_BRANCH))).rejects.toThrow()
+    expect(existsSync(join(hostB, '.worktrees', TASK_BRANCH))).toBe(false)
+  })
+})
 describe('devReviewLoop — every event names the standalone runner, the Vinaya process and the dispatched runtime', () => {
   function identitiesOf(lines: Array<Record<string, unknown>>): unknown[] {
     return lines.map((l) => {
