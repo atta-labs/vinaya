@@ -714,13 +714,21 @@ export function developerBranchFor(
 export function createTaskWorktree(branch: string, opts: { branchHasTaskCommits?: boolean } = {}): void {
   const worktreeDir = join('.worktrees', branch)
   const worktreeExisted = existsSync(worktreeDir)
-  if (!worktreeExisted) {
+  // A branch already on origin is resumed at its pushed head, never replaced; a failed
+  // remote read throws here, before anything is created or pushed.
+  const remoteBranchExisted = !worktreeExisted && sh('git', ['ls-remote', '--heads', 'origin', branch]).trim() !== ''
+  if (remoteBranchExisted) {
+    createTaskWorktreeFromRemote(branch)
+  } else if (!worktreeExisted) {
     sh('git', ['worktree', 'add', worktreeDir, '-b', branch, '--no-track', 'origin/main'])
   }
   // Shared repository config: tasks started together contend for its lock, so a held lock is waited out.
   if (configValue('push.autoSetupRemote') !== 'true')
     retryOnConfigLock(() => sh('git', ['config', 'push.autoSetupRemote', 'true']))
-  if (!worktreeExisted) {
+  if (remoteBranchExisted) {
+    // Fast-forward only: a branch with no task commits catches up to the default branch.
+    if (opts.branchHasTaskCommits === false) resetEmptyTaskWorktree(branch, worktreeDir)
+  } else if (!worktreeExisted) {
     sh('git', ['push', '--no-verify', 'origin', `origin/main:refs/heads/${branch}`])
   } else if (opts.branchHasTaskCommits !== false || !resetEmptyTaskWorktree(branch, worktreeDir)) {
     reconcileExistingTaskWorktree(branch, worktreeDir)
