@@ -134,6 +134,13 @@ describe('checkG2', () => {
     expect(result.findings).toHaveLength(0)
   })
 
+  it('G2 skips a non-gate standalone script under the process checks/standalone prefix', () => {
+    const rows: GateRow[] = [makeRow({ implementation: 'a.ts' })]
+    const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/report-tokens.ts'])
+    expect(result.status).toBe('pass')
+    expect(result.findings).toHaveLength(0)
+  })
+
   it('a NON_GATE_BINS-listed aeg-core bin needs no row at all — the honest fix is the gate stops asking', () => {
     const rows: GateRow[] = [makeRow({ implementation: 'a.ts' })]
     const result = checkG2(rows, ['packages/aeg-core/bin/report-tokens.ts'])
@@ -315,6 +322,31 @@ describe('checkG6', () => {
     ]
     const result = checkG6(rows, new Set(['registry-gates', 'coherence', 'dispatch-readiness']))
     expect(result.status).toBe('fail')
+  })
+
+  it('passes a product row under the process checks/bin prefix when its name is registered, fails when not', () => {
+    const rows: GateRow[] = [
+      makeRow({
+        action: 'Editing a governed file',
+        audience: 'product',
+        implementation: 'harness/processes/vinaya-strict/checks/bin/check-doc-coverage-push.ts'
+      })
+    ]
+    expect(checkG6(rows, new Set(['doc-coverage-push'])).status).toBe('pass')
+    expect(checkG6(rows, new Set(['some-other-check'])).status).toBe('fail')
+  })
+
+  it('resolves a process checks/standalone path through GATE_AUDIENCE like packages/aeg-core/bin', () => {
+    const rows: GateRow[] = [
+      makeRow({
+        action: 'Documentation gate',
+        audience: 'product',
+        implementation: 'harness/processes/vinaya-strict/checks/standalone/verify-docs.ts'
+      })
+    ]
+    expect(checkG6(rows, new Set(['doc-coverage'])).status).toBe('pass')
+    expect(checkG6(rows, new Set(['doc-coverage-push'])).status).toBe('pass')
+    expect(checkG6(rows, new Set(['unrelated'])).status).toBe('fail')
   })
 
   it('passes when every product row resolves', () => {
