@@ -13,7 +13,7 @@ import { ACTION_BINDINGS, createRoleLaunchers, decisions } from '../executing/ac
 
 // A revised round continues the Developer's own vendor session, as the standalone loop resumes its
 // Developer (`claude -p -r <id>`, `codex exec resume <id>`), on both vendors.
-const loaded = loadProcess(resolve(import.meta.dir, '..'))
+const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const ROLES = ['developer', 'code-reviewer', 'security-reviewer']
 
 function roleOf(args: readonly string[]): string {

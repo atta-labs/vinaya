@@ -40,7 +40,7 @@ import {
 } from '../executing/actions'
 
 const processFolder = resolve(import.meta.dir, '..')
-const loaded = loadProcess(processFolder)
+const loaded = loadProcess(processFolder, { flow: 'v1' })
 
 interface FlowStep {
   id: string
