@@ -40,7 +40,7 @@ for (const vendor of ['claude', 'codex'] as const)
       expect(bridges.length).toBeGreaterThan(0)
       for (const bridge of bridges) {
         const text = readFileSync(join(runDirectory(run.runtimeDir, TASK), bridge), 'utf8')
-        expect(text).toContain(join(VINAYA_INSTALL, 'apps', 'cli', 'src', 'index.ts'))
+        expect(text).toContain(join(VINAYA_INSTALL, 'harness', 'kernel', 'tools', 'host', 'dev-tools-bridge.ts'))
         expect(text).not.toContain(join(run.root, 'apps', 'cli'))
       }
       // The forge calls the runner makes, in order.

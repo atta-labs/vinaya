@@ -229,5 +229,5 @@ import type { SurfaceExemption } from '../lib/surface-exemption'
 // reader needs to see. The retirement target is a future `log-delivery.ts` that
 // owns "deliver everything local for this repo" behind one call.
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'log send': { date: '2026-09-28', callsToday: 13, retiresVia: 'logDeliveryChokepoint' }
+  'log send': { date: '2026-09-28', callsToday: 2, retiresVia: 'logDeliveryChokepoint' }
 }

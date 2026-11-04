@@ -152,5 +152,5 @@ export function prRuleCommand(args: string[]): void {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'pr rule': { date: '2026-09-05', callsToday: 6, retiresVia: 'forgeWrite' }
+  'pr rule': { date: '2026-09-05', callsToday: 5, retiresVia: 'forgeWrite' }
 }

@@ -40,7 +40,7 @@ import { OUTBOX_MAX_BYTES } from '../../../../harness/kernel/log/log-sink.js'
 import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const DRAIN_MODULE = join(CLI_ROOT, '../../harness/kernel/log/client/log-webhook-drain.ts')
+const DRAIN_MODULE = join(CLI_ROOT, '..', '..', 'harness', 'kernel', 'log', 'client', 'log-webhook-drain.ts')
 const OWNER_REPO_DIR = 'test-owner-test-repo'
 
 const tempDirs: string[] = []

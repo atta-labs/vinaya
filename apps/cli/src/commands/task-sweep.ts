@@ -58,5 +58,5 @@ export async function taskSweepCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption.js'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'task sweep': { date: '2026-09-21', callsToday: 2, retiresVia: 'sharedCommandShell' }
+  'task sweep': { date: '2026-09-21', callsToday: 1, retiresVia: 'sharedCommandShell' }
 }

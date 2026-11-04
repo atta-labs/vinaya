@@ -168,5 +168,5 @@ import type { SurfaceExemption } from '../lib/surface-exemption'
 // see. The retirement target is the same future `log-delivery.ts` those two
 // commands already name.
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'log emit': { date: '2026-10-01', callsToday: 9, retiresVia: 'logDeliveryChokepoint' }
+  'log emit': { date: '2026-10-01', callsToday: 2, retiresVia: 'logDeliveryChokepoint' }
 }
