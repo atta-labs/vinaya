@@ -143,7 +143,7 @@ describe('the base guard', () => {
       'scripts/ci/impact-plan.ts',
       'scripts/ci/base-guard.ts',
       'scripts/ci/governance-obligations.ts',
-      'apps/cli/src/lib/verification/README.md',
+      'harness/kernel/gates/ring0-hooks/pre-push/verification/README.md',
       'apps/cli/src/lib/verification/selector.ts',
       'apps/cli/src/lib/config.ts',
       'scripts/test-suites/inventory.json',
