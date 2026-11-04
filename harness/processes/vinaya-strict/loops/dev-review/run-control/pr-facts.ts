@@ -209,6 +209,8 @@ const EXCERPT_LINES_BEFORE = 1
 const EXCERPT_LINES_AFTER = 2
 /** When a readable log names no failure line, this many of its last lines stand in for the excerpt. */
 const EXCERPT_FALLBACK_TAIL_LINES = 40
+/** The last line of an excerpt that had to drop failure lines to fit its limit. */
+const EXCERPT_TRUNCATION_MARKER = '… [excerpt truncated: further failure lines omitted]'
 
 /** The runner's own timestamp at the start of every log line — noise in an excerpt. */
 const LOG_LINE_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z ?/
@@ -252,13 +254,46 @@ export function extractFailureExcerpt(raw: string, max: number = MAX_FAILURE_EXC
     if (SOURCE_LOCATION_LINE.test(line) && FOREIGN_LOCATION.test(line)) keep.delete(index)
   }
   if (keep.size === 0) return sanitizeForgeLogTail(lines.slice(-EXCERPT_FALLBACK_TAIL_LINES).join('\n'), max)
-  const out: string[] = []
-  let previous = -2
-  for (const index of [...keep].sort((a, b) => a - b)) {
-    if (index !== previous + 1 && out.length > 0) out.push('…')
-    out.push(lines[index] ?? '')
-    previous = index
+  const render = (indexes: Iterable<number>): string[] => {
+    const out: string[] = []
+    let previous = -2
+    for (const index of [...indexes].sort((a, b) => a - b)) {
+      if (index !== previous + 1 && out.length > 0) out.push('…')
+      out.push(lines[index] ?? '')
+      previous = index
+    }
+    return out
   }
+  const full = render(keep)
+  if (full.join('\n').length <= max) return sanitizeForgeText(full.join('\n'), max)
+  // Over budget: spend it by priority — failing test identities first, then the other
+  // failure-naming lines, then the neighbouring context — so a long run of earlier
+  // diagnostics never pushes a failing test's name out of the excerpt.
+  const tiers: number[][] = [[], [], []]
+  for (const index of [...keep].sort((a, b) => a - b)) {
+    const line = lines[index] ?? ''
+    if (line.includes('(fail)')) tiers[0]?.push(index)
+    else if (namesFailure(line)) tiers[1]?.push(index)
+    else tiers[2]?.push(index)
+  }
+  const reserve = EXCERPT_TRUNCATION_MARKER.length + 1
+  let budget = max - reserve
+  const chosen = new Set<number>()
+  let truncated = false
+  for (const [tierNumber, tier] of tiers.entries()) {
+    for (const index of tier) {
+      // Each line costs its text, a newline and (worst case) a gap marker line.
+      const cost = (lines[index] ?? '').length + 3
+      if (cost > budget) {
+        if (tierNumber < 2) truncated = true
+        continue
+      }
+      budget -= cost
+      chosen.add(index)
+    }
+  }
+  const out = render(chosen)
+  if (truncated) out.push(EXCERPT_TRUNCATION_MARKER)
   return sanitizeForgeText(out.join('\n'), max)
 }
 
