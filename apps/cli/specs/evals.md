@@ -10,7 +10,7 @@ Nothing here runs an agent or decides acceptance. Those come later; this layer g
 
 The harness is internal tooling. No CLI entry, command or other library module imports it — only the harness itself and tests do. `apps/cli/tests/eval/not-shipped.test.ts` walks every source file in the repository, reads its imports with the TypeScript compiler's pre-processor (static imports, re-exports, `import()` and `require`), and fails on any importer outside `apps/cli/src/lib/dev-review-eval/` and the tests. Because the published CLI bundles only what its entry reaches, nothing of the harness ships.
 
-Each program of the harness run on its own (`step-one.ts`, `whole-loop.ts`, `harbor-trial.ts`, `harbor-tasks.ts`, `harbor-grade.ts`, `harbor-results.ts`) is an entry point to the Log as the CLI is: before its command starts it installs the Vinaya process's Log sink factory (`installVinayaLogSinkFactory`, re-exported from `step-one.ts`), so a Log event any code it reaches records goes to the sink the product builds, never refused for want of one (`apps/cli/specs/log.md`, "The process supplies the reader").
+Each program of the harness run on its own (`step-one.ts`, `whole-loop.ts`, `harbor-trial.ts`, `harbor-tasks.ts`, `harbor-grade.ts`, `harbor-results.ts`) is an entry point to the Log as the CLI is: before its command starts it installs the Vinaya process's Log sink factory (`installVinayaLogSinkFactory`, re-exported from `step-one.ts`), so a Log event any code it reaches records goes to the sink the product builds, never refused for want of one (`harness/kernel/log/log.md`, "The process supplies the reader").
 
 ## Contracts
 
@@ -151,10 +151,10 @@ The second shard, `contract-kinds.json`, covers the kinds stated in the contract
 | Kind | Universe | Source |
 | -- | -- | -- |
 | `role` | the grant table's roles | `apps/cli/specs/dev-review-capabilities-contracts.md` §3 |
-| `tool` | `DEV_TOOL_NAMES`, matched against the §4.1 table; the built `read_source` of §4.2; `TASK_TOOL_NAMES`, the Operator's five tools and its pull-request read | `apps/cli/src/lib/task-tools/dev-tools-server.ts`, `packages/aeg-core/src/task-tools.ts`, the contracts specification |
+| `tool` | `DEV_TOOL_NAMES`, matched against the §4.1 table; the built `read_source` of §4.2; `TASK_TOOL_NAMES`, the Operator's five tools and its pull-request read | `harness/kernel/tools/dev-tools-server.ts`, `packages/aeg-core/src/task-tools.ts`, the contracts specification |
 | `effect` | each §4.1 tool marked as a write, and the controller's own publications named in the evaluation program's §6.12 and §6.13 | the contracts specification and the evaluation program |
 | `adapter` | `adapters` | `apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json` |
-| `isolation-boundary` | the six rows of the boundary table | `apps/cli/specs/isolation.md` §1 |
+| `isolation-boundary` | the six rows of the boundary table | `harness/kernel/isolation/isolation.md` §1 |
 | `gate` | the workflow-gate list | the contracts specification §7 |
 
 Each row cites the section that states its component: an evaluation-program section at the mirror's revision, and any other specification at the Engine revision the register is pinned to. The `read_source` row cites the built reviewer tool of §4.2. `apps/cli/tests/eval/registry-contract-kinds.test.ts` fails on any missing, extra or invalid row, and checks that the shard aggregates with the others without a duplicate id.
@@ -293,7 +293,7 @@ A case's grants also decide what its trial's agent can do, the same on Claude Co
 
 `SEVERITY_BLOCKING` is read once from each role's severity scale by rank: a severity among the scale's two most severe ranks blocks (today `BLOCKER` and `MAJOR`; `CRITICAL` and `HIGH`), the rank rule the reviewer-quality suites apply. A fact the record does not carry is `unavailable`, one it records as missing is `absent`, and a fact of another kind of case is `inapplicable`; none is ever given a passing value.
 
-`VINAYA_RENDERER_VERSION` is the renderer's schema version and a SHA-256 over its mapping tables (the tool catalog's names among them), every render and extract function, and the whole text of every source file the mapping depends on (`MAPPING_SOURCE_PATHS`: the renderer, the neutral case and its validator, the review-result and turn-result parsers and schemas, which live in the Vinaya process (`harness/processes/vinaya-strict/executing/code-reviewer/review-result.ts`, `harness/processes/vinaya-strict/executing/developer/developer-turn-result.ts`), the role grants (the membership logic in `apps/cli/src/lib/task-tools/role-grants.ts` and the process's grant table in `harness/processes/vinaya-strict/integration/policies/roles.ts`, the same tool-grant policy every evaluation tool host is started with), the capability contract a case narrows (`harness/kernel/adapters/agents/manifest.ts`), and the beyond-Surface reader with its helpers), so any change to the mapping changes it. Every process input and trial record carries the version it was made under, and `extractOutcomes` refuses one of another version as `stale_renderer`; every extraction returns the version it ran under.
+`VINAYA_RENDERER_VERSION` is the renderer's schema version and a SHA-256 over its mapping tables (the tool catalog's names among them), every render and extract function, and the whole text of every source file the mapping depends on (`MAPPING_SOURCE_PATHS`: the renderer, the neutral case and its validator, the review-result and turn-result parsers and schemas, which live in the Vinaya process (`harness/processes/vinaya-strict/executing/code-reviewer/review-result.ts`, `harness/processes/vinaya-strict/executing/developer/developer-turn-result.ts`), the role grants (the membership logic in `harness/kernel/tools/role-grants.ts` and the process's grant table in `harness/processes/vinaya-strict/integration/policies/roles.ts`, the same tool-grant policy every evaluation tool host is started with), the capability contract a case narrows (`harness/kernel/adapters/agents/manifest.ts`), and the beyond-Surface reader with its helpers), so any change to the mapping changes it. Every process input and trial record carries the version it was made under, and `extractOutcomes` refuses one of another version as `stale_renderer`; every extraction returns the version it ran under.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/vinaya-renderer.ts contains:export const VINAYA_RENDERER_VERSION = rendererVersionOf(MAPPING_TABLES, MAPPING_LOGIC, MAPPING_SOURCES) -->
 
@@ -692,7 +692,7 @@ without it every step above runs as described. Container mode runs only
 layer-`G` suites; a layer-`P` trial in it is refused, and a layer-`P` trial
 always runs on the host. The dispatch's side of container mode, its
 subscription-token login and the rule under which the container is the
-boundary, is `apps/cli/specs/isolation.md` §4e.
+boundary, is `harness/kernel/isolation/isolation.md` §4e.
 
 The role runs directly in the given working tree (`/app` in a trial
 container), at the base commit already checked out there; that commit is the
@@ -1040,7 +1040,7 @@ the missing Codex subscription login. For example, from the repository root
 after `codex login` on the host:
 
 ```sh
-export CODEX_ACCESS_TOKEN="$(bun -e 'import { homedir } from "node:os"; import { resolveCodexAccessToken } from "./apps/cli/src/lib/worker-boundary.ts"; const token = resolveCodexAccessToken(process.env, homedir()); if (!token) process.exit(1); process.stdout.write(token)')"
+export CODEX_ACCESS_TOKEN="$(bun -e 'import { homedir } from "node:os"; import { resolveCodexAccessToken } from "./harness/kernel/isolation/worker-boundary.ts"; const token = resolveCodexAccessToken(process.env, homedir()); if (!token) process.exit(1); process.stdout.write(token)')"
 ```
 
 The root install hook uploads the token through a private temporary file into

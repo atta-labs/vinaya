@@ -46,7 +46,8 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { dirname, join } from 'node:path'
-import { buildReviewInputManifest, DEFAULT_REVIEW_POLICY, type Role } from '@attalabs/aeg-core'
+import { buildReviewInputManifest, DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
+import type { Role } from '../../../../../harness/kernel/log/schema'
 import {
   buildCodexExecpolicyRules,
   isReviewerResume,
@@ -73,7 +74,7 @@ import {
   realConfinementPlatformDeps,
   resolveClaudeConfinement,
   stageCodexPolicyHome
-} from '../worker-boundary.js'
+} from '../../../../../harness/kernel/isolation/worker-boundary.js'
 import { confinedTmpEnv, resolveProofConfinement } from './dev-proof.js'
 import {
   accountEnv,

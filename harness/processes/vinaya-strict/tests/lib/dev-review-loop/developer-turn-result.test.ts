@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CONFIDENCE_REASON_MAX_LENGTH } from '@attalabs/aeg-core'
+import { CONFIDENCE_REASON_MAX_LENGTH } from '../../../../../kernel/log/schema'
 import { handoffFindings } from '../../../loops/dev-review/standalone/dev-review-loop.js'
 import {
   defangReportedCommand,
@@ -39,7 +39,7 @@ import {
   developerTurnResultJsonSchema
 } from '../../../executing/developer/developer-turn-result.js'
 import { deliveredDocumentation } from '../../../loops/dev-review/dispatch/dispatch.js'
-import type { DevToolContext } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server.js'
+import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server.js'
 import {
   cleanupWorlds,
   completedTurnOutput,

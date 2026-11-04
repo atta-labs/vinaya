@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSyncBudgeted } from '../../../../../apps/cli/tests/lib/process-fixture'
-import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../apps/cli/tests/lib/dispatch/fake-sandbox-probe.js'
+import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
 
 /**
  * `vinaya task dispatch <tranche> <n> --agent <vendor>` reaching the real

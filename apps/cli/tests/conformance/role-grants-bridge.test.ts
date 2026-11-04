@@ -4,12 +4,16 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { stageProofCodexHome } from '../../src/lib/task-tools/dev-proof.js'
-import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host.js'
-import { devToolsMcpConfigFileBody, devToolsSocketPath } from '../../src/lib/task-tools/dev-tools-registration.js'
-import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
+import { startDevToolsHost } from '../../../../harness/kernel/tools/host/dev-tools-host.js'
+import {
+  devToolsMcpConfigFileBody,
+  devToolsSocketPath
+} from '../../../../harness/kernel/tools/dev-tools-registration.js'
+import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from '../../../../harness/kernel/tools/dev-tools-server.js'
 import { MCP_PROTOCOL_VERSION } from '../../../../harness/processes/vinaya-strict/integration/server.js'
 import { PROCESS_FIXTURE_BUDGET_MS, stripVinayaEnv } from '../lib/process-fixture.js'
-import { liveBridgeInvocation, startInitializeWitness, VINAYA_CLI_ENTRY } from './role-grants-live.js'
+import { liveBridgeInvocation, startInitializeWitness } from './role-grants-live.js'
+import { devBridgePath } from '../../src/lib/cli-entry.js'
 import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies.js'
 
 /**
@@ -99,11 +103,11 @@ function expectInitializeAnswered(response: Record<string, unknown>): void {
 }
 
 describe('live grant harness — the staged bridge answers initialize', () => {
-  it('launches the bridge from the vinaya CLI entry, never the running test file', () => {
+  it('launches the bridge from the bridge program, never the running test file', () => {
     const bridge = liveBridgeInvocation('/tmp/x/s.sock')
     expect(bridge.command).toBe(process.execPath)
-    expect(bridge.args[0]).toBe(VINAYA_CLI_ENTRY)
-    expect(VINAYA_CLI_ENTRY.endsWith(join('apps', 'cli', 'src', 'index.ts'))).toBe(true)
+    expect(bridge.args[0]).toBe(devBridgePath())
+    expect(devBridgePath().endsWith(join('harness', 'kernel', 'tools', 'host', 'dev-tools-bridge.ts'))).toBe(true)
     expect(bridge.args[0]).not.toBe(process.argv[1])
   })
 

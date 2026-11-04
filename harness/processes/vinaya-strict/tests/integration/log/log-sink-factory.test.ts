@@ -76,20 +76,7 @@ describe('the process Log sink factory', () => {
   it('installed by an entry point, it is the factory the bare log() builds its sink from', () => {
     const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-factory-install-')))
     const factory = join(import.meta.dir, '..', '..', '..', 'integration', 'log', 'log-sink-factory.ts')
-    const logSink = join(
-      import.meta.dir,
-      '..',
-      '..',
-      '..',
-      '..',
-      '..',
-      '..',
-      'apps',
-      'cli',
-      'src',
-      'lib',
-      'log-sink.ts'
-    )
+    const logSink = join(import.meta.dir, '../../../../../kernel/log/log-sink.ts')
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,

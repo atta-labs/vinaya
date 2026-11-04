@@ -30,12 +30,12 @@ import {
   devToolError,
   type DevPullRequestView,
   type DevToolResult
-} from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server.js'
-import type { DevToolContext } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server.js'
+} from '../../../../../kernel/tools/dev-tools-server.js'
+import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server.js'
 import type {
   FetchDocumentationInput,
   FetchDocumentationResult
-} from '../../../../../../apps/cli/src/lib/task-tools/fetch-documentation.js'
+} from '../../../../../kernel/tools/fetch-documentation.js'
 
 /** A validation verdict for a PR body — the driver's own PR-body gate, injected so the loop supplies the real one. */
 export type BodyValidation = { ok: true } | { ok: false; reason: string }

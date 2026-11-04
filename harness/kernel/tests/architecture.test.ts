@@ -564,6 +564,176 @@ describe('a relocated dependency is unchanged, never growth', () => {
   })
 })
 
+// ── Moving code is moving, never adding ─────────────────────────────────────
+
+// Nothing in common with BODY, so git's default rename detection does not pair a file holding one with a file holding the other.
+const REWRITTEN = Array.from({ length: 40 }, (_, i) => `export const moved${i} = 'moved ${i}'`).join('\n')
+const PROCESS_FILE = (name: string): string => `harness/processes/vinaya-strict/tools/${name}.ts`
+
+describe('a moved file is moving, never adding', () => {
+  test('(a) a rename git does not pair keeps its base entry when it is the only deleted and added file of that name', () => {
+    const { root, base } = plantedRepository({ 'apps/cli/src/lib/a.ts': `// the developer\n${BODY}\n` })
+    commitBaseline(
+      root,
+      move(root, 'apps/cli/src/lib/a.ts', 'harness/kernel/gates/a.ts', `// the developer\n${REWRITTEN}\n`)
+    )
+    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 1, headTotal: 1 })
+
+    commitBaseline(root, { 'harness/kernel/gates/a.ts': `// the developer and the reviewer\n${REWRITTEN}\n` })
+    expect(compareBase(root, base).failures[0]).toContain(
+      'harness/kernel/gates/a.ts: counts 2, base 1 — above the base entry of apps/cli/src/lib/a.ts, which it was renamed from'
+    )
+  })
+
+  test('(a) two deleted files of one name are never paired with the file added under it', () => {
+    const { root, base } = plantedRepository({
+      'apps/cli/src/lib/a.ts': `// the developer\n${BODY}\n`,
+      'apps/cli/src/other/a.ts': `// the developer\n${BODY}\n`
+    })
+    commitBaseline(root, {
+      'apps/cli/src/lib/a.ts': null,
+      'apps/cli/src/other/a.ts': null,
+      'harness/kernel/gates/a.ts': `// the developer\n${REWRITTEN}\n`
+    })
+    expect(compareBase(root, base).failures[0]).toContain(
+      'harness/kernel/gates/a.ts: counts 1, base 0 — a file with no base entry counts above zero'
+    )
+  })
+
+  test('(b) one counted import split into several, each of a file the change moves or adds out of its target, counts once', () => {
+    const importing = (...names: string[]): string =>
+      `${names.map((n) => `import { ${n} } from '../../../harness/processes/vinaya-strict/tools/${n}.js'`).join('\n')}\n${BODY}\n`
+    const { root, base } = plantedRepository({
+      [PROCESS_FILE('m')]: `export const m = 1\nexport const n = 2\n${BODY}\n`,
+      'apps/cli/src/lib/c/c.ts': importing('m')
+    })
+    commitBaseline(root, {
+      [PROCESS_FILE('m')]: `export const m = 1\n${BODY}\n`,
+      [PROCESS_FILE('n')]: 'export const n = 2\n',
+      'apps/cli/src/lib/c/c.ts': importing('m', 'n')
+    })
+    expect(countTree(root)).toEqual({ 'apps/cli/src/lib/c/c.ts': 2 })
+    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 1, headTotal: 1 })
+
+    // The same second import of a file the change did not take out of the base import's target is growth.
+    const untouched = plantedRepository({
+      [PROCESS_FILE('m')]: `export const m = 1\n${BODY}\n`,
+      [PROCESS_FILE('n')]: 'export const n = 2\n',
+      'apps/cli/src/lib/c/c.ts': importing('m')
+    })
+    commitBaseline(untouched.root, { 'apps/cli/src/lib/c/c.ts': importing('m', 'n') })
+    expect(compareBase(untouched.root, untouched.base).failures[0]).toContain(
+      'apps/cli/src/lib/c/c.ts: counts 2, base 1 — above its base entry'
+    )
+
+    // A file the change adds while the base import's target stays as it was is not taken out of that target.
+    const added = plantedRepository({
+      [PROCESS_FILE('m')]: `export const m = 1\n${BODY}\n`,
+      'apps/cli/src/lib/c/c.ts': importing('m')
+    })
+    commitBaseline(added.root, {
+      [PROCESS_FILE('n')]: 'export const n = 2\n',
+      'apps/cli/src/lib/c/c.ts': importing('m', 'n')
+    })
+    expect(compareBase(added.root, added.base).failures[0]).toContain(
+      'apps/cli/src/lib/c/c.ts: counts 2, base 1 — above its base entry'
+    )
+  })
+
+  test('(b) an import of a file split into two added files counts once, and a third counted import is growth', () => {
+    const importing = (...names: string[]): string =>
+      `${names.map((n) => `import { ${n} } from '../../../harness/processes/vinaya-strict/tools/${n}.js'`).join('\n')}\n${BODY}\n`
+    const { root, base } = plantedRepository({
+      [PROCESS_FILE('whole')]: `export const x = 1\nexport const y = 2\n${BODY}\n`,
+      'apps/cli/src/lib/c/c.ts': importing('whole')
+    })
+    commitBaseline(root, {
+      [PROCESS_FILE('whole')]: null,
+      [PROCESS_FILE('x')]: 'export const x = 1\n',
+      [PROCESS_FILE('y')]: 'export const y = 2\n',
+      [PROCESS_FILE('z')]: 'export const z = 3\n',
+      'apps/cli/src/lib/c/c.ts': importing('x', 'y')
+    })
+    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 1, headTotal: 1 })
+
+    commitBaseline(root, { 'apps/cli/src/lib/c/c.ts': importing('x', 'y', 'z') })
+    expect(compareBase(root, base).failures[0]).toContain(
+      'apps/cli/src/lib/c/c.ts: counts 2, base 1 — above its base entry'
+    )
+  })
+
+  test('(c) a path string re-pointed to a file moved by an unpaired rename keeps its count, and a new one is growth', () => {
+    const launcher = (path: string): string =>
+      `import { resolve } from 'node:path'\nexport const launcher = (root: string) => resolve(root, '${path}')\n${BODY}\n`
+    const { root, base } = plantedRepository({
+      'apps/cli/src/lib/launch.ts': launcher('../../processes/vinaya/bin/run.ts'),
+      'processes/vinaya/bin/run.ts': `${BODY}\n`
+    })
+    commitBaseline(root, {
+      ...move(root, 'processes/vinaya/bin/run.ts', 'harness/processes/vinaya-strict/bin/run.ts', `${REWRITTEN}\n`),
+      'apps/cli/src/lib/launch.ts': launcher('../../harness/processes/vinaya-strict/bin/run.ts')
+    })
+    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 1, headTotal: 1 })
+
+    commitBaseline(root, {
+      'harness/processes/vinaya-strict/bin/other.ts': 'export const unrelated = 1\n',
+      'apps/cli/src/lib/launch.ts': `${launcher('../../harness/processes/vinaya-strict/bin/run.ts')}export const other = '../../harness/processes/vinaya-strict/bin/other.ts'\n`
+    })
+    expect(compareBase(root, base).failures[0]).toContain('apps/cli/src/lib/launch.ts: counts 2, base 1')
+  })
+
+  test('(d) a path in a comment re-pointed to its moved file keeps its count, and a comment naming another process file is growth', () => {
+    const comment = (path: string): string => `// The entry point lives in ${path}.\n${BODY}\n`
+    const { root, base } = plantedRepository({
+      'apps/cli/src/lib/dispatch.ts': `export function dispatchRole() {}\n${BODY}\n`,
+      'packages/sources/src/notes.ts': comment('apps/cli/src/lib/dispatch.ts')
+    })
+    expect(countTree(root)).toEqual({})
+    commitBaseline(root, {
+      ...move(root, 'apps/cli/src/lib/dispatch.ts', 'harness/processes/vinaya-strict/loops/dispatch.ts'),
+      'packages/sources/src/notes.ts': comment('harness/processes/vinaya-strict/loops/dispatch.ts')
+    })
+    expect(countTree(root)).toEqual({ 'packages/sources/src/notes.ts': 1 })
+    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 0, headTotal: 0 })
+
+    commitBaseline(root, {
+      'harness/processes/vinaya-strict/loops/seats.ts': `export function seats() {}\n${BODY}\n`,
+      'packages/sources/src/notes.ts': `${comment('harness/processes/vinaya-strict/loops/dispatch.ts')}${comment('harness/processes/vinaya-strict/loops/seats.ts')}`
+    })
+    expect(compareBase(root, base).failures[0]).toContain(
+      'packages/sources/src/notes.ts: counts 1, base 0 — above its base entry'
+    )
+  })
+
+  test('(e) a file moved from a path the ratchet does not scan into one it scans brings its own count, and a unit added in the move is growth', () => {
+    const script = `// runs under the developer's sandbox\n${BODY}\n`
+    const { root, base } = plantedRepository({ 'apps/cli/scripts/probe.ts': script })
+    expect(countTree(root)).toEqual({})
+    commitBaseline(root, move(root, 'apps/cli/scripts/probe.ts', 'harness/kernel/isolation/probe.ts'))
+    expect(countTree(root)).toEqual({ 'harness/kernel/isolation/probe.ts': 1 })
+    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 1, headTotal: 1 })
+
+    commitBaseline(root, {
+      'harness/kernel/isolation/probe.ts': `// runs under the developer's sandbox, for the reviewer\n${BODY}\n`
+    })
+    expect(compareBase(root, base).failures[0]).toContain(
+      'harness/kernel/isolation/probe.ts: counts 2, base 1 — above the base entry of apps/cli/scripts/probe.ts, which it was renamed from'
+    )
+  })
+
+  test('(e) a test-path helper moved into a scanned root brings its own count, and a new file there still fails', () => {
+    const helper = `// the developer fixture\n${BODY}\n`
+    const { root, base } = plantedRepository({ 'apps/cli/tests/lib/probe.ts': helper })
+    commitBaseline(root, move(root, 'apps/cli/tests/lib/probe.ts', 'harness/kernel/isolation/dispatch/probe.ts'))
+    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 1, headTotal: 1 })
+
+    commitBaseline(root, { 'harness/kernel/isolation/fresh.ts': `// the developer\n${BODY}\n` })
+    expect(compareBase(root, base).failures[0]).toContain(
+      'harness/kernel/isolation/fresh.ts: counts 1, base 0 — a file with no base entry counts above zero'
+    )
+  })
+})
+
 // ── Ownership transfer with a forwarding entry ──────────────────────────────
 
 describe('an ownership transfer that keeps a forwarding entry is a relocation', () => {

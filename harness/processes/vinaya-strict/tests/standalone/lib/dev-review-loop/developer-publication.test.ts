@@ -24,9 +24,9 @@ import {
   defaultUpdatePrBody,
   pushBranchClassified
 } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import { ProtectedPathError } from '../../../../../../../apps/cli/src/lib/broker.js'
+import { ProtectedPathError } from '../../../../../../kernel/tools/host/broker.js'
 import { VINAYA_BROKER_ROLES } from '../../../../integration/policies/roles.js'
-import { loopLogPathFor } from '../../../../../../../apps/cli/src/lib/loop-log.js'
+import { loopLogPathFor } from '../../../../../../kernel/log/client/loop-log.js'
 import {
   createLivePublicationState,
   type LivePublicationScope,

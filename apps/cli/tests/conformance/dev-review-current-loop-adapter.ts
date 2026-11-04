@@ -20,7 +20,7 @@ import {
   readPauseState,
   writeDriverLock
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import type { LogSinkDeps } from '../../src/lib/log-sink.js'
+import type { LogSinkDeps } from '../../../../harness/kernel/log/log-sink.js'
 import {
   CLEAN_REVIEWER,
   CLEAN_SECURITY,

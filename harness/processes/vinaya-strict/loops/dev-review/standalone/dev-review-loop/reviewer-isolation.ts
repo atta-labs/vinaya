@@ -2,7 +2,7 @@
  * Reviewers inspect one immutable candidate with isolated scratch space
  * (O1/O2/O3).
  *
- * `apps/cli/specs/isolation.md` specifies the full OS-level Worker/Reviewer
+ * `harness/kernel/isolation/isolation.md` specifies the full OS-level Worker/Reviewer
  * boundary (Seatbelt, credential scoping) and is explicit that wiring
  * `dispatchRole` to that mechanism belongs to a later, separate change, not
  * this one. This module is a narrower, already-in-surface slice of that same
@@ -57,7 +57,7 @@
 import { basename, join, relative } from 'node:path'
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { runPath } from '../../../../../../../apps/cli/src/lib/run-paths.js'
+import { runPath } from '../../../../../../kernel/run-paths.js'
 
 export type ReviewerRole = 'reviewer' | 'security'
 

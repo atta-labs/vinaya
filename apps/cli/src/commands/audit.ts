@@ -22,7 +22,7 @@ import {
 } from '@attalabs/aeg-core'
 import { loadConfig } from '../lib/config.js'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 
 // `rings.ring2_asyncAudits` means what it says: `true` (the default — an
 // absent key resolves the same way) RUNS the async audits, so

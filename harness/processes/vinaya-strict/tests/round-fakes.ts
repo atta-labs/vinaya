@@ -1,8 +1,8 @@
 import type { VerdictObservation } from '@attalabs/aeg-core'
 import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import type { EngineForge } from '../bin/run-engine'
-import { LOG_FOLDER_ONLY_ENV } from '../../../../apps/cli/src/lib/log-sink'
-import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache } from '../../../../apps/cli/src/lib/run-paths'
+import { LOG_FOLDER_ONLY_ENV } from '../../../kernel/log/log-sink'
+import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache } from '../../../kernel/run-paths'
 
 // Recorded results the round's deciding steps read, for tests that replace the steps that would write them.
 

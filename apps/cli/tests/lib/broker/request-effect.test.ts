@@ -19,9 +19,9 @@ import {
   scopeTarget,
   UnboundTargetError,
   UngrantedOperationError
-} from '../../../src/lib/broker'
+} from '../../../../../harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from './vinaya-broker'
-import type { LogEventInput } from '../../../src/lib/log-sink'
+import type { LogEventInput } from '../../../../../harness/kernel/log/log-sink'
 
 let dir: string
 let deps: ControlStoreDeps

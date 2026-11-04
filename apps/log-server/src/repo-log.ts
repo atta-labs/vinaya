@@ -10,14 +10,16 @@
  * was the only caller.
  *
  * Identity and classification are never reimplemented here. `recordIdentity`
- * and `classifyStoredLine` come from `@attalabs/aeg-core/log` — the same
+ * and `classifyStoredLine` come from the kernel's Log schema — the same
  * functions the sender's own storage contract uses, so the two sides can
  * never disagree about what counts as the same event, or about which lines
  * are valid.
  */
 
 import { DurableObject } from 'cloudflare:workers'
-import { classifyStoredLine, logEventSchemaDigest, recordIdentity, redact } from '@attalabs/aeg-core/log'
+import { classifyStoredLine, recordIdentity } from '@attalabs/harness/log/store'
+import { logEventSchemaDigest } from '@attalabs/harness/log/client/schema-digest'
+import { redact } from '@attalabs/harness/log/redact'
 import { LIVE_SUBPROTOCOL, parseRoute, repoName, type Route } from './route'
 
 export interface Env {

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '@attalabs/aeg-core'
-import { printJson } from '../lib/envelope'
+import { printJson } from '../../../../harness/kernel/effects/envelope'
 import {
   countMarkerComments,
   makeCheckError,

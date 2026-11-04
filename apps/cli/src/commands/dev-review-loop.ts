@@ -33,7 +33,7 @@ import {
   type AgentVendor
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { loadConfig } from '../lib/config.js'
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import {
   cancelDevReviewLoop,
   devReviewLoop,

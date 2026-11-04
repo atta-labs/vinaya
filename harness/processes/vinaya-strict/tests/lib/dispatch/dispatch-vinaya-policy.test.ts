@@ -47,9 +47,9 @@ import {
 import {
   agentConfigProtectedSubpaths,
   resolveOpenedAgentConfigPaths
-} from '../../../../../../apps/cli/src/lib/worker-boundary.js'
+} from '../../../../../kernel/isolation/worker-boundary.js'
 import { surfaceOpenedAgentConfigPaths } from '../../../loops/dev-review/standalone/dev-review-loop.js'
-import { devToolsSocketRoot } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-registration.js'
+import { devToolsSocketRoot } from '../../../../../kernel/tools/dev-tools-registration.js'
 import {
   CLI_ROOT,
   INDEX,

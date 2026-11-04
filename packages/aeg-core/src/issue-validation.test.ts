@@ -1,3 +1,4 @@
+import { parseIssueDocumentation } from '@attalabs/harness/issue-documentation'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { amendRationaleDeps, projectsFromBody } from '@attalabs/aeg-forge-state'
@@ -59,7 +60,6 @@ import {
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   OBJECTIVES_SINCE_ISSUE,
-  parseIssueDocumentation,
   parseIssueParts,
   parseIssuePremises,
   parseIssueStopConditions,

@@ -10,7 +10,7 @@ import {
   sha256Digest,
   type PreparedSource,
   type RequiredSourceManifest
-} from '../../src/lib/source-manifest'
+} from '../../../../harness/kernel/source-manifest'
 import {
   beyondScope,
   briefRequiredSources,

@@ -13,7 +13,7 @@ import {
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { prepareTaskOrIssue } from '../../../../harness/processes/vinaya-strict/tools/task-contract/dispatch-task.js'
 import { isForgeReadOversize, readIssueComments, readIssueFields } from '../lib/forge-read.js'
-import { printJson } from '../lib/envelope'
+import { printJson } from '../../../../harness/kernel/effects/envelope'
 import {
   countMarkerComments,
   locateBody,

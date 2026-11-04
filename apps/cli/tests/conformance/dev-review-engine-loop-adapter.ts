@@ -25,8 +25,8 @@ import { setEngineLogIdentity } from '../../../../harness/processes/vinaya-stric
 import { LOG_IDENTITY_ENV_KEYS } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { createActions } from '../../../../harness/processes/vinaya-strict/executing/actions.js'
 import type { DeveloperPromptFacts } from '../../../../harness/processes/vinaya-strict/executing/developer-prompt.js'
-import { probeAgentSandbox, type SandboxProbeRun } from '../../src/lib/worker-boundary.js'
-import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
+import { probeAgentSandbox, type SandboxProbeRun } from '../../../../harness/kernel/isolation/worker-boundary.js'
+import type { DevToolContext } from '../../../../harness/kernel/tools/dev-tools-server.js'
 import {
   liveDeveloperFacts,
   liveTaskInput,
@@ -67,10 +67,15 @@ import {
   LOG_FOLDER_ONLY_ENV,
   resetDefaultLogSinkContext,
   type LogSinkDeps
-} from '../../src/lib/log-sink.js'
+} from '../../../../harness/kernel/log/log-sink.js'
 import { createVinayaLogSink } from '../../../../harness/processes/vinaya-strict/integration/log/log-sink-factory.js'
-import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, tasksExecutionRoot } from '../../src/lib/run-paths.js'
-import { createEffectExecutor, type EffectIdentity, type EffectReconciler, sha256Hex } from '../../src/lib/effects.js'
+import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, tasksExecutionRoot } from '../../../../harness/kernel/run-paths.js'
+import {
+  createEffectExecutor,
+  type EffectIdentity,
+  type EffectReconciler,
+  sha256Hex
+} from '../../../../harness/kernel/effects/effects.js'
 import { createTaskCancelHandler } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.js'
 import { readTaskRunner } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-engine.js'
 import { cleanupAllReviewerIsolationArtifacts } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.js'

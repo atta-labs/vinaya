@@ -3,7 +3,7 @@
  * default one, the loop driver's, a cancel's, each role dispatch's — is built
  * here, with the Vinaya branch-to-Issue reader (`branch-issue.ts`) as its
  * required `resolveBranchIssue` dependency. The Log client
- * (`apps/cli/src/lib/log-sink.ts`) names no task model; this module is how
+ * (`harness/kernel/log/log-sink.ts`) names no task model; this module is how
  * the process's task model reaches it.
  *
  * Each entry point installs `createVinayaLogSink` as the default sink's
@@ -18,7 +18,10 @@ import {
   type LogSink,
   type LogSinkDeps,
   resolveLogAppendPath
-} from '../../../../../apps/cli/src/lib/log-sink.js'
+} from '../../../../kernel/log/log-sink.js'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
 import { resolveBranchIssue } from './branch-issue.js'
 
 type BranchReadInputs = Pick<Partial<LogSinkDeps>, 'cwd' | 'env'>
@@ -42,10 +45,27 @@ function branchReader(inputs: BranchReadInputs): LogSinkDeps['resolveBranchIssue
  * answer stays private to that sink.
  */
 export function createVinayaLogSink(overrides: Partial<LogSinkDeps> = {}): LogSink {
+  const vinayaVersion = overrides.vinayaVersion ?? readVinayaVersion
   if (overrides.resolveBranchIssue !== undefined) {
-    return createLogSink({ ...overrides, resolveBranchIssue: overrides.resolveBranchIssue })
+    return createLogSink({ ...overrides, vinayaVersion, resolveBranchIssue: overrides.resolveBranchIssue })
   }
-  return createLogSink({ ...overrides, resolveBranchIssue: branchReader(overrides), shareBranchIssue: true })
+  return createLogSink({
+    ...overrides,
+    vinayaVersion,
+    resolveBranchIssue: branchReader(overrides),
+    shareBranchIssue: true
+  })
+}
+
+function readVinayaVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(cliPackageRoot(), 'package.json'), 'utf8')) as {
+      version?: string
+    }
+    return pkg.version ?? 'unknown'
+  } catch {
+    return 'unknown'
+  }
 }
 
 /**

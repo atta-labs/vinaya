@@ -10,14 +10,14 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { TASK_TOOL_NAMES } from '@attalabs/aeg-core'
-import { DEV_TOOL_NAMES } from '../../../src/lib/task-tools/dev-tools-server'
+import { DEV_TOOL_NAMES } from '../../../../../harness/kernel/tools/dev-tools-server'
 import type { ComponentKind } from '../../../src/lib/dev-review-eval/registry'
 import { OPERATOR_EXIT_EXCLUSIONS } from '../../../src/lib/dev-review-eval/exit-check'
 
 export const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..')
 
 export const CONTRACTS_DOC = 'apps/cli/specs/dev-review-capabilities-contracts.md'
-export const ISOLATION_DOC = 'apps/cli/specs/isolation.md'
+export const ISOLATION_DOC = 'harness/kernel/isolation/isolation.md'
 export const PROGRAM_DOC = 'apps/cli/specs/dev-review-evaluation-program.md'
 export const MATRIX_DOC = 'apps/cli/specs/dev-review-engine-capability-matrix.md'
 const MATRIX_DATA = 'apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json'

@@ -79,10 +79,14 @@ import {
   type ResolvedLogDestination,
   resolveLogDestinationFrom,
   withDeadline
-} from '../lib/log-sink.js'
-import { localSchemaDigest, schemaDigestFromStats, schemaDigestMismatch } from '../lib/log-schema-digest.js'
-import { statsUrlFrom } from '../lib/log-sync-server-source.js'
-import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../lib/run-paths.js'
+} from '../../../../harness/kernel/log/log-sink.js'
+import {
+  localSchemaDigest,
+  schemaDigestFromStats,
+  schemaDigestMismatch
+} from '../../../../harness/kernel/log/client/log-schema-digest.js'
+import { statsUrlFrom } from '../../../../harness/kernel/log/client/log-sync-server-source.js'
+import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../../../../harness/kernel/run-paths.js'
 import {
   branchProtectionConfigured,
   type BranchProtectionState,
@@ -96,7 +100,7 @@ import {
   resolveHookDir
 } from '../lib/detect.js'
 import { localGateControl } from '../lib/local-gate-control.js'
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import { planGhPathFix } from '../lib/gh-path.js'
 import { checksMissingEnvDeclaration, envDeclarationWarning } from '../lib/env-lint.js'
 import { PROJECTS_REGISTRY_PATH } from '../../../../harness/processes/vinaya-strict/artifacts/registry-write.js'
@@ -109,7 +113,7 @@ import {
   realConfinementPlatformDeps,
   runRealSandboxProbe,
   type SandboxProbeRunner
-} from '../lib/worker-boundary.js'
+} from '../../../../harness/kernel/isolation/worker-boundary.js'
 
 export type DoctorDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -1319,7 +1323,7 @@ function diagnoseTestCi(repoRoot: string): Finding[] {
 // cannot answer: whether the events this installation produces are being
 // accepted where they are sent. A server that rejects every event with `401`
 // looks exactly like a healthy one from the config's side — the events queue
-// locally, the run never slows or fails (`apps/cli/specs/log.md`,
+// locally, the run never slows or fails (`harness/kernel/log/log.md`,
 // "Fail-open, always"), and a CI job's queue dies with its runner. That is a
 // whole day of telemetry lost with nothing on any surface saying so, which
 // happened once, and is why this check exists.
@@ -1508,7 +1512,7 @@ async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
 
   if (destination.kind === 'none') {
     // Both reasons that land here are sanctioned outcomes, neither a failure
-    // (`apps/cli/specs/log.md` § CI delivery) — reported so the absence is
+    // (`harness/kernel/log/log.md` § CI delivery) — reported so the absence is
     // visible, never as a finding that reddens the command. The variable is
     // named anyway: "a job holds no delivery credential" IS the incident
     // shape, and the name is the one thing that makes it fixable.

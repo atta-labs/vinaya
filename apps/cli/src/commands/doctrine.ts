@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import matter from 'gray-matter'
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import { packageRoot } from '../lib/package-root.js'
 import { resolveRoleFile } from '../../../../harness/processes/vinaya-strict/integration/roles/plan.js'
 

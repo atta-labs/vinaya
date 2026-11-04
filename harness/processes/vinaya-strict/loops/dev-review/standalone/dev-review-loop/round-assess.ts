@@ -10,7 +10,7 @@
  */
 
 import { readFileSync } from 'node:fs'
-import { CODE_TOKEN_PATTERN } from '@attalabs/aeg-core/log'
+import { CODE_TOKEN_PATTERN } from '../../../../../../kernel/log/schema'
 import {
   defaultControlStoreDeps,
   readLoopState,
@@ -26,7 +26,7 @@ import {
   type RoundStats
 } from '@attalabs/aeg-core'
 import type { AgentVendor, DispatchHandle, SandboxProbeRefusal, UsageLimit } from '../../dispatch/dispatch.js'
-import { controlStoreRoot } from '../../../../../../../apps/cli/src/lib/effects.js'
+import { controlStoreRoot } from '../../../../../../kernel/effects/effects.js'
 import { isControlCharacter } from './turn-result.js'
 
 // --- round marker comment ---------------------------------------------------

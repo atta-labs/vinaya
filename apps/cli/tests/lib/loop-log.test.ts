@@ -9,7 +9,7 @@ import {
   LOOP_LOG_MAX_BYTES,
   loopLogPathFor,
   narrateDriverEvent
-} from '../../src/lib/loop-log'
+} from '../../../../harness/kernel/log/client/loop-log'
 import {
   devReviewLoop,
   type LoopDeps

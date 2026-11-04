@@ -58,13 +58,13 @@ import { dirname } from 'node:path'
 import {
   type ControlStoreDeps,
   defaultControlStoreDeps,
-  type OperationResult,
   readResolution,
   TaskResumeInputSchema,
   taskToolError,
   type TaskResumeResult,
   type TaskToolRef
 } from '@attalabs/aeg-core'
+import type { OperationResult } from '../../../../../kernel/log/schema'
 import { type LaunchResult, launchDetached, waitForLiveDriver } from './detached-launch.js'
 import { type AgentVendor, isAgentVendor } from '../dispatch/dispatch.js'
 import {
@@ -95,14 +95,9 @@ import { runtimeDir } from '../standalone/dev-review-loop.js'
 import { engineContinuationArgv, readTaskRunner } from './task-run-engine.js'
 import { newestPublishedRound } from './task-status.js'
 import { widenSurfaceContinuationFor } from './task-run.js'
-import {
-  ensureRunDir,
-  runPath,
-  runtimeDirForThisRepo,
-  tasksExecutionRoot
-} from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
 import { taskFromEscalationId } from '../standalone/dev-review-loop/pause-resume.js'
-import { log } from '../../../../../../apps/cli/src/lib/log-sink.js'
+import { log } from '../../../../../kernel/log/log-sink.js'
 import type { TaskToolCallResult } from './handlers.js'
 import { resolveIssueForRef } from './handlers.js'
 import { readEscalationPacket } from './read.js'

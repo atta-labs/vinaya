@@ -25,7 +25,7 @@ import { loadConfig } from '../../../../../apps/cli/src/lib/config'
 import { collectBodyCheckErrors } from '../task-contract/forge/forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../../../apps/cli/src/lib/numstat'
 import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
-import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../apps/cli/src/lib/run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../kernel/run-paths.js'
 import {
   type DeferredTestsRecord,
   isReadyCiCommand,

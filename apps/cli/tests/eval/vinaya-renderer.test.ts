@@ -38,7 +38,7 @@ import {
   REVIEWER_SEVERITIES
 } from '../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 import { ROLE_TOOL_GRANTS } from '../../../../harness/processes/vinaya-strict/integration/policies/roles'
-import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
+import { AGENT_TOOL_CATALOG } from '../../../../harness/kernel/tools/tool-catalog'
 import {
   claudeTrace,
   codexTrace,
@@ -695,7 +695,7 @@ describe('the renderer version', () => {
       'harness/processes/vinaya-strict/executing/code-reviewer/review-result.ts',
       'harness/processes/vinaya-strict/executing/developer/developer-turn-result.ts',
       'apps/cli/src/lib/dev-review-eval/neutral-case.ts',
-      'apps/cli/src/lib/task-tools/role-grants.ts',
+      'harness/kernel/tools/role-grants.ts',
       'packages/aeg-core/src/issue-validation.ts'
     ]) {
       expect(MAPPING_SOURCE_PATHS).toContain(path)
@@ -714,7 +714,7 @@ describe('the renderer version', () => {
       join('apps/cli/src/lib/dev-review-eval', `${spec.replace(/\.js$/, '')}.ts`).replace(/\\/g, '/')
     )
     // The tool catalog is read only for its tool names, which the tables carry.
-    const covered = resolved.filter((path) => path !== 'apps/cli/src/lib/task-tools/tool-catalog.ts')
+    const covered = resolved.filter((path) => path !== 'harness/kernel/tools/tool-catalog.ts')
     for (const path of covered) expect(MAPPING_SOURCE_PATHS).toContain(path)
     expect(MAPPING_TABLES.CATALOG_TOOL_NAMES).toEqual(AGENT_TOOL_CATALOG.map((tool) => tool.name))
   })

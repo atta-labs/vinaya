@@ -1,4 +1,4 @@
-import { CustomEventDeclarationsSchema } from '@attalabs/aeg-core/log'
+import { CustomEventDeclarationsSchema } from '../../../../kernel/log/custom'
 import { z } from 'zod'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../apps/cli/src/checks/contract.js'
 import { AGENT_VENDORS, type AgentVendor } from '../../../../../apps/cli/src/lib/agent-vendors.js'

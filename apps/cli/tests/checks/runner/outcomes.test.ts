@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
-import type { LogEventInput } from '../../../src/lib/log-sink'
+import type { LogEventInput } from '../../../../../harness/kernel/log/log-sink'
 import type { CheckSpec } from '../../../src/checks/contract'
 import { runChecks } from '../../../src/checks/runner'
 

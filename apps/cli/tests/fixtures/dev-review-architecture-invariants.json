@@ -2530,7 +2530,7 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/loop-log.ts",
+          "path": "harness/kernel/log/client/loop-log.ts",
           "symbol": "appendLoopLogLine"
         }
       ],
@@ -2552,7 +2552,7 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/loop-log.ts",
+          "path": "harness/kernel/log/client/loop-log.ts",
           "symbol": "loopLogPathFor"
         }
       ],
@@ -2728,7 +2728,7 @@
       "scenarios": ["uncertain-effects"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/worker-boundary.ts",
+          "path": "harness/kernel/isolation/worker-boundary.ts",
           "symbol": "startTurnWriteAttribution"
         }
       ],
@@ -2765,7 +2765,7 @@
       "scenarios": ["isolation-refusal"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/worker-boundary.ts",
+          "path": "harness/kernel/isolation/worker-boundary.ts",
           "symbol": "probeAgentSandbox"
         }
       ],
@@ -2786,12 +2786,12 @@
           "path": "harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts"
         },
         {
-          "path": "apps/cli/src/lib/task-tools/fetch-documentation.ts"
+          "path": "harness/kernel/tools/fetch-documentation.ts"
         }
       ],
       "tests": [
         "apps/cli/tests/lib/dispatch/documentation-read-content.test.ts",
-        "apps/cli/tests/lib/dispatch/fetch-documentation-visible-text.test.ts"
+        "harness/kernel/tools/fetch-documentation-visible-text.test.ts"
       ],
       "loopSpec": [],
       "reason": "Shipped: the read check counts a source only on real content. Evidence: an HTML sign-in page satisfied the read-gate for a document nobody had read. Revision 17 section 16.7: delivery is recorded by the controller against the run's required-source manifest, and a sign-in page is not the source. Reclassified from `guarantee` to `product-guarantee`: the controller enforces it outside the worker and a test is its oracle, which is what `product-guarantee` means."
@@ -2865,7 +2865,7 @@
       "scenarios": ["isolation-refusal"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/worker-boundary.ts",
+          "path": "harness/kernel/isolation/worker-boundary.ts",
           "symbol": "refreshStagedCodexLogin"
         }
       ],
@@ -2884,7 +2884,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/task-tools/fetch-documentation.ts"
+          "path": "harness/kernel/tools/fetch-documentation.ts"
         }
       ],
       "tests": ["apps/cli/tests/lib/dispatch/fetch-documentation-tool.test.ts"],
@@ -2977,7 +2977,7 @@
       "scenarios": ["isolation-refusal"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/worker-boundary.ts",
+          "path": "harness/kernel/isolation/worker-boundary.ts",
           "symbol": "stageCodexPolicyHome"
         }
       ],
@@ -2995,10 +2995,10 @@
       "scenarios": ["isolation-refusal"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/task-tools/dev-tools-server.ts"
+          "path": "harness/kernel/tools/dev-tools-server.ts"
         },
         {
-          "path": "apps/cli/src/lib/broker.ts",
+          "path": "harness/kernel/tools/host/broker.ts",
           "symbol": "authenticateWorkerInvocation"
         }
       ],
@@ -3016,7 +3016,7 @@
       "scenarios": ["isolation-refusal"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/broker.ts",
+          "path": "harness/kernel/tools/host/broker.ts",
           "symbol": "ProtectedPathError"
         }
       ],
@@ -3963,7 +3963,7 @@
       "id": "DEF-26",
       "summary": "A Codex dispatch ran with a copy of the operator's login made by an earlier dispatch, so an expired or rotated login failed the turn; an adapter credential is refreshed from the operator's current login at each dispatch.",
       "code": {
-        "path": "apps/cli/src/lib/worker-boundary.ts",
+        "path": "harness/kernel/isolation/worker-boundary.ts",
         "locator": "refreshStagedCodexLogin"
       },
       "spec": {
@@ -3977,7 +3977,7 @@
       "id": "DEF-27",
       "summary": "Codex could not reach public documentation, and the receipt files it was told to write were blamed on it; documentation reaches both agents through a driver-run fetch tool that records the read, with no per-provider network allowlist.",
       "code": {
-        "path": "apps/cli/src/lib/task-tools/fetch-documentation.ts"
+        "path": "harness/kernel/tools/fetch-documentation.ts"
       },
       "spec": {
         "path": "apps/cli/specs/loop.md"
@@ -4223,7 +4223,7 @@
         "locator": "buildCodexExecpolicyRules"
       },
       "spec": {
-        "path": "apps/cli/specs/isolation.md",
+        "path": "harness/kernel/isolation/isolation.md",
         "locator": "6. The settings-file permission policy"
       },
       "status": "open",

@@ -14,7 +14,7 @@ import {
 import { escalationIdFor } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 import { taskPrReadHandler } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/pr-read.js'
-import { appendRoleLine, loopLogPathFor } from '../../../src/lib/loop-log.js'
+import { appendRoleLine, loopLogPathFor } from '../../../../../harness/kernel/log/client/loop-log.js'
 import {
   deriveLoopState,
   NEXT_ACTION_BY_PAUSE_DISPOSITION,

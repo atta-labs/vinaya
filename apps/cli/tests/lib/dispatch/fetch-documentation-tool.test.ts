@@ -24,7 +24,7 @@ import {
   createDevToolsMcpServer,
   DEV_TOOL_CATALOG,
   DEV_TOOL_NAMES
-} from '../../../src/lib/task-tools/dev-tools-server.js'
+} from '../../../../../harness/kernel/tools/dev-tools-server.js'
 import {
   buildRequest,
   createFetchDocumentationTool,
@@ -44,8 +44,8 @@ import {
   type ResolvedAddress,
   whyNotCountedAsRead,
   UNTRUSTED_PAGE_NOTICE
-} from '../../../src/lib/task-tools/fetch-documentation.js'
-import { describeTool } from '../../../src/lib/task-tools/tool-catalog.js'
+} from '../../../../../harness/kernel/tools/fetch-documentation.js'
+import { describeTool } from '../../../../../harness/kernel/tools/tool-catalog.js'
 import {
   manifestDigest,
   type PreparedSource,
@@ -53,14 +53,14 @@ import {
   sha256Digest,
   sourceReceiptsPath,
   sourceStoreDir
-} from '../../../src/lib/source-manifest.js'
+} from '../../../../../harness/kernel/source-manifest.js'
 import {
   buildCodexSandboxConfigToml,
   createWorkerBoundary,
   DOCUMENTATION_HOSTS,
   startTurnWriteAttribution,
   taskControlDir
-} from '../../../src/lib/worker-boundary.js'
+} from '../../../../../harness/kernel/isolation/worker-boundary.js'
 import {
   vinayaToolGrantPolicy,
   vinayaWorkerBoundaryPolicies
@@ -929,7 +929,7 @@ describe('O5: the driver’s own documentation writes are never the Developer’
 describe('O6: the handler, contract and receipt live in their own module', () => {
   it('imports nothing from the loop driver or the dispatch module', () => {
     const source = readFileSync(
-      join(dirname(import.meta.path), '../../../src/lib/task-tools/fetch-documentation.ts'),
+      join(dirname(import.meta.path), '../../../../../harness/kernel/tools/fetch-documentation.ts'),
       'utf8'
     )
     const imports = [...source.matchAll(/^import[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1])

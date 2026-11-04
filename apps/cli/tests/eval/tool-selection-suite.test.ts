@@ -9,8 +9,8 @@ import { join } from 'node:path'
 import { validateGraderIdentity, validateSuiteRevision } from '../../src/lib/dev-review-eval/contracts'
 import type { Resampling } from '../../src/lib/dev-review-eval/estimators'
 import { ROLE_TOOL_GRANTS } from '../../../../harness/processes/vinaya-strict/integration/policies/roles'
-import { READ_SOURCE_TOOL } from '../../src/lib/task-tools/read-source'
-import { DEV_TOOL_NAMES } from '../../src/lib/task-tools/tool-catalog'
+import { READ_SOURCE_TOOL } from '../../../../harness/kernel/tools/read-source'
+import { DEV_TOOL_NAMES } from '../../../../harness/kernel/tools/tool-catalog'
 import {
   ADAPTERS,
   admit,

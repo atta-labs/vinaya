@@ -50,9 +50,9 @@ import {
   type VinayaProcessSteps
 } from '../../src/lib/dev-review-eval/step-one'
 import { renderCase, type VinayaTrialRecord } from '../../src/lib/dev-review-eval/vinaya-renderer'
-import { claudeDevToolName } from '../../src/lib/task-tools/dev-tools-registration'
-import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
-import { DEV_TOOL_NAMES } from '../../src/lib/task-tools/tool-catalog'
+import { claudeDevToolName } from '../../../../harness/kernel/tools/dev-tools-registration'
+import type { DevToolContext } from '../../../../harness/kernel/tools/dev-tools-server'
+import { DEV_TOOL_NAMES } from '../../../../harness/kernel/tools/tool-catalog'
 import { stripVinayaEnv } from '../lib/process-fixture'
 import { loadCaseFile as loadDeveloperCaseFile, runTests } from './developer-capability-suite'
 import { developmentCases, type GenericSuiteKey, referenceEntry } from './generic-suites'
@@ -489,7 +489,7 @@ describe('the Vinaya CLI installed at image build', () => {
     expect(VINAYA_HOME).toBe('/opt/vinaya')
     const probe = dockerfile.split('\n').find((line) => line.includes('checkLinuxCodexSandboxTools')) as string
     expect(probe).toContain(`RUN cd ${VINAYA_HOME} && bun -e `)
-    expect(probe).toContain('from "./apps/cli/src/lib/worker-boundary.ts"')
+    expect(probe).toContain('from "./harness/kernel/isolation/worker-boundary.ts"')
     expect(probe).toContain('const tools = checkLinuxCodexSandboxTools()')
     expect(probe).toContain('if (!tools.available) throw new Error(')
     expect(dockerfile.indexOf(probe)).toBeGreaterThan(dockerfile.indexOf(install))

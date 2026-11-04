@@ -41,9 +41,12 @@ function sourceFiles(dir: string, prefix: string): [string, string][] {
   return out
 }
 
-/** Every non-test `.ts`/`.tsx` file under `apps/cli/src` and each `packages/<name>/src`, repo-relative — mirrors `log-callers.test.ts`'s own walker. */
+/** Every non-test `.ts`/`.tsx` file under `apps/cli/src`, `harness/kernel` and each `packages/<name>/src`, repo-relative — mirrors `log-callers.test.ts`'s own walker. */
 function allSourceFiles(): [string, string][] {
-  const out: [string, string][] = [...sourceFiles(join(REPO_ROOT, 'apps/cli/src'), 'apps/cli/src')]
+  const out: [string, string][] = [
+    ...sourceFiles(join(REPO_ROOT, 'apps/cli/src'), 'apps/cli/src'),
+    ...sourceFiles(join(REPO_ROOT, 'harness/kernel'), 'harness/kernel')
+  ]
   const packagesDir = join(REPO_ROOT, 'packages')
   for (const pkg of readdirSync(packagesDir, { withFileTypes: true })) {
     if (!pkg.isDirectory()) continue

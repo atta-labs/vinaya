@@ -4,7 +4,7 @@
  * and writer; this file calls it exactly once (`apps/cli/specs/surface.md`).
  */
 
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import { runTaskSweep } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-sweep.js'
 
 function parseArgs(args: string[]): { includeLegacy: boolean; json: boolean } {

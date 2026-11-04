@@ -14,7 +14,6 @@
  */
 
 import { ownVersion } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { devToolsBridgeCommand } from '../lib/task-tools/dev-tools-bridge.js'
 import { devToolsProofCommand } from '../lib/task-tools/dev-proof.js'
 import { resultProofCommand } from '../lib/task-tools/result-proof.js'
 import { reviewResultProofCommand } from '../lib/task-tools/review-result-proof.js'
@@ -22,16 +21,6 @@ import { serveTaskToolsStdio } from '../../../../harness/processes/vinaya-strict
 
 export async function taskToolsServeCommand(_args: string[]): Promise<void> {
   await serveTaskToolsStdio(ownVersion())
-}
-
-/**
- * `vinaya task-tools dev-bridge --socket <path>` — the stdio↔socket bridge the
- * per-dispatch dev-tools registration names as its server command. Spawned by
- * the agent inside its sandbox, it relays JSON-RPC to the driver's dev-tools
- * host over the unix socket at `<path>`. See `dev-tools-bridge.ts`.
- */
-export async function taskToolsDevBridgeCommand(args: string[]): Promise<void> {
-  await devToolsBridgeCommand(args)
 }
 
 /**

@@ -18,7 +18,7 @@ import {
   withV2DevTools,
   stagedPullRequestStore
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/v2/flow-v2-live'
-import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
+import type { DevToolContext } from '../../../../harness/kernel/tools/dev-tools-server'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 /**

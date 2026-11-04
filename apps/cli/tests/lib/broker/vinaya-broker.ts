@@ -6,7 +6,7 @@ import {
   type BrokerLogEvent,
   createBroker,
   type InvocationContext
-} from '../../../src/lib/broker'
+} from '../../../../../harness/kernel/tools/host/broker'
 
 /**
  * The broker the tests drive, built the way every production builder builds

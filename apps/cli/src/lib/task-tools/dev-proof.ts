@@ -10,7 +10,7 @@
  *   2. it writes the SAME per-dispatch registration the loop uses — Claude
  *      through `--strict-mcp-config --mcp-config <file>`, Codex through a
  *      staged `config.toml` `[mcp_servers.<name>]` — each pointing the
- *      server `command` at the thin `task-tools dev-bridge --socket <path>`
+ *      server `command` at the thin bridge program run with `--socket <path>`
  *      relay, the ONLY part that runs inside the sandbox;
  *   3. it dispatches a REAL agent session with that agent's own sandbox on
  *      where the host supports it (`resolveClaudeConfinement` /
@@ -30,7 +30,8 @@
  * comes back as a ruling.
  */
 
-import type { Role } from '@attalabs/aeg-core'
+import { devBridgePath } from '../cli-entry.js'
+import type { Role } from '../../../../../harness/kernel/log/schema'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -45,9 +46,13 @@ import {
   resolveClaudeConfinement,
   resolveCodexConfinement,
   stageCodexPolicyHome
-} from '../worker-boundary.js'
-import { startDevToolsHost } from './dev-tools-host.js'
-import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext, type DevToolResult } from './dev-tools-server.js'
+} from '../../../../../harness/kernel/isolation/worker-boundary.js'
+import { startDevToolsHost } from '../../../../../harness/kernel/tools/host/dev-tools-host.js'
+import {
+  DEV_TOOLS_MCP_SERVER_NAME,
+  type DevToolContext,
+  type DevToolResult
+} from '../../../../../harness/kernel/tools/dev-tools-server.js'
 import {
   type BridgeInvocation,
   claudeDevToolName,
@@ -56,8 +61,8 @@ import {
   devToolsSocketPath,
   devToolsMcpConfigFileBody,
   driverDevBridgeInvocation
-} from './dev-tools-registration.js'
-import { devToolError } from './dev-tools-server.js'
+} from '../../../../../harness/kernel/tools/dev-tools-registration.js'
+import { devToolError } from '../../../../../harness/kernel/tools/dev-tools-server.js'
 
 /** The one allowlisted tool the proof session may call — a read-only check, no publish, no forge write. */
 const PROOF_TOOL = 'run_checks'
@@ -78,13 +83,13 @@ export function parseDevProofArgs(args: readonly string[]): { agent: ProofAgent 
 }
 
 /**
- * The bridge the agent's MCP client spawns — the running vinaya entrypoint
- * (`process.execPath` + this process's own script), so the proof is
+ * The bridge the agent's MCP client spawns — the bridge program
+ * (`process.execPath` + the program path `devBridgePath` names), so the proof is
  * repo-local and runs identically whether invoked as `bun …/index.ts
  * task-tools dev-proof` or as the installed `vinaya` binary.
  */
 export function devBridgeInvocation(socketPath: string): BridgeInvocation {
-  return driverDevBridgeInvocation(socketPath)
+  return driverDevBridgeInvocation(socketPath, devBridgePath())
 }
 
 /** What the host-side handler recorded for the one tool call it answered. */

@@ -6,15 +6,15 @@ import {
   defaultControlStoreDeps,
   globCoversPath,
   type IssueSurface,
-  normalizeTouchedPath,
   withBeyondSurfaceBlock
 } from '@attalabs/aeg-core'
-import { createBroker, type InvocationContext, scopeTarget } from '../../../../../../apps/cli/src/lib/broker.js'
+import { createBroker, type InvocationContext, scopeTarget } from '../../../../../kernel/tools/host/broker.js'
+import { normalizeTouchedPath } from '../../../../../kernel/tools/host/touched-path.js'
 import { type AgentVendor, readLaunchRecord } from '../dispatch/dispatch.js'
 import { vinayaBrokerPolicies, vinayaProtectedPathPolicy } from '../../../integration/policies/vinaya-policies.js'
-import { controlStoreRoot } from '../../../../../../apps/cli/src/lib/effects.js'
-import { appendDriverLine, appendRoleLine } from '../../../../../../apps/cli/src/lib/loop-log.js'
-import { addedDiffLines, findCredentialPatterns } from '../../../../../../apps/cli/src/lib/worker-boundary.js'
+import { controlStoreRoot } from '../../../../../kernel/effects/effects.js'
+import { appendDriverLine, appendRoleLine } from '../../../../../kernel/log/client/loop-log.js'
+import { addedDiffLines, findCredentialPatterns } from '../../../../../kernel/isolation/worker-boundary.js'
 import {
   type DeveloperModelRun,
   readDeveloperModelRuns,
@@ -27,10 +27,10 @@ import {
   sourceReceiptsPath,
   sourceStoreDir,
   readRequiredSourceManifest
-} from '../../../../../../apps/cli/src/lib/source-manifest.js'
-import { devToolError, type DevToolContext } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server.js'
+} from '../../../../../kernel/source-manifest.js'
+import { devToolError, type DevToolContext } from '../../../../../kernel/tools/dev-tools-server.js'
 import { createDeveloperDevToolContext, type DeveloperDevToolDeps } from './developer-dev-tools-context.js'
-import { createFetchDocumentationTool } from '../../../../../../apps/cli/src/lib/task-tools/fetch-documentation.js'
+import { createFetchDocumentationTool } from '../../../../../kernel/tools/fetch-documentation.js'
 
 /** What a turn's publication carries from one tool call to the next; the loop and the Engine each own one. */
 export type LivePublicationState = {

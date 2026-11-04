@@ -69,7 +69,7 @@ import {
   PHASE_HISTORY_FAILURE_BACKOFF_MS,
   SUMMARY_CONFIDENCE_READS_PER_STATUS_READ
 } from '../../loops/dev-review/run-control/task-status-history.js'
-import { appendRoleLine, loopLogPathFor } from '../../../../../apps/cli/src/lib/loop-log.js'
+import { appendRoleLine, loopLogPathFor } from '../../../../kernel/log/client/loop-log.js'
 
 const TASK = 515
 
@@ -2771,7 +2771,7 @@ console.log('ROWS:' + JSON.stringify(view.rows.map((r) => (${reader.row ?? '{ is
   it("reports an Engine run's round, stage and minutes in stage from its driver log's newest stage-change line", () => {
     const { child } = spawnReader('{ issue: 704 }', ['daniboomerang'], {
       before: `import { recordTaskRunner } from '../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-engine.ts'
-import { appendLoopLogLine, loopLogPathFor } from './src/lib/loop-log.ts'
+import { appendLoopLogLine, loopLogPathFor } from '../../harness/kernel/log/client/loop-log.ts'
 import { formatStageLine } from './src/lib/follow-view.ts'
 recordTaskRunner(704, 'atta-engine')
 const log = loopLogPathFor(null, 704)

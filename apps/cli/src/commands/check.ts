@@ -12,7 +12,7 @@ import {
 } from '../checks/resolver'
 import { CHECK_EXCLUDE_ENV, defaultParallelism, runChecks } from '../checks/runner'
 import { type ConfigLoadResult, configPath, loadConfigChecked } from '../lib/config'
-import { printJson } from '../lib/envelope'
+import { printJson } from '../../../../harness/kernel/effects/envelope'
 import { checkProgressWriter } from '../lib/push-progress'
 import { type ProseRulesPlan, proseRulesPlanSection } from '../lib/prose-rules-plan'
 import { buildRolePlan, type RolePlan } from '../../../../harness/processes/vinaya-strict/integration/roles/plan'

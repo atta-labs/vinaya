@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
-import { logQuiet } from '../../../../../apps/cli/src/lib/agent-line.js'
-import { appendRoleLine } from '../../../../../apps/cli/src/lib/loop-log.js'
+import { logQuiet } from '../../../../kernel/adapters/agents/agent-line.js'
+import { appendRoleLine } from '../../../../kernel/log/client/loop-log.js'
 import { quietLogWriter } from '../../../../../apps/cli/src/commands/task-status.js'
 import {
   applyQuiet,

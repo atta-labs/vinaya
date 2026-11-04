@@ -28,7 +28,7 @@ import {
 /** The configuration a run reads its runner from. */
 type VinayaConfig = NonNullable<ReturnType<NonNullable<RunTaskDeps['runnerConfig']>>>
 import { writeDriverLock, writePauseState } from '../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import type { EffectIdentity } from '../../../../apps/cli/src/lib/effects.js'
+import type { EffectIdentity } from '../../../kernel/effects/effects.js'
 import { CrossRunnerRefusedError, runTask, type RunTaskDeps } from '../loops/dev-review/run-control/task-run.js'
 import {
   crossRunnerInFlightText,

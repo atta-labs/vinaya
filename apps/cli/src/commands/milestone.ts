@@ -30,7 +30,7 @@ import {
   trancheLabel
 } from '@attalabs/aeg-forge-state'
 import { detectGitRepo } from '../lib/detect.js'
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import {
   declaredTranches,
   milestoneCloseDecision,

@@ -220,7 +220,7 @@ describe('the CI plan', () => {
   })
 
   it('a new outbox writer no test imports still runs the outbox scanner, kept by the always-run list', () => {
-    const scanner = plan.tests.find((t) => t.test === 'apps/cli/tests/lib/log-callers.test.ts')
+    const scanner = plan.tests.find((t) => t.test.endsWith('/log-callers.test.ts'))
     expect(scanner).toBeDefined()
     expect(scanner?.why.some((w) => w.startsWith('obligation pre-push-always-run: unmodeled input:'))).toBe(true)
   })
@@ -258,7 +258,7 @@ describe('the CI plan', () => {
   it('starts the Linux sandbox suite only when the change reaches it through its SUITE_INPUTS or its imports', () => {
     expect(plan.jobs['sandbox-conformance'].required).toBe(plan.tests.some((t) => t.test === SANDBOX_SUITE_TEST))
     // A path the suite's own list names, read from the list itself.
-    const input = SUITE_INPUTS.find((path) => path === 'apps/cli/src/lib/worker-boundary.ts')
+    const input = SUITE_INPUTS.find((path) => path === 'apps/cli/tests/lib/process-fixture.ts')
     expect(input).toBeDefined()
     const reached = buildCiPlan({
       repoRoot: REPO_ROOT,

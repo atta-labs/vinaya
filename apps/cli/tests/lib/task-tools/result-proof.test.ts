@@ -18,12 +18,12 @@ import {
   proofTurnSchema,
   runChild,
   runProofCases,
-  validatesJsonSchema,
   readClaudeTurnOutput,
   readCodexTurnOutput,
   redactProviderText,
   shellQuote
 } from '../../../src/lib/task-tools/result-proof.js'
+import { validatesJsonSchema } from '../../../../../harness/kernel/tools/json-schema-check.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture.js'
 
 /**

@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { briefHash, redact } from '@attalabs/aeg-core'
+import { briefHash } from '@attalabs/aeg-core'
+import { redact } from '../../../../harness/kernel/log/redact'
 import type {
   LoopDeps,
   LoopResult
@@ -33,22 +34,23 @@ import {
   type ReviewBinding,
   reviewResultJsonSchema
 } from '../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result.js'
-import { runPath } from '../../src/lib/run-paths.js'
+import { runPath } from '../../../../harness/kernel/run-paths.js'
 import {
   createDevToolsMcpServer,
   type DevToolContext,
   type DevToolRefusal,
   devToolError
-} from '../../src/lib/task-tools/dev-tools-server.js'
+} from '../../../../harness/kernel/tools/dev-tools-server.js'
 import {
   claudeDevToolsArgs,
   codexDevToolsMcpTable,
   DEV_TOOLS_TOOL_TIMEOUT_SEC,
   devToolsMcpConfig,
   driverDevBridgeInvocation
-} from '../../src/lib/task-tools/dev-tools-registration.js'
-import { DEV_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/dev-tools-names.js'
-import { validatesJsonSchema } from '../../src/lib/task-tools/result-proof.js'
+} from '../../../../harness/kernel/tools/dev-tools-registration.js'
+import { DEV_TOOLS_MCP_SERVER_NAME } from '../../../../harness/kernel/tools/dev-tools-names.js'
+import { validatesJsonSchema } from '../../../../harness/kernel/tools/json-schema-check.js'
+import { devBridgePath } from '../../src/lib/cli-entry.js'
 import {
   type GrantedRole,
   ROLE_TOOL_GRANTS
@@ -58,13 +60,13 @@ import {
   TOOL_EFFECT_STATES,
   TOOL_ERROR_CLASSES,
   TOOL_RETRY_DISPOSITIONS
-} from '../../src/lib/task-tools/tool-catalog.js'
+} from '../../../../harness/kernel/tools/tool-catalog.js'
 import {
   probeAgentSandbox,
   SANDBOX_PROBE_MARKER,
   type SandboxProbeResult,
   type SandboxProbeRun
-} from '../../src/lib/worker-boundary.js'
+} from '../../../../harness/kernel/isolation/worker-boundary.js'
 import {
   CLEAN_REVIEWER,
   cleanupWorlds,
@@ -940,7 +942,7 @@ async function faultCase(
 
 const DEVELOPER_CHECKS: Record<string, Check> = {
   'catalog-listing': async (adapter, session) => {
-    const bridge = driverDevBridgeInvocation('/tmp/vinaya-conformance.sock', 'vinaya')
+    const bridge = driverDevBridgeInvocation('/tmp/vinaya-conformance.sock', devBridgePath())
     const registration =
       adapter === 'claude'
         ? {

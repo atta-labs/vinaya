@@ -15,7 +15,7 @@ import { extractImportRecords, resolveRelativeImport, walkFiles } from './test-s
 
 const CLI_SOURCE_DIR = 'apps/cli/src'
 const PROCESSES_DIR = 'harness/processes'
-const LOG_SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
+const LOG_SINK_PATH = 'harness/kernel/log/log-sink.ts'
 const LOG_SINK_PRODUCER_NAMES: readonly string[] = ['log', 'logSync']
 
 const NOT_REACHED_BY_IMPORT_CHECK_BIN =

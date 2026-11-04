@@ -64,7 +64,7 @@ import {
 } from '../standalone/dev-review-loop/pause-resume.js'
 import { runtimeDir } from '../standalone/dev-review-loop/reviewer-dispatch.js'
 import { readTurnResultRecords, type TurnResultRecord } from '../standalone/dev-review-loop/turn-result.js'
-import { markProcessUnattended, tasksExecutionRoot } from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { markProcessUnattended, tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
 import {
   assignIssueAtRunStart as realAssignIssueAtRunStart,
   type DispatchAuthorization,

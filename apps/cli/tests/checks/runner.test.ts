@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { coreCheckRegistry } from '../../src/checks/registry'
 import type { CheckSpec } from '../../src/checks/contract'
 import { buildCheckEnv, runChecks } from '../../src/checks/runner'
-import { createLogSink } from '../../src/lib/log-sink'
+import { createLogSink } from '../../../../harness/kernel/log/log-sink'
 
 const FIXTURES = join(import.meta.dir, '..', 'fixtures', 'checks')
 const PASSING = join(FIXTURES, 'passing-check.ts')

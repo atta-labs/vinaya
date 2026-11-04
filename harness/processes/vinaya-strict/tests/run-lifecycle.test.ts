@@ -44,7 +44,7 @@ import {
   latestHeldCleanVerdict,
   writeHeldVerdict
 } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import { loopLogPathFor } from '../../../../apps/cli/src/lib/loop-log'
+import { loopLogPathFor } from '../../../kernel/log/client/loop-log'
 import { parseReviewResult } from '../executing/code-reviewer/review-result'
 import { manifestDigest } from '../executing/code-reviewer/review-result'
 import {

@@ -2,7 +2,7 @@
  * Versioned control-store record schemas. Four record
  * kinds — run, input, ownership, transition — each `.strict()` and
  * carrying its own `version` literal, the same discipline
- * `packages/aeg-core/src/log/schema.ts` already uses for the Vinaya Log.
+ * `harness/kernel/log/schema.ts` already uses for the Vinaya Log.
  *
  * `parse*Record` is the one thing every storage implementation must route
  * a read through: it returns a three-way `ParsedRecord<T>` rather than a
@@ -294,7 +294,7 @@ export type LoopStateRecord = z.infer<typeof LoopStateRecordSchema>
  * caller-chosen `key` (one file per key, overwritten in place as the
  * effect's status advances — unlike `run`/`input`, which are written once).
  * `operation`/`target`/`inputVersion`/`payloadDigest` together are the
- * identity `apps/cli/src/lib/effects.ts`'s `EffectExecutor` binds a write
+ * identity `harness/kernel/effects/effects.ts`'s `EffectExecutor` binds a write
  * to before ever attempting it: a later read finding a DIFFERENT identity
  * under the same `key` is a changed intent, not a retry of this one.
  * `'started'` — intent persisted, the external write has not yet been

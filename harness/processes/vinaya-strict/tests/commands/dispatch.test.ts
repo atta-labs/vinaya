@@ -210,7 +210,7 @@ describe('vinaya dispatch — --task attribution', () => {
 describe('vinaya dispatch — no trailing flush ([task-files-v1] 5, O3)', () => {
   // The trailing flush this command used to run after every `--task`/`--pr`
   // dispatch is gone entirely — telemetry reaches its destination live, as
-  // `dispatchRole` emits it (`logs`, `apps/cli/src/lib/log-sink.ts`), so
+  // `dispatchRole` emits it (`logs`, `harness/kernel/log/log-sink.ts`), so
   // there is nothing left to ship in a trailing step. `gh` is never called
   // by this command at all any more, `logPublish` configured or not.
   it('never calls gh, regardless of a configured logPublish target', () => {

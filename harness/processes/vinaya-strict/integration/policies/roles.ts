@@ -5,11 +5,12 @@
  * these facts through the policies `vinaya-policies.ts` composes.
  */
 
-import { OPERATOR_TOOL_GRANT, ROLE_VALUES } from '@attalabs/aeg-core'
-import type { BrokerRolePolicy } from '../../../../../apps/cli/src/lib/broker.js'
-import type { ToolGrantPolicy } from '../../../../../apps/cli/src/lib/task-tools/role-grants.js'
-import type { RouterRolePolicy } from '../../../../../apps/cli/src/lib/task-tools/router.js'
-import type { BoundaryRolePolicy } from '../../../../../apps/cli/src/lib/worker-boundary.js'
+import { OPERATOR_TOOL_GRANT } from '@attalabs/aeg-core'
+import { ROLE_VALUES } from '../../../../kernel/log/schema'
+import type { BrokerRolePolicy } from '../../../../kernel/tools/host/broker.js'
+import type { ToolGrantPolicy } from '../../../../kernel/tools/role-grants.js'
+import type { RouterRolePolicy } from '../../../../kernel/tools/host/router.js'
+import type { BoundaryRolePolicy } from '../../../../kernel/isolation/worker-boundary.js'
 
 // --- tool grants (`apps/cli/specs/dev-review-capabilities-contracts.md` §3) --
 

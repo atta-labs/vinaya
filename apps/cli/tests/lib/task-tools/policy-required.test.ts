@@ -10,14 +10,14 @@ import { describe, expect, it } from 'bun:test'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { startDevToolsHost } from '../../../src/lib/task-tools/dev-tools-host.js'
+import { startDevToolsHost } from '../../../../../harness/kernel/tools/host/dev-tools-host.js'
 import {
   createDevToolsMcpServer,
   type DevToolContext,
   dispatchDevTool
-} from '../../../src/lib/task-tools/dev-tools-server.js'
-import { MissingToolGrantPolicyError, type ToolGrantPolicy } from '../../../src/lib/task-tools/role-grants.js'
-import { createTaskToolRouter, MissingRouterPolicyError } from '../../../src/lib/task-tools/router.js'
+} from '../../../../../harness/kernel/tools/dev-tools-server.js'
+import { MissingToolGrantPolicyError, type ToolGrantPolicy } from '../../../../../harness/kernel/tools/role-grants.js'
+import { createTaskToolRouter, MissingRouterPolicyError } from '../../../../../harness/kernel/tools/host/router.js'
 
 const GRANTS: ToolGrantPolicy = { roles: ['alpha', 'beta'], grants: { alpha: ['run_checks'], beta: [] } }
 

@@ -38,16 +38,17 @@ import {
   type PreparedSource,
   type RequiredSourceManifest,
   type SourceDeliveryReceipt
-} from '../../src/lib/source-manifest'
-import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host'
-import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
+} from '../../../../harness/kernel/source-manifest'
+import { startDevToolsHost } from '../../../../harness/kernel/tools/host/dev-tools-host'
+import type { DevToolContext } from '../../../../harness/kernel/tools/dev-tools-server'
 import {
   CLAUDE_DEV_TOOLS_ENV,
   devToolsSocketPath,
   driverDevBridgeInvocation
-} from '../../src/lib/task-tools/dev-tools-registration'
+} from '../../../../harness/kernel/tools/dev-tools-registration'
 import { generatedRoleConfig, withStandaloneToolNames } from '../../src/lib/dev-review-eval/engine-role-step'
 import { type GeneratedAgentConfig, RESUME_SESSION_PLACEHOLDER } from '../../../../harness/kernel/isolation/policy'
+import { devBridgePath } from '../../src/lib/cli-entry'
 import { createWorld, usageOf, type ToolSelectionCase, type Usage, type World } from './tool-selection-suite'
 import { stripVinayaEnv } from '../lib/process-fixture'
 import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies'
@@ -70,7 +71,6 @@ export const LIVE_SUITE_PROCESS_LAYER = 'P' as const
 export const TRIALS_PER_TASK = 3
 export const CASES_PATH = join(import.meta.dir, 'source-citation-cases.json')
 export const HELD_OUT_PATH = join(import.meta.dir, 'source-citation-held-out.json')
-const CLI_ENTRY = join(import.meta.dir, '../../src/index.ts')
 
 export interface SourceSpec {
   sourceId: string
@@ -642,7 +642,7 @@ export async function liveTrial(
     context: switchable.context,
     role: 'developer'
   })
-  const bridge = driverDevBridgeInvocation(socketPath, CLI_ENTRY)
+  const bridge = driverDevBridgeInvocation(socketPath, devBridgePath())
   const required = requiredSourcesFor(testCase)
   const schema = developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: required })
   const started = Date.now()

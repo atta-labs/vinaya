@@ -1,5 +1,4 @@
 src/commands/doctor-metering-io.test.ts
-tests/lib/log-entry-paths.test.ts
 src/commands/tokens-metering-io.test.ts
 tests/audit.test.ts
 tests/checks/body-bare-digits-changeset-exempt.test.ts
@@ -25,16 +24,10 @@ tests/detect.test.ts
 tests/diff-evidence.test.ts
 tests/doctrine-pointer.test.ts
 tests/doctrine.test.ts
-tests/lib/effects/executor.test.ts
 tests/import-boundary.test.ts
-tests/lib/log-callers.test.ts
-tests/lib/log-custom.test.ts
-tests/lib/log-destination.test.ts
 tests/lib/no-log-forge-writes.test.ts
-tests/lib/cli-operation-log.test.ts
 tests/lib/log-sink.test.ts
 tests/lib/log-sink-no-sync-spawn.test.ts
-tests/lib/log-sync-server-source.test.ts
 tests/lib/loop-log.test.ts
 tests/new-check.test.ts
 tests/new-role.test.ts

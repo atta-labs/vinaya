@@ -49,7 +49,6 @@ import { taskSwitchCommand } from './commands/task-switch.js'
 import { taskStatusCommand } from './commands/task-status.js'
 import { taskSweepCommand } from './commands/task-sweep.js'
 import {
-  taskToolsDevBridgeCommand,
   taskToolsDevProofCommand,
   taskToolsResultProofCommand,
   taskToolsReviewResultProofCommand,
@@ -58,10 +57,10 @@ import {
 import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
-import { printJson } from './lib/envelope.js'
+import { printJson } from '../../../harness/kernel/effects/envelope.js'
 import { ensureGhOnPath } from './lib/gh-path.js'
-import { recordCliOperationAtExit } from './lib/cli-operation-log.js'
-import { logSync } from './lib/log-sink.js'
+import { recordCliOperationAtExit } from '../../../harness/kernel/log/client/cli-operation-log.js'
+import { logSync } from '../../../harness/kernel/log/log-sink.js'
 import { printHelp } from './lib/output.js'
 import { packageRoot } from './lib/package-root.js'
 import { resolveAuthorRepoSourceEntry } from './lib/self-host.js'
@@ -311,8 +310,6 @@ try {
       const [subcommand, ...rest] = args
       if (subcommand === 'serve') {
         await taskToolsServeCommand(rest)
-      } else if (subcommand === 'dev-bridge') {
-        await taskToolsDevBridgeCommand(rest)
       } else if (subcommand === 'dev-proof') {
         await taskToolsDevProofCommand(rest)
       } else if (subcommand === 'result-proof') {
@@ -321,7 +318,7 @@ try {
         await taskToolsReviewResultProofCommand(rest)
       } else {
         console.error(
-          `Unknown 'task-tools' subcommand: ${subcommand ?? '(none)'} (expected 'serve', 'dev-bridge', 'dev-proof', 'result-proof' or 'review-result-proof')`
+          `Unknown 'task-tools' subcommand: ${subcommand ?? '(none)'} (expected 'serve', 'dev-proof', 'result-proof' or 'review-result-proof')`
         )
         process.exit(2)
       }

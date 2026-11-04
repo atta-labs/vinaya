@@ -25,7 +25,7 @@
 
 import { StringDecoder } from 'node:string_decoder'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
-import { printJson } from '../lib/envelope.js'
+import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import { followTaskLog } from '../lib/follow-view.js'
 import {
   gatherSingleTaskStatus,

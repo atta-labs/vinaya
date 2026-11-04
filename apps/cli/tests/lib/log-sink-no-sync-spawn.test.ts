@@ -33,7 +33,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
-const LOG_SINK = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+const LOG_SINK = join(import.meta.dir, '../../../../harness/kernel/log/log-sink.ts')
 // The sink the product builds: the process factory, with its branch reader.
 const LOG_SINK_FACTORY = join(
   import.meta.dir,

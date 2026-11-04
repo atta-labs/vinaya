@@ -92,7 +92,7 @@ import {
   startTurnWriteAttribution,
   taskControlDir,
   type TurnWriteAttribution
-} from '../../../../apps/cli/src/lib/worker-boundary'
+} from '../../../kernel/isolation/worker-boundary'
 import { vinayaToolGrantPolicy, vinayaWorkerBoundaryPolicies } from '../integration/policies/vinaya-policies'
 import { configPath } from '../../../../apps/cli/src/lib/config'
 import {
@@ -102,26 +102,22 @@ import {
   requiredSourcesPromptBlock,
   sourceReceiptsPath,
   sourceStoreDir
-} from '../../../../apps/cli/src/lib/source-manifest'
+} from '../../../kernel/source-manifest'
 import {
   prepareSources,
   RequiredSourcesUnavailable,
   realSourceProviderDeps
-} from '../../../../apps/cli/src/lib/source-provider'
+} from '../../../kernel/tools/source-provider'
 import { briefHash as briefHashOf, extractSourceRevision, policyDigest as policyDigestOf } from '@attalabs/aeg-core'
 import type { PauseReason } from '@attalabs/aeg-core'
-import {
-  reviewerDevToolContext,
-  type DevToolContext,
-  type DevToolResult
-} from '../../../../apps/cli/src/lib/task-tools/dev-tools-server'
-import { createReadSourceTool } from '../../../../apps/cli/src/lib/task-tools/read-source'
+import { reviewerDevToolContext, type DevToolContext, type DevToolResult } from '../../../kernel/tools/dev-tools-server'
+import { createReadSourceTool } from '../../../kernel/tools/read-source'
 import {
   drainLogSink,
   LOG_FOLDER_ONLY_ENV,
   type LogSinkDeps,
   type LaunchLogAttribution
-} from '../../../../apps/cli/src/lib/log-sink'
+} from '../../../kernel/log/log-sink'
 import { createVinayaLogSink, installVinayaLogSinkFactory } from '../integration/log/log-sink-factory'
 import { setEngineLogIdentity } from './engine-log-identity'
 import {
@@ -171,7 +167,7 @@ import {
   PAUSE_REASON_PROFILE,
   readPauseState
 } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
-import { formatAgentLine } from '../../../../apps/cli/src/lib/agent-line'
+import { formatAgentLine } from '../../../kernel/adapters/agents/agent-line'
 import { formatStageLine, type Stage, type StageChange } from '../../../../apps/cli/src/lib/follow-view'
 import {
   appendLoopLogLine,
@@ -179,7 +175,7 @@ import {
   appendRunStartMarker,
   loopLogPathFor,
   narrateDriverEvent
-} from '../../../../apps/cli/src/lib/loop-log'
+} from '../../../kernel/log/client/loop-log'
 import { type AgentStreamRenderer, createAgentStreamRenderer } from '../../../../apps/cli/src/lib/agent-stream'
 import { CLI_ENTRY_ENV } from '../../../../apps/cli/src/lib/cli-entry'
 import { pollMergeableState } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
@@ -207,8 +203,8 @@ import {
   startReplaceableDevToolsHost,
   type DevToolsHost,
   type ReplaceableDevToolsHost
-} from '../../../../apps/cli/src/lib/task-tools/dev-tools-host'
-import { devToolsSocketPath } from '../../../../apps/cli/src/lib/task-tools/dev-tools-registration'
+} from '../../../kernel/tools/host/dev-tools-host'
+import { devToolsSocketPath } from '../../../kernel/tools/dev-tools-registration'
 import {
   attributeDriverToolCalls,
   createLivePublicationState,
@@ -243,11 +239,7 @@ import {
   latestHeldCleanVerdict,
   persistManifestRecord
 } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import {
-  RUNTIME_DIR_ENV_KEY,
-  resetRuntimeDirCache,
-  runtimeDirForRepoAsync
-} from '../../../../apps/cli/src/lib/run-paths'
+import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, runtimeDirForRepoAsync } from '../../../kernel/run-paths'
 import {
   defaultDeps,
   defaultGitWorktreeUntrackedPaths,
@@ -583,9 +575,9 @@ const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'
  * The script a vendor's MCP settings name as the dev-tools server: it relays to the runner's host socket. While a
  * dispatch of the role runs, it also carries that dispatch's capability; between dispatches it carries none.
  */
-export function shimContent(socketPath: string, execPath: string, entry: string, capability?: string): string {
+export function shimContent(socketPath: string, execPath: string, program: string, capability?: string): string {
   const carried = capability === undefined ? '' : ` --capability ${shellQuote(capability)}`
-  return `#!/bin/sh\nexec ${shellQuote(execPath)} ${shellQuote(entry)} task-tools dev-bridge --socket ${shellQuote(socketPath)}${carried}\n`
+  return `#!/bin/sh\nexec ${shellQuote(execPath)} ${shellQuote(program)} --socket ${shellQuote(socketPath)}${carried}\n`
 }
 
 /** How long the executor lets an agent launch run when its role states no timeout. */
@@ -1731,7 +1723,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           shimContent(
             socketPath,
             options.execPath ?? process.execPath,
-            cliEntryOf(options.cliRoot ?? options.repoRoot),
+            devBridgeProgramOf(options.cliRoot ?? options.repoRoot),
             capability
           ),
           { mode: 0o700 }
@@ -2499,8 +2491,12 @@ export function engineLiveDevToolsContext(input: {
   return { context, beginTurn, completeTurn, state, changedProtectedPaths: () => attribution.changedPaths() }
 }
 
-/** The CLI entry script under `repoRoot`: the shim's bridge and the gate checks both run it. */
+/** The CLI entry script under `repoRoot`: the gate checks run it. */
 export const cliEntryOf = (repoRoot: string): string => join(repoRoot, 'apps', 'cli', 'src', 'index.ts')
+
+/** The dev-tools bridge program under `repoRoot`: the shim runs it directly. */
+export const devBridgeProgramOf = (repoRoot: string): string =>
+  join(repoRoot, 'harness', 'kernel', 'tools', 'host', 'dev-tools-bridge.ts')
 
 /** The forge (and forge-backed git) reads and writes the live wiring makes; a replay replaces them. */
 export interface EngineForge {

@@ -5,8 +5,8 @@
  * caller hands it another reader.
  */
 
-import type { LaunchRecordVerifier } from '../../../../../apps/cli/src/lib/broker.js'
-import type { Role } from '@attalabs/aeg-core'
+import type { LaunchRecordVerifier } from '../../../../kernel/tools/host/broker.js'
+import type { Role } from '../../../../kernel/log/schema'
 import {
   type DispatchTeeRecoveryDeps,
   launchRecordMatchesRun,

@@ -108,7 +108,7 @@ import {
   type VerdictExtraction
 } from '@attalabs/aeg-core'
 import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolveReviewPolicy } from '../lib/config'
-import { printJson } from '../lib/envelope'
+import { printJson } from '../../../../harness/kernel/effects/envelope'
 import { isForgeReadOversize, readIssueComments } from '../lib/forge-read'
 import {
   makeCheckError,

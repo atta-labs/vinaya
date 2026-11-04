@@ -2,13 +2,18 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { formatAgentDetails, formatAgentLine, logQuiet, renderNarratedUpdate } from '../../src/lib/agent-line.js'
+import {
+  formatAgentDetails,
+  formatAgentLine,
+  logQuiet,
+  renderNarratedUpdate
+} from '../../../../harness/kernel/adapters/agents/agent-line.js'
 import { createAgentStreamRenderer } from '../../src/lib/agent-stream.js'
 import {
   renderClaudeEvent,
   renderCodexEvent
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
-import { appendRoleLine } from '../../src/lib/loop-log.js'
+import { appendRoleLine } from '../../../../harness/kernel/log/client/loop-log.js'
 
 describe('formatAgentLine', () => {
   const now = new Date('2026-10-08T03:04:05.678Z')

@@ -2,9 +2,9 @@ import { describe, expect, it } from 'bun:test'
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CustomEventDeclarations } from '@attalabs/aeg-core/log'
-import { emitCustomEvent } from '../../src/lib/log-custom.js'
-import { createLogSink } from '../../src/lib/log-sink.js'
+import type { CustomEventDeclarations } from '../../../../harness/kernel/log/custom'
+import { emitCustomEvent } from '../../../../harness/kernel/log/client/log-custom.js'
+import { createLogSink } from '../../../../harness/kernel/log/log-sink.js'
 import { type LogEmitDeps, logEmitCommand } from '../../src/commands/log-emit.js'
 
 // The command is proved against injected seams — never a real destination —

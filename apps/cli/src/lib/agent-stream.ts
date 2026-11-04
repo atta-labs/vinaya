@@ -1,11 +1,11 @@
-import { type AgentLineParts, renderNarratedUpdate } from './agent-line.js'
+import { type AgentLineParts, renderNarratedUpdate } from '../../../../harness/kernel/adapters/agents/agent-line.js'
 import {
   createNarrationState,
   type NarratedUpdate,
   type NarrationContext,
   scrub,
   translateClaudeEvent
-} from './loop-narration-claude.js'
+} from '../../../../harness/kernel/adapters/agents/claude-code/loop-narration-claude.js'
 import { translateCodexEvent, unwrapShell } from './loop-narration-codex.js'
 
 type Json = Record<string, unknown>

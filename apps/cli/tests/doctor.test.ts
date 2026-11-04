@@ -52,7 +52,7 @@ import {
   type ConfinementPlatformDeps,
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
   SANDBOX_PROBE_MARKER
-} from '../src/lib/worker-boundary.js'
+} from '../../../harness/kernel/isolation/worker-boundary.js'
 
 let root: string
 

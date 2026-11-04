@@ -10,7 +10,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../../../apps/cli/tests/lib/dispatch/fake-sandbox-probe.js'
+import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
 import { checkReviewGate, DEFAULT_REVIEW_POLICY, policyDigest } from '@attalabs/aeg-core'
 
 export const CLI_ROOT = join(

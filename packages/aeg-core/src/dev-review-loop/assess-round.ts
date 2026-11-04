@@ -66,7 +66,7 @@
  * there and nowhere else"), built on the reused map.
  */
 
-import { CODE_TOKEN_PATTERN, ROLE_VALUES, type Role } from '../log/schema'
+import { CODE_TOKEN_PATTERN, ROLE_VALUES, type Role } from '@attalabs/harness/log/schema'
 import { groupRounds, type Round, type VerdictComment } from '../review-status'
 import { isActiveBudgetPhase, taskPhaseLabel } from '../task-phase-history'
 import {

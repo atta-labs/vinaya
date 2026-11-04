@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defaultControlStoreDeps, type ControlStoreDeps } from '@attalabs/aeg-core'
 import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
-import { scopeTarget, WORKER_OPERATIONS } from '../../../src/lib/broker'
+import { scopeTarget, WORKER_OPERATIONS } from '../../../../../harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from '../broker/vinaya-broker'
-import { buildWorkerEnv } from '../../../src/lib/worker-boundary'
+import { buildWorkerEnv } from '../../../../../harness/kernel/isolation/worker-boundary'
 
 /**
  * `worker-isolation-v1` task 3 (`#560`) — the Test Plan's "scoped

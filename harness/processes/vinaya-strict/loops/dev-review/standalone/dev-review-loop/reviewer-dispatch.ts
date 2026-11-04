@@ -28,13 +28,13 @@ import {
   type ManifestRecord,
   type Objective,
   type ReviewInputManifest,
-  redact,
-  REVIEW_FINDING_DESCRIPTION_MAX_LENGTH,
   SECURITY_SEVERITY_ORDER,
   type ReviewPolicy,
   type VerdictObservation,
   writeManifest
 } from '@attalabs/aeg-core'
+import { redact } from '../../../../../../kernel/log/redact'
+import { REVIEW_FINDING_DESCRIPTION_MAX_LENGTH } from '../../../../../../kernel/log/schema'
 import {
   checkDocCorrectnessSearch,
   checkObjectiveIdCoverage,
@@ -56,12 +56,7 @@ import {
   type ReviewResult
 } from '../../../../executing/code-reviewer/review-result.js'
 import { isStagedPrBodyFile, type ReviewerCandidateInputPaths } from './reviewer-isolation.js'
-import {
-  ensureRunDir,
-  runPath,
-  runtimeDirForThisRepo,
-  tasksExecutionRoot
-} from '../../../../../../../apps/cli/src/lib/run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../../../../../../kernel/run-paths.js'
 
 // --- reviewer prompt (facts only) -----------------------------------------
 

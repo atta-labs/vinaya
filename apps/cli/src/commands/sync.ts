@@ -4,7 +4,7 @@
 // the bounded engine, print the summary, pick the exit code) lives behind
 // the one library call below (`apps/cli/specs/surface.md`).
 
-import { runLogSync } from '../lib/log-sync.js'
+import { runLogSync } from '../../../../harness/kernel/log/client/log-sync.js'
 
 export async function syncCommand(args: string[]): Promise<number> {
   return runLogSync({ rebuild: args.includes('--rebuild'), json: args.includes('--json') })

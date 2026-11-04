@@ -448,7 +448,7 @@ export const CODEX_SANDBOX_INSTALL_STEP =
 
 /** Run the production dispatch tool probe against the image's actual PATH at build time. */
 const CODEX_SANDBOX_BUILD_CHECK =
-  'import { checkLinuxCodexSandboxTools } from "./apps/cli/src/lib/worker-boundary.ts"; const tools = checkLinuxCodexSandboxTools(); if (!tools.available) throw new Error(`Codex sandbox tools missing: ${tools.missing.join(", ")}`)'
+  'import { checkLinuxCodexSandboxTools } from "./harness/kernel/isolation/worker-boundary.ts"; const tools = checkLinuxCodexSandboxTools(); if (!tools.available) throw new Error(`Codex sandbox tools missing: ${tools.missing.join(", ")}`)'
 
 /**
  * The last root step of every image: the directories the role, the verifier

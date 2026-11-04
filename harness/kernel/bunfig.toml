@@ -1,0 +1,5 @@
+[test]
+timeout = 30000
+# The same private runtime directory and environment hygiene the CLI and process suites give their own test runs:
+# it installs the Vinaya configuration provider and Log sink factory for tests only.
+preload = "../../apps/cli/tests/lib/test-env-preload.ts"

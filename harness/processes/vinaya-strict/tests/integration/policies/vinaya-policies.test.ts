@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
-import { isProtectedAdminPath, normalizeTouchedPath, PROTECTED_ADMIN_PATHS } from '@attalabs/aeg-core'
+import { isProtectedAdminPath, PROTECTED_ADMIN_PATHS } from '@attalabs/aeg-core'
+import { normalizeTouchedPath } from '../../../../../kernel/tools/host/touched-path.js'
 import type { DispatchTeeRecoveryDeps } from '../../../loops/dev-review/dispatch/dispatch.js'
 import { vinayaLaunchRecordVerifier } from '../../../integration/policies/launch-records.js'
 import { VINAYA_PROTECTED_PATHS } from '../../../integration/policies/protected-paths.js'

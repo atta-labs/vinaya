@@ -32,7 +32,7 @@ describe('devBridgeInvocation', () => {
   it('registers the running entrypoint as the bridge, carrying the socket path', () => {
     const inv = devBridgeInvocation('/tmp/x/dev.sock')
     expect(inv.command).toBe(process.execPath)
-    expect(inv.args.slice(-4)).toEqual(['task-tools', 'dev-bridge', '--socket', '/tmp/x/dev.sock'])
+    expect(inv.args.slice(-2)).toEqual(['--socket', '/tmp/x/dev.sock'])
   })
 })
 

@@ -8,8 +8,8 @@ import {
   runLogSelftest,
   type SelftestReadPage
 } from '../../src/commands/log-selftest.js'
-import { schemaDigestFromStats } from '../../src/lib/log-schema-digest.js'
-import { logEventSchemaDigest } from '@attalabs/aeg-core/log'
+import { schemaDigestFromStats } from '../../../../harness/kernel/log/client/log-schema-digest.js'
+import { logEventSchemaDigest } from '../../../../harness/kernel/log/client/schema-digest'
 
 // The self-test is proved against injected seams, not a live server: every
 // FAIL reason and the one PASS are a decision over `resolveDestination` /

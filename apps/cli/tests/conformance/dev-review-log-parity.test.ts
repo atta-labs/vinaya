@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
 import corpus from '../fixtures/dev-review-engine-scenarios.json'
-import { currentRunId, type LogSinkDeps, type ResolvedLogDestination } from '../../src/lib/log-sink.js'
-import { RUNTIME_DIR_ENV_KEY } from '../../src/lib/run-paths.js'
+import { currentRunId, type LogSinkDeps, type ResolvedLogDestination } from '../../../../harness/kernel/log/log-sink.js'
+import { RUNTIME_DIR_ENV_KEY } from '../../../../harness/kernel/run-paths.js'
 import { runStandaloneScenario } from './dev-review-current-loop-adapter.js'
 import { runEngineScenario } from './dev-review-engine-loop-adapter.js'
 

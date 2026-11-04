@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { parsePremiseBlock } from '@attalabs/aeg-core'
-import { printJson } from '../lib/envelope'
+import { printJson } from '../../../../harness/kernel/effects/envelope'
 import {
   type BodyResult,
   collectBodyCheckErrors,

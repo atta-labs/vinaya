@@ -70,7 +70,13 @@ describe('the committed inventory validates against this repository', () => {
   test('every named area is covered, with its actual runner, working directory and preload', () => {
     const expectations: [string, string, string, string, string | null][] = [
       ['apps/cli/tests/lib/test-selector.test.ts', 'cli', 'bun', 'apps/cli', 'apps/cli/tests/lib/test-env-preload.ts'],
-      ['harness/kernel/tests/architecture.test.ts', 'kernel', 'bun', 'harness/kernel', null],
+      [
+        'harness/kernel/tests/architecture.test.ts',
+        'kernel',
+        'bun',
+        'harness/kernel',
+        'apps/cli/tests/lib/test-env-preload.ts'
+      ],
       [
         'harness/processes/vinaya-strict/tests/run-engine.test.ts',
         'process-vinaya',
@@ -92,8 +98,8 @@ describe('the committed inventory validates against this repository', () => {
     expect(head.suites.find((s) => s.id === 'log-server')?.environment.pool).toBe('cloudflare-workers')
   })
 
-  test('the vitest suite keeps its fixture-folder test only because it declares it a real test', () => {
-    expect(byId.get('packages/aeg-core/src/log/fixtures/executions.test.ts')?.suite).toBe('aeg-core')
+  test('the kernel suite keeps its fixture-folder test only because it declares it a real test', () => {
+    expect(byId.get('harness/kernel/log/fixtures/executions.test.ts')?.suite).toBe('kernel')
   })
 
   test('the type packages and shared TypeScript configuration are recorded as type inputs', () => {

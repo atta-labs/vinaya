@@ -19,7 +19,7 @@ import {
   scopeTarget,
   UngrantedOperationError,
   WORKER_OPERATIONS
-} from '../../../src/lib/broker'
+} from '../../../../../harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from './vinaya-broker'
 
 let dir: string

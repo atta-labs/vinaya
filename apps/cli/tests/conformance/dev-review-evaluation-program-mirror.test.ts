@@ -40,7 +40,7 @@ describe('developer-review evaluation program mirror', () => {
         revisionPinned: false
       },
       'Tech spec — Agent sandbox': {
-        path: 'apps/cli/specs/isolation.md',
+        path: 'harness/kernel/isolation/isolation.md',
         revisionPinned: false
       },
       'Any Process, One Harness': null

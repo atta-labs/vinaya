@@ -17,7 +17,7 @@
     "clean": "rm -rf .turbo"
   },
   "dependencies": {
-    "@attalabs/aeg-core": "workspace:*"
+    "@attalabs/harness": "workspace:*"
   },
   "devDependencies": {
     "@atta/typescript-config": "workspace:*",

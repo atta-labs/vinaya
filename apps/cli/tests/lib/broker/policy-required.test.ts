@@ -19,7 +19,7 @@ import {
   MissingBrokerPolicyError,
   ProtectedPathError,
   scopeTarget
-} from '../../../src/lib/broker'
+} from '../../../../../harness/kernel/tools/host/broker'
 
 const noLog = (): void => {}
 

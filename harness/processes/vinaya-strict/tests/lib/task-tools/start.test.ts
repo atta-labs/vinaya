@@ -14,7 +14,7 @@ import {
   type StartClaimDeps,
   type TaskLoopState
 } from '../../../loops/dev-review/run-control/task-status.js'
-import { appendRoleLine, loopLogPathFor } from '../../../../../../apps/cli/src/lib/loop-log.js'
+import { appendRoleLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log.js'
 import type { CallerContext } from '../../../integration/server.js'
 import {
   createTaskStartHandler,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { LogSink, LogSinkDeps } from '../../../src/lib/log-sink'
+import type { LogSink, LogSinkDeps } from '../../../../../harness/kernel/log/log-sink'
 import { createVinayaLogSink } from '../../../../../harness/processes/vinaya-strict/integration/log/log-sink-factory'
 import type { CheckSpec } from '../../../src/checks/contract'
 import { runChecks } from '../../../src/checks/runner'
@@ -53,7 +53,7 @@ function readGateLines(dir: string, issue: string): Array<Record<string, unknown
 /**
  * Hook, CLI and CI are distinguished ONLY by
  * `meta.host` (derived from the real environment `hostFromEnv` reads,
- * `apps/cli/src/lib/log-sink.ts`), never by anything `runner.ts` invents
+ * `harness/kernel/log/log-sink.ts`), never by anything `runner.ts` invents
  * itself. Each caller here is its own `createLogSink` instance — the same
  * shape a real hook process, a real interactive CLI process and a real CI
  * process each are (three separate `vinaya` invocations, never one process

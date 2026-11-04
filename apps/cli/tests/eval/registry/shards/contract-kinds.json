@@ -1171,7 +1171,7 @@
       "kind": "isolation-boundary",
       "module": "6.15",
       "source": {
-        "document": "apps/cli/specs/isolation.md",
+        "document": "harness/kernel/isolation/isolation.md",
         "revision": 17,
         "section": "1. The six boundaries"
       },
@@ -1210,7 +1210,7 @@
       "kind": "isolation-boundary",
       "module": "6.15",
       "source": {
-        "document": "apps/cli/specs/isolation.md",
+        "document": "harness/kernel/isolation/isolation.md",
         "revision": 17,
         "section": "1. The six boundaries"
       },
@@ -1249,7 +1249,7 @@
       "kind": "isolation-boundary",
       "module": "6.15",
       "source": {
-        "document": "apps/cli/specs/isolation.md",
+        "document": "harness/kernel/isolation/isolation.md",
         "revision": 17,
         "section": "1. The six boundaries"
       },
@@ -1288,7 +1288,7 @@
       "kind": "isolation-boundary",
       "module": "6.15",
       "source": {
-        "document": "apps/cli/specs/isolation.md",
+        "document": "harness/kernel/isolation/isolation.md",
         "revision": 17,
         "section": "1. The six boundaries"
       },
@@ -1327,7 +1327,7 @@
       "kind": "isolation-boundary",
       "module": "6.15",
       "source": {
-        "document": "apps/cli/specs/isolation.md",
+        "document": "harness/kernel/isolation/isolation.md",
         "revision": 17,
         "section": "1. The six boundaries"
       },
@@ -1366,7 +1366,7 @@
       "kind": "isolation-boundary",
       "module": "6.15",
       "source": {
-        "document": "apps/cli/specs/isolation.md",
+        "document": "harness/kernel/isolation/isolation.md",
         "revision": 17,
         "section": "1. The six boundaries"
       },

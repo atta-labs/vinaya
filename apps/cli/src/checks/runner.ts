@@ -1,8 +1,14 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { cpus } from 'node:os'
-import { globToRegex, type GateOutcome } from '@attalabs/aeg-core'
-import { log as defaultLog, warmupLogSink, LOG_FOLDER_ONLY_ENV, type LogEventInput } from '../lib/log-sink.js'
+import { globToRegex } from '@attalabs/aeg-core'
+import type { GateOutcome } from '../../../../harness/kernel/log/schema'
+import {
+  log as defaultLog,
+  warmupLogSink,
+  LOG_FOLDER_ONLY_ENV,
+  type LogEventInput
+} from '../../../../harness/kernel/log/log-sink.js'
 import { CHECK_SCHEMA_VERSION, type CheckError, type CheckOutcome, type CheckSpec, type CheckStatus } from './contract'
 
 export type RunOptions = {
@@ -58,7 +64,7 @@ export type RunOptions = {
   excludeChecks?: string[]
   /**
    * Injectable for tests — defaults to the process-wide Vinaya Log sink
-   * (`../lib/log-sink.js`'s `log`), the same singleton every check attempt
+   * (`../../../../harness/kernel/log/log-sink.js`'s `log`), the same singleton every check attempt
    * in a real `vinaya check`/hook/CI invocation shares one `run_id` through
    * (one process, one correlated run). A test passes its
    * own capturing function instead of exercising the real outbox on disk.
@@ -114,7 +120,7 @@ function isCheckError(value: unknown): value is CheckError {
 }
 
 /**
- * `Vinaya Log`'s `gate` family chokepoint (`apps/cli/specs/log.md` "Six more
+ * `Vinaya Log`'s `gate` family chokepoint (`harness/kernel/log/log.md` "Six more
  * families") — the ONE place this runner records an attempted check's
  * observable outcome, for every terminal state `runOne`/`runChecks` can
  * reach (pass, fail-as-rejected, fail-as-waiting, skip, timeout, and the two
@@ -135,7 +141,7 @@ function isCheckError(value: unknown): value is CheckError {
  * registry today (`CheckSpec` carries no version field, and a resolved
  * check's `core`/`overridden`/`additive` state never reaches this file) —
  * left for a later task to set for real, the same "declared, not yet real"
- * pattern `apps/cli/specs/log.md` already documents for `input_versions`/
+ * pattern `harness/kernel/log/log.md` already documents for `input_versions`/
  * `lineage`. `input_fingerprint` hashes the check's own real, constructed
  * input (its allowlisted env plus, for a diff-scoped check, its sorted
  * changed-file list) rather than transmitting it — a fingerprint identifies

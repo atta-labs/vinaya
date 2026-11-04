@@ -5,12 +5,12 @@
  * no prompt anywhere in this directory.
  */
 
-import type { DevReviewLoopEvent } from '../log'
+import type { DevReviewLoopEvent } from '@attalabs/harness/log/schema'
 import type { DeferralReason } from '../review-policy'
 
 type Envelope = { meta: unknown; subject: unknown }
 /**
- * The same shape `apps/cli/src/lib/log-sink.ts`'s `LogEventInput` derives
+ * The same shape `harness/kernel/log/log-sink.ts`'s `LogEventInput` derives
  * from `LogEvent` — mirrored here, scoped to `DevReviewLoopEvent` only,
  * because this package can never import from `apps/cli` (the surface runs
  * one way). `assessRound`'s caller (the driver) passes each returned event

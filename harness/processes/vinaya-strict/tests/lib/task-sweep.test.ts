@@ -36,7 +36,7 @@ import {
   worktreeHasUncommittedAsync,
   worktreeHasUnpushedCommitsAsync
 } from '../../loops/dev-review/run-control/task-sweep.js'
-import { runPath } from '../../../../../apps/cli/src/lib/run-paths.js'
+import { runPath } from '../../../../kernel/run-paths.js'
 
 const tempDirs: string[] = []
 afterEach(() => {

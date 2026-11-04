@@ -88,8 +88,8 @@ import {
 import { renderCase, VINAYA_RENDERER_VERSION } from '../../src/lib/dev-review-eval/vinaya-renderer'
 import { stripVinayaEnv } from '../lib/process-fixture'
 import { DERIVED_FILE_DIGESTS, HELD_OUT_IDS } from './generic-suites'
-import { DEV_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/dev-tools-names'
-import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
+import { DEV_TOOLS_MCP_SERVER_NAME } from '../../../../harness/kernel/tools/dev-tools-names'
+import type { DevToolContext } from '../../../../harness/kernel/tools/dev-tools-server'
 import { developmentCases } from './generic-suites'
 import { KNOWN_BAD_VARIANTS, referenceRecord } from './vinaya-trial-records'
 
@@ -1032,7 +1032,7 @@ describe('the case repository built from a local mirror', () => {
         // The generated MCP settings reach the trial's own tool host through the bridge script, and nothing else.
         const mcp = JSON.parse(launch.settings) as { mcpServers: Record<string, { command: string }> }
         expect(Object.keys(mcp.mcpServers)).toEqual([ENGINE_DEV_TOOLS_SERVER])
-        expect(launch.bridge).toContain("'task-tools' 'dev-bridge' '--socket'")
+        expect(launch.bridge).toContain("'--socket'")
         expect(trial.hosts).toEqual([kind === 'change' ? 'developer' : 'code-reviewer'])
         // No forge credential and no API key reaches the role; Claude logs in from the subscription token.
         expect(Object.keys(launch.env).some((key) => /GH_TOKEN|GITHUB_TOKEN|API_KEY/.test(key))).toBe(false)
@@ -1063,7 +1063,7 @@ describe('the case repository built from a local mirror', () => {
     // Codex launches from its generated home: the required dev-tools server is the trial's bridge, its login a staged copy.
     expect(launch.settings).toContain(`[mcp_servers.${ENGINE_DEV_TOOLS_SERVER}]\nenabled = true\nrequired = true\n`)
     expect(launch.settings).toContain(`command = ${JSON.stringify(launch.mcpCommand)}`)
-    expect(launch.bridge).toContain("'task-tools' 'dev-bridge' '--socket'")
+    expect(launch.bridge).toContain("'--socket'")
     expect(launch.codexLogin).toBe('{"staged":"login"}')
     expect(launch.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
     expect(launch.args).toContain('codex-test-model')

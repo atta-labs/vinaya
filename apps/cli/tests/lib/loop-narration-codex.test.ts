@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { renderNarratedUpdate } from '../../src/lib/agent-line'
+import { renderNarratedUpdate } from '../../../../harness/kernel/adapters/agents/agent-line'
 import {
   createNarrationState,
   type NarratedUpdate,
   type NarrationContext,
   translateClaudeEvent
-} from '../../src/lib/loop-narration-claude'
+} from '../../../../harness/kernel/adapters/agents/claude-code/loop-narration-claude'
 import { translateCodexEvent } from '../../src/lib/loop-narration-codex'
 
 const WORKTREE = '/work/repo/.worktrees/task/t/1'
@@ -209,10 +209,10 @@ describe('a recorded developer stream (O4)', () => {
       '9 reporting completed 100',
       '10 creating .changeset/dev-review-capabilities-contracts.md',
       '10 editing apps/cli/specs/dev-review-engine-state-machine.md',
-      '10 editing apps/cli/specs/isolation.md',
+      '10 editing harness/kernel/isolation/isolation.md',
       'ok 1000 .changeset/dev-review-capabilities-contracts.md',
       'ok 1000 apps/cli/specs/dev-review-engine-state-machine.md',
-      'ok 1000 apps/cli/specs/isolation.md',
+      'ok 1000 harness/kernel/isolation/isolation.md',
       '12 publishing changes',
       '13 reporting completed 100',
       'ok 2000 changes',

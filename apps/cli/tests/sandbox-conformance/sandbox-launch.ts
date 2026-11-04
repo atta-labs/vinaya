@@ -54,8 +54,8 @@ import {
   resolveCodexConfinement,
   resolveGitCommonDir,
   stageCodexPolicyHome
-} from '../../src/lib/worker-boundary.js'
-import { sourceManifestPath, sourceReceiptsPath, sourceStoreDir } from '../../src/lib/source-manifest.js'
+} from '../../../../harness/kernel/isolation/worker-boundary.js'
+import { sourceManifestPath, sourceReceiptsPath, sourceStoreDir } from '../../../../harness/kernel/source-manifest.js'
 import { grantVariables } from '../../../../harness/kernel/adapters/agents/variables.js'
 import {
   createRoleLaunchers,

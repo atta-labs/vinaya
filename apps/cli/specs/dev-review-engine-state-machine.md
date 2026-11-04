@@ -170,7 +170,7 @@ Every one of the fifteen states above that performs work also carries a
 complete node contract: typed input, typed output, side-effect
 classification, retry policy, timeout policy, failure behavior,
 cancellation behavior, and the Log event kinds it owns emitting (`<kind>:
-<event>`, every one a family `apps/cli/specs/log.md` already ships — this
+<event>`, every one a family `harness/kernel/log/log.md` already ships — this
 model invents no new Log family). The contract test enforces that no field
 is missing; this section explains the two load-bearing ones.
 

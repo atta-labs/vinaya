@@ -13,7 +13,6 @@ tests/lib/dispatch/worker-boundary.test.ts
 tests/lib/dispatch/documentation-read-content.test.ts
 tests/checks/runner/correlation.test.ts
 tests/lib/artifacts/workflow.test.ts
-tests/lib/run-paths.test.ts
 tests/lib/turbo-test-task-uncached.test.ts
 tests/conformance/matrix.test.ts
 tests/log-destination-isolation.test.ts
@@ -23,11 +22,9 @@ tests/conformance/packed-runtime-consumer.test.ts
 tests/conformance/packed-runtime-public-run-control.test.ts
 tests/conformance/packed-runtime-not-shipped.test.ts
 tests/lib/dispatch/fetch-documentation-tool.test.ts
-tests/lib/dispatch/fetch-documentation-visible-text.test.ts
 tests/conformance/dev-review-engine-architecture-exit.test.ts
 tests/conformance/dev-review-engine-shadow.test.ts
 tests/conformance/dev-review-engine-fault-rows.test.ts
-tests/lib/loop-narration-claude.test.ts
 tests/lib/loop-narration-codex.test.ts
 tests/lib/agent-line.test.ts
 tests/conformance/developer-doctrine-shape.test.ts
@@ -40,7 +37,6 @@ tests/eval/reviewer-quality-suite.test.ts
 tests/eval/step-one.test.ts
 tests/eval/freeze-record.test.ts
 tests/eval/whole-loop.test.ts
-tests/lib/task-tools/role-grants.test.ts
 tests/conformance/role-grants-bridge.test.ts
 tests/lib/log-webhook-drain.test.ts
 tests/checks/runner.test.ts

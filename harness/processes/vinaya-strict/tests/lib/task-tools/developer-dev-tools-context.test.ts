@@ -4,7 +4,7 @@ import {
   createDeveloperDevToolContext
 } from '../../../loops/dev-review/actions/developer-dev-tools-context.js'
 import type { PublicationCheckInput } from '../../../loops/dev-review/standalone/dev-review-loop/developer-publication.js'
-import { devToolError } from '../../../../../../apps/cli/src/lib/task-tools/dev-tools-server.js'
+import { devToolError } from '../../../../../kernel/tools/dev-tools-server.js'
 
 /**
  * The production gate-backed `DevToolContext` (O3): each tool runs the gates in

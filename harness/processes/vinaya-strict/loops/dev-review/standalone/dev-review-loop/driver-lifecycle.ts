@@ -4,7 +4,7 @@ import {
   type LoopState,
   type ReconstructedJournal
 } from '@attalabs/aeg-core'
-import { appendRoleLine } from '../../../../../../../apps/cli/src/lib/loop-log.js'
+import { appendRoleLine } from '../../../../../../kernel/log/client/loop-log.js'
 import { errorClassOf } from './round-assess.js'
 
 // What a task driver does around its rounds, shared by the standalone review

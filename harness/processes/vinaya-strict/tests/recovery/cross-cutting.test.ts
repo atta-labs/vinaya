@@ -12,7 +12,7 @@ import {
   readEffectiveResumedState,
   readExecutionRound
 } from '../../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
-import { loopLogPathFor } from '../../../../../apps/cli/src/lib/loop-log'
+import { loopLogPathFor } from '../../../../kernel/log/client/loop-log'
 import {
   cleanupWorlds,
   makeInProcessDeps,

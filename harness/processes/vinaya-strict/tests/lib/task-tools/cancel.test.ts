@@ -472,7 +472,7 @@ import { runtimeDir } from '../../../loops/dev-review/standalone/dev-review-loop
 import { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-factory.js'
 // This program is an entry point: it installs the process's Log sink factory, as the command line does.
 installVinayaLogSinkFactory()
-import { controlStoreRoot } from '../../../../../../apps/cli/src/lib/effects.js'
+import { controlStoreRoot } from '../../../../../kernel/effects/effects.js'
 
 const ISSUE = 558
 const PR = 900
@@ -587,8 +587,8 @@ import { runtimeDir } from '../../../loops/dev-review/standalone/dev-review-loop
 import { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-factory.js'
 // This program is an entry point: it installs the process's Log sink factory, as the command line does.
 installVinayaLogSinkFactory()
-import { controlStoreRoot } from '../../../../../../apps/cli/src/lib/effects.js'
-import { log } from '../../../../../../apps/cli/src/lib/log-sink.js'
+import { controlStoreRoot } from '../../../../../kernel/effects/effects.js'
+import { log } from '../../../../../kernel/log/log-sink.js'
 import { createTaskResumeHandler } from '../../../loops/dev-review/run-control/resume.js'
 
 const ISSUE = 558

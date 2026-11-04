@@ -22,7 +22,6 @@ import { hostname as osHostname } from 'node:os'
 import {
   type ControlStoreDeps,
   defaultControlStoreDeps,
-  type OperationResult,
   readResolution,
   TaskCancelInputSchema,
   type TaskCancelOutcome,
@@ -30,16 +29,17 @@ import {
   taskToolError,
   type TaskToolRef
 } from '@attalabs/aeg-core'
+import type { OperationResult } from '../../../../../kernel/log/schema'
 import { type AgentVendor, isAgentVendor } from '../dispatch/dispatch.js'
 import { cancelDevReviewLoop, type CancelInput, type CancelResult, runtimeDir } from '../standalone/dev-review-loop.js'
-import { tasksExecutionRoot } from '../../../../../../apps/cli/src/lib/run-paths.js'
+import { tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
 import {
   fetchIssueRulings,
   fetchNewestIssueRulingOrdinal,
   fetchNewestRulingOrdinal,
   fetchRulings
 } from '../standalone/dev-review-loop/developer-dispatch.js'
-import { appendRoleLine, loopLogPathFor } from '../../../../../../apps/cli/src/lib/loop-log.js'
+import { appendRoleLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log.js'
 import {
   escalationIdFor,
   escalationPrOf,
@@ -52,7 +52,7 @@ import {
   StaleEscalationError,
   WrongTargetResolutionError
 } from '../standalone/dev-review-loop/pause-resume.js'
-import { log } from '../../../../../../apps/cli/src/lib/log-sink.js'
+import { log } from '../../../../../kernel/log/log-sink.js'
 import { readTaskRunner } from './task-run-engine.js'
 import { resolveIssueForRef, type TaskToolCallResult } from './handlers.js'
 import { readEscalationPacket } from './read.js'

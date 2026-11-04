@@ -11,7 +11,7 @@ import {
   readExecutionRoundMirror
 } from '@attalabs/aeg-core'
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { createBroker, scopeTarget } from '../../../../../apps/cli/src/lib/broker'
+import { createBroker, scopeTarget } from '../../../../kernel/tools/host/broker'
 import { vinayaBrokerPolicies } from '../../integration/policies/vinaya-policies'
 import { loopHistoryFromComments } from '../../loops/dev-review/standalone/dev-review-loop/journal-history'
 import { controlStoreRootFor } from '../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'

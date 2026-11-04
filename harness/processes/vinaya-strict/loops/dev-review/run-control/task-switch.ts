@@ -21,7 +21,7 @@ import {
   writePauseState
 } from '../standalone/dev-review-loop/pause-resume.js'
 import { runtimeDir as thisRepoRuntimeDir } from '../standalone/dev-review-loop/reviewer-dispatch.js'
-import { appendDriverLine, loopLogPathFor } from '../../../../../../apps/cli/src/lib/loop-log.js'
+import { appendDriverLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log.js'
 import { engineRunDirectory, readTaskRunner } from './task-run-engine.js'
 
 /** The checkpoint file and the write-ahead-log siblings that must travel with it. */

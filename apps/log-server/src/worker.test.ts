@@ -9,7 +9,7 @@
 
 import { SELF } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
-import { buildHeader } from '@attalabs/aeg-core/log'
+import { buildHeader } from '@attalabs/harness/log/envelope'
 
 const INGEST = 'ingest-token-for-tests'
 const READ = 'read-token-for-tests'
