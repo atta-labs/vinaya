@@ -19,8 +19,8 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { checkBareDigits } from '../../src/checks/body-bare-digits-logic'
-import { compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
+import { checkBareDigits } from '../../../../harness/processes/vinaya-strict/tools/body-bare-digits-logic'
+import { compareEvidenceBlock } from '../../../../harness/processes/vinaya-strict/checks/evidence-fresh-logic'
 import {
   ScanContext,
   resolveAnchoredRegion,

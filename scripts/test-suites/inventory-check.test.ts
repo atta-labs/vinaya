@@ -90,7 +90,13 @@ describe('the committed inventory validates against this repository', () => {
         'harness/processes/vinaya-strict',
         'apps/cli/tests/lib/test-env-preload.ts'
       ],
-      ['packages/aeg-core/src/no-binary-sources.test.ts', 'aeg-core', 'vitest', 'packages/aeg-core', null],
+      [
+        'harness/processes/vinaya-strict/checks/no-binary-sources.test.ts',
+        'process-vinaya',
+        'bun',
+        'harness/processes/vinaya-strict',
+        'apps/cli/tests/lib/test-env-preload.ts'
+      ],
       ['apps/log-server/src/worker.test.ts', 'log-server', 'vitest', 'apps/log-server', null],
       ['packages/sources/src/file-adapter.test.ts', 'sources', 'bun', 'packages/sources', null],
       ['apps/vinaya-portal/src/lib/brand-logo.test.ts', 'portal', 'bun', 'apps/vinaya-portal', null]

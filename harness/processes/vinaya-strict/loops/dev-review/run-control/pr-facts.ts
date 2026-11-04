@@ -50,11 +50,8 @@ import { redact } from '../../../../../kernel/log/redact'
 import type { FailedCheckLog } from '../../../../../kernel/tools/failed-check-log.js'
 import { markerComments } from '../standalone/dev-review-loop/developer-dispatch.js'
 import { judgeWorkflowRuns, type RestWorkflowRun, sh } from '../standalone/dev-review-loop/gate-reading.js'
-import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../../../../../../apps/cli/src/lib/principal-test-plan-wait-check-name.js'
-import {
-  REVIEW_GATE_CHECK_RUN_NAME,
-  REVIEW_GATE_WORKFLOW_NAME
-} from '../../../../../../apps/cli/src/lib/review-gate-check-name.js'
+import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
+import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../../../tools/review-gate-check-name.js'
 
 /**
  * The ceiling on one `gh` read made for a status row, in time and in output.

@@ -1,4 +1,4 @@
-import type { Doc, DocNav, DocSection } from './types'
+import type { Doc, DocNav, DocSection } from '../../../../harness/processes/vinaya-strict/tools/docs/types'
 
 export type BuildDocNavOptions = {
   sectionOrder?: string[]

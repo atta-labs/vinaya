@@ -50,11 +50,11 @@ import {
   checkBriefSections,
   checkIssueRationale,
   checkPremises,
-  extractClosesReferences,
   isTaskBranch,
   parsePremiseBlock,
   readTierFromPrBody
 } from '../src/index'
+import { extractClosesReferences } from '../../../harness/processes/vinaya-strict/checks/coherence-checks'
 import type { PremiseAssertion } from '../src/index'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')

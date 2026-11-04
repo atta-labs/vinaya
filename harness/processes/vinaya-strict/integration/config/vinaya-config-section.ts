@@ -8,15 +8,15 @@ import {
   CODE_REVIEW_SEVERITY_ORDER,
   DEFAULT_COLLISION_THRESHOLD,
   DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
-  DEFAULT_RELEASE_ACTOR,
   DEFAULT_REVIEW_POLICY,
   type GateCutovers,
   isKnownSeverity,
   NO_GATE_CUTOVERS,
-  normalizeSpecPath,
   type ReviewPolicy,
   SECURITY_SEVERITY_ORDER
 } from '@attalabs/aeg-core'
+import { DEFAULT_RELEASE_ACTOR } from '../../tools/review-gate'
+import { normalizeSpecPath } from '../../tools/reader-resolvable-prose'
 import {
   fetchFailureReason,
   GIT_IDENTITY_TIMEOUT_MS,
@@ -32,7 +32,7 @@ import {
   ProseRulesSchema,
   PublishedProseSchema,
   RepoRelativePathSchema
-} from '../../../../../apps/cli/src/lib/prose-rules-config.js'
+} from '../../tools/prose-rules-config.js'
 import { CLAUDE_COMMAND_PATH } from '../claude-command-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../gemini-command-emitter.js'
 

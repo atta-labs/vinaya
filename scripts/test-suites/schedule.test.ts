@@ -12,7 +12,10 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
-import { CI_SHARD_COUNT, CI_SHARD_LIST_OWNER } from '../../apps/cli/src/lib/ci-shard-membership.ts'
+import {
+  CI_SHARD_COUNT,
+  CI_SHARD_LIST_OWNER
+} from '../../harness/processes/vinaya-strict/checks/ci-shard-membership.ts'
 import {
   groupNativeTests,
   type NativeGroup,

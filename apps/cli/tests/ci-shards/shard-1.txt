@@ -1,17 +1,6 @@
 src/commands/doctor-metering-io.test.ts
 src/commands/tokens-metering-io.test.ts
-tests/checks/body-bare-digits-changeset-exempt.test.ts
-tests/checks/changeset-coverage-bin.test.ts
-tests/checks/check-dispatch-readiness-premise.test.ts
-tests/checks/check-review-gate-objectives.test.ts
-tests/checks/check-review-gate-principal-owed.test.ts
-tests/checks/issue-checks.test.ts
-tests/checks/premise-reassert-logic.test.ts
-tests/checks/prose-gates-doctrine-root.test.ts
-tests/checks/recovery-prompt-coupling.test.ts
 tests/checks/scan-context.test.ts
-tests/checks/surface-scope.test.ts
-tests/checks/token-collection-pointer-hardening.test.ts
 tests/commands/check-flip.test.ts
 tests/commands/issue-objectives.test.ts
 tests/config.test.ts

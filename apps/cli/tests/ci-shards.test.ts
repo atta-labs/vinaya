@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
-import { CI_SHARD_COUNT, isCliTestFile } from '../src/lib/ci-shard-membership'
+import { CI_SHARD_COUNT, isCliTestFile } from '../../../harness/processes/vinaya-strict/checks/ci-shard-membership'
 import { spawnSyncBudgeted, stripVinayaEnv } from './lib/process-fixture'
 
 const CLI_ROOT = join(import.meta.dir, '..')
@@ -166,7 +166,10 @@ describe('the repository CI workflow', () => {
 
 // Real git fixtures exercise staged and committed membership independently.
 describe('ci-shard-coverage — hook-specific membership', () => {
-  const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'checks', 'bin', 'check-ci-shard-coverage.ts')
+  const BIN = join(
+    dirname(fileURLToPath(import.meta.url)),
+    '../../../harness/processes/vinaya-strict/checks/bin/check-ci-shard-coverage.ts'
+  )
 
   const tempDirs: string[] = []
 

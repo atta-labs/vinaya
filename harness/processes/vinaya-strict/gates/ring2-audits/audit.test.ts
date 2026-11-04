@@ -274,7 +274,7 @@ describe('vinaya audit — `--json` output mode', () => {
 })
 
 describe('vinaya audit — dead-branch-push detection parity', () => {
-  it('flags a branch whose tip commit lands after its own PR already resolved, via the same pure findDeadBranchPushes @attalabs/aeg-core exports to packages/aeg-core/bin/dead-branch-audit.ts', () => {
+  it('flags a branch whose tip commit lands after its own PR already resolved, via the same pure findDeadBranchPushes @attalabs/aeg-core exports to harness/processes/vinaya-strict/checks/standalone/dead-branch-audit.ts', () => {
     const findings = findDeadBranchPushes([
       {
         branch: 'task/scratch/1',

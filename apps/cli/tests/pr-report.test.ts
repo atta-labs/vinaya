@@ -1061,7 +1061,10 @@ describe('recordGreenTestRun — the pre-push hook half of O3 reuse (round-2 rev
     const runtimeDir = mkdtempSync(join(tmpdir(), 'pr-report-prepush-script-runtime-'))
     const logFile = join(dir, 'captured-output.txt')
     writeFileSync(logFile, '2 pass, 0 fail\n')
-    const scriptPath = join(CLI_ROOT, 'src', 'lib', 'pre-push-cache-test-run.ts')
+    const scriptPath = join(
+      CLI_ROOT,
+      '../../harness/processes/vinaya-strict/tools/pr-report/pre-push-cache-test-run.ts'
+    )
 
     await spawnBudgetedAsync(
       ['bun', scriptPath, 'bun test y.test.ts', logFile],

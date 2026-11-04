@@ -674,8 +674,8 @@ describe('repoBriefCommandFacts', () => {
     const facts = repoBriefCommandFacts(REPO_ROOT)
     expect(facts.cliInvocation).toBe('bun apps/cli/src/index.ts')
     expect(facts.localGateCommands).toEqual({
-      dispatchReadiness: 'bun packages/aeg-core/bin/verify-dispatch.ts',
-      docCoverage: 'bun packages/aeg-core/bin/verify-docs.ts'
+      dispatchReadiness: 'bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts',
+      docCoverage: 'bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts'
     })
   })
 
@@ -695,10 +695,14 @@ describe('repoBriefCommandFacts', () => {
       // A real entry, so this case isolates the package-name identity check
       // rather than also tripping the entry-existence one below.
       writeFileSync(join(dir, 'apps', 'cli', 'src', 'index.ts'), '')
-      mkdirSync(join(dir, 'packages', 'aeg-core', 'bin'), { recursive: true })
+      mkdirSync(join(dir, 'packages', 'aeg-core'), { recursive: true })
+      mkdirSync(join(dir, 'harness', 'processes', 'vinaya-strict', 'checks', 'standalone'), { recursive: true })
       writeFileSync(join(dir, 'packages', 'aeg-core', 'package.json'), JSON.stringify({ name: 'not-aeg-core' }))
-      writeFileSync(join(dir, 'packages', 'aeg-core', 'bin', 'verify-dispatch.ts'), '')
-      writeFileSync(join(dir, 'packages', 'aeg-core', 'bin', 'verify-docs.ts'), '')
+      writeFileSync(
+        join(dir, 'harness', 'processes', 'vinaya-strict', 'checks', 'standalone', 'verify-dispatch.ts'),
+        ''
+      )
+      writeFileSync(join(dir, 'harness', 'processes', 'vinaya-strict', 'checks', 'standalone', 'verify-docs.ts'), '')
 
       const facts = repoBriefCommandFacts(dir)
       expect(facts.cliInvocation).toBe('bun apps/cli/src/index.ts')

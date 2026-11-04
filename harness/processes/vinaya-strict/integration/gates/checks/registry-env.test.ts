@@ -24,7 +24,7 @@ import {
  * explanatory prose.
  */
 function readCode(binName: string): string {
-  return readSource(join('checks', 'bin', binName))
+  return readSource(`../../../harness/processes/vinaya-strict/checks/bin/${binName}`)
 }
 
 /** The same comment-stripped read for any source file under `apps/cli/src`, not only a check bin — the review gate's own input assembly lives in `lib/`, shared with the dev-review-loop driver. */
@@ -194,7 +194,7 @@ describe('registry env declarations', () => {
     // silently vacuous fail-open (single-plan-pr, dead-branch-push,
     // pre-fix). Coupling: read each bin's source, detect
     // the `gh` shell-out, demand both token declarations.
-    const SRC_BIN_DIR = join(import.meta.dir, '../../../../../../apps/cli/src/checks/bin')
+    const SRC_BIN_DIR = join(import.meta.dir, '../../../../../../harness/processes/vinaya-strict/checks/bin')
     const offenders: string[] = []
     for (const spec of specs) {
       const srcPath = join(SRC_BIN_DIR, `${basename(spec.run).replace(/\.(js|ts)$/, '')}.ts`)
@@ -307,17 +307,17 @@ describe('registry env declarations', () => {
       // this rule binds where the resolution actually happens. The bin itself
       // is asserted to hold no copy of it, just below.
       join('..', '..', '..', 'harness', 'processes', 'vinaya-strict', 'loops', 'dev-review', 'review-gate-input.ts'),
-      join('checks', 'bin', 'check-doc-coverage.ts'),
-      join('checks', 'bin', 'check-doc-coverage-push.ts'),
-      join('checks', 'bin', 'check-evidence-fresh.ts'),
-      join('checks', 'bin', 'check-coherence.ts'),
-      join('checks', 'bin', 'check-first-push-dispatch.ts'),
-      join('checks', 'bin', 'check-dispatch-readiness.ts'),
-      join('checks', 'bin', 'check-brief-shape.ts'),
+      '../../../harness/processes/vinaya-strict/checks/bin/check-doc-coverage.ts',
+      '../../../harness/processes/vinaya-strict/checks/bin/check-doc-coverage-push.ts',
+      '../../../harness/processes/vinaya-strict/checks/bin/check-evidence-fresh.ts',
+      '../../../harness/processes/vinaya-strict/checks/bin/check-coherence.ts',
+      '../../../harness/processes/vinaya-strict/checks/bin/check-first-push-dispatch.ts',
+      '../../../harness/processes/vinaya-strict/checks/bin/check-dispatch-readiness.ts',
+      '../../../harness/processes/vinaya-strict/checks/bin/check-brief-shape.ts',
       // `test-plan` and `principal-test-plan-wait` resolve principals, through
       // this shared module, to pick the task Issue's frozen brief for its
       // `[live]` lines.
-      join('checks', 'frozen-brief.ts')
+      '../../../harness/processes/vinaya-strict/checks/frozen-brief.ts'
     ]
     for (const name of sources) {
       const src = readSource(name)
@@ -342,7 +342,7 @@ describe('registry env declarations', () => {
       // The review policy and the Objectives cutover, beside the Principal list.
       join('..', '..', '..', 'harness', 'processes', 'vinaya-strict', 'loops', 'dev-review', 'review-gate-input.ts'),
       // The release actor, not a Principal.
-      join('checks', 'bin', 'check-body-bare-digits.ts')
+      '../../../harness/processes/vinaya-strict/checks/bin/check-body-bare-digits.ts'
     ]
     for (const name of sources) {
       const src = readSource(name)

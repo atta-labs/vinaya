@@ -408,6 +408,7 @@ function stripComments(source: string): string {
 
 describe('diff-reading checks declare the variables their diff reader uses', () => {
   const srcDir = join(import.meta.dir, '../../../../../../apps/cli/src')
+  const checkBinDir = join(import.meta.dir, '../../../checks/bin')
   // `repoRoot` resolves the repository root and reads no diff; `lineIsInRanges`
   // is a pure predicate over ranges it is handed.
   const NOT_READERS = new Set(['repoRoot', 'lineIsInRanges'])
@@ -447,7 +448,7 @@ describe('diff-reading checks declare the variables their diff reader uses', () 
     const readers = readerSet()
     const diffReading: string[] = []
     for (const spec of coreCheckRegistry()) {
-      const binPath = join(srcDir, 'checks', 'bin', `check-${spec.name}.ts`)
+      const binPath = join(checkBinDir, `check-${spec.name}.ts`)
       if (!existsSync(binPath)) continue
       const source = stripComments(readFileSync(binPath, 'utf8'))
       const imported = new Set<string>()

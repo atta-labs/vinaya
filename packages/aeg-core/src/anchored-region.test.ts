@@ -6,7 +6,11 @@ import { anchoredRegion } from '../../../harness/kernel/gates/checks/anchored-re
 import { buildProvenanceBlock, type MergedPrFacts } from './archive-task'
 import { extractIssue } from '../../../harness/kernel/adapters/code-host/github/extract-issue'
 import { checkClosesNPresence as checkClosesNField, checkProjectField } from './brief-validation'
-import { checkClosesNTopology, extractClosesReferences, type TrancheFile } from './coherence-checks'
+import {
+  checkClosesNTopology,
+  extractClosesReferences,
+  type TrancheFile
+} from '../../../harness/processes/vinaya-strict/checks/coherence-checks'
 import { fenceShapes } from '../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
 import { parsePremiseBlock } from './premise-check'

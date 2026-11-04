@@ -21,8 +21,8 @@ import {
   readyCiPlanCommand
 } from '../../../../../../apps/cli/src/lib/pre-push-ready-policy'
 import { writeJsonUnderGit } from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
-import { checkBareDigits } from '../../../../../../apps/cli/src/checks/body-bare-digits-logic'
-import { compareEvidenceBlock } from '../../../../../../apps/cli/src/checks/evidence-fresh-logic'
+import { checkBareDigits } from '../../../tools/body-bare-digits-logic'
+import { compareEvidenceBlock } from '../../../checks/evidence-fresh-logic'
 import { resolveAnchoredRegion, ScanContext } from '../../../../../kernel/gates/checks/scan-context'
 import { fixtureDir } from '../../../../../../apps/cli/tests/lib/test-temp-fixture'
 import { readyGateEvidence, runExplicitCommandsLive } from './flow-v2-live'

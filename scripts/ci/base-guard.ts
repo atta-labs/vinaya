@@ -43,7 +43,7 @@ export const GUARDED_ENTRYPOINTS: readonly string[] = [
   'harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts',
   'harness/processes/vinaya-strict/integration/ci-test-selection.ts',
   'harness/processes/vinaya-strict/integration/pre-push-selection.ts',
-  'apps/cli/src/lib/ci-shard-membership.ts'
+  'harness/processes/vinaya-strict/checks/ci-shard-membership.ts'
 ]
 
 /** Folders whose every file is a planning, routing or workflow input. */

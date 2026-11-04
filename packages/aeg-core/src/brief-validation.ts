@@ -1138,7 +1138,7 @@ export function checkBriefSections(
  * The marker line a dispatched task's frozen `aeg:brief:v1` Issue comment
  * starts with (`dispatch-task.ts`'s `dispatchTask`, `apps/cli`). Promoted
  * here so the comment-resolution logic that
- * needs it — `packages/aeg-core/bin/verify-brief.ts` (this package, cannot
+ * needs it — `harness/processes/vinaya-strict/checks/standalone/verify-brief.ts` (this package, cannot
  * import `apps/cli`) and `apps/cli`'s own `dispatch-task.ts`/
  * `check-brief-shape.ts` — read the SAME constant rather than four copies of
  * the same string that could quietly drift out of agreement.

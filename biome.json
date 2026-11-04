@@ -83,7 +83,7 @@
   },
   "overrides": [
     {
-      "includes": ["**/scripts/**", "packages/aeg-core/bin/**"],
+      "includes": ["**/scripts/**", "packages/aeg-core/bin/**", "harness/processes/vinaya-strict/checks/standalone/**"],
       "linter": {
         "rules": {
           "suspicious": {

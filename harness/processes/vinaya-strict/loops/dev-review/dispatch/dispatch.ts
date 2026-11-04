@@ -1632,9 +1632,9 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(bun install:*)',
         'Bash(bun run:*)',
         'Bash(bun test:*)',
-        'Bash(bun packages/aeg-core/bin/verify-dispatch.ts:*)',
-        'Bash(bun packages/aeg-core/bin/verify-docs.ts:*)',
-        'Bash(bun packages/aeg-core/bin/verify-task.ts:*)',
+        'Bash(bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts:*)',
+        'Bash(bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts:*)',
+        'Bash(bun harness/processes/vinaya-strict/checks/standalone/verify-task.ts:*)',
         'Bash(bun apps/cli/src/index.ts:*)'
       ],
       deny: [

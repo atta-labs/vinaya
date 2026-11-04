@@ -1,0 +1,914 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'bun:test'
+import {
+  checkReaderResolvableProse,
+  checkSourceComments,
+  checkUndefinedVocabulary,
+  checkUnresolvableReferences,
+  classifyProseFile,
+  DEFAULT_SPEC_PATHS,
+  extractComments,
+  legacySlugPattern,
+  normalizeSpecPath,
+  parseGlossaryTerms,
+  PRODUCT_SLUG_SCOPE,
+  stripNonProse
+} from './reader-resolvable-prose'
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..')
+
+/**
+ * `aeg-root/tranches/completed` is legitimately absent in this repo (task
+ * 4's ratified boundary — attalabs' operational archive, not doctrine).
+ * These tests' subject is the pattern's matching behavior — fires on a
+ * legacy slug, does not fire on a substring inside a longer token, reports
+ * only the slug — not this repo's own archive contents, so the corpus is a
+ * committed fixture instead of a live directory read. Same fixture
+ * `retired-vocabulary.test.ts` uses.
+ */
+function legacySlugs(): string[] {
+  return readFileSync(join(__dirname, '../../../../packages/aeg-core/tests/fixtures/legacy-tranche-slugs.txt'), 'utf8')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((slug) => !/-v[0-9]+$/.test(slug))
+}
+
+const REAL_GLOSSARY = readFileSync(join(REPO_ROOT, 'aeg-root/glossary.md'), 'utf8')
+
+/** This test's own consumer-supplied reader-facing shape — mirrors the real bin script's literal. */
+const READER_FACING_PREFIX = 'apps/vinaya/web/src/app/(site)/'
+const READER_FACING_SUFFIX = '/page.tsx'
+
+describe('classifyProseFile — the three-class map', () => {
+  it('classifies aeg-root/** as ships', () => {
+    expect(classifyProseFile('aeg-root/enforcement.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('ships')
+    expect(classifyProseFile('aeg-root/roles/developer.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('ships')
+  })
+
+  it('classifies the archived-tranche history under aeg-root as internal, not ships', () => {
+    expect(
+      classifyProseFile('aeg-root/tranches/completed/aeg-ui-v1.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)
+    ).toBe('internal')
+  })
+
+  it('classifies a (site) page as reader-facing', () => {
+    expect(
+      classifyProseFile(
+        'apps/vinaya/web/src/app/(site)/start/quick/page.tsx',
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX
+      )
+    ).toBe('reader-facing')
+  })
+
+  it('does not classify a (site) non-page component as reader-facing', () => {
+    expect(
+      classifyProseFile(
+        'apps/vinaya/web/src/app/(site)/_components/canvas/TwoErasCanvas.tsx',
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX
+      )
+    ).toBeNull()
+  })
+
+  // issue-657, O6 — a spec is swept with the doctrine-page rules, never
+  // exempt: a fork or an export reads it with no forge to resolve a
+  // citation against, the same reader `ships` already accounts for.
+  it('classifies apps/*/specs/** as spec, not internal', () => {
+    expect(classifyProseFile('apps/vinaya/specs/vinaya-spec.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe(
+      'spec'
+    )
+  })
+
+  // The spec class's defaults: the durable documents a repository with no
+  // `apps/` tree of its own actually keeps. Without them, a root spec was
+  // free to carry a copy of a plan nothing ever read.
+  it('classifies a root SPEC.md, a root CONTEXT.md and a docs/adr record as spec by default', () => {
+    expect(classifyProseFile('SPEC.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('spec')
+    expect(classifyProseFile('CONTEXT.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('spec')
+    expect(classifyProseFile('docs/adr/0001-pick-a-runtime.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe(
+      'spec'
+    )
+  })
+
+  it('never classifies README.md as spec by default — a stack badge is not a citation', () => {
+    expect(classifyProseFile('README.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBeNull()
+  })
+
+  it('classifies a configured specPaths file or folder as spec, markdown only', () => {
+    expect(
+      classifyProseFile('design/architecture.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [
+        ...DEFAULT_SPEC_PATHS,
+        'design'
+      ])
+    ).toBe('spec')
+    expect(
+      classifyProseFile('design/diagram.svg', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [
+        ...DEFAULT_SPEC_PATHS,
+        'design'
+      ])
+    ).toBeNull()
+  })
+
+  it('a specPaths prefix matches only its own path or a child of it', () => {
+    expect(
+      classifyProseFile('designs/other.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, ['design'])
+    ).toBeNull()
+  })
+
+  it('classifies nothing extra as spec when specPaths is empty — a repo with none of these files reports nothing new', () => {
+    expect(classifyProseFile('SPEC.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [])).toBeNull()
+    expect(
+      classifyProseFile('apps/vinaya/specs/vinaya-spec.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [])
+    ).toBe('spec')
+  })
+
+  it('classifies any CLAUDE.md as internal', () => {
+    expect(classifyProseFile('CLAUDE.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('internal')
+    expect(classifyProseFile('apps/vinaya/CLAUDE.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('internal')
+  })
+
+  it('classifies an unrelated source file as out of scope entirely', () => {
+    expect(classifyProseFile('packages/aeg-core/src/index.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBeNull()
+  })
+
+  it('classifies a file under a PRODUCT_SLUG_SCOPE prefix as product', () => {
+    expect(classifyProseFile('apps/cli/src/commands/dispatch.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe(
+      'product'
+    )
+    expect(classifyProseFile('.vinaya/hooks/pre-push', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('product')
+    expect(classifyProseFile('apps/cli/README.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('product')
+  })
+
+  it('does NOT classify a path that merely starts with the same letters as a product prefix', () => {
+    expect(classifyProseFile('apps/cli/srcx/index.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBeNull()
+  })
+})
+
+describe('class 1 — unresolvable references — the gate can see what it bans', () => {
+  it('fires on a bare forge number, drawn from the ships class', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'aeg-root/enforcement.md', content: 'fixed the gap (task 3, #365)' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.message).toContain('forge number')
+  })
+
+  it('fires on a bare forge number, drawn from the reader-facing class', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/vinaya/web/src/app/(site)/roadmap/page.tsx', content: 'shipped in (#365)' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+  })
+
+  it('fires on a bare -vN tranche slug, drawn from the ships class', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'aeg-root/roles/developer.md', content: 'landed in aeg-coherence-v1 task 3' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.message).toContain('tranche slug')
+  })
+
+  it('fires on a real legacy slug (predates -vN), drawn from the ships class — the coverage gap `retired-vocabulary.test.ts` closed', () => {
+    const slugs = legacySlugs()
+    expect(slugs.length, 'no legacy slugs on disk to prove coverage against').toBeGreaterThan(0)
+    const findings = checkUnresolvableReferences(
+      [{ path: 'aeg-root/enforcement.md', content: `shipped during ${slugs[0]}` }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      slugs
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+  })
+
+  it('the legacy-slug pattern does NOT fire on a bare substring inside a longer, unrelated token (review finding: MINOR)', () => {
+    const slugs = legacySlugs()
+    expect(slugs.length, 'no legacy slugs on disk to prove this against').toBeGreaterThan(0)
+    const pattern = legacySlugPattern(slugs)
+    expect(pattern).not.toBeNull()
+    // e.g. real slug `aeg-consolidation` must not match inside `xxx-aeg-consolidation-suffixyyy`
+    const embedded = `xxx-${slugs[0]}-suffixyyy`
+    expect((pattern as RegExp).test(embedded)).toBe(false)
+  })
+
+  it('the legacy-slug pattern reports only the slug itself, not the boundary characters around it', () => {
+    const slugs = legacySlugs()
+    const findings = checkUnresolvableReferences(
+      [{ path: 'aeg-root/enforcement.md', content: `(shipped during ${slugs[0]}.)` }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      slugs
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.message).toContain(`"${slugs[0]}"`)
+  })
+
+  it('does NOT fire inside a markdown code fence — a quoted example is not prose', () => {
+    const content = ['See the grammar:', '```', 'Closes #365', '```', 'in every PR.'].join('\n')
+    const findings = checkUnresolvableReferences(
+      [{ path: 'aeg-root/enforcement.md', content }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('does NOT fire inside a .tsx source comment — a developer comment is not reader prose', () => {
+    const content = ['// task 9 (#569) added them for `/cli`', 'export default function Page() { return null }'].join(
+      '\n'
+    )
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/vinaya/web/src/app/(site)/docs/page.tsx', content }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('never sweeps CLAUDE.md — this reader already has this forge', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/vinaya/CLAUDE.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  // issue-657, O6 — a spec DOES sweep now, with the same rules as a
+  // doctrine page, and the finding blocks (like the `product` class).
+  it('sweeps apps/*/specs/** with the doctrine-page rules, blocking', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/vinaya/specs/vinaya-spec.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toHaveLength(2)
+    expect(findings.every((f) => f.blocking)).toBe(true)
+    expect(findings.map((f) => f.message).join(' ')).toMatch(/a forge number/)
+    expect(findings.map((f) => f.message).join(' ')).toMatch(/an internal tranche slug/)
+  })
+
+  it('sweeps a root SPEC.md and a docs/adr record with the same blocking rules, no configuration at all', () => {
+    const findings = checkUnresolvableReferences(
+      [
+        { path: 'SPEC.md', content: 'closed by (#365), see aeg-coherence-v1' },
+        { path: 'docs/adr/0002-store-logs-remotely.md', content: 'decided in (#365)' }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.every((f) => f.blocking)).toBe(true)
+    expect(findings.map((f) => f.file)).toContain('SPEC.md')
+    expect(findings.map((f) => f.file)).toContain('docs/adr/0002-store-logs-remotely.md')
+  })
+
+  it('grandfathers a default-path spec by path exactly as it grandfathers a per-product one', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      undefined,
+      ['SPEC.md']
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('sweeps a file named only by specPaths, and reports nothing for a README with a badge-shaped slug', () => {
+    const files = [
+      { path: 'design/architecture.md', content: 'see aeg-coherence-v1' },
+      { path: 'README.md', content: 'Built with next-v1 and bun-v1.' }
+    ]
+    const findings = checkUnresolvableReferences(
+      files,
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      undefined,
+      [],
+      [...DEFAULT_SPEC_PATHS, 'design']
+    )
+    expect(findings.map((f) => f.file)).toEqual(['design/architecture.md'])
+  })
+
+  it('blocks a task number in a spec, beside the Issue numbers and slugs it already blocks', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'Delivered by task 4.\nTasks 11 and 12 follow.\nSee task #7 too.' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    const taskFindings = findings.filter((f) => f.message.includes('a task number'))
+    expect(taskFindings).toHaveLength(3)
+    expect(taskFindings.every((f) => f.blocking)).toBe(true)
+    expect(taskFindings[0]!.message).toContain('"task 4"')
+    expect(taskFindings[1]!.message).toContain('"Tasks 11"')
+    expect(taskFindings[2]!.message).toContain('"task #7"')
+  })
+
+  // The reported line is the citation's own, including when the citation
+  // opens a line: the pattern consumes the character before it, and where
+  // that character is the previous line's newline the whole match begins one
+  // line early. Nothing asserted a line number for this rule before, which is
+  // how that shipped.
+  it('reports the line the task number is actually on, at the start of a line and mid-line', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'an opening line\ntask 5 opens this line\nand mid task 6 sits here\n' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.map((f) => [f.line, f.message.includes('"task 5"') ? 'task 5' : 'task 6'])).toEqual([
+      [2, 'task 5'],
+      [3, 'task 6']
+    ])
+  })
+
+  it('reports the line an Issue number and a tranche slug are on when each opens a line', () => {
+    const findings = checkUnresolvableReferences(
+      [
+        {
+          path: 'aeg-root/roles/developer.md',
+          content: 'an opening line\n(#365) opened this line\naeg-coherence-v1 this one\n'
+        }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.map((f) => f.line)).toEqual([2, 3])
+  })
+
+  it("never reads a spec's own numbered structure as a task number", () => {
+    const findings = checkUnresolvableReferences(
+      [
+        {
+          path: 'apps/vinaya/specs/vinaya-spec.md',
+          content: 'Section 3 covers step 2 of Part 1. Multitasking 2 is not a citation, nor is a tasking 3 run.'
+        }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('leaves a doctrine page and product code untouched by the task-number rule', () => {
+    const findings = checkUnresolvableReferences(
+      [
+        { path: 'aeg-root/roles/developer.md', content: 'Delivered by task 4.' },
+        { path: 'apps/cli/src/commands/dispatch.ts', content: '// delivered by task 4' }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.filter((f) => f.message.includes('a task number'))).toEqual([])
+  })
+
+  it('a grandfathered spec is exempt from the task-number rule too', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'Delivered by task 4.' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      undefined,
+      ['SPEC.md']
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('a spec explicitly grandfathered by path is skipped entirely, even with a real citation', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/vinaya/specs/vinaya-spec.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      undefined,
+      ['apps/vinaya/specs/vinaya-spec.md']
+    )
+    expect(findings).toEqual([])
+  })
+
+  describe('per-file limit (object form of specGrandfather)', () => {
+    const SPEC = 'apps/vinaya/specs/vinaya-spec.md'
+    const run = (content: string, grandfather: Record<string, number>) =>
+      checkUnresolvableReferences(
+        [{ path: SPEC, content }],
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX,
+        [],
+        undefined,
+        grandfather
+      )
+
+    it('passes a file carrying exactly its limit', () => {
+      expect(run('closed by (#365) and (#366).', { [SPEC]: 2 })).toEqual([])
+    })
+
+    it('passes a file below its limit', () => {
+      expect(run('closed by (#365).', { [SPEC]: 2 })).toEqual([])
+    })
+
+    it('fails a file above its limit, naming the file, its count and its limit', () => {
+      const findings = run('closed by (#365), (#366) and (#367).', { [SPEC]: 2 })
+      expect(findings.length).toBe(3)
+      for (const f of findings) {
+        expect(f.file).toBe(SPEC)
+        expect(f.blocking).toBe(true)
+        expect(f.message).toContain(`${SPEC} carries 3 such findings`)
+        expect(f.message).toContain('limit of 2')
+      }
+    })
+
+    it('a limit of zero fails the first citation and passes a clean file', () => {
+      expect(run('closed by (#365).', { [SPEC]: 0 }).length).toBe(1)
+      expect(run('states its facts plainly.', { [SPEC]: 0 })).toEqual([])
+    })
+
+    it('counts the task-number rule too, with the same patterns as the ungrandfathered class', () => {
+      const content = 'Delivered by task 4, see aeg-coherence-v1 and (#365).'
+      const ungrandfathered = checkUnresolvableReferences(
+        [{ path: SPEC, content }],
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX
+      )
+      expect(ungrandfathered.length).toBe(3)
+      expect(run(content, { [SPEC]: 3 })).toEqual([])
+      expect(run(content, { [SPEC]: 2 }).length).toBe(3)
+    })
+
+    it('leaves a spec that is not listed fully checked', () => {
+      expect(run('closed by (#365).', { 'apps/other/specs/x.md': 5 }).length).toBe(1)
+    })
+
+    it('reaches a default-path spec through checkReaderResolvableProse', () => {
+      const findings = checkReaderResolvableProse(
+        [{ path: 'SPEC.md', content: 'closed by (#365), (#366).' }],
+        [],
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX,
+        [],
+        undefined,
+        { 'SPEC.md': 1 }
+      )
+      expect(findings.length).toBe(2)
+    })
+  })
+
+  it('red before green — a seeded violation fails, then the fix passes', () => {
+    const violating = checkUnresolvableReferences(
+      [{ path: 'aeg-root/roles/developer.md', content: 'This closed the gap (#365).' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(violating.length, 'expected the seeded violation to be caught').toBeGreaterThan(0)
+
+    const fixed = checkUnresolvableReferences(
+      [{ path: 'aeg-root/roles/developer.md', content: 'This closed the gap in a prior task.' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(fixed).toEqual([])
+  })
+})
+
+describe('the product class — a tranche-slug citation in product code is a blocking finding', () => {
+  it('fires as a blocking finding on a slug in CLI source', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/cli/src/index.ts', content: '// landed in aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.blocking).toBe(true)
+    expect(findings[0]!.message).toContain('product code')
+  })
+
+  it('does NOT fire on a bare forge number in the same product file — only the slug pattern extends here', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/cli/src/index.ts', content: 'fixed in (#365)' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('does NOT fire on a slug outside the product scope (a test/fixture dir under apps/cli)', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/cli/tests/x.test.ts', content: '// landed in aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('every other (non-product) finding still carries blocking: false', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'aeg-root/roles/developer.md', content: 'landed in aeg-coherence-v1 task 3' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.blocking).toBe(false)
+  })
+
+  it('does NOT fire on a slug split across two lines', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/cli/src/index.ts', content: '// landed in aeg-coherence\n-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('does NOT fire on a slug inside a fenced code block in a product README', () => {
+    const content = ['Usage:', '```', 'vinaya dispatch aeg-coherence-v1', '```', 'See the docs.'].join('\n')
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/cli/README.md', content }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('PRODUCT_SLUG_SCOPE is exactly the non-aeg-root scope list', () => {
+    expect(PRODUCT_SLUG_SCOPE).toEqual([
+      'apps/cli/src',
+      '.github/workflows',
+      '.vinaya',
+      'apps/cli/README.md',
+      'packages/sources/README.md'
+    ])
+  })
+})
+
+describe('class 2 — undefined coined vocabulary — the gate can see what it bans', () => {
+  const glossaryTerms = parseGlossaryTerms(REAL_GLOSSARY)
+
+  it('the real glossary yields the expected term list', () => {
+    expect(glossaryTerms).toEqual(
+      expect.arrayContaining([
+        'Brief',
+        'Dispatch',
+        'Forge',
+        'Gate',
+        'Impact tier',
+        'Provenance',
+        'Ratification',
+        'Seam',
+        'Step 0',
+        'The Dig',
+        'Tranche',
+        'Worktree'
+      ])
+    )
+  })
+
+  it('fires on a coined term used bare, drawn from the reader-facing class', () => {
+    const findings = checkUndefinedVocabulary(
+      [
+        {
+          path: 'apps/vinaya/web/src/app/(site)/start/quick/page.tsx',
+          content: "This step's changes land in the current tranche."
+        }
+      ],
+      glossaryTerms,
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.message).toContain('Tranche')
+  })
+
+  it('fires on a coined term used bare, drawn from the ships class', () => {
+    const findings = checkUndefinedVocabulary(
+      [{ path: 'aeg-root/roles/planner.md', content: 'The planner reads the tranche next.' }],
+      glossaryTerms,
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+  })
+
+  it('does NOT fire when the file defines the term inline (same "Term — definition" shape)', () => {
+    const findings = checkUndefinedVocabulary(
+      [
+        {
+          path: 'apps/vinaya/web/src/app/(site)/start/quick/page.tsx',
+          content: 'A tranche — a named batch of related tasks — is what ships together.'
+        }
+      ],
+      glossaryTerms,
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('does NOT fire when the file links the glossary', () => {
+    const findings = checkUndefinedVocabulary(
+      [
+        {
+          path: 'apps/vinaya/web/src/app/(site)/start/quick/page.tsx',
+          content: 'This lands in the current tranche. See /docs/glossary for definitions.'
+        }
+      ],
+      glossaryTerms,
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('does NOT match an ordinary-English word that merely contains a coined term ("briefly" is not "Brief")', () => {
+    const findings = checkUndefinedVocabulary(
+      [{ path: 'aeg-root/roles/planner.md', content: 'The planner briefly summarizes the sizing.' }],
+      glossaryTerms,
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('never sweeps apps/*/specs/** or CLAUDE.md — this reader already has this forge', () => {
+    const findings = checkUndefinedVocabulary(
+      [
+        { path: 'apps/vinaya/specs/vinaya-spec.md', content: 'The tranche and its brief are dispatched.' },
+        { path: 'apps/vinaya/CLAUDE.md', content: 'The tranche and its brief are dispatched.' }
+      ],
+      glossaryTerms,
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('reads the real glossary — deleting an entry from a scratch copy stops that term being checkable', () => {
+    const withEntry = parseGlossaryTerms(REAL_GLOSSARY)
+    expect(withEntry).toContain('Tranche')
+
+    const scratch = REAL_GLOSSARY.split('\n')
+      .filter((line) => !line.startsWith('**Tranche** —'))
+      .join('\n')
+    const withoutEntry = parseGlossaryTerms(scratch)
+    expect(withoutEntry).not.toContain('Tranche')
+    // Restored: the real file on disk was never touched — `scratch` is a
+    // string derived in memory, not written back.
+    expect(parseGlossaryTerms(REAL_GLOSSARY)).toContain('Tranche')
+  })
+
+  it('red before green — a seeded violation fails, then the fix (an inline definition) passes', () => {
+    const violating = checkUndefinedVocabulary(
+      [{ path: 'apps/vinaya/web/src/app/(site)/roadmap/page.tsx', content: 'The forge tracks every task.' }],
+      glossaryTerms,
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(violating.length, 'expected the seeded violation to be caught').toBeGreaterThan(0)
+
+    const fixed = checkUndefinedVocabulary(
+      [
+        {
+          path: 'apps/vinaya/web/src/app/(site)/roadmap/page.tsx',
+          content: 'The forge — the Git host treated as the source of truth — tracks every task.'
+        }
+      ],
+      glossaryTerms,
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(fixed).toEqual([])
+  })
+})
+
+describe('checkSourceComments — the source-comment class (Issue #575)', () => {
+  it('fires on a tranche-slug citation in a line comment', () => {
+    const findings = checkSourceComments([
+      { path: 'packages/aeg-core/src/x.ts', content: '// landed in review-convergence-v1 task 3\nexport const a = 1' }
+    ])
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.message).toContain('tranche-slug')
+    expect(findings[0]!.message).toContain('review-convergence-v1')
+    expect(findings[0]!.line).toBe(1)
+  })
+
+  it('fires on a forge-number citation in a block comment', () => {
+    const findings = checkSourceComments([
+      { path: 'packages/aeg-core/src/x.ts', content: '/**\n * fixed the gap (#4213)\n */\nexport const a = 1' }
+    ])
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.message).toContain('forge-number')
+    expect(findings[0]!.line).toBe(2)
+  })
+
+  it('does NOT fire on a slug/number-shaped string inside a string literal, not a comment', () => {
+    const findings = checkSourceComments([
+      { path: 'packages/aeg-core/src/x.ts', content: 'const url = "https://vinaya.dev/review-convergence-v1/#4213"' }
+    ])
+    expect(findings).toEqual([])
+  })
+
+  it('does NOT fire on a non-.ts file', () => {
+    const findings = checkSourceComments([{ path: 'aeg-root/roles/developer.md', content: '// review-convergence-v1' }])
+    expect(findings).toEqual([])
+  })
+
+  it('honours the allowlist — a named file is skipped entirely', () => {
+    const content = '// review-convergence-v1 (#4213)'
+    const findings = checkSourceComments(
+      [{ path: 'packages/aeg-core/src/allowed.ts', content }],
+      ['packages/aeg-core/src/allowed.ts']
+    )
+    expect(findings).toEqual([])
+
+    const stillFires = checkSourceComments([{ path: 'packages/aeg-core/src/allowed.ts', content }])
+    expect(stillFires.length).toBeGreaterThan(0)
+  })
+
+  it('red before green — a seeded comment citation fails, then a fact-stated rewrite passes', () => {
+    const violating = checkSourceComments([
+      { path: 'packages/aeg-core/src/x.ts', content: '// closed the gap (#4213)' }
+    ])
+    expect(violating.length, 'expected the seeded violation to be caught').toBeGreaterThan(0)
+
+    const fixed = checkSourceComments([
+      { path: 'packages/aeg-core/src/x.ts', content: '// a closed union now covers every failure class' }
+    ])
+    expect(fixed).toEqual([])
+  })
+})
+
+describe('extractComments', () => {
+  it('keeps only line- and block-comment text, blanking code and preserving line count', () => {
+    const content = ['const a = 1 // review-convergence-v1', '/* #4213', 'still a comment */', 'const b = 2'].join('\n')
+    const extracted = extractComments('packages/aeg-core/src/x.ts', content)
+    expect(extracted.split('\n')).toHaveLength(4)
+    expect(extracted).toContain('review-convergence-v1')
+    expect(extracted).toContain('#4213')
+    expect(extracted).not.toContain('const a')
+    expect(extracted).not.toContain('const b')
+  })
+
+  it('blanks string and template literal content so an embedded "//" is never read as a comment start', () => {
+    const content = 'const url = "https://vinaya.dev" // review-convergence-v1'
+    const extracted = extractComments('packages/aeg-core/src/x.ts', content)
+    expect(extracted).not.toContain('https://vinaya.dev')
+    expect(extracted).toContain('review-convergence-v1')
+  })
+
+  it('honours a backslash escape inside a string so an escaped quote does not end the literal early', () => {
+    const content = String.raw`const s = "a \" review-convergence-v1" // real comment #4213`
+    const extracted = extractComments('packages/aeg-core/src/x.ts', content)
+    expect(extracted).not.toContain('review-convergence-v1')
+    expect(extracted).toContain('real comment #4213')
+  })
+
+  it('returns an all-blank string for a non-.ts/.tsx file', () => {
+    const extracted = extractComments('aeg-root/roles/developer.md', 'review-convergence-v1\n#4213')
+    expect(extracted.replace(/\n/g, '')).toBe('')
+  })
+})
+
+describe('stripNonProse', () => {
+  it('blanks fenced and inline code in markdown while preserving line count', () => {
+    const content = ['before', '```', 'inside #365', '```', 'after `#365` too'].join('\n')
+    const stripped = stripNonProse('aeg-root/x.md', content)
+    expect(stripped.split('\n')).toHaveLength(5)
+    expect(stripped).not.toContain('#365')
+  })
+
+  it('blanks line and block comments in .tsx while preserving line count', () => {
+    const content = ['const a = 1 // #365', '/* tranche', 'still a comment */', 'const b = 2'].join('\n')
+    const stripped = stripNonProse('apps/vinaya/web/src/app/(site)/x/page.tsx', content)
+    expect(stripped.split('\n')).toHaveLength(4)
+    expect(stripped).not.toContain('#365')
+    expect(stripped).not.toContain('tranche')
+  })
+
+  it('leaves other file kinds untouched', () => {
+    expect(stripNonProse('apps/vinaya/specs/vinaya-spec.md.txt', '// not stripped')).toBe('// not stripped')
+  })
+
+  it('does NOT treat a URL\'s "//" as a comment start — real prose after it survives (review finding: MAJOR)', () => {
+    const content = '<p>See https://vinaya.dev — every tranche ships here</p>'
+    const stripped = stripNonProse('apps/vinaya/web/src/app/(site)/x/page.tsx', content)
+    expect(stripped).toContain('https://vinaya.dev')
+    expect(stripped).toContain('every tranche ships here')
+  })
+
+  it('still strips a genuine trailing comment that follows a URL on the same line', () => {
+    const content = 'const href = "https://vinaya.dev" // tranche: internal note'
+    const stripped = stripNonProse('apps/vinaya/web/src/app/(site)/x/page.tsx', content)
+    expect(stripped).toContain('https://vinaya.dev')
+    expect(stripped).not.toContain('internal note')
+  })
+})
+
+describe('regression: class 2 still fires on prose that follows a URL on the same line', () => {
+  it('detects a bare coined term after "https://" without the URL eating it (review finding: MAJOR)', () => {
+    const findings = checkUndefinedVocabulary(
+      [
+        {
+          path: 'apps/vinaya/web/src/app/(site)/start/page.tsx',
+          content: '<p>See https://vinaya.dev — every tranche ships here</p>'
+        }
+      ],
+      ['Tranche'],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.message).toContain('Tranche')
+  })
+})
+
+describe('shipsPrefix — an adopter\'s doctrine root need not be "aeg-root/" (task 7, Issue #56)', () => {
+  const CUSTOM_ROOT = 'governance-docs/'
+
+  it('classifyProseFile treats the custom root as the ships class, and its own completed-tranches archive as internal', () => {
+    expect(
+      classifyProseFile('governance-docs/enforcement.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, CUSTOM_ROOT)
+    ).toBe('ships')
+    expect(
+      classifyProseFile(
+        'governance-docs/tranches/completed/old.md',
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX,
+        CUSTOM_ROOT
+      )
+    ).toBe('internal')
+    // The default "aeg-root/" is no longer special once a custom root is given.
+    expect(
+      classifyProseFile('aeg-root/enforcement.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, CUSTOM_ROOT)
+    ).toBeNull()
+  })
+
+  it('checkReaderResolvableProse sweeps the custom root, not the default one', () => {
+    const findings = checkReaderResolvableProse(
+      [{ path: 'governance-docs/roles/reviewer.md', content: 'Closed the gap (#365) in this tranche.' }],
+      ['Tranche'],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      CUSTOM_ROOT
+    )
+    expect(findings.length).toBeGreaterThanOrEqual(2)
+
+    // The identical content under the DEFAULT root is out of scope once a
+    // custom root is in effect — proof this is a real switch, not an
+    // additive scan.
+    const outOfScope = checkReaderResolvableProse(
+      [{ path: 'aeg-root/roles/reviewer.md', content: 'Closed the gap (#365) in this tranche.' }],
+      ['Tranche'],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      CUSTOM_ROOT
+    )
+    expect(outOfScope).toEqual([])
+  })
+})
+
+describe('checkReaderResolvableProse — runs both classes together', () => {
+  it('reports both a reference finding and a vocabulary finding for one file', () => {
+    const findings = checkReaderResolvableProse(
+      [{ path: 'aeg-root/roles/reviewer.md', content: 'Closed the gap (#365) in this tranche.' }],
+      ['Tranche'],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+// A configured spec path is hand-written, so the class accepts the spellings a
+// hand writes and reduces them to one. Unnormalized, a trailing slash or a
+// leading `./` was collected and read but never classified — the entry checked
+// nothing at all, silently.
+describe('normalizeSpecPath — one spelling for a hand-written entry', () => {
+  it('strips a leading ./, a trailing slash and a doubled separator', () => {
+    expect(normalizeSpecPath('docs/adr/')).toBe('docs/adr')
+    expect(normalizeSpecPath('./docs/adr')).toBe('docs/adr')
+    expect(normalizeSpecPath('./docs//adr///')).toBe('docs/adr')
+    expect(normalizeSpecPath('PRODUCT.md')).toBe('PRODUCT.md')
+  })
+
+  it('leaves a bare entry exactly as written', () => {
+    for (const entry of DEFAULT_SPEC_PATHS) expect(normalizeSpecPath(entry)).toBe(entry)
+  })
+
+  it('classifies a file under an entry written with a trailing slash or a leading ./', () => {
+    expect(
+      classifyProseFile('docs/adr/x.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, ['docs/adr/'])
+    ).toBe('spec')
+    expect(classifyProseFile('design/a.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, ['./design'])).toBe(
+      'spec'
+    )
+  })
+})

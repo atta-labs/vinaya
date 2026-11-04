@@ -161,8 +161,8 @@ function fixtureFacts(): BriefFacts {
     sourceRevision: 'a'.repeat(40),
     cliInvocation: 'bun apps/cli/src/index.ts',
     localGateCommands: {
-      dispatchReadiness: 'bun packages/aeg-core/bin/verify-dispatch.ts',
-      docCoverage: 'bun packages/aeg-core/bin/verify-docs.ts'
+      dispatchReadiness: 'bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts',
+      docCoverage: 'bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts'
     }
   }
 }

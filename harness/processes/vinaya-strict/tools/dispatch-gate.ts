@@ -1,0 +1,344 @@
+/**
+ * Dispatch-readiness composition. Pure — no `fs`, no `fetch`. Composes the forge/rationale/provenance/
+ * archival facts the CLI shim (`bin/verify-dispatch.ts`) gathers (reusing
+ * `parseTranche`, `hasProvenance`, `taskRefFromBranch`,
+ * `checkIssueRationale`, `fetchProvenance` — never re-implementing any of
+ * them) into one `{ ready, blockers }` verdict, one blocker string per
+ * failing predicate.
+ *
+ * Every predicate here mechanizes a prose precondition that `roles/
+ * developer.md`'s entry gate and `contracts/brief-developer.md` currently
+ * state as something the Developer must re-derive by hand — the exact gap
+ * this task exists to close: four Developer agents independently re-derived
+ * (and stopped on) the same archival fact from scratch, at real token cost,
+ * hours after it first became true (aeg-governance-hardening's 2026-07-02/03
+ * live-fire wave).
+ *
+ * Message style mirrors `coherence-checks.ts`'s A1/A2/T2/etc. family: one
+ * line per failure, naming the exact task/Issue/PR involved.
+ */
+
+import type { PriorTrancheArchivalFact } from '@attalabs/aeg-forge-state'
+import { edgesNameEachOther } from '../../../../packages/aeg-core/src/issue-validation'
+
+/** The one edge reader both gates use — the write gate's own function, re-exposed so a test can assert identity. */
+export const conflictEdgeReader = edgesNameEachOther
+
+/** One task Issue reduced to what an edge reader needs: its reference and its parsed `Conflicts-with` ids. */
+export type ConflictEdgeParty = { ref: string; conflictsWith: string[] }
+
+/**
+ * The dispatch gate's edge reader: the same `edgesNameEachOther` the Issue
+ * write gate uses, so a `Conflicts-with` edge is present when EITHER task
+ * names the other. Returns the siblings sharing an edge with `subject`,
+ * whichever side declared it. `Depends-on` is directed and never read here.
+ */
+export function siblingsSharingConflictEdge<S extends ConflictEdgeParty>(
+  subject: ConflictEdgeParty,
+  siblings: S[]
+): S[] {
+  return siblings.filter((s) => s.ref !== subject.ref && conflictEdgeReader(subject, s))
+}
+
+import type { Task } from '../../../../packages/aeg-core/src/types'
+import { isPrincipal } from '../../../../packages/aeg-core/src/waiver-label'
+
+export type DispatchIssueFact = { number: number; state: 'open' | 'closed' } | null
+
+export type DispatchEdgeFact = {
+  /** The edge's target task id, as written in the topology's depends-on/conflicts-with cell. */
+  id: string
+  /** The target task's Issue number, if known — for message readability only. */
+  issue: number | null
+}
+
+export type DispatchDependsOnFact = DispatchEdgeFact & {
+  merged: boolean
+  /**
+   * `false` when the resolver could not find any tranche/task/Issue matching
+   * this edge at all — a fact distinct from `merged: false`, which means the
+   * edge resolved to a real target that just hasn't merged yet. Conflating
+   * the two produced a false "not merged yet" claim for a real dependency
+   * edge, which had genuinely already merged
+   * — the message this distinction exists to correct. Absent or
+   * `true` for every edge the resolver actually matched to a target,
+   * including one whose target lookup itself then failed (an outage), which
+   * stays under the existing conservative `merged: false` default rather
+   * than this one.
+   */
+  resolved?: boolean
+  /**
+   * `true` when the forge could not be read for this edge's dependency — a
+   * fact distinct from `merged: false`: nothing is known about the
+   * dependency, so the gate refuses with a retryable reason rather than
+   * claiming it is unmerged.
+   */
+  readFailed?: boolean
+  /**
+   * Hand-close recognition facts — a
+   * second, narrower path alongside `merged` for a dependency Issue closed
+   * directly by a recognized Principal, with a stated `COMPLETED` reason,
+   * rather than via a merged PR. All three are `null`/absent when the edge
+   * is unresolvable or the target issue is open/has no close event — in
+   * which case this path never fires and only `merged` matters, same as
+   * before this task.
+   */
+  issueState?: 'open' | 'closed' | null
+  stateReason?: 'completed' | 'not_planned' | null
+  closedByActor?: string | null
+}
+
+/**
+ * True when a dependency Issue was closed directly by a recognized Principal
+ * with a stated `COMPLETED` reason — the second, narrower "done" path this
+ * task adds alongside `merged`. Deliberately conjunctive and centralized
+ * here (not duplicated per caller): the trap this task exists to avoid is
+ * "any closed Issue with a comment counts," so every condition below is a
+ * real forge fact, not a prose claim —
+ *   - `issueState === 'closed'`: the Issue is actually closed.
+ *   - `stateReason === 'completed'`: GitHub's own close reason says resolved,
+ *     not `not_planned` (abandoned — the opposite of resolved).
+ *   - `closedByActor` is the GitHub login that performed the CLOSED_EVENT
+ *     (not a claim in a comment body) and is a member of the recognized
+ *     Principal allowlist.
+ */
+function isHandClosedByRecognizedPrincipal(
+  dep: Pick<DispatchDependsOnFact, 'issueState' | 'stateReason' | 'closedByActor'>,
+  principalAllowlist: string[]
+): boolean {
+  return (
+    dep.issueState === 'closed' &&
+    dep.stateReason === 'completed' &&
+    isPrincipal(dep.closedByActor ?? null, principalAllowlist)
+  )
+}
+
+export type DispatchConflictsWithFact = DispatchEdgeFact & { openOrInFlight: boolean }
+
+/**
+ * Removed the predicate that consumed this fact
+ * (`checkDispatchReadiness` no longer blocks on it) — automated the
+ * signal (per-task provenance posting) this predicate existed to protect,
+ * making the row-adjacency gate itself the stale part, not the automation.
+ * Kept, dormant, rather than deleted: several callers (`bin/verify-dispatch.ts`,
+ * both Studio/Vinaya `map-dispatch-input.ts` mappers) still assemble this
+ * fact as harmless dead plumbing, and `DispatchGateInput.priorTask` below
+ * remains the exact shape needed to test the predicate's absence.
+ */
+export type DispatchPriorTaskFact = {
+  id: string
+  issue: number | null
+  issueClosed: boolean
+  prMerged: boolean
+  hasProvenance: boolean
+}
+
+/** One entry per project a task names — the shape `resolvePriorTrancheArchival` returns, defined beside the reads that produce it. */
+export type DispatchPriorTrancheFact = PriorTrancheArchivalFact
+
+export type DispatchGateInput = {
+  trancheSlug: string
+  /** The topology row for this task, as parsed by `parseTranche`. */
+  task: Task
+  /** null when the task has no Issue (#TBD/blank) OR the Issue number doesn't resolve on the forge (phantom ref). */
+  issue: DispatchIssueFact
+  /** `checkIssueRationale` result for this task's Issue — irrelevant (treated as passing) when `issue` is null. */
+  issueRationalePass: boolean
+  dependsOn: DispatchDependsOnFact[]
+  conflictsWith: DispatchConflictsWithFact[]
+  /**
+   * The immediately-prior task in this same tranche's topology, or null
+   * when this is the first task. no longer read by
+   * `checkDispatchReadiness` — dormant field, kept for caller compatibility.
+   */
+  priorTask: DispatchPriorTaskFact | null
+  /** One entry per project named in `task.projects`. */
+  priorTrancheArchival: DispatchPriorTrancheFact[]
+  /**
+   * The Principal list for hand-close recognition — the repository's own
+   * `vinaya.config.json` `principals` field, resolved by the caller before
+   * calling in (never read from here; this stays pure). REQUIRED, with no
+   * built-in fallback, same as `checkReviewGate`'s `principalAllowlist`
+   * (`review-gate.ts`) — hardcoding this repo's own principal made that gate
+   * unpassable on any adopter repo; the same mistake here would silently do
+   * the same to the hand-close path.
+   */
+  principalAllowlist: string[]
+}
+
+/**
+ * Every distinct dispatch-readiness blocker shape `checkDispatchReadiness`
+ * can produce, named apart from its human `message` string —
+ * the recovery-prompt switch in `check-dispatch-readiness.ts` matches on
+ * THIS, never on parsing `message`'s text. Closed deliberately: a new
+ * blocker kind that reuses an existing member here silently inherits that
+ * member's (possibly wrong) recovery prompt, while adding a genuinely new
+ * member without a matching `case` in the consumer's switch fails typecheck
+ * via that switch's exhaustiveness check — the trap a real regression fell into (a new
+ * self-dependency class read as depends-on, whose stock prompt said "close
+ * the dependency" for a dependency that can never close) is now a compile
+ * error, not a live incident.
+ */
+export type DispatchBlockerClass =
+  | 'internal-self-dependency'
+  | 'issue-existence'
+  | 'rationale'
+  | 'depends-on-unresolvable'
+  | 'depends-on-not-merged'
+  | 'depends-on-read-failed'
+  | 'conflicts-with'
+  | 'prior-tranche-archival'
+
+/** A blocker's machine-readable class, beside the human string it always also carries. */
+export type DispatchBlocker = { class: DispatchBlockerClass; message: string }
+
+/**
+ * `blockers` stays the plain message list existing callers (`brief-render.ts`
+ * via `brief-assembly.ts`, `bin/verify-dispatch.ts`) already depend on —
+ * unchanged, byte-identical to before this task. `blockerDetails` is the new,
+ * additive field: the same blockers, each now paired with its
+ * `DispatchBlockerClass`, for a consumer (`check-dispatch-readiness.ts`) that
+ * needs to route on the class rather than re-parse the string.
+ */
+export type DispatchResult = { ready: boolean; blockers: string[]; blockerDetails: DispatchBlocker[] }
+
+/**
+ * True when a parsed `depends-on` edge points back at its own host task.
+ *
+ * A self-dependency is unsatisfiable by construction, so it is never a real
+ * gate state — its presence is proof of a defect in the edge text or in its
+ * resolution. `parseRationaleDeps` (`@attalabs/aeg-forge-state`) reads only
+ * a labeled `Depends-on:`/`Conflicts-with:` field's own comma-separated,
+ * id-shaped tokens; an unlabeled/bare span elsewhere in the
+ * "Dependency rationale" section is never read as an edge, whatever its
+ * shape (`parse-rationale-deps.ts`'s own module comment states the rule). A
+ * slug-qualified token in that list (`aeg-governance-hardening #NNN`) still
+ * resolves its trailing bare number against the NAMED tranche, not the host
+ * — a resolver bug there is what would land a task depending on itself, on
+ * that tranche's own task `1`.
+ *
+ * Reported as an INTERNAL error rather than through the ordinary
+ * "not merged yet" branch below, because that message reads as a legitimate
+ * serialization and invites the reader to route around it: two Developer
+ * agents faced with exactly this gate concluded it was a false positive and
+ * committed with `--no-verify` to get past their hooks. Naming it a tool bug
+ * converts "agent improvises around a nonsense gate" into "agent escalates,"
+ * which is the behavior the gate architecture assumes.
+ *
+ * Two arms, because the edge can carry either shape: a resolved Issue number
+ * equal to this task's own, or — the live case — a bare same-tranche id equal
+ * to this task's own id.
+ */
+function isSelfDependency(dep: DispatchDependsOnFact, task: Task, issue: DispatchIssueFact): boolean {
+  if (dep.issue !== null && issue !== null && dep.issue === issue.number) return true
+  const bare = dep.id.trim().replace(/^#/, '')
+  return bare.toLowerCase() === task.id.trim().toLowerCase()
+}
+
+export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult {
+  const { trancheSlug, task } = input
+  const taskLabel = `task ${task.id} (tranche ${trancheSlug})`
+  const { principalAllowlist } = input
+  const blockerDetails: DispatchBlocker[] = []
+  const push = (blockerClass: DispatchBlockerClass, message: string): void => {
+    blockerDetails.push({ class: blockerClass, message })
+  }
+
+  // Issue-existence — the topology row itself has no Issue number.
+  if (task.issue === null) {
+    push(
+      'issue-existence',
+      `dispatch-gate issue-existence: ${taskLabel} has no Issue (#TBD or blank) in the topology — not dispatchable until the Planner cuts the Issue.`
+    )
+  } else if (input.issue === null) {
+    // Row names an Issue number, but it doesn't resolve on the forge — phantom ref (T1's fail class).
+    push(
+      'issue-existence',
+      `dispatch-gate issue-existence: ${taskLabel} names Issue #${task.issue}, but it does not resolve to a real GitHub Issue (phantom reference).`
+    )
+  }
+
+  // Planner-rationale completeness — only evaluable when the Issue itself resolved.
+  if (input.issue !== null && !input.issueRationalePass) {
+    push(
+      'rationale',
+      `dispatch-gate rationale: Issue #${input.issue.number} for ${taskLabel} fails the rationale gate (checkIssueRationale) — the Planner must complete the rationale (all eight fields for a tranche task; a single-fix Issue omits only Sizing, Project(s) + blast radius and Dependency rationale) before this task is dispatchable.`
+    )
+  }
+
+  // Depends-on merged — OR hand-closed by a recognized Principal: a
+  // second, narrower path for a dependency
+  // Issue closed directly rather than via a merged PR.
+  for (const dep of input.dependsOn) {
+    // Evaluated BEFORE the unresolvable branch: a self-reference that also
+    // failed to resolve is still a parser bug, and reporting it as an
+    // unresolvable edge would send the reader to correct edge text that is
+    // not actually the fault.
+    if (isSelfDependency(dep, task, input.issue)) {
+      const issueStr = input.issue !== null ? `#${input.issue.number}` : '?'
+      push(
+        'internal-self-dependency',
+        `dispatch-gate INTERNAL: parsed a self-dependency for task ${task.id} (${issueStr}) — this is a parser bug in parseRationaleDeps, not a real dependency. Please report it upstream. Re-run once the rationale is corrected or the fix ships.`
+      )
+      continue
+    }
+    if (dep.resolved === false) {
+      // Distinct from the "not merged yet" branch below: this edge
+      // never resolved to any tranche/task/Issue at all, so a "not merged"
+      // claim would misattribute the failure to the forge rather than to
+      // the edge text. Still blocks — the conservative default is correct
+      // for a genuinely unresolvable edge — but says so honestly.
+      push(
+        'depends-on-unresolvable',
+        `dispatch-gate depends-on: ${taskLabel} depends on "${dep.id}", which is UNRESOLVABLE — the resolver could not find a matching tranche/task/Issue for this edge (not a claim about merge status). Not dispatchable until the edge is corrected.`
+      )
+      continue
+    }
+    if (dep.readFailed === true) {
+      const issueStr = dep.issue !== null ? ` (#${dep.issue})` : ''
+      push(
+        'depends-on-read-failed',
+        `dispatch-gate depends-on: ${taskLabel} depends on ${dep.id}${issueStr}, but the forge could not be read for that dependency — not a claim about its merge status. Retry the check.`
+      )
+      continue
+    }
+    if (!dep.merged && !isHandClosedByRecognizedPrincipal(dep, principalAllowlist)) {
+      const issueStr = dep.issue !== null ? ` (#${dep.issue})` : ''
+      push(
+        'depends-on-not-merged',
+        `dispatch-gate depends-on: ${taskLabel} depends on ${dep.id}${issueStr}, whose PR is not merged yet — not dispatchable, it serializes behind it.`
+      )
+    }
+  }
+
+  // Conflicts-with not open/in-flight.
+  for (const c of input.conflictsWith) {
+    if (c.openOrInFlight) {
+      const issueStr = c.issue !== null ? ` (#${c.issue})` : ''
+      push(
+        'conflicts-with',
+        `dispatch-gate conflicts-with: ${taskLabel} conflicts with ${c.id}${issueStr}, whose PR is open or in-flight — not dispatchable until it merges.`
+      )
+    }
+  }
+
+  // Prior-task archival / row-adjacency predicate REMOVED (2026-07-13).
+  // The retired predicate required every earlier table row's full archival (Issue
+  // closed, PR merged, provenance posted) regardless of whether that row was
+  // a declared dependency automated the provenance-posting signal
+  // this existed to protect, so the blanket row-order block outlived its
+  // justification. `input.priorTask` is still accepted (dormant) for caller
+  // compatibility; see the type's doc comment above.
+
+  // Prior-tranche archival, per project named in Project(s).
+  for (const proj of input.priorTrancheArchival) {
+    if (proj.priorTrancheSlug !== null && !proj.archived) {
+      push(
+        'prior-tranche-archival',
+        `dispatch-gate prior-tranche-archival: project \`${proj.project}\`'s previous tranche \`${proj.priorTrancheSlug}\` is not archived — the Tranche Archivist must run before new work on this product.`
+      )
+    }
+  }
+
+  return { ready: blockerDetails.length === 0, blockers: blockerDetails.map((b) => b.message), blockerDetails }
+}

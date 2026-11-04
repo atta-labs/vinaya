@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
-import { checkReviewGate, DEFAULT_REVIEW_POLICY, policyDigest } from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY, policyDigest } from '@attalabs/aeg-core'
+import { checkReviewGate } from '../../../../tools/review-gate'
 
 export const CLI_ROOT = join(
   dirname(fileURLToPath(import.meta.url)),

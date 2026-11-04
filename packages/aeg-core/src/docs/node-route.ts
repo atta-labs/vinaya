@@ -30,7 +30,7 @@
  * never reads a file (an aeg-core purity fix).
  */
 
-import type { DiagramNode } from '../diagram-model'
+import type { DiagramNode } from '../../../../harness/processes/vinaya-strict/tools/diagram-model'
 
 export type NodeDocRoute = {
   /** The page a node lives on. */

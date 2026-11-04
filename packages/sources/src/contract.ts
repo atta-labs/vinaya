@@ -6,4 +6,4 @@
  * origin package.
  */
 export type { StateSource } from '@attalabs/aeg-core'
-export type { DoctrineContent, DoctrineSource } from '@attalabs/aeg-core'
+export type { DoctrineContent, DoctrineSource } from '../../../harness/processes/vinaya-strict/tools/doctrine-source.js'

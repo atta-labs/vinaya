@@ -350,10 +350,10 @@ export type BriefFacts = {
 
 /** See `BriefFacts.localGateCommands`. */
 export type LocalGateCommands = {
-  /** e.g. `bun packages/aeg-core/bin/verify-dispatch.ts`, or `null`. */
+  /** e.g. `bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts`, or `null`. */
   dispatchReadiness: string | null
   /**
-   * e.g. `bun packages/aeg-core/bin/verify-docs.ts`, or `null`. No longer
+   * e.g. `bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts`, or `null`. No longer
    * rendered: the documentation gate is the controller's (`run_checks`, CI),
    * so §12 names no hand-run pre-open command. Still a fact the caller
    * states, so the caller's own shape is unchanged.

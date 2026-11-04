@@ -31,7 +31,7 @@ export function resolveCheckBin(packageDir: string, moduleUrl: string): { dir: s
   const bundled = fromPackage === 'dist' || fromPackage.startsWith(`dist${sep}`)
   return bundled
     ? { dir: join(packageDir, 'dist', 'checks', 'bin'), ext: '.js' }
-    : { dir: join(packageDir, 'src', 'checks', 'bin'), ext: '.ts' }
+    : { dir: join(packageDir, '..', '..', 'harness/processes/vinaya-strict/checks/bin'), ext: '.ts' }
 }
 
 const CHECK_BIN = resolveCheckBin(cliPackageRoot(), import.meta.url)
@@ -60,7 +60,7 @@ export function resolveGateStep(
   const { dir, ext } = resolveCheckBin(packageDir, moduleUrl)
   const path =
     step === 'verify-dispatch' && ext === '.ts'
-      ? join(packageDir, '..', '..', 'packages', 'aeg-core', 'bin', 'verify-dispatch.ts')
+      ? join(packageDir, '..', '..', 'harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts')
       : join(dir, `${step}${ext}`)
   return existsSync(path) ? path : null
 }
@@ -68,7 +68,7 @@ export function resolveGateStep(
 /**
  * `ring` — which of `aeg-root/enforcement.md`'s three ring tables this core
  * check's own row belongs in, when the registry-scaffold writer
- * (`packages/aeg-core/src/registry-scaffold.ts`) needs to auto-insert a stub
+ * (`harness/processes/vinaya-strict/checks/registry-scaffold.ts`) needs to auto-insert a stub
  * row for it. Derived mechanically, not by re-reading each check's prose:
  * `0` for every check that runs under the managed local hooks (pre-commit/
  * pre-push's `vinaya check --all --local`) — i.e. everything that is
@@ -1078,7 +1078,7 @@ export function coreCheckRegistry(): CheckSpec[] {
 
 /** `name` -> `ring`, derived from the same `REGISTRY` pairing `coreCheckRegistry()`
  * reads — never out of sync with it by construction. Consulted by
- * `packages/aeg-core/src/registry-scaffold.ts` indirectly, through the
+ * `harness/processes/vinaya-strict/checks/registry-scaffold.ts` indirectly, through the
  * aeg-core-local mirror in `gate-audience.ts` (aeg-core cannot import this
  * module — see that file's own doc comment for why); `gate-audience.test.ts`-
  * style coupling assertions in this package keep the two in sync. */

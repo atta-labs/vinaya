@@ -1,0 +1,465 @@
+import { describe, expect, it } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, relative, sep } from 'node:path'
+import { checkDispatchReadiness, type DispatchConflictsWithFact, type DispatchGateInput } from '../tools/dispatch-gate'
+import { checkFirstPushDispatchGate } from './first-push-dispatch-gate'
+import { firstPushArchivalReadiness } from './bin/check-first-push-dispatch'
+import { priorTrancheArchivalFindings } from './bin/check-dispatch-readiness'
+import { resolveSiblingConflictFacts } from './sibling-conflict-facts'
+import { reassertPremiseFile } from '../tools/premise-reassert-logic'
+import { containedAbs } from '../../../kernel/gates/ops'
+
+/**
+ * Bin-level regression for the `PREMISE_FILE` wiring (task 10, #59). The
+ * bin's forge-dependent path (a real task branch) needs a live `gh`/network
+ * round-trip that isn't hermetic to spawn in CI — `reassertPremiseFile`'s own
+ * unit tests (`premise-reassert-logic.test.ts`) cover the pass/fail/missing-
+ * file/no-pins decision logic directly. What this file proves instead: on a
+ * non-task branch, with no `<tranche> <n>` argument either (`main` matches
+ * neither), the check still exits `0` whether or not `PREMISE_FILE` is set —
+ * `PREMISE_FILE` itself stays inert either way (issue-661, O2, did not
+ * change that) — but now names the branch and says nothing was evaluated,
+ * rather than the silent, unqualified pass this bypass used to print.
+ */
+const REPO_ROOT = join(import.meta.dir, '../../../..')
+const BIN = join(REPO_ROOT, 'harness/processes/vinaya-strict/checks/bin/check-dispatch-readiness.ts')
+
+async function run(env: Record<string, string>, args: string[] = []): Promise<{ exitCode: number; stderr: string }> {
+  const proc = Bun.spawn(['bun', BIN, ...args], {
+    env: { ...process.env, ...env },
+    cwd: REPO_ROOT,
+    stdout: 'ignore',
+    stderr: 'pipe'
+  })
+  const stderr = await new Response(proc.stderr).text()
+  const exitCode = await proc.exited
+  return { exitCode, stderr }
+}
+
+/**
+ * `runIssueMode` (task-run-v1 21, #541, O2, round 2 review MAJOR): a
+ * `task/issue-<n>` branch resolves `checkDispatchReadiness` straight off the
+ * Issue itself — no topology row, no Milestone. A fake `gh` on `PATH`
+ * answers `gh issue view <n> --json number,state,body,labels`; no other
+ * forge call happens for a rationale-empty Issue with no dependency edges
+ * (`resolveEdge`/`resolveToken` are never reached) beyond the Principal read
+ * of the default branch's `vinaya.config.json`, which the fake answers with a
+ * configured list, so no live network is needed to exercise the three
+ * routing branches below.
+ */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
+function writeFakeGh(dir: string, issueJson: Record<string, unknown> | null): void {
+  const p = join(dir, 'gh')
+  const body = issueJson === null ? null : JSON.stringify(issueJson)
+  writeFileSync(
+    p,
+    `#!/bin/sh
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+${body === null ? '  exit 1' : `  printf '%s' '${body.replace(/'/g, "'\\''")}'\n  exit 0`}
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    repos/*/contents/vinaya.config.json) echo '${PRINCIPALS_CONFIG_B64}'; exit 0 ;;
+  esac
+fi
+echo "unhandled fake gh call in dispatch-readiness issue-mode test: $*" >&2
+exit 1
+`
+  )
+  chmodSync(p, 0o755)
+}
+
+async function runBin(binDir: string, env: Record<string, string>): Promise<{ exitCode: number; stderr: string }> {
+  const proc = Bun.spawn(['bun', BIN], {
+    env: {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH}`,
+      // The Principal read addresses the fake's \`contents\` answer, never the
+      // pre-merge probe's local ref.
+      GITHUB_REPOSITORY: 'atta-labs/vinaya',
+      VINAYA_CI_CONFIG_PROBE_REF: '',
+      ...env
+    },
+    cwd: REPO_ROOT,
+    stdout: 'ignore',
+    stderr: 'pipe'
+  })
+  const stderr = await new Response(proc.stderr).text()
+  const exitCode = await proc.exited
+  return { exitCode, stderr }
+}
+
+describe('check-dispatch-readiness: runIssueMode (task-run-v1 21, #541, O2, round 2 review MAJOR)', () => {
+  it("an Issue that does not resolve on the forge fails with the issue-existence blocker, naming the branch's own Issue number", async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'dispatch-readiness-issue-bin-'))
+    try {
+      writeFakeGh(binDir, null)
+      const result = await runBin(binDir, { BRANCH: 'task/issue-541' })
+      expect(result.exitCode).toBe(1)
+      const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+      const error = JSON.parse(jsonLine ?? '')
+      expect(error.check).toBe('dispatch-readiness')
+      expect(error.message).toContain('Issue #541 does not resolve on the forge')
+    } finally {
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an Issue carrying a vinaya/tranche:* label refuses — it has a real tranche home, not the backlog path', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'dispatch-readiness-issue-bin-'))
+    try {
+      writeFakeGh(binDir, {
+        number: 541,
+        state: 'OPEN',
+        body: '',
+        labels: [{ name: 'vinaya/tranche:fixture-tranche' }]
+      })
+      const result = await runBin(binDir, { BRANCH: 'task/issue-541' })
+      expect(result.exitCode).toBe(1)
+      const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+      const error = JSON.parse(jsonLine ?? '')
+      expect(error.check).toBe('dispatch-readiness')
+      expect(error.message).toContain('vinaya/tranche:* label')
+    } finally {
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an Issue with no rationale fields reaches checkDispatchReadiness and fails the rationale gate, naming its own Issue number', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'dispatch-readiness-issue-bin-'))
+    try {
+      writeFakeGh(binDir, {
+        number: 541,
+        state: 'OPEN',
+        body: 'An Issue body with no rationale fields at all.',
+        labels: []
+      })
+      const result = await runBin(binDir, { BRANCH: 'task/issue-541', AEG_REPO: 'atta-labs/vinaya-fixture' })
+      expect(result.exitCode).toBe(1)
+      const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+      const error = JSON.parse(jsonLine ?? '')
+      expect(error.check).toBe('dispatch-readiness')
+      expect(error.message).toContain('dispatch-gate rationale: Issue #541')
+    } finally {
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('check-dispatch-readiness: PREMISE_FILE on a non-task branch (PREMISE_FILE itself stays inert)', () => {
+  it('PREMISE_FILE unset: exits 0, naming the branch and that nothing was evaluated (issue-661, O2)', async () => {
+    const result = await run({ BRANCH: 'main' })
+    expect(result.exitCode).toBe(0)
+    const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+    const error = JSON.parse(jsonLine ?? '')
+    expect(error.check).toBe('dispatch-readiness')
+    expect(error.severity).toBe('warning')
+    expect(error.message).toBe(
+      "dispatch-readiness: off a task branch ('main') with no tranche/task given by argument — nothing evaluated."
+    )
+  })
+
+  it('PREMISE_FILE set to a nonexistent path: bypass still fires first — exits 0, no premise error raised, still the off-branch finding', async () => {
+    const result = await run({ BRANCH: 'main', PREMISE_FILE: '/tmp/does-not-exist-premise-file.md' })
+    expect(result.exitCode).toBe(0)
+    const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+    const error = JSON.parse(jsonLine ?? '')
+    expect(error.message).toContain('nothing evaluated')
+  })
+})
+
+describe('check-dispatch-readiness: <tranche> <n> argument path (issue-661, O2)', () => {
+  it("a tranche+task given by argument evaluates that task even on a non-task branch — same routing as runIssueMode's own fixture shape, off the topology path instead", async () => {
+    // No topology/Milestone fixture is reachable hermetically here (same
+    // constraint `runIssueMode`'s own suite above documents) — this proves
+    // routing, not the tranche-mode forge read itself: off `main`, with a
+    // `<tranche> <n>` argument, the process no longer takes the "nothing
+    // evaluated" bypass — it reaches past it toward the real (here,
+    // network-dependent) tranche lookup, which fails for an infra reason
+    // distinct from the bypass's own message.
+    const result = await run({ BRANCH: 'main', AEG_REPO: 'atta-labs/vinaya-fixture' }, ['fixture-tranche', '1'])
+    const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+    expect(jsonLine).toBeDefined()
+    const error = JSON.parse(jsonLine ?? '')
+    expect(error.message).not.toContain('nothing evaluated')
+  })
+})
+
+/**
+ * `checkPremiseReassertion`'s `fileReader` wraps every pin's `path` field in
+ * `containedRealPath(process.cwd(), p)` before reading — this reproduces
+ * that exact wrapping (mirrored locally since the bin's `main()` runs on
+ * import) against real files on disk, proving the containment holds for
+ * every escape a `Premise:` pin's `path` (parsed by the frozen, unmodified
+ * `parsePremiseBlock` grammar, which imposes none itself) could otherwise
+ * carry: an absolute path, a `..`-traversal path, and — round `3`, the
+ * escape `containedAbs` alone cannot see — a symlink whose textual path is
+ * inside the root but whose target resolves outside it. `PREMISE_FILE` is an
+ * adopter-wired env var that can point at PR-author-controlled content on
+ * that same PR's own branch checkout (mirroring `PR_BODY_FILE`), so an
+ * author who controls both the pin and the tree is a real threat model, not
+ * a hypothetical one.
+ */
+describe('checkPremiseReassertion — containment on the per-pin fileReader', () => {
+  const CHECK_NAME = 'dispatch-readiness'
+
+  // Mirrors `check-dispatch-readiness.ts`'s `containedRealPath` exactly:
+  // `containedAbs` first, then re-verified through the REAL (symlink-
+  // resolved) path, matching `lib/self-host.ts`'s `resolvesInsideRepo`.
+  function containedRealPath(root: string, p: string): string | null {
+    const abs = containedAbs(root, p)
+    if (abs === null) return null
+    try {
+      const real = realpathSync(abs)
+      const realRoot = realpathSync(root)
+      return real === realRoot || real.startsWith(realRoot + sep) ? real : null
+    } catch {
+      return null
+    }
+  }
+
+  function containedFileReader(repoRoot: string): (p: string) => string | null {
+    return (p) => {
+      const real = containedRealPath(repoRoot, p)
+      if (real === null) return null
+      try {
+        return readFileSync(real, 'utf8')
+      } catch {
+        return null
+      }
+    }
+  }
+
+  it('refuses an absolute-path pin pointing outside the containment root — treated as unreadable, never leaks real file content', () => {
+    const root = mkdtempSync(join(tmpdir(), 'premise-containment-root-'))
+    const secretDir = mkdtempSync(join(tmpdir(), 'premise-containment-secret-'))
+    const secretPath = join(secretDir, 'secret.txt')
+    writeFileSync(secretPath, 'top-secret-content')
+    try {
+      const body = ['**Premise:**', `- ${secretPath} contains: top-secret`, ''].join('\n')
+      const result = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, containedFileReader(root))
+      expect(result.pass).toBe(false)
+      expect(result.errors).toHaveLength(1)
+      expect(result.errors[0]?.message).toContain('does not exist on disk')
+      // The refusal names the pin's path, never the file's actual content.
+      expect(result.errors[0]?.message).not.toContain('top-secret-content')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(secretDir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a `..`-traversal pin that climbs out of the containment root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'premise-containment-root-'))
+    const outsideDir = mkdtempSync(join(tmpdir(), 'premise-containment-outside-'))
+    writeFileSync(join(outsideDir, 'outside.txt'), 'outside-content')
+    try {
+      const traversal = relative(root, join(outsideDir, 'outside.txt'))
+      const body = ['**Premise:**', `- ${traversal} contains: outside`, ''].join('\n')
+      const result = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, containedFileReader(root))
+      expect(result.pass).toBe(false)
+      expect(result.errors[0]?.message).toContain('does not exist on disk')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(outsideDir, { recursive: true, force: true })
+    }
+  })
+
+  it('still accepts an ordinary repo-relative pin — no regression for legitimate `Premise:` pins', () => {
+    const root = mkdtempSync(join(tmpdir(), 'premise-containment-legit-'))
+    writeFileSync(join(root, 'thing.ts'), 'export function thing() {}\n')
+    try {
+      const body = ['**Premise:**', '- thing.ts contains: export function thing', ''].join('\n')
+      const result = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, containedFileReader(root))
+      expect(result).toEqual({ pass: true, errors: [] })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('still accepts a symlink whose target resolves INSIDE the root — no blanket symlink refusal, only escapes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'premise-containment-inlink-'))
+    writeFileSync(join(root, 'real.ts'), 'export function real() {}\n')
+    symlinkSync(join(root, 'real.ts'), join(root, 'link.ts'))
+    try {
+      const body = ['**Premise:**', '- link.ts contains: export function real', ''].join('\n')
+      const result = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, containedFileReader(root))
+      expect(result).toEqual({ pass: true, errors: [] })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // Security re-review, round `3`: a symlink whose PATH is lexically inside
+  // the containment root but whose TARGET resolves outside it — `containedAbs`
+  // alone is a pure `node:path` computation with no filesystem access, so it
+  // cannot see this; `readFileSync` follows the symlink transparently. Live
+  // repro: a `sha256` pin on the symlink disclosed the real target's digest
+  // verbatim in the failure message, and a `contains` pin with a correct
+  // guess passed silently — the same boolean/digest oracle `containedAbs`
+  // alone was supposed to have closed, reopened through the one class of
+  // escape it structurally cannot detect.
+  describe('a symlink escape (path inside root, target outside it)', () => {
+    function makeSymlinkEscape(secretContent: string): { root: string; outsideDir: string; cleanup: () => void } {
+      const root = mkdtempSync(join(tmpdir(), 'premise-containment-root-'))
+      const outsideDir = mkdtempSync(join(tmpdir(), 'premise-containment-secret-'))
+      writeFileSync(join(outsideDir, 'secret.txt'), secretContent)
+      symlinkSync(join(outsideDir, 'secret.txt'), join(root, 'escape-link.txt'))
+      return {
+        root,
+        outsideDir,
+        cleanup: () => {
+          rmSync(root, { recursive: true, force: true })
+          rmSync(outsideDir, { recursive: true, force: true })
+        }
+      }
+    }
+
+    it("a `sha256` pin never discloses the real target's digest — refused the same as a missing file, not a hash mismatch", () => {
+      const secretContent = 'top-secret-content'
+      const realDigest = createHash('sha256').update(secretContent).digest('hex')
+      const { root, cleanup } = makeSymlinkEscape(secretContent)
+      try {
+        const body = ['**Premise:**', `- escape-link.txt sha256: ${'0'.repeat(64)}`, ''].join('\n')
+        const result = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, containedFileReader(root))
+        expect(result.pass).toBe(false)
+        expect(result.errors).toHaveLength(1)
+        expect(result.errors[0]?.message).toContain('does not exist on disk')
+        expect(result.errors[0]?.message).not.toContain('sha256 mismatch')
+        expect(result.errors[0]?.message).not.toContain(realDigest)
+      } finally {
+        cleanup()
+      }
+    })
+
+    it('a `contains` pin with a correct guess is refused, not a silent pass — no boolean oracle on the real target', () => {
+      const secretContent = 'top-secret-content'
+      const { root, cleanup } = makeSymlinkEscape(secretContent)
+      try {
+        const body = ['**Premise:**', '- escape-link.txt contains: top-secret-content', ''].join('\n')
+        const result = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, containedFileReader(root))
+        expect(result.pass).toBe(false)
+        expect(result.errors).toHaveLength(1)
+        expect(result.errors[0]?.message).toContain('does not exist on disk')
+      } finally {
+        cleanup()
+      }
+    })
+  })
+})
+
+describe('check-dispatch-readiness: Conflicts-with named only by a sibling', () => {
+  const sibling = (n: number, conflicts: string) => ({
+    number: n,
+    body: `**Dependency rationale** — \`Conflicts-with: ${conflicts}\` — shared files.
+
+**Traps to avoid** — none known.`
+  })
+  // Fake forge: the sibling's pull request is open until `merged` flips.
+  const forge = (state: { merged: boolean }) => async (edge: string) => ({
+    issue: Number(edge.replace('#', '')),
+    open: !state.merged
+  })
+  const gate = (conflictsWith: DispatchConflictsWithFact[]) => {
+    const input: DispatchGateInput = {
+      trancheSlug: 't',
+      task: { id: '1', title: '', issue: 1264, projects: [], dependsOn: [], conflictsWith: [], rationaleMarkdown: '' },
+      issue: { number: 1264, state: 'open' },
+      issueRationalePass: true,
+      dependsOn: [],
+      conflictsWith,
+      priorTask: null,
+      priorTrancheArchival: [],
+      principalAllowlist: ['daniboomerang']
+    }
+    return checkDispatchReadiness(input)
+  }
+
+  it('blocks dispatch while the naming sibling has an open pull request, and releases on merge', async () => {
+    const state = { merged: false }
+    const subject = { issue: 1264, conflictsWith: [] as string[] }
+    const listing = [sibling(1255, '#1264'), sibling(9, '#8')]
+
+    const open = await resolveSiblingConflictFacts(subject, listing, [], forge(state))
+    expect(open).toEqual([{ id: '#1255', issue: 1255, openOrInFlight: true }])
+    const blocked = gate(open)
+    expect(blocked.ready).toBe(false)
+    expect(blocked.blockers.join('\n')).toContain('conflicts with #1255 (#1255), whose PR is open or in-flight')
+
+    state.merged = true
+    const released = await resolveSiblingConflictFacts(subject, listing, [], forge(state))
+    expect(gate(released).ready).toBe(true)
+  })
+
+  it('adds nothing for an unrelated listing, a sibling already in the own list, or a task with no Issue', async () => {
+    const state = { merged: false }
+    expect(
+      await resolveSiblingConflictFacts({ issue: 1264, conflictsWith: [] }, [sibling(9, '#8')], [], forge(state))
+    ).toEqual([])
+    const own = [{ id: '#1255', issue: 1255, openOrInFlight: true }]
+    expect(
+      await resolveSiblingConflictFacts(
+        { issue: 1264, conflictsWith: ['#1255'] },
+        [sibling(1255, '#1264')],
+        own,
+        forge(state)
+      )
+    ).toEqual([])
+    expect(
+      await resolveSiblingConflictFacts({ issue: null, conflictsWith: [] }, [sibling(1255, '#1264')], [], forge(state))
+    ).toEqual([])
+  })
+})
+
+describe('prior-tranche archival: dispatch-readiness and first-push', () => {
+  const gateInput = (priorTrancheArchival: DispatchGateInput['priorTrancheArchival']): DispatchGateInput => ({
+    trancheSlug: 't',
+    task: { id: '1', title: '', issue: 1, projects: ['cli'], dependsOn: [], conflictsWith: [], rationaleMarkdown: '' },
+    issue: { number: 1, state: 'open' },
+    issueRationalePass: true,
+    dependsOn: [],
+    conflictsWith: [],
+    priorTask: null,
+    priorTrancheArchival,
+    principalAllowlist: ['daniboomerang']
+  })
+  const firstPush = (readiness: ReturnType<typeof firstPushArchivalReadiness>) =>
+    checkFirstPushDispatchGate({ branch: 'task/t/1', prExists: false, readiness })
+
+  it('an infraFailure is one severity:infra-class error line naming the read; a clean resolution is none', () => {
+    expect(priorTrancheArchivalFindings({ infraFailure: null })).toEqual([])
+    const [finding, ...rest] = priorTrancheArchivalFindings({
+      infraFailure: 'severity:infra — could not read the open Issues of tranche `p`; unknown.'
+    })
+    expect(rest).toEqual([])
+    expect(finding?.message).toContain('severity:infra')
+    expect(finding?.message).toContain('open Issues of tranche `p`')
+  })
+
+  it('an unarchived prior-tranche fact is NOT_READY and refuses the first push', () => {
+    const readiness = firstPushArchivalReadiness(
+      gateInput([{ project: 'cli', priorTrancheSlug: 'prior-v1', archived: false }]),
+      null
+    )
+    expect(readiness).toBe('NOT_READY')
+    expect(firstPush(readiness).verdict).toBe('refuse')
+  })
+
+  it('no prior tranche is READY and allows the first push', () => {
+    const readiness = firstPushArchivalReadiness(
+      gateInput([{ project: 'cli', priorTrancheSlug: null, archived: false }]),
+      null
+    )
+    expect(readiness).toBe('READY')
+    expect(firstPush(readiness).verdict).toBe('allow')
+  })
+
+  it('an infraFailure is UNKNOWN and allows the first push (fail-open)', () => {
+    const readiness = firstPushArchivalReadiness(gateInput([]), 'severity:infra — could not read x')
+    expect(readiness).toBe('UNKNOWN')
+    expect(firstPush(readiness).verdict).toBe('allow')
+  })
+})

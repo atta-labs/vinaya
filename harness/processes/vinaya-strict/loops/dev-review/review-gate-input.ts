@@ -37,13 +37,11 @@
 import { execFileSync } from 'node:child_process'
 import {
   briefHash,
-  checkReviewGate,
   extractPauseBoundRuling,
   isIssueNotFoundError,
   isPrincipal,
   isWaiverLabelActorVerified,
   newestPrincipalRulingOrdinal,
-  newestVerdictBodies,
   objectivesOf,
   objectivesVersion,
   parseDeveloperRoundMarker,
@@ -51,13 +49,17 @@ import {
   pauseBoundRulingDigest,
   principalRulingTextById,
   type PauseBoundRuling,
-  type PostedVerdictBodies,
   resolveNewestFrozenBrief,
   resolveObjectivesSource,
   WAIVER_LABEL_REVIEW,
-  type ReviewGateFact,
-  type ReviewGateInput
+  type ReviewGateFact
 } from '@attalabs/aeg-core'
+import {
+  checkReviewGate,
+  newestVerdictBodies,
+  type PostedVerdictBodies,
+  type ReviewGateInput
+} from '../../tools/review-gate'
 import { extractIssue } from '../../../../kernel/adapters/code-host/github/extract-issue'
 import {
   loadTrustAnchorConfig,

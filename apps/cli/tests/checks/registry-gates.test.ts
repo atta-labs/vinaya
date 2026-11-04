@@ -3,9 +3,14 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { checkG7, parseEnforcementRegistry, reachesProducer } from '@attalabs/aeg-core'
+import { checkG7, reachesProducer } from '../../../../harness/processes/vinaya-strict/checks/registry-checks'
+import { parseEnforcementRegistry } from '../../../../harness/processes/vinaya-strict/tools/registry-parse'
 import { findCrossingFiles, globCandidateFiles } from '../../../../harness/kernel/gates/checks/github-crossing-files.js'
-import { blockingGateFiles, gatherLogProducerGraph, readG7Exemptions } from '../../src/lib/log-producer-graph.js'
+import {
+  blockingGateFiles,
+  gatherLogProducerGraph,
+  readG7Exemptions
+} from '../../../../harness/processes/vinaya-strict/checks/log-producer-graph.js'
 import { buildInitOps } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import { HOOK_DIRS, initHookPaths } from '../../../../harness/kernel/gates/ring0-hooks/init-hook-paths.js'
 
@@ -18,7 +23,7 @@ import { HOOK_DIRS, initHookPaths } from '../../../../harness/kernel/gates/ring0
 // examined zero files. This suite proves the fix: the check now announces
 // its own dormancy as a visible warning finding instead of a silent exit.
 
-const BIN_PATH = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin', 'check-registry-gates.ts')
+const BIN_PATH = join(import.meta.dir, '../../../../harness/processes/vinaya-strict/checks/bin/check-registry-gates.ts')
 
 function initFixture(name: string): string {
   const root = join(tmpdir(), `vinaya-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`)
@@ -188,20 +193,20 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     const script =
       'a standalone script outside the CLI package: the import resolution cannot follow it and no CLI source imports it; invoked directly, it records nothing of its own'
     expect(readG7Exemptions(repoRoot)).toEqual({
-      'apps/cli/src/checks/bin/check-review-gate.ts': checkBin,
-      'apps/cli/src/checks/bin/check-doc-coverage.ts': checkBin,
-      'apps/cli/src/checks/bin/check-exec-bits.ts': checkBin,
-      'apps/cli/src/checks/bin/check-main-branch-refusal.ts': checkBin,
-      'apps/cli/src/checks/bin/check-token-collection-wired.ts': checkBin,
+      'harness/processes/vinaya-strict/checks/bin/check-review-gate.ts': checkBin,
+      'harness/processes/vinaya-strict/checks/bin/check-doc-coverage.ts': checkBin,
+      'harness/processes/vinaya-strict/checks/bin/check-exec-bits.ts': checkBin,
+      'harness/processes/vinaya-strict/checks/bin/check-main-branch-refusal.ts': checkBin,
+      'harness/processes/vinaya-strict/checks/bin/check-token-collection-wired.ts': checkBin,
       'harness/kernel/gates/checks/resolver.ts':
         'the pure step that decides which checks `vinaya check` runs; the runner it feeds records each run and the invocation records its own operation at exit',
       'packages/aeg-core/bin/open-pr.ts': script,
       'packages/aeg-core/bin/open-issue.ts': script,
-      'packages/aeg-core/bin/verify-dispatch.ts': script,
-      'packages/aeg-core/bin/verify-task.ts': script,
-      'packages/aeg-core/bin/check-branch-topology.ts': script,
-      'packages/aeg-core/bin/check-push-target.ts': script,
-      'packages/aeg-core/bin/check-first-push-dispatch.ts': script,
+      'harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts': script,
+      'harness/processes/vinaya-strict/checks/standalone/verify-task.ts': script,
+      'harness/processes/vinaya-strict/checks/standalone/check-branch-topology.ts': script,
+      'harness/processes/vinaya-strict/checks/standalone/check-push-target.ts': script,
+      'harness/processes/vinaya-strict/checks/standalone/check-first-push-dispatch.ts': script,
       'packages/aeg-core/src/brief-validation.ts':
         'a pure library outside the CLI package: it makes no call of its own, and the import resolution does not follow a workspace package'
     })
@@ -209,7 +214,7 @@ describe('registry-gates G7 — anything that can block or write to the forge re
 
   it('judges a planted root with the exemption list that root carries', () => {
     const root = initFixture('registry-gates-g7-exemption-file')
-    const blocked = 'apps/cli/src/checks/bin/check-demo.ts'
+    const blocked = 'harness/processes/vinaya-strict/checks/bin/check-demo.ts'
     const evaluate = () => {
       const { producers, imports } = gatherLogProducerGraph(root)
       return checkG7({
@@ -223,7 +228,7 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       })
     }
     try {
-      mkdirSync(join(root, 'apps/cli/src/checks/bin'), { recursive: true })
+      mkdirSync(join(root, 'harness/processes/vinaya-strict/checks/bin'), { recursive: true })
       writeFileSync(join(root, blocked), 'export const demo = 1\n')
       const without = evaluate()
       expect(without.status).toBe('fail')
@@ -285,9 +290,9 @@ describe('registry-gates G7 — anything that can block or write to the forge re
 
   it('follows a check program through the kernel to the kernel sink', () => {
     const root = initFixture('registry-gates-g7-kernel')
-    const checkBin = 'apps/cli/src/checks/bin/check-demo.ts'
+    const checkBin = 'harness/processes/vinaya-strict/checks/bin/check-demo.ts'
     try {
-      mkdirSync(join(root, 'apps/cli/src/checks/bin'), { recursive: true })
+      mkdirSync(join(root, 'harness/processes/vinaya-strict/checks/bin'), { recursive: true })
       mkdirSync(join(root, 'harness/kernel/log'), { recursive: true })
       writeFileSync(join(root, 'harness/kernel/log/log-sink.ts'), 'export function log(): void {}\n')
       writeFileSync(
@@ -341,9 +346,9 @@ describe('registry-gates G7 — anything that can block or write to the forge re
 
   it('keeps the CLI sink as the fallback when neither sink exists', () => {
     const root = initFixture('registry-gates-g7-no-sink')
-    const checkBin = 'apps/cli/src/checks/bin/check-demo.ts'
+    const checkBin = 'harness/processes/vinaya-strict/checks/bin/check-demo.ts'
     try {
-      mkdirSync(join(root, 'apps/cli/src/checks/bin'), { recursive: true })
+      mkdirSync(join(root, 'harness/processes/vinaya-strict/checks/bin'), { recursive: true })
       writeFileSync(join(root, checkBin), "import { log } from '../../lib/log-sink.js'\nlog()\n")
       const { producers, imports } = gatherLogProducerGraph(root)
       expect([...producers]).toEqual(['apps/cli/src/lib/log-sink.ts'])
@@ -367,7 +372,7 @@ describe('registry-gates G7 — anything that can block or write to the forge re
 
   it("follows a check program's import through a process folder to the sink, and leaves that folder's tests out", () => {
     const root = join(tmpdir(), `vinaya-g7-process-folder-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-    const checkBin = 'apps/cli/src/checks/bin/check-demo.ts'
+    const checkBin = 'harness/processes/vinaya-strict/checks/bin/check-demo.ts'
     const processModule = join(root, 'harness', 'processes', 'demo', 'run-control.ts')
     const write = (path: string, text: string) => {
       mkdirSync(join(path, '..'), { recursive: true })

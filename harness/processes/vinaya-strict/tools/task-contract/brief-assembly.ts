@@ -19,7 +19,6 @@ import { join } from 'node:path'
 import {
   buildConsumersOf,
   boundaryPinnedFiles,
-  checkDispatchReadiness,
   checkIssueRationale,
   checkPremisesHold,
   extractBoundaryFilePaths,
@@ -38,11 +37,6 @@ import {
   renderBrief,
   trancheLabel,
   type BriefFacts,
-  type DispatchBlocker,
-  type DispatchConflictsWithFact,
-  type DispatchDependsOnFact,
-  type DispatchGateInput,
-  type DispatchPriorTrancheFact,
   type IssuePart,
   type IssueSurface,
   type IssueTestPlan,
@@ -50,14 +44,17 @@ import {
   type SurfaceFileFact,
   type Task
 } from '@attalabs/aeg-core'
+import {
+  checkDispatchReadiness,
+  type DispatchBlocker,
+  type DispatchConflictsWithFact,
+  type DispatchDependsOnFact,
+  type DispatchGateInput,
+  type DispatchPriorTrancheFact
+} from '../dispatch-gate'
 import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
-import {
-  dependsOnFactFromEdge,
-  type EdgeFactsSubset,
-  type EdgeTaskRef,
-  resolveEdge
-} from '../../../../../apps/cli/src/checks/edge-resolve.js'
+import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve.js'
 import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config.js'
 import { briefCliInvocation } from '../../../../../apps/cli/src/lib/own-version.js'
 import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
@@ -110,8 +107,8 @@ export function repoBriefCommandFacts(repoRoot: string): {
   return {
     cliInvocation: briefCliInvocation(vendored, repoRoot),
     localGateCommands: {
-      dispatchReadiness: program(`${AEG_CORE_DIR}/bin/verify-dispatch.ts`),
-      docCoverage: program(`${AEG_CORE_DIR}/bin/verify-docs.ts`)
+      dispatchReadiness: program('harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts'),
+      docCoverage: program('harness/processes/vinaya-strict/checks/standalone/verify-docs.ts')
     }
   }
 }

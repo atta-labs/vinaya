@@ -13,7 +13,7 @@
  * data, never reads a file (an aeg-core purity fix).
  */
 
-import type { DiagramNode } from '../diagram-model'
+import type { DiagramNode } from '../../../../harness/processes/vinaya-strict/tools/diagram-model'
 import { nodeDocRoute } from './node-route'
 
 /**

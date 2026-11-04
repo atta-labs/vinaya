@@ -20,7 +20,10 @@ import { CHECK_EXCLUDE_ENV, defaultParallelism, runChecks } from '../../../../ha
 import { type ConfigLoadResult, configPath, loadConfigChecked } from '../lib/config'
 import { printJson } from '../../../../harness/kernel/effects/envelope'
 import { checkProgressWriter } from '../lib/push-progress'
-import { type ProseRulesPlan, proseRulesPlanSection } from '../lib/prose-rules-plan'
+import {
+  type ProseRulesPlan,
+  proseRulesPlanSection
+} from '../../../../harness/processes/vinaya-strict/tools/prose-rules-plan'
 import { buildRolePlan, type RolePlan } from '../../../../harness/processes/vinaya-strict/integration/roles/plan'
 import type { RoleResolutionState } from '../../../../harness/kernel/config/loader/roles/resolver'
 

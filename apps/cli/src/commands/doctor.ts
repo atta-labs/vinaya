@@ -19,17 +19,19 @@ import {
   resolveChecks
 } from '../../../../harness/kernel/gates/checks/resolver.js'
 import {
-  classifyDocOwnersManifest,
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
+  parsePnpmWorkspaceYaml,
+  parseRegistry
+} from '@attalabs/aeg-core'
+import {
+  classifyDocOwnersManifest,
   DOC_OWNERS_PATH,
-  isCodeFile,
   isUrlPointer,
   parseDocOwners,
-  parsePnpmWorkspaceYaml,
-  parseRegistry,
   pointerToPath
-} from '@attalabs/aeg-core'
+} from '../../../../harness/processes/vinaya-strict/tools/doc-owners'
+import { isCodeFile } from '../../../../harness/processes/vinaya-strict/tools/file-classify'
 import { globToRegex } from '../../../../harness/kernel/gates/glob-to-regex'
 import { hardenedMeteringDeps } from '../../../../harness/kernel/adapters/agents/claude-code/metering-io-guard'
 import {
@@ -650,7 +652,7 @@ function diagnoseCustomChecks(repoRoot: string, config: VinayaConfig): Finding[]
 
 // ---------------------------------------------------------------------------
 // doc-owners health — repo-wide, not diff-scoped. C5 (`evaluateC5`,
-// packages/aeg-core/src/doc-owners.ts:234) only ever tests a binding's glob
+// harness/processes/vinaya-strict/tools/doc-owners.ts:234) only ever tests a binding's glob
 // against the CURRENT PR'S changed files; a binding whose glob matches zero
 // files ANYWHERE in the repo (the code it names was deleted or renamed
 // wholesale) never fires on any diff, ever again, and is structurally

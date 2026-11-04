@@ -1,0 +1,649 @@
+#!/usr/bin/env bun
+
+/**
+ * Core check: coherence. Thin adapter over `@attalabs/aeg-core`'s coherence
+ * evaluators — mirrors `harness/processes/vinaya-strict/checks/standalone/verify-coherence.ts`'s
+ * forge-fact assembly, but scoped to the CURRENT task branch's tranche
+ * only (derived from `BRANCH`/the current git branch), the same
+ * branch-derived scoping `verify-coherence.ts`'s own `ciTrancheSlug`
+ * already uses for T2/T3.
+ *
+ * Tranche state is read ONLY through a `StateSource`
+ * (`createForgeSource`). Forge facts come only from the two primitives this
+ * task's boundary re-exports from `@attalabs/aeg-core`: `fetchForgeFacts` and
+ * `fetchOpenIssuesByLabel`.
+ *
+ * Runs A1, A2, A3, T1, T2, T3, D1, R1, L1, L3 and L5 over the branch tranche,
+ * each blocking on a `fail`, and the report-only lifecycle rules L2 and L4.
+ * L2 and L4 print as `warning` check-error lines and never change the exit
+ * code. Their facts come from the Milestone index
+ * (`indexTrancheMilestonesForSlugAsync`) and, for L4 only, the branch tranche's
+ * labeled Issue list.
+ *
+ * A2 judges the branch tranche's closed tasks whose closing pull request
+ * merged; a candidate the provenance read gave no answer for, or a missing
+ * token, fails it as `severity:infra`, never a pass. L5 blocks only for the
+ * branch tranche, from the index's active list — a task pull request can
+ * neither cause nor cure another tranche's archival. L5 also sweeps every
+ * other open legacy-titled tranche the index names, one Issue-list read
+ * each, and prints those findings, and any slug whose read failed, as
+ * `warning` lines that never change the exit code. A label-only tranche is
+ * never swept: the index derives "every Issue closed" as complete for it.
+ *
+ * scope: full — reads the live forge, not the local diff.
+ */
+
+import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
+import {
+  deriveTrancheFromForge,
+  fetchProvenance,
+  fetchTrancheIssuesAsync,
+  indexTrancheMilestonesForSlugAsync,
+  issueMilestonesFromIssues,
+  tasksFromIssues
+} from '@attalabs/aeg-forge-state'
+import type { GhIssue } from '../../../../../harness/kernel/adapters/code-host/github/gh'
+import type { SlugMilestoneIndex, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
+import { execFile, execFileSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { fetchForgeFacts, fetchOpenIssuesByLabel, parseRegistry } from '@attalabs/aeg-core'
+import {
+  checkA1,
+  checkA2,
+  checkA3,
+  checkD1,
+  checkL1,
+  checkL2,
+  checkL3,
+  checkL4,
+  checkL5,
+  checkR1,
+  checkT1,
+  checkT2,
+  checkT3,
+  R1_GRANDFATHERED_ISSUES,
+  scopeT2ToPlanPr,
+  type CheckResult,
+  type CoherenceFailureCode,
+  type TrancheFile,
+  type TaskEntry
+} from '../coherence-checks'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'
+import { warnOnUnreadPrincipals } from '../principals-refusal'
+
+const CHECK_NAME = 'coherence'
+
+// No chdir: the only cwd-dependent work here is `git(...)` shelling out for
+// the caller's own remote/branch, and the runner's spawn already inherits
+// the caller's cwd — which IS the repo `vinaya check` is meant to evaluate.
+// A chdir here previously pointed at wherever this SCRIPT lives (this
+// monorepo from source, or the CLI's own install location once bundled),
+// never the target repo — silently leaking this repo's own tranche/branch
+// facts into whatever repo actually invoked the check.
+const execFileAsync = promisify(execFile)
+
+// Array-form execFileSync — no shell, so no injection surface even though
+// today's arguments are fixed literals. `stdio: ['ignore', 'pipe', 'pipe']`
+// is load-bearing, not cosmetic: without it, a git call THIS FUNCTION
+// EXPECTS TO FAIL AND CATCHES (e.g. `rev-parse --abbrev-ref HEAD` on an
+// unborn HEAD — a fresh repo's very first commit, before any tranche
+// branch exists) still inherits stderr and writes its raw, non-JSON text
+// onto the check's own stderr stream. The runner (`runner.ts`) treats every
+// stderr line as a `CheckError` JSON candidate; one non-JSON line sets
+// `malformed = true` and reports `status: 'error'` regardless of the
+// check's real exit code — misreporting a correct, silent, exit-0 bypass
+// as a crash. Found live 2026-08-07: this exact gap made `vinaya check
+// --all` refuse a brand-new adopter repo's very first commit (the
+// pre-commit hook treats `error` as a failure), even though this
+// function's own JS-level handling of the unborn-HEAD case was already
+// correct. Every other check bin's `git()` helper already pipes stderr
+// this way — `check-doc-coverage.ts` names the same reasoning explicitly.
+function git(args: string[]): string {
+  try {
+    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * The adopter repo's registered project names, for R1's project-registry half.
+ * Resolved from the git top-level rather than a bare `cwd`, so the check works
+ * when `vinaya check` is invoked from a subdirectory. `--show-toplevel` is itself
+ * cwd-relative, so it is not a defence against a `chdir` — it is correct here
+ * only because this bin deliberately performs none and the runner spawns it with
+ * the caller's cwd. Outside any repo git exits 128, `git()` returns `''`, and the
+ * check goes dormant rather than resolving an unrelated repo's registry. An
+ * absent registry is a normal state — a single-project
+ * repo has no `.vinaya/projects.md` by design — so this returns `[]` and the
+ * half goes dormant, with the warning below so it is never silent.
+ */
+function readRegisteredProjectNames(): string[] {
+  const root = git(['rev-parse', '--show-toplevel'])
+  if (!root) return []
+  const path = join(root, '.vinaya/projects.md')
+  if (!existsSync(path)) return []
+  return parseRegistry(readFileSync(path, 'utf8')).map((p) => p.name)
+}
+
+function resolveRepo(): { owner: string; repo: string } | null {
+  const fromEnv = process.env.AEG_REPO
+  if (fromEnv) {
+    const m = fromEnv.match(/^([^/]+)\/(.+)$/)
+    if (m?.[1] && m[2]) return { owner: m[1], repo: m[2] }
+  }
+  const url = git(['remote', 'get-url', 'origin'])
+  const ssh = url.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/)
+  if (ssh?.[1] && ssh[2]) return { owner: ssh[1], repo: ssh[2] }
+  const https = url.match(/^https?:\/\/(?:[^@]+@)?github\.com\/([^/]+)\/(.+?)(?:\.git)?\/?$/)
+  if (https?.[1] && https[2]) return { owner: https[1], repo: https[2] }
+  return null
+}
+
+async function resolveToken(): Promise<string | null> {
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN
+  if (process.env.GH_TOKEN) return process.env.GH_TOKEN
+  try {
+    const { stdout } = await execFileAsync('gh', ['auth', 'token'])
+    const token = stdout.trim()
+    return token.length > 0 ? token : null
+  } catch {
+    return null
+  }
+}
+
+function currentTrancheSlug(): string | null {
+  const branch = process.env.BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD'])
+  const m = branch.match(/^task\/([^/]+)\//)
+  return m?.[1] ?? null
+}
+
+function issueToEntry(entries: TaskEntry[]): Map<number, TaskEntry> {
+  const m = new Map<number, TaskEntry>()
+  for (const e of entries) if (e.task.issue !== null) m.set(e.task.issue, e)
+  return m
+}
+
+function taskToEntry(entries: TaskEntry[], slug: string): Map<string, TaskEntry> {
+  const m = new Map<string, TaskEntry>()
+  for (const e of entries) m.set(`${slug}/${e.task.id}`, e)
+  return m
+}
+
+/**
+ * Tailors the instruction to the specific `CoherenceFailureCode` that fired,
+ * never to `result.check` alone and never by parsing `reason` text — the
+ * switch is on the class. `D1` is the reason a check code alone can't drive
+ * this: `checkD1` produces both `dispatched-on-unmet-deps` (an ordinary
+ * unmet dependency — close it) and `d1-self-dependency` (unsatisfiable by
+ * construction — escalate as a tool bug) under the same `D1` check code.
+ * Keying only on `D1` told an agent to close an uncloseable dependency — the
+ * same "improvise around a nonsense gate" failure the self-dependency guard
+ * exists to eliminate, reproduced on the check that reports it. `default`
+ * calls `assertNeverCoherenceCode`, so a new `CoherenceFailureCode` member
+ * with no `case` here fails typecheck instead of silently falling through to
+ * a generic prompt.
+ */
+export function recoveryPromptFor(code: CoherenceFailureCode): string {
+  switch (code) {
+    case 'd1-self-dependency':
+      return 'This is an INTERNAL parser-bug report, not a real coherence failure — a task cannot depend on itself, so there is nothing here to close or resolve. Do NOT work around it. Report it upstream, and re-run once the rationale text is corrected or the parser fix ships.'
+    case 'closed-without-merge':
+      return "The task's Issue is closed but its closing PR is not merged. Verify the PR actually merged (or reopen the Issue if it was closed in error), then re-run `vinaya check coherence`."
+    case 'archived-without-provenance':
+      return 'The closing PR merged but carries no `### AEG provenance` comment. Ask the Archivist to post it, then re-run `vinaya check coherence`.'
+    case 'auto-close-misfire':
+      return 'The closing PR merged but the Issue is still open (a GitHub auto-close misfire). Manually close the Issue, then re-run `vinaya check coherence`.'
+    case 'phantom-issue-ref':
+      return "The topology names an Issue number that doesn't resolve on the forge. Fix the Issue number in the topology, or ask the Planner to re-cut it, then re-run `vinaya check coherence`."
+    case 'orphan-task':
+      return "An open Issue under this tranche's label is missing from the topology. Add its row to the tranche's task list, then re-run `vinaya check coherence`."
+    case 'tbd-in-active-tranche':
+      return 'A task in this active tranche has no Issue (#TBD). Ask the Planner to cut the Issue, then re-run `vinaya check coherence`.'
+    case 'dispatched-on-unmet-deps':
+      return "This task has an open PR but a declared dependency isn't closed. Close the dependency first (or verify it truly is), then re-run `vinaya check coherence`."
+    case 'missing-rationale-field':
+      return 'The Issue fails the rationale gate. Ask the Planner to complete the eight-field rationale on the Issue body, then re-run `vinaya check coherence`.'
+    case 'surface-excludes-bound-doc':
+      return "The Issue's Surface `out:` list excludes a doc-owners-bound document its `in:` list otherwise covers. Fix the Surface split, or update the bound doc in the same PR, then re-run `vinaya check coherence`."
+    case 'surface-overlap':
+      return 'This Issue overlaps another open task Issue sharing the same Milestone. Resolve the overlap (split scope or serialize the tasks), then re-run `vinaya check coherence`.'
+    case 'archive-recommended':
+      return 'This active tranche has no open task-Issues left (advisory). Archive it to `completed/`, or confirm it should stay open, then re-run `vinaya check coherence`.'
+    case 'premature-archive':
+      return 'This archived tranche still has an open task-Issue (advisory). Investigate whether the archive was premature, then re-run `vinaya check coherence`.'
+    case 'milestone-drift':
+      return "This Issue's GitHub-native milestone doesn't match its `vinaya/tranche:` label (advisory, cosmetic). Re-attach the Issue to the correct Milestone, then re-run `vinaya check coherence`."
+    case 'tranche-not-archived':
+      return 'Every task Issue in this tranche is closed but it was never archived. Ask the Tranche Archivist to run, then re-run `vinaya check coherence`.'
+    case 'doc-owners-dangling-pointer':
+      return 'A `.vinaya/doc-owners` entry points at a file that no longer exists in-repo. Fix or remove the dangling entry, then re-run `vinaya check coherence`.'
+    case 'doc-owners-duplicate-glob':
+      return 'A `.vinaya/doc-owners` glob is registered more than once. Remove the duplicate entry, then re-run `vinaya check coherence`.'
+    case 'forge-read-unavailable':
+      return 'A forge read failed while assembling coherence facts (severity:infra) — this is an outage, not a drift finding. Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check coherence`.'
+    default:
+      return assertNeverCoherenceCode(code)
+  }
+}
+
+function assertNeverCoherenceCode(x: never): never {
+  throw new Error(`Unhandled CoherenceFailureCode: ${JSON.stringify(x)}`)
+}
+
+function emitFailure(result: CheckResult): void {
+  if (result.failures.length === 0) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `${result.check}: ${result.note ?? 'see check output'}`,
+      agent_recovery_prompt:
+        'Read the named coherence failure and resolve the underlying forge/topology drift it names, then re-run `vinaya check coherence`.'
+    })
+    return
+  }
+  for (const failure of result.failures) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `${result.check}: ${failure.reason}`,
+      agent_recovery_prompt: recoveryPromptFor(failure.code)
+    })
+  }
+}
+
+/**
+ * True when L4 applies to the slug: its Milestone is open AND titled exactly
+ * the slug. A label-only tranche shares a Milestone with others, so the
+ * exact-title invariant L4 evaluates is meaningless there.
+ */
+export function l4Applies(slug: string, index: TrancheMilestoneIndex): boolean {
+  return index.active.some((r) => r.slug === slug) && index.legacySlugs.has(slug)
+}
+
+/**
+ * Assembles L2's and L4's facts for the branch tranche from the Milestone
+ * index and the tranche's Issue list, and returns their results. Pure — the
+ * caller does every forge read. `issues` is only consulted when L4 applies.
+ */
+export function evaluateLifecycleAdvisories(
+  slug: string,
+  tranche: TrancheFile['tranche'],
+  entries: TaskEntry[],
+  index: TrancheMilestoneIndex,
+  issues: GhIssue[]
+): CheckResult[] {
+  const archived = index.archived.some((r) => r.slug === slug)
+  const results: CheckResult[] = [checkL2([{ slug, archived, tranche }], new Map([[slug, entries]]))]
+  if (l4Applies(slug, index)) {
+    const issueMilestones = issueMilestonesFromIssues(issues).map((f) => ({ tranche: slug, ...f }))
+    results.push(checkL4([slug], issueMilestones))
+  }
+  return results
+}
+
+function emitAdvisories(results: CheckResult[]): void {
+  for (const result of results) {
+    for (const failure of result.failures) {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'warning',
+        message: `${result.check}: ${failure.reason}`,
+        agent_recovery_prompt: recoveryPromptFor(failure.code)
+      })
+    }
+  }
+}
+
+/** Reads, for each closed Issue number, whether its closing PR carries a provenance block. */
+export type ProvenanceReader = (issueNums: number[]) => Promise<Map<number, boolean>>
+
+/**
+ * A2 over the branch tranche. Its candidates are the tasks whose Issue is
+ * closed and whose closing PR merged, keyed `<slug>/<task id>` for `checkA2`.
+ * The provenance read answers an empty map on a network or token failure, and
+ * `checkA2` skips a key it is missing, so a lost read would pass silently: a
+ * missing token, or a candidate the read gave no answer for, fails the result
+ * as `severity:infra` instead.
+ */
+export async function evaluateA2(
+  slug: string,
+  entries: TaskEntry[],
+  token: string,
+  readProvenance: ProvenanceReader
+): Promise<CheckResult> {
+  const candidates = entries.filter(
+    (e) => e.facts?.issueState === 'closed' && e.facts.prState === 'merged' && e.task.issue !== null
+  )
+  if (candidates.length === 0) return checkA2(entries, new Map())
+
+  const unread = (reason: string, issues: Array<number | null>): CheckResult => ({
+    check: 'A2',
+    status: 'fail',
+    failures: issues.map((issue) => ({ code: 'forge-read-unavailable' as const, tranche: slug, issue, reason })),
+    note: 'severity:infra'
+  })
+  if (!token) {
+    return unread(
+      'severity:infra — no forge token, so the provenance of this closed task was not read and A2 did not evaluate it',
+      candidates.map((e) => e.task.issue)
+    )
+  }
+
+  const byIssue = await readProvenance(candidates.map((e) => e.task.issue as number))
+  const provenanceByKey = new Map<string, boolean>()
+  const missing: number[] = []
+  for (const e of candidates) {
+    const issue = e.task.issue as number
+    const has = byIssue.get(issue)
+    if (has === undefined) missing.push(issue)
+    else provenanceByKey.set(`${slug}/${e.task.id}`, has)
+  }
+  if (missing.length > 0) {
+    return unread(
+      `severity:infra — the provenance read returned no answer for #${missing.join(', #')}, so A2 did not evaluate it`,
+      missing
+    )
+  }
+  return checkA2(entries, provenanceByKey)
+}
+
+/**
+ * L5 over the branch tranche only, from the index's active list — the one
+ * active-tranche authority this check has. Pure; `entries` carry the forge
+ * facts already read for the branch tranche.
+ */
+export function evaluateBranchL5(slug: string, index: SlugMilestoneIndex, entries: TaskEntry[]): CheckResult {
+  const active = index.active.some((r) => r.slug === slug) ? [slug] : []
+  return checkL5(active, new Map([[slug, entries]]))
+}
+
+/** Reads one tranche's labeled Issues, every state. */
+export type TrancheIssueReader = (slug: string) => Promise<GhIssue[]>
+
+/** The other-tranche L5 sweep's findings, plus every swept slug it could not read. */
+export type OtherTrancheL5Sweep = {
+  result: CheckResult
+  unevaluated: Array<{ slug: string; detail: string }>
+}
+
+/** A task Issue as an L5 entry: its Issue state, and neutral defaults for every other fact. */
+function sweptEntry(slug: string, issue: GhIssue, task: TaskEntry['task']): TaskEntry {
+  return {
+    trancheSlug: slug,
+    archived: false,
+    task,
+    facts: {
+      issueState: issue.state === 'CLOSED' ? 'closed' : 'open',
+      assigned: false,
+      branchExists: false,
+      prState: 'none',
+      reviewDecision: 'none',
+      blockedLabel: false,
+      stateReason: null,
+      closedAt: null,
+      mergedAt: null,
+      closedByActor: null
+    }
+  }
+}
+
+/**
+ * L5 over every other open legacy-titled tranche the index names, for the
+ * report-only sweep. One Issue-list read per slug, through `readIssues`, and
+ * no other forge read: the index is passed in, never re-read. A slug whose
+ * read failed is returned in `unevaluated`, never dropped. Never rejects.
+ */
+export async function sweepOtherTranchesL5(
+  index: SlugMilestoneIndex,
+  readIssues: TrancheIssueReader
+): Promise<OtherTrancheL5Sweep> {
+  const slugs = index.otherOpenLegacySlugs
+  const reads = await Promise.all(
+    slugs.map(async (slug) => {
+      try {
+        return { slug, issues: await readIssues(slug), detail: '' }
+      } catch (err) {
+        return { slug, issues: null, detail: errorText(err) }
+      }
+    })
+  )
+  const entriesBySlug = new Map<string, TaskEntry[]>()
+  const evaluated: string[] = []
+  const unevaluated: OtherTrancheL5Sweep['unevaluated'] = []
+  for (const { slug, issues, detail } of reads) {
+    if (issues === null) {
+      unevaluated.push({ slug, detail })
+      continue
+    }
+    const byNumber = new Map(issues.map((i) => [i.number, i]))
+    const entries: TaskEntry[] = []
+    for (const task of tasksFromIssues(issues)) {
+      const issue = task.issue === null ? undefined : byNumber.get(task.issue)
+      if (issue) entries.push(sweptEntry(slug, issue, task))
+    }
+    entriesBySlug.set(slug, entries)
+    evaluated.push(slug)
+  }
+  return { result: checkL5(evaluated, entriesBySlug), unevaluated }
+}
+
+function emitOtherTrancheL5(sweep: OtherTrancheL5Sweep): void {
+  for (const failure of sweep.result.failures) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'warning',
+      message: `L5: tranche "${failure.tranche}" (not this branch's tranche, so report-only): ${failure.reason}`,
+      agent_recovery_prompt: recoveryPromptFor(failure.code)
+    })
+  }
+  for (const { slug, detail } of sweep.unevaluated) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'warning',
+      message: `coherence: L5 did not evaluate for tranche "${slug}" — a forge read failed while reading its Issue list: ${detail}`,
+      agent_recovery_prompt:
+        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check coherence` so L5 evaluates this tranche.'
+    })
+  }
+}
+
+function emitLifecycleUnevaluated(slug: string, detail: string): void {
+  emitCheckError({
+    schema: CHECK_SCHEMA_VERSION,
+    check: CHECK_NAME,
+    severity: 'warning',
+    message: `coherence: L2 and L4 did not evaluate for tranche "${slug}" — a forge read failed while collecting their facts: ${detail}`,
+    agent_recovery_prompt:
+      'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check coherence` so the lifecycle advisories L2 and L4 evaluate.'
+  })
+}
+
+function errorText(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).split('\n')[0] ?? ''
+}
+
+async function main(): Promise<void> {
+  const slug = currentTrancheSlug()
+  if (!slug) {
+    // Non-task branch — nothing scoped to check. Mirrors verify-brief.ts's bypass.
+    process.exit(0)
+  }
+
+  const repo = resolveRepo()
+  if (!repo) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: 'coherence severity:infra — could not resolve owner/repo.',
+      agent_recovery_prompt:
+        'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya check coherence`.'
+    })
+    process.exit(1)
+  }
+
+  // The Principal list resolves before any forge read, so its refusal is never
+  // hidden behind a failed tranche read. Only rule A1 (whose hand-close of an
+  // Issue counts) needs it: no Principal configured refuses the check, while a
+  // failed read is one warning and A1 alone goes unevaluated.
+  let a1Principals: string[] | null = null
+  try {
+    a1Principals = resolveTrustedPrincipals()
+  } catch (err) {
+    warnOnUnreadPrincipals(CHECK_NAME, err)
+  }
+
+  // The index read comes first: it supplies the branch tranche's own facts, so
+  // the synchronous Milestone reader (whose `gh` child writes raw lines to
+  // this process's stderr) is never reached.
+  let index: SlugMilestoneIndex
+  try {
+    index = await indexTrancheMilestonesForSlugAsync(repo.owner, repo.repo, slug)
+  } catch (err) {
+    emitLifecycleUnevaluated(slug, errorText(err))
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `coherence severity:infra — Milestone index unavailable for ${repo.owner}/${repo.repo}, tranche "${slug}": ${errorText(err)}`,
+      agent_recovery_prompt: recoveryPromptFor('forge-read-unavailable')
+    })
+    process.exit(1)
+  }
+
+  // The report-only L5 sweep of other tranches runs beside the branch
+  // tranche's own reads; it never rejects, so nothing here can be lost.
+  const otherTranchesL5 = sweepOtherTranchesL5(index, (s) => fetchTrancheIssuesAsync(repo.owner, repo.repo, s))
+
+  const tranche = await deriveTrancheFromForge(
+    repo.owner,
+    repo.repo,
+    slug,
+    index.facts.get(slug) ?? { goal: '', lifecycle: 'planned' }
+  )
+  const file: TrancheFile = { slug, archived: false, tranche }
+
+  const baseEntries: TaskEntry[] = tranche.tasks.map((t) => ({
+    trancheSlug: slug,
+    archived: false,
+    task: t,
+    facts: undefined
+  }))
+
+  const taskRefs = tranche.tasks.filter((t) => t.issue !== null).map((t) => ({ id: t.id, issue: t.issue as number }))
+  const snapshot = await fetchForgeFacts({ owner: repo.owner, repo: repo.repo, tranche: slug, tasks: taskRefs })
+
+  const results: CheckResult[] = [checkL3([file])]
+
+  if (snapshot.unavailable) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `coherence severity:infra — forge facts unavailable for tranche "${slug}": ${snapshot.reason ?? 'unknown'}`,
+      agent_recovery_prompt:
+        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check coherence`.'
+    })
+    process.exit(1)
+  }
+
+  const enrichedEntries: TaskEntry[] = tranche.tasks.map((t) => ({
+    trancheSlug: slug,
+    archived: false,
+    task: t,
+    facts: snapshot.facts.get(t.id)
+  }))
+
+  const token = (await resolveToken()) ?? ''
+
+  if (a1Principals !== null) results.push(checkA1(enrichedEntries, a1Principals))
+  results.push(
+    await evaluateA2(slug, enrichedEntries, token, (nums) => fetchProvenance(nums, repo.owner, repo.repo, token))
+  )
+  results.push(checkA3(enrichedEntries))
+  results.push(checkT1(enrichedEntries))
+  results.push(checkD1(enrichedEntries, issueToEntry(enrichedEntries), taskToEntry(enrichedEntries, slug)))
+  results.push(checkT3(baseEntries, slug, enrichedEntries, new Set()))
+  results.push(checkL1([file], new Map([[slug, enrichedEntries]])))
+  // L5 has no active-tranche authority but the index; a failed index read
+  // already failed the check above, so this never runs without it.
+  results.push(evaluateBranchL5(slug, index, enrichedEntries))
+
+  // L2/L4: report-only. A failed Issue-list read is reported, never a pass.
+  let slugIssues: GhIssue[] | null = []
+  if (l4Applies(slug, index)) {
+    try {
+      slugIssues = await fetchTrancheIssuesAsync(repo.owner, repo.repo, slug)
+    } catch (err) {
+      slugIssues = null
+      emitLifecycleUnevaluated(slug, errorText(err))
+    }
+  }
+  if (slugIssues !== null)
+    emitAdvisories(evaluateLifecycleAdvisories(slug, tranche, enrichedEntries, index, slugIssues))
+  emitOtherTrancheL5(await otherTranchesL5)
+
+  const openIssuesBySlug = await fetchOpenIssuesByLabel([slug], repo.owner, repo.repo, token)
+  const topologyIssues = new Set(tranche.tasks.map((t) => t.issue).filter((n): n is number => n !== null))
+  const openNums = (openIssuesBySlug.get(slug) ?? []).map((i) => i.number)
+  results.push(scopeT2ToPlanPr(checkT2(new Map([[slug, openNums]]), new Map([[slug, topologyIssues]]), slug), false))
+  // R1's project-registry half needs the registry passed in (aeg-core is pure).
+  // Omitting it left that half silently dormant in the shipped CLI while the
+  // governance docs stated R1 re-runs it — a documented-but-absent control.
+  const registeredNames = readRegisteredProjectNames()
+  if (registeredNames.length === 0) {
+    // MUST go through `emitCheckError`, never a raw `process.stderr.write`: the
+    // runner parses every stderr line as a `CheckError` candidate, and one
+    // unparseable line sets `malformed` and reports `status: 'error'` whatever
+    // the exit code. A raw line here would fail a single-project adopter repo —
+    // which legitimately has no registry — on its own pre-commit hook. That is
+    // the same 2026-08-07 incident the `git()` helper above is annotated with.
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'warning',
+      message:
+        "coherence: no registry rows parsed from `.vinaya/projects.md` (absent, or every row malformed) — R1's project-registry half is dormant; declared projects are not resolved.",
+      agent_recovery_prompt:
+        "If this repo has more than one project, register them with `vinaya init product <name> --path <folder>` so R1 can resolve each task's `Project:` field. A single-project repo has no registry by design — no action needed."
+    })
+  }
+  // An absent `gateCutovers.objectivesSinceIssue` resolves to `null` (no
+  // cutover — R1 grades every open Issue's `## Objectives` from Issue 1, O1);
+  // this repo restates its own historical value so its pre-gate stock stays
+  // green (O2).
+  const { objectivesSinceIssue } = resolveGateCutovers(loadConfig())
+  results.push(checkR1(openIssuesBySlug, R1_GRANDFATHERED_ISSUES, registeredNames, objectivesSinceIssue))
+
+  const failed = results.filter((r) => r.status === 'fail')
+  if (failed.length > 0) {
+    for (const r of failed) emitFailure(r)
+    process.exit(1)
+  }
+
+  process.exit(0)
+}
+
+// Guarded so this module can be imported by unit tests without executing the
+// check. Spawned as a bin (the only way it runs for real) this is still true.
+if (isEntryPoint(import.meta.url, 'check-coherence')) {
+  main().catch((err: unknown) => {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `coherence severity:infra — the check failed unexpectedly: ${errorText(err)}`,
+      agent_recovery_prompt: recoveryPromptFor('forge-read-unavailable')
+    })
+    process.exit(1)
+  })
+}

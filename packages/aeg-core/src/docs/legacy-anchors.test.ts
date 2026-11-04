@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { DiagramNode } from '../diagram-model'
+import type { DiagramNode } from '../../../../harness/processes/vinaya-strict/tools/diagram-model'
 import { legacyAnchorSlugs } from './legacy-anchors'
 
 function node(id: string, label: string, ringIndex: 0 | 1 | 2 = 1): DiagramNode {

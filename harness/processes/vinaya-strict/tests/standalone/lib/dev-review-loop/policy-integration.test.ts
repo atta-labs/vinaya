@@ -17,7 +17,6 @@ import {
 } from '../../../../../../../apps/cli/src/commands/review-post.js'
 import { spliceObjectivesSection } from '../../../../../../../apps/cli/src/commands/issue-objectives.js'
 import {
-  checkReviewGate,
   DEFAULT_REVIEW_POLICY,
   objectivesOf,
   objectivesVersion,
@@ -25,6 +24,7 @@ import {
   renderObjectives,
   type Objective
 } from '@attalabs/aeg-core'
+import { checkReviewGate } from '../../../../tools/review-gate'
 import { cleanupWorlds, controlDir as ipControlDir, makeWorld, runLoopInProcess } from '../dev-review-loop-harness.js'
 import { DEFAULT_POLICY_DIGEST, tempDirs as sharedTempDirs } from './driver-test-support.js'
 
@@ -43,7 +43,7 @@ afterEach(cleanupWorlds)
  * exercising the identical shared primitives both sides call
  * (`objectivesOf`/`objectivesVersion`, `@attalabs/aeg-core`) over one body,
  * never by importing the gate's own private `resolveObjectivesVersion`
- * (`apps/cli/src/checks/bin/check-review-gate.ts`, out of this task's
+ * (`harness/processes/vinaya-strict/checks/bin/check-review-gate.ts`, out of this task's
  * declared Surface). `spliceObjectivesSection`/`renderObjectives` are the
  * exact functions `issueObjectivesEditCommand` itself uses to write the new
  * live body and the `Version:` line — so this reproduces its own derivation,

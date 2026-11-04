@@ -2,7 +2,7 @@
  * Provenance fetch — the single implementation of the "does this Issue's
  * closing PR carry an `### AEG provenance` block?" fact.
  *
- * Moved here from `packages/aeg-core/bin/verify-coherence.ts` so Studio's
+ * Moved here from `harness/processes/vinaya-strict/checks/standalone/verify-coherence.ts` so Studio's
  * server components can call it without pulling
  * in that CLI's top-level `process.chdir` side effect. The CLIs
  * (`verify-coherence.ts`, `verify-dispatch.ts`) import it from here — same

@@ -51,8 +51,8 @@ State the fact in plain words and delete the token; the sentence must stay true 
 
 **This rule is mechanized — C7, in `verify-docs`.** It scans the text that actually reaches a reader and nothing else: for a role or contract that is the `## The short version` section (the binding opener each one now carries), and for the enforcement map it is the introduction plus the four columns the page renders — the row's own name, `Summary`, `Category`, `Description`. The enforcing columns are never scanned; they exist to gate, not to read. C7 also asserts the structure of that section: all four blocks present, in order, inside the word band. It runs **blocking at the pull-request gate**, scoped to the doctrine files the diff touched, and again repo-wide in full mode. Protocol mechanics an adopter must learn — the isolated-worktree path and the task branch convention — are explicit, tested exemptions rather than accidental passes.
 
-<!-- AEG:CLAIM: packages/aeg-core/bin/verify-docs.ts contains:const C8_PATHSPECS = -->
-<!-- AEG:CLAIM: packages/aeg-core/bin/verify-docs.ts contains:trackedCited.has(path) && existsSync(path) -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/checks/standalone/verify-docs.ts contains:const C8_PATHSPECS = -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/checks/standalone/verify-docs.ts contains:trackedCited.has(path) && existsSync(path) -->
 **Claims about code are bound — C8, in `verify-docs`.** A sentence in a doctrine page or a source comment that states what code does, checks, refuses, reads, or returns carries a marker naming the source that proves it, or it is removed. The marker is the premise pin reused — the same `<path> contains:<literal>`, `absent:`, or `sha256:` grammar a brief pins a fact with — on its own line immediately before the paragraph it binds, in either of two forms, and several may stack before one paragraph:
 
 ```markdown

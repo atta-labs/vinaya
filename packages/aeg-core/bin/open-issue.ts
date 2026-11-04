@@ -92,7 +92,7 @@ import {
   type ProjectPath,
   type TaskIssueFacts
 } from '../src/issue-validation'
-import { classifyLeftover } from '../src/leftover-detection'
+import { classifyLeftover } from '../../../harness/processes/vinaya-strict/tools/task-contract/bin/leftover-detection'
 import { readConfigObjectivesSinceIssue } from '../src/objectives-cutover-config'
 import { parseRegistry } from '../src/parse-registry'
 

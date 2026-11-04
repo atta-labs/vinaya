@@ -39,7 +39,11 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, posix } from 'node:path'
-import { CI_SHARD_COUNT, CI_SHARD_LIST_OWNER, shardFileRelPath } from '../../apps/cli/src/lib/ci-shard-membership.ts'
+import {
+  CI_SHARD_COUNT,
+  CI_SHARD_LIST_OWNER,
+  shardFileRelPath
+} from '../../harness/processes/vinaya-strict/checks/ci-shard-membership.ts'
 import type { CiDecision } from '../../harness/processes/vinaya-strict/integration/ci-test-selection.ts'
 import {
   DEFAULT_CONFIGURATION,

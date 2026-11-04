@@ -147,7 +147,7 @@ All Tier 1 items, plus:
 
 **Hard rule:** If any tier-required item fails, the PR is not ready to open. "I'll fix the doc issues after merge" is not an option — fix them before.
 
-**Pre-PR gate, working manually.** Confirm the Tier checklist and doc-owners coverage yourself with `PR_BODY` set to the intended PR body text (`PR_BODY="$(cat /tmp/pr-body.md)" vinaya check doc-coverage`). **On this repo's toolchain**, `bun packages/aeg-core/bin/verify-docs.ts --pr` runs both — the tier checklist and doc-owners coverage — as one command, and `bun packages/aeg-core/bin/verify-task.ts` wraps typecheck, lint, tests, build, `verify-docs` and a premise re-check into one run scoped to `aeg-core`; nothing calls either for you. Where neither script is available, self-verify the tier checklist above.
+**Pre-PR gate, working manually.** Confirm the Tier checklist and doc-owners coverage yourself with `PR_BODY` set to the intended PR body text (`PR_BODY="$(cat /tmp/pr-body.md)" vinaya check doc-coverage`). **On this repo's toolchain**, `bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts --pr` runs both — the tier checklist and doc-owners coverage — as one command, and `bun harness/processes/vinaya-strict/checks/standalone/verify-task.ts` wraps typecheck, lint, tests, build, `verify-docs` and a premise re-check into one run scoped to `aeg-core`; nothing calls either for you. Where neither script is available, self-verify the tier checklist above.
 
 ---
 
@@ -274,7 +274,7 @@ Working manually, before the push `git status` shows a clean tree, and after eve
 
 ## Prose is self-contained
 
-A code comment, a pull-request body, and a doctrine page each describe the thing itself — what the code does, what changed, what a reader needs in order to act — not an internal batch-of-work label or a forge number standing in for that description. A citation is a pointer only this repository's own history can resolve; a reader without that history (a fork, an export, someone reading the file in five years after the Issue is closed) gets nothing from it. Where the fact is worth recording, write the fact — what was learned, decided, or fixed — not where it was logged. `reader-resolvable-prose`'s source-comment class enforces this mechanically over `.ts` comment lines under the configured source globs (`packages/aeg-core/src/reader-resolvable-prose.ts`); treat a citation it flags the same as a failing test, not a style nit to defer.
+A code comment, a pull-request body, and a doctrine page each describe the thing itself — what the code does, what changed, what a reader needs in order to act — not an internal batch-of-work label or a forge number standing in for that description. A citation is a pointer only this repository's own history can resolve; a reader without that history (a fork, an export, someone reading the file in five years after the Issue is closed) gets nothing from it. Where the fact is worth recording, write the fact — what was learned, decided, or fixed — not where it was logged. `reader-resolvable-prose`'s source-comment class enforces this mechanically over `.ts` comment lines under the configured source globs (`harness/processes/vinaya-strict/tools/reader-resolvable-prose.ts`); treat a citation it flags the same as a failing test, not a style nit to defer.
 
 ## When to escalate
 

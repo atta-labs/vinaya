@@ -3203,7 +3203,7 @@
       "scenarios": ["stale-evidence"],
       "sources": [
         {
-          "path": "packages/aeg-core/bin/verify-docs.ts",
+          "path": "harness/processes/vinaya-strict/checks/standalone/verify-docs.ts",
           "symbol": "runC8"
         }
       ],
@@ -4099,7 +4099,7 @@
       "id": "DEF-36",
       "summary": "The documentation-claim binding check exists and runs in no hook, CI job or controller step, so broken bindings on the default branch go unnoticed; a check the doctrine names as enforcing a rule runs where the rule says.",
       "code": {
-        "path": "packages/aeg-core/bin/verify-docs.ts",
+        "path": "harness/processes/vinaya-strict/checks/standalone/verify-docs.ts",
         "locator": "runC8"
       },
       "spec": {

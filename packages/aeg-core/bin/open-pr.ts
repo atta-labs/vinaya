@@ -55,7 +55,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkForgeTitle } from '../src/brief-validation'
-import { checkSinglePlanPr, trancheSlugFromTopologyPath, type OpenPrFiles } from '../src/single-plan-pr'
+import {
+  checkSinglePlanPr,
+  trancheSlugFromTopologyPath,
+  type OpenPrFiles
+} from '../../../harness/processes/vinaya-strict/tools/single-plan-pr'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)
@@ -294,9 +298,14 @@ export function main(): void {
   if (body !== null) {
     for (const step of gatePlanForBranch(branch)) {
       if (step === 'verify-brief') {
-        runGate('brief-validation', 'packages/aeg-core/bin/verify-brief.ts', [], { BRANCH: branch, PR_BODY: body })
+        runGate('brief-validation', 'harness/processes/vinaya-strict/checks/standalone/verify-brief.ts', [], {
+          BRANCH: branch,
+          PR_BODY: body
+        })
       } else if (step === 'verify-docs') {
-        runGate('verify-docs', 'packages/aeg-core/bin/verify-docs.ts', ['--pr'], { PR_BODY: body })
+        runGate('verify-docs', 'harness/processes/vinaya-strict/checks/standalone/verify-docs.ts', ['--pr'], {
+          PR_BODY: body
+        })
       } else if (step === 'body-bare-digits') {
         // The scanner lives in `apps/cli`, which `aeg-core`'s bin cannot import,
         // so run its bin as a subprocess — the same shape every other gate here
@@ -306,17 +315,19 @@ export function main(): void {
         // never be left to `runGate`'s `...process.env` passthrough.
         runGate(
           'body-bare-digits',
-          'apps/cli/src/checks/bin/check-body-bare-digits.ts',
+          'harness/processes/vinaya-strict/checks/bin/check-body-bare-digits.ts',
           [],
           bareDigitsGateEnv(body, editPrNumber)
         )
       } else if (step === 'closes-n') {
-        runGate('Closes #N', 'packages/aeg-core/bin/verify-coherence.ts', ['--closes-n'], {
+        runGate('Closes #N', 'harness/processes/vinaya-strict/checks/standalone/verify-coherence.ts', ['--closes-n'], {
           BRANCH: branch,
           PR_BODY: body
         })
       } else if (step === 'verify-task') {
-        runGate('verify-task', 'packages/aeg-core/bin/verify-task.ts', [], { PR_BODY: body })
+        runGate('verify-task', 'harness/processes/vinaya-strict/checks/standalone/verify-task.ts', [], {
+          PR_BODY: body
+        })
       }
     }
   } else {

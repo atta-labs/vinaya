@@ -1,0 +1,177 @@
+#!/usr/bin/env bun
+
+/**
+ * Core check: doc-coverage-push. Thin adapter over `@attalabs/aeg-core`'s C5
+ * evaluator (`evaluateC5`) run with PUSH semantics — mirrors
+ * `harness/processes/vinaya-strict/checks/standalone/verify-docs.ts --push`'s `runPushMode` exactly:
+ * `vinaya/override:docs`/`OVERRIDE_DOCS=1` is honored (via `overrideActive`)
+ * BEFORE evaluating C5 at all, and the check never hard-fails on a finding
+ * — findings are emitted as `severity: 'warning'` and the process exits 0.
+ * Its one refusal is a configuration one: a `vinaya/waiver:docs` label on a
+ * repository that names no Principal (`resolveTrustedPrincipals`'s
+ * `not-configured`) is one `error` line and exit 1.
+ *
+ * Registered as a SEPARATE check from the already-registered `doc-coverage`
+ * (a Developer's call), not the same `CheckSpec` reused at
+ * a different invocation context, for two reasons:
+ *
+ *   1. `CheckSpec` carries no field for "which mode" (`ALLOWED_KEYS` in
+ *      `tests/checks/no-privileged-api.test.ts` is `name`/`run`/`args`/
+ *      `scope`/`include`/`timeoutMs` only — no `env`). The runner spawns
+ *      every check identically (`runner.ts`'s own no-privileged-API
+ *      invariant); the only way two checks can behave differently is to be
+ *      two different executables.
+ *   2. `harness/processes/vinaya-strict/integration/artifacts.ts` (the `vinaya init` hook/
+ *      workflow generator) is out of this task's surface — its generated
+ *      pre-push hook body is `npx --no-install @attalabs/vinaya check --all`
+ *      unconditionally, with no mode flag or env differentiation between a
+ *      push-time and a PR-time invocation. Since `--all` runs every entry of
+ *      the RESOLVED set (`coreCheckRegistry()` after config override/
+ *      additive resolution, minus `ownWorkflow` entries), adding THIS check
+ *      as a new core entry makes it reachable from that unmodified hook body
+ *      automatically — no `artifacts.ts` edit required. Two post-flip
+ *      caveats on "every entry", both adopter-controlled: a config entry
+ *      keyed with this check's id REPLACES it, and an unresolvable `checks`
+ *      registration refuses the whole run so nothing executes at all. This is
+ *      also the first place `OVERRIDE_DOCS` is honored anywhere in this
+ *      CLI's check surface — `check-doc-coverage.ts` (the existing,
+ *      PR-blocking entry) never calls `overrideActive` at all, a real,
+ *      pre-existing gap versus `verify-docs.ts --pr`, left unchanged here
+ *      (out of surface — see the PR body's Part 4 note).
+ *
+ * Pre-commit supplements the committed branch diff with staged paths only
+ * when both hook markers are present; pre-push and CI use committed paths.
+ *
+ * scope: diff — same as `doc-coverage`, C5 is a diff-vs-doc-owners check.
+ */
+
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import { isWaiverLabelActorVerified, overrideActive, WAIVER_LABEL } from '@attalabs/aeg-core'
+import { DOC_OWNERS_PATH, evaluateC5 } from '../../tools/doc-owners'
+import { fileDiffAgainst } from '../../../../../harness/kernel/connectors/git/diff-evidence'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'
+import { warnOnUnreadPrincipals } from '../principals-refusal'
+
+const CHECK_NAME = 'doc-coverage-push'
+
+function git(args: string[]): string {
+  try {
+    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  } catch {
+    return ''
+  }
+}
+
+function changedFiles(base: string): string[] {
+  return git(['diff', '--name-only', `${base}...HEAD`])
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+function stagedChangedFiles(): string[] {
+  // Git sets GIT_INDEX_FILE for both pre-commit and pre-push. Only the
+  // generated pre-commit hook sets VINAYA_COMMIT_HOOK, so use its explicit
+  // marker as well before allowing staged paths to supplement the branch
+  // diff. Push and CI therefore retain the committed `<base>...HEAD` view.
+  if (process.env.VINAYA_COMMIT_HOOK !== '1' || !process.env.GIT_INDEX_FILE) return []
+
+  return git(['diff', '--cached', '--name-only'])
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+function resolvePrBody(): string {
+  if (process.env.PR_BODY) return process.env.PR_BODY
+  if (process.env.PR_BODY_FILE) {
+    try {
+      return readFileSync(process.env.PR_BODY_FILE, 'utf8')
+    } catch {
+      return ''
+    }
+  }
+  return ''
+}
+
+function waiverActiveFromEnv(): boolean {
+  const labels = (process.env.PR_LABELS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  // Short-circuit before the `gh api` trust-anchor call — identical reasoning
+  // to check-doc-coverage.ts's own guard: this runs on every
+  // local push, where PR_LABELS is empty and no waiver can be active.
+  if (!labels.includes(WAIVER_LABEL)) return false
+  // GitHub-API default-branch read — see check-doc-coverage.ts's identical
+  // comment / `loadTrustAnchorConfig`'s doc comment in lib/config.ts. No
+  // Principal configured is this check's one refusal (exit 1); a failed read
+  // is one warning, and the waiver counts as not active.
+  let principalAllowlist: string[]
+  try {
+    principalAllowlist = resolveTrustedPrincipals()
+  } catch (err) {
+    warnOnUnreadPrincipals(CHECK_NAME, err)
+    return false
+  }
+  return isWaiverLabelActorVerified({
+    label: WAIVER_LABEL,
+    labels,
+    labelActor: process.env.WAIVER_LABEL_ACTOR || null,
+    principalAllowlist
+  })
+}
+
+function main(): void {
+  if (
+    overrideActive({
+      overrideDocsEnv: process.env.OVERRIDE_DOCS,
+      prLabels: process.env.PR_LABELS,
+      prBody: resolvePrBody()
+    })
+  ) {
+    process.exit(0)
+  }
+
+  // `ref`, not `base`: the fallback below re-resolves against `main` when
+  // `origin/main` is absent (a local run, a shallow clone), and the
+  // `Doc-neutral:` evidence diff MUST use whichever ref actually produced the
+  // changed-file list. Diffing against a ref that resolved nothing returns
+  // null, which `evaluateC5` reads as "no evidence" — the declaration then
+  // fails for a reason that has nothing to do with the declaration.
+  const base = process.env.BASE_SHA || 'origin/main'
+  let ref = base
+  let changed = changedFiles(ref)
+  if (changed.length === 0) {
+    ref = 'main'
+    changed = changedFiles(ref)
+  }
+  // Settle the committed base and its fallback before staged paths supplement it.
+  changed = [...new Set([...changed, ...stagedChangedFiles()])]
+  if (changed.length === 0) process.exit(0)
+
+  const content = existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null
+  const result = evaluateC5(changed, content, resolvePrBody(), existsSync, waiverActiveFromEnv(), (p) =>
+    fileDiffAgainst(ref, p)
+  )
+
+  // Ring 0: warn-with-declared-intent, never a hard block on a finding — the
+  // push succeeds; the PR (once opened, `doc-coverage`) is where this actually
+  // gates.
+  for (const message of result.errors) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'warning',
+      message,
+      agent_recovery_prompt:
+        'This owned-doc binding is unsatisfied — the push proceeds anyway, but the PR stays red until you update the bound doc, add a `Doc-ack:` line, or a principal applies the `vinaya/waiver:docs` label.'
+    })
+  }
+
+  process.exit(0)
+}
+
+main()

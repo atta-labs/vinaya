@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { extractShortVersionAndChecklist } from '@attalabs/aeg-core/docs'
+import { extractShortVersionAndChecklist } from '../../../harness/processes/vinaya-strict/tools/docs/published-prose'
 import { ENTRY_SEGMENTS, resolveDoctrineRoot } from '../src/commands/doctrine'
 import { buildRolePlan } from '../../../harness/processes/vinaya-strict/integration/roles/plan'
 

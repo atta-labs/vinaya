@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildDocNav } from './build-doc-nav'
 import { findDoc, getNextDoc, getPrevDoc } from './nav-helpers'
-import type { Doc } from './types'
+import type { Doc } from '../../../../harness/processes/vinaya-strict/tools/docs/types'
 
 const doc = (slug: string, title: string, section: string): Doc => ({
   slug,

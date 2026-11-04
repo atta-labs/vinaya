@@ -13,19 +13,16 @@
 
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../../../../../../../apps/cli/src/lib/principal-test-plan-wait-check-name.js'
+import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../../principal-test-plan-wait-check-name.js'
 import {
   BODY_CHECKS_WORKFLOW_PATH,
   CHECKS_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   REVIEW_WORKFLOW_PATH
 } from '../../../../../../kernel/gates/ring1-ci/workflows/managed-workflow-paths.js'
-import {
-  REVIEW_GATE_CHECK_RUN_NAME,
-  REVIEW_GATE_WORKFLOW_NAME
-} from '../../../../../../../apps/cli/src/lib/review-gate-check-name.js'
-import { reassertPrBodyPremise } from '../../../../../../../apps/cli/src/checks/bin/check-pr-premise-reassert.js'
-import type { PremiseReassertResult } from '../../../../../../../apps/cli/src/checks/premise-reassert-logic.js'
+import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../../../../tools/review-gate-check-name.js'
+import { reassertPrBodyPremise } from '../../../../tools/premise-reassert-logic.js'
+import type { PremiseReassertResult } from '../../../../tools/premise-reassert-logic.js'
 import { pollUntil } from './round-assess.js'
 
 /** Env-overridable, same idiom `dev-review-loop.ts`'s own `gatePollEnvOverride` uses — a fixture needs sub-millisecond backoff, real usage needs real spacing between retries. */
@@ -788,6 +785,80 @@ export const DRIVER_OWNED_PATHS = [
   'harness/kernel/telemetry/questions/time.ts',
   'harness/kernel/telemetry/questions/usage-time.test.ts',
   'harness/kernel/telemetry/questions/usage.ts',
+  'harness/processes/vinaya-strict/checks/baseline-capture.test.ts',
+  'harness/processes/vinaya-strict/checks/baseline-capture.ts',
+  'harness/processes/vinaya-strict/checks/branch-topology-gate.test.ts',
+  'harness/processes/vinaya-strict/checks/branch-topology-gate.ts',
+  'harness/processes/vinaya-strict/checks/coherence-checks.test.ts',
+  'harness/processes/vinaya-strict/checks/coherence-checks.ts',
+  'harness/processes/vinaya-strict/checks/docs/docs-coherence.test.ts',
+  'harness/processes/vinaya-strict/checks/docs/docs-coherence.ts',
+  'harness/processes/vinaya-strict/checks/docs/parse-doc.test.ts',
+  'harness/processes/vinaya-strict/checks/docs/parse-doc.ts',
+  'harness/processes/vinaya-strict/checks/doctrine-no-procedures.test.ts',
+  'harness/processes/vinaya-strict/checks/doctrine-no-procedures.ts',
+  'harness/processes/vinaya-strict/checks/doctrine-portability.test.ts',
+  'harness/processes/vinaya-strict/checks/doctrine-portability.ts',
+  'harness/processes/vinaya-strict/checks/first-push-dispatch-gate.test.ts',
+  'harness/processes/vinaya-strict/checks/first-push-dispatch-gate.ts',
+  'harness/processes/vinaya-strict/checks/gate-audience.test.ts',
+  'harness/processes/vinaya-strict/checks/gate-audience.ts',
+  'harness/processes/vinaya-strict/checks/local-anchor-coverage.test.ts',
+  'harness/processes/vinaya-strict/checks/local-anchor-coverage.ts',
+  'harness/processes/vinaya-strict/checks/manifest-validity.test.ts',
+  'harness/processes/vinaya-strict/checks/manifest-validity.ts',
+  'harness/processes/vinaya-strict/checks/no-binary-sources.test.ts',
+  'harness/processes/vinaya-strict/checks/no-disk-state.test.ts',
+  'harness/processes/vinaya-strict/checks/no-disk-state.ts',
+  'harness/processes/vinaya-strict/checks/registry-checks.test.ts',
+  'harness/processes/vinaya-strict/checks/registry-checks.ts',
+  'harness/processes/vinaya-strict/checks/registry-scaffold.test.ts',
+  'harness/processes/vinaya-strict/checks/registry-scaffold.ts',
+  'harness/processes/vinaya-strict/checks/retired-vocabulary-scan.test.ts',
+  'harness/processes/vinaya-strict/checks/retired-vocabulary.test.ts',
+  'harness/processes/vinaya-strict/checks/retired-vocabulary.ts',
+  'harness/processes/vinaya-strict/checks/status-block.test.ts',
+  'harness/processes/vinaya-strict/checks/status-block.ts',
+  'harness/processes/vinaya-strict/checks/symbol-collisions.test.ts',
+  'harness/processes/vinaya-strict/checks/symbol-collisions.ts',
+  'harness/processes/vinaya-strict/checks/test-plan-gate.test.ts',
+  'harness/processes/vinaya-strict/checks/test-plan-gate.ts',
+  'harness/processes/vinaya-strict/checks/vocabulary-citation.test.ts',
+  'harness/processes/vinaya-strict/checks/vocabulary-citation.ts',
+  'harness/processes/vinaya-strict/integration/gates/checks/markdown-table.test.ts',
+  'harness/processes/vinaya-strict/tools/actions.test.ts',
+  'harness/processes/vinaya-strict/tools/actions.ts',
+  'harness/processes/vinaya-strict/tools/diagram-model.test.ts',
+  'harness/processes/vinaya-strict/tools/diagram-model.ts',
+  'harness/processes/vinaya-strict/tools/dispatch-gate.test.ts',
+  'harness/processes/vinaya-strict/tools/dispatch-gate.ts',
+  'harness/processes/vinaya-strict/tools/doc-claim.test.ts',
+  'harness/processes/vinaya-strict/tools/doc-claim.ts',
+  'harness/processes/vinaya-strict/tools/doc-owners.test.ts',
+  'harness/processes/vinaya-strict/tools/doc-owners.ts',
+  'harness/processes/vinaya-strict/tools/docs/published-prose.test.ts',
+  'harness/processes/vinaya-strict/tools/docs/published-prose.ts',
+  'harness/processes/vinaya-strict/tools/docs/surfaced-manifest.test.ts',
+  'harness/processes/vinaya-strict/tools/docs/surfaced-manifest.ts',
+  'harness/processes/vinaya-strict/tools/docs/types.ts',
+  'harness/processes/vinaya-strict/tools/doctrine-source.ts',
+  'harness/processes/vinaya-strict/tools/file-classify.test.ts',
+  'harness/processes/vinaya-strict/tools/file-classify.ts',
+  'harness/processes/vinaya-strict/tools/prose-product-scope.test.ts',
+  'harness/processes/vinaya-strict/tools/prose-rules.test.ts',
+  'harness/processes/vinaya-strict/tools/prose-rules.ts',
+  'harness/processes/vinaya-strict/tools/quoted-command.test.ts',
+  'harness/processes/vinaya-strict/tools/quoted-command.ts',
+  'harness/processes/vinaya-strict/tools/reader-resolvable-prose.test.ts',
+  'harness/processes/vinaya-strict/tools/reader-resolvable-prose.ts',
+  'harness/processes/vinaya-strict/tools/registry-parse.test.ts',
+  'harness/processes/vinaya-strict/tools/registry-parse.ts',
+  'harness/processes/vinaya-strict/tools/review-gate.test.ts',
+  'harness/processes/vinaya-strict/tools/review-gate.ts',
+  'harness/processes/vinaya-strict/tools/single-plan-pr.test.ts',
+  'harness/processes/vinaya-strict/tools/single-plan-pr.ts',
+  'harness/processes/vinaya-strict/tools/task-contract/bin/leftover-detection.test.ts',
+  'harness/processes/vinaya-strict/tools/task-contract/bin/leftover-detection.ts',
   'packages/aeg-core/src'
 ] as const
 

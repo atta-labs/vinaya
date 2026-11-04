@@ -33,7 +33,7 @@ import {
   resolveNewestFrozenBrief,
   type ReviewPolicy
 } from '@attalabs/aeg-core'
-import { extractShortVersion } from '@attalabs/aeg-core/docs'
+import { extractShortVersion } from '../../../../tools/docs/published-prose'
 import { hasLabel } from '@attalabs/aeg-forge-state'
 import { type GateStep, resolveGateStep } from '../../../../checks/registry.js'
 import { resolveDoctrineRoot } from '../../../../../../../apps/cli/src/commands/doctrine.js'

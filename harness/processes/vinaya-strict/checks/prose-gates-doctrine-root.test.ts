@@ -1,0 +1,1167 @@
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it } from 'bun:test'
+
+// Task `vinaya-adopter-portability-v1` 2 (Issue #232): `reader-resolvable-prose`
+// and `retired-vocabulary` both defaulted an unconfigured `proseGates.doctrineRoot`
+// to the bare literal `'aeg-root'`, resolved relative to the caller's cwd —
+// permanently empty for every `vinaya init` adopter, none of whom ever gets a
+// repo-relative `aeg-root/` (settled by experiment). The fix changes only the
+// UNCONFIGURED default, via `resolveDoctrineRoot()` (`../commands/doctrine.js`
+// — the same "package's own copy" resolution `vinaya doctrine` already uses).
+// An explicit `proseGates.doctrineRoot` in `vinaya.config.json` must still win
+// outright — this suite proves that priority holds.
+
+const READER_BIN = join(import.meta.dir, 'bin', 'check-reader-resolvable-prose.ts')
+const RETIRED_BIN = join(import.meta.dir, 'bin', 'check-retired-vocabulary.ts')
+const INDEX_TS = join(import.meta.dir, '../../../../apps/cli/src/index.ts')
+
+/**
+ * What makes a `vinaya` child log as a dispatched, unattended session rather
+ * than as a plain local run: the unattended marker and role (either one alone
+ * makes a process unattended), a CI runner's flag, the host, the log server's
+ * tokens and spool, and the run identity. A test process that ran a loop
+ * in-process, or that is itself a dispatched session, carries some of these;
+ * inherited, they send the child's log lines somewhere else and can put a
+ * delivery warning on its stderr, which these tests assert empty.
+ */
+const SESSION_ENV_KEYS = [
+  'VINAYA_UNATTENDED',
+  'VINAYA_ROLE',
+  'GITHUB_ACTIONS',
+  'VINAYA_HOST',
+  'VINAYA_LOG_TOKEN',
+  'VINAYA_LOG_READ_TOKEN',
+  'VINAYA_LOG_SPOOL_DIR',
+  'VINAYA_RUN_ID',
+  'VINAYA_RUN',
+  'VINAYA_TASK',
+  'VINAYA_ROUND',
+  'VINAYA_PR',
+  'VINAYA_ATTEMPT',
+  'VINAYA_PARENT_EVENT'
+] as const
+
+/** The environment every check child here starts with: this process's own, minus `SESSION_ENV_KEYS`, with `overrides` applied (an `undefined` value removes the key). */
+function checkChildEnv(overrides: Record<string, string | undefined> = {}): Record<string, string> {
+  const env: Record<string, string | undefined> = { ...process.env, ...overrides }
+  for (const key of SESSION_ENV_KEYS) delete env[key]
+  for (const [key, value] of Object.entries(env)) if (value === undefined) delete env[key]
+  return env as Record<string, string>
+}
+
+function initFixture(name: string): string {
+  const root = join(tmpdir(), `vinaya-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(root, { recursive: true })
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root })
+  writeFileSync(join(root, 'README.md'), '# fixture\n')
+  execFileSync('git', ['add', 'README.md'], { cwd: root })
+  execFileSync('git', ['commit', '-q', '-m', 'Chore: initial commit'], { cwd: root })
+  return root
+}
+
+describe('checkChildEnv — the check children start as a plain local run', () => {
+  it('carries none of the session keys even when this process is marked unattended and attributed to a run', () => {
+    const saved: Record<string, string | undefined> = {}
+    for (const key of SESSION_ENV_KEYS) saved[key] = process.env[key]
+    try {
+      for (const key of SESSION_ENV_KEYS) process.env[key] = 'parent-value'
+      process.env.VINAYA_UNATTENDED = '1'
+      const env = checkChildEnv({ BASE_SHA: 'main', PR_BODY: undefined })
+      for (const key of SESSION_ENV_KEYS) expect({ key, value: env[key] }).toEqual({ key, value: undefined })
+      expect(Object.hasOwn(env, 'VINAYA_UNATTENDED')).toBe(false)
+      expect(Object.hasOwn(env, 'PR_BODY')).toBe(false)
+      expect(env.BASE_SHA).toBe('main')
+      expect(env.PATH).toBe(process.env.PATH)
+    } finally {
+      for (const key of SESSION_ENV_KEYS) {
+        if (saved[key] === undefined) delete process.env[key]
+        else process.env[key] = saved[key]
+      }
+    }
+  })
+
+  it('an override cannot put a session key back', () => {
+    expect(checkChildEnv({ VINAYA_UNATTENDED: '1', VINAYA_ROLE: 'developer' })).not.toHaveProperty('VINAYA_UNATTENDED')
+    expect(checkChildEnv({ VINAYA_ROLE: 'developer' })).not.toHaveProperty('VINAYA_ROLE')
+  })
+})
+
+describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — task vinaya-adopter-portability-v1 2', () => {
+  it('both bins call resolveDoctrineRoot() as the unconfigured fallback, not a bare cwd-relative literal', () => {
+    for (const bin of [READER_BIN, RETIRED_BIN]) {
+      const source = readFileSync(bin, 'utf8')
+      expect(source).toContain('resolveDoctrineRoot()')
+      expect(source).not.toContain("proseGates?.doctrineRoot ?? 'aeg-root'")
+      expect(source).not.toContain("loadConfig()?.proseGates?.doctrineRoot ?? 'aeg-root'")
+    }
+  })
+
+  it('an explicit proseGates.doctrineRoot in vinaya.config.json still wins over resolveDoctrineRoot() — configured beats the package default', () => {
+    const root = initFixture('prose-gates-config-wins')
+    try {
+      mkdirSync(join(root, 'configured-doctrine', 'roles'), { recursive: true })
+      writeFileSync(
+        join(root, 'configured-doctrine', 'glossary.md'),
+        '## Glossary\n\n**Widget** — a fixture term, defined right here.\n'
+      )
+      writeFileSync(
+        join(root, 'configured-doctrine', 'roles', 'x.md'),
+        '---\nrole_id: x\n---\nThis page uses Widget correctly, since it is defined in the glossary.\n'
+      )
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ checks: {}, proseGates: { doctrineRoot: 'configured-doctrine' } }, null, 2)
+      )
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add fixture doctrine'], { cwd: root })
+
+      const result = Bun.spawnSync(['bun', INDEX_TS, 'check', 'reader-resolvable-prose'], {
+        cwd: root,
+        env: checkChildEnv({ PR_BODY: undefined })
+      })
+      expect(result.exitCode).toBe(0)
+      // Positive proof it read the CONFIGURED root, not the package default:
+      // a finding (if any) would name a path under `configured-doctrine/`,
+      // never this monorepo's own `aeg-root/`.
+      expect(result.stderr.toString()).not.toContain('/aeg-root/')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+// Code review, PR #290 MINOR (round 2): `tests/diff-evidence.test.ts`
+// unit-tests `resolveChangedFiles()` in isolation, but nothing exercised the
+// two real consumers (`check-reader-resolvable-prose.ts`/
+// `check-retired-vocabulary.ts`) end-to-end against a fixture with a genuine
+// doctrine finding. This suite spawns each real bin against one — BOTH
+// consumers (code review, round 3: the first version of this suite only
+// covered `retired-vocabulary`, leaving `reader-resolvable-prose` — which
+// carries the identical `repoRoot()`/diff-scoping pattern — asymmetrically
+// untested for diff-scoped filtering specifically).
+//
+// A relative `proseGates.doctrineRoot`, invoked from a SUBDIRECTORY, was
+// also tried here and deliberately dropped: it does not exercise this PR's
+// fix at all. `collect(DOCTRINE_ROOT)` — unchanged by this PR, pre-existing —
+// calls plain `readdirSync(DOCTRINE_ROOT)` on the raw config string with no
+// anchoring whatsoever, so a relative `doctrineRoot` finds nothing from a
+// subdirectory regardless of `repoRoot()`-anchored comparison; the sweep
+// itself is empty before comparison ever runs. This PR's `repoRoot()`
+// anchoring closes the gap on the COMPARISON side only, which is what it
+// set out to fix — the collection side is a separate, pre-existing defect,
+// out of scope here the same way `check-doc-coverage.ts`'s own fail-open
+// class was flagged out of scope for this PR by the code-reviewer pass.
+for (const check of [
+  {
+    name: 'retired-vocabulary',
+    // A real, deterministic `RETIRED_PATTERNS` hit (`@attalabs/aeg-core`'s
+    // retired decision-id format, `D` dash three digits) — not a guessed
+    // heuristic. Built via concatenation, not a literal in this file's own
+    // source: `harness/processes/vinaya-strict/checks/retired-vocabulary.test.ts`'s own
+    // repo-wide meta-check (`PRODUCT = ['.']`, deliberately unscoped —
+    // see that file's own module doc for why an enumerated exemption list
+    // is the exact blind-spot shape it exists to avoid) bans that literal
+    // string appearing ANYWHERE in this repo's tracked source, including
+    // this test file's own comments and string literals — found live when
+    // this fixture's first version shipped it as a plain literal and broke
+    // Vinaya CI, a suite this branch's own `bun test` (scoped to `apps/cli`
+    // only) never runs.
+    mention: `See D-${100 + 23} for the historical rationale.\n`,
+    // The message states the offending pattern's SOURCE regex, not a
+    // literal echo of the matched substring.
+    findingContains: ['retired-vocabulary', 'retired AEG mechanism']
+  },
+  {
+    name: 'reader-resolvable-prose',
+    /** `#123`-shaped — a real, deterministic `FORGE_NUMBER_PATTERN` hit (`checkUnresolvableReferences`, `@attalabs/aeg-core`), not a guessed heuristic. */
+    mention: 'See #123 for the historical rationale.\n',
+    findingContains: ['reader-resolvable-prose', 'a forge number']
+  }
+] as const) {
+  describe(`${check.name} — diff-scoped filtering, end to end, with a relative doctrineRoot (PR #290 review)`, () => {
+    function fixtureWithRelativeDoctrineRoot(name: string): string {
+      const root = initFixture(name)
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ checks: {}, proseGates: { doctrineRoot: 'docs' } }, null, 2)
+      )
+      mkdirSync(join(root, 'docs'), { recursive: true })
+      writeFileSync(join(root, 'docs', 'unrelated.md'), '# Nothing to flag here\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: base doctrine, no findings'], { cwd: root })
+      execFileSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: root })
+      return root
+    }
+
+    function run(cwd: string): { exitCode: number; stderr: string } {
+      const result = Bun.spawnSync(['bun', INDEX_TS, 'check', check.name], {
+        cwd,
+        env: checkChildEnv({ BASE_SHA: 'main', PR_BODY: undefined })
+      })
+      return { exitCode: result.exitCode, stderr: result.stderr.toString() }
+    }
+
+    it('a touched doctrine file with a real finding is reported, from the repo root', () => {
+      const root = fixtureWithRelativeDoctrineRoot(`${check.name}-e2e-root`)
+      try {
+        writeFileSync(join(root, 'docs', 'note.md'), check.mention)
+        execFileSync('git', ['add', '-A'], { cwd: root })
+        execFileSync('git', ['commit', '-q', '-m', 'Docs: add a note with a real finding'], { cwd: root })
+
+        const { exitCode, stderr } = run(root)
+        // `retired-vocabulary` blocks — a reportable finding exits `1` and
+        // fails `check --all`; `reader-resolvable-prose`'s doctrine classes
+        // stay report-only.
+        expect(exitCode).toBe(check.name === 'retired-vocabulary' ? 1 : 0)
+        expect(stderr).toContain('docs/note.md')
+        for (const fragment of check.findingContains) expect(stderr).toContain(fragment)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    // Named for what it actually proves (code review, round 3: the prior
+    // name/comment here claimed this discriminates the `repoRoot()` reuse
+    // fix specifically — it doesn't. `DOCTRINE_ROOT` on this path is already
+    // absolute via `resolveDoctrineRoot()`, so `resolve(pathBase, f.file)`
+    // and the pre-fix `resolve(f.file)` are identical for every finding
+    // regardless of `pathBase` — reverting the fix and re-running this test
+    // still passes, confirmed by the round-3 reviewer. Discriminating the
+    // fix itself needs a RELATIVE `finding.file`, which requires a relative
+    // `doctrineRoot` — and that combination is blocked by the separate,
+    // out-of-scope `collect()` cwd-relative bug documented above.
+    // `tests/diff-evidence.test.ts`'s own cwd-independence test is the one
+    // that genuinely discriminates `resolveChangedFiles()`'s `repoRoot()`
+    // fix. What THIS test proves instead: real, valuable, just different —
+    // invoking the installed/unconfigured shape from a subdirectory doesn't
+    // crash and produces byte-identical output to invoking it from the repo
+    // root, for the path every real adopter install actually takes.
+    it('subdirectory invocation is a safe no-op for the unconfigured/default doctrineRoot shape: identical output either way', () => {
+      const root = initFixture(`${check.name}-e2e-subdir-no-crash`)
+      execFileSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: root })
+      writeFileSync(join(root, 'b.md'), '# b\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add b'], { cwd: root })
+
+      const subdir = join(root, 'some', 'nested', 'dir')
+      mkdirSync(subdir, { recursive: true })
+
+      try {
+        const fromRoot = run(root)
+        const fromSubdir = run(subdir)
+        expect(fromRoot.exitCode).toBe(0)
+        expect(fromSubdir.exitCode).toBe(fromRoot.exitCode)
+        expect(fromSubdir.stderr).toBe(fromRoot.stderr)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    it('a diff that never touches the doctrine root reports nothing, even though a real backlog exists elsewhere in it', () => {
+      // Deliberately does NOT use `fixtureWithRelativeDoctrineRoot` — the
+      // backlog finding needs to live in the BASE commit itself (present,
+      // unchanged, on both `main` and `feature`) so the sweep genuinely
+      // finds it on disk while diff-scoping still excludes it, rather than
+      // a file that simply doesn't exist in this checkout at all.
+      const root = initFixture(`${check.name}-e2e-unrelated-diff`)
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ checks: {}, proseGates: { doctrineRoot: 'docs' } }, null, 2)
+      )
+      mkdirSync(join(root, 'docs'), { recursive: true })
+      // The pre-existing backlog — real, on disk, present in BOTH branches.
+      writeFileSync(join(root, 'docs', 'old-note.md'), check.mention)
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: base doctrine, carries a pre-existing backlog finding'], {
+        cwd: root
+      })
+      try {
+        execFileSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: root })
+        // This diff's own change: unrelated to docs/ entirely.
+        writeFileSync(join(root, 'unrelated-outside-docs.md'), '# not doctrine\n')
+        execFileSync('git', ['add', '-A'], { cwd: root })
+        execFileSync('git', ['commit', '-q', '-m', 'Chore: unrelated repo-root file'], { cwd: root })
+
+        const { exitCode, stderr } = run(root)
+        expect(exitCode).toBe(0)
+        // docs/old-note.md's finding is real and on disk — the sweep finds
+        // it — but it's identical on `main` and `feature` (never touched by
+        // this diff), so diff-scoping must exclude it from what's printed.
+        expect(stderr).toBe('')
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  })
+}
+
+// Issue #314: `resolveDoctrineRoot()`'s own default resolves relative to
+// wherever ITS OWN calling module physically sits on disk — the right anchor
+// for `vinaya doctrine`'s "my own package" lookup, but the wrong one for a
+// check sweeping the repo actually under check. Whether that default finds a
+// real doctrine root depended on whether the checkout's ancestor path
+// happened to contain a directory literally named `node_modules` (which
+// gates `resolveDoctrineRoot`'s internal fallback candidate) — a fact with no
+// relation to whether the checkout's own `aeg-root/` exists. Measured live:
+// the same commit, checked out one directory deeper under a `node_modules`-
+// named ancestor, silently swept zero files instead of its real backlog.
+//
+// The fix anchors both checks' unconfigured default to `repoRoot()` (`git
+// rev-parse --show-toplevel`) first — deterministic regardless of checkout
+// shape — falling back to `resolveDoctrineRoot()`'s package-relative
+// resolution only when the repo under check has no local `aeg-root/` of its
+// own. These tests exercise both halves of that fix against the REAL bins,
+// not a unit test of the resolution logic in isolation, because the bug was
+// specifically about what the real subprocess does under a real checkout
+// shape.
+describe('doctrine-root checkout-location independence (Issue #314)', () => {
+  function fixtureWithOwnDoctrine(root: string, checkName: 'reader-resolvable-prose' | 'retired-vocabulary'): void {
+    mkdirSync(join(root, 'aeg-root', 'skills', 'aeg'), { recursive: true })
+    writeFileSync(join(root, 'aeg-root', 'skills', 'aeg', 'SKILL.md'), '# entry\n')
+    // A real, deterministic finding for each check — same patterns the rest
+    // of this suite uses (a live `FORGE_NUMBER_PATTERN`/retired-decision-id
+    // hit), not a guessed heuristic.
+    const mention =
+      checkName === 'retired-vocabulary'
+        ? `See D-${100 + 23} for the historical rationale.\n`
+        : 'See #123 for the historical rationale.\n'
+    writeFileSync(join(root, 'aeg-root', 'note.md'), mention)
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root })
+    execFileSync('git', ['add', '-A'], { cwd: root })
+    execFileSync('git', ['commit', '-q', '-m', 'Chore: fixture doctrine with one real finding'], { cwd: root })
+  }
+
+  // The raw bin, not the `vinaya check <name>` wrapper — the wrapper reformats
+  // stdout into its own `✓ <name>: pass` summary and drops the bin's own
+  // "N finding(s) swept" line, which this test needs to compare sweep counts.
+  function run(cwd: string, checkName: string): { exitCode: number; stdout: string } {
+    const binPath = join(
+      import.meta.dir,
+      'bin',
+      checkName === 'reader-resolvable-prose' ? 'check-reader-resolvable-prose.ts' : 'check-retired-vocabulary.ts'
+    )
+    const result = Bun.spawnSync(['bun', binPath], {
+      cwd,
+      env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
+    })
+    return { exitCode: result.exitCode, stdout: result.stdout.toString() }
+  }
+
+  /**
+   * Pulls the total finding count out of the check's own stdout summary
+   * line — `reader-resolvable-prose` prints `N finding(s) swept, ...`,
+   * `retired-vocabulary` prints `... M file(s) swept; N finding(s), ...`;
+   * both name the total (pre-diff-scoping) count as `N finding(s)`.
+   */
+  function sweptCount(stdout: string): number {
+    const match = stdout.match(/(\d+) finding\(s\)/)
+    if (!match) throw new Error(`no "finding(s)" summary line in stdout: ${stdout}`)
+    return Number(match[1])
+  }
+
+  /**
+   * Pulls the resolved doctrine root path out of the check's own stdout
+   * summary line (`doctrine root "<path>"`). A matching finding COUNT alone
+   * does not prove checkout-independence: with the fix reverted, both
+   * fixtures' `resolveDoctrineRoot()` fallback resolves relative to wherever
+   * `doctrine.ts` itself physically sits (this dev repo), so both runs
+   * silently escape to the SAME real `aeg-root/` and can coincidentally
+   * report the same count without ever having swept the fixture at all —
+   * caught live in review by reverting the three fixed source files and
+   * re-running this suite unmodified. Asserting the reported path actually
+   * points INTO the fixture directory closes that gap.
+   */
+  function doctrineRootPath(stdout: string): string {
+    const match = stdout.match(/doctrine root "([^"]+)"/)
+    if (!match) throw new Error(`no doctrine-root summary line in stdout: ${stdout}`)
+    return match[1] as string
+  }
+
+  for (const checkName of ['reader-resolvable-prose', 'retired-vocabulary'] as const) {
+    it(`${checkName}: identical finding count from a plain checkout and one nested several directories deeper`, () => {
+      const rand = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      const plainRoot = join(tmpdir(), `vinaya-checkout-plain-${checkName}-${rand}`)
+      // Nested under an unrelated multi-level ancestor — deliberately NOT
+      // literally named `node_modules`: `retired-vocabulary`'s own scanner
+      // (`harness/processes/vinaya-strict/checks/retired-vocabulary.ts`) exempts any file
+      // whose path contains `/node_modules/` as vendored/third-party code —
+      // a real, correct, unrelated exemption. Nesting the fixture itself
+      // under that literal name would make its own finding vanish for a
+      // reason that has nothing to do with THIS fix, confounding the test.
+      // Depth/shape (not that one specific name) is what the checkout-
+      // independence property under test actually needs to vary.
+      const deepParent = join(tmpdir(), `vinaya-checkout-deep-${checkName}-${rand}`, 'linked', 'vendored-checkout')
+      const nestedRoot = join(deepParent, 'nested-repo')
+      try {
+        mkdirSync(plainRoot, { recursive: true })
+        mkdirSync(nestedRoot, { recursive: true })
+        fixtureWithOwnDoctrine(plainRoot, checkName)
+        fixtureWithOwnDoctrine(nestedRoot, checkName)
+
+        const plain = run(plainRoot, checkName)
+        const nested = run(nestedRoot, checkName)
+
+        // Both fixtures carry the same one real finding: `retired-vocabulary`
+        // blocks on it, `reader-resolvable-prose` reports it.
+        const expectedExit = checkName === 'retired-vocabulary' ? 1 : 0
+        expect(plain.exitCode).toBe(expectedExit)
+        expect(nested.exitCode).toBe(expectedExit)
+        // Each run actually resolved INTO its own fixture, not (with the fix
+        // reverted) both silently escaping to this dev repo's own real
+        // `aeg-root/` — see `doctrineRootPath`'s doc comment for why a
+        // finding-count match alone cannot prove this.
+        expect(doctrineRootPath(plain.stdout)).toStartWith(realpathSync(plainRoot))
+        expect(doctrineRootPath(nested.stdout)).toStartWith(realpathSync(nestedRoot))
+        const plainCount = sweptCount(plain.stdout)
+        const nestedCount = sweptCount(nested.stdout)
+        // Non-zero: proves both actually swept the fixture's real doctrine
+        // content, not both coincidentally reporting nothing.
+        expect(plainCount).toBeGreaterThan(0)
+        expect(nestedCount).toBe(plainCount)
+      } finally {
+        rmSync(plainRoot, { recursive: true, force: true })
+        rmSync(join(tmpdir(), `vinaya-checkout-deep-${checkName}-${rand}`), { recursive: true, force: true })
+      }
+    })
+  }
+
+  // The exact historical trigger (Issue #314's own measured incident):
+  // `resolveDoctrineRoot()`'s internal fallback candidate is gated on whether
+  // the resolved package path contains a literal `node_modules` segment —
+  // reader-resolvable-prose's own scanner carries no equivalent path
+  // exemption (unlike retired-vocabulary's, see above), so this is safe to
+  // reproduce literally for this one check.
+  it('reader-resolvable-prose: identical finding count nested under a literal "node_modules" ancestor specifically', () => {
+    const rand = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const plainRoot = join(tmpdir(), `vinaya-checkout-plain-nm-${rand}`)
+    const nmParent = join(tmpdir(), `vinaya-checkout-nm-${rand}`, 'node_modules')
+    const nestedRoot = join(nmParent, 'nested-repo')
+    try {
+      mkdirSync(plainRoot, { recursive: true })
+      mkdirSync(nestedRoot, { recursive: true })
+      fixtureWithOwnDoctrine(plainRoot, 'reader-resolvable-prose')
+      fixtureWithOwnDoctrine(nestedRoot, 'reader-resolvable-prose')
+
+      const plain = run(plainRoot, 'reader-resolvable-prose')
+      const nested = run(nestedRoot, 'reader-resolvable-prose')
+
+      expect(plain.exitCode).toBe(0)
+      expect(nested.exitCode).toBe(0)
+      expect(doctrineRootPath(plain.stdout)).toStartWith(realpathSync(plainRoot))
+      expect(doctrineRootPath(nested.stdout)).toStartWith(realpathSync(nestedRoot))
+      const plainCount = sweptCount(plain.stdout)
+      const nestedCount = sweptCount(nested.stdout)
+      expect(plainCount).toBeGreaterThan(0)
+      expect(nestedCount).toBe(plainCount)
+    } finally {
+      rmSync(plainRoot, { recursive: true, force: true })
+      rmSync(join(tmpdir(), `vinaya-checkout-nm-${rand}`), { recursive: true, force: true })
+    }
+  })
+})
+
+// Issue #314's second acceptance criterion: where the doctrine root
+// genuinely cannot be resolved (no local `aeg-root/`, and no bundled copy
+// findable relative to the check's own install either), the check must
+// report that as its own distinct outcome — never silently as a clean,
+// zero-finding pass, which is structurally indistinguishable from "ran and
+// found nothing."
+//
+// Constructing this for real means defeating BOTH resolution paths: the
+// `repoRoot()`-anchored candidate (no local `aeg-root/`) AND
+// `resolveDoctrineRoot()`'s own package-relative fallback (no bundled copy
+// reachable from the check bin's own install location). Every real caller
+// in this dev monorepo's own tree finds ITS OWN `aeg-root/` via that second
+// path, so the only way to exercise genuine unresolvability for real is a
+// separate checkout with its `aeg-root/` actually removed — a fixture
+// clone, not the shared dev tree these tests run inside of. `git clone`
+// (local, same filesystem) hardlinks objects, so this is fast; `node_modules`
+// is symlinked in from THIS run's own real install rather than reinstalled,
+// since only `aeg-root`'s absence is under test here, not dependency
+// resolution.
+describe('doctrine root genuinely unresolvable (Issue #314)', () => {
+  const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
+
+  function cloneWithoutAegRoot(name: string): string {
+    const dest = join(tmpdir(), `vinaya-no-aeg-root-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    // `--shared`: the clone borrows this repository's objects through an
+    // alternate instead of copying them. A plain local clone hardlinks them
+    // only when the source is an ordinary checkout — from a linked worktree,
+    // whose `.git` is a file rather than an object store, it falls back to
+    // copying the whole repository (measured: 4.3s against 0.5s), which took
+    // this test past its own time limit for every run dispatched into a
+    // worktree. The clone is a throwaway this test deletes itself, so
+    // borrowing objects from its source is safe; nothing here writes to the
+    // source, and the clone's own commit below lands in its own object store.
+    execFileSync('git', ['clone', '--quiet', '--shared', REPO_ROOT, dest])
+    execFileSync('git', ['checkout', '-q', '-b', 'test-no-aeg-root'], { cwd: dest })
+    symlinkSync(join(REPO_ROOT, 'node_modules'), join(dest, 'node_modules'))
+    execFileSync('git', ['rm', '-rq', '--', 'aeg-root'], { cwd: dest })
+    execFileSync(
+      'git',
+      ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '-q', '-m', 'Chore: remove aeg-root'],
+      {
+        cwd: dest
+      }
+    )
+    return dest
+  }
+
+  for (const checkName of ['reader-resolvable-prose', 'retired-vocabulary'] as const) {
+    it(`${checkName}: reports doctrine-root-unresolvable as a distinct outcome, never a silent clean pass`, () => {
+      const clone = cloneWithoutAegRoot(checkName)
+      const binPath = join(
+        clone,
+        'harness/processes/vinaya-strict/checks/bin',
+        checkName === 'reader-resolvable-prose' ? 'check-reader-resolvable-prose.ts' : 'check-retired-vocabulary.ts'
+      )
+      try {
+        const result = Bun.spawnSync(['bun', binPath], { cwd: clone, env: checkChildEnv() })
+        const exitCode = result.exitCode
+        const stderr = result.stderr.toString()
+
+        // Never 0 (a clean/empty sweep) — a distinct code so the runner's
+        // own generic exit-code mapping (0 → pass, 1 → fail, else → error)
+        // marks this run `status: 'error'`, never `status: 'pass'` with
+        // zero findings.
+        expect(exitCode).not.toBe(0)
+        const errors = stderr
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+        expect(errors).toHaveLength(1)
+        expect(errors[0].severity).toBe('error')
+        expect(errors[0].check).toBe(checkName)
+        expect(errors[0].message).toContain('doctrine root unresolvable')
+      } finally {
+        rmSync(clone, { recursive: true, force: true })
+      }
+    })
+  }
+})
+
+// Regression: an explicit `proseGates.doctrineRoot` must still win outright
+// over both the `repoRoot()`-anchored candidate and `resolveDoctrineRoot()`'s
+// fallback, for BOTH checks. The reader-resolvable-prose half of this is
+// already covered above (task `vinaya-adopter-portability-v1` 2); this adds
+// the retired-vocabulary half, which that earlier suite never exercised.
+describe('explicit proseGates.doctrineRoot still wins — retired-vocabulary (Issue #314 regression)', () => {
+  it('a configured doctrineRoot is read even when a real repo-root aeg-root/ also exists', () => {
+    const root = join(tmpdir(), `vinaya-retired-config-wins-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    try {
+      // A real `aeg-root/` at the repo root too, so this test actually
+      // discriminates "configured wins" from "repoRoot() candidate would
+      // have won anyway" — the two must differ for the assertion to mean
+      // anything.
+      mkdirSync(join(root, 'aeg-root', 'skills', 'aeg'), { recursive: true })
+      writeFileSync(join(root, 'aeg-root', 'skills', 'aeg', 'SKILL.md'), '# entry\n')
+      writeFileSync(join(root, 'aeg-root', 'note.md'), `See D-${100 + 23} for the historical rationale.\n`)
+
+      mkdirSync(join(root, 'configured-doctrine'), { recursive: true })
+      writeFileSync(join(root, 'configured-doctrine', 'note.md'), '# nothing retired here\n')
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ checks: {}, proseGates: { doctrineRoot: 'configured-doctrine' } }, null, 2)
+      )
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root })
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add fixture doctrine'], { cwd: root })
+
+      const result = Bun.spawnSync(['bun', INDEX_TS, 'check', 'retired-vocabulary'], {
+        cwd: root,
+        env: checkChildEnv({ PR_BODY: undefined })
+      })
+      expect(result.exitCode).toBe(0)
+      // Positive proof it read the CONFIGURED root, not the repo-root
+      // aeg-root/: the real retired-decision-id finding in aeg-root/note.md
+      // (the same pattern `mention` above writes there) never surfaces.
+      expect(result.stderr.toString()).not.toContain('retired AEG mechanism')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+// Issue #435: reader-resolvable-prose is report-only for every class except
+// one — a tranche-slug citation under `PRODUCT_SLUG_SCOPE` (product code,
+// e.g. `apps/cli/src`). That one class is blocking: this run's own exit code
+// reflects it. No `BASE_SHA` is set, same as the checkout-location suite
+// above — a fresh single-commit fixture with no remote has no resolvable
+// diff boundary, so `findingsInThisDiff` treats it as indeterminate and
+// reports everything, which is what lets a bare `bun <bin>` invocation here
+// see the finding at all.
+describe('reader-resolvable-prose: a product-code slug citation is a blocking finding (Issue #435)', () => {
+  it('a fixture with a tranche-slug citation under apps/cli/src exits 1', () => {
+    const root = initFixture('product-slug-blocking')
+    try {
+      mkdirSync(join(root, 'apps', 'cli', 'src'), { recursive: true })
+      writeFileSync(join(root, 'apps', 'cli', 'src', 'index.ts'), '// landed in aeg-coherence-v1\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add a CLI source file with a tranche-slug citation'], {
+        cwd: root
+      })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
+      })
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr.toString()).toContain('product code')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a fixture with no product-scope citation exits 0', () => {
+    const root = initFixture('product-slug-clean')
+    try {
+      mkdirSync(join(root, 'apps', 'cli', 'src'), { recursive: true })
+      writeFileSync(join(root, 'apps', 'cli', 'src', 'index.ts'), '// nothing to cite here\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add a clean CLI source file'], { cwd: root })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
+      })
+      expect(result.exitCode).toBe(0)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+// The source-comment class: config-driven globs, warning-by-default
+// severity, an opt-in error severity, and an allowlist that skips a named
+// file entirely. Distinct fixtures per case (rather than reusing the ones
+// above) since `proseGates.sourceComments.globs` must point at a directory
+// that actually exists in each fixture's own tree.
+describe('reader-resolvable-prose: the source-comment class', () => {
+  function fixtureWithSourceComments(name: string, config: Record<string, unknown>): string {
+    const root = initFixture(name)
+    writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ checks: {}, ...config }, null, 2))
+    return root
+  }
+
+  it('a tranche-slug citation in a comment is a report-only warning by default (exit 0)', () => {
+    const root = fixtureWithSourceComments('source-comments-slug-warning', {
+      proseGates: { sourceComments: { globs: ['lib'] } }
+    })
+    try {
+      mkdirSync(join(root, 'lib'), { recursive: true })
+      writeFileSync(join(root, 'lib', 'x.ts'), '// landed in review-convergence-v1\nexport const a = 1\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add a lib file with a tranche-slug comment citation'], {
+        cwd: root
+      })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
+      })
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr.toString()).toContain('lib/x.ts')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a forge-number citation fails the run once severity is configured to "error"', () => {
+    const root = fixtureWithSourceComments('source-comments-number-error', {
+      proseGates: { sourceComments: { globs: ['lib'], severity: 'error' } }
+    })
+    try {
+      mkdirSync(join(root, 'lib'), { recursive: true })
+      writeFileSync(join(root, 'lib', 'x.ts'), '/**\n * fixed the gap (#4213)\n */\nexport const a = 1\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add a lib file with a forge-number comment citation'], {
+        cwd: root
+      })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
+      })
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr.toString()).toContain('forge-number')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('an allowlisted file is skipped entirely, even at "error" severity', () => {
+    const root = fixtureWithSourceComments('source-comments-allowlist', {
+      proseGates: { sourceComments: { globs: ['lib'], allowlist: ['lib/pinned.ts'], severity: 'error' } }
+    })
+    try {
+      mkdirSync(join(root, 'lib'), { recursive: true })
+      writeFileSync(join(root, 'lib', 'pinned.ts'), '// deliberately pins review-convergence-v1 (#4213)\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add an allowlisted fixture file'], { cwd: root })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
+      })
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr.toString()).not.toContain('pinned.ts')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('with no proseGates.sourceComments configured, the class is dormant — no finding, even on a real citation', () => {
+    const root = initFixture('source-comments-dormant')
+    try {
+      mkdirSync(join(root, 'lib'), { recursive: true })
+      writeFileSync(join(root, 'lib', 'x.ts'), '// landed in review-convergence-v1 (#4213)\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add a lib file with a citation, unconfigured globs'], {
+        cwd: root
+      })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
+      })
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout.toString()).toContain('source-comment class dormant')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+// The spec class's default file set. A repository with no `apps/` tree of its
+// own — the shape a newly-adopting repository actually has — was never read by
+// this class at all, so its root spec was free to carry a copy of a plan
+// (a task list, the Issue numbers behind it) that went stale the moment the
+// plan moved. Measured live: one such spec had to be rewritten three times in
+// a day, with nothing refusing any of it.
+//
+// No `BASE_SHA`, same as the suites above: a fresh single-commit fixture with
+// no remote has no resolvable diff boundary, so `findingsInThisDiff` treats it
+// as indeterminate and reports everything, which is what lets a bare
+// `bun <bin>` invocation here see the finding at all.
+describe('reader-resolvable-prose: the spec class checks a root spec, context and decision records by default', () => {
+  function fixtureWithConfig(name: string, config: Record<string, unknown> | null): string {
+    const root = initFixture(name)
+    if (config !== null) {
+      writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ checks: {}, ...config }, null, 2))
+    }
+    return root
+  }
+
+  function commitAll(root: string, message: string): void {
+    execFileSync('git', ['add', '-A'], { cwd: root })
+    execFileSync('git', ['commit', '-q', '-m', message], { cwd: root })
+  }
+
+  function runReaderBin(root: string): { exitCode: number | null; stdout: string; stderr: string } {
+    const result = Bun.spawnSync(['bun', READER_BIN], {
+      cwd: root,
+      env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
+    })
+    return { exitCode: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
+  }
+
+  it('a root SPEC.md citing an Issue number and a tranche slug fails, with no configuration at all', () => {
+    const root = fixtureWithConfig('spec-defaults-root-spec', null)
+    try {
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      commitAll(root, 'Chore: add a root spec carrying plan citations')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('SPEC.md')
+      expect(stderr).toContain('a forge number')
+      expect(stderr).toContain('an internal tranche slug')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a root CONTEXT.md and a docs/adr record are read the same way', () => {
+    const root = fixtureWithConfig('spec-defaults-context-and-adr', null)
+    try {
+      writeFileSync(join(root, 'CONTEXT.md'), '# Context\n\nWhy this exists: see (#4213).\n')
+      mkdirSync(join(root, 'docs', 'adr'), { recursive: true })
+      writeFileSync(join(root, 'docs', 'adr', '0001-pick-a-runtime.md'), '# Pick a runtime\n\nDecided in (#4214).\n')
+      commitAll(root, 'Chore: add a context document and a decision record')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('CONTEXT.md')
+      expect(stderr).toContain('docs/adr/0001-pick-a-runtime.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a README.md carrying badge-shaped slugs is never swept by default', () => {
+    const root = fixtureWithConfig('spec-defaults-readme-exempt', null)
+    try {
+      writeFileSync(join(root, 'README.md'), '# fixture\n\nBuilt with next-v1 and bun-v1.\n')
+      commitAll(root, 'Chore: add a README carrying stack badges')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stderr).not.toContain('README.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a repository with none of the default files reports nothing new', () => {
+    const root = fixtureWithConfig('spec-defaults-absent', null)
+    try {
+      const { exitCode, stdout } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stdout).toContain('spec class ran (0 file(s) swept')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('specGrandfather exempts a default path exactly as it exempts a per-product spec', () => {
+    const root = fixtureWithConfig('spec-defaults-grandfathered', {
+      proseGates: { specGrandfather: ['SPEC.md'] }
+    })
+    try {
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      commitAll(root, 'Chore: add a grandfathered root spec')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      // The array form's one warning names the path; the citations themselves stay unreported.
+      expect(stderr).not.toContain('aeg-coherence-v1')
+      expect(stderr).not.toContain('#4213')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('specGrandfather as an object passes a file at its limit and fails one above it, naming both numbers', () => {
+    const root = fixtureWithConfig('spec-grandfather-limit', {
+      proseGates: { specGrandfather: { 'SPEC.md': 1 } }
+    })
+    try {
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1.\n')
+      commitAll(root, 'Chore: add a root spec at its limit')
+      const atLimit = runReaderBin(root)
+      expect(atLimit.exitCode).toBe(0)
+      expect(atLimit.stderr).not.toContain('SPEC.md')
+
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      commitAll(root, 'Chore: add one more citation')
+      const above = runReaderBin(root)
+      expect(above.exitCode).toBe(1)
+      expect(above.stderr).toContain('SPEC.md carries 2 such findings')
+      expect(above.stderr).toContain('limit of 1')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('specGrandfather as an array warns once per entry and still exempts the whole file', () => {
+    const root = fixtureWithConfig('spec-grandfather-array-warning', {
+      proseGates: { specGrandfather: ['SPEC.md', 'CONTEXT.md'] }
+    })
+    try {
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      commitAll(root, 'Chore: add a grandfathered root spec')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stderr.split('exempts the whole file').length - 1).toBe(2)
+      // stderr carries JSON lines, so the quotes around a path arrive escaped.
+      expect(stderr).toContain('SPEC.md\\" exempts the whole file')
+      expect(stderr).toContain('CONTEXT.md\\" exempts the whole file')
+      expect(stderr).toContain('object form')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a task number copied out of a plan fails a root spec, and a numbered section does not', () => {
+    const root = fixtureWithConfig('spec-defaults-task-number', null)
+    try {
+      writeFileSync(
+        join(root, 'SPEC.md'),
+        '# Spec\n\nDelivered by task 4.\n\n## Section 3\n\nStep 2 of Part 1 is not a citation.\n'
+      )
+      commitAll(root, 'Chore: add a root spec carrying a task number')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('a task number')
+      expect(stderr).toContain('task 4')
+      expect(stderr).not.toContain('Section 3')
+      expect(stderr).not.toContain('Step 2')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a specPaths entry written with a trailing slash is really checked, not silently skipped', () => {
+    const root = fixtureWithConfig('spec-defaults-trailing-slash', {
+      proseGates: { specPaths: ['design/', './notes'] }
+    })
+    try {
+      mkdirSync(join(root, 'design'), { recursive: true })
+      mkdirSync(join(root, 'notes'), { recursive: true })
+      writeFileSync(join(root, 'design', 'architecture.md'), '# Architecture\n\nDelivered by task 4.\n')
+      writeFileSync(join(root, 'notes', 'context.md'), '# Context\n\nShaped by aeg-coherence-v1.\n')
+      commitAll(root, 'Chore: add spec folders named with a trailing slash and a leading dot-slash')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('design/architecture.md')
+      expect(stderr).toContain('notes/context.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a specPaths entry reaching outside the repository is refused by the schema, so the class reads nothing outside it', () => {
+    const root = fixtureWithConfig('spec-defaults-escaping-entry', {
+      proseGates: { specPaths: ['../outside'] }
+    })
+    const outside = join(root, '..', `outside-${Date.now()}`)
+    try {
+      mkdirSync(outside, { recursive: true })
+      writeFileSync(join(outside, 'notes.md'), '# Outside\n\nDelivered by task 4, closing (#4213).\n')
+      // The escaping entry is written as `../outside` in config; the fixture's
+      // own out-of-repo folder carries a unique name so a stray read of it is
+      // unmistakable in the output.
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ checks: {}, proseGates: { specPaths: [`../${outside.split('/').pop()}`] } }, null, 2)
+      )
+      commitAll(root, 'Chore: configure a spec path outside the repository')
+
+      // The bin itself refuses a configuration that fails validation — it
+      // neither reads the escaping entry nor falls back to its defaults.
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(2)
+      expect(stderr).toContain('proseGates.specPaths.0')
+      expect(stderr).not.toContain('notes.md')
+
+      const validated = Bun.spawnSync(['bun', INDEX_TS, 'check', 'reader-resolvable-prose'], {
+        cwd: root,
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
+      })
+      // The command path validates the config instead of degrading to none, so
+      // an entry that leaves the repository is named rather than ignored.
+      expect(validated.exitCode).not.toBe(0)
+      expect(`${validated.stdout.toString()}${validated.stderr.toString()}`).toContain('specPaths')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('a specPaths folder that is a symlink out of the repository reads nothing through it', () => {
+    const root = fixtureWithConfig('spec-defaults-symlink-escape', {
+      proseGates: { specPaths: ['design'] }
+    })
+    const outside = join(root, '..', `symlinked-${Date.now()}`)
+    try {
+      mkdirSync(outside, { recursive: true })
+      writeFileSync(join(outside, 'leaked.md'), '# Leaked\n\nDelivered by task 4, closing (#4213).\n')
+      symlinkSync(outside, join(root, 'design'))
+      commitAll(root, 'Chore: point a spec folder at a directory outside the repository')
+
+      const { exitCode, stdout, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stderr).not.toContain('leaked.md')
+      expect(stdout).toContain('spec class ran (0 file(s) swept')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('proseGates.specPaths adds a folder to the class without replacing the defaults', () => {
+    const root = fixtureWithConfig('spec-defaults-configured-paths', {
+      proseGates: { specPaths: ['design'] }
+    })
+    try {
+      mkdirSync(join(root, 'design'), { recursive: true })
+      writeFileSync(join(root, 'design', 'architecture.md'), '# Architecture\n\nShaped by aeg-coherence-v1.\n')
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nClosing (#4213).\n')
+      commitAll(root, 'Chore: add a configured spec folder alongside a root spec')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('design/architecture.md')
+      expect(stderr).toContain('SPEC.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+// A repository's own writing rules: `proseGates.rules` read by both prose
+// checks at run time, each check running only its own group.
+describe('proseGates.rules — configured writing rules, end to end', () => {
+  const LEVERAGE = {
+    id: 'acme/leverage',
+    pattern: 'leverage',
+    flags: 'i',
+    means: 'say "use" instead',
+    scopes: ['spec']
+  }
+  const WIDGET = {
+    id: 'acme/widget',
+    pattern: 'legacy widget',
+    means: 'the retired product name',
+    scopes: ['repository']
+  }
+
+  // The doctrine tree sits under its own configured root, not `aeg-root/`:
+  // `check --plan` resolves roles from a repository's `aeg-root/` when one
+  // exists, and this fixture carries no complete doctrine.
+  function rulesFixture(name: string, rules: unknown, checks: Record<string, unknown> = {}): string {
+    const root = initFixture(name)
+    mkdirSync(join(root, 'doctrine', 'roles'), { recursive: true })
+    writeFileSync(join(root, 'doctrine', 'glossary.md'), '## Glossary\n')
+    writeFileSync(join(root, 'doctrine', 'roles', 'x.md'), '# X\n\nThe legacy widget still ships.\n')
+    writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nWe Leverage the cache.\nShipped in #123.\n')
+    writeConfig(root, rules, checks)
+    execFileSync('git', ['add', '-A'], { cwd: root })
+    execFileSync('git', ['commit', '-q', '-m', 'Chore: add fixture'], { cwd: root })
+    return root
+  }
+
+  function writeConfig(root: string, rules: unknown, checks: Record<string, unknown> = {}): void {
+    writeFileSync(
+      join(root, 'vinaya.config.json'),
+      JSON.stringify({ checks, proseGates: { doctrineRoot: 'doctrine', rules } }, null, 2)
+    )
+  }
+
+  function run(root: string, args: string[]) {
+    const result = Bun.spawnSync(['bun', INDEX_TS, ...args], { cwd: root, env: checkChildEnv({ PR_BODY: undefined }) })
+    return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
+  }
+
+  function runBin(root: string, bin: string) {
+    const result = Bun.spawnSync(['bun', bin], { cwd: root, env: checkChildEnv({ PR_BODY: undefined }) })
+    return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
+  }
+
+  it('a custom rule added only in configuration prints its id, the file and line, the matched text and its message', () => {
+    const root = rulesFixture('rules-custom', { custom: [LEVERAGE] })
+    try {
+      const out = runBin(root, READER_BIN)
+      expect(out.stderr).toContain('SPEC.md:3: acme/leverage: say \\"use\\" instead (\\"Leverage\\")')
+      // Its group alone: the retired check never prints a reader-resolvable rule.
+      expect(runBin(root, RETIRED_BIN).stderr).not.toContain('acme/leverage')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a default switched off yields no finding, and a retune takes effect on the next run with no reinstall', () => {
+    const root = rulesFixture('rules-defaults', {})
+    try {
+      const before = runBin(root, READER_BIN)
+      expect(before.code).toBe(1)
+      expect(before.stderr).toContain('references a forge number (\\"#123\\")')
+
+      writeConfig(root, { defaults: { 'forge-number': { severity: 'warning' } } })
+      const softened = runBin(root, READER_BIN)
+      expect(softened.code).toBe(0)
+      expect(softened.stderr).toContain('"severity":"warning","message":"SPEC.md:4: references a forge number')
+
+      writeConfig(root, { defaults: { 'forge-number': 'off' } })
+      const off = runBin(root, READER_BIN)
+      expect(off.code).toBe(0)
+      expect(off.stderr).not.toContain('forge number')
+
+      writeConfig(root, { exempt: ['SPEC.md'] })
+      expect(runBin(root, READER_BIN).stderr).not.toContain('SPEC.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('retired-vocabulary runs a custom repository rule, and reader-resolvable-prose never prints it', () => {
+    const root = rulesFixture('rules-retired', { custom: [WIDGET] })
+    try {
+      const out = runBin(root, RETIRED_BIN)
+      expect(out.code).toBe(1)
+      expect(out.stderr).toContain('acme/widget: the retired product name (matches /legacy widget/)')
+      expect(runBin(root, READER_BIN).stderr).not.toContain('acme/widget')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('replacing a check with a no-op turns off exactly its group', () => {
+    const root = rulesFixture(
+      'rules-noop',
+      { custom: [LEVERAGE, WIDGET] },
+      {
+        'reader-resolvable-prose': { run: './noop.sh', scope: 'full' }
+      }
+    )
+    try {
+      writeFileSync(join(root, 'noop.sh'), '#!/bin/sh\nexit 0\n')
+      execFileSync('chmod', ['+x', join(root, 'noop.sh')])
+      const replaced = run(root, ['check', 'reader-resolvable-prose'])
+      expect(replaced.stdout + replaced.stderr).not.toContain('acme/leverage')
+      const retired = run(root, ['check', 'retired-vocabulary'])
+      expect(retired.stdout + retired.stderr).toContain('acme/widget')
+
+      const plan = run(root, ['check', '--plan', '--json'])
+      const proseRules = JSON.parse(plan.stdout).proseRules
+      expect(proseRules.checks['reader-resolvable-prose']).toEqual({
+        group: 'reader-resolvable',
+        runs: false,
+        rules: []
+      })
+      expect(proseRules.checks['retired-vocabulary'].runs).toBe(true)
+      expect(proseRules.checks['retired-vocabulary'].rules.map((r: { id: string }) => r.id)).toContain('acme/widget')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('check --plan prints which rules each prose check runs', () => {
+    const root = rulesFixture('rules-plan', { defaults: { 'coined-term': 'off' }, custom: [LEVERAGE] })
+    try {
+      const plan = run(root, ['check', '--plan'])
+      expect(plan.stdout).toContain('reader-resolvable-prose (reader-resolvable group,')
+      expect(plan.stdout).toContain('  acme/leverage [custom] — spec')
+      expect(plan.stdout).toContain('  forge-number — ships, reader-facing, spec')
+      expect(plan.stdout).not.toContain('  coined-term')
+      expect(plan.stdout).toContain('retired-vocabulary (retired-vocabulary group, 28 rule(s)):')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a malformed rule refuses the check, naming the key, instead of falling back to no rule', () => {
+    const root = rulesFixture('rules-malformed', { custom: [{ ...LEVERAGE, pattern: '(' }] })
+    try {
+      for (const bin of [READER_BIN, RETIRED_BIN]) {
+        const out = runBin(root, bin)
+        expect(out.code).toBe(2)
+        expect(out.stderr).toContain('proseGates.rules.custom.0.pattern: does not compile')
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})

@@ -27,7 +27,7 @@ import {
 import type { VinayaConfig } from '../src/lib/config.js'
 import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
-import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
+import { DOC_OWNERS_PATH } from '../../../harness/processes/vinaya-strict/tools/doc-owners'
 import {
   CHECKS_WORKFLOW_PATH,
   CLAUDE_POINTER_PATH,

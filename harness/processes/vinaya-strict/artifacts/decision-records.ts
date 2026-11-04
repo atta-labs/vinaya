@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { normalizeSpecPath } from '@attalabs/aeg-core'
+import { normalizeSpecPath } from '../tools/reader-resolvable-prose'
 import { resolveDoctrineRoot } from '../../../../apps/cli/src/commands/doctrine.js'
 import { loadConfigChecked } from '../../../../apps/cli/src/lib/config.js'
 
