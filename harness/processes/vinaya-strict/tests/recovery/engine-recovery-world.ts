@@ -49,7 +49,7 @@ import type { RecoveryRunner } from './runners'
 const PROCESS_ROOT = resolve(import.meta.dir, '../..')
 const PROCESSES: Record<RecoveryRunner, ReturnType<typeof loadProcess> | null> = {
   standalone: null,
-  'engine-v1': loadProcess(PROCESS_ROOT),
+  'engine-v1': loadProcess(PROCESS_ROOT, { flow: 'v1' }),
   'engine-v2': loadProcess(PROCESS_ROOT, { flow: 'v2' })
 }
 const REPO_ROOT = resolve(import.meta.dir, '../../../../..')

@@ -30,7 +30,7 @@ import { clearDriverLock } from '../loops/dev-review/standalone/dev-review-loop/
 import { recordedHandoff } from './handoff-fakes'
 import { confidentTurn, heldReviews, PASSING_FORGE_GATES, vendorLines } from './round-fakes'
 
-const PROCESS = loadProcess(resolve(import.meta.dir, '..'))
+const PROCESS = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const AGENTS: readonly Agent[] = ['claude', 'codex']
 
 // --- the world ----------------------------------------------------------------

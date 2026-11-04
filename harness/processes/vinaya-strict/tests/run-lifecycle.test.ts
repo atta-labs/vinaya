@@ -75,7 +75,7 @@ import {
   type RunTrace
 } from '../bin/run-engine'
 
-const loaded = loadProcess(resolve(import.meta.dir, '..'))
+const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const repoRoot = resolve(import.meta.dir, '../../../..')
 const TASK = 7
 

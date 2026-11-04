@@ -31,7 +31,7 @@ import {
 // fakes here; every decision stays the actions'. The rebase onto the default tip runs the real git rebase through the
 // Engine's shared Developer context. Each case runs once with the Claude stub agent and once with the Codex stub agent.
 
-const PROCESS = loadProcess(resolve(import.meta.dir, '..'))
+const PROCESS = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const AGENTS: readonly Agent[] = ['claude', 'codex']
 const TASK = 7
 const BRANCH = 'task/issue-7'

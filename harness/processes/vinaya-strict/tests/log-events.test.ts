@@ -44,7 +44,7 @@ import { createHandoff } from '../executing/handoff'
 import { recordedHandoff } from './handoff-fakes'
 
 const processFolder = resolve(import.meta.dir, '..')
-const loaded = loadProcess(processFolder)
+const loaded = loadProcess(processFolder, { flow: 'v1' })
 const steps = (parse(readFileSync(loaded.flowPath, 'utf8')) as { steps: { id: string; type: string; role?: string }[] })
   .steps
 

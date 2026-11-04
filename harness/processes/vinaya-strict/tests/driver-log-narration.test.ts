@@ -30,7 +30,7 @@ import { confidentTurn, PASSING_FORGE_GATES } from './round-fakes'
 // The loop harness's worlds live in the OS temp dir; they are removed once this file's tests have run.
 afterAll(cleanupWorlds)
 
-const loaded = loadProcess(resolve(import.meta.dir, '..'))
+const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const repoRoot = resolve(import.meta.dir, '../../../..')
 const CLI_ENTRY = join(repoRoot, 'apps', 'cli', 'src', 'index.ts')
 const TASK = 7

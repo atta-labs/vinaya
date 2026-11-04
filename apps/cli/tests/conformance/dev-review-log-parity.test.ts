@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { parse } from 'yaml'
+import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process.js'
 import corpus from '../fixtures/dev-review-engine-scenarios.json'
 import { currentRunId, type LogSinkDeps, type ResolvedLogDestination } from '../../../../harness/kernel/log/log-sink.js'
 import { RUNTIME_DIR_ENV_KEY } from '../../../../harness/kernel/run-paths.js'
@@ -84,6 +87,18 @@ const WORLD = new Set<string>(['files_changed', 'insertions', 'deletions', 'file
 /** The runner each event names: each runner names itself and its own version, so only whether each is present is compared. The process and runtime stay equal. */
 const RUNNER = new Set<string>(['meta.runner.id', 'meta.runner.version'])
 
+// The conformance Engine runs v1 explicitly; standalone's Log identity reads the process default.
+const processFolder = resolve(import.meta.dir, '../../../../harness/processes/vinaya-strict')
+const engineProcess = loadProcess(processFolder, { flow: 'v1' })
+const standaloneProcess = loadProcess(processFolder)
+const FLOW = new Map<string, [unknown, unknown]>([
+  [
+    'meta.flow.id',
+    [parse(readFileSync(engineProcess.flowPath, 'utf8')).id, parse(readFileSync(standaloneProcess.flowPath, 'utf8')).id]
+  ],
+  ['meta.flow.version', [engineProcess.flowKey, standaloneProcess.flowKey]]
+])
+
 /**
  * Identity tokens inside text: a commit sha, a vendor session and the agent the run was dispatched under. A session
  * a runner could not name stays `(unknown)`, so a missing one is still a difference.
@@ -135,15 +150,19 @@ function differences(engineLines: Line[], standaloneLines: Line[]): string[] {
     const fs = new Map<string, unknown>()
     flatten(e, '', fe)
     flatten(s, '', fs)
-    for (const key of new Set([...fe.keys(), ...fs.keys()]))
+    for (const key of new Set([...fe.keys(), ...fs.keys()])) {
+      const flow = FLOW.get(key)
       if (
-        IDENTITY.has(key) || WORLD.has(key) || RUNNER.has(key)
-          ? present(fe.get(key)) !== present(fs.get(key))
-          : JSON.stringify(fe.get(key)) !== JSON.stringify(fs.get(key))
+        flow && (present(fe.get(key)) || present(fs.get(key)))
+          ? fe.get(key) !== flow[0] || fs.get(key) !== flow[1]
+          : IDENTITY.has(key) || WORLD.has(key) || RUNNER.has(key)
+            ? present(fe.get(key)) !== present(fs.get(key))
+            : JSON.stringify(fe.get(key)) !== JSON.stringify(fs.get(key))
       )
         out.push(
           `#${i} ${name(e)} ${key}: engine ${JSON.stringify(fe.get(key))} standalone ${JSON.stringify(fs.get(key))}`
         )
+    }
   }
   return out
 }

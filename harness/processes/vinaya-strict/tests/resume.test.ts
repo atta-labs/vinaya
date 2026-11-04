@@ -38,7 +38,7 @@ import {
 } from '../bin/run-lifecycle'
 import { recordedHandoff } from './handoff-fakes'
 
-const loaded = loadProcess(resolve(import.meta.dir, '..'))
+const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const repoRoot = resolve(import.meta.dir, '../../../..')
 const TASK = 7
 const PR = 70

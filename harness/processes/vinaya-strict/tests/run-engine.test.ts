@@ -95,7 +95,7 @@ import {
 import { ROLE_NAMES } from '../../../../harness/kernel/adapters/agents/manifest'
 import { createDispatchCapabilityTable } from '../../../kernel/tools/host/dev-tools-host'
 
-const loaded = loadProcess(resolve(import.meta.dir, '..'))
+const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const repoRoot = resolve(import.meta.dir, '../../../..')
 
 describe('arguments', () => {

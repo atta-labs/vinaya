@@ -329,7 +329,7 @@ describe('the round assessment across a resume', () => {
           'vinaya.build-revision-handoff': real['vinaya.build-revision-handoff']!
         }
       }
-      const process = loadProcess(resolve(import.meta.dir, '..'))
+      const process = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
       const roles = createRoleLaunchers({ vendor, generatedRoot: join(root, 'generated') })
       const base = {
         process,

@@ -23,7 +23,7 @@ function camelize(value: unknown): unknown {
 describe('Vinaya process packed runtime boundary', () => {
   test('loads, compiles, builds, and resolves every agent permission and schema', () => {
     const folder = resolve(import.meta.dir, '..')
-    const loaded = loadProcess(folder)
+    const loaded = loadProcess(folder, { flow: 'v1' })
     const flow = camelize(parse(readFileSync(loaded.flowPath, 'utf8'))) as StepsFlow
     const plan = compileFlow(flow, 'Compile the Vinaya process')
     const executor = async () => ({})
@@ -48,7 +48,7 @@ describe('Vinaya process packed runtime boundary', () => {
   })
 
   test('after the local gates, the forge gates run in the standalone round order before any reviewer is dispatched', () => {
-    const loaded = loadProcess(resolve(import.meta.dir, '..'))
+    const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
     const flow = camelize(parse(readFileSync(loaded.flowPath, 'utf8'))) as StepsFlow
     const ids = (flow.steps as Array<{ id: string }>).map((step) => step.id)
     const order = ['run-mechanical-gates', 'check-mergeability', 'read-forge-ci', 'check-premise', 'assess-gate']
@@ -69,7 +69,7 @@ describe('Vinaya process packed runtime boundary', () => {
   })
 
   test('mergeability is read again before publication, and a conflicting head goes back to the Developer', () => {
-    const loaded = loadProcess(resolve(import.meta.dir, '..'))
+    const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
     const flow = camelize(parse(readFileSync(loaded.flowPath, 'utf8'))) as StepsFlow
     const steps = flow.steps as Array<{ id: string; decision?: Record<string, unknown> }>
     const ids = steps.map((step) => step.id)
@@ -97,7 +97,7 @@ describe('version 2 flow (review locally, push once)', () => {
 
   test('loads as v2 beside v1 and compiles into a graph', () => {
     expect(loaded.flowKey).toBe('v2')
-    expect(loadProcess(folder).flowKey).toBe('v1')
+    expect(loadProcess(folder).flowKey).toBe('v2')
     const plan = compileFlow(flow, 'Compile the Vinaya process, version 2')
     expect(() =>
       buildAgentSpawnStateGraph(plan, async () => ({}), { roles: {}, mechanicalActions: {} } as never)

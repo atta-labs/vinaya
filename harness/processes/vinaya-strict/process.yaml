@@ -5,7 +5,7 @@ version: 0.2.16
 flows:
   v1: executing/dev-review.flow.yaml
   v2: loops/dev-review/v2/dev-review-v2.flow.yaml
-default_flow: v1
+default_flow: v2
 roles:
   - executing/developer
   - executing/code-reviewer

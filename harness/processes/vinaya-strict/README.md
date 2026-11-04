@@ -11,7 +11,7 @@ ran: `flow.id` is the chosen Flow file's own `id` and `flow.version` the flow
 key the run chose (`v1`, `v2`), so the two flows are compared from the Log.
 
 The process declares its flows under `flows` in `process.yaml`, by key, with
-`default_flow: v1`. A run chooses one with `vinaya task run --flow <key>`
+`default_flow: v2`. A run chooses one with `vinaya task run --flow <key>`
 (Atta Engine runner only; the standalone runner runs v1) and records it in
 `<runtimeDir>/engine-runs/<task>/flow.json`, so a resume continues the same
 flow and refuses a different one.
