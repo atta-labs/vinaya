@@ -258,7 +258,6 @@ const KNOWN_COLLISIONS = [
   'AssociatedPr',
   'BodyResult',
   'BodySource',
-  'collisionResistantKey',
   'createLabel',
   'ensureLabelExists',
   'extractTitle',
@@ -269,7 +268,6 @@ const KNOWN_COLLISIONS = [
   'isSpecFile',
   'LABEL',
   'LABEL_DESCRIPTION',
-  'legacyTranscriptPointerPath',
   'listLabelNames',
   'locateBody',
   'main',
@@ -278,16 +276,13 @@ const KNOWN_COLLISIONS = [
   'ParsedArgs',
   'PrListEntry',
   'PrView',
-  'readManifest',
   'REPO_ROOT',
   'resolvePrBody',
   'resolveShippableArgs',
-  'sanitizeKey',
   'sh',
   'shJson',
   'stripBackticks',
-  'TASK_BRANCH_PATTERN',
-  'transcriptPointerPath'
+  'TASK_BRANCH_PATTERN'
 ]
 
 describe('symbol-collision gate over this package', () => {

@@ -25,11 +25,11 @@ import { dirname, join, relative } from 'node:path'
 import {
   type BeyondSurfacePath,
   beyondSurfacePaths,
-  defaultControlStoreDeps,
   globCoversPath,
-  recordedBeyondSurfacePaths,
-  TASK_TOOL_NAMES
+  recordedBeyondSurfacePaths
 } from '@attalabs/aeg-core'
+import { defaultControlStoreDeps } from '../../../../harness/kernel/connectors/checkpoint/control-store/index'
+import { TASK_TOOL_NAMES } from '../../../../harness/kernel/tools/catalog/task-tools'
 
 import { ProtectedPathError, scopeTarget } from '../../../../harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from '../lib/broker/vinaya-broker'
@@ -54,7 +54,7 @@ import {
 import { documentationSourceId } from '../../../../harness/kernel/tools/fetch-documentation'
 import { ROLE_TOOL_GRANTS } from '../../../../harness/processes/vinaya-strict/integration/policies/roles'
 import { AGENT_TOOL_CATALOG } from '../../../../harness/kernel/tools/tool-catalog'
-import { selectAffectedTestFiles } from '../../src/lib/test-selector'
+import { selectAffectedTestFiles } from '../../../../harness/processes/vinaya-strict/integration/repository-verification'
 import { agentOwnConfigSubpaths } from '../../../../harness/kernel/isolation/worker-boundary'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 import {

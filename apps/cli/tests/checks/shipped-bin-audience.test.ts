@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { CLI_CHECK_RING, GATE_AUDIENCE, isShipped, SHIPPED_BIN_AUDIENCE } from '@attalabs/aeg-core'
-import { CORE_CHECK_RING, coreCheckRegistry } from '../../src/checks/registry.js'
+import { CORE_CHECK_RING, coreCheckRegistry } from '../../../../harness/processes/vinaya-strict/checks/registry.js'
 
 /**
  * The half of atta-labs/vinaya#186 that has to live here.

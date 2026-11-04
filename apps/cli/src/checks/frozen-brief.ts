@@ -1,5 +1,5 @@
+import { extractIssue } from '../../../../harness/kernel/adapters/code-host/github/extract-issue'
 import {
-  extractIssue,
   isIssueNotFoundError,
   isTaskBranch,
   type LiveGateInputs,
@@ -7,8 +7,8 @@ import {
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
 import { PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../lib/config'
-import { isForgeReadOversize, readIssueComments } from '../lib/forge-read'
-import { incompleteForgeSnapshot } from '../lib/forge-snapshot'
+import { isForgeReadOversize, readIssueComments } from '../../../../harness/kernel/adapters/code-host/github/forge-read'
+import { incompleteForgeSnapshot } from '../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
 
 /** One task Issue comment, as the CI-side checks read it. */
 export type IssueComment = { body: string; author?: { login?: string } | null }

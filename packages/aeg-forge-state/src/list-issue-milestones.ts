@@ -1,4 +1,4 @@
-import { type GhIssue, ghIssueListByAnyLabel } from './gh'
+import { type GhIssue, ghIssueListByAnyLabel } from '../../../harness/kernel/adapters/code-host/github/gh'
 import { trancheLabel } from './labels'
 
 export type IssueMilestoneFact = { issue: number; milestoneTitle: string | null }

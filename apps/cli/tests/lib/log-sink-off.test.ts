@@ -13,7 +13,7 @@ import {
   configureEngineLogEnvironment,
   createEngineLogSink
 } from '../../../../harness/processes/vinaya-strict/bin/run-engine.js'
-import { buildCheckEnv } from '../../src/checks/runner.js'
+import { buildCheckEnv } from '../../../../harness/kernel/gates/checks/runner.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from './process-fixture.js'
 
 const EVENT = {

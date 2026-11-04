@@ -18,10 +18,10 @@ import {
 import { builtinModules, createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
-import { globToRegex as coreGlobToRegex } from '@attalabs/aeg-core'
+import { globToRegex as coreGlobToRegex } from '../../../../harness/kernel/gates/glob-to-regex'
 import ts from 'typescript'
-import * as legacyGraph from '../../src/lib/ts-module-graph'
-import * as libraryGraph from '../../src/lib/verification/compiler-graph'
+import * as legacyGraph from '../../../../harness/kernel/gates/ring0-hooks/pre-push/verification/index'
+import * as libraryGraph from '../../../../harness/kernel/gates/ring0-hooks/pre-push/verification/compiler-graph'
 import {
   gitRepository,
   globToRegex,
@@ -29,11 +29,16 @@ import {
   plannedTests,
   type SelectionPlan,
   selectTests
-} from '../../src/lib/verification/index'
-import { fixture, headFiles, scenarioInput, viewOf } from '../../src/lib/verification/tests/fixture-repos'
+} from '../../../../harness/kernel/gates/ring0-hooks/pre-push/verification/index'
+import {
+  fixture,
+  headFiles,
+  scenarioInput,
+  viewOf
+} from '../../../../harness/kernel/gates/ring0-hooks/pre-push/verification/tests/fixture-repos'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
-const LIBRARY = join(import.meta.dir, '../../src/lib/verification')
+const LIBRARY = join(import.meta.dir, '../../../../harness/kernel/gates/ring0-hooks/pre-push/verification')
 const REPO_ROOT = join(import.meta.dir, '../../../..')
 const REPOSITORY_SELECTION = join(REPO_ROOT, 'scripts/test-suites/repository-selection.ts')
 const INVENTORY_CHECK = join(REPO_ROOT, 'scripts/test-suites/inventory-check.ts')
@@ -592,16 +597,18 @@ describe('the existing paths forward to the library', () => {
     expect(run.stderr).toBe('')
     const view = (JSON.parse(run.stdout) as { head: InventoryView }).head
     const owned = view.tests
-      .filter((t) => t.id.startsWith('apps/cli/src/lib/verification/'))
+      .filter((t) => t.id.startsWith('harness/kernel/gates/ring0-hooks/pre-push/verification/'))
       .map((t) => `${t.id} ${t.suite}`)
     expect(owned).toEqual([
-      'apps/cli/src/lib/verification/tests/native.test.ts cli',
-      'apps/cli/src/lib/verification/tests/selection.test.ts cli'
+      'harness/kernel/gates/ring0-hooks/pre-push/verification/tests/native.test.ts kernel',
+      'harness/kernel/gates/ring0-hooks/pre-push/verification/tests/selection.test.ts kernel'
     ])
-    const fixtures = view.edges.find((e) => e.input === 'apps/cli/src/lib/verification/tests/fixtures/')
+    const fixtures = view.edges.find(
+      (e) => e.input === 'harness/kernel/gates/ring0-hooks/pre-push/verification/tests/fixtures/'
+    )
     expect(fixtures?.readers).toEqual([
-      'apps/cli/src/lib/verification/tests/selection.test.ts',
-      'apps/cli/tests/lib/verification-library.test.ts'
+      'apps/cli/tests/lib/verification-library.test.ts',
+      'harness/kernel/gates/ring0-hooks/pre-push/verification/tests/selection.test.ts'
     ])
     // The fixture views the library tests build are what the library validates.
     const fx = fixture('flat-repo.json')

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import matter from 'gray-matter'
-import { AGENT_VENDORS } from '../../src/lib/agent-vendors'
+import { AGENT_VENDORS } from '../../../../harness/kernel/adapters/agents/agent-vendors'
 import {
   buildInitOps,
   DOCTRINE_POINTER_PATHS,
   type InitContext
 } from '../../../../harness/processes/vinaya-strict/integration/artifacts'
-import type { CreateFileOp, Op } from '../../src/lib/ops'
+import type { CreateFileOp, Op } from '../../../../harness/kernel/gates/ops'
 
 /**
  * Every agent-facing file the generator writes sits where its vendor's own

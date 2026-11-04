@@ -18,8 +18,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { resolveAddedFiles } from '../../lib/diff-evidence'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { resolveAddedFiles } from '../../../../../harness/kernel/connectors/git/diff-evidence'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { CI_SHARD_COUNT, isCliTestFile, shardFileRelPath } from '../../lib/ci-shard-membership'
 
 const CHECK_NAME = 'ci-shard-coverage'

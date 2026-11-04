@@ -7,14 +7,14 @@ import {
   agentDispatchControls,
   describeInactiveControls,
   enforcementControlsActive
-} from '../../src/lib/enforcement-controls.js'
+} from '../../../../harness/kernel/gates/enforcement-controls.js'
 import {
   hookRoutingRepairLine,
   installedHookDir,
   localGateControl,
   realLocalGateControl,
   repairLocalGateControl
-} from '../../src/lib/local-gate-control.js'
+} from '../../../../harness/kernel/gates/local-gate-control.js'
 import { fixtureDir } from './test-temp-fixture'
 import { checkTaskDispatchReadiness } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 

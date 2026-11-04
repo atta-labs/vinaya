@@ -8,7 +8,7 @@
  */
 
 import { checkPrReportDensity } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'pr-report-density'
 

@@ -12,10 +12,10 @@
  * carries an explicit repository target.
  */
 
-import type { GhIssue } from './gh'
+import type { GhIssue } from '../../../harness/kernel/adapters/code-host/github/gh'
 import { indexTrancheMilestonesAsync } from './fetch-milestone'
 import { tasksFromIssues } from './list-tasks'
-import type { RepoRef } from './resolve-repo'
+import type { RepoRef } from '../../../harness/kernel/adapters/code-host/github/resolve-repo'
 
 /** One entry per project a task names: its first active, all-Issues-closed prior tranche, or none. */
 export type PriorTrancheArchivalFact = {

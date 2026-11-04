@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { installVinayaCheckRegistry } from '../checks/registry'
 import { Database } from 'bun:sqlite'
 import type { RoleName } from '../../../../harness/kernel/adapters/agents/manifest'
 import { execFileSync } from 'node:child_process'
@@ -10,6 +11,10 @@ import { StringDecoder } from 'node:string_decoder'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import {
   type ControlStoreDeps,
+  defaultControlStoreDeps,
+  writeExecutionRoundMirror
+} from '../../../kernel/connectors/checkpoint/control-store/index'
+import {
   initialLoopState,
   buildReviewInputManifest,
   DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
@@ -17,9 +22,7 @@ import {
   type DevReviewLoopEventInput,
   type LoopConfig,
   type LoopState,
-  type ReviewInputManifest,
-  defaultControlStoreDeps,
-  writeExecutionRoundMirror
+  type ReviewInputManifest
 } from '@attalabs/aeg-core'
 import {
   createRunControl,
@@ -176,7 +179,7 @@ import {
   loopLogPathFor,
   narrateDriverEvent
 } from '../../../kernel/log/client/loop-log'
-import { type AgentStreamRenderer, createAgentStreamRenderer } from '../../../../apps/cli/src/lib/agent-stream'
+import { type AgentStreamRenderer, createAgentStreamRenderer } from '../../../kernel/adapters/agents/agent-stream'
 import { CLI_ENTRY_ENV } from '../../../../apps/cli/src/lib/cli-entry'
 import { pollMergeableState } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import { developerTurnResultJsonSchema } from '../executing/developer/developer-turn-result'
@@ -303,7 +306,7 @@ import {
   withV2DevTools
 } from '../loops/dev-review/v2/flow-v2-live'
 import { readUnpushedWorkDetail, type UnpushedWork } from '../loops/dev-review/standalone/dev-review-loop/unpushed-work'
-import { hookRoutingRepairLine, repairLocalGateControl } from '../../../../apps/cli/src/lib/local-gate-control'
+import { hookRoutingRepairLine, repairLocalGateControl } from '../../../kernel/gates/local-gate-control'
 import {
   createShadowRecorder,
   refusedAttemptsPath,
@@ -3446,6 +3449,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 if (import.meta.main) {
   // The composition root: kernel code reads configuration through the provider this installs, before the run starts.
   installVinayaConfigProvider()
+  installVinayaCheckRegistry()
   installVinayaLogSinkFactory()
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),

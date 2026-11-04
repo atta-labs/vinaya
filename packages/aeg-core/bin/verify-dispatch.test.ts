@@ -59,7 +59,7 @@ const {
   resolveTargetRoot
 } = await import('./verify-dispatch')
 const { checkDispatchReadiness } = await import('../src/dispatch-gate')
-const { resetResolveRepoCache } = await import('../../aeg-forge-state/src/resolve-repo')
+const { resetResolveRepoCache } = await import('../../../harness/kernel/adapters/code-host/github/resolve-repo')
 const actualChildProcess = await vi.importActual<typeof import('node:child_process')>('node:child_process')
 
 const tempDirs: string[] = []

@@ -43,7 +43,7 @@
  * incidental.
  */
 
-import { findHeadingLine, findTable } from '../markdown-table'
+import { findHeadingLine, findTable } from '../../../../harness/kernel/gates/checks/markdown-table'
 import {
   DECISION_RECORD_CITATION_ID,
   DECISION_RECORD_CITATION_MESSAGE,

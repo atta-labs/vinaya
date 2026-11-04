@@ -14,18 +14,20 @@ import { hostname as osHostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   defaultIsPidAlive,
+  normalizeOutcome,
+  type NormalizedOutcome,
+  type OutcomeSignals
+} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
+import {
   isPrincipal,
   issueBranchName,
   newestPrincipalRulingAuthor,
   newestPrincipalRulingOrdinal,
   parseRulingIdentity,
   principalRulingTextById,
-  normalizeOutcome,
-  type NormalizedOutcome,
   type Objective,
   objectivesOf,
   objectivesVersion,
-  type OutcomeSignals,
   extractSourceRevision,
   parseTaskBranchIdentity,
   resolveNewestFrozenBrief,
@@ -33,7 +35,7 @@ import {
 } from '@attalabs/aeg-core'
 import { extractShortVersion } from '@attalabs/aeg-core/docs'
 import { hasLabel } from '@attalabs/aeg-forge-state'
-import { type GateStep, resolveGateStep } from '../../../../../../../apps/cli/src/checks/registry.js'
+import { type GateStep, resolveGateStep } from '../../../../checks/registry.js'
 import { resolveDoctrineRoot } from '../../../../../../../apps/cli/src/commands/doctrine.js'
 import { buildRolePlan } from '../../../../integration/roles/plan.js'
 import {
@@ -60,11 +62,8 @@ import {
   describeInactiveControls,
   type EnforcementControl,
   enforcementControlsActive
-} from '../../../../../../../apps/cli/src/lib/enforcement-controls.js'
-import {
-  hookRoutingRepairLine,
-  repairLocalGateControl
-} from '../../../../../../../apps/cli/src/lib/local-gate-control.js'
+} from '../../../../../../kernel/gates/enforcement-controls.js'
+import { hookRoutingRepairLine, repairLocalGateControl } from '../../../../../../kernel/gates/local-gate-control.js'
 import { appendDriverLine, loopLogPathFor } from '../../../../../../kernel/log/client/loop-log.js'
 import { ensureRunDir, runPath } from '../../../../../../kernel/run-paths.js'
 import { sh } from './gate-reading.js'
@@ -72,7 +71,7 @@ import {
   type ForgeComment,
   isForgeReadOversize,
   readIssueComments
-} from '../../../../../../../apps/cli/src/lib/forge-read.js'
+} from '../../../../../../kernel/adapters/code-host/github/forge-read.js'
 
 const RULING_MARKER = /^<!-- aeg:principal:ruling:\d+-\d+ -->$/
 

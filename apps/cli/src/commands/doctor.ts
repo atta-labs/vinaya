@@ -11,25 +11,31 @@
 import { execFileSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { delimiter, dirname, join } from 'node:path'
-import type { CheckSpec } from '../checks/contract.js'
-import { coreCheckRegistry } from '../checks/registry.js'
-import { bareKeyRejectedDiagnostic, overriddenReplacesCoreDiagnostic, resolveChecks } from '../checks/resolver.js'
+import type { CheckSpec } from '../../../../harness/kernel/gates/checks/contract.js'
+import { installedCheckRegistry } from '../../../../harness/kernel/gates/checks/registry'
+import {
+  bareKeyRejectedDiagnostic,
+  overriddenReplacesCoreDiagnostic,
+  resolveChecks
+} from '../../../../harness/kernel/gates/checks/resolver.js'
 import {
   classifyDocOwnersManifest,
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
   DOC_OWNERS_PATH,
-  globToRegex,
-  hardenedMeteringDeps,
   isCodeFile,
   isUrlPointer,
-  type MeteringCapability,
   parseDocOwners,
   parsePnpmWorkspaceYaml,
   parseRegistry,
-  pointerToPath,
-  resolveMeteringCapability
+  pointerToPath
 } from '@attalabs/aeg-core'
+import { globToRegex } from '../../../../harness/kernel/gates/glob-to-regex'
+import { hardenedMeteringDeps } from '../../../../harness/kernel/adapters/agents/claude-code/metering-io-guard'
+import {
+  type MeteringCapability,
+  resolveMeteringCapability
+} from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import {
   buildInitOps,
   CHECKS_FOLDER_PLACEHOLDER_PATH,
@@ -68,7 +74,7 @@ import {
   VinayaConfigSchema,
   lintEnvDeclarations
 } from '../lib/config.js'
-import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import {
   describeFolderFallback,
   type FolderFallbackRecord,
@@ -98,13 +104,13 @@ import {
   readCoreHooksPath,
   type RepoInfo,
   resolveHookDir
-} from '../lib/detect.js'
-import { localGateControl } from '../lib/local-gate-control.js'
+} from '../../../../harness/kernel/connectors/git/detect.js'
+import { localGateControl } from '../../../../harness/kernel/gates/local-gate-control.js'
 import { printJson } from '../../../../harness/kernel/effects/envelope.js'
-import { planGhPathFix } from '../lib/gh-path.js'
-import { checksMissingEnvDeclaration, envDeclarationWarning } from '../lib/env-lint.js'
+import { planGhPathFix } from '../../../../harness/kernel/adapters/code-host/github/gh-path.js'
+import { checksMissingEnvDeclaration, envDeclarationWarning } from '../../../../harness/kernel/gates/checks/env-lint.js'
 import { PROJECTS_REGISTRY_PATH } from '../../../../harness/processes/vinaya-strict/artifacts/registry-write.js'
-import { markerLines, renderBlock, resolveManagedBlockPath } from '../lib/ops.js'
+import { markerLines, renderBlock, resolveManagedBlockPath } from '../../../../harness/kernel/gates/ops.js'
 import { packageRoot } from '../lib/package-root.js'
 import { probeClaudeSandboxOnHost } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import {
@@ -907,7 +913,7 @@ function diagnoseEnvDeclarations(repoRoot: string, config: VinayaConfig | null):
   // linting it would diagnose a spec that cannot execute (a review
   // finding). Paths are re-rooted for config-sourced specs only — a core
   // spec's `run` is already absolute.
-  const resolved = resolveChecks(coreCheckRegistry(), config?.checks).resolved
+  const resolved = resolveChecks(installedCheckRegistry(), config?.checks).resolved
   const specs: CheckSpec[] = resolved.map((entry) =>
     entry.source === 'config' ? { ...entry.spec, run: join(repoRoot, entry.spec.run) } : entry.spec
   )
@@ -943,7 +949,7 @@ function diagnoseEnvDeclarations(repoRoot: string, config: VinayaConfig | null):
 // diagnostic keeps between this file and `check.ts` via `lib/env-lint.ts`.
 // ---------------------------------------------------------------------------
 function diagnoseCheckClassification(config: VinayaConfig | null): Finding[] {
-  const classification = resolveChecks(coreCheckRegistry(), config?.checks)
+  const classification = resolveChecks(installedCheckRegistry(), config?.checks)
   const findings: Finding[] = []
   for (const entry of classification.resolved) {
     if (entry.state === 'overridden') findings.push(warn('checks', overriddenReplacesCoreDiagnostic(entry.name)))

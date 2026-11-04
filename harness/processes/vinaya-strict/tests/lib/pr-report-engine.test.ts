@@ -23,7 +23,7 @@ import {
   compareEvidenceBlock,
   EVIDENCE_PLACEHOLDER_TEXT
 } from '../../../../../apps/cli/src/checks/evidence-fresh-logic'
-import { resolveAnchoredRegion, ScanContext } from '../../../../../apps/cli/src/checks/scan-context'
+import { resolveAnchoredRegion, ScanContext } from '../../../../kernel/gates/checks/scan-context'
 import { agentCommandText, extractAgentCommandLines } from '../../../../../apps/cli/src/commands/pr-report'
 import { checkBareDigits } from '../../../../../apps/cli/src/checks/body-bare-digits-logic'
 import {
@@ -49,7 +49,7 @@ import {
   isNativeRunCommand,
   nativeRunCommand,
   REPOSITORY_LOCAL_RUN
-} from '../../../../../apps/cli/src/lib/pre-push-test-runner'
+} from '../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..', 'apps', 'cli')
 const ALWAYS_REFUSE_BODY_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', 'fake-always-refuse-body-check.cjs')

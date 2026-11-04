@@ -67,7 +67,7 @@
  * (or never did) contain it verbatim.
  */
 
-import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
+import { maskCode } from '../../../harness/kernel/adapters/code-host/github/strip-code'
 import { classifyProseFile, type ProseFileClass } from './reader-resolvable-prose'
 
 // `maskCode` (index-preserving) is imported directly from the `./strip-code`

@@ -3,7 +3,7 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { TASK_TOOL_NAMES } from '@attalabs/aeg-core'
+import { TASK_TOOL_NAMES } from '../../../../../harness/kernel/tools/catalog/task-tools'
 import type { VendoredVinaya } from '../../../src/lib/self-host.js'
 import {
   claudeMcpJsonConfig,

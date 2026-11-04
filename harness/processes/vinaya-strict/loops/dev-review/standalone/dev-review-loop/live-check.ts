@@ -21,7 +21,7 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { DevReviewLoopEventInput, LiveRecordEntry, LiveRecordLine, LoopState } from '@attalabs/aeg-core'
-import { buildCheckEnv } from '../../../../../../../apps/cli/src/checks/runner.js'
+import { buildCheckEnv } from '../../../../../../kernel/gates/checks/runner.js'
 import { AGENT_VENDOR_NAMES, type AgentVendor } from '../../dispatch/dispatch.js'
 import { sanitizeForgeLogTail } from '../../run-control/pr-facts.js'
 import {

@@ -14,22 +14,24 @@
 import { execFileSync } from 'node:child_process'
 import {
   buildProvenanceBlock,
-  extractIssue,
   formatTokensLine,
   hasProvenance,
   isEligibleForProvenance,
   parseDeveloperRoundMarker,
-  resolveMeteringCapability,
   resolveNewestFrozenBrief,
   taskRefFromBranch,
   trancheLabel,
   trancheSlugOf,
-  type MergedPrFacts,
-  type MeteringCapability,
-  type TranscriptSummary
+  type MergedPrFacts
 } from '@attalabs/aeg-core'
+import { extractIssue } from '../../../../harness/kernel/adapters/code-host/github/extract-issue'
+import {
+  resolveMeteringCapability,
+  type MeteringCapability
+} from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import type { TranscriptSummary } from '../../../../harness/kernel/adapters/agents/claude-code/transcript-summary'
 import { deriveTrancheFromForge, hasTrancheIntentsSection } from '@attalabs/aeg-forge-state'
-import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
+import { detectGitRepo, type RepoInfo } from '../../../../harness/kernel/connectors/git/detect.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
 import { loadConfig, PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../lib/config.js'
 import {

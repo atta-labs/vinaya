@@ -13,7 +13,7 @@ import {
   registerProcess,
   selectContainmentBackend,
   stopRegistered
-} from '../../src/lib/process-registry'
+} from '../../../../harness/kernel/conformance/unit/process-registry'
 
 // The registry backend: register-and-acknowledge, identity by pid plus start time, TERM then KILL.
 

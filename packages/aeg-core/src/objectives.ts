@@ -15,7 +15,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-code'
+import { maskCode, maskDetailsBlocks } from '../../../harness/kernel/adapters/code-host/github/strip-code'
 
 export type Objective = { id: string; text: string }
 

@@ -1086,7 +1086,7 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
  * across every source it reads, confine a REAL, non-interactive `claude -p`
  * session's tool routes — not merely that the generated JSON says so. The
  * same "do not test the policy by reading the file only" posture
- * `apps/cli/tests/conformance/permission-policy-live-smoke.ts` already
+ * `harness/kernel/conformance/live-matrix/permission-policy-live-smoke.ts` already
  * established for the permission layer (round 2 of that task found a
  * path-scoped `permissions.allow` entry that never actually granted a real
  * `Write`/`Edit` call), applied here to the sandbox layer instead.

@@ -37,11 +37,12 @@ import {
   fetchTrancheIssuesAsync,
   indexTrancheMilestonesAsync,
   issueMilestonesFromIssues,
-  resolveGithubToken,
-  resolveRepo,
   trancheFromIssues
 } from '@attalabs/aeg-forge-state'
-import type { GhIssue, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
+import { resolveGithubToken } from '../../../harness/kernel/adapters/code-host/github/github-token'
+import { resolveRepo } from '../../../harness/kernel/adapters/code-host/github/resolve-repo'
+import type { GhIssue } from '../../../harness/kernel/adapters/code-host/github/gh'
+import type { TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
 import type { Tranche } from '@attalabs/aeg-types'
 import {
   checkA1,
@@ -69,9 +70,9 @@ import {
   parseTranche,
   R1_GRANDFATHERED_ISSUES,
   scopeT2ToPlanPr,
-  touchesAnyTopology,
-  isEntryPoint
+  touchesAnyTopology
 } from '../src/index'
+import { isEntryPoint } from '../../../harness/kernel/gates/checks/entry-point'
 import type { CheckResult, ForgeFacts, TrancheFile, TaskEntry } from '../src/index'
 import { readConfigPrincipals } from '../src/principals-config'
 

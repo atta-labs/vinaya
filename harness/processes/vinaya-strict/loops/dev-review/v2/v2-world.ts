@@ -4,7 +4,7 @@ import {
   chooseTests,
   type FailedTestsRecord,
   recordFromRun
-} from '../../../../../../apps/cli/src/lib/pre-push-failed-tests'
+} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import {

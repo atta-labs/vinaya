@@ -30,7 +30,11 @@ import {
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { ensureGhOnPath, GH_STANDARD_DIRS_ENV, planGhPathFix } from '../src/lib/gh-path'
+import {
+  ensureGhOnPath,
+  GH_STANDARD_DIRS_ENV,
+  planGhPathFix
+} from '../../../harness/kernel/adapters/code-host/github/gh-path'
 import { spawnSyncBudgeted, stripVinayaEnv } from './lib/process-fixture'
 
 const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')

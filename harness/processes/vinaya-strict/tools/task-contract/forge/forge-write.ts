@@ -26,7 +26,11 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
-import { isForgeReadOversize, readIssueBody, readIssueComments } from '../../../../../../apps/cli/src/lib/forge-read'
+import {
+  isForgeReadOversize,
+  readIssueBody,
+  readIssueComments
+} from '../../../../../kernel/adapters/code-host/github/forge-read'
 import {
   boundaryPinnedFiles,
   CHANGESET_RELEASE_BRANCH,
@@ -62,7 +66,6 @@ import {
   checkPinnedFileImportersCovered,
   classifyProseFile,
   DEFAULT_SPEC_PATHS,
-  globToRegex,
   normalizeSpecPath,
   type PinnedFileChecks,
   checkNewTestFilesCoverShards,
@@ -118,6 +121,7 @@ import {
   type TaskSurfaceFacts,
   trancheLabel
 } from '@attalabs/aeg-core'
+import { globToRegex } from '../../../../../kernel/gates/glob-to-regex'
 import {
   assembleAndRenderBrief,
   assembleAndRenderBriefForIssue,
@@ -137,15 +141,15 @@ import {
   resolveMilestoneAttachTarget
 } from '@attalabs/aeg-forge-state'
 import { COMMANDS, CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
-import { CORE_CHECK_RING, coreCheckRegistry } from '../../../../../../apps/cli/src/checks/registry'
-import { resolveChecks } from '../../../../../../apps/cli/src/checks/resolver'
-import { defaultParallelism, runChecks } from '../../../../../../apps/cli/src/checks/runner'
+import { CORE_CHECK_RING, coreCheckRegistry } from '../../../checks/registry'
+import { resolveChecks } from '../../../../../kernel/gates/checks/resolver'
+import { defaultParallelism, runChecks } from '../../../../../kernel/gates/checks/runner'
 import {
   CHECK_SCHEMA_VERSION,
   type CheckError,
   type CheckSpec,
   emitCheckError
-} from '../../../../../../apps/cli/src/checks/contract'
+} from '../../../../../kernel/gates/checks/contract'
 import {
   type BriefBuiltin,
   type BriefSection,
@@ -809,7 +813,7 @@ export async function collectBodyCheckErrors(
  * reported error is `pending: true` never refuses the write.
  *
  * `CheckError.pending` means "has not happened YET", never "is wrong" (see
- * its own doc comment in `apps/cli/src/checks/contract.ts`). A pre-write
+ * its own doc comment in `harness/kernel/gates/checks/contract.ts`). A pre-write
  * validation answers exactly one question — are the bytes about to reach the
  * forge wrong? — so a wait state is never an answer to it: refusing there
  * blocks the very write whose landing is often what clears the wait. The

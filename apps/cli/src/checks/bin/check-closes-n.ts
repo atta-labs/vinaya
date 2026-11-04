@@ -32,7 +32,7 @@ import {
   type TrancheFile
 } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 // No chdir — see check-doc-coverage.ts's rationale; the runner's spawn
 // already inherits the caller's cwd, which IS the repo being evaluated.

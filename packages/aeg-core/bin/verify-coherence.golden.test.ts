@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process'
 import { describe, it } from 'vitest'
-import { deriveTrancheFromForge, resolveRepo } from '@attalabs/aeg-forge-state'
+import { deriveTrancheFromForge } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import { parseTranche } from '../src/index'
 
 /**

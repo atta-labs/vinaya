@@ -4,7 +4,7 @@
  * the tests a change between two commits requires, for a local push and for
  * CI alike.
  *
- * The library (`apps/cli/src/lib/verification/index.ts`, its public
+ * The library (`harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts`, its public
  * entrypoint and the only module of it this file imports) holds no fact of
  * this repository's. This adapter supplies them, each read from the head
  * commit's own committed files — never from the checkout this runs in:
@@ -34,8 +34,8 @@
  *   bun scripts/test-suites/repository-selection.ts --base <rev> --head <rev> [--consumer local|ci] [--depth one|transitive]
  */
 import { execFileSync } from 'node:child_process'
-import { CLI_SPAWN_BINARY } from '../../apps/cli/src/lib/cli-spawn-tests.js'
-import { DEFAULT_CLI_ENTRYPOINT } from '../../apps/cli/src/lib/test-selector.js'
+import { CLI_SPAWN_BINARY } from '../../harness/kernel/gates/ring0-hooks/pre-push/cli-spawn-tests.js'
+import { DEFAULT_CLI_ENTRYPOINT } from '../../harness/processes/vinaya-strict/integration/repository-verification.js'
 import {
   gitRepository,
   type ScannerDeclaration,
@@ -45,7 +45,7 @@ import {
   type SelectionPolicy,
   type SelectTestsInput,
   selectTests
-} from '../../apps/cli/src/lib/verification/index.js'
+} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
 import {
   bunLockParser,
   INVENTORY_PATH,

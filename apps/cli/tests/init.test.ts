@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { parse } from 'yaml'
 import { DOC_OWNERS_PATH, LABELS, parseRegistry, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
-import { AGENT_VENDORS, type AgentVendor } from '../src/lib/agent-vendors.js'
+import { AGENT_VENDORS, type AgentVendor } from '../../../harness/kernel/adapters/agents/agent-vendors.js'
 import {
   ARCHIVIST_WORKFLOW_PATH,
   BODY_CHECKS_WORKFLOW_PATH,
@@ -53,8 +53,8 @@ import type { InitDeps } from '../src/commands/init.js'
 import { parseAgentsFlag, runInit, runInitProduct } from '../src/commands/init.js'
 import { runEject } from '../src/commands/eject.js'
 import type { EjectDeps } from '../src/commands/eject.js'
-import { planInstall, renderInstallDiff } from '../src/lib/ops.js'
-import type { LabelGateway } from '../src/lib/ops.js'
+import { planInstall, renderInstallDiff } from '../../../harness/kernel/gates/ops.js'
+import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
 
 let root: string
 let createdLabels: string[]
@@ -727,7 +727,12 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
 
   function occurrences(files: Map<string, string>, needle: string): number {
     let n = 0
-    for (const content of files.values()) n += content.split(needle).length - 1
+    for (const content of files.values()) {
+      const invocations = content
+        .replaceAll(`npx --yes -p @attalabs/vinaya@${OWN_VERSION} vinaya-audit`, `${PUBLISHED_RUN} audit`)
+        .replaceAll('bun harness/processes/vinaya-strict/gates/ring2-audits/audit.ts', `${VENDORED_BIN} audit`)
+      n += invocations.split(needle).length - 1
+    }
     return n
   }
 
@@ -771,7 +776,7 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     const hooks = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
     const specs: string[] = []
     for (const content of [...generated().values(), hooks]) {
-      for (const m of content.matchAll(/npx --yes @attalabs\/vinaya@([^\s]+)/g)) specs.push(m[1] ?? '')
+      for (const m of content.matchAll(/npx --yes (?:-p )?@attalabs\/vinaya@([^\s]+)/g)) specs.push(m[1] ?? '')
     }
     // Count, not just uniqueness: a set-only assertion would still pass if the
     // workflows lost their pin entirely and the hook alone contributed the
@@ -1031,8 +1036,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(review).toContain(`${VENDORED_BIN} check review-gate`)
     expect(verdict).toContain(`${VENDORED_BIN} check review-gate`)
     expect(archivist).toContain(`${VENDORED_BIN} archive --merge-sha=${SIGIL}{{ github.sha }}`)
-    expect(archivist).toContain(`${VENDORED_BIN} audit --only=dead-branches`)
-    expect(archivist).toContain(`${VENDORED_BIN} audit --only=direct-push --sha=${SIGIL}{{ github.sha }}`)
+    expect(archivist).toContain('bun harness/processes/vinaya-strict/gates/ring2-audits/audit.ts --only=dead-branches')
+    expect(archivist).toContain(
+      `bun harness/processes/vinaya-strict/gates/ring2-audits/audit.ts --only=direct-push --sha=${SIGIL}{{ github.sha }}`
+    )
     expect(occurrences(new Map([[ARCHIVIST_WORKFLOW_PATH, archivist]]), 'setup-bun')).toBe(4)
 
     // `vinaya-checks.yml` builds its own copy at pull-request trust, before
@@ -1410,8 +1417,8 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     )
     expect(prePush).toContain('if bunx turbo typecheck --affected; then VINAYA_STEP=pass; else VINAYA_STEP=fail; fi')
     expect(prePush).toContain('[ "$VINAYA_STEP" = pass ] || exit 1')
-    expect(prePush).toContain('bun apps/cli/src/lib/pre-push-changed-files.ts')
-    expect(prePush).toContain('bun apps/cli/src/lib/pre-push-select-tests.ts')
+    expect(prePush).toContain('bun harness/kernel/gates/ring0-hooks/pre-push/pre-push-changed-files.ts')
+    expect(prePush).toContain('bun harness/processes/vinaya-strict/integration/pre-push-select-tests.ts')
     expect(prePush).not.toContain('--concurrency=1')
     expect(prePush).not.toContain('turbo test --affected')
     // Ordering (round-5 ruling): Biome runs literally before anything else
@@ -1504,7 +1511,7 @@ git rev-parse --git-dir 2>&1 || true
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
     expect(prePush).toContain('xargs bunx biome check --no-errors-on-unmatched --; then')
-    expect(prePush).toContain('xargs bun apps/cli/src/lib/pre-push-record-tests.ts run')
+    expect(prePush).toContain('xargs bun harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts run')
   })
 
   it("real subprocess: 'bun test --' really does refuse to treat a selected file named like a flag as one — without it, a tracked file named '--preload=<module>' would load and run that module (round-4 security review, HIGH)", () => {
@@ -1562,7 +1569,9 @@ git rev-parse --git-dir 2>&1 || true
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
     const biomeIdx = prePush.indexOf('bunx biome check')
-    const modeIdx = prePush.indexOf('VINAYA_PUSH_MODE="$(bun apps/cli/src/lib/pre-push-mode.ts)" || exit 1')
+    const modeIdx = prePush.indexOf(
+      'VINAYA_PUSH_MODE="$(bun harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode.ts)" || exit 1'
+    )
     const checkIdx = prePush.indexOf('check --all --local')
     const storageExitIdx = prePush.indexOf('vinaya pre-push: storage push')
     const typecheckIdx = prePush.indexOf('bunx turbo typecheck --affected')
@@ -1607,8 +1616,11 @@ git rev-parse --git-dir 2>&1 || true
     writeFileSync(join(root, 'apps/cli/dist/index.js'), 'process.exit(0)\n')
     // The push-mode step is required (a failed mode read refuses the push); this
     // stand-in answers the ordinary mode so execution reaches the typecheck.
-    mkdirSync(join(root, 'apps/cli/src/lib'), { recursive: true })
-    writeFileSync(join(root, 'apps/cli/src/lib/pre-push-mode.ts'), 'process.stdout.write("default\\n")\n')
+    mkdirSync(join(root, 'harness/kernel/gates/ring0-hooks/pre-push'), { recursive: true })
+    writeFileSync(
+      join(root, 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode.ts'),
+      'process.stdout.write("default\\n")\n'
+    )
 
     // A fake `bunx` on PATH that fails, exactly as a real red typecheck
     // would — this is the mechanism under test, not the real turbo binary.
@@ -1653,11 +1665,11 @@ git rev-parse --git-dir 2>&1 || true
     expect(snippet).toContain('vinaya pre-push: refused')
 
     const fixtureDir = mkdtempSync(join(tmpdir(), 'vinaya-o6-summary-'))
-    const supervisor = join(fixtureDir, 'apps/cli/src/lib/pre-push-record-tests.ts')
+    const supervisor = join(fixtureDir, 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts')
     mkdirSync(dirname(supervisor), { recursive: true })
     writeFileSync(
       supervisor,
-      `import ${JSON.stringify(new URL('../src/lib/pre-push-record-tests.ts', import.meta.url).pathname)}\n`
+      `import ${JSON.stringify(new URL('../../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts', import.meta.url).pathname)}\n`
     )
     writeFileSync(
       join(fixtureDir, 'a-fixture-failure.test.ts'),

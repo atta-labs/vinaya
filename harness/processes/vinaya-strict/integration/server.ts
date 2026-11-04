@@ -34,7 +34,7 @@ import {
   type TaskToolError,
   type TaskToolName,
   taskToolError
-} from '@attalabs/aeg-core'
+} from '../../../kernel/tools/catalog/task-tools'
 import { Writable } from 'node:stream'
 import { defaultTaskCancelHandler } from '../loops/dev-review/run-control/cancel.js'
 import type { TaskToolCallResult } from '../loops/dev-review/run-control/handlers.js'

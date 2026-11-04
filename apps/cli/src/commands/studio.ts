@@ -3,7 +3,7 @@ import { existsSync, readFileSync, renameSync } from 'node:fs'
 import net from 'node:net'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import { packageRoot } from '../lib/package-root.js'
 import { STUDIO_NODE_MODULES_PACKED_DIRNAME } from '../lib/studio-bundle.js'
 

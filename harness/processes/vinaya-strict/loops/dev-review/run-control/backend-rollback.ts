@@ -38,9 +38,9 @@ import {
   CONTROL_AREA_DIRNAME,
   type ControlStoreDeps,
   readEffect,
-  type TaskCancelResult,
   writeEffect
-} from '@attalabs/aeg-core'
+} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+import type { TaskCancelResult } from '../../../../../kernel/tools/catalog/task-tools'
 import type { TaskRunner } from '../../../../../../apps/cli/src/lib/config.js'
 import {
   fenceStartedEffectsAsUncertain,

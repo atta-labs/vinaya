@@ -4,8 +4,8 @@ import { hostname } from 'node:os'
 import { join, resolve } from 'node:path'
 import { generateCodexConfig } from '../../../../../harness/kernel/adapters/agents/codex/config'
 import { loadRoleGrants, ROLE_NAMES } from '../../../../../harness/kernel/adapters/agents/manifest'
-import { readEffects } from '@attalabs/aeg-core'
-import { createTestTempRun, makeFixtureDir, sweepAbandoned } from '../../../../../apps/cli/src/lib/test-temp'
+import { readEffects } from '../../../../kernel/connectors/checkpoint/control-store/index'
+import { createTestTempRun, makeFixtureDir, sweepAbandoned } from '../../../../kernel/conformance/unit/test-temp'
 import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
 import { checkpointFile, createWorld, expectCleanRun, leg, TASK, threadOf } from './engine-recovery-world'
 import {
@@ -117,7 +117,7 @@ describe.each(ALL_RUNNERS)('%s test storage', () => {
   test('quota exhaustion during a test run is reported and the run recovers', async () => {
     for (const code of ['ENOSPC', 'EDQUOT']) {
       const root = fixtureDir('cross-cutting-storage-')
-      const modulePath = resolve(import.meta.dir, '../../../../../apps/cli/src/lib/test-temp.ts')
+      const modulePath = resolve(import.meta.dir, '../../../../../harness/kernel/conformance/unit/test-temp.ts')
       const source = `
         import { mkdirSync, writeFileSync } from 'node:fs';
         import { join } from 'node:path';

@@ -2,7 +2,12 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { ownPatchAt, ownPatchIdAt, ownPatchInterdiff, patchIdAt } from '../../src/lib/patch-id'
+import {
+  ownPatchAt,
+  ownPatchIdAt,
+  ownPatchInterdiff,
+  patchIdAt
+} from '../../../../harness/kernel/connectors/git/patch-id'
 import { fixtureDir } from './test-temp-fixture'
 
 // The pull request's own patch, read from real git histories: the one-line assertion both sides extend (each adds a

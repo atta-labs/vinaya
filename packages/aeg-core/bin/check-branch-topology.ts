@@ -21,7 +21,8 @@
  * Exit code: 0 = allow (push proceeds), 1 = refuse.
  */
 
-import { deriveTrancheFromForge, resolveRepo } from '@attalabs/aeg-forge-state'
+import { deriveTrancheFromForge } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import { checkBranchTopology, taskBranchTopologyFields } from '../src/index'
 
 if (import.meta.main) {

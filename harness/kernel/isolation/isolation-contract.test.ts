@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { findHeadingLine, findTable, rowToRecord } from '@attalabs/aeg-core'
+import { findHeadingLine, findTable, rowToRecord } from '../gates/checks/markdown-table'
 
 /**
  * Parses harness/kernel/isolation/isolation.md's boundary contract table the same way

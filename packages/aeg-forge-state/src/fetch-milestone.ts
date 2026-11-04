@@ -1,7 +1,13 @@
-import { type GhIssue, ghApiGet, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } from './gh'
+import {
+  type GhIssue,
+  ghApiGet,
+  ghApiGetAllPagesAsync,
+  ghIssueListByLabel,
+  ghIssueListByLabelAsync
+} from '../../../harness/kernel/adapters/code-host/github/gh'
 import { trancheLabel, trancheSlugOf } from './labels'
 import { unwrapValue } from './list-tasks'
-import { stripCode } from './strip-code'
+import { stripCode } from '../../../harness/kernel/adapters/code-host/github/strip-code'
 import type { Lifecycle } from '@attalabs/aeg-types'
 
 export type MilestoneFacts = {

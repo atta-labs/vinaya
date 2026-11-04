@@ -31,7 +31,7 @@ import { execSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import matter from 'gray-matter'
-import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import {
   applyScaffoldPlan,
   checkG1,

@@ -5,12 +5,12 @@ import {
   classifyDocOwnersManifest,
   DOC_OWNERS_PATH,
   evaluateC5,
-  globToRegex,
   isMechanicallyNeutralDiff,
   isUrlPointer,
   parseDocOwners,
   pointerToPath
 } from './doc-owners'
+import { globToRegex } from '../../../harness/kernel/gates/glob-to-regex'
 
 /**
  * `verify-dispatch --surfaces` must distinguish a repo that never configured
@@ -451,7 +451,7 @@ describe('the real manifest resolves at its configured path', () => {
  * these cases green if the binding line were deleted, which would pin nothing.
  */
 describe("the ops.ts → self-hosting.md binding's actual outcomes", () => {
-  const CODE = 'apps/cli/src/lib/ops.ts'
+  const CODE = 'harness/kernel/gates/ops.ts'
   const DOC = 'apps/cli/specs/self-hosting.md'
   const MANIFEST = readFileSync(join(__dirname, '../../..', DOC_OWNERS_PATH), 'utf8')
 

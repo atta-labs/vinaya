@@ -5,7 +5,7 @@
  * these facts through the policies `vinaya-policies.ts` composes.
  */
 
-import { OPERATOR_TOOL_GRANT } from '@attalabs/aeg-core'
+import { OPERATOR_TOOL_GRANT } from '../../../../kernel/tools/catalog/task-tools'
 import { ROLE_VALUES } from '../../../../kernel/log/schema'
 import type { BrokerRolePolicy } from '../../../../kernel/tools/host/broker.js'
 import type { ToolGrantPolicy } from '../../../../kernel/tools/role-grants.js'

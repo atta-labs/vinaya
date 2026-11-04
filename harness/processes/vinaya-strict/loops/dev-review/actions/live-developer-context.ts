@@ -3,11 +3,11 @@ import { existsSync } from 'node:fs'
 import {
   beyondSurfacePaths,
   carryLiveRecord,
-  defaultControlStoreDeps,
   globCoversPath,
   type IssueSurface,
   withBeyondSurfaceBlock
 } from '@attalabs/aeg-core'
+import { defaultControlStoreDeps } from '../../../../../kernel/connectors/checkpoint/control-store/index'
 import { createBroker, type InvocationContext, scopeTarget } from '../../../../../kernel/tools/host/broker.js'
 import { normalizeTouchedPath } from '../../../../../kernel/tools/host/touched-path.js'
 import { type AgentVendor, readLaunchRecord } from '../dispatch/dispatch.js'

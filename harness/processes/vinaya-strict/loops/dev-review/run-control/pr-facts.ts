@@ -38,12 +38,14 @@ import {
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
   isPrincipal,
+  parseDeveloperRoundMarker
+} from '@attalabs/aeg-core'
+import {
   MAX_RETURNED_TEXT_CHARS,
-  parseDeveloperRoundMarker,
   type TaskPrCheck,
   type TaskPrReviewRecord,
   type TaskPrVerdict
-} from '@attalabs/aeg-core'
+} from '../../../../../kernel/tools/catalog/task-tools'
 import { redact } from '../../../../../kernel/log/redact'
 import type { FailedCheckLog } from '../../../../../kernel/tools/failed-check-log.js'
 import { markerComments } from '../standalone/dev-review-loop/developer-dispatch.js'

@@ -1,4 +1,4 @@
-import type { EscalationRecord } from '@attalabs/aeg-core'
+import type { EscalationRecord } from '../../../kernel/connectors/checkpoint/control-store/index'
 import {
   bindPauseToPullRequest,
   readPauseState,

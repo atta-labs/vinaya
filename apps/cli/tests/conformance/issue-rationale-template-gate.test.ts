@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { boundaryPinnedFiles, DEFAULT_COLLISION_THRESHOLD, NO_GATE_CUTOVERS } from '@attalabs/aeg-core'
-import type { CheckError } from '../../src/checks/contract'
+import type { CheckError } from '../../../../harness/kernel/gates/checks/contract'
 import { resolveDoctrineRoot } from '../../src/commands/doctrine'
 import type { BriefSection } from '../../src/lib/config'
 import {

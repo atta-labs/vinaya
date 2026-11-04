@@ -4,7 +4,11 @@ import { Database } from 'bun:sqlite'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type EffectRecord, readExecutionRoundMirror, writeExecutionRoundMirror } from '@attalabs/aeg-core'
+import {
+  type EffectRecord,
+  readExecutionRoundMirror,
+  writeExecutionRoundMirror
+} from '../../../../kernel/connectors/checkpoint/control-store/index'
 import { clearDriverLock } from '../../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { controlStoreRootFor } from '../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import {

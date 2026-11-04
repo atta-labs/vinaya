@@ -33,7 +33,7 @@ import type {
   RawTaskFacts,
   TaskRef
 } from '@attalabs/aeg-types'
-import { resolveGithubToken } from './github-token'
+import { resolveGithubToken } from '../../../harness/kernel/adapters/code-host/github/github-token'
 import { trancheLabel } from './labels'
 import { mapForgeFacts } from './map-forge-facts'
 

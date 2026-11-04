@@ -7,7 +7,7 @@
  */
 
 import { hasLabel, label } from '@attalabs/aeg-forge-state'
-import { anchoredRegion } from './anchored-region'
+import { anchoredRegion } from '../../../harness/kernel/gates/checks/anchored-region'
 import { isDocFile, isSpecFile } from './file-classify'
 
 /**

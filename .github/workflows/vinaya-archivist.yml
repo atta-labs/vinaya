@@ -261,7 +261,7 @@ jobs:
         continue-on-error: true # never-red — this job is a notification channel, not a gate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node apps/cli/dist/index.js audit --only=dead-branches
+        run: bun harness/processes/vinaya-strict/gates/ring2-audits/audit.ts --only=dead-branches
       - name: Archive every finished tranche not yet archived
         # The catch-up the two event-driven triggers cannot make: a tranche that
         # finished before this workflow existed, or whose closing event was
@@ -345,7 +345,7 @@ jobs:
       - name: Run vinaya audit --only=direct-push
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node apps/cli/dist/index.js audit --only=direct-push --sha=${{ github.sha }}
+        run: bun harness/processes/vinaya-strict/gates/ring2-audits/audit.ts --only=direct-push --sha=${{ github.sha }}
       - name: Record the GraphQL budget at job end
         if: ${{ !cancelled() }}
         env:

@@ -12,8 +12,8 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CheckSpec } from '../src/checks/contract'
-import { runChecks } from '../src/checks/runner'
+import type { CheckSpec } from '../../../harness/kernel/gates/checks/contract'
+import { runChecks } from '../../../harness/kernel/gates/checks/runner'
 import { DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
 import {
   isCanonicalHookBlockPath,
@@ -1296,7 +1296,9 @@ describe('VinayaConfigSchema.prePush / .report — additive-only', () => {
     const parsed = VinayaConfigSchema.safeParse(raw)
     expect(parsed.success).toBe(true)
     if (!parsed.success) return
-    const { selectAffectedTestFiles } = await import('../src/lib/test-selector.js')
+    const { selectAffectedTestFiles } = await import(
+      '../../../harness/processes/vinaya-strict/integration/repository-verification.js'
+    )
     const { selected } = selectAffectedTestFiles(repoRoot, ['packages/aeg-core/src/index.ts'], {
       alwaysRun: parsed.data.prePush?.alwaysRun ?? []
     })

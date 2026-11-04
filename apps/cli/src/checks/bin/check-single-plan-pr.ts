@@ -27,8 +27,12 @@
 
 import { execFileSync } from 'node:child_process'
 import { checkSinglePlanPr, touchesAnyTopology, type OpenPrFiles } from '@attalabs/aeg-core'
-import { execErrorText, isGithubRateLimitError, rateLimitMessage } from '../../lib/github-rate-limit'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import {
+  execErrorText,
+  isGithubRateLimitError,
+  rateLimitMessage
+} from '../../../../../harness/kernel/adapters/code-host/github/github-rate-limit'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'single-plan-pr'
 

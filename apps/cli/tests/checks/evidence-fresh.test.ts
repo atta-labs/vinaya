@@ -2,12 +2,16 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { anchoredRegion } from '@attalabs/aeg-core'
+import { anchoredRegion } from '../../../../harness/kernel/gates/checks/anchored-region'
 import { describe, expect, it } from 'bun:test'
 import { EVIDENCE_PLACEHOLDER_TEXT, compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
-import { type ResolvedRegion, ScanContext, resolveAnchoredRegion } from '../../src/checks/scan-context'
+import {
+  type ResolvedRegion,
+  ScanContext,
+  resolveAnchoredRegion
+} from '../../../../harness/kernel/gates/checks/scan-context'
 import { type GroupCCommandResult, renderGroupC } from '../../src/commands/pr-report'
-import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../src/lib/numstat'
+import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../../harness/kernel/connectors/git/numstat'
 
 const HEAD = 'a'.repeat(40)
 const NUMSTAT = '2\t1\tapps/cli/src/commands/pr-report.ts\n1\t0\tapps/cli/src/index.ts'

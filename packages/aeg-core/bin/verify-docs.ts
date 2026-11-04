@@ -90,7 +90,6 @@ import {
   deriveTierFromDiff,
   type DocOwnersBinding,
   evaluateC5,
-  globToRegex,
   hasStatusBlock,
   isCodeFile,
   isDocFile,
@@ -100,9 +99,10 @@ import {
   overrideActive,
   parseDocOwners,
   readTierFromPrBody,
-  WAIVER_LABEL,
-  isEntryPoint
+  WAIVER_LABEL
 } from '../src/index'
+import { globToRegex } from '../../../harness/kernel/gates/glob-to-regex'
+import { isEntryPoint } from '../../../harness/kernel/gates/checks/entry-point'
 import { readConfigPrincipals } from '../src/principals-config'
 
 const DOCS_INVOCATION_CWD = process.cwd()

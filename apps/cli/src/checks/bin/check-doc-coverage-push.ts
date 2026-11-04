@@ -54,8 +54,8 @@ import {
   overrideActive,
   WAIVER_LABEL
 } from '@attalabs/aeg-core'
-import { fileDiffAgainst } from '../../lib/diff-evidence'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { fileDiffAgainst } from '../../../../../harness/kernel/connectors/git/diff-evidence'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { resolveTrustedPrincipals } from '../../lib/config'
 import { warnOnUnreadPrincipals } from '../principals-refusal'
 

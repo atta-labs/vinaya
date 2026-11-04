@@ -48,7 +48,6 @@ import {
   checkBriefSections,
   checkForgeTitle,
   checkPlanPrNoCloses,
-  extractIssue,
   hasObjectivesHeading,
   inferBranchFromBody,
   isBriefShaped,
@@ -59,6 +58,7 @@ import {
   readTierFromPrBody,
   resolveNewestFrozenBrief
 } from '../src/index'
+import { extractIssue } from '../../../harness/kernel/adapters/code-host/github/extract-issue'
 import { readConfigObjectivesSinceIssue } from '../src/objectives-cutover-config'
 import { readConfigPrincipals } from '../src/principals-config'
 

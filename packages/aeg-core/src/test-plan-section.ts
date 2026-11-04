@@ -25,7 +25,7 @@
  * decision record.
  */
 
-import { anchoredRegion } from './anchored-region'
+import { anchoredRegion } from '../../../harness/kernel/gates/checks/anchored-region'
 
 export type TestPlanSection = { found: true; section: string } | { found: false }
 

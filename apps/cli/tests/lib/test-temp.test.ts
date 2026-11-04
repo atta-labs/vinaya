@@ -15,7 +15,7 @@ import {
   sweepOwnedDirs,
   TEST_TEMP_ROOT_ENV,
   testTempRoot
-} from '../../src/lib/test-temp'
+} from '../../../../harness/kernel/conformance/unit/test-temp'
 import { fixtureDir } from './test-temp-fixture'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
@@ -218,7 +218,7 @@ describe('read-only default test storage', () => {
   test('a heavy fixture falls back and recovers when the default root is read-only', async () => {
     const { root, home, scratch, defaultRoot } = sandboxHome()
     const fixtures = resolve(import.meta.dir, 'test-temp-fixture.ts')
-    const storage = resolve(import.meta.dir, '../../src/lib/test-temp.ts')
+    const storage = resolve(import.meta.dir, '../../../../harness/kernel/conformance/unit/test-temp.ts')
     const env = { ...stripVinayaEnv(), HOME: home, TMPDIR: scratch }
     const child = spawnSyncBudgeted(
       process.execPath,

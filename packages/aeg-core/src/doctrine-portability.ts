@@ -40,7 +40,7 @@
  * passed in.
  */
 
-import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
+import { maskCode } from '../../../harness/kernel/adapters/code-host/github/strip-code'
 
 export type PortabilitySourceFile = { path: string; content: string }
 

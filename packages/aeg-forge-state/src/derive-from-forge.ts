@@ -1,5 +1,5 @@
 import type { Tranche } from '@attalabs/aeg-types'
-import type { GhIssue } from './gh'
+import type { GhIssue } from '../../../harness/kernel/adapters/code-host/github/gh'
 import { findMilestoneForSlug, type MilestoneFacts } from './fetch-milestone'
 import { fetchTrancheIssuesAsync, tasksFromIssues } from './list-tasks'
 

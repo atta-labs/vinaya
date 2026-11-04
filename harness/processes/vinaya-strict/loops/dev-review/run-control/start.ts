@@ -9,7 +9,7 @@
  *     `CallerContext` the server resolved from its environment), and refuses
  *     with an `authority` error when that context is absent — MCP is a
  *     transport, not authorization, so the caller is never read from an
- *     argument (`server.ts`, `packages/aeg-core/src/task-tools.ts`).
+ *     argument (`server.ts`, `harness/kernel/tools/catalog/task-tools.ts`).
  *   - refuses before claiming when the repository has no `dispatch.agent`
  *     configured (`precondition`) — this tool carries no agent input field of
  *     its own (that would be a catalog change, out of this task's surface),
@@ -113,9 +113,11 @@ import {
 import { dirname } from 'node:path'
 import {
   defaultControlStoreDeps,
-  principalRulingMarker,
   readLoopState,
-  readResolution,
+  readResolution
+} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+import { principalRulingMarker } from '@attalabs/aeg-core'
+import {
   TaskStartInputSchema,
   type TaskResumeResult,
   type TaskStartResult,
@@ -123,7 +125,7 @@ import {
   type TaskToolRef,
   taskStartRequestIdentity,
   taskToolError
-} from '@attalabs/aeg-core'
+} from '../../../../../kernel/tools/catalog/task-tools'
 import { loadConfig } from '../../../../../../apps/cli/src/lib/config.js'
 import { type LaunchResult, launchDetached, waitForLiveDriver } from './detached-launch.js'
 import {
@@ -150,7 +152,7 @@ import {
   fetchRulings
 } from '../standalone/dev-review-loop/developer-dispatch.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
-import { repoRoot as gitRepoRoot } from '../../../../../../apps/cli/src/lib/diff-evidence.js'
+import { repoRoot as gitRepoRoot } from '../../../../../kernel/connectors/git/diff-evidence.js'
 import {
   deriveLoopState,
   newestPublication,

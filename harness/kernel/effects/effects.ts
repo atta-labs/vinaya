@@ -33,7 +33,12 @@
  */
 
 import { createHash } from 'node:crypto'
-import { acquireOwnership, type ControlStoreDeps, readEffect, writeEffect } from '@attalabs/aeg-core'
+import {
+  acquireOwnership,
+  type ControlStoreDeps,
+  readEffect,
+  writeEffect
+} from '../connectors/checkpoint/control-store/index'
 import { log as logEvent, type LogEventInput } from '../log/log-sink.js'
 import { runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 

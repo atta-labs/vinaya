@@ -19,17 +19,15 @@ import {
   listStartedEffectKeys,
   type LoopBudgets,
   markEffectUncertain,
-  parseTaskBranchIdentity,
-  type PauseReason,
-  principalRulingMarker,
   readEscalation,
   readResolution,
-  type RequestedAuthority,
   type ResolutionRecord,
   type RoundHeadIdentity,
   StaleEpochWriteError,
   writeEscalation
-} from '@attalabs/aeg-core'
+} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
+import { parseTaskBranchIdentity, type PauseReason, principalRulingMarker } from '@attalabs/aeg-core'
+import type { RequestedAuthority } from '../../../../../../kernel/tools/catalog/task-tools'
 import {
   controlStoreRoot,
   createEffectExecutor,

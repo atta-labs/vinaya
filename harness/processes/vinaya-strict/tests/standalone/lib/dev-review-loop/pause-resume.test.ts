@@ -18,12 +18,10 @@ import {
   acquireOwnership,
   type ControlStoreDeps,
   defaultControlStoreDeps,
-  newestPrincipalRulingOrdinal,
-  type PauseReason,
-  principalRulingMarker,
   readEffect,
   writeEffect
-} from '@attalabs/aeg-core'
+} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
+import { newestPrincipalRulingOrdinal, type PauseReason, principalRulingMarker } from '@attalabs/aeg-core'
 import {
   type DriverWatchDeps,
   type LoopDeps,

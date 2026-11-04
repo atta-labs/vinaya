@@ -36,7 +36,7 @@ import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path'
 import { devToolsSocketRoot } from '../tools/dev-tools-registration.js'
 import { sourceReceiptsPath, sourceStoreDir } from '../source-manifest.js'
 
-/** The same allowlist discipline `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `harness/kernel/isolation/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
+/** The same allowlist discipline `harness/kernel/gates/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `harness/kernel/isolation/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
 export const WORKER_ENV_ALLOWLIST_KEYS = [
   'PATH',
   'LANG',
@@ -2301,7 +2301,7 @@ export function controllerStoreReachableBy(controllerDir: string, writableRoots:
 /**
  * The concrete, per-turn protected-path list O1 names: the control store
  * (effect records live inside it — `effectDir`/`effectPath`,
- * `packages/aeg-core/src/control-store/local.ts` — so one entry covers
+ * `harness/kernel/connectors/checkpoint/control-store/local.ts` — so one entry covers
  * both), the source receipts and the driver's documentation read receipts,
  * every other role's folder (scoped per
  * `otherRolesProtectedPaths`'s own doc comment), and the policy

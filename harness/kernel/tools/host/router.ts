@@ -26,8 +26,8 @@
  * module's own fixture.
  */
 
-import { taskToolError, type TaskToolError } from '@attalabs/aeg-core'
-import type { TaskToolName } from '@attalabs/aeg-core'
+import { taskToolError, type TaskToolError } from '../catalog/task-tools'
+import type { TaskToolName } from '../catalog/task-tools'
 
 const CANCEL_WORDS = /\b(cancel|abort|kill|stop|terminate)\b/i
 const RESUME_WORDS = /\b(resume|continue|carry on|pick .* back up|unpause)\b/i

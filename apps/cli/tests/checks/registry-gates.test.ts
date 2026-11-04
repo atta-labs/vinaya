@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { checkG7, parseEnforcementRegistry, reachesProducer } from '@attalabs/aeg-core'
-import { findCrossingFiles, globCandidateFiles } from '../../src/lib/github-crossing-files.js'
+import { findCrossingFiles, globCandidateFiles } from '../../../../harness/kernel/gates/checks/github-crossing-files.js'
 import { blockingGateFiles, gatherLogProducerGraph, readG7Exemptions } from '../../src/lib/log-producer-graph.js'
 import { buildInitOps } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { HOOK_DIRS, initHookPaths } from '../../src/lib/init-hook-paths.js'
+import { HOOK_DIRS, initHookPaths } from '../../../../harness/kernel/gates/ring0-hooks/init-hook-paths.js'
 
 // Task `vinaya-adopter-portability-v1` 2 (Issue #232): before this fix, an
 // absent `aeg-root/enforcement.md` made `check-registry-gates.ts` exit 0 with
@@ -157,9 +157,9 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       const reached = blockingFiles.filter((f) => reachesProducer(f, producers, imports))
       expect(crossingFiles).toHaveLength(0)
       expect(blockingFiles).toHaveLength(16)
-      expect(reached).toHaveLength(4)
+      expect(reached).toHaveLength(2)
       const exemptions = readG7Exemptions(repoRoot)
-      expect(Object.keys(exemptions)).toHaveLength(12)
+      expect(Object.keys(exemptions)).toHaveLength(14)
       const result = checkG7({
         enforcementMapPresent: true,
         crossingFiles,
@@ -182,16 +182,18 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     }
   })
 
-  it("loads exactly today's twelve path-to-reason pairs from the committed data file", () => {
+  it("loads exactly today's fourteen path-to-reason pairs from the committed data file", () => {
     const checkBin =
       'a check bin: it runs only as a child of `vinaya check`, whose runner records one gate event per attempt, so no import of the sink is needed'
     const script =
       'a standalone script outside the CLI package: the import resolution cannot follow it and no CLI source imports it; invoked directly, it records nothing of its own'
     expect(readG7Exemptions(repoRoot)).toEqual({
       'apps/cli/src/checks/bin/check-review-gate.ts': checkBin,
+      'apps/cli/src/checks/bin/check-doc-coverage.ts': checkBin,
+      'apps/cli/src/checks/bin/check-exec-bits.ts': checkBin,
       'apps/cli/src/checks/bin/check-main-branch-refusal.ts': checkBin,
       'apps/cli/src/checks/bin/check-token-collection-wired.ts': checkBin,
-      'apps/cli/src/checks/resolver.ts':
+      'harness/kernel/gates/checks/resolver.ts':
         'the pure step that decides which checks `vinaya check` runs; the runner it feeds records each run and the invocation records its own operation at exit',
       'packages/aeg-core/bin/open-pr.ts': script,
       'packages/aeg-core/bin/open-issue.ts': script,

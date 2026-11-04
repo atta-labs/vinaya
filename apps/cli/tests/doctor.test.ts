@@ -1,3 +1,5 @@
+import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry'
+installVinayaCheckRegistry()
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import {
@@ -42,7 +44,7 @@ import {
   CLAUDE_STOP_HOOK_SCRIPT_PATH
 } from '../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../../../harness/processes/vinaya-strict/integration/gemini-command-emitter.js'
-import type { LabelGateway } from '../src/lib/ops.js'
+import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
 import {
   freshProjectsRegistry,
   PROJECTS_REGISTRY_PATH

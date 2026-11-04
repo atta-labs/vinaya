@@ -7,7 +7,7 @@
  */
 
 import { parseRationaleDeps, trancheLabel, label } from '@attalabs/aeg-forge-state'
-import { anchoredRegion, stripCode } from './anchored-region'
+import { anchoredRegion, stripCode } from '../../../harness/kernel/gates/checks/anchored-region'
 import {
   checkIssueObjectives,
   checkIssueRationale,
@@ -22,7 +22,7 @@ import {
 import { parseTaskBranchIdentity } from './task-branch-identity'
 import { isPrincipal } from './waiver-label'
 import type { ForgeIssue, TaskIssueRef } from '@attalabs/aeg-types'
-import type { GhIssue } from '@attalabs/aeg-forge-state'
+import type { GhIssue } from '../../../harness/kernel/adapters/code-host/github/gh'
 import type { ForgeFacts, Tranche, Task } from './types'
 
 // ---------- grandfather cutoff -----------------------------------------------

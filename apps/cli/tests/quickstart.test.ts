@@ -1,3 +1,5 @@
+import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry'
+installVinayaCheckRegistry()
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -11,7 +13,7 @@ import type { InitDeps } from '../src/commands/init.js'
 import type { QuickstartDeps } from '../src/commands/quickstart.js'
 import { runQuickstart } from '../src/commands/quickstart.js'
 import { PROJECTS_REGISTRY_PATH } from '../../../harness/processes/vinaya-strict/artifacts/registry-write.js'
-import type { LabelGateway } from '../src/lib/ops.js'
+import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
 import { stripAmbientFixtureEnv } from './fixture-env.js'
 import { withSerialLock } from './serial-lock.js'
 

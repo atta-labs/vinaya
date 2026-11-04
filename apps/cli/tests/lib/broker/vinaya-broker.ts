@@ -1,4 +1,4 @@
-import type { ControlStoreDeps } from '@attalabs/aeg-core'
+import type { ControlStoreDeps } from '../../../../../harness/kernel/connectors/checkpoint/control-store/index'
 import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import { vinayaBrokerPolicies } from '../../../../../harness/processes/vinaya-strict/integration/policies/vinaya-policies'
 import {

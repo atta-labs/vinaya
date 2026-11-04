@@ -747,7 +747,7 @@ function ghEditBody(issueRef: string, newBody: string): void {
  * status as the ONLY sanctioned Issue-creation path (module header). No
  * `-R` flag — `gh` resolves the current repo from cwd (`REPO_ROOT`, chdir'd
  * above), the same no-`-R` convention `ghLabelGateway` uses
- * (apps/cli/src/lib/detect.ts). Existing labels are never modified, matching
+ * (harness/kernel/connectors/git/detect.ts). Existing labels are never modified, matching
  * every other create-if-absent label path in this repo.
  */
 const TRANCHE_LABEL_COLOR = '1D76DB'

@@ -22,7 +22,7 @@ const INVARIANT_SPEC = 'apps/cli/specs/dev-review-invariants.md'
 const DESIGN_SPECS = [
   INVARIANT_SPEC,
   'apps/cli/specs/dev-review-engine-state-machine.md',
-  'apps/cli/specs/dev-review-engine-capability-matrix.md'
+  'harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md'
 ] as const
 
 /** The register's one classification vocabulary: the five the invariant specification defines. */

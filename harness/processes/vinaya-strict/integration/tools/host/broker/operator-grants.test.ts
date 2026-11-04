@@ -17,7 +17,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type ControlStoreDeps, defaultControlStoreDeps } from '@attalabs/aeg-core'
+import {
+  type ControlStoreDeps,
+  defaultControlStoreDeps
+} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
 import {
   authenticateOperatorInvocation,
   ForgedInvocationError,

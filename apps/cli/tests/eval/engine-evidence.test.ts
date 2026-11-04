@@ -29,7 +29,7 @@ const REGISTRY_DIR = join(import.meta.dir, 'registry')
 const OWED_FILE = join(import.meta.dir, 'engine-evidence-owed.json')
 /** The most rows the owed list may hold. Lower it as rows gain their proof; never raise it. */
 const OWED_CEILING = 42
-const GATE_16_PROOF = 'apps/cli/tests/conformance/packed-runtime-public-run-control.test.ts'
+const GATE_16_PROOF = 'harness/kernel/loops/runtimes/atta-engine/packed-runtime-public-run-control.test.ts'
 const LIVE_VARIABLE = 'VINAYA_SANDBOX_CONFORMANCE'
 
 const loaded = loadRegistry(join(REGISTRY_DIR, 'modules.json'), join(REGISTRY_DIR, 'shards'))

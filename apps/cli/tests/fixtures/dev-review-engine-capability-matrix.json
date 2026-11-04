@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "spec": "apps/cli/specs/dev-review-engine-capability-matrix.md",
+  "spec": "harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md",
   "invariantRegister": "apps/cli/tests/fixtures/dev-review-architecture-invariants.json",
   "retrieved": "2026-10-06",
   "consumptionBoundary": {

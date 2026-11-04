@@ -18,7 +18,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkDeadBranchPush, type PrStateFact } from '../src/index'
+import { checkDeadBranchPush } from '../../../harness/kernel/gates/ring0-hooks/pre-push/dead-branch-push-guard'
+import type { PrStateFact } from '../../../harness/kernel/gates/ring0-hooks/pre-push/dead-branch-push-guard'
 
 type PrListEntry = { number: number; state: 'OPEN' | 'CLOSED' | 'MERGED' }
 

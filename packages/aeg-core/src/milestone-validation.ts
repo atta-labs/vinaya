@@ -11,7 +11,7 @@
  * intents section are each optional but must parse if present.
  */
 
-import { stripCode } from '@attalabs/aeg-forge-state'
+import { stripCode } from '../../../harness/kernel/adapters/code-host/github/strip-code'
 
 export type MilestoneIntent = { slug: string; goal: string }
 

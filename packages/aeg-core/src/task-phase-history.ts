@@ -29,7 +29,7 @@
  */
 
 import { parseDeveloperRoundMarker } from './review-status'
-import type { TaskPhaseHistory } from './task-tools'
+import type { TaskPhaseHistory } from '../../../harness/kernel/tools/catalog/task-tools'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
 import { isPrincipal } from './waiver-label'
 

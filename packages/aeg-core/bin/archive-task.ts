@@ -25,12 +25,12 @@ import { execSync } from 'node:child_process'
 import { join } from 'node:path'
 import {
   buildProvenanceBlock,
-  extractIssue,
   hasProvenance,
   isEligibleForProvenance,
   resolveNewestFrozenBrief,
   taskRefFromBranch
 } from '../src/index'
+import { extractIssue } from '../../../harness/kernel/adapters/code-host/github/extract-issue'
 import type { MergedPrFacts } from '../src/index'
 import { readConfigPrincipals } from '../src/principals-config'
 

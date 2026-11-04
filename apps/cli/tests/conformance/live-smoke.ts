@@ -3,7 +3,7 @@
  * The bounded, authorized live smoke run (O1) — a REAL
  * invocation of the shared `vinaya-task-tools` MCP server's production code
  * path (real subprocess, real JSON-RPC, real handler, real `log()` sink),
- * proving `apps/cli/specs/conformance.md`'s claims are not test-harness
+ * proving `harness/kernel/conformance/conformance.md`'s claims are not test-harness
  * fiction. This is deliberately NOT a `.test.ts` file: `bun test` never
  * discovers or runs it, because it writes one real Vinaya Log event and is
  * meant to be re-run by hand, not on every CI push.
@@ -39,7 +39,7 @@
  * router, the catalog's Zod validation, the real handler, the real log sink
  * — everything BELOW the model's own decision to call the tool. The one
  * layer this script cannot honestly claim to prove is that decision layer
- * itself; `apps/cli/specs/conformance.md`'s own evidence section says so
+ * itself; `harness/kernel/conformance/conformance.md`'s own evidence section says so
  * plainly rather than papering over the gap.
  *
  * Codex: no `codex` binary exists on this authoring host (confirmed twice —
@@ -61,7 +61,11 @@ import {
   writeEscalationFixture,
   writePauseFixture
 } from './harness.js'
-import { acquireOwnership, consumeResolutionOnce, defaultControlStoreDeps } from '@attalabs/aeg-core'
+import {
+  acquireOwnership,
+  consumeResolutionOnce,
+  defaultControlStoreDeps
+} from '../../../../harness/kernel/connectors/checkpoint/control-store/index'
 import { tasksExecutionRoot } from '../../../../harness/kernel/run-paths.js'
 import { claudeMcpJsonFile } from '../../../../harness/processes/vinaya-strict/integration/adapters.js'
 

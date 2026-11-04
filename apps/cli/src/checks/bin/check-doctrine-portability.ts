@@ -50,8 +50,8 @@ import {
   type PortabilitySourceFile
 } from '@attalabs/aeg-core'
 import { loadConfig } from '../../lib/config'
-import { findingsInThisDiff } from '../../lib/diff-evidence'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { findingsInThisDiff } from '../../../../../harness/kernel/connectors/git/diff-evidence'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'doctrine-portability'
 

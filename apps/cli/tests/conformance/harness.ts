@@ -9,7 +9,7 @@ import {
   defaultControlStoreDeps,
   type EscalationInput,
   writeEscalation
-} from '@attalabs/aeg-core'
+} from '../../../../harness/kernel/connectors/checkpoint/control-store/index'
 import {
   ReplayedResolutionError,
   resolveEscalation,

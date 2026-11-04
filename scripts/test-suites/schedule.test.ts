@@ -18,7 +18,7 @@ import {
   type NativeGroup,
   type NativeTestRequest,
   type TestIdentity
-} from '../../apps/cli/src/lib/verification/index.ts'
+} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts'
 import { type InventoryView, readTestInventory } from './inventory-check.ts'
 import {
   assignShards,
@@ -421,6 +421,12 @@ describe('real runners execute exactly their group', () => {
   const exact = groupsFor(['pkg/bun/tests/a.test.ts', 'pkg/vt/src/run.test.ts'])
   const bunGroup = exact.find((g) => g.runner === 'bun') as NativeGroup
   const vitestGroup = exact.find((g) => g.runner === 'vitest') as NativeGroup
+
+  test('Bun groups preserve the suite isolation flag', () => {
+    const isolated = { ...bunGroup, environment: { ...bunGroup.environment, isolate: true } }
+    expect(runnerCommand(isolated, 'r.xml')).toContain('--isolate')
+    expect(runnerCommand(bunGroup, 'r.xml')).not.toContain('--isolate')
+  })
 
   test('the grouped arguments run only the scheduled files, one runner after the other', () => {
     expect(bunGroup.args).toEqual(['./tests/a.test.ts'])

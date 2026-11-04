@@ -6,11 +6,10 @@ import { join } from 'node:path'
 import {
   acquireOwnership,
   defaultControlStoreDeps,
-  type PauseReason,
-  TASK_NEXT_ACTIONS,
-  TASK_TOOL_NAMES,
   writeEscalation
-} from '@attalabs/aeg-core'
+} from '../../../../../harness/kernel/connectors/checkpoint/control-store/index'
+import type { PauseReason } from '@attalabs/aeg-core'
+import { TASK_NEXT_ACTIONS, TASK_TOOL_NAMES } from '../../../../../harness/kernel/tools/catalog/task-tools'
 import { escalationIdFor } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 import { taskPrReadHandler } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/pr-read.js'

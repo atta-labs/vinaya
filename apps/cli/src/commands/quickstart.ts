@@ -23,7 +23,8 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { hardenedMeteringDeps, resolveMeteringCapability } from '@attalabs/aeg-core'
+import { hardenedMeteringDeps } from '../../../../harness/kernel/adapters/agents/claude-code/metering-io-guard'
+import { resolveMeteringCapability } from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import { runDemoBreak } from './demo.js'
 import type { DoctorDeps } from './doctor.js'
 import { probeLogDestinationServer, resolveLogDestinationForDoctor, runDoctor } from './doctor.js'
@@ -41,7 +42,7 @@ import {
   resolveHookDir,
   type RepoInfo,
   setCoreHooksPath
-} from '../lib/detect.js'
+} from '../../../../harness/kernel/connectors/git/detect.js'
 import { packageRoot } from '../lib/package-root.js'
 import { closeStdin, prompt as promptAsk, promptYesNo } from '../lib/prompt.js'
 

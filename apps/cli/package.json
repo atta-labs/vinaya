@@ -13,7 +13,8 @@
     "vinaya-record-tests": "dist/lib/pre-push-record-tests.js",
     "vinaya-push-mode": "dist/lib/pre-push-mode.js",
     "vinaya-push-progress": "dist/lib/pre-push-progress-dir.js",
-    "vinaya-push-progress-observer": "dist/lib/push-progress-observer.js"
+    "vinaya-push-progress-observer": "dist/lib/push-progress-observer.js",
+    "vinaya-audit": "dist/programs/audit.js"
   },
   "files": [
     "dist",

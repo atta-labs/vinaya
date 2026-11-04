@@ -34,16 +34,16 @@ import {
   checkIssueRationale,
   fetchForgeFacts,
   fetchOpenIssuesByLabel,
-  isEntryPoint,
   parseTaskBranch,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
   type DispatchGateInput,
   type DispatchReadinessFact
 } from '@attalabs/aeg-core'
+import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
 import { resolvePriorTrancheArchival } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { resolveTrustedPrincipals } from '../../lib/config'
 import { resolveEdge } from '../edge-resolve'
 import { warnOnUnreadPrincipals } from '../principals-refusal'

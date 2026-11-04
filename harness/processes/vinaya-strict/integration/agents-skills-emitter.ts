@@ -27,7 +27,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import matter from 'gray-matter'
-import type { CreateFileOp } from '../../../../apps/cli/src/lib/ops.js'
+import type { CreateFileOp } from '../../../kernel/gates/ops.js'
 import type { VendoredVinaya } from '../../../../apps/cli/src/lib/self-host.js'
 
 export const AGENTS_SKILLS_GROUP = 'Agent skills (.agents/skills/)'

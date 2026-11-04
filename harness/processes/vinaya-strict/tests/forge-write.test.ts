@@ -798,7 +798,7 @@ describe('runBodyChecks — the ONE registry-runner call every forge-write path 
   })
 
   it('still reasserts draft premise pins before a PR exists', async () => {
-    const body = `${validPr}\n\nPremise:\n- apps/cli/src/checks/contract.ts contains: deliberately-missing-draft-pin\n`
+    const body = `${validPr}\n\nPremise:\n- harness/kernel/gates/checks/contract.ts contains: deliberately-missing-draft-pin\n`
     const errors = await collectBodyCheckErrors(body, 'fix/some-branch', undefined)
     expect(errors.some((error) => error.check === 'pr-premise-reassert')).toBe(true)
   })

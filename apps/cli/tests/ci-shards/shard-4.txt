@@ -1,14 +1,10 @@
 tests/lib/operator-grant.test.ts
 tests/lib/dispatch/reconcile-launch.test.ts
-tests/lib/dispatch/outcomes.test.ts
-tests/lib/dispatch/launch-intent.test.ts
 tests/lib/dispatch/usage-observation.test.ts
 tests/lib/broker/authenticate.test.ts
 tests/lib/broker/worker-grants.test.ts
 tests/lib/dispatch/unattended.test.ts
 tests/lib/dispatch/after-turn-attribution.test.ts
-tests/checks/runner/outcomes.test.ts
-tests/checks/runner/traces.test.ts
 tests/conformance/codex.test.ts
 tests/process-fixture-coverage.test.ts
 tests/lib/task-tools/operator-state-actions.test.ts
@@ -17,9 +13,7 @@ tests/commands/log-send.test.ts
 tests/commands/sync.test.ts
 tests/lib/dispatch/linux-sandbox-probe.test.ts
 tests/lib/real-runtime-guard.test.ts
-tests/lib/pre-push-scanner-triggers.test.ts
 tests/lib/enforcement-controls-active.test.ts
-tests/lib/dispatch/codex-login-refresh.test.ts
 tests/eval/contracts.test.ts
 tests/eval/neutral-case.test.ts
 tests/eval/generic-graders.test.ts
@@ -37,10 +31,7 @@ tests/lib/source-provider.test.ts
 tests/conformance/adapter-contract.test.ts
 tests/eval/harbor-tasks.test.ts
 tests/eval/harbor-practice-fixes.test.ts
-tests/lib/ci-test-selection.test.ts
 tests/lib/log-sink-off.test.ts
-tests/lib/pre-push-mode.test.ts
 tests/conformance/dev-review-backend-selection.test.ts
 tests/lib/pre-push-test-runner.test.ts
-src/lib/verification/tests/native.test.ts
 tests/lib/ci-job-oracle.test.ts

@@ -129,7 +129,15 @@ const libBinNames = [
 ]
 const libOutdir = join(pkgRoot, 'dist', 'lib')
 await build(
-  libBinNames.map((f) => join(libBinDir, f)),
+  libBinNames.map((f) => {
+    const sources: Record<string, string> = {
+      'pre-push-select-tests.ts': 'harness/processes/vinaya-strict/integration/pre-push-select-tests.ts',
+      'pre-push-changed-files.ts': 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-changed-files.ts',
+      'pre-push-mode.ts': 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode.ts',
+      'pre-push-record-tests.ts': 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts'
+    }
+    return sources[f] ? join(pkgRoot, '..', '..', sources[f] as string) : join(libBinDir, f)
+  }),
   libOutdir
 )
 for (const f of libBinNames) normalizeExecutable(join(libOutdir, f.replace(/\.ts$/, '.js')))
@@ -145,3 +153,7 @@ normalizeExecutable(join(bridgeOutdir, 'dev-tools-bridge.js'))
 console.log(
   `built dist/index.js + ${checkEntrypoints.length} check bin(s) + verify-dispatch in dist/checks/bin/ + ${libBinNames.length} lib bin(s) in dist/lib/ (external: ${external.join(', ') || 'none'})`
 )
+
+const auditOutdir = join(pkgRoot, 'dist', 'programs')
+await build([join(pkgRoot, '..', '..', 'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts')], auditOutdir)
+normalizeExecutable(join(auditOutdir, 'audit.js'))

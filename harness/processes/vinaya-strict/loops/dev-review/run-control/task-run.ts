@@ -10,8 +10,15 @@
  * resolution performed once here.
  */
 
-import { defaultControlStoreDeps, readResolution, type ResolutionRecord } from '@attalabs/aeg-core'
-import { resolveRepo as realResolveRepo, type RepoRef } from '@attalabs/aeg-forge-state'
+import {
+  defaultControlStoreDeps,
+  readResolution,
+  type ResolutionRecord
+} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+import {
+  resolveRepo as realResolveRepo,
+  type RepoRef
+} from '../../../../../kernel/adapters/code-host/github/resolve-repo'
 import {
   type AssembleAndRenderBriefResult,
   assembleAndRenderBrief as realAssembleAndRenderBrief,

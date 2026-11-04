@@ -52,7 +52,7 @@
  * full, is the one thing being said.
  */
 
-import { ANCHOR_FIELDS, anchoredRegionBounds, stripCode } from './anchored-region'
+import { ANCHOR_FIELDS, anchoredRegionBounds, stripCode } from '../../../harness/kernel/gates/checks/anchored-region'
 
 export type DensityResult = { status: 'pass' | 'fail'; errors: string[] }
 

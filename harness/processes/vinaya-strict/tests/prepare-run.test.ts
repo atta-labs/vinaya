@@ -14,7 +14,7 @@ import {
 } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { isHostRepairPause, readPauseState } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { DispatchSandboxRefused } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
-import type { EnforcementControl } from '../../../../apps/cli/src/lib/enforcement-controls'
+import type { EnforcementControl } from '../../../kernel/gates/enforcement-controls'
 import type { PreparedSource, RequiredSourceManifest } from '../../../kernel/source-manifest'
 import { sourceReceiptsPath } from '../../../kernel/source-manifest'
 import { SourceReaderUnavailable } from '../../../kernel/tools/source-provider'

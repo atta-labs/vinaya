@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { resolveMeteringCapability } from '@attalabs/aeg-core'
+import { resolveMeteringCapability } from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import { realDeps } from './tokens'
 
 /**

@@ -3,7 +3,8 @@
  * parser. Pure — file-existence is injected by the caller.
  */
 
-import { DOC_OWNERS_PATH, globToRegex, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'
+import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'
+import { globToRegex } from '../../../harness/kernel/gates/glob-to-regex'
 
 export type NoDocRule = { glob: string; reason: string }
 

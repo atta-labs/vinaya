@@ -21,7 +21,7 @@
 
 import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import { loadConfig, loadTrustAnchorConfigAsync } from '../lib/config.js'
 import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import {

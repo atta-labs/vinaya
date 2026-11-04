@@ -24,7 +24,7 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import type { ResolutionRecord } from '@attalabs/aeg-core'
+import type { ResolutionRecord } from '../../../../kernel/connectors/checkpoint/control-store/index'
 import {
   describeModelResolution,
   isAlreadyDispatchedError,

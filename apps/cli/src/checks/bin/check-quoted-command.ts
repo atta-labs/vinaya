@@ -51,8 +51,8 @@ import {
 } from '@attalabs/aeg-core'
 import { resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { repoRoot } from '../../lib/diff-evidence'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { repoRoot } from '../../../../../harness/kernel/connectors/git/diff-evidence'
 
 const CHECK_NAME = 'quoted-command'
 

@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MAX_RETURNED_TEXT_CHARS } from '@attalabs/aeg-core'
+import { MAX_RETURNED_TEXT_CHARS } from '../../../../../harness/kernel/tools/catalog/task-tools'
 import {
   failedCheckLogsOnHead,
   failureSignaturePart,

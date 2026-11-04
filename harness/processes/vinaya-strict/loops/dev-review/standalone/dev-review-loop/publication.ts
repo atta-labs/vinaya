@@ -15,7 +15,6 @@ import { dirname, join } from 'node:path'
 import {
   compareManifest,
   consequentialFindings,
-  defaultControlStoreDeps,
   type EchoedManifest,
   evaluateCodeReview,
   evaluateSecurityReview,
@@ -28,6 +27,7 @@ import {
   type ReviewPolicy,
   type VerdictExtraction
 } from '@attalabs/aeg-core'
+import { defaultControlStoreDeps } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
 import { principalBodies } from '../../../../../../../apps/cli/src/commands/review-post.js'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../../../../../../kernel/effects/effects.js'
 import { type DeferredFindingsIssueRef, reconcileGhComment } from '../../../../tools/task-contract/forge/forge-write.js'

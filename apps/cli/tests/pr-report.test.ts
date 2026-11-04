@@ -13,7 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveMeteringCapability } from '@attalabs/aeg-core'
+import { resolveMeteringCapability } from '../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import { describe, expect, it } from 'bun:test'
 import {
   agentCommandText,

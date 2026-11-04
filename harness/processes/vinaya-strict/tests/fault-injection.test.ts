@@ -4,12 +4,8 @@ import { Database } from 'bun:sqlite'
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  type EscalationRecord,
-  recordedBeyondSurfacePaths,
-  renderBeyondSurfaceBlock,
-  type ResolutionRecord
-} from '@attalabs/aeg-core'
+import type { EscalationRecord, ResolutionRecord } from '../../../kernel/connectors/checkpoint/control-store/index'
+import { recordedBeyondSurfacePaths, renderBeyondSurfaceBlock } from '@attalabs/aeg-core'
 import { createRunControl } from '@atta/executor-agent-spawn'
 import {
   isHostRepairPause,

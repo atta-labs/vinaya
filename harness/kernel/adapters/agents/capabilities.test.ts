@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@attalabs/aeg-types/dev-tools'
+import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '../../tools/host/dev-tools'
 import { CLAUDE_CAPABILITY_TOOLS, claudeShellRule, claudeToolDecisions } from './claude-code/capabilities'
 import { credentialDenyRead, credentialReadRules, generateClaudeSettings } from './claude-code/settings'
 import {

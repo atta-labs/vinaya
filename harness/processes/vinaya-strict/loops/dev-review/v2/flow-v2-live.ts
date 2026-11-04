@@ -28,20 +28,23 @@ import {
   removeUnderGit,
   SELECTION_NOTE,
   type SelectionNote
-} from '../../../../../../apps/cli/src/lib/pre-push-failed-tests'
+} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
 import {
   containmentLogLine,
   identityOf,
   registerProcess,
   selectContainmentBackend,
   stopRegistered
-} from '../../../../../../apps/cli/src/lib/process-registry'
+} from '../../../../../kernel/conformance/unit/process-registry'
 import {
   ADOPTER_TEST_RUNNER,
   NO_LOCAL_TESTS_MARKER,
   REPOSITORY_LOCAL_RUN
-} from '../../../../../../apps/cli/src/lib/pre-push-test-runner'
-import { PUSH_MODE_MARKER, storageMarkerText } from '../../../../../../apps/cli/src/lib/pre-push-mode-logic'
+} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
+import {
+  PUSH_MODE_MARKER,
+  storageMarkerText
+} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-mode-logic'
 import {
   DEFERRAL_MARKER_TTL_MS,
   deferralMarkerText,
@@ -50,7 +53,7 @@ import {
   type ReadyTestsPolicy,
   type RequiredCiPolicy
 } from '../../../../../../apps/cli/src/lib/pre-push-ready-policy'
-import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../../apps/cli/src/lib/test-temp'
+import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../kernel/conformance/unit/test-temp'
 import { appendLoopLogLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log'
 import {
   appendProgressBytes,

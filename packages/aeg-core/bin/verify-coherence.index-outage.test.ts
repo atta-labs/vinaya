@@ -33,7 +33,7 @@ vi.mock('@attalabs/aeg-forge-state', async (importOriginal) => {
 })
 
 const { runCoherenceChecks } = await import('./verify-coherence')
-const { resolveGithubToken } = await import('@attalabs/aeg-forge-state')
+const { resolveGithubToken } = await import('../../../harness/kernel/adapters/code-host/github/github-token')
 
 const SLUG = 'zzz-index-outage-fixture'
 const ACTIVE_PATH = `aeg-root/tranches/${SLUG}.md`

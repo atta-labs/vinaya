@@ -20,7 +20,7 @@
 // generated file and description must never read as if execution were
 // silent or automatic.
 
-import type { CreateFileOp } from '../../../../apps/cli/src/lib/ops.js'
+import type { CreateFileOp } from '../../../kernel/gates/ops.js'
 import type { VendoredVinaya } from '../../../../apps/cli/src/lib/self-host.js'
 
 export const GEMINI_COMMAND_GROUP = 'Gemini CLI command (.gemini/commands/)'

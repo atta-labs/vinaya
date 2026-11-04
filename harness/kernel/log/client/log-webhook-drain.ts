@@ -46,7 +46,7 @@ import {
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../adapters/code-host/github/resolve-repo'
 import { classifyStoredLine } from '../store'
 import { appendHardenedLine, outboxPathFor as sinkOutboxPathFor } from '../log-sink.js'
 import { configProvider } from '../../config/loader/config-provider.js'

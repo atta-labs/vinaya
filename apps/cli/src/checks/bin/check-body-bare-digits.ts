@@ -48,8 +48,11 @@
 import { execFileSync } from 'node:child_process'
 import { CHANGESET_RELEASE_BRANCH, isChangesetsReleasePr } from '@attalabs/aeg-core'
 import { loadTrustAnchorConfig, resolveReleaseActor } from '../../lib/config'
-import { exitOnIncompleteForgeSnapshot, snapshotPullRequest } from '../../lib/forge-snapshot'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import {
+  exitOnIncompleteForgeSnapshot,
+  snapshotPullRequest
+} from '../../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { checkBareDigits } from '../body-bare-digits-logic'
 
 const CHECK_NAME = 'body-bare-digits'

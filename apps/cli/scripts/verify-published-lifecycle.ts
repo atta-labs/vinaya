@@ -64,12 +64,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { TASK_TOOL_NAMES, trancheLabel } from '@attalabs/aeg-core'
+import { TASK_TOOL_NAMES } from '../../../harness/kernel/tools/catalog/task-tools'
+import { trancheLabel } from '@attalabs/aeg-core'
 import { COMMANDS } from '@attalabs/vinaya-sources'
 // Current source's registry, read to derive the expectation the published
 // artifact is measured against — the same "derive, never hand-maintain"
 // discipline this script already applies to the command coverage set.
-import { coreCheckRegistry, runsUnderAll } from '../src/checks/registry.js'
+import { coreCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry.js'
+import { runsUnderAll } from '../../../harness/kernel/gates/checks/registry'
 // Same discipline for the `studio` exercise below: it probes the ports
 // current source would actually bind rather than hand-maintaining a second
 // copy of `3008`/`3108` that could silently drift from `studio.ts`.
@@ -80,7 +82,7 @@ import { FALLBACK_PORT as STUDIO_FALLBACK_PORT, PRIMARY_PORT as STUDIO_PRIMARY_P
 // hand-maintained list that can silently fall behind what `init` grows to
 // write.
 import { LOCAL_CONFIG_FILENAME, VinayaConfigSchema } from '../src/lib/config.js'
-import { resolveHookDir } from '../src/lib/detect.js'
+import { resolveHookDir } from '../../../harness/kernel/connectors/git/detect.js'
 
 // `..` from `apps/cli/scripts/` is the package root — the same derivation
 // `--local-pack` already uses to find the tree it packs, so both modes read
@@ -563,10 +565,6 @@ export const EXEMPTIONS: Record<string, string> = {
     'breaking the Part 4 eject byte-identity diff). The orchestration logic itself — prompt ordering, ' +
     'closeStdin-once discipline, partial-decline paths — is proven by tests/quickstart.test.ts against this ' +
     "workspace's own source, with real (non-mocked) git/hook behavior.",
-  audit:
-    '`audit` is a ring-2 scheduled mechanism: dead-branch drift and direct-main-push detection both derive ' +
-    'from live forge state (`gh` branch/PR reads) UNCONDITIONALLY — no offline path exists. Same forge/' +
-    'credential boundary as `archive` above; exempt for the same reason as `issue edit`.',
   'review post':
     "`review post` resolves the target PR's real head via `gh pr view <n> --json headRefOid` UNCONDITIONALLY, " +
     'before it renders anything — the whole point of the command is that the sha is forge-resolved and never ' +
@@ -830,8 +828,8 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     // runs `gh pr list` unconditionally. That call fails on local repo
     // resolution before any API request precisely BECAUSE the fixture has no
     // remote, and the check fails open to UNKNOWN. Do not restate this as
-    // "no gh" — the `audit` EXEMPTION above exempts a command for reaching
-    // `gh` through that very code path, and the two claims cannot both hold.
+    // "no gh" — the exemptions above exempt commands for reaching `gh`
+    // through that very code path, and the two claims cannot both hold.
     // The added forge surface is nil either way: the `check` exercise above
     // already runs the strictly larger `check --all --json` on this fixture.
     //

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { findHeadingLine, findTable, rowToRecord } from './markdown-table'
+import { findHeadingLine, findTable, rowToRecord } from '../../../harness/kernel/gates/checks/markdown-table'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 const ENFORCEMENT_PATH = join(REPO_ROOT, 'aeg-root/enforcement.md')

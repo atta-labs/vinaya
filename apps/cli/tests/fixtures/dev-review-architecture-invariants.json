@@ -2824,11 +2824,11 @@
       "scenarios": ["isolation-refusal"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/enforcement-controls.ts",
+          "path": "harness/kernel/gates/enforcement-controls.ts",
           "symbol": "enforcementControlsActive"
         },
         {
-          "path": "apps/cli/src/lib/local-gate-control.ts",
+          "path": "harness/kernel/gates/local-gate-control.ts",
           "symbol": "realLocalGateControl"
         }
       ],
@@ -2869,7 +2869,7 @@
           "symbol": "refreshStagedCodexLogin"
         }
       ],
-      "tests": ["apps/cli/tests/lib/dispatch/codex-login-refresh.test.ts"],
+      "tests": ["harness/kernel/adapters/agents/dispatch/codex-login-refresh.test.ts"],
       "loopSpec": [],
       "reason": "Shipped fix. Evidence: a reused staged Codex home carried a stale login across dispatches. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
@@ -2902,15 +2902,15 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/repo-scanner-tests.ts",
+          "path": "harness/processes/vinaya-strict/integration/verification-scanner-policy.ts",
           "symbol": "SCANNER_DECLARATIONS"
         },
         {
-          "path": "apps/cli/src/lib/pre-push-selection.ts",
+          "path": "harness/processes/vinaya-strict/integration/pre-push-selection.ts",
           "symbol": "prePushSelection"
         }
       ],
-      "tests": ["apps/cli/tests/lib/pre-push-scanner-triggers.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/integration/pre-push-scanner-triggers.test.ts"],
       "loopSpec": [],
       "reason": "Shipped fix. Evidence: tests that scan the repository tree, and tests that depend on the host's sandbox tools, passed the hook and failed on the CI runner. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
@@ -3056,7 +3056,7 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "apps/cli/src/checks/registry.ts"
+          "path": "harness/processes/vinaya-strict/checks/registry.ts"
         },
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.ts"
@@ -3526,7 +3526,7 @@
           "path": "aeg-root/roles/developer.md"
         },
         {
-          "path": "apps/cli/src/checks/registry.ts"
+          "path": "harness/processes/vinaya-strict/checks/registry.ts"
         }
       ],
       "tests": [],
@@ -3990,7 +3990,7 @@
       "id": "DEF-28",
       "summary": "Folder-scanning tests and host-dependent tests were not selected by the local pre-push gate and failed only in CI; the local gate selects what CI would fail.",
       "code": {
-        "path": "apps/cli/src/lib/repo-scanner-tests.ts",
+        "path": "harness/processes/vinaya-strict/integration/verification-scanner-policy.ts",
         "locator": "SCANNER_DECLARATIONS"
       },
       "spec": {
@@ -4030,7 +4030,7 @@
       "id": "DEF-31",
       "summary": "The readiness gate ran scripts by repository path, so in an adopter's repository the loop stopped after its first round; every gate the loop runs ships with the installed package.",
       "code": {
-        "path": "apps/cli/src/checks/registry.ts"
+        "path": "harness/processes/vinaya-strict/checks/registry.ts"
       },
       "spec": {
         "path": "apps/cli/specs/loop.md"

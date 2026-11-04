@@ -79,8 +79,6 @@ import {
   compareManifest,
   concludedLoopRefusal,
   DEFAULT_REVIEW_POLICY,
-  defaultControlStoreDeps,
-  readEarliestOwnership,
   initialLoopState,
   isConcludedJournal,
   type IssueSurface,
@@ -94,7 +92,6 @@ import {
   type Confidence,
   type Decision,
   type DevReviewLoopEventInput,
-  type EscalationRecord,
   type LoopConfig,
   type LoopState,
   type Observations,
@@ -103,12 +100,17 @@ import {
   type ReconstructedJournal,
   type ReviewInputManifest,
   type ReviewPolicy,
-  type RoundHeadIdentity,
   type RoundStats,
   type TaskClock,
   type VerdictObservation,
   extractSourceRevision
 } from '@attalabs/aeg-core'
+import {
+  defaultControlStoreDeps,
+  readEarliestOwnership,
+  type EscalationRecord,
+  type RoundHeadIdentity
+} from '../../../../../kernel/connectors/checkpoint/control-store/index'
 import { DevReviewLoopEventSchema, type Role } from '../../../../../kernel/log/schema'
 import {
   AGENT_VENDOR_NAMES,
@@ -166,7 +168,7 @@ import {
   narrateDriverEvent
 } from '../../../../../kernel/log/client/loop-log.js'
 import { detectVendoredVinaya } from '../../../../../../apps/cli/src/lib/self-host.js'
-import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../../../kernel/adapters/code-host/github/resolve-repo'
 import {
   checkPremiseAtHead,
   conflictReentryBoundDetail,
@@ -320,7 +322,7 @@ import type { DeveloperTurnResult } from '../../../executing/developer/developer
 import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from '../../../tools/pr-report/pr-report-engine.js'
 import type { PremiseReassertResult } from '../../../../../../apps/cli/src/checks/premise-reassert-logic.js'
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
-import { patchIdAt } from '../../../../../../apps/cli/src/lib/patch-id.js'
+import { patchIdAt } from '../../../../../kernel/connectors/git/patch-id.js'
 import {
   attributeDriverToolCalls as sharedAttributeDriverToolCalls,
   commitAndPushPrompt as sharedCommitAndPushPrompt,

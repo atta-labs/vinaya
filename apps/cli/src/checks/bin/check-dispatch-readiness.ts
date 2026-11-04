@@ -63,7 +63,7 @@
  * scope: full — reads the live forge, not the local diff.
  */
 
-import { isEntryPoint } from '@attalabs/aeg-core'
+import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { sep } from 'node:path'
@@ -86,10 +86,13 @@ import {
   resolvePriorTrancheArchival
 } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { resolveTrustedPrincipals } from '../../lib/config'
-import { exitOnIncompleteForgeSnapshot, snapshotIssue } from '../../lib/forge-snapshot'
-import { containedAbs } from '../../lib/ops'
+import {
+  exitOnIncompleteForgeSnapshot,
+  snapshotIssue
+} from '../../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
+import { containedAbs } from '../../../../../harness/kernel/gates/ops'
 import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve'
 import { resolveSiblingConflictFacts } from '../sibling-conflict-facts'
 import { reassertPremiseFile } from '../premise-reassert-logic'

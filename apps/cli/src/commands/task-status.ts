@@ -24,7 +24,7 @@
  */
 
 import { StringDecoder } from 'node:string_decoder'
-import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import { followTaskLog } from '../lib/follow-view.js'
 import {

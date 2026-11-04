@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { GhIssue } from '@attalabs/aeg-forge-state'
+import type { GhIssue } from '../../../harness/kernel/adapters/code-host/github/gh'
 import {
   checkA1,
   checkA2,

@@ -30,7 +30,7 @@
 //     install diff's standard refusal messaging as the guidance for wiring
 //     it in by hand.
 
-import type { CreateFileOp, ManagedBlockOp } from '../../../../apps/cli/src/lib/ops.js'
+import type { CreateFileOp, ManagedBlockOp } from '../../../kernel/gates/ops.js'
 
 export const CLAUDE_STOP_HOOK_GROUP = 'Claude Code Stop hook (transcript pointer)'
 

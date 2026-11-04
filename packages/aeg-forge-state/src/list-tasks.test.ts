@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createGhMock } from './test-support/mock-gh'
 
-vi.mock('./gh', () => createGhMock())
+vi.mock('../../../harness/kernel/adapters/code-host/github/gh', () => createGhMock())
 
-const { ghIssueListByAnyLabel, ghIssueListByAnyLabelAsync } = await import('./gh')
+const { ghIssueListByAnyLabel, ghIssueListByAnyLabelAsync } = await import(
+  '../../../harness/kernel/adapters/code-host/github/gh'
+)
 const {
   listTasksForSlug,
   listTasksForSlugAsync,

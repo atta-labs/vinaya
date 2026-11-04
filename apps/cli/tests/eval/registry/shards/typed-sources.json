@@ -8,7 +8,7 @@
       "kind": "port",
       "module": "6.3",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-capability-matrix.md",
+        "document": "harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md",
         "revision": 17,
         "section": "One core contract for every adapter"
       },
@@ -47,7 +47,7 @@
       "kind": "port",
       "module": "6.6",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-capability-matrix.md",
+        "document": "harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md",
         "revision": 17,
         "section": "One core contract for every adapter"
       },
@@ -86,7 +86,7 @@
       "kind": "port",
       "module": "6.2",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-capability-matrix.md",
+        "document": "harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md",
         "revision": 17,
         "section": "One core contract for every adapter"
       },
@@ -131,7 +131,7 @@
       "kind": "port",
       "module": "6.13",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-capability-matrix.md",
+        "document": "harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md",
         "revision": 17,
         "section": "One core contract for every adapter"
       },
@@ -176,7 +176,7 @@
       "kind": "port",
       "module": "6.14",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-capability-matrix.md",
+        "document": "harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md",
         "revision": 17,
         "section": "One core contract for every adapter"
       },

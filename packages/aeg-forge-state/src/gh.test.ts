@@ -38,7 +38,7 @@ vi.mock('node:child_process', async () => {
   return { execFile, execFileSync: () => '[]' }
 })
 
-const { ghApiGetAllPagesAsync } = await import('./gh')
+const { ghApiGetAllPagesAsync } = await import('../../../harness/kernel/adapters/code-host/github/gh')
 
 const items = (n: number, offset = 0): { id: number }[] => Array.from({ length: n }, (_, i) => ({ id: offset + i }))
 

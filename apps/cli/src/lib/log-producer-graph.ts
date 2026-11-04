@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import type { GateRow } from '@attalabs/aeg-core'
-import { extractImportRecords, resolveRelativeImport, walkFiles } from './test-selector.js'
+import {
+  extractImportRecords,
+  resolveRelativeImport,
+  walkFiles
+} from '../../../../harness/processes/vinaya-strict/integration/repository-verification.js'
 
 /**
  * The inputs of the registry gates' seventh rule — anything able to block a

@@ -22,8 +22,10 @@
 
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { checkDirectMainPush, ensureLabelExists as ensureLabelExistsShared } from '../src/index'
-import { label, resolveRepo } from '@attalabs/aeg-forge-state'
+import { checkDirectMainPush } from '../../../harness/kernel/gates/ring2-audits/direct-main-push'
+import { ensureLabelExists as ensureLabelExistsShared } from '../../../harness/kernel/gates/ring2-audits/ensure-label'
+import { label } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../harness/kernel/adapters/code-host/github/resolve-repo'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)

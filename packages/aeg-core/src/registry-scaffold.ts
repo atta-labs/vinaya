@@ -46,7 +46,7 @@
  */
 
 import { CLI_CHECK_RING, GATE_AUDIENCE, isShipped } from './gate-audience'
-import { findHeadingLine, findTable } from './markdown-table'
+import { findHeadingLine, findTable } from '../../../harness/kernel/gates/checks/markdown-table'
 import type { GateRing, GateRow } from './registry-parse'
 
 /** The literal marker a stub's every non-mechanical cell carries. Never

@@ -1,7 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import { dirname } from 'node:path'
-import { emitCheckError, type CheckError, type CheckOutcome, type CheckSpec } from '../checks/contract'
-import { coreCheckRegistry, runsUnderAll } from '../checks/registry'
+import {
+  emitCheckError,
+  type CheckError,
+  type CheckOutcome,
+  type CheckSpec
+} from '../../../../harness/kernel/gates/checks/contract'
+import { installedCheckRegistry } from '../../../../harness/kernel/gates/checks/registry'
+import { runsUnderAll } from '../../../../harness/kernel/gates/checks/registry'
 import {
   bareKeyRejectedDiagnostic,
   overriddenReplacesCoreDiagnostic,
@@ -9,14 +15,14 @@ import {
   type ResolvedCheck,
   type ResolverFailure,
   type ResolveResult
-} from '../checks/resolver'
-import { CHECK_EXCLUDE_ENV, defaultParallelism, runChecks } from '../checks/runner'
+} from '../../../../harness/kernel/gates/checks/resolver'
+import { CHECK_EXCLUDE_ENV, defaultParallelism, runChecks } from '../../../../harness/kernel/gates/checks/runner'
 import { type ConfigLoadResult, configPath, loadConfigChecked } from '../lib/config'
 import { printJson } from '../../../../harness/kernel/effects/envelope'
 import { checkProgressWriter } from '../lib/push-progress'
 import { type ProseRulesPlan, proseRulesPlanSection } from '../lib/prose-rules-plan'
 import { buildRolePlan, type RolePlan } from '../../../../harness/processes/vinaya-strict/integration/roles/plan'
-import type { RoleResolutionState } from '../roles/resolver'
+import type { RoleResolutionState } from '../../../../harness/kernel/config/loader/roles/resolver'
 
 // Array-form execFileSync — no shell, so `base` (env-controlled) is passed
 // to git as an inert literal argv element, never shell-interpreted.
@@ -253,9 +259,9 @@ function refusal(message: string): CheckError {
  */
 function resolveForRun(configResult: ConfigLoadResult): { result: ResolveResult; refusals: CheckError[] } {
   const base = configResult.ok
-    ? resolveChecks(coreCheckRegistry(), configResult.config?.checks)
+    ? resolveChecks(installedCheckRegistry(), configResult.config?.checks)
     : {
-        resolved: resolveChecks(coreCheckRegistry(), undefined).resolved,
+        resolved: resolveChecks(installedCheckRegistry(), undefined).resolved,
         failures: [{ key: configResult.path, reason: `invalid \`checks\` registration — ${configResult.error}` }]
       }
 

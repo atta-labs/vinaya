@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createGhMock } from './test-support/mock-gh'
 
-vi.mock('./gh', () => createGhMock())
+vi.mock('../../../harness/kernel/adapters/code-host/github/gh', () => createGhMock())
 
-const { ghApiGet, ghIssueListByAnyLabelAsync, ghIssueListByLabel } = await import('./gh')
+const { ghApiGet, ghIssueListByAnyLabelAsync, ghIssueListByLabel } = await import(
+  '../../../harness/kernel/adapters/code-host/github/gh'
+)
 const { deriveTrancheFromForge, trancheFromIssues } = await import('./derive-from-forge')
 
 const OWNER = 'atta-labs'

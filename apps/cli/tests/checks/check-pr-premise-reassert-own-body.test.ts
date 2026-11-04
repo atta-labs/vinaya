@@ -45,7 +45,10 @@ describe("reassertPrBodyPremise — a real PR's own body (round 1 review, PR #47
 
   function realFileReader(path: string): string | null {
     try {
-      return readFileSync(join(REPO_ROOT, path), 'utf8')
+      const movedPaths: Record<string, string> = {
+        'apps/cli/src/checks/registry.ts': 'harness/processes/vinaya-strict/checks/registry.ts'
+      }
+      return readFileSync(join(REPO_ROOT, movedPaths[path] ?? path), 'utf8')
     } catch {
       return null
     }

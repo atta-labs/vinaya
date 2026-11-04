@@ -1,3 +1,4 @@
+import { globToRegex } from '../../../harness/kernel/gates/glob-to-regex'
 /**
  * The `.vinaya/doc-owners` manifest parser and the C5 code→doc
  * coverage evaluator (state-machine.md Section 15). Pure — I/O (reading the
@@ -59,36 +60,6 @@ export function parseDocOwners(content: string): { bindings: DocOwnersBinding[];
     bindings.push({ glob: glob ?? '', pointer: pointerParts.join(' '), lineNum: i + 1 })
   }
   return { bindings, errors }
-}
-
-/**
- * Translate a doc-owners glob to a RegExp. Deliberately simple — only `*` and
- * `**` are special; every other character is literal so Next.js dynamic-route
- * segments like `[username]` match without escaping.
- */
-export function globToRegex(pat: string): RegExp {
-  let re = '^'
-  let i = 0
-  while (i < pat.length) {
-    const c = pat[i]
-    if (c === '*') {
-      if (pat[i + 1] === '*') {
-        re += '.*'
-        i += 2
-      } else {
-        re += '[^/]*'
-        i += 1
-      }
-    } else if (/[.+^$|(){}[\]\\?]/.test(c as string)) {
-      re += `\\${c}`
-      i += 1
-    } else {
-      re += c
-      i += 1
-    }
-  }
-  re += '$'
-  return new RegExp(re)
 }
 
 export function isUrlPointer(p: string): boolean {

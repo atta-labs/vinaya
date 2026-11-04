@@ -30,8 +30,8 @@
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { repoRoot, resolveChangedFiles } from '../../lib/diff-evidence'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { repoRoot, resolveChangedFiles } from '../../../../../harness/kernel/connectors/git/diff-evidence'
 
 const CHECK_NAME = 'exec-bits'
 const EXECUTABLE_MODE = '100755'

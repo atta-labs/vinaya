@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { GhIssue } from './gh'
+import type { GhIssue } from '../../../harness/kernel/adapters/code-host/github/gh'
 import { createGhMock } from './test-support/mock-gh'
 
-vi.mock('./gh', () => createGhMock())
+vi.mock('../../../harness/kernel/adapters/code-host/github/gh', () => createGhMock())
 
-const { ghApiGetAllPagesAsync, ghIssueListByLabelAsync } = await import('./gh')
+const { ghApiGetAllPagesAsync, ghIssueListByLabelAsync } = await import(
+  '../../../harness/kernel/adapters/code-host/github/gh'
+)
 const { defaultPriorTrancheArchivalDeps, resolvePriorTrancheArchival } = await import('./prior-tranche-archival')
 type PriorTrancheArchivalDeps = import('./prior-tranche-archival').PriorTrancheArchivalDeps
 type PriorTrancheArchivalFact = import('./prior-tranche-archival').PriorTrancheArchivalFact

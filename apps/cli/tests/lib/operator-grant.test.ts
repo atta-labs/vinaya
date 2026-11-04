@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
-import { isOperatorGranted, OPERATOR_TOOL_GRANT, TASK_TOOL_CATALOG, TASK_TOOL_NAMES } from '@attalabs/aeg-core'
+import {
+  isOperatorGranted,
+  OPERATOR_TOOL_GRANT,
+  TASK_TOOL_CATALOG,
+  TASK_TOOL_NAMES
+} from '../../../../harness/kernel/tools/catalog/task-tools'
 import {
   discoverRoleNames,
   renderAgentSkill,

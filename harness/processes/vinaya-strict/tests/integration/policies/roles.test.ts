@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { OPERATOR_TOOL_GRANT } from '@attalabs/aeg-core'
+import { OPERATOR_TOOL_GRANT } from '../../../../../kernel/tools/catalog/task-tools'
 import { ROLE_VALUES } from '../../../../../kernel/log/schema'
 import { DEV_TOOL_NAMES } from '../../../../../kernel/tools/dev-tools-server.js'
 import { isToolGranted } from '../../../../../kernel/tools/role-grants.js'

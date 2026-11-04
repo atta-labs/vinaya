@@ -4,12 +4,11 @@ import { hostname, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
   type ControlStoreDeps,
-  DEFAULT_REVIEW_POLICY,
   defaultControlStoreDeps,
-  initialLoopState,
   readEffects,
   readExecutionRoundMirror
-} from '@attalabs/aeg-core'
+} from '../../../../kernel/connectors/checkpoint/control-store/index'
+import { DEFAULT_REVIEW_POLICY, initialLoopState } from '@attalabs/aeg-core'
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { createBroker, scopeTarget } from '../../../../kernel/tools/host/broker'
 import { vinayaBrokerPolicies } from '../../integration/policies/vinaya-policies'

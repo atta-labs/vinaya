@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CheckError } from '../../src/checks/contract'
+import type { CheckError } from '../../../../harness/kernel/gates/checks/contract'
 
 // Bin-level tests for check-changeset-coverage.ts's own I/O wiring — the
 // pure predicate (changeset-coverage-logic.ts) has its own dedicated test

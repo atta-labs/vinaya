@@ -99,11 +99,14 @@ import {
   parseEnforcementRegistry,
   type RegistryCheckResult
 } from '@attalabs/aeg-core'
-import { initHookPaths } from '../../lib/init-hook-paths.js'
-import { findCrossingFiles, globCandidateFiles } from '../../lib/github-crossing-files.js'
+import { initHookPaths } from '../../../../../harness/kernel/gates/ring0-hooks/init-hook-paths.js'
+import {
+  findCrossingFiles,
+  globCandidateFiles
+} from '../../../../../harness/kernel/gates/checks/github-crossing-files.js'
 import { blockingGateFiles, gatherLogProducerGraph, readG7Exemptions } from '../../lib/log-producer-graph.js'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { coreCheckRegistry } from '../registry.js'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { coreCheckRegistry } from '../../../../../harness/processes/vinaya-strict/checks/registry.js'
 
 const CHECK_NAME = 'registry-gates'
 const ENFORCEMENT_PATH = 'aeg-root/enforcement.md'

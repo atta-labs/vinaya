@@ -16,7 +16,6 @@ import {
   blockingSeverities,
   CODE_REVIEW_SEVERITY_ORDER,
   classifyFinding,
-  defaultControlStoreDeps,
   type DeferralReason,
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
@@ -24,15 +23,18 @@ import {
   globCoversPath,
   isProseLocation,
   type IssueSurface,
-  type ManifestInput,
-  type ManifestRecord,
   type Objective,
   type ReviewInputManifest,
   SECURITY_SEVERITY_ORDER,
   type ReviewPolicy,
-  type VerdictObservation,
-  writeManifest
+  type VerdictObservation
 } from '@attalabs/aeg-core'
+import {
+  defaultControlStoreDeps,
+  type ManifestInput,
+  type ManifestRecord,
+  writeManifest
+} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
 import { redact } from '../../../../../../kernel/log/redact'
 import { REVIEW_FINDING_DESCRIPTION_MAX_LENGTH } from '../../../../../../kernel/log/schema'
 import {

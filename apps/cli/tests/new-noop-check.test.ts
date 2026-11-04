@@ -1,10 +1,12 @@
+import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry'
+installVinayaCheckRegistry()
 import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CheckSpec } from '../src/checks/contract'
-import { coreCheckRegistry } from '../src/checks/registry'
-import { runChecks } from '../src/checks/runner'
+import type { CheckSpec } from '../../../harness/kernel/gates/checks/contract'
+import { coreCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry'
+import { runChecks } from '../../../harness/kernel/gates/checks/runner'
 
 const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')
 

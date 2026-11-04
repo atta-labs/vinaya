@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { validateRoleContract } from '../src/roles/contract'
-import { resolveRoles } from '../src/roles/resolver'
+import { validateRoleContract } from '../../../harness/kernel/config/loader/roles/contract'
+import { resolveRoles } from '../../../harness/kernel/config/loader/roles/resolver'
 
 const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')
 

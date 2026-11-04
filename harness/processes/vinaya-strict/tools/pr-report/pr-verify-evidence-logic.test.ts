@@ -227,7 +227,7 @@ describe('renderVerdict does not overclaim about the base', () => {
 
 describe('the hidden verdict is pinned end to end, not just at the switch arm', () => {
   test('resolveAnchoredRegion returns hidden for a <details>-wrapped pair, and no-block for none', async () => {
-    const { ScanContext, resolveAnchoredRegion } = await import('../../../../../apps/cli/src/checks/scan-context')
+    const { ScanContext, resolveAnchoredRegion } = await import('../../../../kernel/gates/checks/scan-context')
     const wrapped = [
       '<details><summary>x</summary>',
       '<!-- AEG:EVIDENCE:START -->',
@@ -240,7 +240,7 @@ describe('the hidden verdict is pinned end to end, not just at the switch arm', 
   })
 
   test('a decoy pair inside <details> loses to the real block outside it', async () => {
-    const { ScanContext, resolveAnchoredRegion } = await import('../../../../../apps/cli/src/checks/scan-context')
+    const { ScanContext, resolveAnchoredRegion } = await import('../../../../kernel/gates/checks/scan-context')
     const body = [
       '<details><summary>worked example</summary>',
       '<!-- AEG:EVIDENCE:START -->',

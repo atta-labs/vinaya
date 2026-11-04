@@ -24,7 +24,7 @@
  * name is the only honest key. See the lookup in `parseEnforcementRegistry`.
  */
 
-import { findHeadingLine, findTable } from './markdown-table'
+import { findHeadingLine, findTable } from '../../../harness/kernel/gates/checks/markdown-table'
 
 export type GateRing = 'ring0' | 'ring1' | 'ring2'
 
@@ -59,7 +59,7 @@ export type GateRow = {
   implementation: string
   /**
    * `product` — this row's implementation is a check registered in
-   * `coreCheckRegistry()` (`apps/cli/src/checks/registry.ts`), so it ships to
+   * `coreCheckRegistry()` (`harness/processes/vinaya-strict/checks/registry.ts`), so it ships to
    * every adopter through `vinaya check`. `repo-own` — everything else: a
    * mechanism specific to how this repository enforces itself on top of the
    * product (a hand-written CI job, the check runner/resolver, a forge-write

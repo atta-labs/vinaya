@@ -39,8 +39,11 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkMainBranchRefusal, resolveDefaultBranch } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import {
+  checkMainBranchRefusal,
+  resolveDefaultBranch
+} from '../../../../../harness/kernel/gates/ring0-hooks/pre-commit/main-branch-refusal'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'main-branch-refusal'
 

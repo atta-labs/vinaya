@@ -46,7 +46,7 @@
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, realpathSync } from 'node:fs'
 import { dirname, join, resolve as resolvePath } from 'node:path'
-import { CONTROL_AREA_DIRNAME, mkdirNoSymlinks } from '@attalabs/aeg-core'
+import { CONTROL_AREA_DIRNAME, mkdirNoSymlinks } from './connectors/checkpoint/control-store/index'
 import { configProvider, type ProvidedConfig } from './config/loader/config-provider.js'
 import { resolveRuntimeDirSetting, resolveTrustAnchorRuntimeDir } from './config/schema/config-schema.js'
 
@@ -63,7 +63,7 @@ export const TASKS_EXECUTION_DIRNAME = 'tasks-execution'
 /** The four classified subdirectories of a task folder, plus the per-round tree. `driver.pid.json` deliberately has none — the lock is the task folder's own, not a member of any class. */
 export const RUN_AREA_DIRNAMES = {
   // Imported, never repeated: the control store appends this same segment
-  // itself (`packages/aeg-core/src/control-store/local.ts`'s `taskRoot`), so
+  // itself (`harness/kernel/connectors/checkpoint/control-store/local.ts`'s `taskRoot`), so
   // a change on either side moves both.
   control: CONTROL_AREA_DIRNAME,
   sessions: 'sessions',
@@ -198,7 +198,7 @@ export function isInsideRepo(candidate: string, repoRoot: string | null | undefi
  * The directory holding one folder per task — `<runtimeDir>/tasks-execution`.
  * This is what the control store takes as its own root: it appends the task
  * and its own `control/` segment itself
- * (`packages/aeg-core/src/control-store/local.ts`'s `taskRoot`), so the two
+ * (`harness/kernel/connectors/checkpoint/control-store/local.ts`'s `taskRoot`), so the two
  * roots that used to disagree about where a record lived are now the same
  * directory every other run file resolves under.
  */

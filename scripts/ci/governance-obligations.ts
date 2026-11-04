@@ -81,7 +81,7 @@ export const GOVERNANCE_OBLIGATIONS: readonly GovernanceObligation[] = [
     kind: 'oracle',
     job: 'test-cli',
     when: 'default-branch',
-    duty: "the independent file-selector oracle in apps/cli/tests/lib/test-selector.test.ts runs on every default-branch commit, as the full run's part"
+    duty: "the independent file-selector oracle in harness/processes/vinaya-strict/integration/test-selector-oracle.test.ts runs on every default-branch commit, as the full run's part"
   },
   {
     id: 'required-check',

@@ -44,7 +44,7 @@ const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH =
 const LOG_SYNC_FOLDER_SOURCE_PATH = 'harness/kernel/log/client/log-sync-folder-source.ts'
 const TASK_TOOLS_RESUME_PATH = 'harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts'
-const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
+const RUNNER_PATH = 'harness/kernel/gates/checks/runner.ts'
 const FLOW_V2_EVENTS_PATH = 'harness/processes/vinaya-strict/loops/dev-review/flow-v2-events.ts'
 /**
  * The webhook destination is the sink's own delivery mechanism for a
@@ -176,6 +176,7 @@ const CALLER_ALLOWLIST = new Set([
   LOG_CUSTOM_PATH,
   LOG_EMIT_PATH,
   CLI_ENTRY_PATH,
+  'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts',
   CLI_OPERATION_LOG_PATH,
   LOG_SYNC_PATH,
   LOG_SINK_FACTORY_PATH,
@@ -278,12 +279,73 @@ const MOVED_SRC_FOLDERS = [
   'loops/dev-review/dispatch',
   'loops/dev-review/actions'
 ].map((folder) => `harness/processes/vinaya-strict/${folder}`)
+/** The verification library, moved out of `apps/cli/src/lib/` whole. */
+const VERIFICATION_LIBRARY = 'harness/kernel/gates/ring0-hooks/pre-push/verification'
 const MOVED_SRC_FILES = ['loops/dev-review/flow-v2-events.ts', 'loops/dev-review/review-gate-input.ts'].map(
   (file) => `harness/processes/vinaya-strict/${file}`
 )
 
 /** The source that moved out of `apps/cli/src` and `packages/aeg-core/src` into the kernel, so these scans read it where it now lives. */
 const MOVED_KERNEL_FILES = [
+  'harness/kernel/adapters/agents/agent-stream.ts',
+  'harness/kernel/adapters/agents/agent-vendors.ts',
+  'harness/kernel/adapters/agents/claude-code/claude-code-transcript.ts',
+  'harness/kernel/adapters/agents/claude-code/metering-io-guard.ts',
+  'harness/kernel/adapters/agents/codex/loop-narration-codex.ts',
+  'harness/kernel/adapters/code-host/github/forge-read.ts',
+  'harness/kernel/adapters/code-host/github/forge-snapshot.ts',
+  'harness/kernel/adapters/code-host/github/gh-path.ts',
+  'harness/kernel/adapters/code-host/github/gh.ts',
+  'harness/kernel/adapters/code-host/github/github-rate-limit.ts',
+  'harness/kernel/adapters/code-host/github/github-token.ts',
+  'harness/kernel/adapters/code-host/github/resolve-repo.ts',
+  'harness/kernel/adapters/code-host/github/strip-code.ts',
+  'harness/kernel/adapters/tracker/github-issues/issue-assignment.ts',
+  'harness/kernel/config/loader/roles/contract.ts',
+  'harness/kernel/config/loader/roles/resolver.ts',
+  'harness/kernel/conformance/unit/process-registry.ts',
+  'harness/kernel/conformance/unit/test-temp.ts',
+  'harness/kernel/connectors/checkpoint/control-store/index.ts',
+  'harness/kernel/connectors/checkpoint/control-store/local.ts',
+  'harness/kernel/connectors/checkpoint/control-store/migration.ts',
+  'harness/kernel/connectors/checkpoint/control-store/outcomes.ts',
+  'harness/kernel/connectors/checkpoint/control-store/records.ts',
+  'harness/kernel/connectors/git/detect.ts',
+  'harness/kernel/connectors/git/diff-evidence.ts',
+  'harness/kernel/connectors/git/numstat.ts',
+  'harness/kernel/connectors/git/patch-id.ts',
+  'harness/kernel/connectors/git/remote-base.ts',
+  'harness/kernel/gates/checks/anchored-region.ts',
+  'harness/kernel/gates/checks/contract.ts',
+  'harness/kernel/gates/checks/entry-point.ts',
+  'harness/kernel/gates/checks/env-lint.ts',
+  'harness/kernel/gates/checks/github-crossing-files.ts',
+  'harness/kernel/gates/checks/markdown-table.ts',
+  'harness/kernel/gates/checks/resolver.ts',
+  'harness/kernel/gates/checks/runner.ts',
+  'harness/kernel/gates/checks/scan-context.ts',
+  'harness/kernel/gates/checks/workspace-escape.ts',
+  'harness/kernel/gates/enforcement-controls.ts',
+  'harness/kernel/gates/local-gate-control.ts',
+  'harness/kernel/gates/ops.ts',
+  'harness/kernel/gates/ring0-hooks/init-hook-paths.ts',
+  'harness/kernel/gates/ring0-hooks/pre-commit/main-branch-refusal.ts',
+  'harness/kernel/gates/ring0-hooks/pre-push/cli-spawn-tests.ts',
+  'harness/kernel/gates/ring0-hooks/pre-push/dead-branch-push-guard.ts',
+  'harness/kernel/gates/ring0-hooks/pre-push/pre-push-changed-files.ts',
+  'harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests.ts',
+  'harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode-logic.ts',
+  'harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode.ts',
+  'harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts',
+  'harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.ts',
+  'harness/kernel/gates/ring1-ci/workflows/managed-workflow-paths.ts',
+  'harness/kernel/gates/ring2-audits/dead-branch-push-audit.ts',
+  'harness/kernel/gates/ring2-audits/direct-main-push.ts',
+  'harness/kernel/gates/ring2-audits/ensure-label.ts',
+  'harness/kernel/tools/catalog/task-tools.ts',
+  'harness/kernel/tools/host/dev-tools.ts',
+  'harness/processes/vinaya-strict/checks/registry.ts',
+  'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts',
   'harness/kernel/adapters/agents/agent-line.ts',
   'harness/kernel/adapters/agents/claude-code/loop-narration-claude.ts',
   'harness/kernel/effects/effects.ts',
@@ -350,6 +412,7 @@ function allSourceFiles(): [string, string][] {
     ...sourceFiles(join(REPO_ROOT, 'apps/cli/src'), 'apps/cli/src'),
     ...sourceFiles(join(REPO_ROOT, STANDALONE_DRIVER_SRC), STANDALONE_DRIVER_SRC),
     ...MOVED_SRC_FOLDERS.flatMap((folder) => sourceFiles(join(REPO_ROOT, folder), folder)),
+    ...sourceFiles(join(REPO_ROOT, VERIFICATION_LIBRARY), VERIFICATION_LIBRARY),
     ...MOVED_SRC_FILES.map((file): [string, string] => [file, join(REPO_ROOT, file)]),
     ...MOVED_KERNEL_FILES.map((file): [string, string] => [file, join(REPO_ROOT, file)])
   ]

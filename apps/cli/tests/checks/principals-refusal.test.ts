@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { WAIVER_LABEL } from '@attalabs/aeg-core'
-import { type CheckError, CHECK_SCHEMA_VERSION } from '../../src/checks/contract'
+import { type CheckError, CHECK_SCHEMA_VERSION } from '../../../../harness/kernel/gates/checks/contract'
 import { EVIDENCE_PLACEHOLDER_TEXT } from '../../src/checks/evidence-fresh-logic'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 

@@ -8,7 +8,7 @@ import {
   type EscalationInput,
   readResolution,
   writeEscalation
-} from '@attalabs/aeg-core'
+} from '../../../../../kernel/connectors/checkpoint/control-store/index'
 import type { AgentVendor } from '../../../loops/dev-review/dispatch/dispatch.js'
 import type { CallerContext } from '../../../integration/server.js'
 import {

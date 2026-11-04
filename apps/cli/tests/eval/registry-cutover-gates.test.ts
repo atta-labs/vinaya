@@ -206,7 +206,7 @@ describe('the cutover-gates shard', () => {
     }
     const gate = (n: number) => shard.components.find((row) => row.id === `cutover-gate:gate-${n}`)
     expect(gate(16)?.backendEvidence).toEqual({
-      engine: { test: 'apps/cli/tests/conformance/packed-runtime-public-run-control.test.ts' }
+      engine: { test: 'harness/kernel/loops/runtimes/atta-engine/packed-runtime-public-run-control.test.ts' }
     })
     const operatorEntry = gate(11)?.backendEvidence?.engine
     expect(operatorEntry !== undefined && 'owed' in operatorEntry && operatorEntry.owed).toContain(

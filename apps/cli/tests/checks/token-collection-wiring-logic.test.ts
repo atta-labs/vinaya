@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { MeteringCapability } from '@attalabs/aeg-core'
+import type { MeteringCapability } from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import { evaluateTokenCollectionWiring } from '../../src/checks/token-collection-wiring-logic'
 
 const CHECK_NAME = 'token-collection-wired'

@@ -25,7 +25,7 @@ planning (the Planner's own brief authoring) and nothing after merge
 as a bounded, read-mostly client — it starts, reads status on, and requests
 authenticated continuation or cancellation of a run; it plans nothing,
 edits no code, changes no Objectives, posts no ruling, approves nothing,
-and merges nothing (`aeg-root/roles/operator.md`; `packages/aeg-core/src/task-tools.ts`'s
+and merges nothing (`aeg-root/roles/operator.md`; `harness/kernel/tools/catalog/task-tools.ts`'s
 `OPERATOR_TOOL_GRANT`). Studio reporting, multi-task batch scheduling,
 automatic merge, and a whole-repository rewrite of this path into a
 standalone product are explicitly outside this boundary — classified in
@@ -42,8 +42,8 @@ permitted/forbidden lists and the security rationale behind each.
 | Controller | Runs `devReviewLoop`/`task run`; holds the Operator's own forge login and model credentials; the only actor that spawns Worker, Reviewer and repository subprocesses | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `dev-review-loop.ts` |
 | Worker (Developer) | Reads/writes its own worktree; runs the declared toolchain; pushes and opens a PR on its own branch only | `harness/kernel/isolation/worker-boundary.ts` (Seatbelt sandbox on Darwin, always on where supported) |
 | Reviewer | Reads the repository at a judged head; writes findings to a driver-chosen work directory; never holds any forge-write credential | Same `worker-boundary.ts` profile, with every forge-write grant denied |
-| Operator | The task-scoped external client described in Section A | `packages/aeg-core/src/task-tools.ts`'s `OPERATOR_TOOL_GRANT` + `harness/kernel/tools/host/router.ts`'s `refuseUngrantedTool` |
-| Repository subprocess | Reads/writes only what the Controller explicitly constructs into its environment | `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` (never `{ ...process.env }` spread) |
+| Operator | The task-scoped external client described in Section A | `harness/kernel/tools/catalog/task-tools.ts`'s `OPERATOR_TOOL_GRANT` + `harness/kernel/tools/host/router.ts`'s `refuseUngrantedTool` |
+| Repository subprocess | Reads/writes only what the Controller explicitly constructs into its environment | `harness/kernel/gates/checks/runner.ts`'s `buildCheckEnv` (never `{ ...process.env }` spread) |
 | Broker | Grants Worker `branch-push`/`branch-lease-push`/`pr-open`/`pr-comment` (a `branch-lease-push` only to a `refs/heads/task/` target, and requested only by the driver's own publication) and Operator `task-execute`/`task-observe`; refuses `ruling-post`/`criteria-edit`/`protected-merge`/`review-publish` unconditionally to both | `harness/kernel/tools/host/broker.ts` |
 
 `dispatchRole` (`dispatch.ts`) is the one chokepoint every Worker/Reviewer
@@ -53,7 +53,7 @@ vendor.
 
 ## C — Adapter boundary
 
-Two runtime adapters, one shared server: `packages/aeg-core/src/task-tools.ts`'s
+Two runtime adapters, one shared server: `harness/kernel/tools/catalog/task-tools.ts`'s
 six registered tools are served by exactly one process
 (`harness/processes/vinaya-strict/integration/server.ts`, MCP protocol `2025-06-18`,
 newline-delimited JSON-RPC over stdio) — `harness/processes/vinaya-strict/integration/adapters.ts`'s
@@ -99,7 +99,7 @@ hook when a family's shape needs to change. Each producer file named in the tabl
 
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:kind: 'role_attempt' -->
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts contains:kind: 'dev_review_loop' -->
-<!-- AEG:CLAIM: apps/cli/src/checks/runner.ts contains:kind: 'gate' -->
+<!-- AEG:CLAIM: harness/kernel/gates/checks/runner.ts contains:kind: 'gate' -->
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts contains:kind: 'operation' -->
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts contains:kind: 'operation' -->
 <!-- AEG:CLAIM: harness/kernel/tools/host/broker.ts contains:operationEvent -->
@@ -115,7 +115,7 @@ hook when a family's shape needs to change. Each producer file named in the tabl
 | `dispatch` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts` (`dispatchRole`) | A vendor CLI launch, its outcome, and the usage it reported. |
 | `dev_review_loop` | `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts` | The round-by-round loop lifecycle — start, gate, verdicts, pause/resume/cancel, journal. |
 | `forge_write` | none today | Declared in the schema so an already-posted comment line still parses; no file emits it — the comment-posting flush and the artifact commands are removed, and logs never reach a tracker or a code host. |
-| `gate` | `apps/cli/src/checks/runner.ts` | One check's terminal outcome (pass/fail/wait/skip/invalid/unavailable/timeout/cancelled). |
+| `gate` | `harness/kernel/gates/checks/runner.ts` | One check's terminal outcome (pass/fail/wait/skip/invalid/unavailable/timeout/cancelled). |
 | `operation` | `harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts`, `cancel.ts`, `harness/kernel/tools/host/broker.ts`, `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `harness/kernel/log/client/log-custom.ts`, `harness/kernel/log/client/cli-operation-log.ts` | A normalized tool-call or broker-authorized operation's outcome (ok/error/refused/timeout/cancelled/unavailable) — this is the family a registered task tool's own call emits; `conformance.md` Section D captures one real instance. |
 | `usage` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts` | Vendor token usage, every unit nullable rather than defaulted to zero when a vendor doesn't report one. |
 | `role_attempt` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `dev-review-loop.ts` | A dispatched role's own normalized attempt outcome, distinct from the Controller-side `dispatch` view of the same attempt. |

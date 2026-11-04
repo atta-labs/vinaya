@@ -21,7 +21,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { checkDoctrineNoProcedures, type DoctrineFile } from '@attalabs/aeg-core'
 import { loadConfig } from '../../lib/config'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'doctrine-no-procedures'
 
