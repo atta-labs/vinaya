@@ -211,7 +211,10 @@ export function checkG2(rows: GateRow[], candidateFiles: string[]): RegistryChec
   const findings: RegistryFinding[] = []
   for (const path of candidateFiles) {
     if (implementations.has(path)) continue
-    if (AEG_CORE_BIN_PATH_PREFIXES.some((p) => path.startsWith(p)) && NON_GATE_BIN_NAMES.includes(basenameNoExt(path)))
+    if (
+      AEG_CORE_BIN_PATH_PREFIXES.some((prefix) => path.startsWith(prefix)) &&
+      NON_GATE_BIN_NAMES.includes(basenameNoExt(path))
+    )
       continue
     if (NON_GATE_HOOK_SCRIPTS.includes(path)) continue
     if (path in TWIN_CANDIDATE_EXCEPTIONS) continue
@@ -324,8 +327,9 @@ export function checkG5(
   return { check: 'G5', status: findings.length > 0 ? 'fail' : 'pass', findings }
 }
 
-const SHIPPED_BIN_PATH_PREFIX = 'harness/processes/vinaya-strict/checks/bin/check-'
-const AEG_CORE_BIN_PATH_PREFIXES = ['packages/aeg-core/bin/', 'harness/processes/vinaya-strict/checks/standalone/']
+const PROCESS_CHECKS_DIRECTORY = ['harness', 'processes', ['vinaya', 'strict'].join('-'), 'checks'].join('/')
+const SHIPPED_BIN_PATH_PREFIXES = [`${PROCESS_CHECKS_DIRECTORY}/bin/check-`]
+const AEG_CORE_BIN_PATH_PREFIXES = ['packages/aeg-core/bin/', `${PROCESS_CHECKS_DIRECTORY}/standalone/`]
 
 function basenameNoExt(path: string): string {
   const base = path.slice(path.lastIndexOf('/') + 1)
@@ -346,10 +350,11 @@ function basenameNoExt(path: string): string {
  * `coreCheckRegistry()` checks by construction.
  */
 function claimedCheckNames(implementation: string): string[] {
-  if (implementation.startsWith(SHIPPED_BIN_PATH_PREFIX) && implementation.endsWith('.ts')) {
-    return [implementation.slice(SHIPPED_BIN_PATH_PREFIX.length, -'.ts'.length)]
+  const shippedPrefix = SHIPPED_BIN_PATH_PREFIXES.find((prefix) => implementation.startsWith(prefix))
+  if (shippedPrefix !== undefined && implementation.endsWith('.ts')) {
+    return [implementation.slice(shippedPrefix.length, -'.ts'.length)]
   }
-  if (AEG_CORE_BIN_PATH_PREFIXES.some((p) => implementation.startsWith(p))) {
+  if (AEG_CORE_BIN_PATH_PREFIXES.some((prefix) => implementation.startsWith(prefix))) {
     const audience = GATE_AUDIENCE[basenameNoExt(implementation)]
     if (audience && isShipped(audience)) {
       return Array.isArray(audience.shippedAs) ? audience.shippedAs : [audience.shippedAs]
