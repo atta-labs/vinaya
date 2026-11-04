@@ -199,6 +199,88 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     expect(result.stderr.toString()).not.toContain('registry-gates.G7')
   }, 20_000)
 
+  it('follows a check program through the kernel to the kernel sink', () => {
+    const root = initFixture('registry-gates-g7-kernel')
+    const checkBin = 'apps/cli/src/checks/bin/check-demo.ts'
+    try {
+      mkdirSync(join(root, 'apps/cli/src/checks/bin'), { recursive: true })
+      mkdirSync(join(root, 'harness/kernel/log'), { recursive: true })
+      writeFileSync(join(root, 'harness/kernel/log/log-sink.ts'), 'export function log(): void {}\n')
+      writeFileSync(
+        join(root, 'harness/kernel/control.ts'),
+        "import { log } from './log/log-sink.js'\nexport const runControl = log\n"
+      )
+      writeFileSync(
+        join(root, checkBin),
+        "import { runControl } from '../../../../../harness/kernel/control.js'\nrunControl()\n"
+      )
+      const { producers, imports } = gatherLogProducerGraph(root)
+      expect(producers.has('harness/kernel/control.ts')).toBe(true)
+      expect(producers.has('apps/cli/src/lib/log-sink.ts')).toBe(false)
+      expect(reachesProducer(checkBin, producers, imports)).toBe(true)
+      const result = checkG7({
+        enforcementMapPresent: true,
+        crossingFiles: [],
+        blockingFiles: [checkBin],
+        producers,
+        imports,
+        exemptions: {},
+        existsFn: (p) => existsSync(join(root, p))
+      })
+      expect(result.findings).toEqual([])
+      expect(result.status).toBe('pass')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves kernel tests and non-TypeScript files out of the graph', () => {
+    const root = initFixture('registry-gates-g7-kernel-tests')
+    try {
+      mkdirSync(join(root, 'harness/kernel/log'), { recursive: true })
+      mkdirSync(join(root, 'harness/kernel/tests'), { recursive: true })
+      writeFileSync(join(root, 'harness/kernel/log/log-sink.ts'), 'export function log(): void {}\n')
+      for (const [path, specifier] of [
+        ['tests/helper.ts', '../log/log-sink.js'],
+        ['control.test.ts', './log/log-sink.js'],
+        ['control.js', './log/log-sink.js']
+      ] as const) {
+        writeFileSync(join(root, 'harness/kernel', path), `import { log } from '${specifier}'\nlog()\n`)
+      }
+      const { producers, imports } = gatherLogProducerGraph(root)
+      expect([...producers]).toEqual(['harness/kernel/log/log-sink.ts'])
+      expect([...imports.keys()]).toEqual(['harness/kernel/log/log-sink.ts'])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the CLI sink as the fallback when neither sink exists', () => {
+    const root = initFixture('registry-gates-g7-no-sink')
+    const checkBin = 'apps/cli/src/checks/bin/check-demo.ts'
+    try {
+      mkdirSync(join(root, 'apps/cli/src/checks/bin'), { recursive: true })
+      writeFileSync(join(root, checkBin), "import { log } from '../../lib/log-sink.js'\nlog()\n")
+      const { producers, imports } = gatherLogProducerGraph(root)
+      expect([...producers]).toEqual(['apps/cli/src/lib/log-sink.ts'])
+      expect(imports.get(checkBin)).toEqual([])
+      expect(reachesProducer(checkBin, producers, imports)).toBe(false)
+      const result = checkG7({
+        enforcementMapPresent: true,
+        crossingFiles: [],
+        blockingFiles: [checkBin],
+        producers,
+        imports,
+        exemptions: {},
+        existsFn: (p) => existsSync(join(root, p))
+      })
+      expect(result.status).toBe('fail')
+      expect(result.findings.map((f) => f.path)).toEqual([checkBin])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it("follows a check program's import through a process folder to the sink, and leaves that folder's tests out", () => {
     const root = join(tmpdir(), `vinaya-g7-process-folder-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     const checkBin = 'apps/cli/src/checks/bin/check-demo.ts'
