@@ -37,7 +37,7 @@ const actions: ActionRegistry = Object.fromEntries(
 
 const result = await runEngine({
   args: { task: 7, agent, dryRun: false },
-  process: loadProcess(resolve(import.meta.dir, '../..')),
+  process: loadProcess(resolve(import.meta.dir, '../..'), { flow: 'v1' }),
   repoRoot,
   runtimeDir,
   loopId: 'signal-test',

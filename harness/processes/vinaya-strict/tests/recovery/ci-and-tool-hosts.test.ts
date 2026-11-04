@@ -185,7 +185,7 @@ describe.each(ENGINE_RUNNERS)('%s', (runner) => {
 
 // --- the agent a checkpoint resumes on -----------------------------------------------
 
-const loaded = loadProcess(resolve(import.meta.dir, '../..'))
+const loaded = loadProcess(resolve(import.meta.dir, '../..'), { flow: 'v1' })
 const repoRoot = resolve(import.meta.dir, '../../../../..')
 const stubHome = scratchDir('recovery-codex-home-')
 writeFileSync(join(stubHome, 'auth.json'), '{}\n')
@@ -195,7 +195,6 @@ function stubAgent(lines: string[], exitCode = 0): SpawnedProcessLike {
   const closeListeners: Array<(code: number | null) => void> = []
   let stdout: ((chunk: string) => void) | undefined
   return {
-    pid: process.pid,
     stdin: {
       write: () => {},
       end: () => {

@@ -34,7 +34,7 @@ import {
 // effect executor with the identity the real publication gives it, the remote write landing in the ledger, so a
 // leg that dies between the remote write and its local record reconciles it rather than posting it again.
 
-const loaded = loadProcess(resolve(import.meta.dir, '..'))
+const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const FIXTURES = join(import.meta.dir, 'fixtures', 'replay')
 export const TASK = 4321
 export const PR = 4242

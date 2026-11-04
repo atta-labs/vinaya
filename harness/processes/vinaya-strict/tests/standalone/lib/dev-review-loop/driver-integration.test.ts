@@ -376,9 +376,9 @@ describe('devReviewLoop — every event names the standalone runner, the Vinaya 
       VINAYA_PROCESS_DIGEST: expect.stringMatching(/^[0-9a-f]{64}$/),
       VINAYA_RUNNER_ID: 'standalone',
       VINAYA_RUNNER_VERSION: cliVersion,
-      // The standalone loop runs the default flow, named as the Engine runner names it.
-      VINAYA_FLOW: 'vinaya-dev-review',
-      VINAYA_FLOW_VERSION: 'v1'
+      // The standalone identity setter reads the process default flow.
+      VINAYA_FLOW: 'vinaya-dev-review-v2',
+      VINAYA_FLOW_VERSION: 'v2'
     })
   })
 

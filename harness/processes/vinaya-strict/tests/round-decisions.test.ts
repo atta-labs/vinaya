@@ -41,7 +41,7 @@ import { liveHandoffDeps, type HandoffDeps } from '../executing/handoff'
 // vendor-shaped stub agents. Every decision is the shared assessment's; these tests only arrange the inputs and
 // read what the run did. Each case runs once with the Claude stub agent and once with the Codex stub agent.
 
-const PROCESS = loadProcess(resolve(import.meta.dir, '..'))
+const PROCESS = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const AGENTS: readonly Agent[] = ['claude', 'codex']
 const TASK = 7
 const BRANCH = 'task/issue-7'
