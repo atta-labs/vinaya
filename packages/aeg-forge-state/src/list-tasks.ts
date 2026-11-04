@@ -1,8 +1,12 @@
 import type { Task, TaskIssueRef } from '@attalabs/aeg-types'
-import { type GhIssue, ghIssueListByAnyLabel, ghIssueListByAnyLabelAsync } from './gh'
+import {
+  type GhIssue,
+  ghIssueListByAnyLabel,
+  ghIssueListByAnyLabelAsync
+} from '../../../harness/kernel/adapters/code-host/github/gh'
 import { findTrancheSlug, trancheLabel } from './labels'
 import { parseRationaleDeps } from './parse-rationale-deps'
-import { hasUnterminatedFence, stripCode } from './strip-code'
+import { hasUnterminatedFence, stripCode } from '../../../harness/kernel/adapters/code-host/github/strip-code'
 
 /** Issue title convention: `[<tranche-slug>] <task-id> — <title>`, the same
  * shape every Vinaya Issue is opened with (`open-issue.ts`, brief-authoring). */

@@ -2,7 +2,10 @@ import { describe, expect, it, afterEach, beforeEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { defaultControlStoreDeps, type ControlStoreDeps } from '@attalabs/aeg-core'
+import {
+  defaultControlStoreDeps,
+  type ControlStoreDeps
+} from '../../../../../harness/kernel/connectors/checkpoint/control-store/index'
 import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import { scopeTarget, WORKER_OPERATIONS } from '../../../../../harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from '../broker/vinaya-broker'

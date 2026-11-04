@@ -11,7 +11,7 @@ import {
   isForgeReadOversize,
   readIssueBody,
   readIssueComments
-} from '../../src/lib/forge-read'
+} from '../../../../harness/kernel/adapters/code-host/github/forge-read'
 import { fetchIssueComments } from '../../../../harness/processes/vinaya-strict/tools/task-contract/dispatch-task'
 import {
   fetchFrozenBrief,

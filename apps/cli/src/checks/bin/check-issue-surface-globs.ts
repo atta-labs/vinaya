@@ -18,7 +18,7 @@
  */
 
 import { checkSurfaceGlobsResolve } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { readIssueCheckEnv } from '../issue-check-env'
 import { expandGlob } from '../../../../../harness/processes/vinaya-strict/tools/task-contract/brief-assembly'
 

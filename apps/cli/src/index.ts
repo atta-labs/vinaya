@@ -5,13 +5,12 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { archiveCommand, archiveTrancheCommand, archiveTranchesCommand } from './commands/archive.js'
-import { auditCommand } from './commands/audit.js'
 import { briefRenderCommand } from './commands/brief.js'
 import { checkCommand } from './commands/check.js'
 import { commitMsgCommand } from './commands/commit-msg.js'
 import { demoBreakCommand } from './commands/demo.js'
 import { devReviewLoopCommand } from './commands/dev-review-loop.js'
-import { dispatchCommand, installVinayaLogSinkFactory } from './commands/dispatch.js'
+import { dispatchCommand, installVinayaLogSinkFactory, installVinayaCheckRegistry } from './commands/dispatch.js'
 import { doctorCommand } from './commands/doctor.js'
 import { logEmitCommand } from './commands/log-emit.js'
 import { logSelftestCommand } from './commands/log-selftest.js'
@@ -58,7 +57,7 @@ import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
 import { printJson } from '../../../harness/kernel/effects/envelope.js'
-import { ensureGhOnPath } from './lib/gh-path.js'
+import { ensureGhOnPath } from '../../../harness/kernel/adapters/code-host/github/gh-path.js'
 import { recordCliOperationAtExit } from '../../../harness/kernel/log/client/cli-operation-log.js'
 import { logSync } from '../../../harness/kernel/log/log-sink.js'
 import { printHelp } from './lib/output.js'
@@ -124,6 +123,7 @@ ensureGhOnPath()
 // The composition root: kernel code reads configuration through the provider
 // this installs, before any command runs.
 installVinayaConfigProvider()
+installVinayaCheckRegistry()
 
 maybeDeferToAuthorRepoSource()
 
@@ -203,10 +203,6 @@ try {
       } else {
         await archiveCommand(args)
       }
-      break
-    }
-    case 'audit': {
-      await auditCommand(args)
       break
     }
     case 'new': {

@@ -880,8 +880,8 @@ export const MAPPING_SOURCE_PATHS: readonly string[] = [
   'packages/aeg-core/src/review-policy.ts',
   'harness/kernel/log/schema.ts',
   'packages/aeg-core/src/issue-validation.ts',
-  'packages/aeg-core/src/anchored-region.ts',
-  'packages/aeg-forge-state/src/strip-code.ts'
+  'harness/kernel/gates/checks/anchored-region.ts',
+  'harness/kernel/adapters/code-host/github/strip-code.ts'
 ]
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url))

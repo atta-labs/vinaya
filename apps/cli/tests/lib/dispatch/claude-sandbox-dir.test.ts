@@ -7,8 +7,12 @@ import {
   mintClaudeScratchDir,
   releaseClaudeScratchDir
 } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
-import type { StopReport } from '../../../src/lib/process-registry'
-import { currentOwner, readOwnerMarker, writeOwnerMarker } from '../../../src/lib/test-temp'
+import type { StopReport } from '../../../../../harness/kernel/conformance/unit/process-registry'
+import {
+  currentOwner,
+  readOwnerMarker,
+  writeOwnerMarker
+} from '../../../../../harness/kernel/conformance/unit/test-temp'
 import { fixtureDir } from '../test-temp-fixture'
 
 const noStop = async (): Promise<StopReport> => ({ backend: 'registry', terminated: [], killed: [], alreadyGone: [] })

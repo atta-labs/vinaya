@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { resetResolveRepoCache } from '../../../packages/aeg-forge-state/src/resolve-repo'
+import { resetResolveRepoCache } from '../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import {
   FALLBACK_PORT,
   parsePortFlag,
@@ -129,7 +129,7 @@ describe('runStudio', () => {
   // AEG_REPO into the test process (as this repo's own CI now does) made the
   // test fail for exactly that reason while it passed on a developer box with
   // no such var; stripping it here makes the test hermetic either way, the
-  // same guard `packages/aeg-forge-state/src/resolve-repo.test.ts` already
+  // same guard `harness/kernel/adapters/code-host/github/resolve-repo.test.ts` already
   // applies to its own AEG_REPO-sensitive cases.
   let savedAegRepo: string | undefined
 

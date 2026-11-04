@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { isValidNamespacedKey } from '../checks/resolver.js'
+import { isValidNamespacedKey } from '../../../../harness/kernel/gates/checks/resolver.js'
 import { packageRoot } from '../lib/package-root.js'
 
 const TEMPLATE_PATH = join(packageRoot(import.meta.url), 'templates', 'role.template.md')

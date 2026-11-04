@@ -1,11 +1,9 @@
-export { isEntryPoint } from './entry-point'
 export * from './types'
 export type { StateSource } from './state-source'
 export type { DoctrineContent, DoctrineSource } from './doctrine-source'
 export { CLI_CHECK_RING, GATE_AUDIENCE, NON_GATE_BINS, SHIPPED_BIN_AUDIENCE, isShipped } from './gate-audience'
 export type { GateAudience, InternalGate, ShippedGate } from './gate-audience'
-export { ANCHOR_FIELDS, anchoredRegion, anchoredRegionBounds } from './anchored-region'
-export type { AnchorField } from './anchored-region'
+
 export { parseRegistry } from './parse-registry'
 export {
   CROSS_CUTTING_CANDIDATES,
@@ -46,19 +44,14 @@ export type {
   TaskPhaseLabel
 } from './task-phase-history'
 export { formatBreakdown, formatTokenReportRow, formatTokensLine } from './report-tokens'
-export type { TokenReportRowInput, TokensLineInput, TranscriptSummary, UsageComponents } from './report-tokens'
+export type { TokenReportRowInput, TokensLineInput } from './report-tokens'
 // The Claude Code collection adapter (`tranche-model.md` §12 layer 2) — one
 // host's way to produce a `TranscriptSummary`, exported beside the portable
 // renderers it feeds, never as a requirement of the contract.
-export {
-  isTokenCollectionWiringBroken,
-  resolveMeteringCapability,
-  summarizeTranscript
-} from './claude-code-transcript'
-export type { MeteringCapability, MeteringCapabilityDeps, MeteringIncapableReason } from './claude-code-transcript'
+
 // The hardened deps every real caller of `resolveMeteringCapability` should
 // build from — a sibling module, not part of the pure adapter above.
-export { hardenedMeteringDeps, isTrustedMeteringStat } from './metering-io-guard'
+
 export { declarationsIn, findCollisions } from './symbol-collisions'
 export type { SymbolCollision, SymbolDeclaration } from './symbol-collisions'
 export { isCodeFile, isDocFile, isSpecFile } from './file-classify'
@@ -67,7 +60,6 @@ export {
   classifyDocOwnersManifest,
   DOC_OWNERS_PATH,
   evaluateC5,
-  globToRegex,
   isMechanicallyNeutralDiff,
   isUrlPointer,
   parseDocOwners,
@@ -214,13 +206,7 @@ export type {
   TrancheFile,
   TaskEntry
 } from './coherence-checks'
-export {
-  buildProvenanceBlock,
-  extractIssue,
-  hasProvenance,
-  isEligibleForProvenance,
-  taskRefFromBranch
-} from './archive-task'
+export { buildProvenanceBlock, hasProvenance, isEligibleForProvenance, taskRefFromBranch } from './archive-task'
 export type { MergedPrFacts } from './archive-task'
 export {
   extractCodeReviewVerdict,
@@ -376,8 +362,7 @@ export type {
   TaskIssueFacts,
   TaskSurfaceFacts
 } from './issue-validation'
-export { findHeadingLine, findTable, rowToRecord } from './markdown-table'
-export type { ParsedTable, TableRow } from './markdown-table'
+
 export { deriveDiagramModel } from './diagram-model'
 export type {
   DiagramConfig,
@@ -427,13 +412,7 @@ export { checkDocClaims } from './doc-claim'
 export type { ClaimBinding, ClaimFinding, ClaimVoice, DocClaimSourceFile } from './doc-claim'
 export { classifyLeftover, leftoverBlocksDispatch } from './leftover-detection'
 export type { LeftoverInput, LeftoverResult, LeftoverVerdict } from './leftover-detection'
-export { checkDeadBranchPush } from './dead-branch-push-guard'
-export type {
-  DeadBranchPushInput,
-  DeadBranchPushResult,
-  DeadBranchPushVerdict,
-  PrStateFact
-} from './dead-branch-push-guard'
+
 export { captureBaseline, compareToBaseline } from './baseline-capture'
 export type { BaselineComparison, BaselineEntry, BaselineToolComparison } from './baseline-capture'
 export { checkDoctrinePortability } from './doctrine-portability'
@@ -531,105 +510,12 @@ export { checkSinglePlanPr, trancheSlugFromTopologyPath, touchesAnyTopology } fr
 export type { OpenPrFiles } from './single-plan-pr'
 export { isNewDiskStateFile } from './no-disk-state'
 export type { DiskStateFileStatus } from './no-disk-state'
-export { checkDirectMainPush } from './direct-main-push'
-export type { DirectMainPushFact, DirectMainPushResult } from './direct-main-push'
-export { checkMainBranchRefusal, resolveDefaultBranch } from './main-branch-refusal'
-export type { MainBranchRefusalFinding, MainBranchRefusalReason } from './main-branch-refusal'
-export { ensureLabelExists, LABEL_COLOR } from './ensure-label'
-export type { LabelExistenceIo } from './ensure-label'
-export { findDeadBranchPushes } from './dead-branch-push-audit'
-export type { DeadBranchFact, DeadBranchPush } from './dead-branch-push-audit'
+
 export { checkBranchTopology, taskBranchTopologyFields } from './branch-topology-gate'
 export type { BranchTopologyInput, BranchTopologyResult, BranchTopologyVerdict } from './branch-topology-gate'
 export { issueBranchName, parseTaskBranchIdentity } from './task-branch-identity'
 export type { TaskBranchIdentity } from './task-branch-identity'
-export {
-  capabilityUnavailable,
-  DEFAULT_PAGE_LIMIT,
-  isOperatorGranted,
-  isTaskToolName,
-  MAX_PAGE_LIMIT,
-  OPERATOR_TOOL_GRANT,
-  TASK_CANCEL_TOOL,
-  TASK_ESCALATION_READ_TOOL,
-  TASK_PR_READ_TOOL,
-  TASK_RESUME_TOOL,
-  TASK_START_TOOL,
-  TASK_STATUS_TOOL,
-  TASK_TOOL_CATALOG,
-  TASK_TOOL_ERROR_KINDS,
-  TASK_TOOL_NAMES,
-  taskToolByName,
-  taskToolError,
-  isTaskNextAction,
-  TASK_NEXT_ACTIONS,
-  taskStartRequestIdentity,
-  TaskStartResultSchema,
-  EscalationEvidenceSchema,
-  EscalationInputsSchema,
-  EscalationInputVersionsSchema,
-  EscalationRunIdentitySchema,
-  FreshnessSchema,
-  ObservedSchema,
-  PageRequestSchema,
-  RequestedAuthoritySchema,
-  TaskCancelInputSchema,
-  TaskCancelOutcomeSchema,
-  TaskCancelResultSchema,
-  TaskEscalationPacketSchema,
-  TaskEscalationReadInputSchema,
-  TaskEscalationReadResultSchema,
-  MAX_RETURNED_TEXT_CHARS,
-  TaskPrCheckSchema,
-  TaskPrPauseSchema,
-  TaskPrReadInputSchema,
-  TaskPrReadResultSchema,
-  TaskPrReviewRecordSchema,
-  TaskPrVerdictSchema,
-  TaskToolRefSchema,
-  TaskResumeInputSchema,
-  TaskResumeResultSchema,
-  TaskStartInputSchema,
-  TaskConfidenceSchema,
-  TaskPhaseHistorySchema,
-  TaskStatusInputSchema,
-  TaskStatusItemSchema,
-  TaskStatusResultSchema,
-  TaskToolErrorSchema
-} from './task-tools'
-export type {
-  Freshness,
-  OperatorGrantedTool,
-  TaskNextAction,
-  PageRequest,
-  RequestedAuthority,
-  TaskCancelInput,
-  TaskCancelOutcome,
-  TaskCancelResult,
-  TaskEscalationPacket,
-  TaskEscalationReadInput,
-  TaskEscalationReadResult,
-  TaskPrCheck,
-  TaskPrReadInput,
-  TaskPrReadResult,
-  TaskPrReviewRecord,
-  TaskPrVerdict,
-  TaskResumeInput,
-  TaskResumeResult,
-  TaskStartInput,
-  TaskStartRequestInput,
-  TaskConfidence,
-  TaskPhaseHistory,
-  TaskStartResult,
-  TaskStatusInput,
-  TaskStatusResult,
-  TaskToolDefinition,
-  TaskToolError,
-  TaskToolErrorKind,
-  TaskToolHandlerBinding,
-  TaskToolName,
-  TaskToolRef
-} from './task-tools'
+
 export { checkFirstPushDispatchGate, parseTaskBranch } from './first-push-dispatch-gate'
 export type {
   DispatchReadinessFact,
@@ -637,8 +523,7 @@ export type {
   FirstPushDispatchGateResult,
   FirstPushDispatchGateVerdict
 } from './first-push-dispatch-gate'
-export { decideIssueAssignment } from './issue-assignment'
-export type { IssueAssignmentDecision, IssueAssignmentInput } from './issue-assignment'
+
 export { locateTestPlanSection } from './test-plan-section'
 export type { TestPlanSection } from './test-plan-section'
 export {
@@ -691,8 +576,7 @@ export type {
   MilestoneShapeResult,
   ReleaseField
 } from './milestone-validation'
-export { findWorkspaceEscapes } from './workspace-escape'
-export type { WorkspaceEscapeFinding, WorkspaceEscapeReason, WorkspaceEscapeSourceFile } from './workspace-escape'
+
 export { extractBoundaryFilePaths, extractSourceRevision, parseRationaleFields, renderBrief } from './brief-render'
 export type { BriefFacts, LocalGateCommands, RationaleFieldKey, RenderResult, SurfaceFileFact } from './brief-render'
 export { NO_GATE_CUTOVERS } from './gate-cutovers'
@@ -745,85 +629,5 @@ export type {
   TaskClock,
   VerdictObservation
 } from './dev-review-loop'
-export {
-  acquireOwnership,
-  appendTransition,
-  CONTROL_RECORD_VERSION,
-  consumeResolutionOnce,
-  defaultControlStoreDeps,
-  defaultIsPidAlive,
-  InvalidEffectKeyError,
-  InvalidEscalationIdError,
-  InvalidRunIdError,
-  listStartedEffectKeys,
-  markEffectUncertain,
-  migrateLegacyTask,
-  mkdirNoSymlinks,
-  normalizeOutcome,
-  parseEffectRecord,
-  parseEscalationRecord,
-  parseExecutionRoundMirrorRecord,
-  parseInputRecord,
-  parseLoopStateRecord,
-  parseManifestRecord,
-  parseOwnershipRecord,
-  parseResolutionRecord,
-  parseRunRecord,
-  parseTransitionRecord,
-  readCurrentOwnership,
-  readEarliestOwnership,
-  readEffect,
-  readEffects,
-  readExecutionRoundMirror,
-  readEscalation,
-  readInput,
-  readLoopState,
-  readManifest,
-  readResolution,
-  readRun,
-  readTransitions,
-  StaleEpochWriteError,
-  CONTROL_AREA_DIRNAME,
-  writeEffect,
-  writeEscalation,
-  writeExecutionRoundMirror,
-  writeInput,
-  writeLoopState,
-  writeManifest,
-  writeRun
-} from './control-store'
-export type {
-  AcquireResult,
-  ConsumeResolutionResult,
-  ControlRecord,
-  ControlStoreDeps,
-  EffectInput,
-  EffectRecord,
-  EffectStatus,
-  EscalationInput,
-  EscalationRecord,
-  ExecutionRoundMirrorInput,
-  ExecutionRoundMirrorRecord,
-  InputInput,
-  InputRecord,
-  LoopBudgets,
-  LoopStateInput,
-  LoopStateRecord,
-  ManifestInput,
-  ManifestRecord,
-  MigrationResult,
-  NormalizedOutcome,
-  OutcomeSignals,
-  OwnershipRecord,
-  ParsedRecord,
-  ResolutionInput,
-  ResolutionRecord,
-  RoundHeadIdentity,
-  RunInput,
-  RunRecord,
-  TaskOutcomeStatus,
-  TransitionInput,
-  TransitionRecord
-} from './control-store'
 
 export { isProtectedAdminPath, PROTECTED_ADMIN_PATHS } from './protected-paths'

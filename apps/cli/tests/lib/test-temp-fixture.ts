@@ -8,7 +8,7 @@ import {
   type SweepReport,
   sweepAbandoned,
   type TestTempRun
-} from '../../src/lib/test-temp'
+} from '../../../../harness/kernel/conformance/unit/test-temp'
 
 // One test process's heavy-fixture storage: a run directory on disk (see `test-temp.ts`), created on first use and
 // removed by the test preload once every test file has run.

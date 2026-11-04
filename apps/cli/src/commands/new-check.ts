@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { coreCheckRegistry } from '../checks/registry.js'
-import { isValidNamespacedKey } from '../checks/resolver.js'
+import { installedCheckRegistry } from '../../../../harness/kernel/gates/checks/registry'
+import { isValidNamespacedKey } from '../../../../harness/kernel/gates/checks/resolver.js'
 import { packageRoot } from '../lib/package-root.js'
 
 const TEMPLATE_PATH = join(packageRoot(import.meta.url), 'templates', 'custom-check.template.ts')
@@ -33,7 +33,7 @@ export function newCheckCommand(args: string[]): void {
     console.error(USAGE)
     process.exit(2)
   }
-  if (coreCheckRegistry().some((spec) => spec.name === name)) {
+  if (installedCheckRegistry().some((spec) => spec.name === name)) {
     console.error(
       `Refusing: "${name}" is a core check id. Registering it under \`checks\` REPLACES that core check — the core one stops running — so a scaffolded stub is never the right shape for it. Pick a namespaced name, or write the override entry by hand if you really mean to replace the core check.`
     )

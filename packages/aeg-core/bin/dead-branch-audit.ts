@@ -17,9 +17,12 @@
 
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import { ensureLabelExists as ensureLabelExistsShared, findDeadBranchPushes } from '../src/index'
-import type { DeadBranchFact, DeadBranchPush } from '../src/index'
-import { label, resolveRepo } from '@attalabs/aeg-forge-state'
+import { ensureLabelExists as ensureLabelExistsShared } from '../../../harness/kernel/gates/ring2-audits/ensure-label'
+import { findDeadBranchPushes } from '../../../harness/kernel/gates/ring2-audits/dead-branch-push-audit'
+import type { DeadBranchFact } from '../../../harness/kernel/gates/ring2-audits/dead-branch-push-audit'
+import type { DeadBranchPush } from '../../../harness/kernel/gates/ring2-audits/dead-branch-push-audit'
+import { label } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../harness/kernel/adapters/code-host/github/resolve-repo'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)

@@ -1,3 +1,5 @@
+import { installVinayaCheckRegistry } from '../../../../harness/processes/vinaya-strict/checks/registry'
+installVinayaCheckRegistry()
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'

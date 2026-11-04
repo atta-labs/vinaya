@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
 import { SUITE_INPUTS } from '../../apps/cli/tests/sandbox-conformance/command-sources.ts'
-import { changedInputReaders as libraryChangedInputReaders } from '../../apps/cli/src/lib/verification/index.ts'
+import { changedInputReaders as libraryChangedInputReaders } from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts'
 import {
   buildInventoryView,
   bunLockParser,
@@ -69,7 +69,13 @@ describe('the committed inventory validates against this repository', () => {
 
   test('every named area is covered, with its actual runner, working directory and preload', () => {
     const expectations: [string, string, string, string, string | null][] = [
-      ['apps/cli/tests/lib/test-selector.test.ts', 'cli', 'bun', 'apps/cli', 'apps/cli/tests/lib/test-env-preload.ts'],
+      [
+        'harness/processes/vinaya-strict/integration/test-selector-oracle.test.ts',
+        'process-vinaya',
+        'bun',
+        'harness/processes/vinaya-strict',
+        'apps/cli/tests/lib/test-env-preload.ts'
+      ],
       [
         'harness/kernel/tests/architecture.test.ts',
         'kernel',
@@ -145,8 +151,10 @@ describe('the committed inventory validates against this repository', () => {
   })
 
   test('the default Bun selection never hands a Vitest file to bun test; exposure names the runner', async () => {
-    const { selectAffectedTestFiles } = await import('../../apps/cli/src/lib/test-selector.ts')
-    const changed = ['packages/aeg-core/src/anchored-region.ts']
+    const { selectAffectedTestFiles } = await import(
+      '../../harness/processes/vinaya-strict/integration/repository-verification.ts'
+    )
+    const changed = ['harness/kernel/gates/checks/anchored-region.ts']
     const plain = selectAffectedTestFiles(REPO_ROOT, changed)
     const vitestIds = new Set(head.tests.filter((t) => t.runner === 'vitest').map((t) => t.id))
     expect(plain.selected.map((f) => f.slice(REPO_ROOT.length + 1)).filter((f) => vitestIds.has(f))).toEqual([])

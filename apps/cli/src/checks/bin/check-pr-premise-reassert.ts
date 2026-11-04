@@ -34,12 +34,12 @@
  * scope: diff — reads the PR body alone, no live forge state.
  */
 
-import { isEntryPoint } from '@attalabs/aeg-core'
+import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
 import { readFileSync, realpathSync } from 'node:fs'
 import { sep } from 'node:path'
 import { parsePremiseBlock } from '@attalabs/aeg-core'
-import { emitCheckError } from '../contract'
-import { containedAbs } from '../../lib/ops'
+import { emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { containedAbs } from '../../../../../harness/kernel/gates/ops'
 import { reassertPremiseFile, type PremiseReassertResult } from '../premise-reassert-logic'
 
 const CHECK_NAME = 'pr-premise-reassert'

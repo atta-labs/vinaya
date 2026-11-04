@@ -2,7 +2,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { type ControlStoreDeps, readCurrentOwnership, readEffect, readRun, writeEffect } from '@attalabs/aeg-core'
+import {
+  type ControlStoreDeps,
+  readCurrentOwnership,
+  readEffect,
+  readRun,
+  writeEffect
+} from '../../../../../harness/kernel/connectors/checkpoint/control-store/index'
 import type { ProcessSnapshot } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { fenceStartedEffectsAsUncertain } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import {
@@ -19,7 +25,7 @@ import type { RunTaskInput } from '../../../../../harness/processes/vinaya-stric
 /**
  * `startBackgroundRun` driven entirely with injected deps — a real
  * control-store rooted at a scratch temp directory (the same fault-fixture
- * style `packages/aeg-core/src/control-store/local.test.ts` uses), a
+ * style `harness/kernel/connectors/checkpoint/control-store/local.test.ts` uses), a
  * recording fake spawn (no real detached process, no real `ps`), and
  * controllable liveness/identity probes. Covers the brief's own Test Plan
  * cases: handle-after-ownership, parent-exit-leaves-controller-alive,

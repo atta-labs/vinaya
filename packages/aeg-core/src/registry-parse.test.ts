@@ -120,9 +120,9 @@ describe('parseEnforcementRegistry', () => {
 | Action | Summary | Category | Gate | What must be true | Audience | implementation |
 |---|---|---|---|---|---|---|
 | Shipped check | Ever? | hook | Gate | Something | product | \`packages/aeg-core/bin/verify-dispatch.ts\` |
-| Repo-only hook | Ever? | hook | Gate | Something | repo-own | \`apps/cli/src/checks/runner.ts\` |
-| Malformed cell | Ever? | hook | Gate | Something | Product | \`apps/cli/src/checks/runner.ts\` |
-| Blank cell | Ever? | hook | Gate | Something |  | \`apps/cli/src/checks/runner.ts\` |
+| Repo-only hook | Ever? | hook | Gate | Something | repo-own | \`harness/kernel/gates/checks/runner.ts\` |
+| Malformed cell | Ever? | hook | Gate | Something | Product | \`harness/kernel/gates/checks/runner.ts\` |
+| Blank cell | Ever? | hook | Gate | Something |  | \`harness/kernel/gates/checks/runner.ts\` |
 `
     const rows = parseEnforcementRegistry(fixture)
     expect(rows.find((r) => r.action === 'Shipped check')?.audience).toBe('product')
@@ -138,7 +138,7 @@ describe('parseEnforcementRegistry', () => {
 
 | Action | Summary | Category | Gate | What must be true | implementation |
 |---|---|---|---|---|---|
-| No audience column | Ever? | hook | Gate | Something | \`apps/cli/src/checks/runner.ts\` |
+| No audience column | Ever? | hook | Gate | Something | \`harness/kernel/gates/checks/runner.ts\` |
 `)
     expect(rows[0]?.audience).toBe('repo-own')
   })

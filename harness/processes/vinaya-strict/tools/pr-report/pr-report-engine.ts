@@ -17,13 +17,14 @@ import {
 import { hostname, tmpdir } from 'node:os'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
-import { type AnchorField, anchoredRegionBounds, extractFencedBlocks, locateTestPlanSection } from '@attalabs/aeg-core'
-import { coreCheckRegistry } from '../../../../../apps/cli/src/checks/registry'
-import { buildCheckEnv, CHECK_EXCLUDE_ENV } from '../../../../../apps/cli/src/checks/runner'
-import { ScanContext } from '../../../../../apps/cli/src/checks/scan-context'
+import { type AnchorField, anchoredRegionBounds } from '../../../../kernel/gates/checks/anchored-region'
+import { extractFencedBlocks, locateTestPlanSection } from '@attalabs/aeg-core'
+import { coreCheckRegistry } from '../../checks/registry'
+import { buildCheckEnv, CHECK_EXCLUDE_ENV } from '../../../../kernel/gates/checks/runner'
+import { ScanContext } from '../../../../kernel/gates/checks/scan-context'
 import { loadConfig } from '../../../../../apps/cli/src/lib/config'
 import { collectBodyCheckErrors } from '../task-contract/forge/forge-write.js'
-import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../../../apps/cli/src/lib/numstat'
+import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../../kernel/connectors/git/numstat'
 import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../kernel/run-paths.js'
 import {
@@ -34,7 +35,10 @@ import {
   type ReadyTestsPolicy,
   readTrustedReadyTestsPolicy
 } from '../../../../../apps/cli/src/lib/pre-push-ready-policy.js'
-import { isNativeRunCommand, parseNativeRunCommand } from '../../../../../apps/cli/src/lib/pre-push-test-runner.js'
+import {
+  isNativeRunCommand,
+  parseNativeRunCommand
+} from '../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
 
 /**
  * The `AEG:EVIDENCE` engine — every function that computes, or writes, the

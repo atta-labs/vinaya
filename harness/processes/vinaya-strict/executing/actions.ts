@@ -66,8 +66,8 @@ import {
   describeInactiveControls,
   enforcementControlsActive,
   type EnforcementControl
-} from '../../../../apps/cli/src/lib/enforcement-controls'
-import { hookRoutingRepairLine, repairLocalGateControl } from '../../../../apps/cli/src/lib/local-gate-control'
+} from '../../../kernel/gates/enforcement-controls'
+import { hookRoutingRepairLine, repairLocalGateControl } from '../../../kernel/gates/local-gate-control'
 import { appendDriverLine, loopLogPathFor } from '../../../kernel/log/client/loop-log'
 import {
   countedSourceIds,

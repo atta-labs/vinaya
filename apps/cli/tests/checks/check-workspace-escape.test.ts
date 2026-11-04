@@ -4,7 +4,7 @@ import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isTestFile } from '../../src/checks/bin/check-workspace-escape'
-import type { CheckError } from '../../src/checks/contract'
+import type { CheckError } from '../../../../harness/kernel/gates/checks/contract'
 
 // O2 (found live 2026-09-04): `*.test.ts`/`*.test.tsx` files are excluded
 // from the swept surface entirely, silencing both this repo's own known
@@ -62,7 +62,7 @@ afterEach(() => {
 
 describe('isTestFile', () => {
   it('matches .test.ts and .test.tsx', () => {
-    expect(isTestFile('packages/aeg-core/src/workspace-escape.test.ts')).toBe(true)
+    expect(isTestFile('harness/kernel/gates/checks/workspace-escape.test.ts')).toBe(true)
     expect(isTestFile('apps/cli/src/foo.test.tsx')).toBe(true)
   })
 

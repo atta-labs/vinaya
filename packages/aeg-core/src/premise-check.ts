@@ -18,7 +18,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { anchoredRegion } from './anchored-region'
+import { anchoredRegion } from '../../../harness/kernel/gates/checks/anchored-region'
 
 export type PremiseAssertion =
   | { kind: 'contains'; path: string; value: string }

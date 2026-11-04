@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  buildProvenanceBlock,
-  extractIssue,
-  hasProvenance,
-  isEligibleForProvenance,
-  taskRefFromBranch
-} from './archive-task'
+import { buildProvenanceBlock, hasProvenance, isEligibleForProvenance, taskRefFromBranch } from './archive-task'
+import { extractIssue } from '../../../harness/kernel/adapters/code-host/github/extract-issue'
 import type { MergedPrFacts } from './archive-task'
 
 function facts(overrides: Partial<MergedPrFacts> = {}): MergedPrFacts {

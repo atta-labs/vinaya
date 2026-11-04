@@ -10,7 +10,7 @@
 // The live L6 rehearsal reads a real rehearsal record, and runs only when
 // VINAYA_ROLLBACK_REHEARSAL names the rehearsed task.
 import { afterAll, describe, expect, it } from 'bun:test'
-import { readEffect } from '@attalabs/aeg-core'
+import { readEffect } from '../../../../harness/kernel/connectors/checkpoint/control-store/index'
 import {
   endEngineRunThrough,
   readRollbackRehearsals,

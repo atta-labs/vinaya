@@ -19,7 +19,11 @@
  * attempt alike.
  */
 
-import { taskToolError, type OperatorGrantedTool, type TaskToolError } from '@attalabs/aeg-core'
+import {
+  taskToolError,
+  type OperatorGrantedTool,
+  type TaskToolError
+} from '../../../../kernel/tools/catalog/task-tools'
 import { routeTaskToolIntent } from '../../../../kernel/tools/host/router.js'
 
 export type ContextPacketRole = 'operator' | 'developer' | 'reviewer'

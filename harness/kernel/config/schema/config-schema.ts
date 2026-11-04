@@ -408,3 +408,13 @@ export function resolveTaskRunner(
   }
   return runner
 }
+
+export type ManagedBlockRecord = z.infer<
+  ReturnType<typeof managedManifestSchemas<typeof import('../../adapters/agents/agent-vendors').AGENT_VENDORS>>['block']
+>
+export type ManagedManifest = z.infer<
+  ReturnType<
+    typeof managedManifestSchemas<typeof import('../../adapters/agents/agent-vendors').AGENT_VENDORS>
+  >['manifest']
+>
+export type CheckEntry = z.infer<ReturnType<typeof checkEntrySchema<typeof KERNEL_CHECK_ENTRY_FIELDS>>>

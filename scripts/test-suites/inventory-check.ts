@@ -39,7 +39,7 @@
  *
  * What is generic about a view — its types, its shape validation, and which
  * readers a changed input reaches — is the selection library's, imported from
- * its public entrypoint (`apps/cli/src/lib/verification/index.ts`) and
+ * its public entrypoint (`harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts`) and
  * re-exported here. What stays here is this repository's own: where the
  * declarations live, how each suite's runner is configured, and the tree.
  *
@@ -53,7 +53,11 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join, posix } from 'node:path'
 import ts from 'typescript'
-import { extractImportSpecifiers, resolveRelativeImport, testRunnerOf } from '../../apps/cli/src/lib/test-selector.js'
+import {
+  extractImportSpecifiers,
+  resolveRelativeImport,
+  testRunnerOf
+} from '../../harness/processes/vinaya-strict/integration/repository-verification.js'
 import {
   bunLockIdentity,
   declarationListProblems,
@@ -75,7 +79,7 @@ import {
   stableJson,
   type TestIdentity,
   type UnknownScope
-} from '../../apps/cli/src/lib/verification/index.js'
+} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
 
 export {
   diffTestIdentities,
@@ -93,7 +97,7 @@ export {
   stableJson,
   type TestIdentity,
   type UnknownScope
-} from '../../apps/cli/src/lib/verification/index.js'
+} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
 
 /** The schema this file reads and every view it produces declares. */
 export const INVENTORY_SCHEMA = 'vinaya.test-inventory'
@@ -299,10 +303,14 @@ function parseToml(text: string): Record<string, unknown> | null {
 }
 
 /** The script's own `--timeout=N` / `--preload <p>` flags, read as text. */
-function scriptFlags(script: string): { timeoutMs?: number; preload?: string } {
+function scriptFlags(script: string): { timeoutMs?: number; preload?: string; isolate?: boolean } {
   const timeout = /--timeout[= ](\d+)/.exec(script)?.[1]
   const preload = /--preload[= ](\S+)/.exec(script)?.[1]
-  return { ...(timeout ? { timeoutMs: Number(timeout) } : {}), ...(preload ? { preload } : {}) }
+  return {
+    ...(timeout ? { timeoutMs: Number(timeout) } : {}),
+    ...(preload ? { preload } : {}),
+    ...(/(?:^|\s)--isolate(?:\s|$)/.test(script) ? { isolate: true } : {})
+  }
 }
 
 /**
@@ -648,6 +656,7 @@ export function buildInventoryView(tree: TreeReader, options: ViewOptions = {}):
       runner = read
       const flags = scriptFlags(script ?? '')
       if (flags.timeoutMs !== undefined) environment.timeoutMs = flags.timeoutMs
+      if (flags.isolate) environment.isolate = true
       if (flags.preload) preload = resolveIn(dir, flags.preload)
     } else {
       runner = 'bun'

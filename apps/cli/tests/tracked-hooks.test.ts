@@ -1,3 +1,5 @@
+import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry'
+installVinayaCheckRegistry()
 // Tracked hooks (atta-labs/attalabs#927) — ring 0 must survive a clone.
 //
 // The defect: a `.git/hooks` install writes hooks git never versions, so the
@@ -36,8 +38,8 @@ import {
   resolveHookDir,
   setCoreHooksPath,
   unsetCoreHooksPath
-} from '../src/lib/detect.js'
-import type { LabelGateway } from '../src/lib/ops.js'
+} from '../../../harness/kernel/connectors/git/detect.js'
+import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
 
 // The real CLI source, invoked directly by `bun` instead of the hook's real
 // `npx --yes @attalabs/vinaya` body — same technique quickstart.test.ts uses,

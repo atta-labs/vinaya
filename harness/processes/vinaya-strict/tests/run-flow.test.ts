@@ -21,7 +21,7 @@ import {
 } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import { publishRound } from '../loops/dev-review/standalone/dev-review-loop/publication'
 import { cleanupAllReviewerIsolationArtifacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
-import { enforcementControlsActive } from '../../../../apps/cli/src/lib/enforcement-controls'
+import { enforcementControlsActive } from '../../../kernel/gates/enforcement-controls'
 import { probeAgentSandbox } from '../../../kernel/isolation/worker-boundary'
 import { handoffFindings } from '../loops/dev-review/standalone/dev-review-loop'
 import { runCliChecks } from '../../../../harness/kernel/gates/checks/run-checks'

@@ -52,8 +52,8 @@ import { join } from 'node:path'
 import { resolveProseRules, rulesOfGroup, scanRetiredVocabulary, type VocabSourceFile } from '@attalabs/aeg-core'
 import { hasDoctrineEntry, resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfigChecked } from '../../lib/config'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { findingsInThisDiff, repoRoot } from '../../lib/diff-evidence'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { findingsInThisDiff, repoRoot } from '../../../../../harness/kernel/connectors/git/diff-evidence'
 
 const CHECK_NAME = 'retired-vocabulary'
 

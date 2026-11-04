@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { MAX_RETURNED_TEXT_CHARS, type TaskPrCheck } from '@attalabs/aeg-core'
+import { MAX_RETURNED_TEXT_CHARS, type TaskPrCheck } from '../../../../../kernel/tools/catalog/task-tools'
 import { taskEscalationReadHandler, taskStatusHandler } from '../../../loops/dev-review/run-control/handlers.js'
 import { PR_FACTS_READS_PER_STATUS_READ } from '../../../loops/dev-review/run-control/task-status.js'
 import {

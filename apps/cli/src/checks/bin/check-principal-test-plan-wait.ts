@@ -38,9 +38,14 @@
  * whole repo.
  */
 
-import { isEntryPoint, type LiveGateInputs } from '@attalabs/aeg-core'
+import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
+import type { LiveGateInputs } from '@attalabs/aeg-core'
 import { evaluateTestPlanGate } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../contract'
+import {
+  CHECK_SCHEMA_VERSION,
+  type CheckError,
+  emitCheckError
+} from '../../../../../harness/kernel/gates/checks/contract'
 import { defaultLiveCheckDeps, type LiveCheckDeps, type LiveCheckInputs, resolveLiveCheckInputs } from '../frozen-brief'
 
 const CHECK_NAME = 'principal-test-plan-wait'

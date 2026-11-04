@@ -84,12 +84,11 @@ import {
   parseRationaleDeps,
   resolvePriorTrancheArchival,
   requireTrancheQualifiedEdges,
-  resolveGithubToken,
-  resolveRepo,
   splitSlugQualifiedEdge,
-  tranchesAttachedToMilestone,
-  type RepoRef
+  tranchesAttachedToMilestone
 } from '@attalabs/aeg-forge-state'
+import { resolveGithubToken } from '../../../harness/kernel/adapters/code-host/github/github-token'
+import { resolveRepo, type RepoRef } from '../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import {
   type BaselineEntry,
   captureBaseline,
@@ -107,9 +106,9 @@ import {
   DOC_OWNERS_PATH,
   issueBranchName,
   parsePremiseBlock,
-  resolveNewestFrozenBrief,
-  isEntryPoint
+  resolveNewestFrozenBrief
 } from '../src/index'
+import { isEntryPoint } from '../../../harness/kernel/gates/checks/entry-point'
 import { readConfigPrincipals } from '../src/principals-config'
 import type { Tranche, Task } from '../src/types'
 

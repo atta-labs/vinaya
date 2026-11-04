@@ -172,6 +172,7 @@ const FACTORY_MODULE = 'harness/processes/vinaya-strict/integration/log/log-sink
 
 /** The entry points that install the process factory before any command or run starts. */
 const ENTRY_POINTS = [
+  'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts',
   'apps/cli/src/index.ts',
   'harness/processes/vinaya-strict/bin/run-engine.ts',
   // The evaluation programs, each run on its own.
@@ -193,6 +194,7 @@ const SITES: Record<string, number> = {
   [`${FACTORY_MODULE} installDefaultLogSinkFactory code`]: 1,
   // The entry points.
   'apps/cli/src/index.ts installVinayaLogSinkFactory code': 1,
+  'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts installVinayaLogSinkFactory code': 1,
   'harness/processes/vinaya-strict/bin/run-engine.ts installVinayaLogSinkFactory code': 1,
   ...Object.fromEntries(
     ['harbor-grade', 'harbor-results', 'harbor-tasks', 'harbor-trial', 'step-one', 'whole-loop'].map((name) => [
@@ -210,7 +212,7 @@ const SITES: Record<string, number> = {
   'harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts installVinayaLogSinkFactory embedded': 2,
   'apps/cli/tests/fixtures/checks/run-and-hang.ts installVinayaLogSinkFactory code': 1,
   // Kernel contract tests: each builds the Log client's own sink with a branch reader it gives itself.
-  'apps/cli/tests/checks/runner.test.ts createLogSink code': 1,
+  'harness/processes/vinaya-strict/integration/gates/checks/runner-launch.test.ts createLogSink code': 1,
   'apps/cli/tests/commands/log-emit.test.ts createLogSink code': 1,
   'harness/processes/vinaya-strict/integration/log/client/log-custom.test.ts createLogSink code': 1,
   'harness/processes/vinaya-strict/integration/log/log-destination.test.ts createLogSink code': 4,

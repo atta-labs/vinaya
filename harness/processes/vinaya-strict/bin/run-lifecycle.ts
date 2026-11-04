@@ -10,12 +10,14 @@ import {
   type ExecutionRoundMirrorRecord,
   type ParsedRecord,
   type ResolutionRecord,
+  readEffects,
+  readExecutionRoundMirror,
+  writeExecutionRoundMirror
+} from '../../../kernel/connectors/checkpoint/control-store/index'
+import {
   compareManifest,
   manifestAsEchoed,
   nextRoundNumber,
-  readEffects,
-  readExecutionRoundMirror,
-  writeExecutionRoundMirror,
   type LoopState,
   type ReconstructedJournal,
   type ReviewInputManifest

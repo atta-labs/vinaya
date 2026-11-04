@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('./gh', () => ({
+vi.mock('../../../harness/kernel/adapters/code-host/github/gh', () => ({
   ghIssueListByAnyLabel: vi.fn()
 }))
 
-const { ghIssueListByAnyLabel } = await import('./gh')
+const { ghIssueListByAnyLabel } = await import('../../../harness/kernel/adapters/code-host/github/gh')
 const { issueMilestonesFromIssues, listIssueMilestonesForSlug } = await import('./list-issue-milestones')
 
 describe('listIssueMilestonesForSlug', () => {

@@ -29,7 +29,7 @@ import {
   trancheFromIssues,
   trancheLabel
 } from '@attalabs/aeg-forge-state'
-import { detectGitRepo } from '../lib/detect.js'
+import { detectGitRepo } from '../../../../harness/kernel/connectors/git/detect.js'
 import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import {
   declaredTranches,

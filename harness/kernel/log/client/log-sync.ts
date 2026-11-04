@@ -13,7 +13,7 @@
 
 import { existsSync, mkdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { type RepoRef, resolveRepo } from '@attalabs/aeg-forge-state'
+import { type RepoRef, resolveRepo } from '../../adapters/code-host/github/resolve-repo'
 import type { LogCache, LogSource } from '../sync/contracts'
 // `syncSource`/`SyncSummary` are not re-exported from the package root
 // (`packages/aeg-core/src/index.ts`, out of this task's surface) — only from

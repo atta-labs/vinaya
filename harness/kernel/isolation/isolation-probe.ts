@@ -136,7 +136,7 @@ export async function runProbeChecks(overrides: ProbeOverrides = {}): Promise<Pr
 
   // 1. Environment — a value the caller holds but did not explicitly
   // forward must be absent, exactly like `buildCheckEnv`'s allowlist
-  // (apps/cli/src/checks/runner.ts) already enforces for custom checks.
+  // (harness/kernel/gates/checks/runner.ts) already enforces for custom checks.
   results.environment = process.env[SECRET_ENV] !== undefined
 
   // 2. HOME — read a marker file the orchestrator drops in the REAL home

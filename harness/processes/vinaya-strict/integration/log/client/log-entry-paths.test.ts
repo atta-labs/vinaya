@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { parse } from 'yaml'
-import { coreCheckRegistry } from '../../../../../../apps/cli/src/checks/registry.js'
+import { coreCheckRegistry } from '../../../checks/registry.js'
 
 type Route = { producer: 'operation' | 'gate'; commandToken: string }
 type InventoryRow = { id: string; route?: Route; noProducer?: string }
@@ -31,7 +31,7 @@ const workflowRoutes: Record<string, Route> = {
   },
   'workflow:vinaya-archivist.yml:daily-drift:Run vinaya audit --only=dead-branches': {
     producer: 'operation',
-    commandToken: 'audit --only=dead-branches'
+    commandToken: 'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts --only=dead-branches'
   },
   'workflow:vinaya-archivist.yml:daily-drift:Archive every finished tranche not yet archived': {
     producer: 'operation',
@@ -39,7 +39,7 @@ const workflowRoutes: Record<string, Route> = {
   },
   'workflow:vinaya-archivist.yml:direct-main-push-detection:Run vinaya audit --only=direct-push': {
     producer: 'operation',
-    commandToken: 'audit --only=direct-push'
+    commandToken: 'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts --only=direct-push'
   },
   'workflow:vinaya-body-checks.yml:vinaya-body-checks:Body checks': {
     producer: 'gate',

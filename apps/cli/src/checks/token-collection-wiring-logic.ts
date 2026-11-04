@@ -28,8 +28,11 @@
  * `CheckError` contract, naming the wiring `capability.detail` already
  * describes — never the agent.
  */
-import { isTokenCollectionWiringBroken, type MeteringCapability } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, type CheckError } from './contract'
+import {
+  isTokenCollectionWiringBroken,
+  type MeteringCapability
+} from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import { CHECK_SCHEMA_VERSION, type CheckError } from '../../../../harness/kernel/gates/checks/contract'
 
 export type TokenCollectionWiringResult = { pass: true } | { pass: false; error: CheckError }
 

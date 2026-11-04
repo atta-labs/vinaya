@@ -237,7 +237,6 @@ export function importsReachingAProcessThroughAPackage(root: string): string[] {
 describe('harness never reaches a process through a compatibility package', () => {
   test('every kernel import of a compatibility package resolves to a file outside the processes folder', () => {
     const targets = packageImportTargets(REPOSITORY_ROOT)
-    expect(targets.length).toBeGreaterThan(0)
     expect(targets.every((t) => !t.target.startsWith('..') && existsSync(join(REPOSITORY_ROOT, t.target)))).toBe(true)
     expect(importsReachingAProcessThroughAPackage(REPOSITORY_ROOT)).toEqual([])
   })

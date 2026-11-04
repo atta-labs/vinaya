@@ -18,7 +18,7 @@
  */
 
 import { checkMilestoneAttach } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { readIssueCheckEnv } from '../issue-check-env'
 
 const CHECK_NAME = 'issue-milestone-attach'

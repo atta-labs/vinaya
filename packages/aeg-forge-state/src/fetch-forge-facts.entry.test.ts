@@ -20,7 +20,7 @@ vi.mock('@octokit/graphql', () => ({
   graphql: { defaults: () => graphqlClient }
 }))
 
-vi.mock('./github-token', () => ({ resolveGithubToken }))
+vi.mock('../../../harness/kernel/adapters/code-host/github/github-token', () => ({ resolveGithubToken }))
 
 const { fetchForgeFacts, fetchForgeTasksByLabel } = await import('./fetch-forge-facts')
 

@@ -27,8 +27,8 @@ import {
   SECTION_HEADER,
   splitSlugQualifiedEdge
 } from '@attalabs/aeg-forge-state'
-import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
-import { anchoredRegion, anchoredRegionBounds, stripCode } from './anchored-region'
+import { maskCode } from '../../../harness/kernel/adapters/code-host/github/strip-code'
+import { anchoredRegion, anchoredRegionBounds, stripCode } from '../../../harness/kernel/gates/checks/anchored-region'
 import { checkTestPlan, extractFencedBlocks } from './brief-validation'
 import { type ClaimBinding, type ClaimVoice, evaluateClaimBindings } from './doc-claim'
 import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'

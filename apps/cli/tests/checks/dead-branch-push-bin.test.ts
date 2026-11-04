@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { type CheckError, CHECK_SCHEMA_VERSION } from '../../src/checks/contract'
+import { type CheckError, CHECK_SCHEMA_VERSION } from '../../../../harness/kernel/gates/checks/contract'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 
 /**

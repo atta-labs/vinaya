@@ -21,9 +21,13 @@
 import { describe, expect, it } from 'bun:test'
 import { checkBareDigits } from '../../src/checks/body-bare-digits-logic'
 import { compareEvidenceBlock } from '../../src/checks/evidence-fresh-logic'
-import { ScanContext, resolveAnchoredRegion, summaryLineIndex } from '../../src/checks/scan-context'
+import {
+  ScanContext,
+  resolveAnchoredRegion,
+  summaryLineIndex
+} from '../../../../harness/kernel/gates/checks/scan-context'
 import { DivergentEvidenceAnchorError, replaceEvidenceBlock } from '../../src/commands/pr-report'
-import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../src/lib/numstat'
+import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../../harness/kernel/connectors/git/numstat'
 
 // Never a literal zero-width character in this source file — the same rule
 // `ZERO_WIDTH`'s own comment states, for the same reason: an invisible

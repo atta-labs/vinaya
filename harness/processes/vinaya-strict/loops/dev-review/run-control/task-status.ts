@@ -27,18 +27,22 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { hostname } from 'node:os'
 import {
   DEFAULT_PAGE_LIMIT,
-  defaultControlStoreDeps,
-  isPrincipal,
-  isPublishedSummaryComment,
-  parseSummaryConfidenceRows,
-  readEffects,
-  readLoopState,
-  resolveNewestFrozenBrief,
-  taskPhaseLabel,
-  type PauseReason,
   type TaskConfidence,
   type TaskNextAction,
   type TaskPhaseHistory
+} from '../../../../../kernel/tools/catalog/task-tools'
+import {
+  defaultControlStoreDeps,
+  readEffects,
+  readLoopState
+} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+import {
+  isPrincipal,
+  isPublishedSummaryComment,
+  parseSummaryConfidenceRows,
+  resolveNewestFrozenBrief,
+  taskPhaseLabel,
+  type PauseReason
 } from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { resolveTrustedPrincipals, type TaskRunner } from '../../../../../../apps/cli/src/lib/config.js'

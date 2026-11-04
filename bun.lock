@@ -108,12 +108,12 @@
       "dependencies": {
         "@atta/engine": "file:../../apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
         "@atta/executor-agent-spawn": "file:../../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
-        "@attalabs/aeg-forge-state": "workspace:*",
-        "@attalabs/aeg-types": "workspace:*",
+        "gray-matter": "^4.0.3",
         "yaml": "2.9.0",
         "zod": "3.25.76",
       },
       "devDependencies": {
+        "@atta/adapter-langgraph": "file:../../apps/cli/tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz",
         "@atta/typescript-config": "workspace:*",
         "@langchain/langgraph": "0.2.74",
         "@types/bun": "latest",
@@ -241,7 +241,7 @@
 
     "@asamuzakjp/nwsapi": ["@asamuzakjp/nwsapi@2.3.9", "", {}, "sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q=="],
 
-    "@atta/adapter-langgraph": ["@atta/adapter-langgraph@tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz", { "dependencies": { "@anthropic-ai/sdk": "^0.65.0", "@atta/engine": "0.0.1", "@atta/models": "0.1.0", "@google/generative-ai": "^0.24.0", "@langchain/core": "^0.3.0", "@langchain/langgraph": "^0.2.0", "handlebars": "^4.7.8", "openai": "^4.98.0" } }, "sha512-EdGQbAIEtQOUbSkQAzzKgz3cZCb3nVUSntEZl2iiINgsKHNtclbsJFmQF34IiZ6Rp2EpqSFjvKnbtROV8itMaw=="],
+    "@atta/adapter-langgraph": ["@atta/adapter-langgraph@../../apps/cli/tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz", { "dependencies": { "@anthropic-ai/sdk": "^0.65.0", "@atta/engine": "0.0.1", "@atta/models": "0.1.0", "@google/generative-ai": "^0.24.0", "@langchain/core": "^0.3.0", "@langchain/langgraph": "^0.2.0", "handlebars": "^4.7.8", "openai": "^4.98.0" } }, "sha512-EdGQbAIEtQOUbSkQAzzKgz3cZCb3nVUSntEZl2iiINgsKHNtclbsJFmQF34IiZ6Rp2EpqSFjvKnbtROV8itMaw=="],
 
     "@atta/agents": ["@atta/agents@apps/cli/tests/fixtures/atta-engine/atta-agents-0.1.0.tgz", {}, "sha512-WAnjkaNCBYFnwR2WfgHtpGVIeqtOorNzeui5VAHic/4Yps0WcQLLc2A+BSkttab1kq3W95GOcCEGX6lop6T33g=="],
 
@@ -1412,6 +1412,8 @@
     "@atta/engine/zod": ["zod@4.6.7", "", {}, "sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg=="],
 
     "@attalabs/process-vinaya/@atta/executor-agent-spawn": ["@atta/executor-agent-spawn@../../../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz", { "dependencies": { "@atta/engine": "0.0.1", "@langchain/langgraph": "^0.2.0", "handlebars": "^4.7.8" } }, "sha512-qrwg5REpqkkhNqkQTpYGTiud8yXxxEsX/rHwGumtZvPgzy/nB9IY+Ar/2bw9FDLnc6fahjcwDEfNIdK0nHONPQ=="],
+
+    "@attalabs/vinaya/@atta/adapter-langgraph": ["@atta/adapter-langgraph@tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz", { "dependencies": { "@anthropic-ai/sdk": "^0.65.0", "@atta/engine": "0.0.1", "@atta/models": "0.1.0", "@google/generative-ai": "^0.24.0", "@langchain/core": "^0.3.0", "@langchain/langgraph": "^0.2.0", "handlebars": "^4.7.8", "openai": "^4.98.0" } }, "sha512-EdGQbAIEtQOUbSkQAzzKgz3cZCb3nVUSntEZl2iiINgsKHNtclbsJFmQF34IiZ6Rp2EpqSFjvKnbtROV8itMaw=="],
 
     "@attalabs/vinaya/@atta/executor-agent-spawn": ["@atta/executor-agent-spawn@tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz", { "dependencies": { "@atta/engine": "0.0.1", "@langchain/langgraph": "^0.2.0", "handlebars": "^4.7.8" } }, "sha512-qrwg5REpqkkhNqkQTpYGTiud8yXxxEsX/rHwGumtZvPgzy/nB9IY+Ar/2bw9FDLnc6fahjcwDEfNIdK0nHONPQ=="],
 

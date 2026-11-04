@@ -74,11 +74,11 @@ import {
   type SweepDeps,
   sweepOwnedDirs,
   writeOwnerMarker
-} from '../../../../../../apps/cli/src/lib/test-temp'
+} from '../../../../../kernel/conformance/unit/test-temp'
 import { execFileSync, spawn } from 'node:child_process'
-import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../../../kernel/adapters/code-host/github/resolve-repo'
 import { homedir, hostname as osHostname, tmpdir } from 'node:os'
-import { summarizeTranscript } from '@attalabs/aeg-core'
+import { summarizeTranscript } from '../../../../../kernel/adapters/agents/claude-code/claude-code-transcript'
 import { redact } from '../../../../../kernel/log/redact'
 import {
   DOCUMENTATION_READ_MIN_SIZE,
@@ -92,14 +92,14 @@ import {
   sourceReceiptsPath,
   sourceStoreDir
 } from '../../../../../kernel/source-manifest.js'
-import type { TranscriptSummary } from '@attalabs/aeg-core'
+import type { TranscriptSummary } from '../../../../../kernel/adapters/agents/claude-code/transcript-summary'
 import type { Role, RoleAttemptOutcome } from '../../../../../kernel/log/schema'
 import { drainLogSpool } from '../../../../../kernel/log/log-sink.js'
 import { createVinayaLogSink, resolveVinayaLogAppendPath } from '../../../integration/log/log-sink-factory.js'
 // The command line installs the process's sink factory through the dispatch module it already loads.
 export { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-factory.js'
 import { appendRoleLine } from '../../../../../kernel/log/client/loop-log.js'
-import { createAgentStreamRenderer } from '../../../../../../apps/cli/src/lib/agent-stream.js'
+import { createAgentStreamRenderer } from '../../../../../kernel/adapters/agents/agent-stream.js'
 import {
   formatAgentDetails,
   formatAgentLine,
@@ -157,8 +157,8 @@ import {
   type ConfinementRequest,
   type SandboxProbeResult
 } from '../../../../../kernel/isolation/worker-boundary.js'
-import { agentControlsRefusal } from '../../../../../../apps/cli/src/lib/enforcement-controls.js'
-import { repoRoot } from '../../../../../../apps/cli/src/lib/diff-evidence.js'
+import { agentControlsRefusal } from '../../../../../kernel/gates/enforcement-controls.js'
+import { repoRoot } from '../../../../../kernel/connectors/git/diff-evidence.js'
 import {
   type BridgeInvocation,
   CLAUDE_DEV_TOOLS_ENV,
@@ -2863,7 +2863,7 @@ export type LaunchStatus = 'launched' | 'completed' | 'interrupted'
  * for the SAME reason this module keeps the vendor session id out of the
  * Vinaya Log's own `DispatchOutcomeSchema` (see this file's module doc): no
  * strict, versioned schema — the log's, or the control store's own
- * (`packages/aeg-core/src/control-store/records.ts`) — carries
+ * (`harness/kernel/connectors/checkpoint/control-store/records.ts`) — carries
  * a `role`, an `attempt`, or a vendor `sessionId` field, and this record is
  * this launcher's own concern, not a control-store ownership epoch the
  * generic launcher has no business claiming (the loop's own control-store
@@ -2900,7 +2900,7 @@ export type LaunchRecord = {
 
 /**
  * The three-way read of a launch record, mirroring the control store's own
- * `ParsedRecord` discipline (`packages/aeg-core/src/control-store/records.ts`):
+ * `ParsedRecord` discipline (`harness/kernel/connectors/checkpoint/control-store/records.ts`):
  * `'corrupt'` (something is written but does not parse as a launch record) is
  * never conflated with `'absent'` (nothing was ever written) — the exact
  * distinction recovery needs to tell "no launch to reconcile" apart from "a
@@ -6116,3 +6116,5 @@ export async function dispatchRole(
     child.stdin.end()
   })
 }
+
+export { installVinayaCheckRegistry } from '../../../checks/registry.js'

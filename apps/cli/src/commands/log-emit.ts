@@ -23,7 +23,7 @@
 // every caller (`harness/kernel/log/log.md` § Attribution).
 
 import { join } from 'node:path'
-import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import { loadConfig, loadTrustAnchorConfigAsync } from '../lib/config.js'
 import { emitCustomEvent, type EmitCustomEventResult } from '../../../../harness/kernel/log/client/log-custom.js'
 import {

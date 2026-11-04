@@ -73,7 +73,7 @@ import {
   type RepoInfo,
   resolveHookDir,
   setCoreHooksPath
-} from '../lib/detect.js'
+} from '../../../../harness/kernel/connectors/git/detect.js'
 import {
   appendBlock,
   blockStripLeavesEmpty,
@@ -89,7 +89,7 @@ import {
   resolveManagedBlockPath,
   stripBlockFromContent,
   writeFileWithDirs
-} from '../lib/ops.js'
+} from '../../../../harness/kernel/gates/ops.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
 
 export type UpgradeDeps = {

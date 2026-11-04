@@ -304,7 +304,7 @@ export const COMMANDS: readonly Command[] = [
     description: 'Run the task-operator MCP tool server over stdio — the command both runtime adapters register',
     details: [
       // AEG:CLAIM: harness/processes/vinaya-strict/integration/server.ts contains:export async function serveTaskToolsStdio(
-      'Exposes the task-operator tool catalog (`packages/aeg-core/src/task-tools.ts`) to an agent runtime as one MCP server speaking newline-delimited JSON-RPC 2.0 (`initialize`/`tools/list`/`tools/call`). Claude registers it through the generated `.mcp.json`; Codex through its documented `~/.codex/config.toml` `[mcp_servers]` table — both point at this same command.',
+      'Exposes the task-operator tool catalog (`harness/kernel/tools/catalog/task-tools.ts`) to an agent runtime as one MCP server speaking newline-delimited JSON-RPC 2.0 (`initialize`/`tools/list`/`tools/call`). Claude registers it through the generated `.mcp.json`; Codex through its documented `~/.codex/config.toml` `[mcp_servers]` table — both point at this same command.',
       'stdout carries JSON-RPC and nothing else: any stray write from the CLI (a forge-read warning) is redirected to stderr, so the protocol stream is never corrupted.',
       "`task_status`/`task_escalation_read`/`task_pr_read` read; `task_pr_read` returns the selected task's OWN pull request — every required and reported check with its state, conclusion and failure summary, plus the principal-authored review record (newest verdicts and their judged head, round markers, published summary table, pause comment) — and refuses any other pull request; `task_start` starts a run in attended mode only, requiring an authenticated caller from the invocation context (`VINAYA_MCP_CALLER`) and refusing without one — MCP is a transport, not authorization. `task_resume`/`task_cancel` require the same authenticated caller, plus a current Principal ruling read fresh from the run's own PR — never a caller-supplied approval; `task_resume` triggers the existing `dev-review-loop --resume` continuation exactly once per escalation, and `task_cancel` reports a truthful `confirmed`/`pending`/`uncertain` outcome, idempotently, across repeated calls. No unattended start until the worker-isolation boundary and a capability flag land."
     ],
@@ -775,22 +775,6 @@ export const COMMANDS: readonly Command[] = [
     details: [
       'Walks every `vinaya/tranche:<slug>` label, skips each tranche that still has an open task Issue, and runs `archive tranche` for each finished one whose Milestone is not already closed with its retrospective. One tranche failing does not stop the others; the exit code reports it.',
       'The generated `vinaya-archivist.yml` workflow calls it on its daily scheduled run, so a tranche that finished before the workflow could see it is archived within a day. Running it again when every finished tranche is archived changes nothing and says so.'
-    ],
-    status: 'shipped'
-  },
-  {
-    name: 'audit',
-    needs: ['forge'],
-    description: 'Run the ring-2 dead-branch-push and direct-main-push detection checks directly',
-    flags: [
-      { flag: '--only', description: "Scope to one check: 'dead-branches' or 'direct-push'" },
-      { flag: '--sha', description: 'The commit to check for direct-main-push (defaults to the current HEAD)' },
-      { flag: '--json', description: 'Enveloped JSON output' }
-    ],
-    details: [
-      'Dead-branch-push is never-red — a notification channel that flags (label + PR comment) any `task/*` branch whose tip commit lands after its own PR already resolved. Direct-main-push is a real pass/fail — it polls the merge-association API for up to ~100s before deciding, then opens an incident Issue and exits 1 if a commit on `main` genuinely has no associated merged PR.',
-      "The same logic the generated `vinaya-archivist.yml` workflow's `daily-drift` and `direct-main-push-detection` jobs run on schedule / on every push to `main` — callable directly for a one-off run or local verification.",
-      'All progress output writes through `process.stdout.write`/`process.stderr.write` (never bare `console.*`), so piping this command into a log file or a CI step captures every line in order.'
     ],
     status: 'shipped'
   },

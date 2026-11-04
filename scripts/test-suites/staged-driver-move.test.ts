@@ -7,7 +7,7 @@
  * change does not run the process suite, though the process package lists the
  * CLI as a development dependency.
  *
- * The selection is the CI adapter's own (`apps/cli/src/lib/ci-test-selection.ts
+ * The selection is the CI adapter's own (`harness/processes/vinaya-strict/integration/ci-test-selection.ts
  * --decision`), run as its own process in the fixture repository; the
  * inventory is built from the fixture's committed declarations.
  */
@@ -17,12 +17,12 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { CI_SHARD_COUNT } from '../../apps/cli/src/lib/ci-shard-membership.ts'
-import type { CiDecision } from '../../apps/cli/src/lib/ci-test-selection.ts'
+import type { CiDecision } from '../../harness/processes/vinaya-strict/integration/ci-test-selection.ts'
 import { buildInventoryView, INVENTORY_PATH, type InventoryDeclarations, memoryReader } from './inventory-check.ts'
 import { buildTestSchedule, checkSchedule, ciScheduleInput, type TestSchedule } from './schedule.ts'
 
 const REPO_ROOT = join(import.meta.dir, '../..')
-const SELECTION = join(REPO_ROOT, 'apps/cli/src/lib/ci-test-selection.ts')
+const SELECTION = join(REPO_ROOT, 'harness/processes/vinaya-strict/integration/ci-test-selection.ts')
 
 const OLD_TEST = 'apps/cli/tests/driver.test.ts'
 const NEW_TEST = 'processes/vinaya/tests/driver.test.ts'

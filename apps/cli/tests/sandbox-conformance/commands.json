@@ -88,7 +88,9 @@
     },
     {
       "id": "pre-push-tests",
-      "forms": ["bun apps/cli/src/lib/pre-push-select-tests.ts | xargs -r bun test --timeout=30000 --"],
+      "forms": [
+        "bun harness/processes/vinaya-strict/integration/pre-push-select-tests.ts | xargs -r bun test --timeout=30000 --"
+      ],
       "notRun": "the pre-push hook's own command — under the review loop the driver pushes, outside the sandbox, and the doctrine forbids hand-running it"
     },
     {

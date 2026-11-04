@@ -279,7 +279,7 @@ ruling can, and that ruling's status is then recorded on the entry.
 The register's normative design is revision 17 of the Engine specification,
 and the fixture's `normativeDesign` names it with the sections the register
 rests on. This file, `apps/cli/specs/dev-review-engine-state-machine.md` and
-`apps/cli/specs/dev-review-engine-capability-matrix.md` state the same
+`harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md` state the same
 revision, and the architecture test fails when any of the four disagrees.
 Every entry, defect and ambiguity was re-read against revision 17's section
 16; every reason that cited a section now cites revision 17, and the test

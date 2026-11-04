@@ -941,7 +941,7 @@
       "backends": ["engine"],
       "backendEvidence": {
         "engine": {
-          "test": "apps/cli/tests/conformance/packed-runtime-public-run-control.test.ts"
+          "test": "harness/kernel/loops/runtimes/atta-engine/packed-runtime-public-run-control.test.ts"
         }
       },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",

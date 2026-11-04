@@ -11,7 +11,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type ControlStoreDeps, defaultControlStoreDeps, TASK_TOOL_NAMES } from '@attalabs/aeg-core'
+import {
+  type ControlStoreDeps,
+  defaultControlStoreDeps
+} from '../../../../harness/kernel/connectors/checkpoint/control-store/index'
+import { TASK_TOOL_NAMES } from '../../../../harness/kernel/tools/catalog/task-tools'
 import type { DispatchTeeRecoveryDeps } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'
 import {
   vinayaBrokerPolicies,

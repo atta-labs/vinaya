@@ -3,8 +3,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { coreCheckRegistry } from '../../src/checks/registry'
-import { runChecks } from '../../src/checks/runner'
+import { coreCheckRegistry } from '../../../../harness/processes/vinaya-strict/checks/registry'
+import { runChecks } from '../../../../harness/kernel/gates/checks/runner'
 import { spawnSyncBudgeted } from '../lib/process-fixture'
 
 // Bin-level tests for check-main-branch-refusal.ts: scratch repositories with

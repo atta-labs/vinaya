@@ -15,16 +15,12 @@ import {
   defaultControlStoreDeps,
   readLoopState,
   writeLoopState,
-  type Decision,
-  type DevReviewLoopEventInput,
   type LoopBudgets,
-  type LoopState,
   type LoopStateRecord,
   type ParsedRecord,
-  type PauseBoundRuling,
-  type RoundHeadIdentity,
-  type RoundStats
-} from '@attalabs/aeg-core'
+  type RoundHeadIdentity
+} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
+import type { Decision, DevReviewLoopEventInput, LoopState, PauseBoundRuling, RoundStats } from '@attalabs/aeg-core'
 import type { AgentVendor, DispatchHandle, SandboxProbeRefusal, UsageLimit } from '../../dispatch/dispatch.js'
 import { controlStoreRoot } from '../../../../../../kernel/effects/effects.js'
 import { isControlCharacter } from './turn-result.js'

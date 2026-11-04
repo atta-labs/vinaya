@@ -1,4 +1,3 @@
-tests/ops.test.ts
 tests/package-root.test.ts
 tests/review-post.test.ts
 tests/serial-lock.test.ts
@@ -27,10 +26,7 @@ tests/eval/recut-generic-cases.test.ts
 tests/eval/generic-suites.test.ts
 tests/eval/harbor-results.test.ts
 tests/checks/main-branch-refusal-bin.test.ts
-tests/lib/forge-snapshot.test.ts
-tests/lib/ci-graphql-calls.test.ts
 tests/runner-repo-default.test.ts
-tests/lib/pre-push-failed-tests.test.ts
 tests/lib/test-temp.test.ts
 tests/lib/process-registry.test.ts
 tests/lib/follow-view.test.ts

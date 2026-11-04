@@ -11,9 +11,9 @@ import {
   type ControlStoreDeps,
   defaultControlStoreDeps,
   readEffect,
-  taskToolError,
   writeEffect
-} from '@attalabs/aeg-core'
+} from '../../../kernel/connectors/checkpoint/control-store/index'
+import { taskToolError } from '../../../kernel/tools/catalog/task-tools'
 import { COMMANDS } from '@attalabs/vinaya-sources'
 import { parseFlags, rollbackFlagConflict } from '../../../../apps/cli/src/commands/task-run.js'
 import {

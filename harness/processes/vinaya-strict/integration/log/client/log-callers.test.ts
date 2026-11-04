@@ -44,7 +44,7 @@ const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH =
 const LOG_SYNC_FOLDER_SOURCE_PATH = 'harness/kernel/log/client/log-sync-folder-source.ts'
 const TASK_TOOLS_RESUME_PATH = 'harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts'
-const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
+const RUNNER_PATH = 'harness/kernel/gates/checks/runner.ts'
 const FLOW_V2_EVENTS_PATH = 'harness/processes/vinaya-strict/loops/dev-review/flow-v2-events.ts'
 /**
  * The webhook destination is the sink's own delivery mechanism for a

@@ -52,7 +52,7 @@ import {
   readStartClaims,
   START_CLAIM_REPORTING_WINDOW_MS
 } from '../../loops/dev-review/run-control/start.js'
-import { DEFAULT_PAGE_LIMIT, TASK_NEXT_ACTIONS } from '@attalabs/aeg-core'
+import { DEFAULT_PAGE_LIMIT, TASK_NEXT_ACTIONS } from '../../../../kernel/tools/catalog/task-tools'
 import type { ProcessSnapshot } from '../../loops/dev-review/dispatch/dispatch.js'
 import type { TaskPrFacts } from '../../loops/dev-review/run-control/pr-facts.js'
 import {

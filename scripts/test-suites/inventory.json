@@ -328,12 +328,12 @@
     {
       "id": "selection-library-fixtures",
       "kind": "fixture",
-      "paths": ["apps/cli/src/lib/verification/tests/fixtures/"],
+      "paths": ["harness/kernel/gates/ring0-hooks/pre-push/verification/tests/fixtures/"],
       "readers": [
         {
           "kind": "raw-bytes",
           "tests": [
-            "apps/cli/src/lib/verification/tests/selection.test.ts",
+            "harness/kernel/gates/ring0-hooks/pre-push/verification/tests/selection.test.ts",
             "apps/cli/tests/lib/verification-library.test.ts"
           ]
         }
@@ -449,7 +449,7 @@
     {
       "id": "folder-scanning-tests",
       "kind": "provider",
-      "file": "apps/cli/src/lib/repo-scanner-tests.ts",
+      "file": "harness/processes/vinaya-strict/integration/verification-scanner-policy.ts",
       "export": "SCANNER_DECLARATIONS",
       "shape": "scanner-declarations",
       "reason": "Each folder-scanning test reads the roots it declares from disk."
@@ -485,15 +485,15 @@
       "id": "selector-oracle",
       "kind": "oracle",
       "inputs": [
-        "apps/cli/src/lib/test-selector.ts",
-        "apps/cli/src/lib/ts-module-graph.ts",
-        "apps/cli/src/lib/repo-scanner-tests.ts",
-        "apps/cli/src/lib/cli-spawn-tests.ts",
-        "apps/cli/src/lib/verification/",
+        "harness/processes/vinaya-strict/integration/repository-verification.ts",
+        "harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts",
+        "harness/processes/vinaya-strict/integration/verification-scanner-policy.ts",
+        "harness/kernel/gates/ring0-hooks/pre-push/cli-spawn-tests.ts",
+        "harness/kernel/gates/ring0-hooks/pre-push/verification/",
         "scripts/test-suites/inventory.json"
       ],
-      "duty": "the bundler oracle in apps/cli/tests/lib/test-selector.test.ts runs when the selection logic, its inputs or the inventory change, and on every default-branch run",
-      "source": "apps/cli/tests/lib/test-selector.test.ts"
+      "duty": "the bundler oracle in harness/processes/vinaya-strict/integration/test-selector-oracle.test.ts runs when the selection logic, its inputs or the inventory change, and on every default-branch run",
+      "source": "harness/processes/vinaya-strict/integration/test-selector-oracle.test.ts"
     },
     {
       "id": "inventory-gate",

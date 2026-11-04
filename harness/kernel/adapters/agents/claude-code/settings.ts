@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@attalabs/aeg-types/dev-tools'
+import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '../../../tools/host/dev-tools'
 import { mcpRule, type RoleGrants } from '../manifest'
 import {
   normalizedCapabilities,

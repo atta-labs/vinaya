@@ -7,7 +7,7 @@
 // under test, or the 60s ceiling neither test should ever reach.
 import { join } from 'node:path'
 import { installVinayaLogSinkFactory } from '../../../../../harness/processes/vinaya-strict/integration/log/log-sink-factory'
-import { runChecks } from '../../../src/checks/runner'
+import { runChecks } from '../../../../../harness/kernel/gates/checks/runner'
 import { installVinayaConfigProvider } from '../../../src/lib/config'
 
 // This program is its own composition root: the runner's log sink reads

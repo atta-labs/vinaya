@@ -40,7 +40,7 @@
  * Real credential minting stays future work, not yet assigned anywhere.
  */
 
-import { acquireOwnership, type ControlStoreDeps, readEffect } from '@attalabs/aeg-core'
+import { acquireOwnership, type ControlStoreDeps, readEffect } from '../../connectors/checkpoint/control-store/index'
 import { normalizeTouchedPath } from './touched-path.js'
 import { createEffectExecutor, type EffectReconciler, sha256Hex } from '../../effects/effects.js'
 import { log as defaultLogEvent, type LogEventInput } from '../../log/log-sink.js'

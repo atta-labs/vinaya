@@ -21,8 +21,8 @@
  * digit sits inside a code span, so the body's bare-digit rule never sees one.
  */
 
-import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
-import { anchoredRegion, anchoredRegionBounds } from './anchored-region'
+import { maskCode } from '../../../harness/kernel/adapters/code-host/github/strip-code'
+import { anchoredRegion, anchoredRegionBounds } from '../../../harness/kernel/gates/checks/anchored-region'
 import { locateTestPlanSection } from './test-plan-section'
 
 export type LiveRecordEntry =

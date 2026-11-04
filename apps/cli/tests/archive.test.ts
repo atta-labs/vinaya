@@ -1,5 +1,5 @@
 import { parseTokensLines } from '@attalabs/aeg-core'
-import type { MeteringCapability } from '@attalabs/aeg-core'
+import type { MeteringCapability } from '../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

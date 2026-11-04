@@ -20,7 +20,6 @@ import { readdirSync, readFileSync } from 'node:fs'
 import {
   buildConsumersOf as buildConsumersOfShared,
   checkBriefSections,
-  extractIssue,
   hasObjectivesHeading,
   isBriefShaped,
   isIssueNotFoundError,
@@ -31,10 +30,11 @@ import {
   partitionBriefErrorsByRollout,
   readTierFromPrBody
 } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { extractIssue } from '../../../../../harness/kernel/adapters/code-host/github/extract-issue'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { resolveTaskFrozenBrief } from '../frozen-brief'
-import { readIssueBody, readIssueComments } from '../../lib/forge-read'
-import { exitOnIncompleteForgeSnapshot } from '../../lib/forge-snapshot'
+import { readIssueBody, readIssueComments } from '../../../../../harness/kernel/adapters/code-host/github/forge-read'
+import { exitOnIncompleteForgeSnapshot } from '../../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
 import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../lib/config'
 
 const CHECK_NAME = 'brief-shape'

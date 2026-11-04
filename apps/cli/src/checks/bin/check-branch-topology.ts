@@ -18,7 +18,7 @@
 import { execFileSync } from 'node:child_process'
 import { checkBranchTopology, taskBranchTopologyFields } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'branch-topology'
 

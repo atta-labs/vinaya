@@ -23,9 +23,13 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { type VinayaConfig, loadTrustAnchorConfigOrThrow } from './config.js'
-import { currentBranch, gitPath, writeJsonUnderGit } from './pre-push-failed-tests.js'
-import { isTaskBranch } from './pre-push-mode-logic.js'
-import { identityOf, type ProcessIdentity } from './process-registry.js'
+import {
+  currentBranch,
+  gitPath,
+  writeJsonUnderGit
+} from '../../../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests.js'
+import { isTaskBranch } from '../../../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode-logic.js'
+import { identityOf, type ProcessIdentity } from '../../../../harness/kernel/conformance/unit/process-registry.js'
 
 /** The one workflow the initial opt-in supports: this repository's hand-written CI. */
 export const READY_TESTS_WORKFLOW = '.github/workflows/ci.yml'

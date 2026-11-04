@@ -56,7 +56,7 @@ import {
   suiteMean,
   tallyTask
 } from '../../src/lib/dev-review-eval/estimators'
-import { unwrapShell } from '../../src/lib/loop-narration-codex'
+import { unwrapShell } from '../../../../harness/kernel/adapters/agents/codex/loop-narration-codex'
 import { READ_ONLY_COMMANDS, READ_ONLY_FORBIDDEN } from '../../../../harness/kernel/adapters/agents/manifest'
 import { stripVinayaEnv } from '../lib/process-fixture'
 import { startDevToolsHost } from '../../../../harness/kernel/tools/host/dev-tools-host'

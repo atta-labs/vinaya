@@ -66,13 +66,16 @@ import {
   type TestRunnerFacts,
   verificationInputsDirty,
   writeJsonUnderGit
-} from '../../apps/cli/src/lib/pre-push-failed-tests.js'
+} from '../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests.js'
 import {
   defaultTestRunCache,
   recordGreenTestRun
 } from '../../harness/processes/vinaya-strict/tools/pr-report/pr-report-engine.js'
-import { nativeRunCommand, parseNativeRunCommand } from '../../apps/cli/src/lib/pre-push-test-runner.js'
-import { cleanMergeOnto, resolveRemoteBase } from '../../apps/cli/src/lib/remote-base.js'
+import {
+  nativeRunCommand,
+  parseNativeRunCommand
+} from '../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
+import { cleanMergeOnto, resolveRemoteBase } from '../../harness/kernel/connectors/git/remote-base.js'
 import {
   DEFAULT_CONFIGURATION,
   groupNativeTests,
@@ -88,7 +91,7 @@ import {
   type TestIdentity,
   validateExecutedIdentities,
   type WholeSuiteRequest
-} from '../../apps/cli/src/lib/verification/index.js'
+} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
 import { readTestInventory } from './inventory-check.js'
 import { repositorySelectionInput } from './repository-selection.js'
 import { type GroupOutcome, type RunResult, runGroups, WHOLE_ON_CHANGE_OWNERS, WHOLE_SUITE_OWNERS } from './schedule.js'

@@ -14,7 +14,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
-import { plannedTests, type SelectionPlan } from '../../src/lib/verification/index.js'
+import {
+  plannedTests,
+  type SelectionPlan
+} from '../../../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
 import { SUITE_INPUTS } from '../sandbox-conformance/command-sources.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 
@@ -129,9 +132,9 @@ describe('the base guard', () => {
     expect(unresolved).toEqual([])
     // The selection library's whole runtime and type closure, not only its entrypoint.
     for (const file of [
-      'apps/cli/src/lib/verification/selector.ts',
-      'apps/cli/src/lib/verification/types.ts',
-      'apps/cli/src/lib/ts-module-graph.ts',
+      'harness/kernel/gates/ring0-hooks/pre-push/verification/selector.ts',
+      'harness/kernel/gates/ring0-hooks/pre-push/verification/types.ts',
+      'harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts',
       'scripts/test-suites/repository-selection.ts',
       'scripts/test-suites/schedule.ts'
     ])
@@ -140,8 +143,8 @@ describe('the base guard', () => {
       'scripts/ci/impact-plan.ts',
       'scripts/ci/base-guard.ts',
       'scripts/ci/governance-obligations.ts',
-      'apps/cli/src/lib/verification/README.md',
-      'apps/cli/src/lib/verification/selector.ts',
+      'harness/kernel/gates/ring0-hooks/pre-push/verification/README.md',
+      'harness/kernel/gates/ring0-hooks/pre-push/verification/selector.ts',
       'apps/cli/src/lib/config.ts',
       'scripts/test-suites/inventory.json',
       'apps/cli/tests/ci-shards/shard-3.txt',

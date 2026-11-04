@@ -33,7 +33,7 @@
  * scope: full — reads the live forge, not the local diff.
  */
 
-import { isEntryPoint } from '@attalabs/aeg-core'
+import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
 import {
   deriveTrancheFromForge,
   fetchProvenance,
@@ -42,7 +42,8 @@ import {
   issueMilestonesFromIssues,
   tasksFromIssues
 } from '@attalabs/aeg-forge-state'
-import type { GhIssue, SlugMilestoneIndex, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
+import type { GhIssue } from '../../../../../harness/kernel/adapters/code-host/github/gh'
+import type { SlugMilestoneIndex, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -71,7 +72,7 @@ import {
   type TrancheFile,
   type TaskEntry
 } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../lib/config'
 import { warnOnUnreadPrincipals } from '../principals-refusal'
 

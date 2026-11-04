@@ -25,13 +25,13 @@
  * which stays inside the value for a caller that wants it.
  */
 
-import {
-  defaultControlStoreDeps,
-  type Freshness,
-  type TaskConfidence,
-  type TaskEscalationPacket,
-  type TaskPhaseHistory
-} from '@attalabs/aeg-core'
+import { defaultControlStoreDeps } from '../../../../../kernel/connectors/checkpoint/control-store/index'
+import type {
+  Freshness,
+  TaskConfidence,
+  TaskEscalationPacket,
+  TaskPhaseHistory
+} from '../../../../../kernel/tools/catalog/task-tools'
 import {
   escalationIdFor,
   noPushResumeCommandFor,

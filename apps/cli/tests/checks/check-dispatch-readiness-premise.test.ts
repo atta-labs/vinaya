@@ -13,7 +13,7 @@ import { firstPushArchivalReadiness } from '../../src/checks/bin/check-first-pus
 import { priorTrancheArchivalFindings } from '../../src/checks/bin/check-dispatch-readiness'
 import { resolveSiblingConflictFacts } from '../../src/checks/sibling-conflict-facts'
 import { reassertPremiseFile } from '../../src/checks/premise-reassert-logic'
-import { containedAbs } from '../../src/lib/ops'
+import { containedAbs } from '../../../../harness/kernel/gates/ops'
 
 /**
  * Bin-level regression for the `PREMISE_FILE` wiring (task 10, #59). The

@@ -251,7 +251,7 @@ describe('checkG5', () => {
 
 describe('checkG6', () => {
   it('skips rows left at the default repo-own audience', () => {
-    const rows: GateRow[] = [makeRow({ audience: 'repo-own', implementation: 'apps/cli/src/checks/runner.ts' })]
+    const rows: GateRow[] = [makeRow({ audience: 'repo-own', implementation: 'harness/kernel/gates/checks/runner.ts' })]
     const result = checkG6(rows, new Set())
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
@@ -259,7 +259,7 @@ describe('checkG6', () => {
 
   it('fails a product row whose implementation is not a registered check at all', () => {
     const rows: GateRow[] = [
-      makeRow({ action: 'Merging', audience: 'product', implementation: 'apps/cli/src/checks/runner.ts' })
+      makeRow({ action: 'Merging', audience: 'product', implementation: 'harness/kernel/gates/checks/runner.ts' })
     ]
     const result = checkG6(rows, new Set(['review-gate']))
     expect(result.status).toBe('fail')

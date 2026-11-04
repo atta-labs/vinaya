@@ -12,15 +12,18 @@ import {
   type TestRunCacheRecord,
   testRunCacheKey
 } from '../../../tools/pr-report/pr-report-engine'
-import { nativeRunCommand, readyTestCommand } from '../../../../../../apps/cli/src/lib/pre-push-test-runner'
+import {
+  nativeRunCommand,
+  readyTestCommand
+} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
 import {
   READY_TESTS_DEFERRED_RECORD,
   readyCiPlanCommand
 } from '../../../../../../apps/cli/src/lib/pre-push-ready-policy'
-import { writeJsonUnderGit } from '../../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import { writeJsonUnderGit } from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
 import { checkBareDigits } from '../../../../../../apps/cli/src/checks/body-bare-digits-logic'
 import { compareEvidenceBlock } from '../../../../../../apps/cli/src/checks/evidence-fresh-logic'
-import { resolveAnchoredRegion, ScanContext } from '../../../../../../apps/cli/src/checks/scan-context'
+import { resolveAnchoredRegion, ScanContext } from '../../../../../kernel/gates/checks/scan-context'
 import { fixtureDir } from '../../../../../../apps/cli/tests/lib/test-temp-fixture'
 import { readyGateEvidence, runExplicitCommandsLive } from './flow-v2-live'
 import { prReportCommand } from '../../../../../../apps/cli/src/commands/pr-report'

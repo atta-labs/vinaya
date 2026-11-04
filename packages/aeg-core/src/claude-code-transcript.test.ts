@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { isTokenCollectionWiringBroken, resolveMeteringCapability, summarizeTranscript } from './claude-code-transcript'
-import type { MeteringCapability, MeteringCapabilityDeps } from './claude-code-transcript'
+import {
+  isTokenCollectionWiringBroken,
+  resolveMeteringCapability,
+  summarizeTranscript
+} from '../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import type {
+  MeteringCapability,
+  MeteringCapabilityDeps
+} from '../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import { formatTokensLine } from './report-tokens'
 
 function assistantLine(opts: {

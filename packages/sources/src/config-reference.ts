@@ -57,9 +57,9 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'rings.ring2_asyncAudits',
     type: 'boolean',
     semantics: [
-      '`true` (the default — an absent key resolves the same way) RUNS the async audits: `vinaya archive`’s provenance work and `vinaya audit`’s dead-branch-push notification run exactly as they always have. `false` is the opt-OUT — the only value that changes behavior — and skips that work, exiting `0` without doing anything.',
+      '`true` (the default — an absent key resolves the same way) RUNS the async audits: `vinaya archive`’s provenance work and `vinaya-audit`’s dead-branch-push notification run exactly as they always have. `false` is the opt-OUT — the only value that changes behavior — and skips that work, exiting `0` without doing anything.',
       "Prior to issue-545's O2 fix this boolean's sense was inverted (`true` skipped, `false` ran) — `vinaya upgrade` migrates a config still holding the old values and prints what it changed.",
-      'Deliberately does NOT gate `vinaya audit`’s direct-main-push detection, which stays unconditional regardless of this flag — it is a real pass/fail that catches a branch-protection bypass, and its own on/off switch must never be readable from ordinary, PR-reachable config content (the security-review reasoning: the actor a detector exists to catch must never also be able to disable it in the same push).'
+      'Deliberately does NOT gate `vinaya-audit`’s direct-main-push detection, which stays unconditional regardless of this flag — it is a real pass/fail that catches a branch-protection bypass, and its own on/off switch must never be readable from ordinary, PR-reachable config content (the security-review reasoning: the actor a detector exists to catch must never also be able to disable it in the same push).'
     ],
     example: `{ "rings": { "ring2_asyncAudits": true } }`
   },

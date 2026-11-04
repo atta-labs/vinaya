@@ -45,7 +45,7 @@
 # This starter ships empty — no bindings, no no-doc entries. Add your own
 # below this line as your repo grows real code → doc coverage needs.
 
-apps/cli/src/lib/ops.ts  apps/cli/specs/self-hosting.md
+harness/kernel/gates/ops.ts  apps/cli/specs/self-hosting.md
 harness/kernel/log/log-sink.ts  harness/kernel/log/log.md
 harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts  apps/cli/specs/loop.md
 apps/log-server/src/**  apps/log-server/specs/server.md

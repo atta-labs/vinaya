@@ -28,7 +28,6 @@ import {
   opensNoneFoundClaim,
   type ObjectiveResult,
   ObjectivesParseError,
-  parseChangedLineRanges,
   parseFindingsFile,
   FindingsParseError,
   parseObjectivesFile,
@@ -41,6 +40,7 @@ import {
   verifyPostedEscalation,
   verifyPostedSecurity
 } from '../../src/commands/review-post'
+import { parseChangedLineRanges } from '../../../../harness/kernel/connectors/git/changed-line-ranges'
 
 /** The default branch's `vinaya.config.json` every `gh` stub here serves to the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`), base64-encoded as the contents API returns it. */
 const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')

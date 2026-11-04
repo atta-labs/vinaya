@@ -34,12 +34,12 @@ import {
   AEG_BRIEF_V1_MARKER,
   briefHash,
   briefMarkerFor,
-  decideIssueAssignment,
   isPrincipal,
   parseIssueSurface,
   parseRationaleFields,
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
+import { decideIssueAssignment } from '../../../../kernel/adapters/tracker/github-issues/issue-assignment'
 import {
   dispatchRole,
   isAgentClass,
@@ -49,8 +49,8 @@ import {
 import { assembleAndRenderBrief, assembleAndRenderBriefForIssue } from './brief-assembly.js'
 import { resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config.js'
 import { collectTaskIssueErrors, currentGhLogin, postMarkedComment } from './forge/forge-write.js'
-import { isForgeReadOversize, readIssueComments } from '../../../../../apps/cli/src/lib/forge-read.js'
-import { emitCheckError } from '../../../../../apps/cli/src/checks/contract'
+import { isForgeReadOversize, readIssueComments } from '../../../../kernel/adapters/code-host/github/forge-read.js'
+import { emitCheckError } from '../../../../kernel/gates/checks/contract'
 
 export { AEG_BRIEF_V1_MARKER, briefHash, contentAfterTwoLines } from '@attalabs/aeg-core'
 

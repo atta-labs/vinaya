@@ -21,7 +21,7 @@
 
 import { graphql } from '@octokit/graphql'
 import type { TaskIssueRef } from '@attalabs/aeg-types'
-import { resolveGithubToken } from './github-token'
+import { resolveGithubToken } from '../../../harness/kernel/adapters/code-host/github/github-token'
 import { resolveTaskIssueRef } from './list-tasks'
 
 export async function fetchTaskIssueRefs(

@@ -2,13 +2,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { DEFAULT_REVIEW_POLICY, evaluateCodeReview, type ReviewInputManifest } from '@attalabs/aeg-core'
 import {
-  DEFAULT_REVIEW_POLICY,
   defaultControlStoreDeps,
-  evaluateCodeReview,
-  readManifest,
-  type ReviewInputManifest
-} from '@attalabs/aeg-core'
+  readManifest
+} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
 import type { DispatchHandle } from '../../../../loops/dev-review/dispatch/dispatch'
 import type { CompletedReview, ReviewResult } from '../../../../executing/code-reviewer/review-result'
 import { defaultRunSecurityScanSubprocess } from '../../../../loops/dev-review/standalone/dev-review-loop'

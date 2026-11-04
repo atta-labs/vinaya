@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
-import type { CheckError } from '../../src/checks/contract'
+import type { CheckError } from '../../../../harness/kernel/gates/checks/contract'
 
 // Bin-level tests for check-quoted-command.ts's own I/O wiring — the pure
 // evaluator (quoted-command.ts, aeg-core) has its own dedicated,

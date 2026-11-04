@@ -1,4 +1,4 @@
-import { forgeSnapshotCommand } from '../lib/forge-snapshot'
+import { forgeSnapshotCommand } from '../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
 
 /**
  * `vinaya pr snapshot --dir <dir>` — CI plumbing, not a user command: the

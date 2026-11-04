@@ -32,7 +32,7 @@
 import { closeSync, constants as fsConstants, mkdirSync, openSync } from 'node:fs'
 import { hostname as osHostname } from 'node:os'
 import { dirname } from 'node:path'
-import { resolveRepo as realResolveRepo } from '@attalabs/aeg-forge-state'
+import { resolveRepo as realResolveRepo } from '../../../../../kernel/adapters/code-host/github/resolve-repo'
 import {
   acquireOwnership,
   appendTransition,
@@ -44,7 +44,7 @@ import {
   type RunRecord,
   writeInput,
   writeRun
-} from '@attalabs/aeg-core'
+} from '../../../../../kernel/connectors/checkpoint/control-store/index'
 import { launchSelfDetached } from './detached-launch.js'
 import { controlStoreRoot } from '../../../../../kernel/effects/effects.js'
 import { markProcessUnattended } from '../../../../../kernel/run-paths.js'
@@ -214,7 +214,7 @@ function handleFromRun(run: RunRecord, epoch: number, logPath: string): Backgrou
  * O3: refused before anything is launched, on a host this driver cannot
  * supervise. Detachment here relies on POSIX process-group semantics
  * (the detached launch making the child its own process-group leader — the
- * same mechanism `apps/cli/src/checks/runner.ts`'s own group-kill launcher
+ * same mechanism `harness/kernel/gates/checks/runner.ts`'s own group-kill launcher
  * already uses) and the system `ps` (`dispatch.ts`'s `getProcessSnapshot`,
  * "every supported platform ships one" — true for macOS/Linux, not for
  * Windows). Traps to avoid: this must expose the gap rather than detach and

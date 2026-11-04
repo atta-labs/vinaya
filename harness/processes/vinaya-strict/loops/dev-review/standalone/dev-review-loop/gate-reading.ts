@@ -19,7 +19,7 @@ import {
   CHECKS_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   REVIEW_WORKFLOW_PATH
-} from '../../../../../../../apps/cli/src/lib/managed-workflow-paths.js'
+} from '../../../../../../kernel/gates/ring1-ci/workflows/managed-workflow-paths.js'
 import {
   REVIEW_GATE_CHECK_RUN_NAME,
   REVIEW_GATE_WORKFLOW_NAME
@@ -701,6 +701,40 @@ export function checkPremiseAtHead(
  * both the driver and its tests share the exact same list.
  */
 export const DRIVER_OWNED_PATHS = [
+  'harness/kernel/gates/checks/anchored-region.ts',
+  'harness/kernel/gates/checks/entry-point.ts',
+  'harness/kernel/gates/checks/markdown-table.ts',
+  'harness/kernel/gates/checks/workspace-escape.test.ts',
+  'harness/kernel/gates/checks/workspace-escape.ts',
+  'harness/kernel/gates/ring0-hooks/pre-push/dead-branch-push-guard.test.ts',
+  'harness/kernel/gates/ring0-hooks/pre-push/dead-branch-push-guard.ts',
+  'harness/kernel/adapters/agents/claude-code/claude-code-transcript.ts',
+  'harness/kernel/adapters/agents/claude-code/metering-io-guard.test.ts',
+  'harness/kernel/adapters/agents/claude-code/metering-io-guard.ts',
+  'harness/kernel/connectors/checkpoint/control-store/execution-round.test.ts',
+  'harness/kernel/connectors/checkpoint/control-store/index.ts',
+  'harness/kernel/connectors/checkpoint/control-store/local-race.test.ts',
+  'harness/kernel/connectors/checkpoint/control-store/local.test.ts',
+  'harness/kernel/connectors/checkpoint/control-store/local.ts',
+  'harness/kernel/connectors/checkpoint/control-store/migration.test.ts',
+  'harness/kernel/connectors/checkpoint/control-store/migration.ts',
+  'harness/kernel/connectors/checkpoint/control-store/outcomes.test.ts',
+  'harness/kernel/connectors/checkpoint/control-store/outcomes.ts',
+  'harness/kernel/connectors/checkpoint/control-store/records.test.ts',
+  'harness/kernel/connectors/checkpoint/control-store/records.ts',
+  'harness/kernel/gates/ring2-audits/dead-branch-push-audit.test.ts',
+  'harness/kernel/gates/ring2-audits/dead-branch-push-audit.ts',
+  'harness/kernel/gates/ring2-audits/direct-main-push.test.ts',
+  'harness/kernel/gates/ring2-audits/direct-main-push.ts',
+  'harness/kernel/gates/ring2-audits/ensure-label.test.ts',
+  'harness/kernel/gates/ring2-audits/ensure-label.ts',
+  'harness/kernel/adapters/tracker/github-issues/issue-assignment.test.ts',
+  'harness/kernel/adapters/tracker/github-issues/issue-assignment.ts',
+  'harness/kernel/gates/ring0-hooks/pre-commit/main-branch-refusal.test.ts',
+  'harness/kernel/gates/ring0-hooks/pre-commit/main-branch-refusal.ts',
+  'harness/kernel/tools/catalog/task-tools.test.ts',
+  'harness/kernel/tools/catalog/task-tools.ts',
+  'harness/kernel/connectors/git/changed-line-ranges.ts',
   'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
   'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/',
   'apps/cli/src/commands/review-post.ts',

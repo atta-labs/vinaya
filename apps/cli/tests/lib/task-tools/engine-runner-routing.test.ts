@@ -3,7 +3,13 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { acquireOwnership, defaultControlStoreDeps, readEffect, readResolution, writeEffect } from '@attalabs/aeg-core'
+import {
+  acquireOwnership,
+  defaultControlStoreDeps,
+  readEffect,
+  readResolution,
+  writeEffect
+} from '../../../../../harness/kernel/connectors/checkpoint/control-store/index'
 import {
   cancelDevReviewLoop,
   taskFromPrBody

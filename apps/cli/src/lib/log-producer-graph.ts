@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import type { GateRow } from '@attalabs/aeg-core'
-import { extractImportRecords, resolveRelativeImport, walkFiles } from './test-selector.js'
+import {
+  extractImportRecords,
+  resolveRelativeImport,
+  walkFiles
+} from '../../../../harness/processes/vinaya-strict/integration/repository-verification.js'
 
 /**
  * The inputs of the registry gates' seventh rule — anything able to block a
@@ -31,7 +35,7 @@ export const G7_EXEMPTIONS: Readonly<Record<string, string>> = {
   'apps/cli/src/checks/bin/check-review-gate.ts': NOT_REACHED_BY_IMPORT_CHECK_BIN,
   'apps/cli/src/checks/bin/check-main-branch-refusal.ts': NOT_REACHED_BY_IMPORT_CHECK_BIN,
   'apps/cli/src/checks/bin/check-token-collection-wired.ts': NOT_REACHED_BY_IMPORT_CHECK_BIN,
-  'apps/cli/src/checks/resolver.ts':
+  'harness/kernel/gates/checks/resolver.ts':
     'the pure step that decides which checks `vinaya check` runs; the runner it feeds records each run and the invocation records its own operation at exit',
   'packages/aeg-core/bin/open-pr.ts': NOT_REACHED_STANDALONE_SCRIPT,
   'packages/aeg-core/bin/open-issue.ts': NOT_REACHED_STANDALONE_SCRIPT,

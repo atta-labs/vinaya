@@ -15,7 +15,7 @@
  */
 
 import { checkIssueObjectives } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { loadConfig, resolveGateCutovers } from '../../lib/config'
 import { readIssueCheckEnv } from '../issue-check-env'
 

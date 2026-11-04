@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { AgentVendor } from '../../../src/lib/agent-vendors.js'
+import type { AgentVendor } from '../../../../../harness/kernel/adapters/agents/agent-vendors.js'
 import {
   BODY_CHECKS_WORKFLOW_PATH,
   buildInitOps,

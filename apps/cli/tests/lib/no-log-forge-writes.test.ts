@@ -13,7 +13,7 @@ import { describe, expect, it } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { AgentVendor } from '../../src/lib/agent-vendors.js'
+import type { AgentVendor } from '../../../../harness/kernel/adapters/agents/agent-vendors.js'
 import {
   BODY_CHECKS_WORKFLOW_PATH,
   buildInitOps,

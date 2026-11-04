@@ -16,10 +16,13 @@ import {
   renderFailureExcerpt,
   sanitizeForgeText
 } from '../run-control/pr-facts'
-import type { SelectionNote } from '../../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import type { SelectionNote } from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
 import { PROGRESS_SUMMARY_INTERVAL_MS } from '../../../../../../apps/cli/src/lib/push-progress'
 import { manifestDigest } from '../../../executing/code-reviewer/review-result'
-import { isNativeRunCommand, readyTestCommand } from '../../../../../../apps/cli/src/lib/pre-push-test-runner'
+import {
+  isNativeRunCommand,
+  readyTestCommand
+} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
 import {
   isReadyCiCommand,
   readyCiPlanCommand,
@@ -47,7 +50,7 @@ import {
   type PostedVerdictBodies,
   type ReviewPolicy
 } from '@attalabs/aeg-core'
-import { ownPatchIdAt, ownPatchInterdiff } from '../../../../../../apps/cli/src/lib/patch-id'
+import { ownPatchIdAt, ownPatchInterdiff } from '../../../../../kernel/connectors/git/patch-id'
 import {
   fetchConflictingFiles,
   fetchMergeableState,

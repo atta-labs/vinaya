@@ -28,13 +28,22 @@ import {
   readJsonUnderGit,
   type SelectionNote,
   writeJsonUnderGit
-} from '../../src/lib/pre-push-failed-tests'
+} from '../../../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
 import {
   lookupGreenRun,
   type TestRunCacheRecord
 } from '../../../../harness/processes/vinaya-strict/tools/pr-report/pr-report-engine'
-import { nativeRunCommand, parseNativeRunCommand, REPOSITORY_LOCAL_RUN } from '../../src/lib/pre-push-test-runner'
-import type { InventoryView, NativeGroup, SelectionPlan, TestIdentity } from '../../src/lib/verification/index'
+import {
+  nativeRunCommand,
+  parseNativeRunCommand,
+  REPOSITORY_LOCAL_RUN
+} from '../../../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
+import type {
+  InventoryView,
+  NativeGroup,
+  SelectionPlan,
+  TestIdentity
+} from '../../../../harness/kernel/gates/ring0-hooks/pre-push/verification/index'
 import { stripVinayaEnv } from './process-fixture'
 import { fixtureDir } from './test-temp-fixture'
 

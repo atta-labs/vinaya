@@ -17,7 +17,7 @@ import {
   defaultControlStoreDeps,
   readEffect,
   StaleEpochWriteError
-} from '@attalabs/aeg-core'
+} from '../connectors/checkpoint/control-store/index'
 import {
   createEffectExecutor,
   EffectExecutor,

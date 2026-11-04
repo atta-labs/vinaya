@@ -9,7 +9,9 @@ const state = vi.hoisted(() => ({
 vi.mock('@octokit/graphql', () => ({
   graphql: { defaults: () => async (query: string) => state.respond(query) }
 }))
-vi.mock('./github-token', () => ({ resolveGithubToken: async () => 'token' }))
+vi.mock('../../../harness/kernel/adapters/code-host/github/github-token', () => ({
+  resolveGithubToken: async () => 'token'
+}))
 
 import { fetchForgeFacts, fetchForgeFactsByIssue } from './fetch-forge-facts'
 import { resolveDuplicateTasks } from './list-tasks'

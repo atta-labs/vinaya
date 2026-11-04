@@ -8,7 +8,7 @@ import {
   logQuiet,
   renderNarratedUpdate
 } from '../../../../harness/kernel/adapters/agents/agent-line.js'
-import { createAgentStreamRenderer } from '../../src/lib/agent-stream.js'
+import { createAgentStreamRenderer } from '../../../../harness/kernel/adapters/agents/agent-stream.js'
 import {
   renderClaudeEvent,
   renderCodexEvent

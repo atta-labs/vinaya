@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { TaskResumeResult, TaskToolRef } from '@attalabs/aeg-core'
+import type { TaskResumeResult, TaskToolRef } from '../../../../../kernel/tools/catalog/task-tools'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

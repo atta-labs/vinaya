@@ -21,8 +21,13 @@
  * whole repo.
  */
 
-import { evaluateTestPlanGate, isEntryPoint, type TestPlanGateResult } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../contract'
+import { evaluateTestPlanGate, type TestPlanGateResult } from '@attalabs/aeg-core'
+import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
+import {
+  CHECK_SCHEMA_VERSION,
+  type CheckError,
+  emitCheckError
+} from '../../../../../harness/kernel/gates/checks/contract'
 import { defaultLiveCheckDeps, type LiveCheckDeps, type LiveCheckInputs, resolveLiveCheckInputs } from '../frozen-brief'
 
 const CHECK_NAME = 'test-plan'

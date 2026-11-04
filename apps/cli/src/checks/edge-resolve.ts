@@ -20,7 +20,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { DispatchDependsOnFact } from '@attalabs/aeg-core'
-import { execErrorText } from '../lib/github-rate-limit'
+import { execErrorText } from '../../../../harness/kernel/adapters/code-host/github/github-rate-limit'
 import { deriveTrancheFromForge, fetchForgeFacts, splitSlugQualifiedEdge } from '@attalabs/aeg-forge-state'
 
 export type ResolvedEdge = {

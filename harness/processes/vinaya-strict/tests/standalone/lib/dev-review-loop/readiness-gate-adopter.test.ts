@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { resolveGateStep } from '../../../../../../../apps/cli/src/checks/registry.js'
+import { resolveGateStep } from '../../../../checks/registry.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../../apps/cli/tests/lib/process-fixture'
 import { checkTaskDispatchReadiness } from '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 

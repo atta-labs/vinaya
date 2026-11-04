@@ -68,7 +68,6 @@ describe('router -> COMMANDS coverage', () => {
         'archive',
         'archive tranche',
         'archive tranches',
-        'audit',
         'new check',
         'new noop-check',
         'new role',

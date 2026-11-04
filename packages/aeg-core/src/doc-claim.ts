@@ -44,7 +44,7 @@
  * unverified sentences agree.
  */
 
-import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
+import { maskCode } from '../../../harness/kernel/adapters/code-host/github/strip-code'
 import { checkPremises, type PremiseAssertion } from './premise-check'
 import { isValidCitedFilePath } from './quoted-command'
 

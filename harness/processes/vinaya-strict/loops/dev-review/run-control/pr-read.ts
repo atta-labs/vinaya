@@ -46,7 +46,7 @@ import {
   type TaskToolError,
   taskToolError,
   type TaskToolRef
-} from '@attalabs/aeg-core'
+} from '../../../../../kernel/tools/catalog/task-tools'
 import { markerComments, principalAllowlist } from '../standalone/dev-review-loop/developer-dispatch.js'
 import { sh } from '../standalone/dev-review-loop/gate-reading.js'
 import { resolveRowForRef, type TaskToolCallResult } from './handlers.js'

@@ -45,7 +45,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { resolveRepo } from '@attalabs/aeg-forge-state'
+import { resolveRepo } from '../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import {
   checkBriefSections,
   checkIssueRationale,

@@ -1,3 +1,5 @@
+import { installVinayaCheckRegistry } from '../../../../harness/processes/vinaya-strict/checks/registry'
+installVinayaCheckRegistry()
 /**
  * The execution flip: `vinaya check` executes what the RESOLVER decides, and
  * `--plan` is a preview of that same decision rather than a parallel
@@ -12,7 +14,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { duplicateIdFailures } from '../../src/commands/check'
-import { coreCheckRegistry, runsUnderAll } from '../../src/checks/registry'
+import { coreCheckRegistry } from '../../../../harness/processes/vinaya-strict/checks/registry'
+import { runsUnderAll } from '../../../../harness/kernel/gates/checks/registry'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')

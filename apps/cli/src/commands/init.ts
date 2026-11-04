@@ -9,7 +9,11 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { AGENT_VENDORS, type AgentVendor, isAgentVendor } from '../lib/agent-vendors.js'
+import {
+  AGENT_VENDORS,
+  type AgentVendor,
+  isAgentVendor
+} from '../../../../harness/kernel/adapters/agents/agent-vendors.js'
 import {
   buildInitOps,
   CONFIG_PATH,
@@ -27,8 +31,13 @@ import {
   type RepoInfo,
   resolveHookDir,
   setCoreHooksPath
-} from '../lib/detect.js'
-import { applyInstall, type LabelGateway, planInstall, renderInstallDiff } from '../lib/ops.js'
+} from '../../../../harness/kernel/connectors/git/detect.js'
+import {
+  applyInstall,
+  type LabelGateway,
+  planInstall,
+  renderInstallDiff
+} from '../../../../harness/kernel/gates/ops.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
 import {
   applyConfigProjectEntry,

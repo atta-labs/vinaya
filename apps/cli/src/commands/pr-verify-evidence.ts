@@ -16,7 +16,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { ScanContext, resolveAnchoredRegion } from '../checks/scan-context.js'
+import { ScanContext, resolveAnchoredRegion } from '../../../../harness/kernel/gates/checks/scan-context.js'
 import { buildReport } from './pr-report.js'
 import {
   compareEvidence,

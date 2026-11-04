@@ -14,7 +14,7 @@ import {
   StaleEpochWriteError,
   writeEffect,
   writeEscalation
-} from '@attalabs/aeg-core'
+} from '../../../../../kernel/connectors/checkpoint/control-store/index'
 import type { CallerContext } from '../../../integration/server.js'
 import { createTaskCancelHandler } from '../../../loops/dev-review/run-control/cancel.js'
 import type { CancelInput } from '../../../loops/dev-review/standalone/dev-review-loop.js'

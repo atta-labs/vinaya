@@ -1,6 +1,6 @@
 /**
  * The `task_status` and `task_escalation_read` handlers named in the
- * catalog's own `handlerBinding` (`packages/aeg-core/src/task-tools.ts`).
+ * catalog's own `handlerBinding` (`harness/kernel/tools/catalog/task-tools.ts`).
  * Both validate their input against the catalog's own schema first, then
  * compose two sources: `task-status.ts`'s forge-touching reader (task
  * identity, PR number, frozen-brief presence — "the status reader" O2
@@ -34,7 +34,7 @@ import {
   type TaskStatusResult,
   type TaskToolError,
   type TaskToolRef
-} from '@attalabs/aeg-core'
+} from '../../../../../kernel/tools/catalog/task-tools'
 import { findTrancheSlug, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { runtimeDir } from '../standalone/dev-review-loop.js'
 import {

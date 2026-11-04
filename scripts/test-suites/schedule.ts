@@ -25,7 +25,7 @@
  *
  * Location is decided by owner and runner, never by folder, so a suite moved
  * to another folder keeps its place. Nothing here selects: the CI adapter's
- * selection (`apps/cli/src/lib/ci-test-selection.ts --decision`) decides
+ * selection (`harness/processes/vinaya-strict/integration/ci-test-selection.ts --decision`) decides
  * which tests a pull request needs, and a push to the default branch passes
  * `--full`. A suite this schedule cannot narrow — `@attalabs/aeg-core`, whose
  * tests read the whole repository — runs whole, with its reason stated.
@@ -42,7 +42,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from '
 import { tmpdir } from 'node:os'
 import { join, posix } from 'node:path'
 import { CI_SHARD_COUNT, CI_SHARD_LIST_OWNER, shardFileRelPath } from '../../apps/cli/src/lib/ci-shard-membership.js'
-import type { CiDecision } from '../../apps/cli/src/lib/ci-test-selection.js'
+import type { CiDecision } from '../../harness/processes/vinaya-strict/integration/ci-test-selection.js'
 import {
   DEFAULT_CONFIGURATION,
   type ExecutionFacts,
@@ -52,7 +52,7 @@ import {
   type NativeTestRequest,
   validateExecutedIdentities,
   type WholeSuiteRequest
-} from '../../apps/cli/src/lib/verification/index.js'
+} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
 import { testGroupEndLine, testGroupStartLine } from '../../apps/cli/src/lib/push-progress.js'
 import { type InventoryView, readTestInventory, type TestIdentity } from './inventory-check.js'
 
@@ -496,6 +496,7 @@ export function runnerCommand(group: NativeGroup, report: string): string[] {
       'bun',
       'test',
       ...(typeof timeout === 'number' ? [`--timeout=${timeout}`] : []),
+      ...(group.environment.isolate === true ? ['--isolate'] : []),
       '--reporter=junit',
       `--reporter-outfile=${report}`,
       ...group.args

@@ -25,7 +25,7 @@
  * the driver ends a Claude start whose server was reported failed or skipped.
  */
 
-import { DEV_TOOLS_TOOL_TIMEOUT_SEC as SHARED_DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@attalabs/aeg-types/dev-tools'
+import { DEV_TOOLS_TOOL_TIMEOUT_SEC as SHARED_DEV_TOOLS_TOOL_TIMEOUT_SEC } from './host/dev-tools'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

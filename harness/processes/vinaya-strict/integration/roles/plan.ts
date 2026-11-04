@@ -18,13 +18,13 @@ import { createFileDoctrineSource } from '@attalabs/vinaya-sources'
 import { resolveDoctrineRoot } from '../../../../../apps/cli/src/commands/doctrine'
 import { configPath, loadConfigChecked } from '../../../../../apps/cli/src/lib/config'
 import type { RoleEntry } from '../../../../../apps/cli/src/lib/config'
-import { type RoleContract, validateRoleContract } from '../../../../../apps/cli/src/roles/contract'
+import { type RoleContract, validateRoleContract } from '../../../../kernel/config/loader/roles/contract'
 import {
   type ResolvedRole,
   type RoleConfigInput,
   type RoleResolverFailure,
   resolveRoles
-} from '../../../../../apps/cli/src/roles/resolver'
+} from '../../../../kernel/config/loader/roles/resolver'
 
 export type RolePlan =
   | { available: true; resolved: ResolvedRole[]; failures: RoleResolverFailure[] }

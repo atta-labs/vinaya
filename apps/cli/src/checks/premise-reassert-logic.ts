@@ -17,7 +17,7 @@
  * an unreadable file, a file with zero pins, and one or more failed pins.
  */
 import { checkPremises, parsePremiseBlock } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, type CheckError } from './contract'
+import { CHECK_SCHEMA_VERSION, type CheckError } from '../../../../harness/kernel/gates/checks/contract'
 
 export type PremiseReassertResult = { pass: boolean; errors: CheckError[] }
 

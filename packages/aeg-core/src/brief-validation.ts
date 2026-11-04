@@ -12,7 +12,7 @@
  * `brief-authoring` skill and `brief-developer` contract define.
  */
 
-import { type AnchorField, anchoredRegion, stripCode } from './anchored-region'
+import { type AnchorField, anchoredRegion, stripCode } from '../../../harness/kernel/gates/checks/anchored-region'
 import { type Objective, objectivesVersion, objectivesOf } from './objectives'
 import { parsePremiseBlock, premiseBlockText } from './premise-check'
 import { locateTestPlanSection } from './test-plan-section'

@@ -15,6 +15,7 @@ import {
   AGENT_VENDOR_NAMES,
   dispatchRole,
   installVinayaLogSinkFactory,
+  installVinayaCheckRegistry,
   isAgentVendor,
   type AgentVendor
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
@@ -22,7 +23,7 @@ import { loadConfig } from '../lib/config.js'
 import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 
 // The process's Log sink factory, for the entry point to install before any command runs.
-export { installVinayaLogSinkFactory }
+export { installVinayaLogSinkFactory, installVinayaCheckRegistry }
 
 type ParsedArgs = {
   role: string | undefined

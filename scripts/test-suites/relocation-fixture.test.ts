@@ -16,8 +16,14 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, posix } from 'node:path'
-import { discoveredLayout, isSelectablePath } from '../../apps/cli/src/lib/ci-test-selection.ts'
-import { discoverWorkspaceDirs, selectAffectedTestFiles } from '../../apps/cli/src/lib/test-selector.ts'
+import {
+  discoveredLayout,
+  isSelectablePath
+} from '../../harness/processes/vinaya-strict/integration/ci-test-selection.ts'
+import {
+  discoverWorkspaceDirs,
+  selectAffectedTestFiles
+} from '../../harness/processes/vinaya-strict/integration/repository-verification.ts'
 import {
   buildInventoryView,
   changedInputReaders,

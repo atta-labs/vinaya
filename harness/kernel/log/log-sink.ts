@@ -28,7 +28,7 @@ import {
 import { hostname as osHostname, homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { resolveRepo as resolveRepoDefault } from '@attalabs/aeg-forge-state'
+import { resolveRepo as resolveRepoDefault } from '../adapters/code-host/github/resolve-repo'
 import { buildHeader, type HeaderInput } from './envelope'
 import { type Host, type LogEvent, LogEventSchema, type Provenance } from './schema'
 import { type OverflowDiagnostic, recordIdentity } from './store'

@@ -22,7 +22,7 @@
 
 import { DOC_OWNERS_PATH, LABELS, type LabelKey, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { resolveDoctrineRoot } from '../../../../apps/cli/src/commands/doctrine.js'
-import type { AgentVendor } from '../../../../apps/cli/src/lib/agent-vendors.js'
+import type { AgentVendor } from '../../../kernel/adapters/agents/agent-vendors.js'
 import { buildAgentsSkillsOps, discoverRoleNames } from './agents-skills-emitter.js'
 import { claudeMcpJsonFile } from './adapters.js'
 import {
@@ -30,24 +30,24 @@ import {
   CHECKS_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   REVIEW_WORKFLOW_PATH
-} from '../../../../apps/cli/src/lib/managed-workflow-paths.js'
+} from '../../../kernel/gates/ring1-ci/workflows/managed-workflow-paths.js'
 import { buildClaudeCommandOps } from './claude-command-emitter.js'
 import { buildClaudeStopHookOps } from './claude-stop-hook-emitter.js'
 import type { VinayaConfig } from '../../../../apps/cli/src/lib/config.js'
 import { buildGeminiCommandOp } from './gemini-command-emitter.js'
-import { type HookDir, TRACKED_HOOK_DIR } from '../../../../apps/cli/src/lib/init-hook-paths.js'
-import type { CreateLabelOp, Op } from '../../../../apps/cli/src/lib/ops.js'
+import { type HookDir, TRACKED_HOOK_DIR } from '../../../kernel/gates/ring0-hooks/init-hook-paths.js'
+import type { CreateLabelOp, Op } from '../../../kernel/gates/ops.js'
 import { ownVersion } from '../../../../apps/cli/src/lib/own-version.js'
 import { REVIEW_GATE_WORKFLOW_NAME } from '../../../../apps/cli/src/lib/review-gate-check-name.js'
 import {
   ADOPTER_TEST_RUNNER,
   NO_LOCAL_TESTS_MARKER,
   REPOSITORY_LOCAL_RUN
-} from '../../../../apps/cli/src/lib/pre-push-test-runner.js'
+} from '../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
 import { READY_TESTS_DEFERRED_LINE } from '../../../../apps/cli/src/lib/pre-push-ready-policy.js'
 import type { VendoredVinaya } from '../../../../apps/cli/src/lib/self-host.js'
 
-export { type HookDir, TRACKED_HOOK_DIR } from '../../../../apps/cli/src/lib/init-hook-paths.js'
+export { type HookDir, TRACKED_HOOK_DIR } from '../../../kernel/gates/ring0-hooks/init-hook-paths.js'
 
 export type InitContext = {
   owner: string
@@ -1410,7 +1410,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=dead-branches
         continue-on-error: true # never-red — this job is a notification channel, not a gate
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-        run: ${vinayaRun(selfHost, 'audit --only=dead-branches')}
+        run: ${libBinInvocation(selfHost, 'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts', 'vinaya-audit') + ' --only=dead-branches'}
       - name: Archive every finished tranche not yet archived
         # The catch-up the two event-driven triggers cannot make: a tranche that
         # finished before this workflow existed, or whose closing event was
@@ -1444,7 +1444,7 @@ ${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
 ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=direct-push
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-        run: ${vinayaRun(selfHost, 'audit --only=direct-push')} --sha=\${{ github.sha }}
+        run: ${libBinInvocation(selfHost, 'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts', 'vinaya-audit') + ' --only=direct-push'} --sha=\${{ github.sha }}
 ${graphqlBudgetStep('end')}${budgetMarkerStep()}`
 }
 
@@ -1561,9 +1561,9 @@ bunx turbo typecheck --affected || exit 1
 ${doctrineGate}`
 }
 
-/** `bun <dir>/src/lib/<file>.ts` self-hosted, `npx --yes -p @attalabs/vinaya@<version> <bin>` for an adopter's real install — the same two-shape split `hookRun` already draws, for a script that isn't routed through the CLI's own argv dispatch at all. */
+/** `bun <repository-relative source>` self-hosted, `npx --yes -p @attalabs/vinaya@<version> <bin>` for an adopter's real install — the same two-shape split `hookRun` already draws, for a script that isn't routed through the CLI's own argv dispatch at all. */
 function libBinInvocation(selfHost: VendoredVinaya | null, file: string, bin: string): string {
-  if (selfHost) return `bun ${selfHost.dir}/src/lib/${file}`
+  if (selfHost) return `bun ${file}`
   return `npx --yes -p @attalabs/vinaya@${ownVersion()} ${bin}`
 }
 
@@ -1638,7 +1638,7 @@ ${adopterReadyTests()}`
   //    processes) cannot recur when there is only ever one. The full,
   //    unscoped affected suite stays CI's job, on the one push, exactly as
   //    before.
-  const progress = libBinInvocation(selfHost, 'pre-push-progress-dir.ts', 'vinaya-push-progress')
+  const progress = libBinInvocation(selfHost, 'apps/cli/src/lib/pre-push-progress-dir.ts', 'vinaya-push-progress')
   return `# Live progress for a version-2 driver behind this push: "on" only when the
 # helper resolves the run's reserved progress directory itself (a live
 # driver's mark, no symlinked component). It prints nothing else and every
@@ -1650,7 +1650,7 @@ VINAYA_PROGRESS="$(${progress} dir 2>/dev/null)" || VINAYA_PROGRESS=""
 # else that follows costs real time. The trailing "--" stops flag parsing
 # before the file list, so a tracked file named like a Biome option is
 # passed through as a literal path, never interpreted as one.
-VINAYA_CHANGED_FILES="$(${libBinInvocation(selfHost, 'pre-push-changed-files.ts', 'vinaya-changed-files')})"
+VINAYA_CHANGED_FILES="$(${libBinInvocation(selfHost, 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-changed-files.ts', 'vinaya-changed-files')})"
 if [ -n "$VINAYA_CHANGED_FILES" ]; then
   VINAYA_STEP_STARTED=$(date +%s)
   if echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched --; then VINAYA_STEP=pass; else VINAYA_STEP=fail; fi
@@ -1661,7 +1661,7 @@ fi
 # cheap checks only, no typecheck, no tests; refused when one is open), ready
 # (after both reviewers approved — the selected tests, measured against the
 # default branch) or default (every other push, unchanged).
-VINAYA_PUSH_MODE="$(${libBinInvocation(selfHost, 'pre-push-mode.ts', 'vinaya-push-mode')})" || exit 1
+VINAYA_PUSH_MODE="$(${libBinInvocation(selfHost, 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode.ts', 'vinaya-push-mode')})" || exit 1
 export VINAYA_PUSH_MODE
 ${doctrineGate}
 if [ "$VINAYA_PUSH_MODE" = "storage" ]; then
@@ -1679,7 +1679,7 @@ if bunx turbo typecheck --affected; then VINAYA_STEP=pass; else VINAYA_STEP=fail
 # when the default branch opts in (prePush.readyTests) and the run's live
 # driver marked this push. Every check above has already run; the selector,
 # the test run and the test cache below do not. Anything else is "local".
-VINAYA_READY_TESTS="$(${libBinInvocation(selfHost, 'pre-push-ready-policy.ts', 'vinaya-ready-policy')})" || exit 1
+VINAYA_READY_TESTS="$(${libBinInvocation(selfHost, 'apps/cli/src/lib/pre-push-ready-policy.ts', 'vinaya-ready-policy')})" || exit 1
 if [ "$VINAYA_READY_TESTS" = "deferred" ]; then
   echo "${READY_TESTS_DEFERRED_LINE} — local checks passed; the selected tests run in the required CI check on this head"
   exit 0
@@ -1717,7 +1717,7 @@ if [ -f ${REPOSITORY_LOCAL_RUN} ]; then
   rm -f "$VINAYA_TEST_LOG"
   exit "$VINAYA_TEST_STATUS"
 fi
-VINAYA_SELECTED_TESTS="$(${libBinInvocation(selfHost, 'pre-push-select-tests.ts', 'vinaya-select-tests')})"
+VINAYA_SELECTED_TESTS="$(${libBinInvocation(selfHost, 'harness/processes/vinaya-strict/integration/pre-push-select-tests.ts', 'vinaya-select-tests')})"
 if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # A git hook's own invoking git sets GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE
   # for THIS repo — correct for every step above, which all operate on this
@@ -1787,7 +1787,7 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
     ${progress} follow "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 &
     VINAYA_PROGRESS_COPIER=$!
   fi
-  echo "$VINAYA_SELECTED_TESTS" | xargs ${libBinInvocation(selfHost, 'pre-push-record-tests.ts', 'vinaya-record-tests')} run > "$VINAYA_TEST_LOG" 2>&1
+  echo "$VINAYA_SELECTED_TESTS" | xargs ${libBinInvocation(selfHost, 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts', 'vinaya-record-tests')} run > "$VINAYA_TEST_LOG" 2>&1
   VINAYA_TEST_STATUS=$?
   if [ -n "$VINAYA_PROGRESS_COPIER" ]; then
     # Stop the copier, then drain the copy to the capture's end (bounded)
@@ -1804,7 +1804,7 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
     # the next push runs those plus what the fix affects, not the whole
     # selection again. Best-effort, and STDERR only — the refusal summary
     # below stays the tail of this hook's own output.
-    ${libBinInvocation(selfHost, 'pre-push-record-tests.ts', 'vinaya-record-tests')} failed "$VINAYA_TEST_LOG" "$VINAYA_TEST_ELAPSED" 1>&2 || true
+    ${libBinInvocation(selfHost, 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts', 'vinaya-record-tests')} failed "$VINAYA_TEST_LOG" "$VINAYA_TEST_ELAPSED" 1>&2 || true
     echo ""
     echo "vinaya pre-push: refused — selected \${VINAYA_SELECTED_COUNT} file(s), \${VINAYA_TEST_ELAPSED}s — failing tests:"
     # \`<path>.test.<ext>:\` is this repo's own per-file header (\`isTestFile\`'s
@@ -1823,13 +1823,13 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # test run itself already succeeded) so a "pr report" evidence build for
   # the same head/tree naming the identical command reuses it rather than
   # running it again.
-  ${libBinInvocation(selfHost, 'pre-push-cache-test-run.ts', 'vinaya-cache-test-run')} "$VINAYA_TEST_CMD" "$VINAYA_TEST_LOG" || true
-  ${libBinInvocation(selfHost, 'pre-push-record-tests.ts', 'vinaya-record-tests')} passed "$VINAYA_TEST_LOG" "$VINAYA_TEST_ELAPSED" 1>&2 || true
+  ${libBinInvocation(selfHost, 'apps/cli/src/lib/pre-push-cache-test-run.ts', 'vinaya-cache-test-run')} "$VINAYA_TEST_CMD" "$VINAYA_TEST_LOG" || true
+  ${libBinInvocation(selfHost, 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts', 'vinaya-record-tests')} passed "$VINAYA_TEST_LOG" "$VINAYA_TEST_ELAPSED" 1>&2 || true
   rm -f "$VINAYA_TEST_LOG"
   echo "vinaya pre-push: selected \${VINAYA_SELECTED_COUNT} file(s), \${VINAYA_TEST_ELAPSED}s — all green"
 else
   # Nothing selected is a green run too: it clears a stale failed-tests record.
-  ${libBinInvocation(selfHost, 'pre-push-record-tests.ts', 'vinaya-record-tests')} passed "" 0 1>&2 || true
+  ${libBinInvocation(selfHost, 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts', 'vinaya-record-tests')} passed "" 0 1>&2 || true
 fi`
 }
 

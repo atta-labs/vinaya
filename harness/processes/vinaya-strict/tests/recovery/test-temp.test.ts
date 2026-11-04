@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { StopOptions, StopReport } from '../../../../../apps/cli/src/lib/process-registry'
+import type { StopOptions, StopReport } from '../../../../kernel/conformance/unit/process-registry'
 import {
   claimTestTempRun,
   createTestTempRun,
@@ -12,7 +12,7 @@ import {
   readOwnerMarker,
   sweepAbandoned,
   writeOwnerMarker
-} from '../../../../../apps/cli/src/lib/test-temp'
+} from '../../../../kernel/conformance/unit/test-temp'
 import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
 import { ALL_RUNNERS } from './runners'
 

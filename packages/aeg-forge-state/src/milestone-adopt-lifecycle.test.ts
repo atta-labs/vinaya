@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createGhMock } from './test-support/mock-gh'
 
-vi.mock('./gh', () => createGhMock())
+vi.mock('../../../harness/kernel/adapters/code-host/github/gh', () => createGhMock())
 
-const { ghApiGet, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } = await import('./gh')
+const { ghApiGet, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } = await import(
+  '../../../harness/kernel/adapters/code-host/github/gh'
+)
 const { findMilestoneForSlug, indexTrancheMilestonesAsync, listActiveTrancheSlugs, listArchivedTrancheSlugs } =
   await import('./fetch-milestone')
 

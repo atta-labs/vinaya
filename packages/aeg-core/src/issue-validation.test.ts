@@ -1720,7 +1720,7 @@ describe('checkObjectivesRespectBoundary', () => {
       '',
       '## Objectives',
       '',
-      'O1. `apps/cli/src/checks/registry.ts` gains a new check the write gate runs.',
+      'O1. `harness/processes/vinaya-strict/checks/registry.ts` gains a new check the write gate runs.',
       '',
       '## Surface',
       '',

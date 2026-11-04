@@ -15,7 +15,7 @@ import {
   sweepOwnedDirs,
   TEST_TEMP_ROOT_ENV,
   testTempRoot
-} from '../../src/lib/test-temp'
+} from '../../../../harness/kernel/conformance/unit/test-temp'
 import { fixtureDir } from './test-temp-fixture'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 

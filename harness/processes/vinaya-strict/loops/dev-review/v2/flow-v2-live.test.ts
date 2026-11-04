@@ -4,7 +4,11 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server'
-import { gitPath, LAST_PUSH_RESULT, SELECTION_NOTE } from '../../../../../../apps/cli/src/lib/pre-push-failed-tests'
+import {
+  gitPath,
+  LAST_PUSH_RESULT,
+  SELECTION_NOTE
+} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
 import { PROGRESS_MARKER } from '../../../../../../apps/cli/src/lib/push-progress'
 import {
   DEFERRAL_MARKER_TTL_MS,
@@ -670,10 +674,11 @@ describe('the ready push deferring its selected tests to required CI', () => {
       '..',
       '..',
       '..',
-      'apps',
-      'cli',
-      'src',
-      'lib',
+      'harness',
+      'kernel',
+      'gates',
+      'ring0-hooks',
+      'pre-push',
       'pre-push-record-tests.ts'
     )
     const selected = join(dir, 'nested.test.ts')

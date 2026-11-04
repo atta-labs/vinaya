@@ -29,7 +29,7 @@ export type {
   SlugMilestoneIndex,
   TrancheMilestoneIndex
 } from './fetch-milestone'
-export type { GhIssue } from './gh'
+
 export { fetchProvenance } from './fetch-provenance'
 export { buildBranchName, fetchForgeFacts, fetchForgeFactsByIssue, fetchForgeTasksByLabel } from './fetch-forge-facts'
 export { defaultPriorTrancheArchivalDeps, resolvePriorTrancheArchival } from './prior-tranche-archival'
@@ -50,7 +50,7 @@ export {
 } from './labels'
 export type { Label, LabelCategory, LabelForm, LabelKey } from './labels'
 export { AEG_BLOCKED_LABEL, mapForgeFacts } from './map-forge-facts'
-export { resolveGithubToken } from './github-token'
+
 export { issueMilestonesFromIssues, listIssueMilestonesForSlug } from './list-issue-milestones'
 export type { IssueMilestoneFact } from './list-issue-milestones'
 export {
@@ -71,8 +71,7 @@ export type { DuplicateOpenTask, ProjectField } from './list-tasks'
 // `maskCode` and `hasUnterminatedFence` are NOT: they are reachable through the
 // `./strip-code` subpath for the two callers that need them, so moving the
 // grammar down a layer does not widen this published package's front door.
-export { stripCode } from './strip-code'
-export type { StripCodeOptions } from './strip-code'
+
 export {
   AmbiguousBareEdgeError,
   findLetteredEdgeIds,
@@ -82,5 +81,3 @@ export {
   splitSlugQualifiedEdge
 } from './parse-rationale-deps'
 export type { ParsedRationaleDeps, SlugQualifiedEdge } from './parse-rationale-deps'
-export { resolveRepo } from './resolve-repo'
-export type { RepoRef } from './resolve-repo'

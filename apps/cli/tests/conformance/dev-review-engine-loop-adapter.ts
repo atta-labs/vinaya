@@ -12,13 +12,11 @@ import {
 import { createHash } from 'node:crypto'
 import { hostname, tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
+import { buildReviewInputManifest, DEFAULT_REVIEW_POLICY, objectivesVersion } from '@attalabs/aeg-core'
 import {
-  buildReviewInputManifest,
   type ControlStoreDeps,
-  DEFAULT_REVIEW_POLICY,
-  defaultControlStoreDeps,
-  objectivesVersion
-} from '@attalabs/aeg-core'
+  defaultControlStoreDeps
+} from '../../../../harness/kernel/connectors/checkpoint/control-store/index'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process.js'
 import { setEngineLogIdentity } from '../../../../harness/processes/vinaya-strict/bin/engine-log-identity.js'

@@ -1,12 +1,16 @@
 import { execFileSync } from 'node:child_process'
 import { resolve as resolvePath } from 'node:path'
-import { formatBreakdown, formatTokensLine, hardenedMeteringDeps, resolveMeteringCapability } from '@attalabs/aeg-core'
+import { formatBreakdown, formatTokensLine } from '@attalabs/aeg-core'
+import { hardenedMeteringDeps } from '../../../../harness/kernel/adapters/agents/claude-code/metering-io-guard'
+import { resolveMeteringCapability } from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import type {
   MeteringCapabilityDeps,
-  MeteringIncapableReason,
+  MeteringIncapableReason
+} from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import type {
   TranscriptSummary,
   UsageComponents
-} from '@attalabs/aeg-core'
+} from '../../../../harness/kernel/adapters/agents/claude-code/transcript-summary'
 import {
   getTokensCollectTrust,
   gitBlobHash,

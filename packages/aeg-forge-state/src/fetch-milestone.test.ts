@@ -3,10 +3,10 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createGhMock } from './test-support/mock-gh'
 
-vi.mock('./gh', () => createGhMock())
+vi.mock('../../../harness/kernel/adapters/code-host/github/gh', () => createGhMock())
 
 const { ghApiGet, ghApiGetAsync, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } = await import(
-  './gh'
+  '../../../harness/kernel/adapters/code-host/github/gh'
 )
 const {
   findMilestoneForSlug,

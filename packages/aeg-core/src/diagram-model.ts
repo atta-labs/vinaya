@@ -17,7 +17,7 @@
 import matter from 'gray-matter'
 import { ACTIONS, CROSSING_KEYWORDS } from './actions'
 import type { DoctrineContent } from './doctrine-source'
-import { findHeadingLine, findTable } from './markdown-table'
+import { findHeadingLine, findTable } from '../../../harness/kernel/gates/checks/markdown-table'
 import { parseEnforcementRegistry } from './registry-parse'
 import type { Tranche } from './types'
 

@@ -58,12 +58,14 @@ import { dirname } from 'node:path'
 import {
   type ControlStoreDeps,
   defaultControlStoreDeps,
-  readResolution,
+  readResolution
+} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+import {
   TaskResumeInputSchema,
   taskToolError,
   type TaskResumeResult,
   type TaskToolRef
-} from '@attalabs/aeg-core'
+} from '../../../../../kernel/tools/catalog/task-tools'
 import type { OperationResult } from '../../../../../kernel/log/schema'
 import { type LaunchResult, launchDetached, waitForLiveDriver } from './detached-launch.js'
 import { type AgentVendor, isAgentVendor } from '../dispatch/dispatch.js'

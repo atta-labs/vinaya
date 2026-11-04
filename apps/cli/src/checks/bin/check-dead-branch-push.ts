@@ -16,8 +16,11 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkDeadBranchPush, type PrStateFact } from '@attalabs/aeg-core'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import {
+  checkDeadBranchPush,
+  type PrStateFact
+} from '../../../../../harness/kernel/gates/ring0-hooks/pre-push/dead-branch-push-guard'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'dead-branch-push'
 

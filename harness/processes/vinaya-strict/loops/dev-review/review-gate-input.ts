@@ -38,7 +38,6 @@ import { execFileSync } from 'node:child_process'
 import {
   briefHash,
   checkReviewGate,
-  extractIssue,
   extractPauseBoundRuling,
   isIssueNotFoundError,
   isPrincipal,
@@ -59,6 +58,7 @@ import {
   type ReviewGateFact,
   type ReviewGateInput
 } from '@attalabs/aeg-core'
+import { extractIssue } from '../../../../kernel/adapters/code-host/github/extract-issue'
 import {
   loadTrustAnchorConfig,
   PRINCIPALS_FIX,
@@ -72,8 +72,8 @@ import {
   snapshotComments,
   snapshotIssue,
   snapshotPullRequest
-} from '../../../../../apps/cli/src/lib/forge-snapshot.js'
-import { fetchFromOrigin, ownPatchIdAt } from '../../../../../apps/cli/src/lib/patch-id.js'
+} from '../../../../kernel/adapters/code-host/github/forge-snapshot.js'
+import { fetchFromOrigin, ownPatchIdAt } from '../../../../kernel/connectors/git/patch-id.js'
 
 export type PrView = {
   number: number

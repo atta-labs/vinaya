@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { checkG7, parseEnforcementRegistry, reachesProducer } from '@attalabs/aeg-core'
-import { findCrossingFiles, globCandidateFiles } from '../../src/lib/github-crossing-files.js'
+import { findCrossingFiles, globCandidateFiles } from '../../../../harness/kernel/gates/checks/github-crossing-files.js'
 import { blockingGateFiles, G7_EXEMPTIONS, gatherLogProducerGraph } from '../../src/lib/log-producer-graph.js'
 import { buildInitOps } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { HOOK_DIRS, initHookPaths } from '../../src/lib/init-hook-paths.js'
+import { HOOK_DIRS, initHookPaths } from '../../../../harness/kernel/gates/ring0-hooks/init-hook-paths.js'
 
 // Task `vinaya-adopter-portability-v1` 2 (Issue #232): before this fix, an
 // absent `aeg-root/enforcement.md` made `check-registry-gates.ts` exit 0 with

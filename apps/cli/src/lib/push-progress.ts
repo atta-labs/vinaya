@@ -41,8 +41,13 @@ import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { packageRoot } from './package-root.js'
-import { gitPath } from './pre-push-failed-tests.js'
-import { identityOf, type ProcessIdentity, registerProcess, stopRegistered } from './process-registry.js'
+import { gitPath } from '../../../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests.js'
+import {
+  identityOf,
+  type ProcessIdentity,
+  registerProcess,
+  stopRegistered
+} from '../../../../harness/kernel/conformance/unit/process-registry.js'
 import { runtimeDirForThisRepo } from '../../../../harness/kernel/run-paths.js'
 
 /** The reserved progress directory's name under the task's run directory. */

@@ -1092,7 +1092,7 @@
       "module": "6.3",
       "additionalModules": ["6.4", "6.8", "6.21", "6.22", "6.25"],
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-capability-matrix.md",
+        "document": "harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md",
         "revision": 17,
         "section": "One core contract for every adapter"
       },
@@ -1132,7 +1132,7 @@
       "module": "6.3",
       "additionalModules": ["6.4", "6.8", "6.21", "6.22", "6.25"],
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-capability-matrix.md",
+        "document": "harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md",
         "revision": 17,
         "section": "One core contract for every adapter"
       },

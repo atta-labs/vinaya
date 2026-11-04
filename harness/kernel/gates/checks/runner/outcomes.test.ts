@@ -1,0 +1,210 @@
+import { describe, expect, it } from 'bun:test'
+import { join } from 'node:path'
+import type { LogEventInput } from '../../../log/log-sink'
+import type { CheckSpec } from '../contract'
+import { runChecks } from '../runner'
+
+const FIXTURES = join(import.meta.dir, '../../../../../apps/cli/tests/fixtures/checks')
+const PASSING = join(FIXTURES, 'passing-check.ts')
+const FAILING = join(FIXTURES, 'failing-check.ts')
+const PENDING = join(FIXTURES, 'pending-check.ts')
+const MALFORMED = join(FIXTURES, 'malformed-check.ts')
+const SLEEPER = join(FIXTURES, 'sleeper.ts')
+
+function fullScope(overrides: Partial<CheckSpec> & Pick<CheckSpec, 'name' | 'run'>): CheckSpec {
+  return { scope: 'full', ...overrides }
+}
+
+/** `events` holds the per-check `checked` observations (a check that did not pass); `summaries` the run's one `summary`. */
+function capture(): {
+  events: LogEventInput[]
+  summaries: LogEventInput[]
+  log: (e: LogEventInput) => void
+} {
+  const events: LogEventInput[] = []
+  const summaries: LogEventInput[] = []
+  return {
+    events,
+    summaries,
+    log: (e) => (e.kind === 'gate' && e.event === 'summary' ? summaries : events).push(e)
+  }
+}
+
+const BASE_OPTS = { parallel: 1, diffOnly: false, changedFiles: null, defaultTimeoutMs: 5000 }
+
+/**
+ * One `gate` `checked` observation per terminal outcome the runner can reach
+ * for a check that did not pass (a pass and a skip record none — the run's
+ * `summary` counts them), each carrying `check_version`,
+ * `policy_version`, `input_fingerprint`, `outcome`, `duration_ms` and a
+ * structured `reason` (never a check's own free-text `CheckError.message`,
+ * which the fixture bodies below deliberately vary to prove that).
+ */
+describe('runChecks — gate observations, one per terminal outcome', () => {
+  it('pass — records no event of its own, only the run summary', async () => {
+    const { events, summaries, log } = capture()
+    const [outcome] = await runChecks([fullScope({ name: 'passing', run: PASSING })], { ...BASE_OPTS, log })
+    expect(outcome?.status).toBe('pass')
+    expect(events).toHaveLength(0)
+    expect(summaries).toHaveLength(1)
+  })
+
+  it('fail — rejected, structured reason names only the error count, never the message', async () => {
+    const { events, log } = capture()
+    const [outcome] = await runChecks([fullScope({ name: 'failing', run: FAILING })], { ...BASE_OPTS, log })
+    expect(outcome?.status).toBe('fail')
+    expect(events).toHaveLength(1)
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
+    expect(e.outcome).toBe('fail')
+    expect(e.reason).toBe('errors:1')
+    expect(e.reason).not.toContain('fixture finding')
+  })
+
+  it('wait — every reported error is pending:true, never rendered as a rejection', async () => {
+    const { events, log } = capture()
+    const [outcome] = await runChecks([fullScope({ name: 'pending', run: PENDING })], { ...BASE_OPTS, log })
+    expect(outcome?.status).toBe('fail')
+    expect(outcome?.errors[0]?.pending).toBe(true)
+    expect(events).toHaveLength(1)
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
+    expect(e.outcome).toBe('wait')
+    expect(e.reason).toBe('pending_principal_action')
+  })
+
+  it('skip — a diff-scoped check with no matching include glob records no event, only a skipped count', async () => {
+    const { events, summaries, log } = capture()
+    const spec = fullScope({ name: 'scoped', run: PASSING, scope: 'diff', include: ['apps/other/**'] })
+    const [outcome] = await runChecks([spec], {
+      ...BASE_OPTS,
+      diffOnly: true,
+      changedFiles: ['apps/vinaya/cli/src/index.ts'],
+      log
+    })
+    expect(outcome?.status).toBe('skipped')
+    expect(events).toHaveLength(0)
+    expect(summaries[0]).toMatchObject({ ran: 0, skipped: 1, failed_checks: [] })
+  })
+
+  it('skip — requiresOpenPr under localOnly records no event, and the outcome names its own reason', async () => {
+    const { events, summaries, log } = capture()
+    const spec = fullScope({ name: 'pr-only', run: PASSING, requiresOpenPr: true })
+    const [outcome] = await runChecks([spec], { ...BASE_OPTS, localOnly: true, log })
+    expect(events).toHaveLength(0)
+    expect(summaries[0]).toMatchObject({ skipped: 1 })
+    expect(outcome?.skipReason).toBe('requires-open-pr, local-only')
+  })
+
+  it('skip — skipFull records no event, and the outcome names its own reason', async () => {
+    const { events, summaries, log } = capture()
+    const spec = fullScope({ name: 'full-one', run: PASSING, scope: 'full' })
+    const [outcome] = await runChecks([spec], { ...BASE_OPTS, skipFull: true, log })
+    expect(events).toHaveLength(0)
+    expect(summaries[0]).toMatchObject({ skipped: 1 })
+    expect(outcome?.skipReason).toBe('full-scope, pre-commit')
+  })
+
+  it('timeout', async () => {
+    const { events, log } = capture()
+    const [outcome] = await runChecks([fullScope({ name: 'slow', run: SLEEPER, args: ['10000'], timeoutMs: 300 })], {
+      ...BASE_OPTS,
+      log
+    })
+    expect(outcome?.status).toBe('timeout')
+    expect(events).toHaveLength(1)
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
+    expect(e.outcome).toBe('timeout')
+    expect(e.reason).toBe('timeout_ms:300')
+  })
+
+  it('invalid_input — malformed check output, never the raw stderr content', async () => {
+    const { events, log } = capture()
+    const [outcome] = await runChecks([fullScope({ name: 'malformed', run: MALFORMED })], { ...BASE_OPTS, log })
+    expect(outcome?.status).toBe('error')
+    expect(events).toHaveLength(1)
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
+    expect(e.outcome).toBe('invalid_input')
+    expect(e.reason).toBe('malformed_output')
+  })
+
+  it('unavailable_dependency — missing executable', async () => {
+    const { events, log } = capture()
+    const [outcome] = await runChecks([fullScope({ name: 'missing-bin', run: join(FIXTURES, 'no-such-executable') })], {
+      ...BASE_OPTS,
+      log
+    })
+    expect(outcome?.status).toBe('error')
+    expect(events).toHaveLength(1)
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
+    expect(e.outcome).toBe('unavailable_dependency')
+    expect(e.reason).toBe('spawn_failed:ENOENT')
+  })
+
+  it('unavailable_dependency — missing required env, names only the key, never a value', async () => {
+    const { events, log } = capture()
+    const spec = fullScope({ name: 'needs-token', run: PASSING, env: { SECRET_TOKEN: true } })
+    const [outcome] = await runChecks([spec], {
+      ...BASE_OPTS,
+      callerEnv: { PATH: process.env.PATH as string },
+      log
+    })
+    expect(outcome?.status).toBe('error')
+    expect(events).toHaveLength(1)
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
+    expect(e.outcome).toBe('unavailable_dependency')
+    expect(e.reason).toBe('missing_env:SECRET_TOKEN')
+  })
+
+  it('the input fingerprint never carries a forwarded secret value in the clear', async () => {
+    const { events, log } = capture()
+    // A failing check, because a passing one records no event to read the fingerprint from.
+    const spec = fullScope({ name: 'with-secret', run: FAILING, env: { SECRET_TOKEN: true } })
+    await runChecks([spec], {
+      ...BASE_OPTS,
+      callerEnv: { PATH: process.env.PATH as string, SECRET_TOKEN: 'sk-super-secret-value' },
+      log
+    })
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
+    expect(e.input_fingerprint).not.toContain('sk-super-secret-value')
+    // sha256 hex digest — fixed shape, not the JSON it was built from.
+    expect(e.input_fingerprint as string).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
+/**
+ * The push's live progress: a completion observer told about every finished check, pass and skip included, that
+ * changes nothing about the run — the same outcomes in the same order, and the same exit, with it on, off, or throwing.
+ */
+describe('runChecks — the completion observer', () => {
+  const specs = (): CheckSpec[] => [
+    fullScope({ name: 'passing', run: PASSING }),
+    fullScope({ name: 'pr-only', run: PASSING, requiresOpenPr: true }),
+    fullScope({ name: 'failing', run: FAILING }),
+    fullScope({ name: 'malformed', run: MALFORMED })
+  ]
+  const shape = (outcomes: { name: string; status: string; exitCode: number | null; errors: unknown[] }[]) =>
+    outcomes.map((o) => ({ name: o.name, status: o.status, exitCode: o.exitCode, errors: o.errors.length }))
+  const failed = (outcomes: { status: string }[]) => outcomes.some((o) => o.status !== 'pass' && o.status !== 'skipped')
+
+  it('fires for pass, skip, fail and error, and outcomes, order and exit are identical on, off and throwing', async () => {
+    const { log } = capture()
+    const opts = { ...BASE_OPTS, parallel: 2, localOnly: true, log }
+    const off = await runChecks(specs(), opts)
+    const seen: string[] = []
+    const on = await runChecks(specs(), {
+      ...opts,
+      onCheckComplete: (outcome) => seen.push(`${outcome.name}:${outcome.status}`)
+    })
+    const throwing = await runChecks(specs(), {
+      ...opts,
+      onCheckComplete: () => {
+        throw new Error('the progress sink is broken')
+      }
+    })
+    expect([...seen].sort()).toEqual(['failing:fail', 'malformed:error', 'passing:pass', 'pr-only:skipped'])
+    expect(shape(on)).toEqual(shape(off))
+    expect(shape(throwing)).toEqual(shape(off))
+    expect(shape(off).map((o) => o.name)).toEqual(['passing', 'pr-only', 'failing', 'malformed'])
+    expect(failed(on)).toBe(failed(off))
+    expect(failed(throwing)).toBe(failed(off))
+  })
+})

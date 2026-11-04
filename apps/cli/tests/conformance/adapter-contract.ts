@@ -28,7 +28,7 @@ import {
   vendorSessionArgs
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import { developerTurnResultJsonSchema } from '../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result.js'
-import { agentControlsRefusal } from '../../src/lib/enforcement-controls.js'
+import { agentControlsRefusal } from '../../../../harness/kernel/gates/enforcement-controls.js'
 import {
   classifyReviewOutcome,
   type ReviewBinding,
@@ -129,7 +129,7 @@ export type LiveBinding = {
 
 /**
  * A difference between the adapters in how they meet a case, declared in the
- * capability matrix (`apps/cli/specs/dev-review-engine-capability-matrix.md`,
+ * capability matrix (`harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md`,
  * "Declared differences in the adapter conformance suite"). `supported: false`
  * marks a difference the adapter does not cover — a named gap the case still
  * runs against.

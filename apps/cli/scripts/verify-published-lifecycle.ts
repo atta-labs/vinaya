@@ -64,12 +64,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { TASK_TOOL_NAMES, trancheLabel } from '@attalabs/aeg-core'
+import { TASK_TOOL_NAMES } from '../../../harness/kernel/tools/catalog/task-tools'
+import { trancheLabel } from '@attalabs/aeg-core'
 import { COMMANDS } from '@attalabs/vinaya-sources'
 // Current source's registry, read to derive the expectation the published
 // artifact is measured against — the same "derive, never hand-maintain"
 // discipline this script already applies to the command coverage set.
-import { coreCheckRegistry, runsUnderAll } from '../src/checks/registry.js'
+import { coreCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry.js'
+import { runsUnderAll } from '../../../harness/kernel/gates/checks/registry'
 // Same discipline for the `studio` exercise below: it probes the ports
 // current source would actually bind rather than hand-maintaining a second
 // copy of `3008`/`3108` that could silently drift from `studio.ts`.
@@ -80,7 +82,7 @@ import { FALLBACK_PORT as STUDIO_FALLBACK_PORT, PRIMARY_PORT as STUDIO_PRIMARY_P
 // hand-maintained list that can silently fall behind what `init` grows to
 // write.
 import { LOCAL_CONFIG_FILENAME, VinayaConfigSchema } from '../src/lib/config.js'
-import { resolveHookDir } from '../src/lib/detect.js'
+import { resolveHookDir } from '../../../harness/kernel/connectors/git/detect.js'
 
 // `..` from `apps/cli/scripts/` is the package root — the same derivation
 // `--local-pack` already uses to find the tree it packs, so both modes read

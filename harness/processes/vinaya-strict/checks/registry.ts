@@ -1,0 +1,1091 @@
+import { installCheckRegistry } from '../../../kernel/gates/checks/registry'
+import { existsSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { cliPackageRoot } from '../../../../apps/cli/src/lib/package-root.js'
+import type { CheckSpec } from '../../../kernel/gates/checks/contract'
+
+// `cliPackageRoot()` walks up to the nearest `package.json`
+// rather than a fixed `../..` — the fixed depth was correct only when
+// running unbundled from `src/checks/`; once bundled into a single-file
+// `dist/index.js` (what a real `npm install` ships), the depth from the
+// bundled file to the package root differs, and a fixed walk landed every
+// `BIN_DIR`-derived path one directory short. `BIN_DIR` is still computed
+// once at module scope: the package root a check's bin resolves against
+// never changes at runtime.
+//
+// **The published tarball never contains `src/`** — `package.json`'s
+// `files` allowlist ships only `dist`, `templates`, `README.md`. Every one
+// of these checks was 100% unreachable through a real `npm install`
+// (`check --all` errored "not found on PATH" for all 15 — found live
+// against the real published `@attalabs/vinaya@0.1.1`, not caught by any
+// prior review because verification only ever ran against local source,
+// where `src/checks/bin/*.ts` genuinely exists). `scripts/build.ts` now
+// bundles each `src/checks/bin/*.ts` to its own standalone, self-contained
+// `dist/checks/bin/*.js` (same `Bun.build` shape as the main `dist/index.js`
+// entrypoint) — that bundled output is what actually ships. A bundled entry
+// uses it; a raw source entry uses the `.ts` checks even when a stale `dist`
+// directory is present.
+export function resolveCheckBin(packageDir: string, moduleUrl: string): { dir: string; ext: '.js' | '.ts' } {
+  const fromPackage = relative(packageDir, fileURLToPath(moduleUrl))
+  const bundled = fromPackage === 'dist' || fromPackage.startsWith(`dist${sep}`)
+  return bundled
+    ? { dir: join(packageDir, 'dist', 'checks', 'bin'), ext: '.js' }
+    : { dir: join(packageDir, 'src', 'checks', 'bin'), ext: '.ts' }
+}
+
+const CHECK_BIN = resolveCheckBin(cliPackageRoot(), import.meta.url)
+const BIN_DIR = CHECK_BIN.dir
+const BIN_EXT = CHECK_BIN.ext
+
+/** `bin('check-brief-shape')` → the real, resolvable path to that check's executable — bundled `.js` when shipped, raw `.ts` in local dev. */
+function bin(name: string): string {
+  return join(BIN_DIR, `${name}${BIN_EXT}`)
+}
+
+/** The loop's readiness-gate steps: the shipped check bin, and the core package's existing-work verification, which the build bundles beside the checks. */
+export type GateStep = 'check-dispatch-readiness' | 'verify-dispatch'
+
+/**
+ * The real path of one readiness-gate step, resolved from the package this
+ * module lives in — never the current directory, which an adopter's
+ * repository does not fill with Vinaya sources. `null` when the step is not
+ * on disk (an incomplete install).
+ */
+export function resolveGateStep(
+  step: GateStep,
+  packageDir = cliPackageRoot(),
+  moduleUrl = import.meta.url
+): string | null {
+  const { dir, ext } = resolveCheckBin(packageDir, moduleUrl)
+  const path =
+    step === 'verify-dispatch' && ext === '.ts'
+      ? join(packageDir, '..', '..', 'packages', 'aeg-core', 'bin', 'verify-dispatch.ts')
+      : join(dir, `${step}${ext}`)
+  return existsSync(path) ? path : null
+}
+
+/**
+ * `ring` — which of `aeg-root/enforcement.md`'s three ring tables this core
+ * check's own row belongs in, when the registry-scaffold writer
+ * (`packages/aeg-core/src/registry-scaffold.ts`) needs to auto-insert a stub
+ * row for it. Derived mechanically, not by re-reading each check's prose:
+ * `0` for every check that runs under the managed local hooks (pre-commit/
+ * pre-push's `vinaya check --all --local`) — i.e. everything that is
+ * neither `requiresOpenPr` nor `ownWorkflow`, since `--local` skips exactly
+ * those two classes (`harness/processes/vinaya-strict/integration/artifacts.ts`'s `preCommitBody`/
+ * `prePushBody` comments) and nothing else; `1` for a check that can only
+ * ever run once a pull request exists (`requiresOpenPr`) or is reported by
+ * its own dedicated workflow instead of `--all` (`ownWorkflow`) — CI/PR-only
+ * by construction. No core check is ring-2-only today: every ring-2
+ * mechanism in this repo (`archive-task.ts`, `check-direct-main-push.ts`,
+ * `dead-branch-audit.ts`, `report-tokens.ts`) is a standalone script, never
+ * a `coreCheckRegistry()` entry.
+ *
+ * Several of these checks are *also* re-run in CI (`vinaya-checks.yml`'s
+ * `check --all --diff-only`) even when ring-0 — `enforcement.md` line 114
+ * documents this as the normal, accepted shape ("Same checks, same
+ * strictness, at ring 0 and ring 1 — the runner is one codebase invoked from
+ * both"), not a contradiction: `ring` here names the EARLIEST enforcement
+ * point (ring 0 also covers body checks enforced by pre-write validation,
+ * even when hooks skip them without a body), not an
+ * exhaustive list of every ring a check happens to also run under.
+ *
+ * Deliberately NOT a field on `CheckSpec` (or on the objects
+ * `coreCheckRegistry()` returns): the shared contract and the adopter config
+ * schema stay untouched (a core-registry-local decision), and
+ * `tests/checks/no-privileged-api.test.ts` already guards that a core
+ * `CheckSpec` object carries no field a config-derived one cannot — adding
+ * `ring` as a real property on the spec would trip that guard, which is
+ * exactly the invariant this task must not break. Paired here as a 2-tuple
+ * instead: `REGISTRY`'s element type is `readonly [CheckSpec, 0 | 1 | 2]`, so
+ * omitting the ring for a new entry is a tuple-arity type error, not a
+ * silent gap — the typechecker forces completeness without the annotation
+ * ever reaching the runtime object.
+ */
+export type CoreCheckRing = 0 | 1 | 2
+
+/**
+ * The core AEG gates an adopter's repo actually runs, expressed as ordinary
+ * `CheckSpec`s — the exact shape a `vinaya.config.json` entry produces. No
+ * extra field, no privileged flag: this IS the no-privileged-API proof, not
+ * a stylistic choice. See `tests/checks/no-privileged-api.test.ts`.
+ *
+ * `reader-resolvable-prose`/`retired-vocabulary`: both
+ * used to be excluded here because they hardcoded this monorepo's own
+ * doctrine layout — a scope-registration decision, not a pathing bug. Both
+ * bins now read their doctrine root, reader-facing globs, and legacy-slug
+ * corpus from `vinaya.config.json`'s `proseGates` key (`lib/config.ts`),
+ * defaulting to this repo's own prior hardcoded shape when unset, so an
+ * install that sets nothing behaves exactly as before this task. Both
+ * registered report-only (`aeg-root/enforcement.md`'s G1/G2 precedent) — a
+ * `warning` finding, never a failing exit code — so registering them could
+ * not newly fail any existing install's CI. `retired-vocabulary` has since
+ * turned blocking, once the shipped doctrine tree it sweeps carried zero
+ * findings.
+ *
+ * Each entry is paired with its ring in `REGISTRY` below — see
+ * `CoreCheckRing`'s doc comment for how the ring is derived and why it is
+ * not a field on the spec itself.
+ */
+const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
+  [
+    {
+      name: 'brief-shape',
+      validates: 'body',
+      requiresOpenPr: true,
+      run: bin('check-brief-shape'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
+      // plain absence-tolerant fall-throughs. Without BRANCH declared here
+      // the runner strips it before the child spawns and the non-task/
+      // non-brief bypass and requireClosesN gating never fire.
+      // `PR_NUMBER` (task 10 round-2 ruling addendum 1) gates
+      // BRIEF_RULES_SINCE_PR grandfathering — without it declared here the
+      // runner strips it too, and every PR reads as "no PR number", which
+      // this check's own logic treats as NOT grandfathered (fail-closed).
+      // `GITHUB_TOKEN`/`GH_TOKEN` are what let a
+      // task branch's objectives checks `gh issue view` the linked Issue's
+      // live `## Objectives` section — without them declared here the
+      // runner strips them, and the fetch fails every time regardless of
+      // the real token the CI job holds.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: in CI this check reads the
+      // pull request and its task Issue from the run's forge snapshot
+      // (`lib/forge-snapshot.ts`), honoured only when GITHUB_ACTIONS is
+      // `true`; undeclared, the runner strips both and every read goes to
+      // `gh` again.
+      env: {
+        PR_BODY: { optional: true },
+        BRANCH: { optional: true },
+        PR_NUMBER: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      // Hooks have no body to grade. Pre-write validation still grades the
+      // outgoing draft before a pull request exists, as does a named run.
+      name: 'pr-report-density',
+      validates: 'body',
+      requiresOpenPr: true,
+      run: bin('check-pr-report-density'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      env: {
+        PR_BODY: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'doc-coverage',
+      validates: 'body',
+      run: bin('check-doc-coverage'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // `resolvePrBody()` falls through to `''` when neither PR_BODY nor
+      // PR_BODY_FILE is set — the legitimate ring-0 "no PR exists yet" case.
+      // BASE_SHA already defaults via `|| 'origin/main'` in the bin itself.
+      // Git sets GIT_INDEX_FILE for both hooks. The generated pre-commit hook
+      // additionally supplies VINAYA_COMMIT_HOOK=1, so the bin can add staged
+      // files only for that run and retain the committed comparison at push.
+      // PR_NUMBER absence takes the bin's own "no PR to evaluate the waiver
+      // against yet" bypass (`waiverActive()` returns false) — same shape as
+      // `review-gate`'s identical PR_NUMBER declaration below. The bin shells
+      // to `gh pr view`/`gh api .../timeline` directly to resolve the
+      // `vinaya/waiver:docs` label + its labeling actor, so
+      // GITHUB_TOKEN/GH_TOKEN must reach it on a CI runner, where `gh`
+      // authenticates only from those env vars. GITHUB_REPOSITORY/
+      // GITHUB_TOKEN/GH_TOKEN also feed the Principal read
+      // (`resolveTrustedPrincipals`, lib/config.ts) — a `gh api` fetch of
+      // `principals` from the DEFAULT BRANCH, never local git. All optional,
+      // but there is no built-in Principal to fall back to: once a waiver
+      // label is on the pull request, a failed read or a default branch that
+      // names no Principal refuses the check, naming the reason or the fix.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
+      env: {
+        BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true },
+        PR_BODY: { optional: true },
+        PR_BODY_FILE: { optional: true },
+        PR_NUMBER: { optional: true },
+        GITHUB_REPOSITORY: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'coherence',
+      run: bin('check-coherence'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // `resolveToken()`'s three-tier fallback (GITHUB_TOKEN, then GH_TOKEN,
+      // then a `gh auth token` subprocess) means neither var is ever
+      // hard-required — the subprocess path is the documented reason zero
+      // pre-spawn env coverage is the correct outcome here, not a gap.
+      // AEG_REPO/BRANCH each fall back to `git remote`/`git rev-parse`.
+      env: {
+        AEG_REPO: { optional: true },
+        BRANCH: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      // Second caller of `../premise-reassert-logic.ts`'s `reassertPremiseFile`
+      // — re-asserts a pull request BODY's `Premise:` pins,
+      // where `dispatch-readiness`'s `PREMISE_FILE` above re-asserts a FILE
+      // handed to a dispatch. Triggered by the block's presence alone, on
+      // any branch: `PR_BODY` is the same absence-tolerant fall-through
+      // `brief-shape`/`pr-report-density` above use, so a PR with no
+      // `Premise:` block (the overwhelming majority) is silent, and there is
+      // no branch condition anywhere in this check.
+      name: 'pr-premise-reassert',
+      validates: 'body',
+      requiresOpenPr: true,
+      run: bin('check-pr-premise-reassert'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      env: {
+        PR_BODY: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'dispatch-readiness',
+      run: bin('check-dispatch-readiness'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Identical `resolveToken()` three-tier fallback to `coherence` above
+      // — same reasoning, same declaration. PREMISE_FILE is a
+      // local-file path, not a forge credential — optional, absent by
+      // default, and the bin's own re-assertion path never reaches the
+      // network on its account.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
+      env: {
+        AEG_REPO: { optional: true },
+        BRANCH: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true },
+        PREMISE_FILE: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'closes-n',
+      validates: 'body',
+      run: bin('check-closes-n'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Pre-merge-only: needs the open PR's real body to find `Closes #N`.
+      // See `CheckSpec.requiresOpenPr`'s doc comment for why the local hooks
+      // skip this rather than running it against nothing.
+      requiresOpenPr: true,
+      // `process.env.PR_BODY ?? ''`; BRANCH/AEG_REPO both fall back to git
+      // (`rev-parse --abbrev-ref HEAD` / `remote get-url origin`). Tokens
+      // forwarded because the bin reaches the forge through
+      // `createForgeSource` — same as `branch-topology`'s identical
+      // declaration above: the runner spawns each check with only a fixed
+      // baseline env, so without explicit forwarding this check has no way
+      // to auth to GitHub on a CI runner (found live: passed locally under
+      // a developer's own `gh auth login`, failed deterministically in CI
+      // with "no topology file found" — a misleading message, since the
+      // real cause was an unauthenticated forge read, not a missing file).
+      env: {
+        BRANCH: { optional: true },
+        PR_BODY: { optional: true },
+        AEG_REPO: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
+      }
+    },
+    // requiresOpenPr: cannot run under the local hook (`--local` skips it) —
+    // CI/PR-only, see `CoreCheckRing`'s doc comment.
+    1
+  ],
+  [
+    {
+      name: 'single-plan-pr',
+      run: bin('check-single-plan-pr'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // BASE_SHA defaults to `'origin/main'`; PR_NUMBER's absence takes the
+      // explicit `? Number(...) : null` branch — both tolerate absence.
+      // Tokens forwarded so the bin's `gh pr list` authenticates on CI
+      // runners (fail-open to [] without them — silently vacuous there).
+      env: {
+        BASE_SHA: { optional: true },
+        PR_NUMBER: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'surface-scope',
+      run: bin('check-surface-scope'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Reads the pull request body's `AEG:BEYOND-SURFACE` record, which
+      // exists only once the pull request is open — the local hooks skip it.
+      // See `CheckSpec.requiresOpenPr`'s doc comment.
+      requiresOpenPr: true,
+      // BASE_SHA defaults to `'origin/main'`; BRANCH defaults to
+      // `git rev-parse --abbrev-ref HEAD`. AEG_REPO/GITHUB_TOKEN/GH_TOKEN
+      // feed the live forge read (topology + Issue body) `gh`/
+      // `createForgeSource` need on a CI runner. PR_BODY/PR_BODY_FILE carry
+      // the pull request body whose beyond-Surface record this check reads;
+      // absent, the body records nothing.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
+      env: {
+        AEG_REPO: { optional: true },
+        BASE_SHA: { optional: true },
+        BRANCH: { optional: true },
+        PR_BODY: { optional: true },
+        PR_BODY_FILE: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
+      }
+    },
+    // requiresOpenPr: cannot run under the local hook (`--local` skips it) —
+    // CI/PR-only, see `CoreCheckRing`'s doc comment.
+    1
+  ],
+  [
+    {
+      name: 'test-plan',
+      validates: 'body',
+      run: bin('check-test-plan'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Pre-merge-only: a `[principal]` Test Plan item is, by construction
+      // (`roles/developer.md`), never tickable by the Developer that makes
+      // the first commit — only the Principal can satisfy it, after review.
+      // See `CheckSpec.requiresOpenPr`'s doc comment.
+      requiresOpenPr: true,
+      // See `CheckSpec.principalOwed`'s doc comment: a run whose ONLY
+      // red is this check, failing for the
+      // `pending: true` (unticked `[principal]` item) reason, reads green to
+      // `vinaya check --all`'s own exit code and to the loop's CI reader.
+      // The `[agent]`/structural half stays a real, blocking failure.
+      principalOwed: true,
+      // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
+      // plain absence-tolerant fall-throughs. On a task branch the bin reads
+      // the task Issue's frozen brief for its `[live]` lines (`gh api`), so
+      // GITHUB_TOKEN/GH_TOKEN must reach it on a CI runner, where `gh`
+      // authenticates only from those, and GITHUB_REPOSITORY addresses the
+      // trust-anchor read of `principals` that picks the brief's author.
+      // PULL_REQUEST_HEAD_SHA is the pull request's own head — never the
+      // merge ref a `pull_request` run checks out — at which each `[live]`
+      // line must have passed. Absent, no record entry matches and every
+      // `[live]` line reads unpassed. That red is `pending` here, so this
+      // check's own line goes red while `--all`'s exit stays green
+      // (`principalOwed`); the merge hold is `principal-test-plan-wait`'s,
+      // which grades the same inputs. The loop's `run_checks` supplies the
+      // pull request's head (`worktreeCheckEnv`).
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
+      env: {
+        PR_BODY: { optional: true },
+        BRANCH: { optional: true },
+        PULL_REQUEST_HEAD_SHA: { optional: true },
+        GITHUB_REPOSITORY: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
+      }
+    },
+    // requiresOpenPr — see `closes-n` above.
+    1
+  ],
+  [
+    {
+      // Owns the merge condition an unticked `[principal]` Test Plan item
+      // represents, as its own independent check — the Principal wants
+      // every merge condition to be its own check, so that all green means
+      // mergeable, rather than depending on a reviewer to notice this
+      // reason buried inside `review-gate`'s own possible failures.
+      // Reported by its own job in `vinaya-body-checks.yml`, never by
+      // `--all` (see `ownWorkflow` below) — its own workflow re-runs on a
+      // PR body edit (ticking a box), unlike `review-gate`, which a body
+      // edit never retriggers.
+      name: 'principal-test-plan-wait',
+      validates: 'body',
+      run: bin('check-principal-test-plan-wait'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Pre-merge-only: an unticked `[principal]` Test Plan item is never
+      // tickable by the Developer's first commit — only the Principal
+      // clears it. See `CheckSpec.requiresOpenPr`'s doc comment.
+      requiresOpenPr: true,
+      // Reported by its own dedicated job in the generated
+      // `vinaya-body-checks.yml` — `--all` must never evaluate it a second
+      // time, the same reasoning `review-gate`/`body-bare-digits` document
+      // on their own entries: a second copy inside `--all` would put this
+      // check's red inside another check's name.
+      ownWorkflow: true,
+      // Deliberately NOT `principalOwed`, unlike `test-plan` above. That flag
+      // would make this check's red read green to the mechanical gate and the
+      // loop's CI reader — and holding the merge until the box is ticked is
+      // this check's entire job. Its one all-`pending` error still never
+      // refuses a forge-write: the write path excludes that by reading
+      // `CheckError.pending` alone (`isPendingOnlyFailure`,
+      // `harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts`), so the per-round Evidence splice
+      // goes through while the box is still unticked and the Principal's tick
+      // then finds a fresh block rather than the template placeholder.
+      // The same inputs as `test-plan`'s declaration above, for the same
+      // reason: on a task branch the bin reads the frozen brief's `[live]`
+      // lines and holds the merge on each with no passed entry at
+      // PULL_REQUEST_HEAD_SHA, and a brief it cannot read holds it too.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
+      env: {
+        PR_BODY: { optional: true },
+        BRANCH: { optional: true },
+        PULL_REQUEST_HEAD_SHA: { optional: true },
+        GITHUB_REPOSITORY: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
+      }
+    },
+    // requiresOpenPr AND ownWorkflow — CI/PR-only twice over, same as
+    // `body-bare-digits` below.
+    1
+  ],
+  [
+    {
+      name: 'body-bare-digits',
+      validates: 'body',
+      run: bin('check-body-bare-digits'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Pre-merge-only: reads the open PR's real body, same reasoning as
+      // `closes-n`/`test-plan`/`evidence-fresh` above — nothing to scan
+      // before a PR (hence its body) exists.
+      requiresOpenPr: true,
+      // Reported by the generated `vinaya-body-checks.yml`, a
+      // `pull_request_target` job — `check --all` must not evaluate it a
+      // second time from `vinaya-checks.yml`'s `pull_request` job: that copy
+      // cannot safely resolve the Changesets-release exemption (its
+      // PR_NUMBER/BRANCH are PR-editable), same reasoning as `review-gate`'s
+      // own `ownWorkflow` entry above.
+      ownWorkflow: true,
+      // `process.env.PR_BODY ?? ''` — plain absence-tolerant fall-through.
+      // PR_NUMBER/GITHUB_TOKEN/GH_TOKEN back the live `gh pr view` fetch the
+      // Changesets-release exemption needs (bin's own module comment) —
+      // same reasoning as `review-gate`'s entry: on a CI runner `gh`
+      // authenticates ONLY from GH_TOKEN/GITHUB_TOKEN, and PR_AUTHOR is
+      // deliberately never declared here (registry-env.test.ts's coupling
+      // test bans any check bin from reading it from env at all).
+      // GITHUB_REPOSITORY addresses the trust-anchor read
+      // (`loadTrustAnchorConfig`, lib/config.ts) — a `gh api` fetch of
+      // `releaseActor` from the DEFAULT BRANCH, same as `review-gate`'s own
+      // entry. Found live in code review: omitted here, the runner
+      // strips it before the check ever runs, and the trust-anchor read
+      // silently falls to its local-dev fallback path on every CI run.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
+      env: {
+        PR_BODY: { optional: true },
+        PR_NUMBER: { optional: true },
+        GITHUB_REPOSITORY: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
+      }
+    },
+    // requiresOpenPr AND ownWorkflow — CI/PR-only twice over.
+    1
+  ],
+  [
+    {
+      name: 'no-disk-state',
+      run: bin('check-no-disk-state'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // BASE_SHA defaults to `'origin/main'`, with a further `main...HEAD`
+      // fallback in the bin itself when that yields no files.
+      env: { BASE_SHA: { optional: true } }
+    },
+    0
+  ],
+  [
+    {
+      name: 'registry-gates',
+      run: bin('check-registry-gates'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // `resolveRepo()`'s only env read; falls back to `git remote get-url
+      // origin` when unset. The bin is otherwise dormant (exit 0) when
+      // `aeg-root/enforcement.md` doesn't exist — no other env dependency.
+      // Tokens forwarded so its `gh auth status` / `gh issue|pr view`
+      // string-form shell-outs authenticate on CI runners (without them
+      // `ghReachable()` reports false there and the forge-number
+      // resolution degrades, exactly like the execFileSync siblings).
+      env: {
+        AEG_REPO: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'review-gate',
+      run: bin('check-review-gate'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Reported by the generated `vinaya-review.yml`, which the verdict
+      // workflow re-runs when a verdict comment lands. `check --all` must not
+      // evaluate it a second time: nothing re-runs `vinaya-checks.yml`, so
+      // that copy freezes at push-time verdicts and stays red after an
+      // approval — measured live.
+      ownWorkflow: true,
+      // PR_NUMBER's absence takes the explicit "no PR to evaluate yet
+      // (local dev, pre-push before a PR exists)"
+      // bypass documented in the bin's own module comment. The bin shells
+      // to `gh` directly (no `resolveToken()`), and on a CI runner `gh`
+      // authenticates ONLY from GH_TOKEN/GITHUB_TOKEN — without forwarding
+      // them the allowlist strips the workflow-provided token and every
+      // `gh pr view` fails. Optional because local runs use `gh`'s own
+      // keyring auth with no env var at all. GITHUB_REPOSITORY addresses the
+      // Principal read (`resolveTrustedPrincipals`, lib/config.ts) — a `gh
+      // api` fetch of `principals` from the DEFAULT BRANCH, which refuses the
+      // check when it fails or names no Principal — and the trust-anchor read
+      // of the review policy (`loadTrustAnchorConfig`).
+      //
+      // Deliberately NO `BASE_SHA` here, and no other ref-shaped knob: a
+      // `BASE_SHA` declaration was tried and reverted (a security-review
+      // finding) because a `pull_request`-triggered workflow runs the
+      // PR's own PR-editable YAML, so any ref this check accepts as an
+      // override is attacker-steerable and reopens the self-approval hole.
+      // GITHUB_REPOSITORY is not the same thing: it names WHICH repo to ask
+      // GitHub about, is runner-set in the only context where this is a trust
+      // decision, and never selects a commit — see `trustAnchorRepo`.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above. Not a ref-shaped knob either: it names a
+      // directory a default-branch step of the same trusted workflow wrote,
+      // and it selects no commit and no trust anchor.
+      env: {
+        PR_NUMBER: { optional: true },
+        GITHUB_REPOSITORY: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
+      }
+    },
+    // ownWorkflow — see `body-bare-digits` above.
+    1
+  ],
+  [
+    {
+      name: 'branch-topology',
+      run: bin('check-branch-topology'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // BRANCH falls back to git; AEG_REPO falls back to `git remote`.
+      // Tokens forwarded because the bin reaches the forge through
+      // `createForgeSource` → `@attalabs/aeg-forge-state`'s token resolution
+      // (GITHUB_TOKEN, then GH_TOKEN, then a `gh auth token` subprocess)
+      // — the subprocess tier fails on CI runners, so without forwarding
+      // the check cannot reach the forge there. Same reasoning as
+      // `coherence`/`dispatch-readiness` above.
+      env: {
+        BRANCH: { optional: true },
+        AEG_REPO: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'dead-branch-push',
+      run: bin('check-dead-branch-push'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // BRANCH falls back to `git rev-parse --abbrev-ref HEAD`; the bin's
+      // own module comment documents fail-open (UNKNOWN → allow) for every
+      // other forge-reachability gap, unrelated to env absence. Tokens
+      // forwarded so `gh pr list` authenticates on CI runners instead of
+      // taking that UNKNOWN branch on every run.
+      env: {
+        BRANCH: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'first-push-dispatch',
+      run: bin('check-first-push-dispatch'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // BRANCH/AEG_REPO fall back to git; GITHUB_TOKEN/GH_TOKEN read as
+      // `process.env.GITHUB_TOKEN || process.env.GH_TOKEN || ''` inside
+      // `classifyReadiness` — absence degrades to an empty token, which
+      // `fetchOpenIssuesByLabel` tolerates (fail-open, per the bin's own
+      // module comment on forge-reachability failures).
+      env: {
+        BRANCH: { optional: true },
+        AEG_REPO: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'doc-coverage-push',
+      validates: 'body',
+      advisory: true,
+      run: bin('check-doc-coverage-push'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Same `resolvePrBody()`/BASE_SHA/PR_LABELS/WAIVER_LABEL_ACTOR
+      // absence-tolerance as `doc-coverage` above, plus OVERRIDE_DOCS
+      // (`overrideActive()`'s first, env-only check) which is opt-in by
+      // design — absence is the default, unremarkable path.
+      // GITHUB_REPOSITORY/GITHUB_TOKEN/GH_TOKEN: same trust-anchor read as
+      // `doc-coverage` above — see that entry's comment. Changed paths and
+      // per-file evidence supplement the committed diff only when both
+      // pre-commit hook variables are set; push and CI stay committed-only.
+      env: {
+        OVERRIDE_DOCS: { optional: true },
+        BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true },
+        PR_BODY: { optional: true },
+        PR_BODY_FILE: { optional: true },
+        PR_LABELS: { optional: true },
+        WAIVER_LABEL_ACTOR: { optional: true },
+        GITHUB_REPOSITORY: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'evidence-fresh',
+      validates: 'body',
+      run: bin('check-evidence-fresh'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Pre-merge-only: meaningless before a PR exists to resolve a real
+      // head against. Same reasoning as `closes-n`/`test-plan` above.
+      requiresOpenPr: true,
+      // The bin shells to `gh pr view --json headRefOid` to resolve the real
+      // PR head (never `HEAD`, which is the merge commit in CI — see the
+      // bin's own module comment), so GITHUB_TOKEN/GH_TOKEN must reach it on
+      // a CI runner. PR_NUMBER/PR_BODY absence both take documented
+      // ring-0/no-PR bypasses in the bin. BASE_SHA overrides the
+      // `origin/main`/`main` merge-base resolution — same declaration as
+      // `doc-coverage`/`doc-coverage-push`/`no-disk-state`/`single-plan-pr`
+      // above (`closes-n` declares no BASE_SHA and resolves no merge-base) —
+      // for a repo whose default branch resolves as neither.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
+      env: {
+        PR_NUMBER: { optional: true },
+        PR_BODY: { optional: true },
+        BASE_SHA: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
+      }
+    },
+    // requiresOpenPr — see `closes-n` above.
+    1
+  ],
+  [
+    {
+      name: 'reader-resolvable-prose',
+      run: bin('check-reader-resolvable-prose'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Reads local files plus the shared diff helper. BASE_SHA scopes that
+      // helper's diff; the hook variables let it add staged evidence only
+      // during pre-commit.
+      env: {
+        BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      },
+      // An `include` declaration on a `scope: 'full'` entry
+      // is currently pinning/documentation only (`runner.ts`'s `shouldSkip`
+      // returns early for any non-`'diff'` scope, before ever consulting
+      // `include`) — see this task's own PR body for that known gap and why
+      // `runner.ts` is out of this task's surface. Declared anyway so the
+      // sweep's real scope is legible here, and so a future `runner.ts`
+      // change that extends `--diff-only` skipping to `scope: 'full'` finds
+      // this already correct.
+      //
+      // The four product-code globs below mirror
+      // `PRODUCT_SLUG_SCOPE` in `reader-resolvable-prose.ts` — the surface
+      // whose tranche-slug citation is now this check's one blocking class.
+      include: [
+        'aeg-root/**/*.md',
+        'apps/cli/src/**',
+        '.github/workflows/**',
+        '.vinaya/**',
+        'apps/cli/README.md',
+        'packages/sources/README.md'
+      ]
+    },
+    0
+  ],
+  [
+    {
+      name: 'retired-vocabulary',
+      run: bin('check-retired-vocabulary'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Same shared-diff declarations as `reader-resolvable-prose`: BASE_SHA
+      // plus the two hook variables.
+      env: {
+        BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      },
+      // See `reader-resolvable-prose`'s identical `include` comment above.
+      include: ['aeg-root/**/*.md']
+    },
+    0
+  ],
+  [
+    {
+      name: 'doctrine-portability',
+      advisory: true,
+      run: bin('check-doctrine-portability'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Local-only: `git ls-tree`/`git show` and the shared diff helper read
+      // the already-fetched local repository, never the network.
+      // BASE_SHA overrides the `origin/main` baseline ref, same declaration
+      // as `doc-coverage`/`no-disk-state`/`evidence-fresh` above.
+      env: {
+        BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      },
+      // See `reader-resolvable-prose`'s identical `include` comment above.
+      include: ['aeg-root/**/*.md']
+    },
+    0
+  ],
+  [
+    {
+      name: 'doctrine-no-procedures',
+      run: bin('check-doctrine-no-procedures'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Local-only: walks `<doctrineRoot>` with `node:fs`, never the
+      // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
+      env: {},
+      // See `reader-resolvable-prose`'s identical `include` comment above.
+      include: ['aeg-root/**/*.md']
+    },
+    0
+  ],
+  [
+    {
+      name: 'doc-claims',
+      run: bin('check-doc-claims'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Local-only: `git ls-files` and tracked-file reads, never the
+      // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
+      env: {},
+      // See `reader-resolvable-prose`'s identical `include` comment above.
+      // The corpus the bin sweeps; a binding goes stale when its CITED file
+      // changes, which may sit anywhere in the repository. The registry is
+      // static and never reads configuration, so this lists the default
+      // doctrine root; the bin derives the configured one.
+      include: ['aeg-root/**/*.md', 'apps/**/*.ts', 'apps/**/*.md', 'packages/**/*.ts', 'packages/**/*.md']
+    },
+    0
+  ],
+  [
+    {
+      name: 'exec-bits',
+      run: bin('check-exec-bits'),
+      scope: 'diff',
+      timeoutMs: 30_000,
+      // Local-only: `git ls-files -s`, a first-line read, and the shared diff
+      // helper; BASE_SHA scopes its diff and the hook variables admit staged
+      // evidence only at pre-commit.
+      env: {
+        BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      // Refuses new CLI tests absent from every shard list. No include glob:
+      // pre-commit reads additions and shard lists from the index under both
+      // hook markers; push and CI judge committed branch additions against
+      // HEAD's shard lists, or all tracked CLI tests if no diff resolves.
+      name: 'ci-shard-coverage',
+      run: bin('check-ci-shard-coverage'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Local-only: `git diff --cached`/`git show :<path>` plus the shared
+      // diff helper, never the network. BASE_SHA scopes that helper's diff;
+      // the hook variables admit staged evidence only at pre-commit.
+      env: {
+        BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'workspace-escape',
+      advisory: true,
+      run: bin('check-workspace-escape'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Local-only: walks the working tree and consults the shared diff
+      // helper; BASE_SHA scopes its diff and the hook variables admit staged
+      // evidence only at pre-commit.
+      env: {
+        BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      },
+      // See `reader-resolvable-prose`'s identical `include` comment above —
+      // named here per the Issue's own list even though this sweep's real
+      // domain is `apps`/`packages`, not `aeg-root`; harmless either way
+      // while `include` has no runtime effect on a `scope: 'full'` entry.
+      include: ['aeg-root/**/*.md']
+    },
+    0
+  ],
+  [
+    {
+      name: 'changeset-coverage',
+      run: bin('check-changeset-coverage'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Local-only: `.changeset/config.json`, every fixed-group member's own
+      // `package.json`, and the shared diff all come from the already-local
+      // working tree and `git`. BASE_SHA scopes the diff; the hook variables
+      // admit staged evidence only at pre-commit. Blocking on a finding (see
+      // the bin's doc).
+      env: {
+        BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      }
+    },
+    0
+  ],
+  [
+    {
+      name: 'quoted-command',
+      advisory: true,
+      run: bin('check-quoted-command'),
+      scope: 'full',
+      timeoutMs: 15_000,
+      // Local-only: sweeps `<doctrineRoot>/**` (and any configured
+      // reader-facing pages) for `AEG:QUOTES-FILE` markers, then reads each
+      // marker's cited file straight off the already-checked-out working
+      // tree — no forge call, no PR content. Report-only (severity: warning,
+      // exit 0 always — see the bin's own module doc), same rollout
+      // precedent as changeset-coverage/reader-resolvable-prose above:
+      // registering it must not newly redden any existing install. Full
+      // scope: the sweep covers the whole doctrine tree whatever the diff.
+      env: {},
+      // See `reader-resolvable-prose`'s identical `include` comment above.
+      include: ['aeg-root/**/*.md']
+    },
+    0
+  ],
+  [
+    {
+      name: 'main-branch-refusal',
+      run: bin('check-main-branch-refusal'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Diff scope with no `include`: the commit hook's `--skip-full` skips
+      // only full-scope checks and `--diff-only` never skips a diff-scope
+      // check without `include` globs, so a commit on the default branch is
+      // refused too. Local-only: the facts (`symbolic-ref --short HEAD`, the
+      // remote-tracking refs of origin) read
+      // already-local git state — no forge call, no PR content, same `env: {}` shape as
+      // `workspace-escape` above. `VINAYA_PUSH_REFS` is the
+      // one exception: the generated pre-push hook sets it from git's own
+      // pre-push stdin before spawning `check --all --local`, and without
+      // it in this allowlist `buildCheckEnv` strips it before the check
+      // subprocess ever sees it — every tag-only push then reads as a plain
+      // commit-on-main and refuses. Optional: absent on every non-push
+      // invocation (a commit, or a bare `check` run), which the check
+      // already treats as "not a push in flight."
+      env: { VINAYA_PUSH_REFS: { optional: true } }
+    },
+    0
+  ],
+  [
+    {
+      name: 'token-collection-wired',
+      run: bin('check-token-collection-wired'),
+      scope: 'full',
+      timeoutMs: 15_000,
+      // `resolveMeteringCapability` (`@attalabs/aeg-core`) reads
+      // `CLAUDE_PROJECT_DIR`/`CLAUDE_CODE_SESSION_ID` directly — both must be
+      // declared or the runner strips them before spawn (the same env-stripping
+      // trap `brief-shape`'s `BRANCH` comment above names) and the pointer-file
+      // resolution silently falls back to `cwd`/no-staleness-check on every
+      // hook run. `TMPDIR` needs no declaration: it's already in the
+      // runner's fixed baseline.
+      env: {
+        CLAUDE_PROJECT_DIR: { optional: true },
+        CLAUDE_CODE_SESSION_ID: { optional: true }
+      }
+    },
+    0
+  ],
+  // The five write-only rules named apart — `validates: 'issue'`
+  // means each applies only to a task Issue's own content, never a pull
+  // request. `ownWorkflow: true`: nothing in `.github/workflows` ever
+  // invokes these by name, so `--all` (both `vinaya-checks.yml` and
+  // `vinaya-body-checks.yml`, both PULL-REQUEST workflows) never selects
+  // them either way — declared for the same reason `review-gate`/
+  // `body-bare-digits` declare it: a check that is invoked directly, by
+  // name, from somewhere other than `--all`. The executables run by name
+  // only from the Issue write gate's runner (`runIssueChecks`); the
+  // coherence sweep never spawns one, though its R1 rule calls two of their
+  // rule functions directly (`checkIssueObjectives`,
+  // `checkPartsCiteDefinedObjectives`).
+  [
+    {
+      name: 'issue-title-grammar',
+      run: bin('check-issue-title-grammar'),
+      validates: 'issue',
+      scope: 'full',
+      ownWorkflow: true,
+      timeoutMs: 15_000,
+      env: { ISSUE_TITLE: { optional: true } }
+    },
+    1
+  ],
+  [
+    {
+      name: 'issue-objectives-numbering',
+      run: bin('check-issue-objectives-numbering'),
+      validates: 'issue',
+      scope: 'full',
+      ownWorkflow: true,
+      timeoutMs: 15_000,
+      env: { ISSUE_BODY: { optional: true }, ISSUE_NUMBER: { optional: true } }
+    },
+    1
+  ],
+  [
+    {
+      name: 'issue-parts-coverage',
+      run: bin('check-issue-parts-coverage'),
+      validates: 'issue',
+      scope: 'full',
+      ownWorkflow: true,
+      timeoutMs: 15_000,
+      env: { ISSUE_BODY: { optional: true } }
+    },
+    1
+  ],
+  [
+    {
+      name: 'issue-surface-globs',
+      run: bin('check-issue-surface-globs'),
+      validates: 'issue',
+      scope: 'full',
+      ownWorkflow: true,
+      timeoutMs: 15_000,
+      env: { ISSUE_BODY: { optional: true } }
+    },
+    1
+  ],
+  [
+    {
+      name: 'issue-milestone-attach',
+      run: bin('check-issue-milestone-attach'),
+      validates: 'issue',
+      scope: 'full',
+      ownWorkflow: true,
+      timeoutMs: 15_000,
+      env: {
+        ISSUE_LABELS: { optional: true },
+        CURRENT_MILESTONE_TITLE: { optional: true },
+        RESOLVED_MILESTONE_TITLE: { optional: true }
+      }
+    },
+    1
+  ]
+]
+
+/** The exact `CheckSpec[]` shape `vinaya.config.json` also produces — no
+ * extra field, no privileged flag. See `no-privileged-api.test.ts`. */
+export function coreCheckRegistry(): CheckSpec[] {
+  return REGISTRY.map(([spec]) => spec)
+}
+
+/** `name` -> `ring`, derived from the same `REGISTRY` pairing `coreCheckRegistry()`
+ * reads — never out of sync with it by construction. Consulted by
+ * `packages/aeg-core/src/registry-scaffold.ts` indirectly, through the
+ * aeg-core-local mirror in `gate-audience.ts` (aeg-core cannot import this
+ * module — see that file's own doc comment for why); `gate-audience.test.ts`-
+ * style coupling assertions in this package keep the two in sync. */
+export const CORE_CHECK_RING: Readonly<Record<string, CoreCheckRing>> = Object.fromEntries(
+  REGISTRY.map(([spec, ring]) => [spec.name, ring])
+)
+
+export function installVinayaCheckRegistry(): void {
+  installCheckRegistry(coreCheckRegistry())
+}

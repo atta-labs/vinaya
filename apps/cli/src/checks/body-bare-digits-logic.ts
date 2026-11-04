@@ -29,7 +29,7 @@
  *
  * **The real-world cost, stated plainly, not hidden in a corpus number:**
  * this makes every digit-bearing identifier a PR body wants to cite —
- * `#NNN`, `2026-08-18`, `0.12.0`, `packages/aeg-forge-state/src/strip-code.ts`,
+ * `#NNN`, `2026-08-18`, `0.12.0`, `harness/kernel/adapters/code-host/github/strip-code.ts`,
  * `§9` — require backtick-wrapping to pass, where the old exemption list let
  * them stand bare. That is not a defect in this rewrite; it is what "one
  * rule, no enumerable shape space" necessarily means. Real corpus bodies
@@ -100,9 +100,10 @@
  * carve-out from reopening that exact class.
  */
 
-import { anchoredRegionBounds, objectivesSectionBounds, TIER_FIELD } from '@attalabs/aeg-core'
+import { anchoredRegionBounds } from '../../../../harness/kernel/gates/checks/anchored-region'
+import { objectivesSectionBounds, TIER_FIELD } from '@attalabs/aeg-core'
 import { PROJECT_SLUG, unwrapValue } from '@attalabs/aeg-forge-state'
-import { ScanContext } from './scan-context'
+import { ScanContext } from '../../../../harness/kernel/gates/checks/scan-context'
 
 export type BareDigitViolation = { line: number; text: string }
 export type BareDigitScanResult = { violations: BareDigitViolation[] }
@@ -149,7 +150,7 @@ type ExemptAnchorField = (typeof EXEMPT_ANCHOR_FIELDS)[number]
  * Round 6 security review, HIGH: `anchoredRegionBounds` trusts ANY
  * well-formed `<!-- AEG:<FIELD>:START -->…<!-- AEG:<FIELD>:END -->` pair
  * anywhere in the body — correct and safe for its own designed purpose
- * (`packages/aeg-core/src/anchored-region.ts`'s own doc: value resolution,
+ * (`harness/kernel/gates/checks/anchored-region.ts`'s own doc: value resolution,
  * "when a pair is present, it is authoritative"), because every other
  * consumer (`pr-tier.ts`, `test-plan-section.ts`, `premise-check.ts`,
  * `brief-validation.ts`, `coherence-checks.ts`) only ever reads a value

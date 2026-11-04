@@ -1,5 +1,10 @@
 import { PRINCIPALS_FIX, PrincipalsUnresolvedError } from '../lib/config'
-import { CHECK_SCHEMA_VERSION, type CheckError, type CheckSeverity, emitCheckError } from './contract'
+import {
+  CHECK_SCHEMA_VERSION,
+  type CheckError,
+  type CheckSeverity,
+  emitCheckError
+} from '../../../../harness/kernel/gates/checks/contract'
 
 /**
  * How a check turns `resolveTrustedPrincipals`'s refusal into its one

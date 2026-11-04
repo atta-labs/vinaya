@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseTokenReportEntries, parseTokensLines } from './parse-token-report'
-import { formatBreakdown, formatTokenReportRow, formatTokensLine, type TranscriptSummary } from './report-tokens'
+import { formatBreakdown, formatTokenReportRow, formatTokensLine } from './report-tokens'
+import type { TranscriptSummary } from '../../../harness/kernel/adapters/agents/claude-code/transcript-summary'
 
 /**
  * Every fixture here is a hand-built `TranscriptSummary` — this suite never
