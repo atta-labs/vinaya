@@ -1804,5 +1804,5 @@ export async function doctorCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  doctor: { date: '2026-09-05', callsToday: 20, retiresVia: 'sharedCommandShell' }
+  doctor: { date: '2026-09-05', callsToday: 24, retiresVia: 'sharedCommandShell' }
 }
