@@ -9,7 +9,7 @@
  *
  * `TranscriptSummary` **is the seam.** A host adapter's whole job is to
  * produce one — from a session transcript, an API usage response, a meter the
- * harness exposes, or figures an operator supplies by hand. AEG ships exactly
+ * harness exposes, or figures a person supplies by hand. AEG ships exactly
  * one such adapter, for Claude Code, in the transcript reader beside this file; a repo
  * on another harness writes its own and reuses everything here unchanged.
  * Adding host knowledge to this file would silently re-couple the portable
@@ -18,11 +18,11 @@
  *
  * Historical note: this module retracted
  * §12's earlier claim that a role reports exact tokens "from `/cost`" — an
- * operator-typed slash command no unattended agent session can invoke, in
+ * human-typed slash command no unattended agent session can invoke, in
  * that host or any other. §12 records the retraction; the fix was to collect
  * from a real per-turn source instead.
  *
- * Pure — no `fs`, no `process.env`. The token-report program
+ * Pure — no file or environment access. The token-report program
  * does the I/O; these functions take values and produce the report.
  */
 
@@ -44,7 +44,7 @@ export type UsageComponents = {
  * role-turn, and the only thing the portable layers below consume. Named for
  * the shipped adapter's source (a session transcript), but the shape is not
  * transcript-specific: an adapter that reads an API usage response or takes
- * operator-supplied figures produces this same object.
+ * hand-supplied figures produces this same object.
  */
 export type TranscriptSummary = {
   components: UsageComponents
