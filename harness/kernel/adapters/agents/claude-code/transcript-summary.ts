@@ -3,14 +3,14 @@
  * (the tranche model's token-report layers). No value this file reads,
  * computes or emits is host-specific: it defines the summary shape every
  * collection adapter must produce, and renders that shape into the frozen
- * `Tokens: …` grammar `parse-token-report.ts` reads back. A host is named
+ * `Tokens: …` grammar the report parser reads back. A host is named
  * below only to point at the one shipped adapter and to record a retraction —
  * never to branch on, and never in rendered output.
  *
  * `TranscriptSummary` **is the seam.** A host adapter's whole job is to
  * produce one — from a session transcript, an API usage response, a meter the
  * harness exposes, or figures an operator supplies by hand. AEG ships exactly
- * one such adapter, for Claude Code, in `claude-code-transcript.ts`; a repo
+ * one such adapter, for Claude Code, in the transcript reader beside this file; a repo
  * on another harness writes its own and reuses everything here unchanged.
  * Adding host knowledge to this file would silently re-couple the portable
  * layers to one vendor — that coupling is the defect the split exists to
