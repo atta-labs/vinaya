@@ -137,7 +137,7 @@ const AGENT_LINES: Record<string, string[]> = {
 }
 
 function stubRun(agent: Agent, runtimeDir: string, revision: string, replaced: Record<string, ProcessAction> = {}) {
-  const loaded = loadProcess(processDir)
+  const loaded = loadProcess(processDir, { flow: 'v1' })
   const spawns: string[] = []
   const actionRuns: Record<string, number> = {}
   const actions: ActionRegistry = Object.fromEntries(
@@ -345,7 +345,7 @@ if (writing) {
     })
 
     test('records the process and the Engine runtime it was written under, and no machine path', () => {
-      const current = loadProcess(processDir)
+      const current = loadProcess(processDir, { flow: fixture.process.flowKey })
       expect(fixture.process.id).toBe(current.identity.id)
       expect(fixture.process.flowKey).toBe(current.flowKey)
       for (const run of fixture.runs) {
