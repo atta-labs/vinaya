@@ -76,7 +76,9 @@
  * producer is a CLI source file, or one of the process folders' sources, that
  * imports the sink's `log` or `logSync`. Reaching is confined to the CLI
  * package's own sources and the process folders' non-test sources; a file
- * outside them is named in `G7_EXEMPTIONS` with its reason.
+ * outside them is named, with its reason, in `.vinaya/g7-exemptions.json` of the
+ * repository being checked, so a change that moves a blocking-gate file updates
+ * the list in the same tree the rule judges.
  *
  * scope: full — reads the whole doctrine tree, not the local diff.
  */
@@ -99,7 +101,7 @@ import {
 } from '@attalabs/aeg-core'
 import { initHookPaths } from '../../lib/init-hook-paths.js'
 import { findCrossingFiles, globCandidateFiles } from '../../lib/github-crossing-files.js'
-import { blockingGateFiles, G7_EXEMPTIONS, gatherLogProducerGraph } from '../../lib/log-producer-graph.js'
+import { blockingGateFiles, gatherLogProducerGraph, readG7Exemptions } from '../../lib/log-producer-graph.js'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { coreCheckRegistry } from '../registry.js'
 
@@ -282,7 +284,7 @@ async function main(): Promise<void> {
     blockingFiles: blockingGateFiles(ring0Rows, existsSync),
     producers,
     imports,
-    exemptions: G7_EXEMPTIONS,
+    exemptions: readG7Exemptions(process.cwd()),
     existsFn: existsSync
   })
 
