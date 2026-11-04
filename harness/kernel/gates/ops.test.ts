@@ -323,7 +323,7 @@ describe('containedManagedBlockAbs resolves the common dir exactly once', () => 
       execFileSync('chmod', ['755', join(shimDir, 'git')])
 
       const probe = join(root, 'probe.ts')
-      const modulePath = join(import.meta.dirname, '../src/lib/ops.ts')
+      const modulePath = join(import.meta.dirname, './ops.ts')
       writeFileSync(
         probe,
         `import { containedManagedBlockAbs } from ${JSON.stringify(modulePath)}\n` +

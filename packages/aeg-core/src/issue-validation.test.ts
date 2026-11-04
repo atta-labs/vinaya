@@ -1720,7 +1720,7 @@ describe('checkObjectivesRespectBoundary', () => {
       '',
       '## Objectives',
       '',
-      'O1. `harness/processes/vinaya-strict/checks/registry.ts` gains a new check the write gate runs.',
+      'O1. `apps/cli/src/checks/frozen-brief.ts` gains a new check the write gate runs.',
       '',
       '## Surface',
       '',
@@ -1734,7 +1734,7 @@ describe('checkObjectivesRespectBoundary', () => {
     const r = checkObjectivesRespectBoundary(body)
     expect(r.status).toBe('fail')
     expect(r.errors[0]).toMatch(/O1/)
-    expect(r.errors[0]).toMatch(/apps\/cli\/src\/checks\/registry\.ts/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/checks\/frozen-brief\.ts/)
     expect(r.errors[0]).toMatch(/out:.*apps\/cli\/src\/checks/)
   })
 

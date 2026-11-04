@@ -33,7 +33,17 @@ import {
  */
 
 const CLI_ROOT = join(import.meta.dir, '..', '..')
-const MATRIX_DOC = join(CLI_ROOT, 'specs', 'dev-review-engine-capability-matrix.md')
+const MATRIX_DOC = join(
+  CLI_ROOT,
+  '..',
+  '..',
+  'harness',
+  'kernel',
+  'loops',
+  'runtimes',
+  'atta-engine',
+  'dev-review-engine-capability-matrix.md'
+)
 const MATRIX_DATA = join(CLI_ROOT, 'tests', 'fixtures', 'dev-review-engine-capability-matrix.json')
 const MODULES = join(CLI_ROOT, 'tests', 'eval', 'registry', 'modules.json')
 

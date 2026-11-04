@@ -1036,8 +1036,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(review).toContain(`${VENDORED_BIN} check review-gate`)
     expect(verdict).toContain(`${VENDORED_BIN} check review-gate`)
     expect(archivist).toContain(`${VENDORED_BIN} archive --merge-sha=${SIGIL}{{ github.sha }}`)
-    expect(archivist).toContain(`${VENDORED_BIN} audit --only=dead-branches`)
-    expect(archivist).toContain(`${VENDORED_BIN} audit --only=direct-push --sha=${SIGIL}{{ github.sha }}`)
+    expect(archivist).toContain('bun harness/processes/vinaya-strict/gates/ring2-audits/audit.ts --only=dead-branches')
+    expect(archivist).toContain(
+      `bun harness/processes/vinaya-strict/gates/ring2-audits/audit.ts --only=direct-push --sha=${SIGIL}{{ github.sha }}`
+    )
     expect(occurrences(new Map([[ARCHIVIST_WORKFLOW_PATH, archivist]]), 'setup-bun')).toBe(4)
 
     // `vinaya-checks.yml` builds its own copy at pull-request trust, before

@@ -465,7 +465,7 @@ describe('cancelDevReviewLoop — real subprocess, real control store (security 
     const home = fixture.home
     const scriptPath = join(import.meta.dir, `.cancel-integration-fixture-${process.pid}-${Date.now()}.ts`)
     const script = `
-import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '@attalabs/aeg-core'
+import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '../../../../../kernel/connectors/checkpoint/control-store/index.js'
 import { writePauseState } from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { cancelDevReviewLoop, ReplayedResolutionError } from '../../../loops/dev-review/standalone/dev-review-loop.js'
 import { runtimeDir } from '../../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
@@ -580,7 +580,7 @@ try {
     const script = `
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '@attalabs/aeg-core'
+import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '../../../../../kernel/connectors/checkpoint/control-store/index.js'
 import { writePauseState } from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { cancelDevReviewLoop } from '../../../loops/dev-review/standalone/dev-review-loop.js'
 import { runtimeDir } from '../../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'

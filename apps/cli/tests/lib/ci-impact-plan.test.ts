@@ -132,9 +132,9 @@ describe('the base guard', () => {
     expect(unresolved).toEqual([])
     // The selection library's whole runtime and type closure, not only its entrypoint.
     for (const file of [
-      'harness/kernel/gates/ring0-hooks/pre-push/verification/selector.ts',
-      'harness/kernel/gates/ring0-hooks/pre-push/verification/types.ts',
-      'harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts',
+      'apps/cli/src/lib/verification/selector.ts',
+      'apps/cli/src/lib/verification/types.ts',
+      'apps/cli/src/lib/ts-module-graph.ts',
       'scripts/test-suites/repository-selection.ts',
       'scripts/test-suites/schedule.ts'
     ])
@@ -143,8 +143,8 @@ describe('the base guard', () => {
       'scripts/ci/impact-plan.ts',
       'scripts/ci/base-guard.ts',
       'scripts/ci/governance-obligations.ts',
-      'harness/kernel/gates/ring0-hooks/pre-push/verification/README.md',
-      'harness/kernel/gates/ring0-hooks/pre-push/verification/selector.ts',
+      'apps/cli/src/lib/verification/README.md',
+      'apps/cli/src/lib/verification/selector.ts',
       'apps/cli/src/lib/config.ts',
       'scripts/test-suites/inventory.json',
       'apps/cli/tests/ci-shards/shard-3.txt',

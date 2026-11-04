@@ -413,7 +413,9 @@ describe('diff-reading checks declare the variables their diff reader uses', () 
   const NOT_READERS = new Set(['repoRoot', 'lineIsInRanges'])
 
   function readerSet(): Set<string> {
-    const helper = stripComments(readFileSync(join(srcDir, 'lib', 'diff-evidence.ts'), 'utf8'))
+    const helper = stripComments(
+      readFileSync(join(srcDir, '..', '..', '..', 'harness', 'kernel', 'connectors', 'git', 'diff-evidence.ts'), 'utf8')
+    )
     const names = new Set<string>()
     for (const m of helper.matchAll(/^export\s+(?:async\s+)?(?:function|const)\s+([A-Za-z_$][\w$]*)/gm)) {
       if (m[1] && !NOT_READERS.has(m[1])) names.add(m[1])
@@ -422,7 +424,9 @@ describe('diff-reading checks declare the variables their diff reader uses', () 
   }
 
   it('derives the reader set from the helper and exports no shape the derivation misses', () => {
-    const helper = stripComments(readFileSync(join(srcDir, 'lib', 'diff-evidence.ts'), 'utf8'))
+    const helper = stripComments(
+      readFileSync(join(srcDir, '..', '..', '..', 'harness', 'kernel', 'connectors', 'git', 'diff-evidence.ts'), 'utf8')
+    )
     const readers = readerSet()
     for (const name of [
       'fileDiffAgainst',
@@ -448,7 +452,7 @@ describe('diff-reading checks declare the variables their diff reader uses', () 
       const source = stripComments(readFileSync(binPath, 'utf8'))
       const imported = new Set<string>()
       for (const m of source.matchAll(
-        /import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['"][^'"]*\/lib\/diff-evidence['"]/g
+        /import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['"][^'"]*\/connectors\/git\/diff-evidence['"]/g
       )) {
         for (const part of (m[1] ?? '').split(',')) {
           const name = part

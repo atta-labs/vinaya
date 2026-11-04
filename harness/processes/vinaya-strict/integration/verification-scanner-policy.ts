@@ -33,7 +33,6 @@ export { underDeclaredRoot } from '../../../kernel/gates/ring0-hooks/pre-push/ve
  * exist in another repository select nothing there.
  */
 export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
-  { test: 'harness/kernel/tests/kernel-folders.test.ts', roots: ['harness/kernel/'], trigger: 'tree-shape' },
   {
     test: 'apps/cli/tests/conformance/dev-review-engine-architecture-exit.test.ts',
     roots: [

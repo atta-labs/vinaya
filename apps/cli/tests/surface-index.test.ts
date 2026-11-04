@@ -59,12 +59,46 @@ const MOVED_LIBRARY_FOLDERS = [
 const MOVED_LIBRARY_FILES = ['loops/dev-review/flow-v2-events.ts', 'loops/dev-review/review-gate-input.ts'].map(
   (file) => `/harness/processes/vinaya-strict/${file}`
 )
+/** The library modules that moved out of `apps/cli/src/lib/` into the kernel; the commands still call them as a library. */
+const KERNEL_LIBRARY_FILES = [
+  'adapters/agents/agent-stream.ts',
+  'adapters/agents/agent-vendors.ts',
+  'adapters/agents/codex/loop-narration-codex.ts',
+  'adapters/code-host/github/forge-read.ts',
+  'adapters/code-host/github/forge-snapshot.ts',
+  'adapters/code-host/github/gh-path.ts',
+  'adapters/code-host/github/github-rate-limit.ts',
+  'conformance/unit/process-registry.ts',
+  'conformance/unit/test-temp.ts',
+  'connectors/git/detect.ts',
+  'connectors/git/diff-evidence.ts',
+  'connectors/git/numstat.ts',
+  'connectors/git/patch-id.ts',
+  'connectors/git/remote-base.ts',
+  'gates/checks/env-lint.ts',
+  'gates/checks/github-crossing-files.ts',
+  'gates/enforcement-controls.ts',
+  'gates/local-gate-control.ts',
+  'gates/ops.ts',
+  'gates/ring0-hooks/init-hook-paths.ts',
+  'gates/ring0-hooks/pre-push/cli-spawn-tests.ts',
+  'gates/ring0-hooks/pre-push/pre-push-changed-files.ts',
+  'gates/ring0-hooks/pre-push/pre-push-failed-tests.ts',
+  'gates/ring0-hooks/pre-push/pre-push-mode-logic.ts',
+  'gates/ring0-hooks/pre-push/pre-push-mode.ts',
+  'gates/ring0-hooks/pre-push/pre-push-record-tests.ts',
+  'gates/ring0-hooks/pre-push/pre-push-test-runner.ts',
+  'gates/ring1-ci/workflows/managed-workflow-paths.ts'
+].map((file) => `/harness/kernel/${file}`)
+const KERNEL_LIBRARY_FOLDERS = ['/harness/kernel/gates/ring0-hooks/pre-push/verification/']
 const isMovedLibrary = (filePath: string): boolean =>
-  !filePath.includes('/harness/processes/vinaya-strict/tests/') &&
-  // `roles/plan.ts` sat beside `lib/`, never inside it, so it stays outside the library here too.
-  !filePath.includes('/harness/processes/vinaya-strict/integration/roles/') &&
-  (MOVED_LIBRARY_FOLDERS.some((folder) => filePath.includes(folder)) ||
-    MOVED_LIBRARY_FILES.some((file) => filePath.endsWith(file)))
+  KERNEL_LIBRARY_FILES.some((file) => filePath.endsWith(file)) ||
+  KERNEL_LIBRARY_FOLDERS.some((folder) => filePath.includes(folder)) ||
+  (!filePath.includes('/harness/processes/vinaya-strict/tests/') &&
+    // `roles/plan.ts` sat beside `lib/`, never inside it, so it stays outside the library here too.
+    !filePath.includes('/harness/processes/vinaya-strict/integration/roles/') &&
+    (MOVED_LIBRARY_FOLDERS.some((folder) => filePath.includes(folder)) ||
+      MOVED_LIBRARY_FILES.some((file) => filePath.endsWith(file))))
 
 function isInScope(filePath: string): boolean {
   return (

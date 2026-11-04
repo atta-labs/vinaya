@@ -565,10 +565,6 @@ export const EXEMPTIONS: Record<string, string> = {
     'breaking the Part 4 eject byte-identity diff). The orchestration logic itself — prompt ordering, ' +
     'closeStdin-once discipline, partial-decline paths — is proven by tests/quickstart.test.ts against this ' +
     "workspace's own source, with real (non-mocked) git/hook behavior.",
-  audit:
-    '`audit` is a ring-2 scheduled mechanism: dead-branch drift and direct-main-push detection both derive ' +
-    'from live forge state (`gh` branch/PR reads) UNCONDITIONALLY — no offline path exists. Same forge/' +
-    'credential boundary as `archive` above; exempt for the same reason as `issue edit`.',
   'review post':
     "`review post` resolves the target PR's real head via `gh pr view <n> --json headRefOid` UNCONDITIONALLY, " +
     'before it renders anything — the whole point of the command is that the sha is forge-resolved and never ' +
@@ -832,8 +828,8 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     // runs `gh pr list` unconditionally. That call fails on local repo
     // resolution before any API request precisely BECAUSE the fixture has no
     // remote, and the check fails open to UNKNOWN. Do not restate this as
-    // "no gh" — the `audit` EXEMPTION above exempts a command for reaching
-    // `gh` through that very code path, and the two claims cannot both hold.
+    // "no gh" — the exemptions above exempt commands for reaching `gh`
+    // through that very code path, and the two claims cannot both hold.
     // The added forge surface is nil either way: the `check` exercise above
     // already runs the strictly larger `check --all --json` on this fixture.
     //

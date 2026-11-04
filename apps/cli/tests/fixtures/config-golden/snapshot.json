@@ -323,6 +323,7 @@
             "harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md"
           ],
           "productPaths": [
+            "harness/kernel/gates/ring0-hooks/pre-push/verification/README.md",
             "apps/cli/src",
             ".github/workflows",
             ".vinaya",
@@ -847,6 +848,7 @@
                   "harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md"
                 ],
                 "productPaths": [
+                  "harness/kernel/gates/ring0-hooks/pre-push/verification/README.md",
                   "apps/cli/src",
                   ".github/workflows",
                   ".vinaya",
