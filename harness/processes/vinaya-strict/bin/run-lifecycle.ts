@@ -518,6 +518,9 @@ export type WatchResult =
   /** The watch was stopped, or the run holds no pause that a ruling continues. */
   | { kind: 'stopped' }
 
+/** The longest one sleep of a usage-limit wait lasts; the pause's resolution is read after each. */
+export const USAGE_LIMIT_WAIT_SLICE_MS = 30_000
+
 /** The pull request a held pause's ruling belongs to: null for a pause whose ruling is on the task Issue. */
 const rulingOrdinalOf = (deps: ResumeDeps, held: PauseState, task: number): number => {
   const pr = escalationPrOf(held)
@@ -575,7 +578,16 @@ export async function watchForRuling(
     : null
   if (waitMs !== null && automatic.usageLimit < MAX_AUTOMATIC_RATE_LIMIT_RESUMES) {
     narrate(`the agent's usage limit resets within its bound; waiting ${waitMs} ms for the reset, then resuming`)
-    await watch.sleep(waitMs, stop)
+    // The wait is slept in slices, so a cancel written during it ends the wait within one slice.
+    for (let remaining = waitMs; remaining > 0; ) {
+      const slice = Math.min(remaining, USAGE_LIMIT_WAIT_SLICE_MS)
+      await watch.sleep(slice, stop)
+      if (stop.aborted) return { kind: 'stopped' }
+      remaining -= slice
+      const sliced = tolerate(() => deps.readResolution(task, escalationId), null)
+      if (sliced?.decision === 'cancel') return { kind: 'cancelled' }
+      if (sliced !== null) return { kind: 'consumed' }
+    }
     if (stop.aborted) return { kind: 'stopped' }
     const resolution = tolerate(() => deps.readResolution(task, escalationId), null)
     if (resolution?.decision === 'cancel') return { kind: 'cancelled' }

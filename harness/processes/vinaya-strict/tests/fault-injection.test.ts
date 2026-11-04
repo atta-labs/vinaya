@@ -33,7 +33,7 @@ import {
   OWN
 } from '../../../../apps/cli/tests/lib/task-tools/live-developer-context-world'
 import { checkpointPath, engineLiveDevToolsContext, runDirectory } from '../bin/run-engine'
-import { liveResumeDeps, type ResumeDeps, type RulingWatch } from '../bin/run-lifecycle'
+import { liveResumeDeps, type ResumeDeps, type RulingWatch, USAGE_LIMIT_WAIT_SLICE_MS } from '../bin/run-lifecycle'
 import {
   blocked,
   createWorld,
@@ -223,7 +223,8 @@ function fakeWatch(onSleep: (ms: number, state: WatchState) => void = () => {}) 
       onSleep(ms, state)
       // A watch that never ends on what its scenario arranged is cancelled rather than left spinning, so the
       // scenario fails on its outcome instead of hanging.
-      if (state.sleeps.length >= WATCH_POLL_LIMIT) state.resolution = { decision: 'cancel' } as ResolutionRecord
+      if (state.sleeps.filter((slept) => slept === 7).length >= WATCH_POLL_LIMIT)
+        state.resolution = { decision: 'cancel' } as ResolutionRecord
       await sleep(0)
     }
   }
@@ -470,7 +471,8 @@ for (const vendor of VENDORS)
         let world: World | undefined
         const { watch, state } = fakeWatch(() => {
           const held = world ? readPauseState(world.runtimeDir, TASK) : null
-          if (held?.detail) details.push(held.detail)
+          // Each slice of the wait reads the same held pause: its detail is recorded once.
+          if (held?.detail && details[details.length - 1] !== held.detail) details.push(held.detail)
         })
         world = createWorld()
         const now = Date.now()
@@ -486,9 +488,12 @@ for (const vendor of VENDORS)
         ])
         expect(details).toHaveLength(1)
         expect(isUsageLimitPauseDetail(details[0])).toBe(true)
-        // One bounded wait, to the reset the vendor named, and no ruling read or asked for.
-        expect(state.sleeps).toEqual([usageLimitWaitMs(usageLimitResetFromDetail(details[0]), now) as number])
-        expect(state.sleeps[0]).toBeGreaterThan(0)
+        // One bounded wait, to the reset the vendor named, slept in slices of at most the slice bound, and no ruling
+        // read or asked for.
+        const waitMs = usageLimitWaitMs(usageLimitResetFromDetail(details[0]), now) as number
+        expect(state.sleeps.reduce((total, slept) => total + slept, 0)).toBe(waitMs)
+        expect(Math.max(...state.sleeps)).toBeLessThanOrEqual(USAGE_LIMIT_WAIT_SLICE_MS)
+        expect(waitMs).toBeGreaterThan(0)
         expect(state.rulingReads).toBe(0)
         expect(state.claims).toEqual([
           { decision: 'resume', by: 'driver-self', from: expect.stringMatching(/-usage-limit-reset$/) }
@@ -514,9 +519,26 @@ for (const vendor of VENDORS)
         expect(state.claims).toHaveLength(MAX_AUTOMATIC_RATE_LIMIT_RESUMES)
         expect(state.claims.every((claim) => claim.by === 'driver-self')).toBe(true)
         expect(run.ledger.launches.develop).toBe(MAX_AUTOMATIC_RATE_LIMIT_RESUMES + 1)
-        expect(state.sleeps.slice(MAX_AUTOMATIC_RATE_LIMIT_RESUMES)).toEqual([7])
+        expect(state.sleeps.filter((slept) => slept === 7)).toEqual([7])
         expect(run.trace.outcome).toBe('cancelled')
         expect(run.ledger.comments).toEqual([])
+      })
+    }, 60_000)
+
+    test(`${ROWS.usageLimit} — a cancel written during the wait ends it after the first slice, not the whole reset`, async () => {
+      await holds(ROWS.usageLimit, async () => {
+        const { watch, state } = fakeWatch((ms, s) => {
+          if (ms === USAGE_LIMIT_WAIT_SLICE_MS) s.resolution = { decision: 'cancel' } as ResolutionRecord
+        })
+        const now = Date.now()
+        const run = await replay({
+          vendor,
+          launch: (step) => (step === 'develop' ? usageLimited(vendor, now) : undefined),
+          lifecycle: { watch: { ...watch, now: () => now }, now: () => new Date(now), handleSignals: false }
+        })
+        expect(state.sleeps).toEqual([USAGE_LIMIT_WAIT_SLICE_MS])
+        expect(state.claims).toEqual([])
+        expect(run.trace.outcome).toBe('cancelled')
       })
     }, 60_000)
 

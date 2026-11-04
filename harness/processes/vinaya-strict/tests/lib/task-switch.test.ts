@@ -41,6 +41,10 @@ function deps(overrides: Partial<SwitchTaskDeps> = {}): SwitchTaskDeps {
     rewritePauseAgent: () => false,
     logLine: (_task, words) => lines.push(words),
     now: () => new Date('2026-10-27T03:04:05.678Z'),
+    holdsPause: () => false,
+    stopDriver: () => {},
+    sleep: async () => {},
+    startBackground: async () => 'acknowledged',
     ...overrides
   }
 }
@@ -53,6 +57,90 @@ describe('switchTask', () => {
     expect(result.message).toContain('pid 4242')
     for (const name of CHECKPOINT_FILES) expect(existsSync(join(runDir(7), name))).toBe(true)
     expect(lines).toEqual([])
+  })
+
+  it('stops a live driver that only holds a pause, waits for its exit, and switches', async () => {
+    seedCheckpoint(7)
+    let alive = true
+    const stopped: number[] = []
+    const result = await switchTask(
+      { task: 7, agent: 'claude' },
+      deps({
+        liveDriverPid: () => (alive ? 4242 : null),
+        holdsPause: () => true,
+        stopDriver: (pid) => {
+          stopped.push(pid)
+          alive = false
+        }
+      })
+    )
+    expect(stopped).toEqual([4242])
+    expect(result.kind).toBe('switched')
+    for (const name of CHECKPOINT_FILES) expect(existsSync(join(runDir(7), name))).toBe(false)
+  })
+
+  it('refuses a live driver with no pause as before, stopping nothing and starting nothing', async () => {
+    seedCheckpoint(7)
+    const stopped: number[] = []
+    const started: unknown[] = []
+    const result = await switchTask(
+      { task: 7, agent: 'claude' },
+      deps({
+        liveDriverPid: () => 4242,
+        stopDriver: (pid) => stopped.push(pid),
+        startBackground: async (...args) => {
+          started.push(args)
+          return ''
+        }
+      })
+    )
+    expect(result.kind).toBe('refused')
+    expect(result.message).toContain(
+      'is still running; nothing was changed. Let it reach its pause, or stop it, then switch.'
+    )
+    expect(stopped).toEqual([])
+    expect(started).toEqual([])
+  })
+
+  it('refuses a driver that does not exit within 30 seconds, naming its pid, moving and starting nothing', async () => {
+    seedCheckpoint(7)
+    let slept = 0
+    const started: unknown[] = []
+    const result = await switchTask(
+      { task: 7, agent: 'claude' },
+      deps({
+        liveDriverPid: () => 4242,
+        holdsPause: () => true,
+        sleep: async (ms) => {
+          slept += ms
+        },
+        startBackground: async (...args) => {
+          started.push(args)
+          return ''
+        }
+      })
+    )
+    expect(result.kind).toBe('refused')
+    expect(result.message).toContain('pid 4242')
+    expect(slept).toBe(30_000)
+    for (const name of CHECKPOINT_FILES) expect(existsSync(join(runDir(7), name))).toBe(true)
+    expect(lines).toEqual([])
+    expect(started).toEqual([])
+  })
+
+  it('starts the run in the background once on the new agent and model after a switch, printing its acknowledgement', async () => {
+    const started: unknown[] = []
+    const result = await switchTask(
+      { task: 7, agent: 'claude', model: 'opus' },
+      deps({
+        startBackground: async (...args) => {
+          started.push(args)
+          return 'background controller acknowledged'
+        }
+      })
+    )
+    expect(started).toEqual([[7, 'claude', 'opus']])
+    expect(result.message).toContain('background controller acknowledged')
   })
 
   it('moves all three checkpoint files aside when the task has no published work', async () => {
@@ -124,7 +212,12 @@ describe('switchTask', () => {
       agent: 'codex',
       model: 'gpt-5.5'
     } as Parameters<typeof writePauseState>[1])
-    const live = { ...liveSwitchDeps(root, () => true), readRunner: () => 'atta-engine' as const, logLine: () => {} }
+    const live = {
+      ...liveSwitchDeps(root, () => true),
+      readRunner: () => 'atta-engine' as const,
+      logLine: () => {},
+      startBackground: async () => 'acknowledged'
+    }
     const result = await switchTask({ task: 7, agent: 'claude', model: 'opus' }, live)
     expect(result.kind).toBe('switched')
     const held = readPauseState(root, 7)
@@ -135,7 +228,12 @@ describe('switchTask', () => {
   })
 
   it('leaves no pause record behind when none was held', async () => {
-    const live = { ...liveSwitchDeps(root, () => false), readRunner: () => 'atta-engine' as const, logLine: () => {} }
+    const live = {
+      ...liveSwitchDeps(root, () => false),
+      readRunner: () => 'atta-engine' as const,
+      logLine: () => {},
+      startBackground: async () => 'acknowledged'
+    }
     await switchTask({ task: 8, agent: 'claude' }, live)
     expect(readPauseState(root, 8)).toBeNull()
   })
