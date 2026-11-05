@@ -105,6 +105,12 @@ function globCandidateFiles(): string[] {
     }
   }
 
+  out.push(
+    'harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts',
+    'harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts',
+    'harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.ts'
+  )
+
   const standaloneDir = join(REPO_ROOT, 'harness/processes/vinaya-strict/checks/standalone')
   for (const name of readdirSync(standaloneDir)) {
     if (name.endsWith('.ts') && !name.endsWith('.test.ts')) {

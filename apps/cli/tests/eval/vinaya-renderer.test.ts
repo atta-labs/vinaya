@@ -4,7 +4,7 @@
 // translation, never defaulting a missing fact to a passing value.
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { parseIssueSurface } from '@attalabs/aeg-core'
+import { parseIssueSurface } from '../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
 import { KIND_FIELDS, type NeutralCase, NEUTRAL_CASE_KINDS } from '../../src/lib/dev-review-eval/neutral-case'
 import { CLAUDE_CAPABILITY_TOOLS } from '../../../../harness/kernel/adapters/agents/claude-code/capabilities'
 import { OUTCOME_NAMES } from '../../src/lib/dev-review-eval/neutral-outcomes'
@@ -696,7 +696,7 @@ describe('the renderer version', () => {
       'harness/processes/vinaya-strict/executing/developer/developer-turn-result.ts',
       'apps/cli/src/lib/dev-review-eval/neutral-case.ts',
       'harness/kernel/tools/role-grants.ts',
-      'packages/aeg-core/src/issue-validation.ts'
+      'harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts'
     ]) {
       expect(MAPPING_SOURCE_PATHS).toContain(path)
       const edited = { ...MAPPING_SOURCES, [path]: `${MAPPING_SOURCES[path]}\n// edited` }

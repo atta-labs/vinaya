@@ -8,7 +8,7 @@ import type {
   MeteringCapability,
   MeteringCapabilityDeps
 } from '../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
-import { formatTokensLine } from './report-tokens'
+import { formatTokensLine } from '../../../harness/processes/vinaya-strict/tools/pr-report/tokens/report-tokens'
 
 function assistantLine(opts: {
   id: string

@@ -1,5 +1,6 @@
 import { execFileSync, execSync } from 'node:child_process'
-import * as realForgeState from '@attalabs/aeg-forge-state'
+import * as realMilestone from '../../tools/task-contract/forge/fetch-milestone'
+import * as realTasks from '../../tools/task-contract/forge/list-tasks'
 import { describe, expect, it, mock } from 'bun:test'
 
 /**
@@ -53,8 +54,8 @@ import { describe, expect, it, mock } from 'bun:test'
 const FORGE_FIXTURE_SLUG = 'zzz-topology-move-forge-fixture'
 const FORGE_FIXTURE_ISSUE_NUMBER = 424242
 
-const actual = { ...realForgeState }
-mock.module('@attalabs/aeg-forge-state', () => {
+const actual = { ...realMilestone, ...realTasks }
+mock.module('../../tools/task-contract/forge/fetch-milestone', () => {
   return {
     ...actual,
     indexTrancheMilestonesAsync: async () => ({
@@ -67,22 +68,25 @@ mock.module('@attalabs/aeg-forge-state', () => {
         ]
       ]),
       legacySlugs: new Set<string>()
-    }),
-    fetchTrancheIssuesAsync: async (owner: string, repo: string, slug: string) => {
-      if (slug !== FORGE_FIXTURE_SLUG) return actual.fetchTrancheIssuesAsync(owner, repo, slug)
-      return [
-        {
-          number: FORGE_FIXTURE_ISSUE_NUMBER,
-          title: `[${FORGE_FIXTURE_SLUG}] 1 — Fixture task delivered by the mocked forge`,
-          body: '',
-          state: 'OPEN' as const,
-          labels: [{ name: `vinaya/tranche:${FORGE_FIXTURE_SLUG}` }],
-          milestone: null
-        }
-      ]
-    }
+    })
   }
 })
+mock.module('../../tools/task-contract/forge/list-tasks', () => ({
+  ...realTasks,
+  fetchTrancheIssuesAsync: async (owner: string, repo: string, slug: string) => {
+    if (slug !== FORGE_FIXTURE_SLUG) return actual.fetchTrancheIssuesAsync(owner, repo, slug)
+    return [
+      {
+        number: FORGE_FIXTURE_ISSUE_NUMBER,
+        title: `[${FORGE_FIXTURE_SLUG}] 1 — Fixture task delivered by the mocked forge`,
+        body: '',
+        state: 'OPEN' as const,
+        labels: [{ name: `vinaya/tranche:${FORGE_FIXTURE_SLUG}` }],
+        milestone: null
+      }
+    ]
+  }
+}))
 
 const { loadTrancheSweep } = await import('./verify-coherence')
 

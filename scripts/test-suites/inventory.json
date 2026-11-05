@@ -36,14 +36,6 @@
       "preload": null
     },
     {
-      "id": "aeg-forge-state",
-      "owner": "@attalabs/aeg-forge-state",
-      "kind": "workspace",
-      "dir": "packages/aeg-forge-state",
-      "runner": "vitest",
-      "preload": null
-    },
-    {
       "id": "sources",
       "owner": "@attalabs/vinaya-sources",
       "kind": "workspace",
@@ -96,15 +88,17 @@
   ],
   "typeInputs": [
     {
-      "path": "packages/aeg-types",
-      "role": "shared type package with no tests; an input to every package's typecheck task"
+      "path": "packages/typescript-config",
+      "role": "shared TypeScript configuration package with no tests"
     },
-    { "path": "packages/typescript-config", "role": "shared TypeScript configuration package with no tests" },
     {
       "path": "packages/typescript-config/base.json",
       "role": "the TypeScript base configuration every package extends"
     },
-    { "path": "tsconfig.json", "role": "the repository-root TypeScript configuration" }
+    {
+      "path": "tsconfig.json",
+      "role": "the repository-root TypeScript configuration"
+    }
   ],
   "exclusions": [],
   "inputs": [
@@ -113,7 +107,12 @@
       "kind": "config",
       "paths": ["vinaya.config.json"],
       "format": "json",
-      "readers": [{ "kind": "semantic", "suites": ["cli"] }],
+      "readers": [
+        {
+          "kind": "semantic",
+          "suites": ["cli"]
+        }
+      ],
       "reason": "Every CLI command a CLI test starts reads the parsed repository configuration; the selector forces the CLI suite on its change for the same reason."
     },
     {
@@ -129,7 +128,6 @@
             "log-server",
             "portal",
             "aeg-core",
-            "aeg-forge-state",
             "sources",
             "kernel",
             "process-vinaya",
@@ -144,7 +142,12 @@
       "id": "config-probe-program",
       "kind": "spawn",
       "paths": ["scripts/ci/config-probe.ts"],
-      "readers": [{ "kind": "code", "tests": ["apps/cli/tests/lib/ci-config-probe.test.ts"] }],
+      "readers": [
+        {
+          "kind": "code",
+          "tests": ["apps/cli/tests/lib/ci-config-probe.test.ts"]
+        }
+      ],
       "reason": "The test starts the probe as its own process, outside any import."
     },
     {
@@ -153,7 +156,10 @@
       "paths": ["harness/kernel/dev-process-socket/contract/process.schema.json"],
       "format": "json",
       "readers": [
-        { "kind": "schema-policy", "tests": ["harness/kernel/dev-process-socket/loader/load-process.test.ts"] }
+        {
+          "kind": "schema-policy",
+          "tests": ["harness/kernel/dev-process-socket/loader/load-process.test.ts"]
+        }
       ],
       "reason": "The loader test validates every process folder against the contract schema it reads from disk."
     },
@@ -161,21 +167,36 @@
       "id": "golden-tranche-fixture",
       "kind": "fixture",
       "paths": ["packages/sources/tests/fixtures/golden-tranche-snapshot.md"],
-      "readers": [{ "kind": "raw-bytes", "tests": ["packages/sources/src/golden-forge-vs-file.test.ts"] }],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["packages/sources/src/golden-forge-vs-file.test.ts"]
+        }
+      ],
       "reason": "The golden comparison reads the snapshot's bytes from disk."
     },
     {
       "id": "bun-lock-fixtures",
       "kind": "fixture",
       "paths": ["scripts/test-suites/fixtures/bun-lock/"],
-      "readers": [{ "kind": "raw-bytes", "tests": ["scripts/test-suites/inventory-check.test.ts"] }],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["scripts/test-suites/inventory-check.test.ts"]
+        }
+      ],
       "reason": "The inventory test reads real lockfiles from before and after two workspace moves from disk, outside any import."
     },
     {
       "id": "aeg-core-test-fixtures",
       "kind": "fixture",
       "paths": ["packages/aeg-core/tests/fixtures/"],
-      "readers": [{ "kind": "raw-bytes", "tests": ["apps/cli/tests/commands/pr.test.ts"] }],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["apps/cli/tests/commands/pr.test.ts"]
+        }
+      ],
       "reason": "The pr command test reads the core package's pull-request body fixtures from disk, outside any import."
     },
     {
@@ -203,22 +224,25 @@
     {
       "id": "published-package-trees",
       "kind": "fixture",
-      "paths": [
-        "apps/cli/",
-        "packages/aeg-core/",
-        "packages/aeg-forge-state/",
-        "packages/aeg-types/",
-        "packages/sources/",
-        "aeg-root/"
+      "paths": ["apps/cli/", "packages/aeg-core/", "packages/sources/", "aeg-root/"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["scripts/package-compat/package-compat.test.ts"]
+        }
       ],
-      "readers": [{ "kind": "raw-bytes", "tests": ["scripts/package-compat/package-compat.test.ts"] }],
       "reason": "The compatibility suite packs every published package's folder with npm, outside any import: the command-line package from the bundle it builds and the doctrine it copies, the three aeg packages through the assemble step, and installs the tarballs."
     },
     {
       "id": "package-compat-programs",
       "kind": "spawn",
       "paths": ["apps/cli/scripts/build.ts", "apps/cli/scripts/bundle-doctrine.ts"],
-      "readers": [{ "kind": "code", "tests": ["scripts/package-compat/package-compat.test.ts"] }],
+      "readers": [
+        {
+          "kind": "code",
+          "tests": ["scripts/package-compat/package-compat.test.ts"]
+        }
+      ],
       "reason": "The compatibility suite starts the command-line package's build and doctrine copy as their own processes before packing it."
     },
     {
@@ -226,7 +250,12 @@
       "kind": "config",
       "paths": [".changeset/config.json", "scripts/package-compat/snapshot.json"],
       "format": "json",
-      "readers": [{ "kind": "semantic", "tests": ["scripts/package-compat/package-compat.test.ts"] }],
+      "readers": [
+        {
+          "kind": "semantic",
+          "tests": ["scripts/package-compat/package-compat.test.ts"]
+        }
+      ],
       "reason": "The compatibility suite reads the fixed release group that names the published packages, and the snapshot it compares their facts with, from disk."
     },
     {
@@ -281,7 +310,12 @@
       "id": "task-graph",
       "kind": "config",
       "paths": ["turbo.json"],
-      "readers": [{ "kind": "raw-bytes", "tests": ["apps/cli/tests/lib/ci-job-oracle.test.ts"] }],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["apps/cli/tests/lib/ci-job-oracle.test.ts"]
+        }
+      ],
       "reason": "The job oracle derives each package's typecheck prerequisites from turbo's own dry-run task graph."
     },
     {
@@ -305,7 +339,12 @@
       "id": "managed-pre-push-hook",
       "kind": "config",
       "paths": [".vinaya/hooks/pre-push"],
-      "readers": [{ "kind": "raw-bytes", "tests": ["apps/cli/tests/lib/local-test-runner.test.ts"] }],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["apps/cli/tests/lib/local-test-runner.test.ts"]
+        }
+      ],
       "reason": "The native local runner's test reads the committed hook and asserts where it hands a push's tests to the adapter."
     },
     {
@@ -345,7 +384,10 @@
       "kind": "fixture",
       "paths": ["apps/cli/tests/fixtures/forge/"],
       "readers": [
-        { "kind": "raw-bytes", "tests": ["harness/processes/vinaya-strict/tests/forge-write.test.ts"] },
+        {
+          "kind": "raw-bytes",
+          "tests": ["harness/processes/vinaya-strict/tests/forge-write.test.ts"]
+        },
         {
           "kind": "code",
           "tests": [
@@ -362,7 +404,10 @@
       "paths": ["harness/processes/vinaya-strict/integration/log/fixtures/recorded-headers.json"],
       "format": "json",
       "readers": [
-        { "kind": "semantic", "tests": ["harness/processes/vinaya-strict/integration/log/log-sink-factory.test.ts"] }
+        {
+          "kind": "semantic",
+          "tests": ["harness/processes/vinaya-strict/integration/log/log-sink-factory.test.ts"]
+        }
       ],
       "reason": "The header parity test compares the parsed event headers its probes write with this recording, read from disk."
     },
@@ -419,7 +464,12 @@
         "apps/cli/tests/fixtures/config-golden/snapshot.json"
       ],
       "format": "json",
-      "readers": [{ "kind": "semantic", "tests": ["apps/cli/tests/config-golden.test.ts"] }],
+      "readers": [
+        {
+          "kind": "semantic",
+          "tests": ["apps/cli/tests/config-golden.test.ts"]
+        }
+      ],
       "reason": "The configuration golden parses its corpus and its recorded snapshot from disk and compares the composed schema's answers against them, outside any import."
     },
     {
@@ -432,8 +482,282 @@
         "apps/cli/tests/fixtures/forge/vinaya.config.custom.json"
       ],
       "format": "json",
-      "readers": [{ "kind": "semantic", "tests": ["apps/cli/tests/config-golden.test.ts"] }],
+      "readers": [
+        {
+          "kind": "semantic",
+          "tests": ["apps/cli/tests/config-golden.test.ts"]
+        }
+      ],
       "reason": "The configuration golden lists every tracked vinaya.config*.json with git ls-files and parses each from disk. These are the files that scan finds today. The `git ls-files` call also makes the selector read the test as a whole-tree scanner, the conservative fallback that selects it on any change: a newly tracked configuration file anywhere fails the golden until its snapshot is rewritten."
+    },
+    {
+      "id": "task-contract-placement-tree",
+      "kind": "fixture",
+      "paths": ["packages/", "apps/cli/tests/lib/"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["harness/processes/vinaya-strict/tools/task-contract/task-contract-placement.test.ts"]
+        }
+      ],
+      "reason": "Conservative tree-scan roots: the placement test checks every old file is absent under these folders, so additions anywhere in them must select the guard."
+    },
+    {
+      "id": "task-contract-placement-config",
+      "kind": "config",
+      "paths": [
+        "vinaya.config.json",
+        "packages/aeg-core/src/index.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/brief-render.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/brief-render.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/brief-validation.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/consumer-enumeration.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/consumer-enumeration.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/derive-section7.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/derive-section7.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/derive-tranche.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/derive-tranche.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/issue-validation.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/milestone-validation.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/milestone-validation.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/objectives.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/objectives.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/parse-registry.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/parse-registry.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/parse-tranche.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/parse-tranche.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/pr-tier.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/pr-tier.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/premise-check.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/premise-check.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/principals-config.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/principals-config.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/protected-paths.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/protected-paths.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/review-policy.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/review-policy.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/review-status.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/review-status.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/ruling-ordinal.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/ruling-ordinal.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/state-machine-model.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/state-machine-model.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/task-branch-identity.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/task-branch-identity.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/test-plan-section.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/test-plan-section.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/waiver-label.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/waiver-label.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/gate-cutovers.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/live-record.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/objectives-cutover-config.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/state-source.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/types.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/parse-ledger.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/parse-ledger.test.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/parse-token-report.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/parse-token-report.test.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/report-tokens.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/report-tokens.test.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/sum-ledger.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/sum-ledger.test.ts",
+        "harness/processes/vinaya-strict/checks/pr-report-density.ts",
+        "harness/processes/vinaya-strict/checks/pr-report-density.test.ts",
+        "harness/processes/vinaya-strict/tools/task-phase-history.ts",
+        "harness/processes/vinaya-strict/integration/gates/checks/anchored-region.test.ts",
+        "harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts",
+        "harness/processes/vinaya-strict/thinking/planner/tools/open-issue.test.ts",
+        "harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts",
+        "harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.test.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/issue-surface.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/planning-collisions.test.ts",
+        "harness/processes/vinaya-strict/tools/milestone/check-milestone-attachment.test.ts",
+        "harness/processes/vinaya-strict/checks/forge/list-issue-milestones.test.ts",
+        "harness/processes/vinaya-strict/tools/prior-tranche-archival.ts",
+        "harness/processes/vinaya-strict/checks/forge/fetch-task-issue-refs.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fetch-milestone.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/labels.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/map-forge-facts.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fetch-forge-facts.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fetch-forge-facts.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/derive-from-forge.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/duplicate-task-ids.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/derive-from-forge.test.ts",
+        "harness/processes/vinaya-strict/checks/forge/fetch-provenance.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fetch-open-issues.test.ts",
+        "harness/processes/vinaya-strict/checks/forge/list-issue-milestones.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/parse-rationale-deps.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fetch-open-issues.ts",
+        "harness/processes/vinaya-strict/checks/forge/fetch-task-issue-refs.ts",
+        "harness/processes/vinaya-strict/checks/forge/fetch-provenance.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/map-forge-facts.ts",
+        "harness/processes/vinaya-strict/tools/milestone/check-milestone-attachment.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fetch-milestone.test.ts",
+        "harness/processes/vinaya-strict/thinking/planner/tools/amend-rationale-deps.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fetch-forge-facts.entry.test.ts",
+        "harness/processes/vinaya-strict/integration/adapters/code-host/github/gh.test.ts",
+        "harness/processes/vinaya-strict/thinking/planner/tools/amend-rationale-deps.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/parse-rationale-deps.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/milestone-adopt-lifecycle.test.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/labels.ts",
+        "harness/processes/vinaya-strict/tools/prior-tranche-archival.test.ts",
+        "harness/processes/vinaya-strict/tools/test-support/mock-gh.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fixtures/issue-429-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fixtures/issue-382-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fixtures/issue-383-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fixtures/issue-388-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fixtures/issue-384-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fixtures/issue-509-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/forge/fixtures/milestones-empty.json",
+        "harness/processes/vinaya-strict/tools/task-contract/tranche-types.ts"
+      ],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["harness/processes/vinaya-strict/tools/task-contract/task-contract-placement.test.ts"]
+        }
+      ],
+      "reason": "The placement guard reads the core index and source-comment roots and checks the exact moved-file set."
+    },
+    {
+      "id": "task-contract-core-fixtures",
+      "kind": "fixture",
+      "paths": ["packages/aeg-core/tests/fixtures/"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": [
+            "harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/brief-render.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/brief-validation.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/consumer-enumeration.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/derive-section7.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/derive-tranche.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/issue-validation.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/milestone-validation.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/objectives.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/parse-registry.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/parse-tranche.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/pr-tier.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/premise-check.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/principals-config.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/protected-paths.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/review-policy.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/review-status.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/ruling-ordinal.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/state-machine-model.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/task-branch-identity.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/test-plan-section.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/waiver-label.test.ts",
+            "harness/processes/vinaya-strict/tools/pr-report/tokens/parse-ledger.test.ts",
+            "harness/processes/vinaya-strict/tools/pr-report/tokens/parse-token-report.test.ts",
+            "harness/processes/vinaya-strict/tools/pr-report/tokens/report-tokens.test.ts",
+            "harness/processes/vinaya-strict/tools/pr-report/tokens/sum-ledger.test.ts",
+            "harness/processes/vinaya-strict/checks/pr-report-density.test.ts",
+            "harness/processes/vinaya-strict/integration/gates/checks/anchored-region.test.ts"
+          ]
+        }
+      ],
+      "reason": "Conservative folder edge for the moved parsers that read core fixtures with filesystem paths, retaining all fixture-triggered coverage."
+    },
+    {
+      "id": "task-contract-forge-fixtures",
+      "kind": "fixture",
+      "paths": ["harness/processes/vinaya-strict/tools/task-contract/forge/fixtures/"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": [
+            "harness/processes/vinaya-strict/tools/milestone/check-milestone-attachment.test.ts",
+            "harness/processes/vinaya-strict/checks/forge/list-issue-milestones.test.ts",
+            "harness/processes/vinaya-strict/checks/forge/fetch-task-issue-refs.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/forge/labels.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/forge/map-forge-facts.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/forge/fetch-forge-facts.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/forge/duplicate-task-ids.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/forge/derive-from-forge.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/forge/fetch-open-issues.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/forge/parse-rationale-deps.test.ts",
+            "harness/processes/vinaya-strict/checks/forge/fetch-provenance.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/forge/fetch-milestone.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/forge/fetch-forge-facts.entry.test.ts",
+            "harness/processes/vinaya-strict/integration/adapters/code-host/github/gh.test.ts",
+            "harness/processes/vinaya-strict/thinking/planner/tools/amend-rationale-deps.test.ts",
+            "harness/processes/vinaya-strict/tools/task-contract/forge/milestone-adopt-lifecycle.test.ts",
+            "harness/processes/vinaya-strict/tools/prior-tranche-archival.test.ts",
+            "harness/processes/vinaya-strict/thinking/planner/tools/open-issue.test.ts"
+          ]
+        }
+      ],
+      "reason": "Conservative folder edge for moved forge-reader tests and the Issue opener that load captured Issue bodies and milestone JSON outside imports."
+    },
+    {
+      "id": "task-contract-collision-inputs",
+      "kind": "fixture",
+      "paths": [
+        "packages/aeg-core/src/",
+        "packages/aeg-core/bin/",
+        "harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/brief-render.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/consumer-enumeration.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/derive-section7.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/derive-tranche.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/milestone-validation.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/objectives.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/parse-registry.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/parse-tranche.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/pr-tier.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/premise-check.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/principals-config.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/protected-paths.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/review-policy.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/review-status.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/ruling-ordinal.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/state-machine-model.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/task-branch-identity.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/test-plan-section.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/waiver-label.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/gate-cutovers.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/live-record.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/objectives-cutover-config.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/state-source.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/types.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/parse-ledger.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/parse-token-report.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/report-tokens.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/sum-ledger.ts",
+        "harness/processes/vinaya-strict/checks/pr-report-density.ts",
+        "harness/processes/vinaya-strict/tools/task-phase-history.ts",
+        "harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts",
+        "harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.ts"
+      ],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["harness/processes/vinaya-strict/checks/symbol-collisions.test.ts"]
+        }
+      ],
+      "reason": "The symbol-collision test preserves its pre-move source census and logical identities while reading relocated implementations at their destinations."
     }
   ],
   "providers": [
@@ -443,7 +767,12 @@
       "file": "apps/cli/tests/sandbox-conformance/command-sources.ts",
       "export": "SUITE_INPUTS",
       "shape": "path-list",
-      "readers": [{ "kind": "raw-bytes", "tests": ["apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts"] }],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts"]
+        }
+      ],
       "reason": "The sandbox suite skips itself unless a pull request changes one of these paths, so each is an input of that suite."
     },
     {

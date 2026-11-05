@@ -27,7 +27,7 @@
  * full reasoning, and `vinaya-body-checks.yml`'s header for the workflow
  * side of the same boundary `vinaya-review.yml` already established.
  *
- * `packages/aeg-core/bin/open-pr.ts` is a second, non-CI caller of this same
+ * `harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts` is a second, non-CI caller of this same
  * bin — a local/agent CLI invocation before the write, not a GitHub Actions
  * trigger, so the `pull_request` vs `pull_request_target` boundary above
  * does not apply to it. It carries its own narrower obligation instead:

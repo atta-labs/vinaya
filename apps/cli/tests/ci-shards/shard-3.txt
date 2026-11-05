@@ -17,7 +17,6 @@ tests/commands/review-post.test.ts
 tests/commands/review-status.test.ts
 tests/doctor.test.ts
 tests/init.test.ts
-tests/lib/issue-surface.test.ts
 tests/lib/gate-cutovers.test.ts
 tests/lib/log-cache-sqlite.test.ts
 tests/milestone.test.ts

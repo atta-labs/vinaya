@@ -16,7 +16,7 @@ import { expandGlob, packageNameForPath, sha256OfFile } from '../../src/commands
  * `harness/processes/vinaya-strict/checks/branch-topology.test.ts` documents for the same
  * reason: exercise the pure/local pieces directly rather than a live network
  * call. The pure renderer itself (`renderBrief`/`parseRationaleFields`) is
- * covered exhaustively in `packages/aeg-core/src/brief-render.test.ts`.
+ * covered exhaustively in `harness/processes/vinaya-strict/tools/task-contract/brief-render.test.ts`.
  */
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -105,8 +105,8 @@ describe('brief.ts local helpers — repo-root-relative', () => {
   afterAll(() => process.chdir(originalCwd))
 
   it('expandGlob expands a real tracked file via git ls-files', () => {
-    const matches = expandGlob('packages/aeg-core/src/brief-render.ts')
-    expect(matches).toEqual(['packages/aeg-core/src/brief-render.ts'])
+    const matches = expandGlob('harness/processes/vinaya-strict/tools/task-contract/brief-render.ts')
+    expect(matches).toEqual(['harness/processes/vinaya-strict/tools/task-contract/brief-render.ts'])
   })
 
   it('expandGlob resolves to an empty list for a glob matching no tracked file — the caller names the glob in its own refusal', () => {
@@ -114,7 +114,7 @@ describe('brief.ts local helpers — repo-root-relative', () => {
   })
 
   it("packageNameForPath resolves a packages/<pkg> path to that workspace member's own package.json name", () => {
-    expect(packageNameForPath('packages/aeg-core/src/brief-render.ts')).toBe('@attalabs/aeg-core')
+    expect(packageNameForPath('packages/typescript-config/base.json')).toBe('@atta/typescript-config')
   })
 
   it("packageNameForPath resolves an apps/<app> path to that workspace member's own package.json name", () => {
@@ -128,7 +128,7 @@ describe('brief.ts local helpers — repo-root-relative', () => {
 
 describe('sha256OfFile', () => {
   it('is a 64-char lowercase hex digest, stable across two reads of the same file', () => {
-    const path = join(REPO_ROOT, 'packages/aeg-core/src/brief-render.ts')
+    const path = join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/brief-render.ts')
     const first = sha256OfFile(path)
     const second = sha256OfFile(path)
     expect(first).toMatch(/^[0-9a-f]{64}$/)

@@ -1,0 +1,4083 @@
+import { parseIssueDocumentation } from '@attalabs/harness/issue-documentation'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { amendRationaleDeps } from '../../thinking/planner/tools/amend-rationale-deps'
+import { projectsFromBody } from './forge/list-tasks'
+import { describe, expect, it } from 'vitest'
+import { fenceShapes } from '../../../../../packages/aeg-core/tests/fixtures/fence-shapes'
+import {
+  boundaryPinnedFiles,
+  BRIEF_SECTIONS_SINCE_ISSUE,
+  checkBlastRadiusScope,
+  checkBoundaryClaimsNeedPremise,
+  checkConflictCompleteness,
+  checkEdgeIdsWholeNumbers,
+  checkFileCollisions,
+  checkIssueBriefSections,
+  checkIssueObjectives,
+  checkIssuePremises,
+  checkIssueRationale,
+  checkIntroducedCommandsCovered,
+  checkIntroducedConfigKeysCovered,
+  checkPinnedFileChecksDecided,
+  checkPinnedFileImportersCovered,
+  decidePinnedFileImporters,
+  surfaceForcedSet,
+  checkNewTestFilesCoverShards,
+  checkNewLoopFilesCoverInvariantMap,
+  checkDocumentationPathsExist,
+  checkDocumentationReadable,
+  isNonPublicHost,
+  type CommandReferenceFacts,
+  type ConfigReferenceFacts,
+  checkDocsWithinSurface,
+  checkDocumentationCitesObjective,
+  checkIssueType,
+  checkMilestoneAttach,
+  checkNoBriefContent,
+  checkNoForeignTaskOwnership,
+  checkProseAllowsBeyondSurfaceEdit,
+  checkCrossTaskValuesPinned,
+  checkObjectivesRespectBoundary,
+  checkPartsCiteDefinedObjectives,
+  checkPartsCoverageAndSequence,
+  checkPremiseDependencyDeclared,
+  checkProjectsRegistered,
+  checkRationaleNamesDocs,
+  checkRationaleSurfaceCoverage,
+  checkSurfaceExcludesBoundDoc,
+  checkSurfaceGlobsResolve,
+  checkSurfaceOverlap,
+  checkSurfaceScope,
+  beyondSurfacePaths,
+  recordedBeyondSurfacePaths,
+  renderBeyondSurfaceBlock,
+  withBeyondSurfaceBlock,
+  checkTestPlanDeveloperRunnable,
+  declaredProjects,
+  DOCUMENTATION_SINCE_ISSUE,
+  frozenSectionsChanged,
+  globCoversPath,
+  isTaskIssueBodyShaped,
+  isTaskIssueLabelSet,
+  OBJECTIVES_SINCE_ISSUE,
+  parseIssueParts,
+  parseIssuePremises,
+  parseIssueStopConditions,
+  parseIssueSurface,
+  parseIssueTestPlan,
+  type TaskFileFacts,
+  type TaskIssueFacts,
+  type TaskSurfaceFacts
+} from './issue-validation'
+
+// A real live Issue body, verbatim (`gh issue view <n> --json body`,
+// captured at the cutover's own authoring time) — the cutover's own first Issue, already carrying the section by hand.
+const ISSUE_404_BODY = `vinaya-log-v1 1 — log() with the typed header, two families, and the outbox sink
+
+**Tier:** 1
+**Project:** aeg-core, cli, sources
+**Type:** feat
+
+## Objectives
+
+O1. A call to \`log()\` with a valid \`dispatch\` or \`dev_review_loop\` line appends one ndjson line to \`~/.vinaya/outbox/<owner>-<repo>/<issue-or-none>.ndjson\` whose \`meta\` and \`subject\` fields are filled from the environment, the remote, the package and the tree, and an invalid payload is refused by the schema without writing.
+O2. No file other than \`apps/cli/src/lib/log-sink.ts\` performs the append, and no file other than the two named chokepoints calls \`log()\`; a test proves both.
+O3. \`apps/cli/specs/log.md\` exists, describes the header, the two families and the outbox, and is bound in \`.vinaya/doc-owners\` to the sink.
+
+## Planner's rationale
+
+**Boundary** — One function \`log(e: LogEvent)\` and the one place its lines land.
+`
+
+// Bold-inline style, as on a real Issue.
+const BOLD_STYLE = `
+**Tranche:** aeg-governance-hardening · **Task:** 5d · **Project(s):** aeg
+
+## Planner's rationale
+
+**Boundary** — What this task is and is not.
+
+**Sizing** — Passes all four tests.
+
+**Project(s) + blast radius** — aeg, aeg-core.
+
+**Dependency rationale** — No depends-on.
+
+**Traps to avoid** — Do not do X.
+
+**Suggested agent-class** — high.
+
+**Stop-and-escalate** — If Y happens, stop.
+
+**Docs to keep coherent** — state-machine.md §12.
+`
+
+// Heading style, as on a real Issue.
+const HEADING_STYLE = `
+### Boundary
+
+The flow derives the list.
+
+### Sizing
+
+Small-medium.
+
+### Project(s) + blast radius
+
+aeg only.
+
+**Dependency rationale** — Depends on task 3.
+
+### Traps
+
+- The helper is an aid, not an enforcer.
+
+### Stop-and-escalate
+
+- Derivation needs undeclared intent.
+
+### Suggested agent-class
+
+Medium.
+
+### Docs to keep coherent
+
+planner.md.
+`
+
+describe('checkIssueRationale', () => {
+  it('passes the bold-inline rationale style (#309 shape)', () => {
+    expect(checkIssueRationale(BOLD_STYLE).status).toBe('pass')
+  })
+
+  it('passes the heading rationale style (#219 shape)', () => {
+    expect(checkIssueRationale(HEADING_STYLE).status).toBe('pass')
+  })
+
+  it('fails an empty body with one error per missing field', () => {
+    const r = checkIssueRationale('Just a title-ish body with no rationale.')
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(8)
+  })
+
+  it('fails only the missing field when one is dropped', () => {
+    const body = BOLD_STYLE.replace('**Traps to avoid** — Do not do X.\n', '')
+    const r = checkIssueRationale(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toMatch(/Traps/)
+  })
+
+  it('does not accept a field name mentioned in plain prose (needs bold or heading form)', () => {
+    const body = 'The boundary of this task is unclear and the sizing was never done.'
+    expect(checkIssueRationale(body).status).toBe('fail')
+  })
+})
+
+// The single-fix form: an Issue with no tranche label omits the three
+// tranche-only fields; every field a gate or the render reads stays required.
+const SINGLE_FIX_STYLE = `
+**Project:** aeg-core
+
+## Planner's rationale
+
+**Boundary** — One function and its test. Pinned files: \`packages/aeg-core/src/x.ts\`.
+
+**Traps to avoid** — Do not do X.
+
+**Suggested agent-class** — high.
+
+**Stop-and-escalate** — If Y happens, stop.
+
+**Docs to keep coherent** — no-doc-surface.
+`
+
+const TRANCHE_ONLY_FIELDS = ['Sizing', 'Project(s) + blast radius', 'Dependency rationale']
+const ALWAYS_REQUIRED = [
+  ['Boundary', '**Boundary** — One function and its test. Pinned files: `packages/aeg-core/src/x.ts`.\n'],
+  ['Traps to avoid', '**Traps to avoid** — Do not do X.\n'],
+  ['Suggested agent-class', '**Suggested agent-class** — high.\n'],
+  ['Stop-and-escalate', '**Stop-and-escalate** — If Y happens, stop.\n'],
+  ['Docs to keep coherent', '**Docs to keep coherent** — no-doc-surface.\n']
+] as const
+
+describe('checkIssueRationale — single-fix form', () => {
+  it('passes a single-fix body with no Sizing, Project(s) + blast radius or Dependency rationale', () => {
+    expect(checkIssueRationale(SINGLE_FIX_STYLE, { singleFix: true })).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('refuses the same body as a tranche task, naming exactly the three tranche-only fields', () => {
+    const r = checkIssueRationale(SINGLE_FIX_STYLE)
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(3)
+    for (const name of TRANCHE_ONLY_FIELDS)
+      expect(r.errors.some((e) => e.includes(`issue-validation ${name}:`))).toBe(true)
+  })
+
+  it.each(ALWAYS_REQUIRED)('still refuses a single-fix body missing %s', (name, line) => {
+    const body = SINGLE_FIX_STYLE.replace(line, '')
+    expect(body).not.toBe(SINGLE_FIX_STYLE)
+    const r = checkIssueRationale(body, { singleFix: true })
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain(`issue-validation ${name}:`)
+  })
+
+  it('still grades a Dependency rationale a single-fix Issue does declare', () => {
+    const body = `${SINGLE_FIX_STYLE}\n**Dependency rationale:** \`Depends-on: #12\`.\n`
+    const r = checkIssueRationale(body, { singleFix: true })
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/amend-deps/)
+  })
+
+  it('still refuses a tranche task Issue missing any one of the eight fields', () => {
+    const fields = [
+      '**Boundary** — What this task is and is not.\n',
+      '**Sizing** — Passes all four tests.\n',
+      '**Project(s) + blast radius** — aeg, aeg-core.\n',
+      '**Dependency rationale** — No depends-on.\n',
+      '**Traps to avoid** — Do not do X.\n',
+      '**Suggested agent-class** — high.\n',
+      '**Stop-and-escalate** — If Y happens, stop.\n',
+      '**Docs to keep coherent** — state-machine.md §12.\n'
+    ]
+    // The header line also names `Project(s)`; drop it so the blast-radius
+    // field's removal is not masked by the header's own match.
+    const base = BOLD_STYLE.replace('**Tranche:** aeg-governance-hardening · **Task:** 5d · **Project(s):** aeg\n', '')
+    expect(checkIssueRationale(base).status).toBe('pass')
+    for (const field of fields) {
+      const body = base.replace(field, '')
+      expect(body).not.toBe(base)
+      const r = checkIssueRationale(body)
+      expect(r.status).toBe('fail')
+      expect(r.errors).toHaveLength(1)
+    }
+  })
+})
+
+// issue-809, O1 — a lettered edge id is refused at authoring, naming the
+// whole-number rule, so no plan the gates accept names a task `task run` refuses.
+describe('checkEdgeIdsWholeNumbers', () => {
+  it('passes edges naming only whole-number and `#NNN` ids', () => {
+    const body = '**Dependency rationale** — `Depends-on: 1, 2`, `Conflicts-with: #570`.\n\n**Traps to avoid** — none.'
+    expect(checkEdgeIdsWholeNumbers(body)).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('passes a body with no Dependency rationale section', () => {
+    expect(checkEdgeIdsWholeNumbers('**Boundary** — nothing here.').status).toBe('pass')
+  })
+
+  it('fails a lettered `Depends-on` id, naming the token and the whole-number rule', () => {
+    const body = '**Dependency rationale** — `Depends-on: 2a`.\n\n**Traps to avoid** — none.'
+    const r = checkEdgeIdsWholeNumbers(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain('`2a`')
+    expect(r.errors[0]).toMatch(/whole number/)
+    expect(r.errors[0]).toMatch(/task run/)
+  })
+
+  it('fails once per lettered id across both fields', () => {
+    const body = '**Dependency rationale** — `Depends-on: 7a, 2`, `Conflicts-with: 3b`.\n\n**Traps to avoid** — none.'
+    const r = checkEdgeIdsWholeNumbers(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(2)
+  })
+})
+
+describe('checkIssueObjectives', () => {
+  // Below OBJECTIVES_SINCE_ISSUE, no `## Objectives` section at all.
+  const PRE_CUTOVER_BODY = BOLD_STYLE
+
+  it('passes a body below the cutover with no `## Objectives` section (#403 shape)', () => {
+    expect(OBJECTIVES_SINCE_ISSUE).toBe(404)
+    expect(checkIssueObjectives(PRE_CUTOVER_BODY, 403).status).toBe('pass')
+  })
+
+  it('refuses a body AT the cutover with no `## Objectives` section, naming the section', () => {
+    const r = checkIssueObjectives(PRE_CUTOVER_BODY, OBJECTIVES_SINCE_ISSUE)
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/## Objectives/)
+  })
+
+  it('passes Issue #404’s real live body', () => {
+    expect(checkIssueObjectives(ISSUE_404_BODY, 404).status).toBe('pass')
+  })
+
+  it('fail-closes on an unknown issue number (not exempted)', () => {
+    const r = checkIssueObjectives(PRE_CUTOVER_BODY, null)
+    expect(r.status).toBe('fail')
+  })
+
+  it('with NO cutover (sinceIssue=null, O1), refuses even a low-numbered Issue with no `## Objectives`', () => {
+    // A repository that declares no `gateCutovers` resolves to `null`, so the
+    // gate applies to Issue 1 exactly as it does to a high-numbered Issue.
+    expect(checkIssueObjectives(PRE_CUTOVER_BODY, 1, null).status).toBe('fail')
+    expect(checkIssueObjectives(PRE_CUTOVER_BODY, 403, null).status).toBe('fail')
+  })
+
+  it('with an explicit cutover (O2), grandfathers below it and enforces at/above it', () => {
+    // A repository that sets its own cutover is judged against that number.
+    expect(checkIssueObjectives(PRE_CUTOVER_BODY, 99, 100).status).toBe('pass')
+    expect(checkIssueObjectives(PRE_CUTOVER_BODY, 100, 100).status).toBe('fail')
+  })
+})
+
+describe('isTaskIssueLabelSet', () => {
+  it('is true when a tranche label is present', () => {
+    expect(isTaskIssueLabelSet(['vinaya/tranche:aeg-governance-hardening', 'vinaya/tier:3'])).toBe(true)
+  })
+  it('is false for non-tranche labels', () => {
+    expect(isTaskIssueLabelSet(['bug', 'help wanted'])).toBe(false)
+  })
+  it('is false for no labels', () => {
+    expect(isTaskIssueLabelSet([])).toBe(false)
+  })
+})
+
+describe('isTaskIssueBodyShaped (O1)', () => {
+  it('is true when the body carries a real `## Objectives` heading', () => {
+    expect(isTaskIssueBodyShaped('## Objectives\n\nO1. Do the thing.\n')).toBe(true)
+  })
+
+  it('is true when the body carries any ONE of the eight Planner rationale fields, bold-inline', () => {
+    expect(isTaskIssueBodyShaped('**Boundary** — the thing.\n')).toBe(true)
+    expect(isTaskIssueBodyShaped('**Stop-and-escalate** — n/a.\n')).toBe(true)
+  })
+
+  it('is true on the heading-style rationale fields too (Issue #219 style)', () => {
+    expect(isTaskIssueBodyShaped('### Boundary\n\nthe thing.\n')).toBe(true)
+  })
+
+  it('is true under a non-literal parent heading, as long as a real field is present — the live #issue-valid.md shape', () => {
+    // `checkIssueRationale` never requires the literal heading "## Planner's
+    // rationale" — only the eight fields underneath it — so a body titled
+    // "## Task Issue — Planner rationale" (a real fixture shape) must still
+    // read as task-shaped.
+    const body = '## Task Issue — Planner rationale\n\n**Boundary** — Ship the thing.\n'
+    expect(isTaskIssueBodyShaped(body)).toBe(true)
+  })
+
+  it('is false for an ordinary, non-task-shaped body', () => {
+    expect(isTaskIssueBodyShaped('Fix a typo in the README.\n')).toBe(false)
+  })
+
+  it('is false when the only match appears inside a fenced code block', () => {
+    const body = '```\n## Objectives\n\nO1. example inside a fence.\n\n**Boundary** — n/a.\n```\n'
+    expect(isTaskIssueBodyShaped(body)).toBe(false)
+  })
+})
+
+describe('checkIssueType', () => {
+  const TASK_LABELS_NO_TYPE = ['vinaya/tranche:vinaya-verification-v1', 'vinaya/tier:1']
+  const TASK_LABELS_ONE_TYPE = [...TASK_LABELS_NO_TYPE, 'vinaya/type:feat']
+  const TASK_LABELS_TWO_TYPES = [...TASK_LABELS_ONE_TYPE, 'vinaya/type:fix']
+
+  it('fails a task Issue carrying zero vinaya/type:* labels, naming the ten valid ids', () => {
+    const r = checkIssueType('body', TASK_LABELS_NO_TYPE)
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(1)
+    for (const t of ['build', 'chore', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test']) {
+      expect(r.errors[0]).toContain(`vinaya/type:${t}`)
+    }
+  })
+
+  it('fails a task Issue carrying two vinaya/type:* labels', () => {
+    const r = checkIssueType('body', TASK_LABELS_TWO_TYPES)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/vinaya\/type:feat/)
+    expect(r.errors[0]).toMatch(/vinaya\/type:fix/)
+  })
+
+  it('passes a task Issue carrying exactly one vinaya/type:* label', () => {
+    expect(checkIssueType('body', TASK_LABELS_ONE_TYPE)).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('passes a non-task Issue (no tranche label) regardless of type labels', () => {
+    expect(checkIssueType('body', [])).toEqual({ status: 'pass', errors: [] })
+    expect(checkIssueType('body', ['bug', 'help wanted'])).toEqual({ status: 'pass', errors: [] })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Content checks (A/B/D block, C warns)
+// ---------------------------------------------------------------------------
+
+/** The real collision-domain shape; the live list is resolved by `open-issue.ts`'s `readSharedPackages`. */
+const SHARED = ['packages/ui', 'packages/aeg-core', '.vinaya']
+
+/** Registry rows as `parseRegistry` returns them — `vinaya` is an app, `aeg-core` IS a shared package. */
+const REGISTRY = [
+  { name: 'vinaya', path: 'apps/vinaya' },
+  { name: 'aeg-core', path: 'packages/aeg-core' },
+  { name: 'vada', path: 'apps/vada-ai' }
+]
+
+/** An Issue numbered below the brief-sections cutover: the blast-radius rule still reads its prose, not `## Surface`. */
+const PRE_CUTOVER = BRIEF_SECTIONS_SINCE_ISSUE - 1
+
+/**
+ * A minimally-valid rationale, parameterised on the fields the content checks
+ * read. It carries BOTH shapes every live Issue does: the `Project(s) + blast
+ * radius` prose field (narrative, and where paths get named), and the
+ * line-anchored project field at the foot (the declaration — the only thing
+ * `projectsFromBody` reads, and therefore the only thing the gates read). See
+ * `issue-863-body.md` / `issue-870-body.md` for the live shape this mirrors.
+ */
+function rationale(opts: {
+  boundary: string
+  docs?: string
+  traps?: string
+  extra?: string
+  projects?: string
+}): string {
+  return `
+## Planner's rationale
+
+**Boundary** — ${opts.boundary}
+
+**Sizing** — Passes the four.
+
+**Project(s) + blast radius** — \`Project: ${opts.projects ?? 'vinaya'}\`.
+
+**Dependency rationale** — Depends-on: —.
+
+**Traps to avoid** — ${opts.traps ?? 'Read `.claude/skills/ui-library-system/SKILL.md` first.'}
+
+**Suggested agent-class** — mid.
+
+**Stop-and-escalate** — If X, stop.
+
+**Docs to keep coherent** — ${opts.docs ?? 'Keep `apps/vinaya/web/CLAUDE.md` coherent.'}
+${opts.extra ?? ''}
+
+**Project:** ${opts.projects ?? 'vinaya'}
+`
+}
+
+describe('declaredProjects', () => {
+  it('reads every project the body field declares', () => {
+    const body = rationale({ boundary: 'x', projects: 'vada, vinaya' })
+    expect(declaredProjects(body, [])).toEqual(expect.arrayContaining(['vada', 'vinaya']))
+  })
+
+  it('ignores a residual project:* label — project is a field, never a label (#614)', () => {
+    expect(declaredProjects(rationale({ boundary: 'x' }), ['project:vada', 'vinaya/tranche:x'])).toEqual(['vinaya'])
+  })
+})
+
+/** The registry reduced to the name column — what `checkProjectsRegistered` consumes. */
+const REGISTERED = REGISTRY.map((p) => p.name)
+
+/**
+ * Real task-Issue bodies, saved from the forge. Fixtures for this check must
+ * come from the live corpus: a synthetic body can carry a `Project:` shape no
+ * real Issue has, and the suite then passes over a gate that never fires.
+ *
+ * Verbatim with ONE exception: a third-party adopter repo's identifier in
+ * `issue-870-body.md` is redacted. `packages/aeg-core` ships inside the published
+ * `@attalabs/vinaya` tarball, so a real Issue body pasted in here travels further
+ * than the forge. Nothing these tests assert touches the redacted span — check an
+ * identifier before copying the next body in.
+ */
+const realBody = (n: number): string =>
+  readFileSync(join(__dirname, '../../../../../packages/aeg-core/tests/fixtures', `issue-${n}-body.md`), 'utf8')
+
+/**
+ * The two control characters these tests smuggle through the gate, named rather
+ * than embedded: a literal `ESC` in a source file is invisible in review and in
+ * a diff, which is the whole reason it is worth defending against.
+ */
+const ESC = String.fromCharCode(0x1b)
+const BEL = String.fromCharCode(0x07)
+
+describe('checkProjectsRegistered', () => {
+  it('#863 (modern `**Project:**` footer) — EVALUATES its names, and passes on their merit', () => {
+    const body = realBody(863)
+    // The load-bearing assertion: it found names. A pass with zero names found is
+    // the vacuous pass that made the first version look green while inert.
+    expect(projectsFromBody(body)).toEqual(['aeg-core', 'vinaya'])
+    expect(checkProjectsRegistered(body, [], REGISTERED).status).toBe('pass')
+  })
+
+  it('#863 fails once one of its real declared names is not a registry row', () => {
+    // Same real body, registry missing `vinaya` — proves the pass above is earned.
+    const r = checkProjectsRegistered(realBody(863), [], ['aeg-core', 'vada'])
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/vinaya/)
+    expect(r.errors[0]).toMatch(/\.vinaya\/projects\.md/)
+  })
+
+  it('#188 (legacy `**Project(s):**` colon style) — still fires', () => {
+    const body = realBody(188)
+    expect(projectsFromBody(body)).toEqual(['vada', 'engine', 'adapter'])
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/engine/)
+    expect(r.errors[0]).toMatch(/adapter/)
+  })
+
+  it('#870 (prose field full of file paths) — invents no project named `src`', () => {
+    // Its `**Project(s) + blast radius**` line names `packages/aeg-core/src/…`.
+    // The prose-field read turned that into `src, bin, verify-briefts, …` and
+    // refused a correctly-declared Issue; the line-anchored field read cannot.
+    const body = realBody(870)
+    expect(body).toContain('packages/aeg-core/src/brief-validation.ts')
+    expect(projectsFromBody(body)).toEqual(['vinaya'])
+    expect(checkProjectsRegistered(body, [], REGISTERED).status).toBe('pass')
+  })
+
+  it('reads the same field the derivation does — gate and `projectsFromBody` cannot disagree', () => {
+    // The reviewer's reproduction: an unregistered project declared on the footer
+    // line, invisible to the prose-field read, and resolved by the derivation.
+    const body = [
+      '**Project(s) + blast radius** — `aeg-types` owns the edited path.',
+      '',
+      '**Tier:** 1',
+      '**Project:** aeg-types'
+    ].join('\n')
+    expect(projectsFromBody(body)).toEqual(['aeg-types'])
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/aeg-types/)
+  })
+
+  it('names every unregistered project, not just the first', () => {
+    const body = '**Project:** aeg-types, vda'
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/aeg-types/)
+    expect(r.errors[0]).toMatch(/vda/)
+  })
+
+  it('matches exactly — a case variant is refused, because downstream comparison is literal', () => {
+    const r = checkProjectsRegistered('**Project:** Vinaya', [], REGISTERED)
+    expect(r.status).toBe('fail')
+    // …and says why, naming the row it differs from only in case.
+    expect(r.errors[0]).toMatch(/differs from the registered `vinaya` only in case/)
+  })
+
+  it('is dormant when the registry is absent — a gate with no source of truth invents none', () => {
+    expect(checkProjectsRegistered('**Project:** aeg-types', [], []).status).toBe('pass')
+  })
+
+  it('passes a body with no `**Project:**` line — field presence is checkIssueRationale’s job', () => {
+    const body = 'A body with no rationale and no Project field at all.'
+    expect(projectsFromBody(body)).toEqual([])
+    expect(checkProjectsRegistered(body, [], REGISTERED).status).toBe('pass')
+  })
+
+  // -------------------------------------------------------------------------
+  // The silent-drop fail-open: a DECLARED value the parser could not turn into
+  // a name used to be indistinguishable from no declaration at all, so the gate
+  // passed vacuously on the one body it most needed to refuse.
+  // -------------------------------------------------------------------------
+
+  it('fails a declaration whose value yields no name — it can no longer pass vacuously', () => {
+    // A real Issue's exact shape: prose in the field. `projectsFromBody` still yields
+    // nothing, which used to read to this gate as "no project declared".
+    const body = '**Project:** (none — tools/admin is unregistered; see Project(s) + blast radius above)'
+    expect(projectsFromBody(body)).toEqual([])
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/resolves to no project name/)
+    // …and names the residue, so the author can see what was read.
+    expect(r.errors[0]).toMatch(/tools\/admin is unregistered/)
+  })
+
+  it('fails closed when an unterminated fence swallowed the field, and says so', () => {
+    // Regression pin for the fail-open the fence fix itself introduced: the
+    // stray fence blanked the foot declaration, the parser reported "absent",
+    // and this gate passed a body its pre-fix self refused.
+    const body = ['```', 'a stray unclosed fence', '', '**Project:** notaproject'].join('\n')
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/unterminated code fence|fences do not balance/i)
+  })
+
+  it('fails closed on an unreadable body even when the swallowed name IS registered', () => {
+    // The read cannot be trusted, so the answer cannot be "pass" — but the
+    // message must point at the malformed fence, not accuse a valid name.
+    const body = ['````', 'x', '```', '', '**Project:** vinaya'].join('\n')
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/unterminated code fence|fences do not balance/i)
+    expect(r.errors[0]).not.toMatch(/is not a project name/)
+  })
+
+  it('fails a declaration with an empty value — the same vacuous pass, one shape further', () => {
+    // `**Project:**` with nothing after it yields no name AND no residue to
+    // report. Keying the failure on "declared but resolved to nothing" rather
+    // than on the residue is what catches this shape too.
+    const r = checkProjectsRegistered('**Project:**   \n', [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/resolves to no project name/)
+  })
+
+  it('fails on the unparseable half of a partly-parseable declaration', () => {
+    const body = '**Project:** vinaya, a value with spaces'
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/a value with spaces/)
+  })
+
+  it('refuses an unregistered name that only trailing punctuation used to hide', () => {
+    // `notaproject.` failed the slug shape and was dropped before the registry
+    // could refuse it — the gate cannot fail on a name it never receives.
+    const r = checkProjectsRegistered('**Project:** notaproject.', [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/notaproject/)
+  })
+
+  it('reads the foot declaration, not a fenced example, so the gate and the board agree', () => {
+    const body = ['```markdown', '**Project:** not-a-real-project', '```', '', '**Project:** vinaya'].join('\n')
+    expect(projectsFromBody(body)).toEqual(['vinaya'])
+    expect(checkProjectsRegistered(body, [], REGISTERED).status).toBe('pass')
+  })
+
+  // -------------------------------------------------------------------------
+  // Error-message sanitation. `parseRegistry` validates nothing, so a guest
+  // repo's `.vinaya/projects.md` reaches this message as raw markdown-cell text.
+  // -------------------------------------------------------------------------
+
+  it('does not render a registry name’s terminal escapes into the error message', () => {
+    const hostile = ['vinaya', `${ESC}[31mred${ESC}[0m`, `drop${BEL}bell`]
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], hostile)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).not.toContain(ESC)
+    expect(r.errors[0]).not.toContain(BEL)
+  })
+
+  it('does not render a declared value’s terminal escapes into the error message', () => {
+    const r = checkProjectsRegistered(`**Project:** ${ESC}[31mnotaname${ESC}[0m here`, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).not.toContain(ESC)
+  })
+
+  it('still names a well-formed registry row verbatim — sanitation is not redaction', () => {
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], REGISTERED)
+    expect(r.errors[0]).toMatch(/aeg-core/)
+    expect(r.errors[0]).toMatch(/nosuchproject/)
+  })
+})
+
+describe('checkBlastRadiusScope (A)', () => {
+  it('fails a single-project task whose Boundary edits a shared package it does not own', () => {
+    const body = rationale({ boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).' })
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/ui/)
+  })
+
+  it('passes once a second project is declared — the review fan-out actually widens', () => {
+    const body = rationale({
+      boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).',
+      projects: 'vinaya, vada'
+    })
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
+  })
+
+  it('passes on an explicit blast-radius-ack: line', () => {
+    const body = rationale({
+      boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).',
+      extra: '\n**blast-radius-ack:** every consumer keeps the existing fallback path.\n'
+    })
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
+  })
+
+  it('passes a single-project task editing the package that IS its own project (no under-declaration)', () => {
+    const body = rationale({
+      boundary: 'Add a check to `packages/aeg-core/src/issue-validation.ts`.',
+      projects: 'aeg-core'
+    })
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
+  })
+
+  it('does not count a cited document as a touched domain', () => {
+    const body = rationale({ boundary: 'Resolve the registry row in `.vinaya/projects.md`.' })
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
+  })
+
+  it('does not count a shared path named outside Boundary / blast radius (an import, a trap)', () => {
+    const body = rationale({
+      boundary: 'Add a CLI flag in `apps/vinaya/cli`.',
+      traps: 'The CLI imports `packages/aeg-core` unchanged — do not edit it.'
+    })
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
+  })
+
+  it('is dormant when no collision-domain list is available', () => {
+    const body = rationale({ boundary: 'Restyle `packages/ui/topbar/index.tsx`.' })
+    expect(checkBlastRadiusScope(body, [], [], REGISTRY).status).toBe('pass')
+  })
+
+  // -------------------------------------------------------------------------
+  // The parse and the count, proven on live bodies. A synthetic body can
+  // carry a project shape no real Issue has, and the suite then passes over a
+  // gate that never fires — which is how both defects below survived a green
+  // suite. Every fixture here is a body that shipped on the forge.
+  // -------------------------------------------------------------------------
+
+  it('#870 — the prose read invented five projects and bought the bypass; the field read does not', () => {
+    const body = realBody(870)
+    // What the body-wide read saw: path fragments off its own blast-radius line,
+    // parsed as project names. Five of the six are fiction, and the count alone
+    // cleared the `> 1` bypass, so this check never ran on the Issue at all.
+    const invented = declaredProjects(body, [])
+    expect(invented).toContain('src')
+    expect(invented.length).toBeGreaterThan(1)
+    // The line-anchored field, read through the one shared parser: one project.
+    expect(projectsFromBody(body)).toEqual(['vinaya'])
+    // And with the real declaration visible, the real reach is refused: a task
+    // on `vinaya` (apps/vinaya) editing `packages/aeg-core`, no ack line.
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/aeg-core/)
+    expect(r.errors[0]).toMatch(/\(vinaya\)/)
+  })
+
+  it('#863 — passes on ownership, not on the six names its prose used to yield', () => {
+    const body = realBody(863)
+    expect(declaredProjects(body, [])).toContain('src')
+    expect(projectsFromBody(body)).toEqual(['aeg-core', 'vinaya'])
+    // `aeg-core` owns `packages/aeg-core`, so the reach is declared exactly —
+    // this pass never depended on the bypass, and still does not.
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
+  })
+
+  it('#863 with `aeg-core` unregistered — an unregistered name no longer buys the bypass', () => {
+    // Same real body, registry as the only variable: two declared names, one of
+    // which resolves to no row. Raw-token counting made that `> 1` and passed;
+    // one registry-validated name is one review lens, so it must not.
+    const r = checkBlastRadiusScope(realBody(863), [], SHARED, [{ name: 'vinaya', path: 'apps/vinaya' }], PRE_CUTOVER)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/aeg-core/)
+    expect(r.errors[0]).toMatch(/Not counted: aeg-core/)
+  })
+
+  it('a genuine multi-project declaration still gets the bypass — both names are rows', () => {
+    const body = rationale({
+      boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).',
+      projects: 'vinaya, vada'
+    })
+    expect(projectsFromBody(body)).toEqual(['vinaya', 'vada'])
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
+  })
+
+  it('the same body fails once the second name is fiction — one real lens is one lens', () => {
+    const body = rationale({
+      boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).',
+      projects: 'vinaya, aeg-types'
+    })
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/Not counted: aeg-types/)
+  })
+})
+
+describe('checkNoBriefContent (B)', () => {
+  it('fails a body carrying a brief-shaped References section', () => {
+    const body = `${rationale({ boundary: 'x' })}\n## References\n\nSkills to read first: …\n`
+    const r = checkNoBriefContent(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/References/)
+  })
+
+  it.each(['Technical surface map', 'Step 0'])('fails on a brief-shaped "%s" heading', (heading) => {
+    expect(checkNoBriefContent(`${rationale({ boundary: 'x' })}\n## ${heading}\n\nstuff\n`).status).toBe('fail')
+  })
+
+  it('fails on a bold Premise field', () => {
+    expect(checkNoBriefContent(`${rationale({ boundary: 'x' })}\n**Premise:** the file contains X\n`).status).toBe(
+      'fail'
+    )
+  })
+
+  it('passes a clean rationale-only body', () => {
+    expect(checkNoBriefContent(rationale({ boundary: 'x' })).status).toBe('pass')
+  })
+
+  // `## Surface`/`## Parts`/`## Test plan`/
+  // `## Stop conditions` are Issue-native sections since `BRIEF_SECTIONS_SINCE_ISSUE`
+  // — a heading is not a brief-content marker for these four any more.
+  it.each(['Surface', 'Parts', 'Test plan', 'Stop conditions'])(
+    'a "## %s" heading alone is NOT a brief-content marker (Issue-native since #426)',
+    (heading) => {
+      expect(checkNoBriefContent(`${rationale({ boundary: 'x' })}\n## ${heading}\n\nstuff\n`).status).toBe('pass')
+    }
+  )
+
+  it('still fails on a bold **Test Plan:** brief-content marker', () => {
+    expect(checkNoBriefContent(`${rationale({ boundary: 'x' })}\n**Test Plan:** unit-tests-only\n`).status).toBe('fail')
+  })
+})
+
+describe('checkRationaleNamesDocs (D)', () => {
+  it('fails when neither Docs nor Traps names a concrete doc path', () => {
+    const body = rationale({
+      boundary: 'Fix the tab layout in `apps/vinaya/web`.',
+      docs: 'No docs touched.',
+      traps: 'Do not weaken the assertions.'
+    })
+    const r = checkRationaleNamesDocs(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/no-doc-surface/)
+  })
+
+  it('passes when Docs names a concrete doc path', () => {
+    const body = rationale({
+      boundary: 'Fix the tab layout in `apps/vinaya/web`.',
+      docs: 'Keep `apps/vinaya/web/CLAUDE.md` coherent.',
+      traps: 'Do not weaken the assertions.'
+    })
+    expect(checkRationaleNamesDocs(body).status).toBe('pass')
+  })
+
+  it('passes when only Traps names one — the read artifact can live in either field', () => {
+    const body = rationale({
+      boundary: 'x',
+      docs: 'None expected.',
+      traps: 'Read `.claude/rules/ui-patterns.md` RULE 2 first.'
+    })
+    expect(checkRationaleNamesDocs(body).status).toBe('pass')
+  })
+
+  it('passes a genuinely doc-less surface via the explicit sentinel', () => {
+    const body = rationale({
+      boundary: 'x',
+      docs: 'no-doc-surface — pure internal refactor, nothing documents it.',
+      traps: 'Do not weaken the assertions.'
+    })
+    expect(checkRationaleNamesDocs(body).status).toBe('pass')
+  })
+
+  // Regression: under the `m` flag the field slicer's `$` terminator matched
+  // end-of-LINE, so a heading-style field sliced to its own label with no
+  // content and D failed Issues that name their docs on the next line.
+  it('reads a heading-style rationale, not just the bold-inline one (#219 shape)', () => {
+    const body = HEADING_STYLE.replace('planner.md.', '`aeg-root/roles/planner.md` — the §7 derivation rule.')
+    expect(checkRationaleNamesDocs(body).status).toBe('pass')
+  })
+
+  it('still fails a heading-style rationale whose Docs field names no path', () => {
+    expect(checkRationaleNamesDocs(HEADING_STYLE).status).toBe('fail')
+  })
+
+  it('fails when neither Docs nor Traps field exists in the body at all (not merely empty)', () => {
+    const body = `
+## Planner's rationale
+
+**Boundary** — Fix the tab layout in \`apps/vinaya/web\`.
+
+**Project(s) + blast radius** — \`Project: vinaya\`.
+
+**Project:** vinaya
+`
+    const r = checkRationaleNamesDocs(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/no-doc-surface/)
+  })
+})
+
+describe('checkConflictCompleteness (C, warn-only)', () => {
+  const mk = (ref: string, path: string, conflictsWith: string[] = []): TaskIssueFacts => ({
+    ref,
+    body: rationale({ boundary: `Edit \`${path}\`.` }),
+    conflictsWith
+  })
+
+  it('warns when two open task Issues name the same domain with no mutual edge', () => {
+    const w = checkConflictCompleteness(
+      mk('#621', 'packages/ui/topbar/index.tsx'),
+      [mk('#626', 'packages/ui/lib/color-scheme-toggle.tsx')],
+      SHARED
+    )
+    expect(w).toHaveLength(1)
+    expect(w[0]).toMatch(/#626/)
+    expect(w[0]).toMatch(/packages\/ui/)
+  })
+
+  it('is silent once either side declares the edge', () => {
+    expect(
+      checkConflictCompleteness(
+        mk('#621', 'packages/ui/topbar/index.tsx', ['#626']),
+        [mk('#626', 'packages/ui/lib/color-scheme-toggle.tsx')],
+        SHARED
+      )
+    ).toEqual([])
+  })
+
+  it('is silent for disjoint domains', () => {
+    expect(
+      checkConflictCompleteness(
+        mk('#621', 'packages/ui/topbar/index.tsx'),
+        [mk('#630', 'packages/aeg-core/src/x.ts')],
+        SHARED
+      )
+    ).toEqual([])
+  })
+})
+
+describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
+  const mk = (
+    ref: string,
+    surfaceIn: string[],
+    conflictsWith: string[] = [],
+    dependsOn: string[] = []
+  ): TaskSurfaceFacts => ({
+    ref,
+    surfaceIn,
+    conflictsWith,
+    dependsOn
+  })
+
+  it('refuses, naming both overlapping globs and the other task, when two tasks overlap with no Conflicts-with edge', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'])
+    const r = checkSurfaceOverlap(subject, [mk('43', ['packages/aeg-core/src/issue-validation.ts'])])
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/aeg-core\/src\/\*\*/)
+    expect(r.errors[0]).toMatch(/packages\/aeg-core\/src\/issue-validation\.ts/)
+    expect(r.errors[0]).toMatch(/43/)
+  })
+
+  it('passes when both tasks name each other in Conflicts-with', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], ['43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'], ['42'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes when only ONE side declares the edge — same one-sided-is-enough rule `checkConflictCompleteness` already applies', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], ['43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts']) // does not name 42 back
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes when the Surface globs simply do not overlap', () => {
+    const subject = mk('42', ['apps/cli/src/lib/**'])
+    const sibling = mk('43', ['packages/aeg-core/src/**'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('never compares a task against itself, even if `siblings` includes it', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'])
+    expect(checkSurfaceOverlap(subject, [subject]).status).toBe('pass')
+  })
+
+  it('reports one finding per overlapping glob pair, not only the first', () => {
+    const subject = mk('42', ['packages/aeg-core/src/a/**', 'packages/aeg-core/src/b/**'])
+    const sibling = mk('43', ['packages/aeg-core/src/a/x.ts', 'packages/aeg-core/src/b/y.ts'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(2)
+  })
+
+  it('a `#`-prefixed ref in Conflicts-with still counts as the same task', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], ['#43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'], ['#42'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('a slug-qualified ref (`<slug> #n`) in Conflicts-with names the bare Issue it qualifies', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], ['task-log-v1 #550'])
+    const sibling = mk('550', ['packages/aeg-core/src/issue-validation.ts'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('the same slug-qualified pair with no edge declared is still refused', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'])
+    const sibling = mk('550', ['packages/aeg-core/src/issue-validation.ts'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+  })
+
+  // task 17, O4 — shared-by-construction exemptions.
+  it('passes an overlap under a shared `tests` directory — no Conflicts-with edge needed', () => {
+    const subject = mk('42', ['apps/cli/tests/**'])
+    const sibling = mk('43', ['apps/cli/tests/checks/**'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes an overlap under a shared `specs` directory', () => {
+    const subject = mk('42', ['packages/aeg-core/specs/**'])
+    const sibling = mk('43', ['packages/aeg-core/specs/foo.md'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes an overlap under `.changeset`, whose files are unique per task', () => {
+    const subject = mk('42', ['.changeset/**'])
+    const sibling = mk('43', ['.changeset/change-description.md'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('a directory merely containing ".changeset" is NOT exempt — segment equality, never a substring test', () => {
+    const subject = mk('42', ['docs/.changeset-notes/**'])
+    const sibling = mk('43', ['docs/.changeset-notes/change.md'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+  })
+
+  it('a nested exact `.changeset` segment is NOT exempt', () => {
+    const subject = mk('42', ['packages/example/.changeset/**'])
+    const sibling = mk('43', ['packages/example/.changeset/change.md'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+  })
+
+  it('a directory merely named "testsuite" is NOT exempt — segment equality, never a substring test', () => {
+    const subject = mk('42', ['apps/testsuite/**'])
+    const sibling = mk('43', ['apps/testsuite/foo.ts'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+  })
+
+  it('a glob outside shared-by-construction directories on the SAME task still overlaps a real one — the exemption is per-glob, not per-task', () => {
+    const subject = mk('42', ['.changeset/**', 'apps/cli/src/lib/**'])
+    const sibling = mk('43', ['.changeset/change.md', 'apps/cli/src/lib/thing.ts'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(1)
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/lib/)
+  })
+
+  it('passes a glob every open task in the Milestone declares in common, outside tests/specs', () => {
+    const subject = mk('42', ['aeg-root/roles/**'])
+    const sibling1 = mk('43', ['aeg-root/roles/**'])
+    const sibling2 = mk('44', ['aeg-root/roles/**'])
+    expect(checkSurfaceOverlap(subject, [sibling1, sibling2]).status).toBe('pass')
+  })
+
+  it('does NOT exempt a glob the subject shares with only SOME siblings, not the whole cohort', () => {
+    const subject = mk('42', ['aeg-root/roles/**'])
+    const sibling1 = mk('43', ['aeg-root/roles/**'])
+    const sibling2 = mk('44', ['unrelated/**']) // does not declare aeg-root/roles at all
+    const r = checkSurfaceOverlap(subject, [sibling1, sibling2])
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(1)
+    expect(r.errors[0]).toMatch(/43/)
+  })
+
+  // issue-657, O2 — a Depends-on edge serializes overlapping siblings, same as Conflicts-with.
+  it('passes an overlap when the subject depends on the sibling directly', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], [], ['43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes an overlap when the sibling depends on the subject (reversed direction)', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'], [], ['42'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes an overlap between two tasks joined only through a chain of Depends-on edges', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], [], ['44'])
+    const middle = mk('44', [], [], ['43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'])
+    const r = checkSurfaceOverlap(subject, [middle, sibling])
+    expect(r.status).toBe('pass')
+  })
+
+  it('still refuses an overlap between two tasks with no dependency relation, direct or chained', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], [], ['45'])
+    const unrelated = mk('45', [])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'])
+    const r = checkSurfaceOverlap(subject, [unrelated, sibling])
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(1)
+    expect(r.errors[0]).toMatch(/43/)
+  })
+})
+
+describe('checkFileCollisions', () => {
+  const A = 'packages/aeg-core/src/issue-validation.ts'
+  const B = 'apps/cli/src/lib/forge-write.ts'
+  const C = 'apps/cli/src/lib/config.ts'
+  const D = 'packages/sources/src/config-reference.ts'
+
+  const peer = (ref: string, files: string[], conflictsWith: string[] = []): TaskFileFacts => ({
+    ref,
+    label: `task Issue #${ref}`,
+    files,
+    conflictsWith
+  })
+  const subject = (files: string[], conflictsWith: string[] = []) => ({ ref: '851', files, conflictsWith })
+
+  it('refuses at the threshold, naming the other task and every shared file', () => {
+    const r = checkFileCollisions(subject([A, B, C, D]), [peer('860', [A, B, C])], 3)
+    expect(r.warnings).toEqual([])
+    expect(r.refusals).toHaveLength(1)
+    expect(r.refusals[0]).toMatch(/task Issue #860/)
+    for (const f of [A, B, C]) expect(r.refusals[0]).toContain(f)
+    expect(r.refusals[0]).not.toContain(D)
+  })
+
+  it('refuses above the threshold too', () => {
+    const r = checkFileCollisions(subject([A, B, C, D]), [peer('860', [A, B, C, D])], 3)
+    expect(r.refusals).toHaveLength(1)
+  })
+
+  it('accepts a two-file overlap and warns, naming each shared file and the task it is shared with', () => {
+    const r = checkFileCollisions(subject([A, B, C]), [peer('860', [A, B])], 3)
+    expect(r.refusals).toEqual([])
+    expect(r.warnings).toHaveLength(1)
+    expect(r.warnings[0]).toMatch(/task Issue #860/)
+    expect(r.warnings[0]).toContain(A)
+    expect(r.warnings[0]).toContain(B)
+    expect(r.warnings[0]).not.toContain(C)
+  })
+
+  it('is silent when the subject declares the edge on the other task', () => {
+    expect(checkFileCollisions(subject([A, B, C], ['860']), [peer('860', [A, B, C])], 3)).toEqual({
+      refusals: [],
+      warnings: []
+    })
+  })
+
+  it('is silent when only the OTHER task declares the edge — one-sided is enough, as elsewhere', () => {
+    expect(checkFileCollisions(subject([A, B, C]), [peer('860', [A, B, C], ['#851'])], 3)).toEqual({
+      refusals: [],
+      warnings: []
+    })
+  })
+
+  it('a threshold of 0 turns the refusal off and leaves the overlap as a warning', () => {
+    const r = checkFileCollisions(subject([A, B, C, D]), [peer('860', [A, B, C, D])], 0)
+    expect(r.refusals).toEqual([])
+    expect(r.warnings).toHaveLength(1)
+    expect(r.warnings[0]).toMatch(/collisionThreshold/)
+  })
+
+  it('is silent when the two share no file at all', () => {
+    expect(checkFileCollisions(subject([A, B]), [peer('860', [C, D])], 3)).toEqual({ refusals: [], warnings: [] })
+  })
+
+  it('is silent when the subject pins no file — nothing to compare', () => {
+    expect(checkFileCollisions(subject([]), [peer('860', [A, B, C])], 3)).toEqual({ refusals: [], warnings: [] })
+  })
+
+  it('never compares a task against itself, even if `peers` includes it', () => {
+    expect(checkFileCollisions(subject([A, B, C]), [peer('851', [A, B, C])], 3)).toEqual({
+      refusals: [],
+      warnings: []
+    })
+  })
+
+  it('counts a file shared with an open pull request the same as one shared with an Issue', () => {
+    const pull: TaskFileFacts = {
+      ref: '860',
+      label: 'pull request #862 (task Issue #860)',
+      files: [A, B, C],
+      conflictsWith: []
+    }
+    const r = checkFileCollisions(subject([A, B, C]), [pull], 3)
+    expect(r.refusals).toHaveLength(1)
+    expect(r.refusals[0]).toMatch(/pull request #862/)
+  })
+
+  it('counts a duplicated path in a peer once, so a repeated file cannot inflate the count past the threshold', () => {
+    const r = checkFileCollisions(subject([A, B]), [peer('860', [A, A, A, B])], 3)
+    expect(r.refusals).toEqual([])
+    expect(r.warnings).toHaveLength(1)
+  })
+
+  it('reports one finding per colliding peer, not only the first', () => {
+    const r = checkFileCollisions(subject([A, B, C]), [peer('860', [A, B, C]), peer('861', [A, B, C])], 3)
+    expect(r.refusals).toHaveLength(2)
+  })
+
+  it('a not-yet-created Issue (no ref of its own) still collides against its peers', () => {
+    const r = checkFileCollisions({ ref: '', files: [A, B, C], conflictsWith: [] }, [peer('860', [A, B, C])], 3)
+    expect(r.refusals).toHaveLength(1)
+  })
+})
+
+describe('frozenSectionsChanged (task-run-v1 11, review round 1, O3)', () => {
+  const surface = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
+  const parts = '## Parts\n\nPart 1 (O1) — the thing.\n'
+  const objectives = '## Objectives\n\nO1. Do the thing.\n'
+  const body = `${objectives}\n${surface}\n${parts}`
+
+  it('reports nothing when nothing changed', () => {
+    expect(frozenSectionsChanged(body, body)).toEqual([])
+  })
+
+  it('reports `Objectives` when the objectives text changes', () => {
+    const changed = body.replace('O1. Do the thing.', 'O1. Do a different thing.')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Objectives'])
+  })
+
+  it('does not report `Objectives` for a reflow that leaves the normalized text identical', () => {
+    const reflowed = body.replace('O1. Do the thing.', 'O1.   Do   the   thing.')
+    expect(frozenSectionsChanged(body, reflowed)).toEqual([])
+  })
+
+  it('reports `Surface` when an `in:`/`out:` glob changes', () => {
+    const changed = body.replace('in: apps/cli/src/lib', 'in: apps/cli/src/lib, packages/aeg-core/src')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Surface'])
+  })
+
+  it('does not report `Surface` for a reordering of the same glob set', () => {
+    const multiGlob = body.replace(
+      'in: apps/cli/src/lib\nout: apps/cli/src/commands',
+      'in: apps/cli/src/lib, packages/aeg-core/src\nout: apps/cli/src/commands, apps/cli/src/checks'
+    )
+    const reordered = multiGlob.replace(
+      'in: apps/cli/src/lib, packages/aeg-core/src\nout: apps/cli/src/commands, apps/cli/src/checks',
+      'in: packages/aeg-core/src, apps/cli/src/lib\nout: apps/cli/src/checks, apps/cli/src/commands'
+    )
+    expect(frozenSectionsChanged(multiGlob, reordered)).toEqual([])
+  })
+
+  it('reports `Parts` when a Part outcome changes', () => {
+    const changed = body.replace('Part 1 (O1) — the thing.', 'Part 1 (O1) — a different thing.')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Parts'])
+  })
+
+  it('reports every changed section in one pass, not only the first', () => {
+    const changed = body
+      .replace('O1. Do the thing.', 'O1. Do a different thing.')
+      .replace('Part 1 (O1) — the thing.', 'Part 1 (O1) — a different thing.')
+    expect(frozenSectionsChanged(body, changed)).toEqual(['Objectives', 'Parts'])
+  })
+
+  it('reports a section as changed when it stops parsing on one side', () => {
+    const brokenSurface = body.replace('## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n', '')
+    expect(frozenSectionsChanged(body, brokenSurface)).toEqual(['Surface'])
+  })
+
+  it('reports nothing for a section malformed identically on both sides', () => {
+    const noSurface = body.replace('## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n', '')
+    expect(frozenSectionsChanged(noSurface, noSurface)).toEqual([])
+  })
+
+  // a round-2 HIGH security-review finding — `## Documentation` is a
+  // frozen-brief-locked section too, same as Surface/Parts: an ordinary
+  // `issue edit` must not be able to silently drop or reword a source once
+  // the brief is frozen.
+  const documentation = '## Documentation\n\n- https://example.com/docs — the mechanism it governs\n'
+  const bodyWithDocs = `${body}\n${documentation}`
+
+  it('reports `Documentation` when a source or its mechanism changes', () => {
+    const changed = bodyWithDocs.replace('the mechanism it governs', 'a different mechanism')
+    expect(frozenSectionsChanged(bodyWithDocs, changed)).toEqual(['Documentation'])
+  })
+
+  it('reports `Documentation` when a source is dropped from an already-frozen Issue', () => {
+    const dropped = bodyWithDocs.replace(documentation, '## Documentation\n\nNone — no source governs this task.\n')
+    expect(frozenSectionsChanged(bodyWithDocs, dropped)).toEqual(['Documentation'])
+  })
+
+  it('reports `Documentation` when the section stops parsing on one side', () => {
+    const removed = bodyWithDocs.replace(documentation, '')
+    expect(frozenSectionsChanged(bodyWithDocs, removed)).toEqual(['Documentation'])
+  })
+
+  it('does not report `Documentation` when the section is byte-identical', () => {
+    expect(frozenSectionsChanged(bodyWithDocs, bodyWithDocs)).toEqual([])
+  })
+
+  // F3 (round 2 code review, MINOR) — documentationEqual's own
+  // doc comment claims order-significance like Parts; this proves it against
+  // two otherwise-identical sources, the way the Surface/Parts cases above
+  // each prove their own order-(in)sensitivity.
+  it('reports `Documentation` when two otherwise-identical sources are reordered', () => {
+    const twoSources =
+      '## Documentation\n\n' +
+      '- https://example.com/a — the mechanism it governs\n' +
+      '- https://example.com/b — a different mechanism\n'
+    const withTwoSources = `${body}\n${twoSources}`
+    const reordered = withTwoSources.replace(
+      twoSources,
+      '## Documentation\n\n' +
+        '- https://example.com/b — a different mechanism\n' +
+        '- https://example.com/a — the mechanism it governs\n'
+    )
+    expect(frozenSectionsChanged(withTwoSources, reordered)).toEqual(['Documentation'])
+  })
+})
+
+describe('code-blindness — every content check reuses the single stripCode (PR #617)', () => {
+  it.each(fenceShapes())('does not trip A or B on quoted content inside a $name fence', (shape) => {
+    const quoted = [
+      shape.open,
+      '## References',
+      '**Premise:** packages/ui/topbar/index.tsx contains: TopBar',
+      'Restyle packages/ui/topbar/index.tsx',
+      shape.close
+    ].join(shape.eol)
+    const body = `${rationale({ boundary: 'Add a CLI flag in `apps/vinaya/cli`.' })}\n${quoted}\n`
+    expect(checkNoBriefContent(body).status).toBe('pass')
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// One rationale grammar: an Issue body the creation gate accepts
+// must always be rewritable by `amend-deps`. `checkIssueRationale` and
+// `amendRationaleDeps` are two independent consumers of the same
+// `Dependency rationale` field; this suite feeds a shared set of bodies
+// through BOTH and asserts they agree, rather than trusting two
+// independently-passing unit tests that never run against each other's
+// fixtures (found live 2026-08-05).
+// ---------------------------------------------------------------------------
+
+/** A complete, otherwise-canonical rationale body with only the `Dependency
+ * rationale` field's form varied — isolates disagreement to that one field. */
+function rationaleWithDependencyForm(dependencyField: string): string {
+  return `
+**Boundary** — What this task is and is not.
+
+**Sizing** — Passes all four tests.
+
+**Project(s) + blast radius** — aeg, aeg-core.
+
+${dependencyField}
+
+**Traps to avoid** — Do not do X.
+
+**Suggested agent-class** — high.
+
+**Stop-and-escalate** — If Y happens, stop.
+
+**Docs to keep coherent** — state-machine.md §12.
+`
+}
+
+/** Whether `amendRationaleDeps` can locate the section at all — the same
+ * question `checkIssueRationale`'s new check answers for the creation gate. */
+function amendDepsAcceptsSectionLocation(body: string): boolean {
+  try {
+    amendRationaleDeps(body, { dependsOn: ['1'], note: 'round-trip probe', date: '2026-01-01' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Whether `checkIssueRationale` accepts this body on the `Dependency
+ * rationale` field specifically (ignores errors on the other seven fields,
+ * which `rationaleWithDependencyForm` always satisfies). */
+function checkIssueRationaleAcceptsDependencyField(body: string): boolean {
+  return !checkIssueRationale(body).errors.some((e) => e.startsWith('issue-validation Dependency rationale'))
+}
+
+const DEPENDENCY_FORM_FIXTURES: Array<{ name: string; field: string; accepted: boolean }> = [
+  {
+    name: 'canonical bold form (Issue #309 shape)',
+    field: '**Dependency rationale** — No depends-on.',
+    accepted: true
+  },
+  {
+    name: 'colon-inside-bold form (Issue #736 shape, found live 2026-08-05)',
+    field: '**Dependency rationale:** No depends-on.',
+    accepted: false
+  },
+  {
+    name: 'heading form (Issue #219 shape) — amend-deps has no heading grammar for this field',
+    field: '### Dependency rationale\n\nNo depends-on.',
+    accepted: false
+  }
+]
+
+describe('checkIssueRationale / amendRationaleDeps — round-trip agreement (task 738)', () => {
+  it.each(DEPENDENCY_FORM_FIXTURES)('$name: both consumers agree (accepted=$accepted)', ({ field, accepted }) => {
+    const body = rationaleWithDependencyForm(field)
+    expect(checkIssueRationaleAcceptsDependencyField(body)).toBe(accepted)
+    expect(amendDepsAcceptsSectionLocation(body)).toBe(accepted)
+  })
+
+  it('rejects the exact colon-form body from Issue #736 (real, captured 2026-08-05) with an actionable error', () => {
+    const body = readFileSync(
+      join(__dirname, '../../../../../packages/aeg-core/tests/fixtures', 'issue-736-body.md'),
+      'utf8'
+    )
+    const result = checkIssueRationale(body)
+    expect(result.status).toBe('fail')
+    const depError = result.errors.find((e) => e.startsWith('issue-validation Dependency rationale'))
+    expect(depError).toBeDefined()
+    expect(depError).toMatch(/\*\*Dependency rationale\*\* — …/)
+    expect(depError).toMatch(/\*\*Dependency rationale:\*\* …/)
+    // And the same body is, independently, unamendable — the defect this task closes.
+    expect(amendDepsAcceptsSectionLocation(body)).toBe(false)
+  })
+
+  it('still passes the canonical form on both consumers — no regression on the accepted shape', () => {
+    const body = rationaleWithDependencyForm('**Dependency rationale** — Depends-on: 1.')
+    expect(checkIssueRationale(body).status).toBe('pass')
+    expect(amendDepsAcceptsSectionLocation(body)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// `hasRationaleField` regex-grouping regression (found live 2026-08-07):
+// `labelPattern`'s own top-level `|` (e.g. `Dependency
+// rationale|Depends[- ]on`) must not split the surrounding
+// `(?:\*\*|^#{1,4}\s+)\s*` alternation. Ungrouped, `Depends[- ]on` becomes a
+// bare, unanchored alternative that matches ANY "Depends on"/"Depends-on"
+// text anywhere in the body — including plain prose with no bold/heading
+// marker nearby — and a body that never had this field at all gets
+// misreported as "field found, but malformed" instead of "field missing".
+// ---------------------------------------------------------------------------
+
+describe('hasRationaleField — label-pattern grouping (regression, found live 2026-08-07)', () => {
+  it('a body with a bare "Depends on" in ordinary prose, and no bold/heading Dependency-rationale field, reports the field MISSING', () => {
+    const body = `
+**Boundary** — Depends on the reader having already read the design doc.
+
+**Sizing** — One PR.
+
+**Project(s) + blast radius** — aeg, aeg-core.
+
+**Traps to avoid** — Do not do X.
+
+**Suggested agent-class** — high.
+
+**Stop-and-escalate** — If Y happens, stop.
+
+**Docs to keep coherent** — state-machine.md §12.
+`
+    const result = checkIssueRationale(body)
+    expect(result.status).toBe('fail')
+    const depError = result.errors.find((e) => e.startsWith('issue-validation Dependency rationale'))
+    expect(depError).toBeDefined()
+    // Missing (no prefix match) — not the "found but wrong form" message task 738 added.
+    expect(depError).toMatch(/rationale field not found/)
+    expect(depError).not.toMatch(/rationale field found, but not in the form/)
+  })
+
+  it('a real-shaped Issue with only inline "Depends-on: #N" prose in an unrelated section (Issue #240/#241 shape) reports the field MISSING, not malformed', () => {
+    const body = `
+**Boundary** — Depends on: **#186 (T11)** — the benchmark data answers the signal question.
+
+**Sizing** — One PR.
+
+**Project(s) + blast radius** — vada only.
+
+**Traps to avoid** — Do not do X.
+
+**Suggested agent-class** — high.
+
+**Stop-and-escalate** — If Y happens, stop.
+
+**Docs to keep coherent** — some-doc.md.
+`
+    const result = checkIssueRationale(body)
+    const depError = result.errors.find((e) => e.startsWith('issue-validation Dependency rationale'))
+    expect(depError).toBeDefined()
+    expect(depError).toMatch(/rationale field not found/)
+  })
+})
+
+/**
+ * Trojan-Source class characters. Named, never embedded: a literal bidi
+ * override in a source file is invisible in review, which is the entire reason
+ * it is worth stripping out of an operator-facing message.
+ */
+const RLO = String.fromCharCode(0x202e) // right-to-left override
+const ZWSP = String.fromCharCode(0x200b) // zero-width space
+const BOM = String.fromCharCode(0xfeff)
+
+describe('checkProjectsRegistered — what reaches the operator’s terminal', () => {
+  it('drops bidi overrides from a registry name', () => {
+    const hostile = ['vinaya', `aeg${RLO}erroc-gea`]
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], hostile)
+    expect(r.errors[0]).not.toContain(RLO)
+  })
+
+  it('drops zero-width characters that could split a name into a lookalike', () => {
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], [`vin${ZWSP}aya`, 'aeg-core'])
+    expect(r.errors[0]).not.toContain(ZWSP)
+  })
+
+  it('drops a byte-order mark from a declared value', () => {
+    const r = checkProjectsRegistered(`**Project:** not a name${BOM} here`, [], REGISTERED)
+    expect(r.errors[0]).not.toContain(BOM)
+  })
+
+  it('bounds the residue count, so one body cannot amplify into a huge error string', () => {
+    // 500 unparseable values. Uncapped this renders every one of them into a
+    // single error string that lands in `CheckFailure.reason` and in a blocking
+    // gate's `--json` output.
+    const body = `**Project:** ${Array.from({ length: 500 }, (_, i) => `not a name ${i}`).join(', ')}`
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    expect(r.status).toBe('fail')
+    expect((r.errors[0] ?? '').length).toBeLessThan(2000)
+    expect(r.errors[0]).toMatch(/more/)
+  })
+
+  it('never emits a lone surrogate when eliding a long value', () => {
+    // An astral character straddling the elision boundary splits into a lone
+    // surrogate under a UTF-16 slice.
+    // 61 single-unit characters put the 64th code UNIT inside the first astral
+    // character, so a `slice(0, 64)` cuts it in half.
+    const astral = '\u{1F600}'
+    const body = `**Project:** ${'a'.repeat(61)}${astral.repeat(10)}`
+    const r = checkProjectsRegistered(body, [], REGISTERED)
+    // Scan CODE UNITS: every high surrogate must be followed by a low one.
+    // (Iterating the string with `for...of` walks code points and would never
+    // see the split, which is exactly why a UTF-16 slice can hide this.)
+    const msg = r.errors[0] ?? ''
+    let lone = 0
+    for (let i = 0; i < msg.length; i++) {
+      const code = msg.charCodeAt(i)
+      const isHigh = code >= 0xd800 && code <= 0xdbff
+      const isLow = code >= 0xdc00 && code <= 0xdfff
+      if (isHigh) {
+        const next = msg.charCodeAt(i + 1)
+        if (!(next >= 0xdc00 && next <= 0xdfff)) lone++
+        else i++
+      } else if (isLow) {
+        lone++
+      }
+    }
+    expect(lone).toBe(0)
+  })
+
+  it('still renders a well-formed registry row verbatim — sanitation is not redaction', () => {
+    const r = checkProjectsRegistered('**Project:** nosuchproject', [], REGISTERED)
+    expect(r.errors[0]).toMatch(/aeg-core/)
+    expect(r.errors[0]).toMatch(/nosuchproject/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The four judgment-sections-as-data
+// parsers, and the gate that composes them.
+// ---------------------------------------------------------------------------
+
+const ISSUE_426_BODY = readFileSync(
+  join(import.meta.dirname, '../../../../../packages/aeg-core/tests/fixtures/issue-426-body.md'),
+  'utf8'
+)
+
+describe('parseIssueSurface', () => {
+  it('parses a well-formed in:/out: pair', () => {
+    const body = '## Surface\n\nin: packages/aeg-core/src, apps/cli/src\nout: apps/cli/src/commands\n'
+    const r = parseIssueSurface(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.in).toEqual(['packages/aeg-core/src', 'apps/cli/src'])
+    expect(r.value.out).toEqual(['apps/cli/src/commands'])
+  })
+
+  it('refuses when the `## Surface` heading is absent', () => {
+    const r = parseIssueSurface('nothing surface-shaped here')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/no `## Surface` heading/)
+  })
+
+  it('refuses when `in:` is missing', () => {
+    const r = parseIssueSurface('## Surface\n\nout: packages/ui\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors.join(' ')).toMatch(/no `in:` line/)
+  })
+
+  it('refuses a file path in `in:` — Surface entries are directory-level globs', () => {
+    const r = parseIssueSurface('## Surface\n\nin: packages/aeg-core/src/issue-validation.ts\nout: —\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/looks like a file path/)
+  })
+
+  it('refuses a file path in `out:` too', () => {
+    const r = parseIssueSurface('## Surface\n\nin: packages/aeg-core/src\nout: apps/cli/README.md\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/looks like a file path/)
+  })
+
+  it('tolerates a trailing `/**` glob suffix as directory-level', () => {
+    const r = parseIssueSurface('## Surface\n\nin: packages/aeg-core/**\nout: —\n')
+    expect(r.ok).toBe(true)
+  })
+
+  // O15 — a dot-prefixed directory (`.claude`, `.github`) is a directory, not
+  // a file: its last segment's only `.` sits at index 0, a name, not an
+  // extension.
+  it('O15: a bare dot-directory entry is not read as a file path', () => {
+    const r = parseIssueSurface('## Surface\n\nin: .claude\nout: —\n')
+    expect(r.ok).toBe(true)
+  })
+
+  it('O15: a dot-directory with a trailing `/**` is not read as a file path', () => {
+    const r = parseIssueSurface('## Surface\n\nin: .github/**\nout: —\n')
+    expect(r.ok).toBe(true)
+  })
+
+  it('O15: a real dotfile inside a dot-directory is still refused as a file path', () => {
+    const r = parseIssueSurface('## Surface\n\nin: .claude/skills/foo.md\nout: —\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/looks like a file path/)
+  })
+})
+
+describe('checkSurfaceGlobsResolve (O1)', () => {
+  it('passes for a new directory when the Boundary pins a file inside it', () => {
+    const body =
+      '**Boundary** — Pinned files: `decisions/first.md`. Out: nothing.\n\n## Surface\n\nin: decisions\nout: —\n'
+    expect(checkSurfaceGlobsResolve(body, () => false).status).toBe('pass')
+  })
+
+  it('fails for a new directory with no pinned file inside it', () => {
+    const body = '**Boundary** — Pinned files: `docs/guide.md`. Out: nothing.\n\n## Surface\n\nin: decisions\nout: —\n'
+    expect(checkSurfaceGlobsResolve(body, () => false).status).toBe('fail')
+  })
+
+  it('does not count a file named only in the Boundary Out clause as pinned', () => {
+    const body = '**Boundary** — In: the change. Out: `decisions/first.md`.\n\n## Surface\n\nin: decisions\nout: —\n'
+    expect(checkSurfaceGlobsResolve(body, () => false).status).toBe('fail')
+  })
+
+  it('passes when every `in:` glob resolves', () => {
+    const body = '## Surface\n\nin: packages/aeg-core/src\nout: —\n'
+    const r = checkSurfaceGlobsResolve(body, () => true)
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming the glob, when an `in:` glob resolves to nothing', () => {
+    const body = '## Surface\n\nin: packages/does-not-exist\nout: —\n'
+    const r = checkSurfaceGlobsResolve(body, () => false)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/does-not-exist/)
+    expect(r.errors[0]).toMatch(/matches no tracked file/)
+  })
+
+  it('names only the glob that fails, not the whole list', () => {
+    const body = '## Surface\n\nin: packages/aeg-core/src, packages/nope\nout: —\n'
+    const r = checkSurfaceGlobsResolve(body, (glob) => glob !== 'packages/nope')
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(1)
+    expect(r.errors[0]).toMatch(/packages\/nope/)
+  })
+
+  it('catches a backtick-wrapped glob naturally — it can never resolve to a real tracked path', () => {
+    const body = '## Surface\n\nin: `packages/aeg-core/src`\nout: —\n'
+    const r = checkSurfaceGlobsResolve(body, (glob) => !glob.includes('`'))
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('`packages/aeg-core/src`')
+  })
+
+  it('does not check `out:` globs — a legitimate exclusion may not exist yet', () => {
+    const body = '## Surface\n\nin: packages/aeg-core/src\nout: packages/not-created-yet\n'
+    const r = checkSurfaceGlobsResolve(body, (glob) => glob === 'packages/aeg-core/src')
+    expect(r.status).toBe('pass')
+  })
+
+  it('passes trivially when `## Surface` itself does not parse — reported elsewhere', () => {
+    const r = checkSurfaceGlobsResolve('nothing surface-shaped here', () => false)
+    expect(r.status).toBe('pass')
+  })
+})
+
+describe('checkPartsCiteDefinedObjectives (O2)', () => {
+  const objectives = '## Objectives\n\nO1. Do the first thing.\nO2. Do the second thing.\n'
+
+  it('passes when every Part cites a defined objective', () => {
+    const body = `${objectives}\n## Parts\n\nPart 1 (O1) — the parsers.\nPart 2 (O1, O2) — the render.\n`
+    expect(checkPartsCiteDefinedObjectives(body).status).toBe('pass')
+  })
+
+  it('fails, naming the part and the undefined citation, when a Part cites O3 with no O3', () => {
+    const body = `${objectives}\n## Parts\n\nPart 1 (O1) — the parsers.\nPart 2 (O3) — a phantom objective.\n`
+    const r = checkPartsCiteDefinedObjectives(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/Part 2/)
+    expect(r.errors[0]).toMatch(/O3/)
+  })
+
+  it('passes trivially when Objectives is malformed — reported by checkIssueObjectives instead', () => {
+    const body = '## Parts\n\nPart 1 (O9) — cites an objective that does not exist anywhere.\n'
+    expect(checkPartsCiteDefinedObjectives(body).status).toBe('pass')
+  })
+
+  it('passes trivially when Parts is malformed — reported by parseIssueParts instead', () => {
+    const body = `${objectives}\n## Parts\n\nnothing part-shaped here\n`
+    expect(checkPartsCiteDefinedObjectives(body).status).toBe('pass')
+  })
+})
+
+describe('checkObjectivesRespectBoundary', () => {
+  it('passes when nothing named in Objectives/Parts/Test plan falls under an excluded path', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib/forge-write.ts`. Out: what any brief section means, the loop.',
+      '',
+      '## Objectives',
+      '',
+      'O1. `apps/cli/src/lib/forge-write.ts` renders and validates the brief.',
+      '',
+      '## Surface',
+      '',
+      'in: apps/cli/src/lib',
+      'out: apps/cli/src/checks',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the write gate renders and validates the brief.'
+    ].join('\n')
+    expect(checkObjectivesRespectBoundary(body).status).toBe('pass')
+  })
+
+  it('fails, quoting both lines, when an Objective names a path the Surface `out:` excludes', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: nothing else.',
+      '',
+      '## Objectives',
+      '',
+      'O1. `apps/cli/src/checks/frozen-brief.ts` gains a new check the write gate runs.',
+      '',
+      '## Surface',
+      '',
+      'in: apps/cli/src/lib',
+      'out: apps/cli/src/checks',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the registry gains the new check.'
+    ].join('\n')
+    const r = checkObjectivesRespectBoundary(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/O1/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/checks\/frozen-brief\.ts/)
+    expect(r.errors[0]).toMatch(/out:.*apps\/cli\/src\/checks/)
+  })
+
+  it('fails, quoting both lines, when a Part names a path the Boundary `Out:` clause excludes', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: `packages/sources`, never touched.',
+      '',
+      '## Objectives',
+      '',
+      'O1. The write gate validates the brief before it reaches the forge.',
+      '',
+      '## Surface',
+      '',
+      'in: apps/cli/src/lib',
+      'out: —',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — deliberately also edits `packages/sources/index.ts` here.'
+    ].join('\n')
+    const r = checkObjectivesRespectBoundary(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/Part 1/)
+    expect(r.errors[0]).toMatch(/packages\/sources\/index\.ts/)
+    expect(r.errors[0]).toMatch(/packages\/sources/)
+  })
+
+  it('fails when a Test plan line names an excluded path', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: `apps/cli/src/checks`.',
+      '',
+      '## Objectives',
+      '',
+      'O1. The write gate validates the brief before it reaches the forge.',
+      '',
+      '## Surface',
+      '',
+      'in: apps/cli/src/lib',
+      'out: apps/cli/src/checks',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the write gate validates the brief.',
+      '',
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/src/checks/registry.test.ts → 0 fail',
+      '```'
+    ].join('\n')
+    const r = checkObjectivesRespectBoundary(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/checks\/registry\.test\.ts/)
+  })
+})
+
+describe('checkNoForeignTaskOwnership', () => {
+  it('passes when a Traps sentence merely mentions another task with no ownership verb', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: nothing.',
+      '',
+      '**Traps to avoid** — Do NOT reimplement the bare-id rule in the gate; call the primitive #545 ships.',
+      '',
+      '**Stop-and-escalate** — If rendering needs tree facts that cannot be stubbed, escalate.'
+    ].join('\n')
+    expect(checkNoForeignTaskOwnership(body).status).toBe('pass')
+  })
+
+  it('passes when a task reference lives in Dependency rationale, never scanned here', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: nothing.',
+      '',
+      '**Dependency rationale** — O2 is owned by task-run-v1 21; land after it.'
+    ].join('\n')
+    expect(checkNoForeignTaskOwnership(body).status).toBe('pass')
+  })
+
+  it('fails, naming the field and quoting the sentence, when Traps assigns ownership to another task', () => {
+    const body = [
+      '**Boundary** — In: `apps/cli/src/lib`. Out: nothing.',
+      '',
+      '**Traps to avoid** — O2 is owned by task-run-v1 21, so skip it here.'
+    ].join('\n')
+    const r = checkNoForeignTaskOwnership(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/Traps to avoid/)
+    expect(r.errors[0]).toMatch(/owned by task-run-v1 21/)
+  })
+
+  it('fails when a Boundary sentence defers ownership to a bare `#N` reference', () => {
+    const body = '**Boundary** — In: `apps/cli/src/lib`. This objective is handled by #545 instead.'
+    const r = checkNoForeignTaskOwnership(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/Boundary/)
+    expect(r.errors[0]).toMatch(/#545/)
+  })
+})
+
+describe('checkProseAllowsBeyondSurfaceEdit', () => {
+  const bodyWith = (field: string): string =>
+    [
+      '**Boundary** — Pinned files: `packages/aeg-core/src/issue-validation.ts`, `apps/log-server/src/server.ts`. Out: the loop.',
+      '',
+      field,
+      '',
+      '## Surface',
+      '',
+      'in: packages/aeg-core/src',
+      'out: apps/cli/src/lib/dev-review-loop'
+    ].join('\n')
+
+  const phrasings = [
+    'Do not edit `apps/log-server/src/server.ts` here.',
+    'Do not change `apps/log-server/src/server.ts` here.',
+    'Do not touch `apps/log-server/src/server.ts` here.',
+    'Never edit `apps/log-server/src/server.ts` here.',
+    'Stop if `apps/log-server/src/server.ts` needs a change.',
+    'Escalate if the fix cannot avoid `apps/log-server/src/server.ts`.'
+  ]
+
+  for (const sentence of phrasings) {
+    it(`refuses "${sentence}" on a path no \`in:\` glob covers, naming the field, path and sentence`, () => {
+      const r = checkProseAllowsBeyondSurfaceEdit(bodyWith(`**Traps to avoid** — ${sentence}`))
+      expect(r.status).toBe('fail')
+      expect(r.errors).toHaveLength(1)
+      expect(r.errors[0]).toContain('Traps to avoid')
+      expect(r.errors[0]).toContain('`apps/log-server/src/server.ts`')
+      expect(r.errors[0]).toContain(sentence)
+      expect(r.errors[0]).toMatch(/beyond-Surface block/)
+      expect(r.errors[0]).toMatch(/no Surface `in:` glob covers/)
+    })
+
+    it(`passes "${sentence}" once the path is in the Surface`, () => {
+      const inSurface = sentence.replace('apps/log-server/src/server.ts', 'packages/aeg-core/src/issue-validation.ts')
+      expect(checkProseAllowsBeyondSurfaceEdit(bodyWith(`**Traps to avoid** — ${inSurface}`)).status).toBe('pass')
+    })
+  }
+
+  it('refuses a path an `out:` glob covers, naming the glob, in Stop-and-escalate', () => {
+    const r = checkProseAllowsBeyondSurfaceEdit(
+      bodyWith('**Stop-and-escalate** — Stop if `apps/cli/src/lib/dev-review-loop/driver.ts` must change.')
+    )
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('Stop-and-escalate')
+    expect(r.errors[0]).toContain("the Surface's `out:` glob `apps/cli/src/lib/dev-review-loop` covers")
+  })
+
+  it('refuses in the `## Stop conditions` section', () => {
+    const body = `${bodyWith('**Traps to avoid** — none.')}\n\n## Stop conditions\n\n- Do not edit \`apps/log-server/src/server.ts\`.\n`
+    const r = checkProseAllowsBeyondSurfaceEdit(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('issue-validation Stop conditions')
+  })
+
+  it('refuses a sentence naming an out-of-Surface pinned file by its module', () => {
+    const r = checkProseAllowsBeyondSurfaceEdit(bodyWith('**Traps to avoid** — Do not touch the server module.'))
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('`apps/log-server/src/server.ts`')
+  })
+
+  it('passes a sentence naming an in-Surface pinned file by its module', () => {
+    const r = checkProseAllowsBeyondSurfaceEdit(
+      bodyWith('**Traps to avoid** — Do not touch the `issue-validation` module.')
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('passes an out-of-Surface path with no prohibition phrase, and a phrase outside the three fields', () => {
+    expect(
+      checkProseAllowsBeyondSurfaceEdit(bodyWith('**Traps to avoid** — Read `apps/log-server/src/server.ts` first.'))
+        .status
+    ).toBe('pass')
+    expect(
+      checkProseAllowsBeyondSurfaceEdit(bodyWith('**Sizing** — Do not edit `apps/log-server/src/server.ts`.')).status
+    ).toBe('pass')
+  })
+
+  it('is dormant when `## Surface` does not parse', () => {
+    expect(checkProseAllowsBeyondSurfaceEdit('**Traps to avoid** — Do not edit `apps/x/y.ts`.').status).toBe('pass')
+  })
+})
+
+describe('checkCrossTaskValuesPinned', () => {
+  const tree = new Set(['readFile', 'existing-kind'])
+  const existsInTree = (token: string): boolean => tree.has(token)
+  const bodyWith = (objective: string, premises = '', deps = '`Depends-on: #900`.'): string =>
+    [
+      `**Dependency rationale** — ${deps}`,
+      '',
+      '**Traps to avoid** — Read through `readFile`.',
+      '',
+      '## Objectives',
+      '',
+      `O1. ${objective}`,
+      ...(premises ? ['', '## Premises', '', premises] : [])
+    ].join('\n')
+
+  it('refuses a value no default-branch file contains when no premise pins it', () => {
+    const r = checkCrossTaskValuesPinned(bodyWith('The shard covers the `isolation-boundary` kind.'), existsInTree)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('O1')
+    expect(r.errors[0]).toContain('`isolation-boundary`')
+    expect(r.errors[0]).toContain('Depends-on: #900')
+  })
+
+  it('refuses a quoted string literal, naming its contents', () => {
+    const r = checkCrossTaskValuesPinned(bodyWith("The registry reads the `'gate'` kind."), existsInTree)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('`gate`')
+  })
+
+  it('passes once an `after #<n>:` premise on a declared dependency pins it', () => {
+    const body = bodyWith(
+      'The shard covers the `isolation-boundary` kind.',
+      '- after #900: `apps/cli/src/kinds.ts` contains `isolation-boundary`'
+    )
+    expect(checkCrossTaskValuesPinned(body, existsInTree).status).toBe('pass')
+  })
+
+  it('still refuses when the pinning premise defers to an undeclared task', () => {
+    const body = bodyWith(
+      'The shard covers the `isolation-boundary` kind.',
+      '- after #901: `apps/cli/src/kinds.ts` contains `isolation-boundary`'
+    )
+    expect(checkCrossTaskValuesPinned(body, existsInTree).status).toBe('fail')
+  })
+
+  it('needs no premise for a value the default branch already carries', () => {
+    expect(
+      checkCrossTaskValuesPinned(bodyWith('The shard covers the `existing-kind` kind.'), existsInTree).status
+    ).toBe('pass')
+  })
+
+  it('passes a value the same sentence says this task adds', () => {
+    expect(checkCrossTaskValuesPinned(bodyWith('Add the `isolation-boundary` kind.'), existsInTree).status).toBe('pass')
+  })
+
+  it('ignores paths, filenames, commands and flags', () => {
+    const r = checkCrossTaskValuesPinned(
+      bodyWith('Run `bun test` on `src/kinds.ts` and `kinds.json` with `--fast`.'),
+      existsInTree
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('is dormant for an Issue that declares no Depends-on', () => {
+    expect(
+      checkCrossTaskValuesPinned(bodyWith('The shard covers the `isolation-boundary` kind.', '', 'none.'), existsInTree)
+        .status
+    ).toBe('pass')
+  })
+})
+
+describe('checkPartsCoverageAndSequence', () => {
+  const objectives = '## Objectives\n\nO1. Do the first thing.\nO2. Do the second thing.\n'
+
+  it('passes when every objective is cited by some Part and Parts are numbered contiguously from 1', () => {
+    const body = `${objectives}\n## Parts\n\nPart 1 (O1) — the parsers.\nPart 2 (O2) — the render.\n`
+    expect(checkPartsCoverageAndSequence(body).status).toBe('pass')
+  })
+
+  it('fails, naming the objective, when no Part cites it', () => {
+    const body = `${objectives}\n## Parts\n\nPart 1 (O1) — the parsers.\n`
+    const r = checkPartsCoverageAndSequence(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/O2/)
+    expect(r.errors[0]).toMatch(/not cited by any/)
+  })
+
+  it('fails, naming the position and the numbers, when Parts skip a number', () => {
+    const body = `${objectives}\n## Parts\n\nPart 1 (O1) — the parsers.\nPart 3 (O2) — the render.\n`
+    const r = checkPartsCoverageAndSequence(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors.some((e) => /line 2 is numbered Part 3, expected Part 2/.test(e))).toBe(true)
+  })
+
+  it('passes trivially when Objectives is malformed — reported by checkIssueObjectives instead', () => {
+    const body = '## Parts\n\nPart 1 (O1) — the parsers.\n'
+    expect(checkPartsCoverageAndSequence(body).status).toBe('pass')
+  })
+
+  it('passes trivially when Parts is malformed — reported by parseIssueParts instead', () => {
+    const body = `${objectives}\n## Parts\n\nnothing part-shaped here\n`
+    expect(checkPartsCoverageAndSequence(body).status).toBe('pass')
+  })
+})
+
+describe('checkDocsWithinSurface (O6)', () => {
+  const surface = '## Surface\n\nin: aeg-root/skills/**\nout: aeg-root/tranches/**\n'
+
+  it('passes when the docs pointer falls inside an `in:` glob', () => {
+    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/skills/foo/SKILL.md\`.\n`
+    expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
+  })
+
+  it('fails, naming the pointer and the glob, when the pointer falls inside an `out:` glob', () => {
+    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/tranches/example-tranche.md\`.\n`
+    const r = checkDocsWithinSurface(body, 500)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/aeg-root\/tranches\/example-tranche\.md/)
+    expect(r.errors[0]).toMatch(/aeg-root\/tranches\/\*\*/)
+  })
+
+  it('passes when the pointer falls outside every `in:` glob but inside no `out:` glob either', () => {
+    const body = `${surface}\n**Docs to keep coherent** — Update \`apps/cli/specs/surface.md\`.\n`
+    expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
+  })
+
+  it('passes on the explicit `no-doc-surface` sentinel — nothing to compare', () => {
+    const body = `${surface}\n**Docs to keep coherent** — no-doc-surface.\n`
+    expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
+  })
+
+  it('passes below the brief-sections cutover — no `## Surface` to compare against', () => {
+    const body = '**Docs to keep coherent** — Update `apps/cli/specs/surface.md`.\n'
+    expect(checkDocsWithinSurface(body, 425).status).toBe('pass')
+  })
+
+  it('passes trivially when `## Surface` does not parse — reported elsewhere', () => {
+    const body = '**Docs to keep coherent** — Update `apps/cli/specs/surface.md`.\n'
+    expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
+  })
+
+  it('applies from Issue 1 when no cutover is configured (null) — O1', () => {
+    // Config-less repo: `## Surface` is required from Issue 1, so this
+    // Surface-consistency gate must run from Issue 1 too — an `out:`-excluded
+    // pointer is a real refusal, never grandfathered away.
+    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/tranches/example-tranche.md\`.\n`
+    const r = checkDocsWithinSurface(body, 1, null)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/aeg-root\/tranches\/example-tranche\.md/)
+  })
+
+  it('grandfathers Issue 1 below a configured cutover — O2 unchanged', () => {
+    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/tranches/example-tranche.md\`.\n`
+    expect(checkDocsWithinSurface(body, 1, 426).status).toBe('pass')
+  })
+})
+
+describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
+  const surface = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
+
+  it('passes when the Boundary path falls inside an `in:` glob', () => {
+    const body = `${surface}\n**Boundary** — Edits \`apps/cli/src/lib/forge-write.ts\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('fails, naming the path and the nearest `in:` entry, when no `in:` glob covers it', () => {
+    const body = `${surface}\n**Boundary** — Edits \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    const r = checkRationaleSurfaceCoverage(body, 500)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/aeg-core\/src\/issue-validation\.ts/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/lib/)
+  })
+
+  it('tells the author to widen a directory glob and that Surface never lists a file path (issue-809, O2)', () => {
+    const body = `${surface}\n**Boundary** — Edits \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    const r = checkRationaleSurfaceCoverage(body, 500)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/directory glob/)
+    expect(r.errors[0]).toMatch(/never a file path/)
+    // The old wording said "widen the Surface's `in:` list to cover it", which
+    // read as "add the file path" — it must not return.
+    expect(r.errors[0]).not.toMatch(/list to cover it/)
+  })
+
+  it('picks the `in:` glob sharing the most leading path segments as "nearest"', () => {
+    const body =
+      '## Surface\n\nin: apps/cli/src/lib, apps/cli/src/commands\nout: —\n\n' +
+      '**Boundary** — Edits `apps/cli/src/checks/edge-resolve.ts`.\n'
+    const r = checkRationaleSurfaceCoverage(body, 500)
+    expect(r.status).toBe('fail')
+    // Both candidates share `apps/cli/src`; neither shares `checks` — first
+    // occurrence wins the tie, matching `nearestInGlob`'s own tie-break rule.
+    expect(r.errors[0]).toMatch(/nearest is `apps\/cli\/src\/lib`/)
+  })
+
+  it('passes when Boundary names a path to EXCLUDE it — covered by `out:`, not a gap', () => {
+    const body = `${surface}\n**Boundary** — Does NOT touch \`apps/cli/src/commands/task.ts\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('does not scan "Docs to keep coherent" — that field has its own, deliberately narrower check', () => {
+    const body = `${surface}\n**Docs to keep coherent** — See \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('passes below the brief-sections cutover — no `## Surface` to compare against', () => {
+    const body = '**Boundary** — Edits `packages/aeg-core/src/issue-validation.ts`.\n'
+    expect(checkRationaleSurfaceCoverage(body, 425).status).toBe('pass')
+  })
+
+  it('passes trivially when `## Surface` does not parse — reported elsewhere', () => {
+    const body = '**Boundary** — Edits `packages/aeg-core/src/issue-validation.ts`.\n'
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('ignores a bare backticked identifier with no `/` — never a path', () => {
+    const body = `${surface}\n**Boundary** — Calls \`renderBrief()\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('applies from Issue 1 when no cutover is configured (null) — O1', () => {
+    const body = `${surface}\n**Boundary** — Edits \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    const r = checkRationaleSurfaceCoverage(body, 1, null)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/aeg-core\/src\/issue-validation\.ts/)
+  })
+
+  it('grandfathers Issue 1 below a configured cutover — O2 unchanged', () => {
+    const body = `${surface}\n**Boundary** — Edits \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 1, 426).status).toBe('pass')
+  })
+})
+
+describe('checkSurfaceExcludesBoundDoc (task-run-v1 9, O1/O2/O3)', () => {
+  // The Planner's own sizing example: `apps/cli/src/lib/**` binds
+  // to `apps/cli/specs/surface.md`, and a Surface that pulls the code glob
+  // into `in:` while excluding the doc via `out:` is the contradiction.
+  const manifest = 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n'
+
+  it('refuses, naming the binding and the two contradicting Surface lines', () => {
+    const body = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/specs\n'
+    const r = checkSurfaceExcludesBoundDoc(body, manifest)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/lib/)
+    expect(r.errors[0]).toMatch(/\.vinaya\/doc-owners:1/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/src\/lib\/\*\*/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/specs\/surface\.md/)
+    expect(r.errors[0]).toMatch(/apps\/cli\/specs/)
+  })
+
+  it('passes (O3) once the bound document is moved inside `in:`', () => {
+    const body = '## Surface\n\nin: apps/cli/src/lib, apps/cli/specs\nout: —\n'
+    expect(checkSurfaceExcludesBoundDoc(body, manifest).status).toBe('pass')
+  })
+
+  it('passes (O3) when no doc-owners binding matches the `in:` list at all', () => {
+    const body = '## Surface\n\nin: packages/aeg-forge-state\nout: apps/cli/specs\n'
+    expect(checkSurfaceExcludesBoundDoc(body, manifest).status).toBe('pass')
+  })
+
+  it('passes when the bound document is simply absent from both `in:` and `out:`', () => {
+    const body = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
+    expect(checkSurfaceExcludesBoundDoc(body, manifest).status).toBe('pass')
+  })
+
+  it('skips a URL-pointer binding — no repo path an `out:` glob could cover', () => {
+    const urlManifest = 'apps/cli/src/lib/**  https://example.com/docs\n'
+    const body = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/specs\n'
+    expect(checkSurfaceExcludesBoundDoc(body, urlManifest).status).toBe('pass')
+  })
+
+  it('passes trivially when `.vinaya/doc-owners` is absent', () => {
+    const body = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/specs\n'
+    expect(checkSurfaceExcludesBoundDoc(body, null).status).toBe('pass')
+  })
+
+  it('passes trivially when `## Surface` does not parse — reported elsewhere', () => {
+    const body = '**Docs to keep coherent** — no `## Surface` heading here.\n'
+    expect(checkSurfaceExcludesBoundDoc(body, manifest).status).toBe('pass')
+  })
+})
+
+describe('globCoversPath — the root glob `*` (#826, O1/O2/O3)', () => {
+  it('admits a repository-root file, a path with no slash (O1)', () => {
+    expect(globCoversPath('*', 'README.md')).toBe(true)
+    expect(globCoversPath('*', 'LICENSE')).toBe(true)
+    expect(globCoversPath('*', 'package.json')).toBe(true)
+  })
+
+  it('never admits a nested path — `*` stays root-level only, so `in: *, out: apps` still excludes apps/... (O2)', () => {
+    expect(globCoversPath('*', 'apps/cli/src/index.ts')).toBe(false)
+    expect(globCoversPath('*', 'packages/aeg-core/src/issue-validation.ts')).toBe(false)
+    // a bare root directory name has no slash, so `*` covers it as a root entry —
+    // it is `out: apps` (a prefix glob), not `*`, that excludes the files under it.
+    expect(globCoversPath('*', 'apps')).toBe(true)
+  })
+
+  it('a trailing-slash form of the root glob behaves identically', () => {
+    expect(globCoversPath('*/', 'README.md')).toBe(true)
+    expect(globCoversPath('*/', 'apps/cli/src/index.ts')).toBe(false)
+  })
+
+  it('only `*` is the root glob — `.` keeps its existing prefix behaviour unchanged (O3)', () => {
+    expect(globCoversPath('.', 'README.md')).toBe(false)
+    expect(globCoversPath('.', 'apps/cli/src/index.ts')).toBe(false)
+    expect(globCoversPath('.', '.')).toBe(true)
+  })
+
+  it('every non-root glob matches exactly what it matched before (O3)', () => {
+    expect(globCoversPath('packages/aeg-core', 'packages/aeg-core/src/x.ts')).toBe(true)
+    expect(globCoversPath('packages/aeg-core/src/**', 'packages/aeg-core/src/x.ts')).toBe(true)
+    expect(globCoversPath('packages/aeg-core/bin', 'packages/aeg-core/src/x.ts')).toBe(false)
+    expect(globCoversPath('packages/aeg-core/src/x.ts', 'packages/aeg-core')).toBe(true)
+  })
+})
+
+describe('checkSurfaceScope — a protected administrative path needs an in: glob that names it', () => {
+  it('fails an uncovered protected path even when the record lists it', () => {
+    const result = checkSurfaceScope(['aeg-root/enforcement.md'], { in: ['apps/cli/src'], out: [] }, [
+      'aeg-root/enforcement.md'
+    ])
+    expect(result).toEqual({ ok: false, violation: { path: 'aeg-root/enforcement.md', reason: 'protected' } })
+  })
+
+  it('an empty in: covers no protected path', () => {
+    const result = checkSurfaceScope(['.github/workflows/ci.yml'], { in: [], out: [] }, [])
+    expect(result).toEqual({ ok: false, violation: { path: '.github/workflows/ci.yml', reason: 'protected' } })
+  })
+
+  it('passes a protected path an in: glob covers', () => {
+    expect(checkSurfaceScope(['aeg-root/enforcement.md'], { in: ['aeg-root'], out: [] }, []).ok).toBe(true)
+  })
+
+  it('an out: glob does not decide a protected path', () => {
+    expect(
+      checkSurfaceScope(['vinaya.config.json'], { in: ['vinaya.config.json'], out: ['vinaya.config.json'] }, [
+        'vinaya.config.json'
+      ]).ok
+    ).toBe(true)
+  })
+
+  it.each(['./.github/x', '/aeg-root/x', 'foo/../.github/x', '../../aeg-root/x'])(
+    'recognizes the disguised %s',
+    (path) => {
+      const result = checkSurfaceScope([path], { in: ['apps'], out: [] }, [path])
+      expect(result).toEqual({ ok: false, violation: { path, reason: 'protected' } })
+    }
+  )
+})
+
+describe('checkSurfaceScope — a beyond-Surface path passes only when the body records it', () => {
+  it('passes when no changed file is beyond the Surface', () => {
+    const result = checkSurfaceScope(
+      ['packages/aeg-core/src/issue-validation.ts'],
+      { in: ['packages/aeg-core/src'], out: ['packages/aeg-core/src/other/**'] },
+      []
+    )
+    expect(result.ok).toBe(true)
+  })
+
+  it('fails, naming the file and the out: glob it crosses, when the crossing is not recorded', () => {
+    const result = checkSurfaceScope(
+      ['packages/aeg-core/src/other/thing.ts'],
+      { in: [], out: ['packages/aeg-core/src/other/**'] },
+      []
+    )
+    expect(result).toEqual({
+      ok: false,
+      violation: { path: 'packages/aeg-core/src/other/thing.ts', reason: 'out', glob: 'packages/aeg-core/src/other/**' }
+    })
+  })
+
+  it('fails on a changed file no in: glob covers, when it is not recorded', () => {
+    const result = checkSurfaceScope(['docs/x.md'], { in: ['src'], out: [] }, [])
+    expect(result).toEqual({ ok: false, violation: { path: 'docs/x.md', reason: 'in', glob: null } })
+  })
+
+  it('names only the first unrecorded beyond-Surface path, skipping recorded ones', () => {
+    const result = checkSurfaceScope(['a/one.ts', 'b/two.ts', 'c/three.ts'], { in: [], out: ['a/**', 'b/**'] }, [
+      'a/one.ts'
+    ])
+    expect(result).toEqual({ ok: false, violation: { path: 'b/two.ts', reason: 'out', glob: 'b/**' } })
+  })
+
+  it('passes when every beyond-Surface path is recorded', () => {
+    const result = checkSurfaceScope(['a/one.ts', 'docs/x.md'], { in: ['a', 'src'], out: ['a/**'] }, [
+      'a/one.ts',
+      'docs/x.md'
+    ])
+    expect(result.ok).toBe(true)
+  })
+
+  it('names the first matching out: glob when a file falls under more than one', () => {
+    const result = checkSurfaceScope(['a/b/c.ts'], { in: [], out: ['a/**', 'a/b/**'] }, [])
+    expect(result.ok).toBe(false)
+    if (result.ok || result.violation.reason === 'protected') return
+    expect(result.violation.glob).toBe('a/**')
+  })
+})
+
+describe('the AEG:BEYOND-SURFACE body block', () => {
+  const body = [
+    'Closes #1',
+    '',
+    '## Evidence',
+    '',
+    'x',
+    '',
+    '## Scope',
+    '',
+    'One paragraph.',
+    '',
+    '<!-- AEG:TIER:START -->',
+    '**Tier:** 1',
+    '<!-- AEG:TIER:END -->',
+    ''
+  ].join('\n')
+
+  it('measures beyond-Surface paths, an out: crossing before an in: miss', () => {
+    expect(beyondSurfacePaths(['src/a.ts', 'src/gen/b.ts', 'docs/c.md'], { in: ['src'], out: ['src/gen'] })).toEqual([
+      { path: 'src/gen/b.ts', reason: 'out', glob: 'src/gen' },
+      { path: 'docs/c.md', reason: 'in', glob: null }
+    ])
+  })
+
+  it('is empty when no path is beyond the Surface', () => {
+    expect(renderBeyondSurfaceBlock([])).toBe('<!-- AEG:BEYOND-SURFACE:START -->\n<!-- AEG:BEYOND-SURFACE:END -->')
+    expect(recordedBeyondSurfacePaths(withBeyondSurfaceBlock(body, []))).toEqual([])
+  })
+
+  it('is inserted in the Scope section just before the Tier pair, and round-trips its paths', () => {
+    const written = withBeyondSurfaceBlock(body, [
+      { path: 'docs/c.md', reason: 'in', glob: null },
+      { path: 'src/gen/b.ts', reason: 'out', glob: 'src/gen' }
+    ])
+    expect(written.indexOf('<!-- AEG:BEYOND-SURFACE:START -->')).toBeGreaterThan(written.indexOf('## Scope'))
+    expect(written.indexOf('<!-- AEG:BEYOND-SURFACE:END -->')).toBeLessThan(written.indexOf('<!-- AEG:TIER:START -->'))
+    expect(written).toContain('- `src/gen/b.ts` crosses the `out:` glob `src/gen`')
+    expect(recordedBeyondSurfacePaths(written)).toEqual(['docs/c.md', 'src/gen/b.ts'])
+  })
+
+  it('replaces only its own marked region on a rewrite, discarding an agent-edited list', () => {
+    const tampered = withBeyondSurfaceBlock(body, [{ path: 'docs/c.md', reason: 'in', glob: null }]).replace(
+      '- `docs/c.md` matches no `in:` glob',
+      '- `docs/c.md` matches no `in:` glob\n- `src/sneaked.ts` hand-added'
+    )
+    const rewritten = withBeyondSurfaceBlock(tampered, [])
+    expect(recordedBeyondSurfacePaths(rewritten)).toEqual([])
+    expect(rewritten).toBe(withBeyondSurfaceBlock(body, []))
+  })
+
+  it('appends a Scope section to a body that has none', () => {
+    const written = withBeyondSurfaceBlock('Closes #1\n', [{ path: 'x.ts', reason: 'in', glob: null }])
+    expect(written).toMatch(/## Scope\n\n<!-- AEG:BEYOND-SURFACE:START -->/)
+    expect(recordedBeyondSurfacePaths(written)).toEqual(['x.ts'])
+  })
+
+  it('a body with no block records nothing', () => {
+    expect(recordedBeyondSurfacePaths(body)).toEqual([])
+  })
+})
+
+describe('checkBlastRadiusScope (O4) — structural mode at/above the brief-sections cutover', () => {
+  it('fails from `## Surface` alone when an `in:` glob covers a shared domain, even with no Boundary prose', () => {
+    const body = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 500)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/ui/)
+  })
+
+  it('passes from `## Surface` alone when no `in:` glob covers a shared domain, even if Boundary prose names it to EXCLUDE it', () => {
+    // The exact O4 case: naming a package in order to exclude it must not trip
+    // the gate once the decision is structural.
+    const body = [
+      '## Surface',
+      '',
+      'in: apps/vinaya/**',
+      'out: packages/ui/**',
+      '',
+      '**Boundary** — Does NOT touch `packages/ui` (that package is out of scope).',
+      '',
+      '**Project:** vinaya'
+    ].join('\n')
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 500)
+    expect(r.status).toBe('pass')
+  })
+
+  it('falls back to the prose scan below the cutover, unchanged', () => {
+    const body = rationale({ boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).' })
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 425)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/ui/)
+  })
+
+  it('judges a new Issue (no number yet) from `## Surface` exactly as one numbered above the cutover', () => {
+    // `issue create` has no number: the Surface judgement must refuse the
+    // same body there that `issue edit` and the dispatch gate refuse.
+    const body = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+    const created = checkBlastRadiusScope(body, [], SHARED, REGISTRY, null)
+    const numbered = checkBlastRadiusScope(body, [], SHARED, REGISTRY, BRIEF_SECTIONS_SINCE_ISSUE + 1)
+    expect(created.status).toBe('fail')
+    expect(created.errors[0]).toMatch(/packages\/ui/)
+    expect(created).toEqual(numbered)
+    const acked = `${body}\n**blast-radius-ack:** every consumer keeps the existing fallback path.\n`
+    expect(checkBlastRadiusScope(acked, [], SHARED, REGISTRY, null).status).toBe('pass')
+    expect(checkBlastRadiusScope(acked, [], SHARED, REGISTRY, BRIEF_SECTIONS_SINCE_ISSUE + 1).status).toBe('pass')
+  })
+
+  it('leaves an Issue numbered below the cutover on the prose scan — the same Surface body passes there', () => {
+    const body = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
+    const prose = rationale({ boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).' })
+    const r = checkBlastRadiusScope(prose, [], SHARED, REGISTRY, PRE_CUTOVER)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/ui/)
+  })
+
+  it('still honors the ack line and the ownership bypass in structural mode', () => {
+    const body = [
+      '## Surface',
+      '',
+      'in: packages/ui/**',
+      'out: —',
+      '',
+      '**blast-radius-ack:** every consumer keeps the existing fallback path.',
+      '',
+      '**Project:** vinaya'
+    ].join('\n')
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 500)
+    expect(r.status).toBe('pass')
+  })
+
+  it('decides from `## Surface` from Issue 1 when no cutover is configured (null) — O1', () => {
+    // Config-less repo: `## Surface` is required from Issue 1, so the mode
+    // switch must pick the structural `in:`-glob read from Issue 1, not the
+    // coarser prose scan.
+    const body = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 1, null)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/ui/)
+  })
+
+  it('grandfathers Issue 1 to the prose scan below a configured cutover — O2 unchanged', () => {
+    // Configured cutover 426: Issue 1 is below it → prose scan, which does not
+    // consult the structural `in:` glob, so no Boundary prose naming the domain
+    // means pass — this repo's behaviour is unchanged.
+    const body = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 1, 426)
+    expect(r.status).toBe('pass')
+  })
+})
+
+describe('parseIssueParts', () => {
+  it('parses numbered Part lines with their objective refs', () => {
+    const body = '## Parts\n\nPart 1 (O1) — the parsers.\nPart 2 (O1, O2) — the render.\n'
+    const r = parseIssueParts(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual([
+      { n: 1, objectiveIds: [1], text: 'the parsers.' },
+      { n: 2, objectiveIds: [1, 2], text: 'the render.' }
+    ])
+  })
+
+  it('refuses when the `## Parts` heading is absent', () => {
+    const r = parseIssueParts('nothing parts-shaped here')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/no `## Parts` heading/)
+  })
+
+  it('refuses a line with no outcome text after the dash', () => {
+    const r = parseIssueParts('## Parts\n\nPart 1 (O1) — \n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/no outcome text/)
+  })
+
+  it('refuses an outcome that is little more than a bare file path', () => {
+    const r = parseIssueParts('## Parts\n\nPart 1 (O1) — `packages/aeg-core/src/issue-validation.ts`\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/little more than a file path/)
+  })
+
+  it('a Part naming no objective (an administrative Part) parses with an empty objectiveIds', () => {
+    const r = parseIssueParts('## Parts\n\nPart 1 () — changesets, then the one push.\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value[0]?.objectiveIds).toEqual([])
+  })
+})
+
+describe('parseIssueTestPlan', () => {
+  it('parses the unit-tests-only sentinel', () => {
+    const r = parseIssueTestPlan('## Test plan\n\nTest plan: unit-tests-only\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({ kind: 'unit-tests-only' })
+  })
+
+  it('parses a fenced command list plus a `[principal]` item', () => {
+    const body = [
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/tests/lib/dev-review-loop.test.ts → 0 fail',
+      '```',
+      '',
+      '- [ ] **[principal]** Verify in a real browser.',
+      ''
+    ].join('\n')
+    const r = parseIssueTestPlan(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'commands',
+      lines: ['bun test apps/cli/tests/lib/dev-review-loop.test.ts → 0 fail'],
+      principal: ['Verify in a real browser.'],
+      live: []
+    })
+  })
+
+  it('parses `[live]` items beside the command list and `[principal]` items, one code span removed', () => {
+    const body = [
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/tests/lib/dev-review-loop.test.ts → 0 fail',
+      '```',
+      '',
+      '- [ ] **[principal]** Verify in a real browser.',
+      '- **[live]** `VINAYA_LIVE_CONFORMANCE=1 bun test apps/cli/tests/sandbox-conformance/claude.test.ts`',
+      '- **[live]** echo codex',
+      ''
+    ].join('\n')
+    const r = parseIssueTestPlan(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok || r.value.kind !== 'commands') return
+    expect(r.value.live).toEqual([
+      'VINAYA_LIVE_CONFORMANCE=1 bun test apps/cli/tests/sandbox-conformance/claude.test.ts',
+      'echo codex'
+    ])
+    expect(r.value.principal).toEqual(['Verify in a real browser.'])
+  })
+
+  it('accepts a plan whose only item is a `[live]` line', () => {
+    const r = parseIssueTestPlan('## Test plan\n\n- **[live]** `bun test apps/cli/tests/x.test.ts`\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok || r.value.kind !== 'commands') return
+    expect(r.value).toEqual({ kind: 'commands', lines: [], principal: [], live: ['bun test apps/cli/tests/x.test.ts'] })
+  })
+
+  it('refuses both the sentinel and a fence together — same exclusivity rule as the PR body', () => {
+    const body = [
+      '## Test plan',
+      '',
+      'Test plan: unit-tests-only',
+      '',
+      '```',
+      'bun test apps/cli/tests/lib/dev-review-loop.test.ts → 0 fail',
+      '```',
+      ''
+    ].join('\n')
+    const r = parseIssueTestPlan(body)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/mutually exclusive/)
+  })
+
+  it('refuses when the `## Test plan` section is absent', () => {
+    const r = parseIssueTestPlan('nothing test-plan-shaped here')
+    expect(r.ok).toBe(false)
+  })
+
+  describe('whole-suite refusal', () => {
+    const withPlan = (line: string) => ['## Test plan', '', '```', line, '```', ''].join('\n')
+
+    it('refuses a bare `bun test`', () => {
+      const r = parseIssueTestPlan(withPlan('bun test → 0 fail'))
+      expect(r.ok).toBe(false)
+      if (r.ok) return
+      expect(r.errors[0]).toContain('bun test → 0 fail')
+      expect(r.errors[0]).toMatch(/no test-file argument/)
+    })
+
+    it('refuses `bun test` on a directory — the exact fixture from the brief', () => {
+      const r = parseIssueTestPlan(withPlan('bun test apps/cli/tests'))
+      expect(r.ok).toBe(false)
+      if (r.ok) return
+      expect(r.errors[0]).toContain('bun test apps/cli/tests')
+    })
+
+    it('renders `bun test` naming a real test file — the brief’s paired positive fixture', () => {
+      const r = parseIssueTestPlan(withPlan('bun test apps/cli/tests/lib/dev-review-loop.test.ts → 0 fail'))
+      expect(r.ok).toBe(true)
+    })
+
+    it('refuses `bunx turbo test` in any form, even with flags', () => {
+      const r = parseIssueTestPlan(withPlan('bunx turbo test --affected --force → 0 fail'))
+      expect(r.ok).toBe(false)
+      if (r.ok) return
+      expect(r.errors[0]).toContain('bunx turbo test --affected --force')
+    })
+
+    it('refuses `vitest run` on a package with no test-file argument', () => {
+      const r = parseIssueTestPlan(withPlan('vitest run packages/aeg-core → 0 fail'))
+      expect(r.ok).toBe(false)
+    })
+
+    it('passes a `vinaya check` command untouched', () => {
+      const r = parseIssueTestPlan(withPlan('bun apps/cli/src/index.ts check --all → exits 0'))
+      expect(r.ok).toBe(true)
+    })
+
+    it('security review: a shell comment cannot smuggle a real test-file path past a bare `bun test`', () => {
+      const r = parseIssueTestPlan(withPlan('bun test # apps/cli/tests/lib/dev-review-loop.test.ts'))
+      expect(r.ok).toBe(false)
+    })
+
+    it('security review: a chained statement cannot smuggle a real test-file path past a bare `bun test`', () => {
+      const r = parseIssueTestPlan(withPlan('bun test; echo apps/cli/tests/lib/dev-review-loop.test.ts'))
+      expect(r.ok).toBe(false)
+    })
+  })
+})
+
+describe('parseIssueStopConditions', () => {
+  it('parses a bullet list', () => {
+    const r = parseIssueStopConditions('## Stop conditions\n\n- Pre-flight fails.\n- A premise pin mismatches.\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual(['Pre-flight fails.', 'A premise pin mismatches.'])
+  })
+
+  it('refuses when the section has no bullet items', () => {
+    const r = parseIssueStopConditions('## Stop conditions\n\nnothing bulleted here\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/no bullet-list items/)
+  })
+
+  it('refuses when the `## Stop conditions` heading is absent', () => {
+    expect(parseIssueStopConditions('nothing here').ok).toBe(false)
+  })
+})
+
+describe('parseIssueDocumentation', () => {
+  it('parses one or more `- <source> — <mechanism>` bullets, with no citation when none is given', () => {
+    const r = parseIssueDocumentation(
+      '## Documentation\n\n' +
+        '- https://modelcontextprotocol.io/docs/hooks — the PostToolUse/Stop hook JSON contract\n' +
+        '- https://code.claude.com/docs/en/hooks — exit-code semantics for Stop hooks\n'
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'sources',
+      sources: [
+        {
+          source: 'https://modelcontextprotocol.io/docs/hooks',
+          mechanism: 'the PostToolUse/Stop hook JSON contract',
+          objectiveIds: []
+        },
+        {
+          source: 'https://code.claude.com/docs/en/hooks',
+          mechanism: 'exit-code semantics for Stop hooks',
+          objectiveIds: []
+        }
+      ]
+    })
+  })
+
+  // round 2 review, BLOCKER (O1/O2) — a real doc-page URL
+  // routinely contains an unspaced hyphen; the separator must never mistake
+  // one for the source/mechanism split, or the source recorded (and later
+  // compared against a real `WebFetch` call by the Stop hook) is truncated.
+  it('never splits on a hyphen embedded in the source URL itself', () => {
+    const r = parseIssueDocumentation(
+      '## Documentation\n\n' +
+        '- https://code.claude.com/docs/en/agent-sdk/cost-tracking — the mechanism this task implements (O1)\n'
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'sources',
+      sources: [
+        {
+          source: 'https://code.claude.com/docs/en/agent-sdk/cost-tracking',
+          mechanism: 'the mechanism this task implements',
+          objectiveIds: [1]
+        }
+      ]
+    })
+  })
+
+  it('still accepts a plain ASCII hyphen separator when it carries real whitespace on both sides', () => {
+    const r = parseIssueDocumentation('## Documentation\n\n- https://example.com/docs - the mechanism\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'sources',
+      sources: [{ source: 'https://example.com/docs', mechanism: 'the mechanism', objectiveIds: [] }]
+    })
+  })
+
+  it('parses a trailing `(O<n>[, O<m>])` citation off the mechanism', () => {
+    const r = parseIssueDocumentation(
+      '## Documentation\n\n- https://example.com/docs — the mechanism this task implements (O1, O2)\n'
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'sources',
+      sources: [
+        {
+          source: 'https://example.com/docs',
+          mechanism: 'the mechanism this task implements',
+          objectiveIds: [1, 2]
+        }
+      ]
+    })
+  })
+
+  it('parses the explicit `None` sentinel as a valid, sourceless opt-out', () => {
+    const r = parseIssueDocumentation('## Documentation\n\nNone — no normative source governs this task.\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({ kind: 'none' })
+  })
+
+  it('refuses when the `## Documentation` heading is absent', () => {
+    const r = parseIssueDocumentation('nothing here')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/no `## Documentation` heading/)
+  })
+
+  it('refuses a bullet with no dash separator between source and mechanism', () => {
+    const r = parseIssueDocumentation('## Documentation\n\n- https://example.com/docs\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/not a well-formed Documentation line/)
+  })
+
+  it('refuses an empty section with no bullets and no `None` sentinel', () => {
+    const r = parseIssueDocumentation('## Documentation\n\nnothing here yet\n')
+    expect(r.ok).toBe(false)
+  })
+})
+
+describe('checkDocumentationCitesObjective', () => {
+  const OBJECTIVES = '## Objectives\n\nO1. First objective.\nO2. Second objective.\n'
+
+  it('passes when a real source cites a real Objective id', () => {
+    const body = `${OBJECTIVES}\n## Documentation\n\n- https://example.com/docs — the mechanism (O2)\n`
+    expect(checkDocumentationCitesObjective(body).status).toBe('pass')
+  })
+
+  it('fails, naming the gap, when no source cites any Objective id', () => {
+    const body = `${OBJECTIVES}\n## Documentation\n\n- https://example.com/docs — the mechanism\n`
+    const r = checkDocumentationCitesObjective(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/none cites a defined/)
+  })
+
+  it('fails when the only citation names an Objective id the section never defines', () => {
+    const body = `${OBJECTIVES}\n## Documentation\n\n- https://example.com/docs — the mechanism (O9)\n`
+    expect(checkDocumentationCitesObjective(body).status).toBe('fail')
+  })
+
+  it('passes trivially on the `None` sentinel — nothing to grade', () => {
+    const body = `${OBJECTIVES}\n## Documentation\n\nNone.\n`
+    expect(checkDocumentationCitesObjective(body).status).toBe('pass')
+  })
+
+  it('passes trivially when Documentation or Objectives fails to parse — other checks already report that', () => {
+    expect(checkDocumentationCitesObjective('nothing here').status).toBe('pass')
+    expect(checkDocumentationCitesObjective('## Documentation\n\n- https://example.com/docs — x\n').status).toBe('pass')
+  })
+})
+
+describe('checkIssueBriefSections', () => {
+  it('passes a fully-formed Issue at the cutover (#426 itself)', () => {
+    expect(BRIEF_SECTIONS_SINCE_ISSUE).toBe(426)
+    const r = checkIssueBriefSections(ISSUE_426_BODY, 426)
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming Parts, when `## Parts` is removed from an at-cutover Issue', () => {
+    const withoutParts = ISSUE_426_BODY.replace(/## Parts[\s\S]*?(?=\n## Test plan)/, '')
+    const r = checkIssueBriefSections(withoutParts, 426)
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/Parts/)
+  })
+
+  it('passes an Issue below the cutover carrying none of the four sections', () => {
+    const r = checkIssueBriefSections('a body with nothing but a title.', 425)
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails closed on a null Issue number, even with none of the four sections', () => {
+    const r = checkIssueBriefSections('a body with nothing but a title.', null)
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBeGreaterThan(0)
+  })
+
+  it('does not require `## Documentation` below its own cutover (#625, one below #626)', () => {
+    expect(DOCUMENTATION_SINCE_ISSUE).toBe(626)
+    const r = checkIssueBriefSections(ISSUE_426_BODY, 625)
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming Documentation, on an Issue at/above #626 with no `## Documentation` section', () => {
+    const r = checkIssueBriefSections(ISSUE_426_BODY, 626)
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/Documentation/)
+  })
+
+  it('fails, naming Documentation, when a real source cites no `## Objectives` id (O3, ungraded)', () => {
+    const withUncitedDocumentation = ISSUE_426_BODY.replace(
+      '## Objectives',
+      '## Documentation\n\n- https://example.com/docs — the mechanism this task implements\n\n## Objectives'
+    )
+    const r = checkIssueBriefSections(withUncitedDocumentation, 626)
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/Documentation/)
+    expect(r.errors.join(' ')).toMatch(/cites/)
+  })
+
+  it('passes an Issue at/above #626 that names a source, its mechanism, and cites a real Objective (O3, graded)', () => {
+    const withDocumentation = ISSUE_426_BODY.replace(
+      '## Objectives',
+      '## Documentation\n\n- https://example.com/docs — the mechanism this task implements (O1)\n\n## Objectives'
+    )
+    const r = checkIssueBriefSections(withDocumentation, 626)
+    expect(r.status).toBe('pass')
+  })
+
+  it('passes a null-numbered (create) body at the Documentation cutover when the `None` sentinel is used', () => {
+    const withNone = ISSUE_426_BODY.replace('## Objectives', '## Documentation\n\nNone.\n\n## Objectives')
+    const r = checkIssueBriefSections(withNone, null)
+    expect(r.status).toBe('pass')
+  })
+
+  it('with NO brief-sections cutover (null, O1), refuses a low-numbered Issue carrying none of the four', () => {
+    // A repository that declares no `gateCutovers` holds Issue 1 to the gate.
+    const r = checkIssueBriefSections('a body with nothing but a title.', 1, null, null)
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBeGreaterThan(0)
+  })
+
+  it('with NO documentation cutover (null, O1), requires `## Documentation` on a low-numbered Issue', () => {
+    // ISSUE_426_BODY carries the four sections but no `## Documentation`; with
+    // a null documentation cutover the section is required from Issue 1.
+    const r = checkIssueBriefSections(ISSUE_426_BODY, 1, 1, null)
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/Documentation/)
+  })
+
+  it('with an explicit brief-sections cutover (O2), grandfathers below it', () => {
+    const r = checkIssueBriefSections('a body with nothing but a title.', 99, 100, 100)
+    expect(r.status).toBe('pass')
+  })
+})
+
+// The five write-only rules named apart.
+describe('checkMilestoneAttach', () => {
+  it('passes a non-task Issue regardless of Milestone state', () => {
+    const r = checkMilestoneAttach([], null, 'v1')
+    expect(r.status).toBe('pass')
+  })
+
+  it('passes when no target Milestone could be resolved — dormant, nothing to compare', () => {
+    const r = checkMilestoneAttach(['vinaya/tranche:demo-v1'], 'some-other-milestone', null)
+    expect(r.status).toBe('pass')
+  })
+
+  it('passes when the live Milestone already matches the resolved target', () => {
+    const r = checkMilestoneAttach(['vinaya/tranche:demo-v1'], 'v1', 'v1')
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming both titles, when the live Milestone diverges from the resolved target', () => {
+    const r = checkMilestoneAttach(['vinaya/tranche:demo-v1'], 'v0', 'v1')
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/"v0"/)
+    expect(r.errors.join(' ')).toMatch(/"v1"/)
+  })
+
+  it('fails, naming "unset", when the task Issue carries no live Milestone at all', () => {
+    const r = checkMilestoneAttach(['vinaya/tranche:demo-v1'], null, 'v1')
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/unset/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The forced-companion Surface rules. Fixture references and fixture importer
+// lists throughout — never this repository's live tree, so a real command or a
+// real config key changing can never flip one of these cases.
+// ---------------------------------------------------------------------------
+
+const NOTHING_IN_TREE = () => false
+
+const FIXTURE_COMMAND_REFERENCE: CommandReferenceFacts = {
+  file: 'packages/sources/src/commands.ts',
+  binary: 'vinaya',
+  commands: [
+    { name: 'check', flags: ['--all', '--json'], needs: [] },
+    { name: 'issue create', flags: ['--body-file', '--validate-only'], needs: ['forge'] },
+    { name: 'doctrine', flags: ['--role', '--print'], needs: [] }
+  ],
+  text: 'Runs one check, or every registered check. `--print` writes the resolved text to stdout.'
+}
+
+const FIXTURE_CONFIG_REFERENCE: ConfigReferenceFacts = {
+  files: ['packages/sources/src/config-reference.ts', 'apps/cli/src/lib/config.ts'],
+  keys: ['checks', 'checks.timeoutMs', 'reviewPolicy', 'reviewPolicy.maxRounds', 'logs'],
+  text: 'A folder (`logs.folder`) or a server (`logs.url`), never both.'
+}
+
+/** One well-formed task Issue body, with the Surface globs, Boundary and Objectives/Parts text each case needs. */
+function issueBody(parts: { boundary: string; objectives: string[]; partLines: string[]; in: string; out: string }) {
+  return [
+    "## Planner's rationale",
+    '',
+    `**Boundary** — ${parts.boundary}`,
+    '',
+    '## Objectives',
+    '',
+    ...parts.objectives,
+    '',
+    '## Surface',
+    '',
+    `in: ${parts.in}`,
+    `out: ${parts.out}`,
+    '',
+    '## Parts',
+    '',
+    ...parts.partLines
+  ].join('\n')
+}
+
+describe('checkIntroducedCommandsCovered', () => {
+  const body = (objective: string, inGlobs = 'apps/cli/src/lib') =>
+    issueBody({
+      boundary: 'One gate and its wiring.',
+      objectives: [`O1. ${objective}`],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+
+  it('is dormant when this repository ships no command reference', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya doctrine --template` prints the template.'),
+      { ...FIXTURE_COMMAND_REFERENCE, file: null },
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('refuses an introduced flag, naming the flag and the glob to add', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya doctrine --template pr-report --print` prints the template.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('`--template`')
+    expect(result.errors[0]).toContain('`vinaya doctrine`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+  })
+
+  it('refuses an introduced subcommand under a documented namespace', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya issue archive` closes and relabels the Issue.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`vinaya issue archive`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+  })
+
+  it('refuses an introduced command however the binary is capitalised', () => {
+    for (const invocation of ['`Vinaya issue archive`', '`VINAYA rotate-secrets`']) {
+      const result = checkIntroducedCommandsCovered(
+        body(`${invocation} does the new thing.`),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      )
+      expect(result.status).toBe('fail')
+      expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+    }
+  })
+
+  it('reads a capitalised word run after the binary as a proper name, never as a command', () => {
+    // `Vinaya Body Checks` is the name of a CI workflow in this repository's own
+    // Issues; nothing mechanical separates it from a Title-Cased invocation, so
+    // a capitalised command word ends the run.
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`Vinaya Body Checks` answers in two minutes.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
+  it('still reads a capitalised leaf command plus a further word as an argument', () => {
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`Vinaya check dispatch-readiness` passes on the task branch.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
+  it('refuses a command whose very first word the reference has never heard of', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya frobnicate` rewrites the body.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`vinaya frobnicate`')
+  })
+
+  it('passes the same body once an `in:` glob covers the command reference', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya doctrine --template pr-report` prints the template.', 'apps/cli/src/lib, packages/sources/src'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a leaf command plus a further word as an argument, never as a new subcommand', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya check dispatch-readiness` passes on the task branch.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes a flag the reference documents for any command, and one only its prose explains', () => {
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`vinaya doctrine --json` prints the resolved text.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`vinaya issue create --print` prints the body.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
+  it('passes a flag the tracked tree already ships, however stale the reference row is', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya check --parallel` caps concurrency.'),
+      FIXTURE_COMMAND_REFERENCE,
+      (token) => token === '--parallel'
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('never fires on free prose — only a backticked token counts', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('Running vinaya doctrine with --template is out of scope for this task.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a Part line as well as an Objective', () => {
+    const result = checkIntroducedCommandsCovered(
+      issueBody({
+        boundary: 'One gate.',
+        objectives: ['O1. The gate refuses a malformed body.'],
+        partLines: ['Part 1 (O1) — `vinaya check --deep` runs the slow lens.'],
+        in: 'apps/cli/src/lib',
+        out: 'apps/log-server'
+      }),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('Part 1 introduces the flag `--deep`')
+  })
+})
+
+describe('checkIntroducedConfigKeysCovered', () => {
+  const body = (objective: string, inGlobs = 'apps/cli/src/commands') =>
+    issueBody({
+      boundary: 'One key and its reader.',
+      objectives: [`O1. ${objective}`],
+      partLines: ['Part 1 (O1) — the reader resolves the key.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+
+  it('is dormant when neither reference nor schema is in this tree', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.'),
+      { ...FIXTURE_CONFIG_REFERENCE, files: [] },
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('refuses an introduced key, naming both missing globs', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('`reviewPolicy.maxTaskMinutes`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` and `apps/cli/src/lib` to `in:`')
+  })
+
+  it('names only the glob still missing when the Surface already covers one of the two', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.', 'apps/cli/src/lib'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+    expect(result.errors[0]).not.toContain('apps/cli/src/lib` to')
+  })
+
+  it('passes once the Surface covers both the reference and the schema', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.', 'packages/sources/src, apps/cli/src/lib'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a documented key quoted with its own instance name as documented', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`checks.doc-coverage.timeoutMs` is raised to 120000.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a key the reference explains inside its parent row as documented', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`logs.url` receives every event as it occurs.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes a key the tracked tree already ships', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.securityThreshold` gates the security pass.'),
+      FIXTURE_CONFIG_REFERENCE,
+      (token) => token === 'reviewPolicy.securityThreshold'
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('refuses a brand-new top-level key whatever words the line is written in', () => {
+    for (const objective of [
+      'A new configuration key `telemetry.endpoint` names where events go.',
+      'Add a setting `telemetry.endpoint` for event routing.',
+      'Two new keys `telemetry.endpoint` and `telemetry.sampleRate` are read from the default branch.'
+    ]) {
+      const result = checkIntroducedConfigKeysCovered(body(objective), FIXTURE_CONFIG_REFERENCE, NOTHING_IN_TREE)
+      expect(result.status).toBe('fail')
+      expect(result.errors[0]).toContain('`telemetry.endpoint`')
+      expect(result.errors[0]).toContain('Add `packages/sources/src` and `apps/cli/src/lib` to `in:`')
+    }
+  })
+
+  it('passes that same brand-new key once the Surface covers both files', () => {
+    expect(
+      checkIntroducedConfigKeysCovered(
+        body('Add a setting `telemetry.endpoint` for event routing.', 'packages/sources/src, apps/cli/src/lib'),
+        FIXTURE_CONFIG_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
+  it('excuses a dotted token the tracked tree already spells out, whatever its root', () => {
+    expect(
+      checkIntroducedConfigKeysCovered(
+        body('`surface.value` already carries the parsed globs.'),
+        FIXTURE_CONFIG_REFERENCE,
+        (token) => token === 'surface.value'
+      ).status
+    ).toBe('pass')
+  })
+
+  it('never reads a filename as a key', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`brief-render.ts` and `checks.ts` and `loop.md` are untouched.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+})
+
+describe('boundaryPinnedFiles', () => {
+  it('returns the file-shaped paths the Boundary pins, and never one its `Out:` clause disclaims', () => {
+    const body = issueBody({
+      boundary:
+        'In: the gate. Pinned files: `packages/aeg-core/src/issue-validation.ts`, `apps/cli/src/lib/forge-write.ts`, `packages/aeg-core/src`. Out: `apps/cli/src/commands/issue.ts`.',
+      objectives: ['O1. The gate refuses the body.'],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: 'packages/aeg-core/src, apps/cli/src/lib',
+      out: 'apps/log-server'
+    })
+    expect(boundaryPinnedFiles(body)).toEqual([
+      'packages/aeg-core/src/issue-validation.ts',
+      'apps/cli/src/lib/forge-write.ts'
+    ])
+  })
+})
+
+describe('checkPinnedFileImportersCovered', () => {
+  const body = (inGlobs: string, outGlobs: string, boundaryOut = 'judging whether the Surface is too wide') =>
+    issueBody({
+      boundary: `In: the gate. Pinned files: \`packages/aeg-core/src/gate.ts\`. Out: ${boundaryOut}.`,
+      objectives: ['O1. The gate refuses the body.'],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: inGlobs,
+      out: outGlobs
+    })
+  const importers = [{ file: 'packages/aeg-core/src/gate.ts', importers: ['apps/cli/src/commands/issue.ts'] }]
+
+  it('is dormant when no pinned file has an importer', () => {
+    expect(
+      checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), [
+        { file: 'packages/aeg-core/src/gate.ts', importers: [] }
+      ]).status
+    ).toBe('pass')
+  })
+
+  it('refuses when no importer is reachable, naming the importer and the glob that would reach it', () => {
+    const result = checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), importers)
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('pins `packages/aeg-core/src/gate.ts`')
+    expect(result.errors[0]).toContain('`apps/cli/src/commands/issue.ts` (add `apps/cli/src/commands` to `in:`)')
+  })
+
+  it('passes when an `in:` glob covers the importer', () => {
+    expect(
+      checkPinnedFileImportersCovered(
+        body('packages/aeg-core/src, apps/cli/src/commands', 'apps/log-server'),
+        importers
+      ).status
+    ).toBe('pass')
+  })
+
+  it('refuses even when a Surface `out:` glob covers the importer — only the Boundary says "left out on purpose"', () => {
+    const result = checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/cli/src/commands'), importers)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`apps/cli/src/commands/issue.ts`')
+  })
+
+  it("passes when the Boundary's `Out:` clause names the importer's directory", () => {
+    expect(
+      checkPinnedFileImportersCovered(
+        body('packages/aeg-core/src', 'apps/log-server', 'every caller under `apps/cli/src/commands`'),
+        importers
+      ).status
+    ).toBe('pass')
+  })
+
+  it('refuses an importer left undecided even when another importer of the same file is inside the Surface', () => {
+    const result = checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), [
+      {
+        file: 'packages/aeg-core/src/gate.ts',
+        importers: [
+          'apps/cli/src/commands/issue.ts',
+          'apps/cli/tests/lib/gate.test.ts',
+          'packages/aeg-core/src/index.ts'
+        ]
+      }
+    ])
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('`apps/cli/src/commands/issue.ts` (add `apps/cli/src/commands` to `in:`)')
+    expect(result.errors[0]).toContain('`apps/cli/tests/lib/gate.test.ts` (add `apps/cli/tests/lib` to `in:`)')
+    expect(result.errors[0]).not.toContain('packages/aeg-core/src/index.ts')
+  })
+
+  it('passes once every importer is reached or disclaimed', () => {
+    expect(
+      checkPinnedFileImportersCovered(
+        body('packages/aeg-core/src, apps/cli/src/commands', 'apps/log-server', 'the tests under `apps/cli/tests/lib`'),
+        [
+          {
+            file: 'packages/aeg-core/src/gate.ts',
+            importers: [
+              'apps/cli/src/commands/issue.ts',
+              'apps/cli/tests/lib/gate.test.ts',
+              'packages/aeg-core/src/index.ts'
+            ]
+          }
+        ]
+      ).status
+    ).toBe('pass')
+  })
+})
+
+describe('decidePinnedFileImporters', () => {
+  const body = issueBody({
+    boundary:
+      'In: the gate. Pinned files: `packages/aeg-core/src/gate.ts`. Out: every caller under `apps/cli/src/commands`.',
+    objectives: ['O1. The gate refuses the body.'],
+    partLines: ['Part 1 (O1) — the gate refuses the body.'],
+    in: 'packages/aeg-core/src',
+    out: 'apps/cli/tests/lib'
+  })
+
+  it('decides each importer reached, disclaimed or uncovered — never excused by a Surface `out:` glob', () => {
+    expect(
+      decidePinnedFileImporters(body, [
+        {
+          file: 'packages/aeg-core/src/gate.ts',
+          importers: [
+            'apps/cli/src/commands/issue.ts',
+            'apps/cli/tests/lib/gate.test.ts',
+            'packages/aeg-core/src/index.ts'
+          ]
+        }
+      ])
+    ).toEqual([
+      {
+        file: 'packages/aeg-core/src/gate.ts',
+        importers: [
+          { importer: 'apps/cli/src/commands/issue.ts', state: 'disclaimed', by: 'apps/cli/src/commands' },
+          { importer: 'apps/cli/tests/lib/gate.test.ts', state: 'uncovered', fix: 'apps/cli/tests/lib' },
+          { importer: 'packages/aeg-core/src/index.ts', state: 'reached', by: 'packages/aeg-core/src' }
+        ]
+      }
+    ])
+  })
+
+  it('is null when `## Surface` does not parse', () => {
+    expect(decidePinnedFileImporters('**Boundary** — Pinned files: `a/b.ts`.', [])).toBeNull()
+  })
+})
+
+describe('surfaceForcedSet', () => {
+  const body = (inGlobs: string, pinned: string) =>
+    issueBody({
+      boundary: `In: the gate. Pinned files: ${pinned}. Out: nothing.`,
+      objectives: ['O1. The gate refuses the body.'],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+  const tracked = ['packages/aeg-core/src/gate.ts', 'apps/cli/tests/ci-shards/shard-1.txt']
+
+  it("reports the importers with the gate's own decisions, and no companion when no pinned file is new", () => {
+    const importers = [{ file: 'packages/aeg-core/src/gate.ts', importers: ['apps/cli/src/lib/x.ts'] }]
+    const b = body('packages/aeg-core/src', '`packages/aeg-core/src/gate.ts`')
+    expect(surfaceForcedSet(b, importers, tracked)).toEqual({
+      importers: decidePinnedFileImporters(b, importers),
+      checks: [],
+      ciShards: null,
+      loopInvariantMap: null
+    })
+  })
+
+  it('reports the shard list for a new CLI test file and the loop map for a new loop file', () => {
+    const result = surfaceForcedSet(
+      body(
+        'packages/aeg-core/src, apps/cli/tests/lib, apps/cli/tests/fixtures',
+        '`apps/cli/tests/lib/dev-review-loop-fresh.test.ts`'
+      ),
+      [],
+      tracked
+    )
+    expect(result?.ciShards).toEqual({
+      newFiles: ['apps/cli/tests/lib/dev-review-loop-fresh.test.ts'],
+      companion: { path: 'apps/cli/tests/ci-shards/shard-1.txt', reached: false },
+      fix: 'apps/cli/tests/ci-shards'
+    })
+    expect(result?.loopInvariantMap).toEqual({
+      newFiles: ['apps/cli/tests/lib/dev-review-loop-fresh.test.ts'],
+      companions: [
+        { path: 'apps/cli/tests/fixtures/dev-review-architecture-invariants.json', reached: true },
+        { path: 'apps/cli/specs/dev-review-invariants.md', reached: false }
+      ],
+      fix: ['apps/cli/specs']
+    })
+  })
+
+  it('is null when `## Surface` does not parse', () => {
+    expect(surfaceForcedSet('no sections here', [], tracked)).toBeNull()
+  })
+})
+
+// --------------------------------------------------------------------------
+// `## Premises` — the section a plan's facts about the code are written in.
+// --------------------------------------------------------------------------
+
+/** Every premise the tests below evaluate reads from this map, never from disk. */
+function readerOf(files: Record<string, string>): (path: string) => string | null {
+  return (path) => files[path] ?? null
+}
+
+const PREMISE_SOURCES = { 'packages/aeg-core/src/cancel.ts': 'export const signal = new AbortController()\n' }
+
+function bodyWithPremises(premises: string, extra = ''): string {
+  return [
+    '**Boundary** — a task about one thing.',
+    '',
+    '**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`',
+    '',
+    extra,
+    '## Premises',
+    '',
+    premises,
+    ''
+  ].join('\n')
+}
+
+describe('parseIssuePremises', () => {
+  it('returns no premises for a body with no `## Premises` heading — the section is optional', () => {
+    const r = parseIssuePremises('**Boundary** — nothing to pin.\n')
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value).toEqual([])
+  })
+
+  it('parses a bulleted and an unbulleted premise line alike', () => {
+    const r = parseIssuePremises(
+      bodyWithPremises(
+        '- `packages/aeg-core/src/cancel.ts` contains `AbortController`\n`apps/cli/src/index.ts` contains `main(`'
+      )
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual([
+      {
+        path: 'packages/aeg-core/src/cancel.ts',
+        text: 'AbortController',
+        afterIssue: null,
+        line: '- `packages/aeg-core/src/cancel.ts` contains `AbortController`'
+      },
+      {
+        path: 'apps/cli/src/index.ts',
+        text: 'main(',
+        afterIssue: null,
+        line: '`apps/cli/src/index.ts` contains `main(`'
+      }
+    ])
+  })
+
+  it('reads the `after #<n>:` prefix as the Issue the premise waits on', () => {
+    const r = parseIssuePremises(
+      bodyWithPremises('after #841: `packages/aeg-core/src/cancel.ts` contains `drainOutbox`')
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value[0]?.afterIssue).toBe(841)
+  })
+
+  it('keeps a literal that itself contains backticks — the text capture runs to the last backtick', () => {
+    const r = parseIssuePremises(bodyWithPremises('`apps/cli/src/index.ts` contains `the `--json` flag`'))
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value[0]?.text).toBe('the `--json` flag')
+  })
+
+  it('refuses a line that is not a premise, quoting it', () => {
+    const r = parseIssuePremises(bodyWithPremises('the cancellation signal is already wired.'))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/is not a premise/)
+  })
+
+  it('refuses a premise path outside the repository', () => {
+    const r = parseIssuePremises(bodyWithPremises('`../../etc/passwd` contains `root`'))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/not a repository-relative path/)
+  })
+
+  it('refuses an absolute premise path', () => {
+    const r = parseIssuePremises(bodyWithPremises('`/etc/passwd` contains `root`'))
+    expect(r.ok).toBe(false)
+  })
+
+  it('refuses a `## Premises` heading with no premise line — an empty section reads as "checked"', () => {
+    const r = parseIssuePremises('**Boundary** — x.\n\n## Premises\n\n\n## Surface\n\nin: apps\n')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/carries no premise line/)
+  })
+})
+
+describe('checkIssuePremises (O1)', () => {
+  it('passes a premise the checkout holds', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('`packages/aeg-core/src/cancel.ts` contains `AbortController`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming the premise, when the file does not contain the text', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('`packages/aeg-core/src/cancel.ts` contains `drainOutbox`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/premise 1 binds `packages\/aeg-core\/src\/cancel\.ts contains:drainOutbox`/)
+    expect(r.errors.join(' ')).toMatch(/Write the premise the code actually holds/)
+  })
+
+  it('fails when the premise names a file that does not exist', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('`packages/aeg-core/src/gone.ts` contains `x`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/could not be read/)
+  })
+
+  it('does NOT check an `after #<n>:` premise — it is not true yet, by construction (O2)', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('after #841: `packages/aeg-core/src/cancel.ts` contains `drainOutbox`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('reports the malformed-section error through the same check', () => {
+    const r = checkIssuePremises(bodyWithPremises('not a premise at all'), readerOf(PREMISE_SOURCES))
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/issue-validation Premises:/)
+  })
+})
+
+describe('checkPremiseDependencyDeclared (O2)', () => {
+  const deferred = 'after #841: `packages/aeg-core/src/cancel.ts` contains `drainOutbox`'
+
+  it('accepts a deferred premise whose Issue is declared `Depends-on` as `#<n>`', () => {
+    const body = bodyWithPremises(deferred).replace('`Depends-on: —`', '`Depends-on: #841`')
+    expect(checkPremiseDependencyDeclared(body).status).toBe('pass')
+  })
+
+  it('accepts the bare-number `Depends-on` form for the same Issue', () => {
+    const body = bodyWithPremises(deferred).replace('`Depends-on: —`', '`Depends-on: 841`')
+    expect(checkPremiseDependencyDeclared(body).status).toBe('pass')
+  })
+
+  it('refuses a deferred premise with no matching `Depends-on` edge', () => {
+    const r = checkPremiseDependencyDeclared(bodyWithPremises(deferred))
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/defers to #841, but the Dependency rationale declares no `Depends-on`/)
+  })
+
+  it('refuses when the declared edge names a different Issue', () => {
+    const body = bodyWithPremises(deferred).replace('`Depends-on: —`', '`Depends-on: #842`')
+    expect(checkPremiseDependencyDeclared(body).status).toBe('fail')
+  })
+
+  it('ignores an unprefixed premise — nothing is deferred', () => {
+    expect(checkPremiseDependencyDeclared(bodyWithPremises('`apps/cli/src/index.ts` contains `main(`')).status).toBe(
+      'pass'
+    )
+  })
+})
+
+describe('checkBoundaryClaimsNeedPremise (O4)', () => {
+  const withBoundary = (boundary: string, premises?: string): string =>
+    [
+      `**Boundary** — ${boundary}`,
+      '',
+      '**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`',
+      ...(premises ? ['', '## Premises', '', premises] : []),
+      ''
+    ].join('\n')
+
+  it('passes a Boundary that claims nothing about the code as it stands', () => {
+    expect(checkBoundaryClaimsNeedPremise(withBoundary('add a cancellation signal to the loop.')).status).toBe('pass')
+  })
+
+  for (const word of ['already', 'currently', 'wired']) {
+    it(`refuses a premise-less Issue whose Boundary says "${word}"`, () => {
+      const r = checkBoundaryClaimsNeedPremise(withBoundary(`the signal is ${word} there, inert.`))
+      expect(r.status).toBe('fail')
+      expect(r.errors.join(' ')).toMatch(new RegExp(`the Boundary says "${word}"`))
+    })
+  }
+
+  it('passes the same Boundary once it carries a premise', () => {
+    const r = checkBoundaryClaimsNeedPremise(
+      withBoundary(
+        'the signal is already wired, inert.',
+        '`packages/aeg-core/src/cancel.ts` contains `AbortController`'
+      )
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('sees a trigger word inside an inline code span — the shape a Boundary actually states this claim in', () => {
+    const r = checkBoundaryClaimsNeedPremise(withBoundary('the signal is `already wired`, inert.'))
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/the Boundary says "already"/)
+  })
+
+  it('sees a trigger word whose whole sentence is one inline span', () => {
+    expect(checkBoundaryClaimsNeedPremise(withBoundary('`the drain is currently inert`.')).status).toBe('fail')
+  })
+
+  it('passes that same backticked Boundary once it carries a premise', () => {
+    const r = checkBoundaryClaimsNeedPremise(
+      withBoundary(
+        'the signal is `already wired`, inert.',
+        '`packages/aeg-core/src/cancel.ts` contains `AbortController`'
+      )
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('matches the trigger words whole — `wiredness` is not a claim', () => {
+    expect(checkBoundaryClaimsNeedPremise(withBoundary('judge the wiredness of nothing.')).status).toBe('pass')
+  })
+
+  it('reads the Boundary field only — a "already" in another field never triggers it', () => {
+    const body = [
+      '**Boundary** — add a cancellation signal.',
+      '',
+      '**Traps to avoid** — the outbox drain already exists; see `aeg-root/process.md`.',
+      ''
+    ].join('\n')
+    expect(checkBoundaryClaimsNeedPremise(body).status).toBe('pass')
+  })
+
+  it('ignores a trigger word inside a fenced block — code is not a claim', () => {
+    const body = ['**Boundary** — add a signal.', '', '```', 'const already = 1', '```', ''].join('\n')
+    expect(checkBoundaryClaimsNeedPremise(body).status).toBe('pass')
+  })
+
+  it('leaves a malformed `## Premises` section to `checkIssuePremises` rather than reporting it as absent', () => {
+    const r = checkBoundaryClaimsNeedPremise(withBoundary('the signal is already wired.', 'not a premise'))
+    expect(r.status).toBe('pass')
+  })
+})
+
+describe('checkNewTestFilesCoverShards', () => {
+  const body = (inGlobs: string, pinned = 'apps/cli/tests/lib/brand-new.test.ts') =>
+    issueBody({
+      boundary: `In: the gate. Pinned files: \`${pinned}\`. Out: nothing.`,
+      objectives: ['O1. The gate refuses the body.'],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+  const tracked = ['apps/cli/tests/lib/old.test.ts', 'apps/cli/tests/ci-shards/shard-1.txt']
+
+  it('refuses a new CLI test file whose Surface misses the shard directory, naming the glob', () => {
+    const result = checkNewTestFilesCoverShards(body('apps/cli/tests/lib'), tracked)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`apps/cli/tests/lib/brand-new.test.ts`')
+    expect(result.errors[0]).toContain('Add `apps/cli/tests/ci-shards` to `in:`')
+  })
+
+  it('passes when the Surface reaches the shard directory', () => {
+    expect(checkNewTestFilesCoverShards(body('apps/cli/tests/lib, apps/cli/tests/ci-shards'), tracked).status).toBe(
+      'pass'
+    )
+  })
+
+  it('passes for an existing test file and for a non-CLI test file', () => {
+    expect(
+      checkNewTestFilesCoverShards(body('apps/cli/tests/lib', 'apps/cli/tests/lib/old.test.ts'), tracked).status
+    ).toBe('pass')
+    expect(
+      checkNewTestFilesCoverShards(body('packages/aeg-core/src', 'packages/aeg-core/src/new.test.ts'), tracked).status
+    ).toBe('pass')
+  })
+
+  it('is dormant when the tracked tree is unknown', () => {
+    expect(checkNewTestFilesCoverShards(body('apps/cli/tests/lib'), []).status).toBe('pass')
+  })
+})
+
+describe('checkNewLoopFilesCoverInvariantMap', () => {
+  const body = (inGlobs: string, pinned = 'apps/cli/tests/lib/dev-review-loop-new.test.ts') =>
+    issueBody({
+      boundary: `In: the loop. Pinned files: \`${pinned}\`. Out: nothing.`,
+      objectives: ['O1. The loop refuses the body.'],
+      partLines: ['Part 1 (O1) — the loop refuses the body.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+  const tracked = ['apps/cli/src/lib/dev-review-loop/gate-reading.ts']
+
+  it('refuses a new loop test file whose Surface misses the fixture and spec, naming both globs', () => {
+    const result = checkNewLoopFilesCoverInvariantMap(body('apps/cli/tests/lib'), tracked)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`apps/cli/tests/fixtures` and `apps/cli/specs`')
+  })
+
+  it('refuses a new loop module, and names only the glob still missing', () => {
+    const result = checkNewLoopFilesCoverInvariantMap(
+      body('apps/cli/src/lib, apps/cli/tests/fixtures', 'apps/cli/src/lib/dev-review-loop/fresh.ts'),
+      tracked
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('Add `apps/cli/specs` to `in:`')
+  })
+
+  it('passes when both are reachable, for an existing loop file, and for a non-loop file', () => {
+    expect(checkNewLoopFilesCoverInvariantMap(body('apps/cli/tests/fixtures, apps/cli/specs'), tracked).status).toBe(
+      'pass'
+    )
+    expect(
+      checkNewLoopFilesCoverInvariantMap(
+        body('apps/cli/src/lib', 'apps/cli/src/lib/dev-review-loop/gate-reading.ts'),
+        tracked
+      ).status
+    ).toBe('pass')
+    expect(
+      checkNewLoopFilesCoverInvariantMap(body('apps/cli/src/lib', 'apps/cli/src/lib/other.ts'), tracked).status
+    ).toBe('pass')
+  })
+})
+
+describe('checkDocumentationReadable', () => {
+  const body = (source: string) =>
+    ['## Documentation', '', `- ${source} — the mechanism (O1)`, '', '## Objectives', '', 'O1. The gate refuses.'].join(
+      '\n'
+    )
+
+  it('refuses an unreadable URL, naming it and pointing at an in-repository spec', () => {
+    const result = checkDocumentationReadable(body('https://example.test/doc'), () => ({
+      kind: 'unreadable',
+      detail: 'status 401'
+    }))
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`https://example.test/doc`')
+    expect(result.errors[0]).toContain('in-repository spec')
+  })
+
+  it('warns, and never refuses, when the fetch could not be decided', () => {
+    const result = checkDocumentationReadable(body('https://example.test/doc'), () => ({ kind: 'unknown' }))
+    expect(result.status).toBe('pass')
+    expect(result.warnings).toHaveLength(1)
+  })
+
+  it('passes a readable URL and an in-repository path without fetching the path', () => {
+    const seen: string[] = []
+    const probe = (url: string) => {
+      seen.push(url)
+      return { kind: 'readable' } as const
+    }
+    expect(checkDocumentationReadable(body('https://example.test/doc'), probe).status).toBe('pass')
+    expect(checkDocumentationReadable(body('apps/cli/specs/loop.md'), probe).status).toBe('pass')
+    expect(seen).toEqual(['https://example.test/doc'])
+  })
+})
+
+describe('checkDocumentationReadable — every link in the body', () => {
+  const readable = () => ({ kind: 'readable' }) as const
+  const withRationale = (link: string) =>
+    [
+      '## Rationale',
+      '',
+      `See ${link} for the background.`,
+      '',
+      '## Documentation',
+      '',
+      '- https://example.test/listed — the mechanism (O1)',
+      '',
+      '## Objectives',
+      '',
+      'O1. The gate refuses.'
+    ].join('\n')
+
+  it('refuses a link outside Documentation that the section does not list, naming it', () => {
+    const result = checkDocumentationReadable(withRationale('https://example.test/other'), readable)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`https://example.test/other`')
+    expect(result.errors[0]).toContain('required reading')
+  })
+
+  it('accepts a body link that Documentation also lists', () => {
+    expect(checkDocumentationReadable(withRationale('https://example.test/listed'), readable).status).toBe('pass')
+  })
+
+  it('probes a body link outside Documentation and refuses an unreadable one', () => {
+    const own = 'https://github.com/o/r'
+    const result = checkDocumentationReadable(
+      withRationale(`${own}/issues/5`),
+      (url) => (url.endsWith('/issues/5') ? { kind: 'unreadable', detail: 'status 404' } : { kind: 'readable' }),
+      own
+    )
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('/issues/5')
+    expect(result.errors[0]).toContain('not publicly readable')
+  })
+
+  it("exempts this repository's own Issue and pull-request links from the listing rule only", () => {
+    const own = 'https://github.com/o/r'
+    expect(checkDocumentationReadable(withRationale(`${own}/pull/7`), readable, own).status).toBe('pass')
+    expect(checkDocumentationReadable(withRationale('https://github.com/o/other/issues/7'), readable, own).status).toBe(
+      'fail'
+    )
+    expect(checkDocumentationReadable(withRationale(`${own}/blob/main/x.md`), readable, own).status).toBe('fail')
+  })
+
+  it('warns, and never refuses, for an undecidable body link', () => {
+    const own = 'https://github.com/o/r'
+    const result = checkDocumentationReadable(withRationale(`${own}/issues/5`), () => ({ kind: 'unknown' }), own)
+    expect(result.status).toBe('pass')
+    expect(result.warnings.length).toBeGreaterThan(0)
+  })
+})
+
+describe('isNonPublicHost', () => {
+  it('flags loopback, link-local, private-range and internal names', () => {
+    for (const h of [
+      'localhost',
+      'app.localhost',
+      'foo.internal',
+      '127.0.0.1',
+      '10.1.2.3',
+      '169.254.169.254',
+      '172.20.0.1',
+      '192.168.1.1',
+      '[::1]',
+      'fd00::1'
+    ]) {
+      expect(isNonPublicHost(h)).toBe(true)
+    }
+  })
+
+  it('passes public names and addresses', () => {
+    for (const h of ['example.com', 'code.claude.com', '93.184.216.34', '172.32.0.1', '8.8.8.8']) {
+      expect(isNonPublicHost(h)).toBe(false)
+    }
+  })
+})
+
+describe('checkTestPlanDeveloperRunnable — a Test plan line is one the dispatched Developer can run', () => {
+  const plan = (...lines: string[]): string => ['## Test plan', '', '```', ...lines, '```', ''].join('\n')
+  const entry = (name: string, needs: string[]) => ({ name, flags: [], needs })
+  const reference: CommandReferenceFacts = {
+    file: 'packages/sources/src/commands.ts',
+    binary: 'vinaya',
+    text: '',
+    commands: [
+      entry('check', []),
+      entry('doctrine', []),
+      entry('issue', ['forge']),
+      entry('issue create', ['forge']),
+      entry('issue surface', []),
+      entry('issue objectives edit', ['forge']),
+      entry('brief render', ['forge', 'default-branch']),
+      entry('task status', ['forge']),
+      entry('task run', ['forge', 'operator-seat']),
+      entry('pr rule', ['forge', 'operator-seat']),
+      entry('release', ['forge', 'default-branch', 'operator-seat'])
+    ]
+  }
+  const run = (...lines: string[]) => checkTestPlanDeveloperRunnable(plan(...lines), reference)
+
+  it.each([
+    'bun apps/cli/src/index.ts task run loop-determinism-cleanup-v1 3',
+    'bun apps/cli/src/index.ts pr rule 12 --file ruling.md',
+    'bun apps/cli/src/index.ts release',
+    'vinaya task run demo-v1 1',
+    'bun apps/cli/src/index.ts brief render loop-determinism-cleanup-v1 4',
+    'vinaya brief render demo-v1 1',
+    'bun apps/cli/src/index.ts task status',
+    'bun apps/cli/src/index.ts issue create --validate-only --body-file x.md',
+    'bun apps/cli/src/index.ts issue create --body-file x.md',
+    'bun apps/cli/src/index.ts issue objectives edit 12 --file o.md',
+    'gh pr merge 12 --squash',
+    'gh pr review 12 --approve',
+    'git push origin HEAD',
+    'ssh root@example.test uptime'
+  ])('refuses `%s`, naming the line', (line) => {
+    const result = run('bun test a/b.test.ts → 0 fail', line)
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain(`\`${line}\``)
+    expect(result.errors[0]).toContain('the dispatched Developer cannot run')
+  })
+
+  it('names the need the Developer lacks', () => {
+    expect(run('bun apps/cli/src/index.ts brief render a 4').errors[0]).toContain(
+      'needs a forge credential and a default-branch checkout'
+    )
+    expect(run('bun apps/cli/src/index.ts task status').errors[0]).toContain('needs a forge credential')
+    expect(run('bun apps/cli/src/index.ts task run a 1').errors[0]).toContain("the Operator's seat")
+  })
+
+  it('accepts the declared-free commands and a bare test file', () => {
+    expect(
+      run(
+        'bun test apps/cli/tests/lib/forge-write.test.ts → 0 fail',
+        'bun apps/cli/src/index.ts check --all → exits 0',
+        'bun apps/cli/src/index.ts doctrine --role developer --print → exits 0',
+        'bun apps/cli/src/index.ts issue surface --body-file b.md → exits 0'
+      )
+    ).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('reads the longest declared name, never a shorter prefix', () => {
+    expect(run('bun apps/cli/src/index.ts issue surface --body-file b.md').status).toBe('pass')
+    expect(run('bun apps/cli/src/index.ts issue objectives edit 1').status).toBe('fail')
+  })
+
+  it('derives the forbidden set from the declarations alone: a command declared free is runnable', () => {
+    const free: CommandReferenceFacts = {
+      ...reference,
+      commands: reference.commands.map((c) => ({ ...c, needs: [] }))
+    }
+    expect(
+      checkTestPlanDeveloperRunnable(plan('bun apps/cli/src/index.ts brief render a 4', 'vinaya task run a 1'), free)
+        .status
+    ).toBe('pass')
+    expect(checkTestPlanDeveloperRunnable(plan('git push', 'ssh host'), free).errors).toHaveLength(2)
+  })
+
+  it('passes the same plan without the line', () => {
+    expect(run('bun test a/b.test.ts → 0 fail').status).toBe('pass')
+  })
+
+  it('judges every statement of a chained, piped, or env-prefixed line', () => {
+    for (const line of [
+      'bun test a/b.test.ts && git push',
+      'echo yes | ssh host',
+      'GH_TOKEN=x gh pr merge 12',
+      'true; bun apps/cli/src/index.ts pr rule 12',
+      'FOO=1 bun apps/cli/src/index.ts brief render a 1 | cat'
+    ]) {
+      expect(run(line).status).toBe('fail')
+    }
+  })
+
+  it('keeps quoted or commented text allowed', () => {
+    const result = run(
+      'bun apps/cli/src/index.ts check --all → exits 0',
+      "grep -ciE 'git push|ssh' aeg-root/roles/developer.md → prints 0",
+      'bun test a/b.test.ts # never git push here',
+      'echo "gh pr merge" → prints the words'
+    )
+    expect(result).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('never judges prose outside the fence, nor a missing section', () => {
+    const prose = [
+      '## Test plan',
+      '',
+      'The Principal runs `gh pr merge` after review.',
+      '',
+      '```',
+      'bun test a/b.test.ts',
+      '```'
+    ].join('\n')
+    expect(checkTestPlanDeveloperRunnable(prose, reference).status).toBe('pass')
+    expect(checkTestPlanDeveloperRunnable('## Objectives\n\nO1. x\n', reference).status).toBe('pass')
+  })
+})
+
+describe('checkDocumentationPathsExist — an in-repository Documentation source exists in the checkout', () => {
+  const doc = (...lines: string[]): string => ['## Documentation', '', ...lines, ''].join('\n')
+  const checkout: Record<string, string> = { 'aeg-root/roles/planner.md': '# Planner' }
+  const reads: string[] = []
+  const readFile = (path: string): string | null => {
+    reads.push(path)
+    return checkout[path] ?? null
+  }
+
+  it('refuses a path the checkout lacks, naming the path', () => {
+    const result = checkDocumentationPathsExist(
+      doc('- aeg-root/roles/missing.md — a spec never written (O1)'),
+      readFile
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('`aeg-root/roles/missing.md`')
+  })
+
+  it('passes the same section when the path exists, in bare, code-span, and fragment forms', () => {
+    for (const line of [
+      '- aeg-root/roles/planner.md — the entry gate (O1)',
+      '- `aeg-root/roles/planner.md` — the entry gate (O1)',
+      '- aeg-root/roles/planner.md#entry-gate — the entry gate (O1)'
+    ]) {
+      expect(checkDocumentationPathsExist(doc(line), readFile)).toEqual({ status: 'pass', errors: [] })
+    }
+  })
+
+  it('never reads a source with a URL scheme, and passes the None sentinel', () => {
+    reads.length = 0
+    expect(checkDocumentationPathsExist(doc('- https://example.test/missing — a page (O1)'), readFile).status).toBe(
+      'pass'
+    )
+    expect(checkDocumentationPathsExist(doc('None — no normative source.'), readFile).status).toBe('pass')
+    expect(reads).toEqual([])
+  })
+})
+
+describe('checkPinnedFileChecksDecided', () => {
+  const body = (decisions: string) =>
+    issueBody({
+      boundary: `In: the spec. Pinned files: \`apps/cli/specs/mirror.md\`. Out: nothing else. ${decisions}`,
+      objectives: ['O1. The spec states the rule.'],
+      partLines: ['Part 1 (O1) — the spec states the rule.'],
+      in: 'apps/cli/specs',
+      out: 'apps/log-server'
+    })
+  const covering = [
+    {
+      file: 'apps/cli/specs/mirror.md',
+      checks: [{ check: 'reader-resolvable-prose', covers: 'proseGates specification class' }],
+      unresolved: ['secret-scan']
+    }
+  ]
+
+  it('is dormant when no check covers a pinned file', () => {
+    expect(checkPinnedFileChecksDecided(body(''), []).status).toBe('pass')
+    expect(checkPinnedFileChecksDecided(body(''), [{ file: 'a.md', checks: [], unresolved: ['x'] }]).status).toBe(
+      'pass'
+    )
+  })
+
+  it('refuses a pinned specification with no decision for the reader-resolvable-prose check', () => {
+    const result = checkPinnedFileChecksDecided(body('Checks: `reader-resolvable-prose`, `doc-claims`.'), covering)
+    expect(result.status).toBe('fail')
+    expect(result.errors.join('\n')).toContain('`reader-resolvable-prose`')
+    expect(result.errors.join('\n')).toContain('apps/cli/specs/mirror.md')
+  })
+
+  it('passes once the check carries a decision naming how the change satisfies it', () => {
+    const decided = body('`reader-resolvable-prose`: the new prose cites no Issue number and no tranche name.')
+    expect(checkPinnedFileChecksDecided(decided, covering).status).toBe('pass')
+  })
+})

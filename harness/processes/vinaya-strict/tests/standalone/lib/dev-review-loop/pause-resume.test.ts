@@ -21,7 +21,8 @@ import {
   readEffect,
   writeEffect
 } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import { newestPrincipalRulingOrdinal, type PauseReason, principalRulingMarker } from '@attalabs/aeg-core'
+import { newestPrincipalRulingOrdinal, principalRulingMarker } from '../../../../tools/task-contract/ruling-ordinal'
+import type { PauseReason } from '@attalabs/aeg-core'
 import {
   type DriverWatchDeps,
   type LoopDeps,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { GhIssue } from '../../../kernel/adapters/code-host/github/gh'
-import type { SlugMilestoneIndex } from '@attalabs/aeg-forge-state'
+import type { SlugMilestoneIndex } from '../tools/task-contract/forge/fetch-milestone'
 import type { TaskEntry } from './coherence-checks'
 import { evaluateA2, evaluateBranchL5, sweepOtherTranchesL5 } from './bin/check-coherence'
 

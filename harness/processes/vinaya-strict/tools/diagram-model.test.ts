@@ -4,7 +4,7 @@ import { describe, expect, it } from 'bun:test'
 import { ACTIONS } from './actions'
 import { deriveDiagramModel } from './diagram-model'
 import type { DoctrineContent } from './doctrine-source'
-import type { Tranche } from '../../../../packages/aeg-core/src/types'
+import type { Tranche } from './task-contract/types'
 
 // --- Synthetic fixture doctrine ------------------------------------------
 

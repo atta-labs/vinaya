@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { parseRegistry } from '@attalabs/aeg-core'
+import { parseRegistry } from '../tools/task-contract/parse-registry'
 import {
   appendRegistryRow,
   applyConfigProjectEntry,

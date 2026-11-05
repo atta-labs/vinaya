@@ -50,8 +50,8 @@ You are the AEG Developer. Run `vinaya doctrine --role developer --print` and re
 **Modify:**
 - [exact file paths to modify, with what changes in each]
 
-<!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:'**Out of surface:** ' + -->
-<!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:records each such path in the pull request body's beyond-Surface block -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:'**Out of surface:** ' + -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:records each such path in the pull request body's beyond-Surface block -->
 **Out of surface:** [adjacent files/dirs the plan leaves alone, named explicitly — `vinaya brief render` fills this verbatim from the Issue's `## Surface` `out:` list, never a hand-authored placeholder, and appends the recording rule: a change there, or to any path no Surface `in:` glob covers, is still published — the review-loop driver records each such path in the pull request body's beyond-Surface block, and the reviewers judge it like any change]
 
 #### Premise pins
@@ -78,7 +78,7 @@ On any failure: STOP and report.
 
 ## 6. Numbered parts — publish once with `publish_changes` when every Part is done, then `open_pull_request`
 
-<!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:function renderPartCitation(part: IssuePart): string { -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:function renderPartCitation(part: IssuePart): string { -->
 [Rendered from the Issue's `## Parts` section — `vinaya brief render` fills one numbered Part per `Part <k> (O<n>[, O<m>]) — <outcome>` line, citation reconstructed verbatim, files grouped by package as today. Hand-authoring the same: exact files + exact function/type signatures + constraints — not prose. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the executed output (skill §2's rule). Cite at least one `O<n>` from the Objectives section above; an administrative Part with no objective of its own (a changeset commit, the final push) may omit the citation.]
 
 1. **Part 1** (O[n]) — [exact files + exact function/type signatures + constraints — not prose.]
@@ -98,7 +98,7 @@ On any failure: STOP and report.
 
 ## 9. Test Plan
 
-<!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:...facts.testPlan.lines, -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:...facts.testPlan.lines, -->
 [Rendered from the Issue's `## Test plan` section — `vinaya brief render` copies it verbatim, never re-deriving one from the surface file list.]
 
 ```
@@ -114,7 +114,7 @@ On any failure: STOP and report.
 
 ## 10. Stop conditions
 
-<!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:`${facts.rationale.stopAndEscalate}` -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:`${facts.rationale.stopAndEscalate}` -->
 [Rendered from the Issue's `## Stop conditions` bullets, plus the Stop-and-escalate rationale field verbatim — never the field alone.]
 
 STOP and report if: pre-flight fails; [the Planner's stop-and-escalate conditions, substance-verbatim]; [task-specific stop conditions]; about to touch files outside the §4 surface; any destructive action not explicitly authorized.

@@ -73,16 +73,12 @@
  * head sha via `gh` and calls `checkReviewGate`.
  */
 
-import {
-  isPrincipal,
-  isWaiverLabelActorVerified,
-  WAIVER_LABEL_REVIEW
-} from '../../../../packages/aeg-core/src/waiver-label'
+import { isPrincipal, isWaiverLabelActorVerified, WAIVER_LABEL_REVIEW } from './task-contract/waiver-label'
 import {
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
   type VerdictExtraction
-} from '../../../../packages/aeg-core/src/verdict-extraction'
+} from './task-contract/verdict-extraction'
 import {
   consequentialFindings,
   DEFAULT_REVIEW_POLICY,
@@ -93,14 +89,14 @@ import {
   type FindingDeferralContext,
   type PolicyFinding,
   type ReviewPolicy
-} from '../../../../packages/aeg-core/src/review-policy'
+} from './task-contract/review-policy'
 import {
   compareManifest,
   isBoundToHead,
   policyDigest as computePolicyDigest,
   type EchoedManifest,
   type ReviewInputManifest
-} from '../../../../packages/aeg-core/src/review-input-manifest'
+} from './task-contract/review-input-manifest'
 
 export type ReviewGateVerdict = 'pass' | 'fail'
 
@@ -204,7 +200,7 @@ export type ReviewGateInput = {
    */
   rulingOrdinal: number
   /** Ruling that authenticated the resumed pause preceding this review round. */
-  pauseBoundRuling?: import('../../../../packages/aeg-core/src/review-input-manifest').PauseBoundRuling | null
+  pauseBoundRuling?: import('./task-contract/review-input-manifest').PauseBoundRuling | null
   /**
    * Which severities block is repository policy — resolved by the caller from the DEFAULT BRANCH's
    * `vinaya.config.json` (`resolveReviewPolicy(loadTrustAnchorConfig())`),
@@ -651,7 +647,7 @@ export function decideApprovalCarry(input: {
 
 /** A ruling binding as the gate's failure text names it: `<ruling>|<pause>|<digest>`, `(none)`, or `(absent)` when no slot was echoed at all. */
 function renderBinding(
-  binding: import('../../../../packages/aeg-core/src/review-input-manifest').PauseBoundRuling | null | undefined
+  binding: import('./task-contract/review-input-manifest').PauseBoundRuling | null | undefined
 ): string {
   if (binding === undefined) return '(absent)'
   return binding === null ? '(none)' : `${binding.rulingId}|${binding.pauseId}|${binding.contentDigest}`

@@ -200,14 +200,14 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       'harness/processes/vinaya-strict/checks/bin/check-token-collection-wired.ts': checkBin,
       'harness/kernel/gates/checks/resolver.ts':
         'the pure step that decides which checks `vinaya check` runs; the runner it feeds records each run and the invocation records its own operation at exit',
-      'packages/aeg-core/bin/open-pr.ts': script,
-      'packages/aeg-core/bin/open-issue.ts': script,
+      'harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts': script,
+      'harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/verify-task.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/check-branch-topology.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/check-push-target.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/check-first-push-dispatch.ts': script,
-      'packages/aeg-core/src/brief-validation.ts':
+      'harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts':
         'a pure library outside the CLI package: it makes no call of its own, and the import resolution does not follow a workspace package'
     })
   })

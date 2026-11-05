@@ -78,7 +78,7 @@ function git(cwd: string, args: string[]): string {
 /**
  * `resolveBoundaryPaths` — the impure-adjacent half of task 5 (Issue #447,
  * O3): resolving `extractBoundaryFilePaths` tokens (tested purely in
- * `packages/aeg-core/src/brief-render.test.ts`) against a real `git
+ * `harness/processes/vinaya-strict/tools/task-contract/brief-render.test.ts`) against a real `git
  * ls-files` snapshot. The snapshot is injected here so this stays a fast,
  * network-free unit test.
  */

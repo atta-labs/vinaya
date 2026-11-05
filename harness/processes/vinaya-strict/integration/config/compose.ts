@@ -75,7 +75,8 @@ import {
   VINAYA_GLOBAL_ONLY_KEYS,
   VINAYA_HOME
 } from './vinaya-config-section.js'
-import type { GateCutovers, ReviewPolicy } from '@attalabs/aeg-core'
+import type { GateCutovers } from '../../tools/task-contract/gate-cutovers'
+import type { ReviewPolicy } from '../../tools/task-contract/review-policy'
 
 // The composition of the kernel's configuration keys with Vinaya's section
 // into the one schema `vinaya.config.json` is validated against, and the one

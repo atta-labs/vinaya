@@ -20,7 +20,8 @@ import {
   type ParsedRecord,
   type RoundHeadIdentity
 } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import type { Decision, DevReviewLoopEventInput, LoopState, PauseBoundRuling, RoundStats } from '@attalabs/aeg-core'
+import type { Decision, DevReviewLoopEventInput, LoopState, RoundStats } from '@attalabs/aeg-core'
+import type { PauseBoundRuling } from '../../../../tools/task-contract/review-input-manifest'
 import type { AgentVendor, DispatchHandle, SandboxProbeRefusal, UsageLimit } from '../../dispatch/dispatch.js'
 import { controlStoreRoot } from '../../../../../../kernel/effects/effects.js'
 import { isControlCharacter } from './turn-result.js'

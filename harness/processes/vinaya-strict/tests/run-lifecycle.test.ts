@@ -7,14 +7,10 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import {
-  buildReviewInputManifest,
-  DEFAULT_REVIEW_POLICY,
-  initialLoopState,
-  objectivesVersion,
-  type ReconstructedJournal,
-  type ReviewInputManifest
-} from '@attalabs/aeg-core'
+import { buildReviewInputManifest, type ReviewInputManifest } from '../tools/task-contract/review-input-manifest'
+import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
+import { initialLoopState, type ReconstructedJournal } from '@attalabs/aeg-core'
+import { objectivesVersion } from '../tools/task-contract/objectives'
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { MemorySaver } from '@langchain/langgraph'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'

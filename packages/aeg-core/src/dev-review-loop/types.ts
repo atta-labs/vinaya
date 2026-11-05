@@ -6,7 +6,7 @@
  */
 
 import type { DevReviewLoopEvent } from '@attalabs/harness/log/schema'
-import type { DeferralReason } from '../review-policy'
+import type { DeferralReason } from '../../../../harness/processes/vinaya-strict/tools/task-contract/review-policy'
 
 type Envelope = { meta: unknown; subject: unknown }
 /**

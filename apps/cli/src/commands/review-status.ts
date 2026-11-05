@@ -1,5 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { deriveReviewStatus, renderReviewStatus } from '@attalabs/aeg-core'
+import {
+  deriveReviewStatus,
+  renderReviewStatus
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/review-status'
 import { resolveTrustedPrincipals } from '../lib/config'
 import { reviewPolicy } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 

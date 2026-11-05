@@ -26,7 +26,9 @@ import {
   StaleEpochWriteError,
   writeEscalation
 } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import { parseTaskBranchIdentity, type PauseReason, principalRulingMarker } from '@attalabs/aeg-core'
+import { parseTaskBranchIdentity } from '../../../../tools/task-contract/task-branch-identity'
+import type { PauseReason } from '@attalabs/aeg-core'
+import { principalRulingMarker } from '../../../../tools/task-contract/ruling-ordinal'
 import type { RequestedAuthority } from '../../../../../../kernel/tools/catalog/task-tools'
 import {
   controlStoreRoot,

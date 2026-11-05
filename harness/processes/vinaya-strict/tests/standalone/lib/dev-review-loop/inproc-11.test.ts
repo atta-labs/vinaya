@@ -24,7 +24,9 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { briefHash, DEFAULT_REVIEW_POLICY, objectivesOf, objectivesVersion, policyDigest } from '@attalabs/aeg-core'
+import { briefHash, policyDigest } from '../../../../tools/task-contract/review-input-manifest'
+import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
+import { objectivesOf, objectivesVersion } from '../../../../tools/task-contract/objectives'
 import {
   renderCodeReviewComment,
   renderSecurityComment

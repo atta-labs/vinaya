@@ -3,7 +3,7 @@
  * `issue create/edit`). Two concerns live here:
  *
  *  1. **Same-bytes body plumbing** (`locateBody` / `resolveShippableArgs`) —
- *     adapted from `packages/aeg-core/bin/open-pr.ts`'s own fix, NEVER
+ *     adapted from `harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts`'s own fix, NEVER
  *     imported (those bins `process.chdir(REPO_ROOT)` and shell out to this
  *     repo's `bin/*` gate scripts; dragging them into a distributable CLI
  *     drags this repo's layout in). A stream/heredoc body is empty on a
@@ -33,17 +33,11 @@ import {
 } from '../../../../../kernel/adapters/code-host/github/forge-read'
 import {
   boundaryPinnedFiles,
-  checkAutonomyClause,
   checkBlastRadiusScope,
   checkBoundaryClaimsNeedPremise,
-  checkBriefClosesN,
-  checkBriefSections,
   checkDocsWithinSurface,
-  checkDocUpdateList,
   checkEdgeIdsWholeNumbers,
   checkFileCollisions,
-  checkForField,
-  checkForgeTitle,
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssuePremises,
@@ -52,8 +46,6 @@ import {
   checkIntroducedConfigKeysCovered,
   type CommandReferenceFacts,
   type ConfigReferenceFacts,
-  type GateCutovers,
-  checkMilestoneShape,
   checkNoBriefContent,
   checkNoForeignTaskOwnership,
   checkProseAllowsBeyondSurfaceEdit,
@@ -74,46 +66,55 @@ import {
   surfaceForcedSet,
   type SurfaceForcedSet,
   checkPremiseDependencyDeclared,
-  checkPremiseCoverage,
-  checkPrincipalPlaceholder,
-  checkProjectField,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkRationaleSurfaceCoverage,
-  checkStopConditions,
   checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
-  checkSurfaceMap,
   checkSurfaceOverlap,
-  checkTestPlan,
   checkTestPlanDeveloperRunnable,
-  checkTestPlanExclusivity,
-  checkTierField,
-  checkWorktreeStep0,
-  DEFERRAL_REASON_TEXT,
-  type DeferralReason,
-  deriveBuiltinCrossCuttingDefaults,
-  deriveWorkspacePackageDomains,
-  extractBoundaryFilePaths,
-  findTrancheSlug,
-  type FrozenBriefCandidate,
   frozenSectionsChanged,
-  isBriefShaped,
-  isPrincipal,
-  isTaskBranch,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   parseIssueSurface,
-  parsePnpmWorkspaceYaml,
-  parseRationaleFields,
-  parseRegistry,
   type ProjectPath,
-  readTierFromPrBody,
-  resolveNewestFrozenBrief,
   type TaskFileFacts,
-  type TaskSurfaceFacts,
-  trancheLabel
-} from '@attalabs/aeg-core'
+  type TaskSurfaceFacts
+} from '../issue-validation'
+import {
+  checkAutonomyClause,
+  checkClosesNPresence as checkBriefClosesN,
+  checkBriefSections,
+  checkDocUpdateList,
+  checkForField,
+  checkForgeTitle,
+  checkPremiseCoverage,
+  checkPrincipalPlaceholder,
+  checkProjectField,
+  checkStopConditions,
+  checkSurfaceMap,
+  checkTestPlan,
+  checkTestPlanExclusivity,
+  checkTierField,
+  checkWorktreeStep0,
+  type FrozenBriefCandidate,
+  isBriefShaped,
+  isTaskBranch,
+  resolveNewestFrozenBrief
+} from '../brief-validation'
+import type { GateCutovers } from '../gate-cutovers'
+import { checkMilestoneShape } from '../milestone-validation'
+import { DEFERRAL_REASON_TEXT, type DeferralReason } from '../review-policy'
+import {
+  deriveBuiltinCrossCuttingDefaults,
+  deriveWorkspacePackageDomains,
+  parsePnpmWorkspaceYaml
+} from '../blast-radius-domains'
+import { extractBoundaryFilePaths, parseRationaleFields } from '../brief-render'
+import { findTrancheSlug, trancheLabel } from './labels'
+import { isPrincipal } from '../waiver-label'
+import { parseRegistry } from '../parse-registry'
+import { readTierFromPrBody } from '../pr-tier'
 import { CHANGESET_RELEASE_BRANCH, isChangesetsReleasePr } from '../../review-gate'
 import { classifyProseFile, DEFAULT_SPEC_PATHS, normalizeSpecPath } from '../../reader-resolvable-prose'
 import type { DispatchBlockerClass } from '../../dispatch-gate'
@@ -134,9 +135,9 @@ import {
 import {
   findMilestoneAttachTargetForSlug,
   hasExplicitMilestoneFlag,
-  parseRationaleDeps,
   resolveMilestoneAttachTarget
-} from '@attalabs/aeg-forge-state'
+} from './fetch-milestone'
+import { parseRationaleDeps } from './parse-rationale-deps'
 import { COMMANDS, CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
 import { CORE_CHECK_RING, coreCheckRegistry } from '../../../checks/registry'
 import { resolveChecks } from '../../../../../kernel/gates/checks/resolver'
@@ -908,7 +909,7 @@ export async function runIssueChecks(input: {
 
 // ---------------------------------------------------------------------------
 // Issue-only content gate — `checkBlastRadiusScope`, `checkNoBriefContent`,
-// `checkRationaleNamesDocs` (`packages/aeg-core/bin/open-issue.ts`'s A/B/D
+// `checkRationaleNamesDocs` (`harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts`'s A/B/D
 // block; C, `checkConflictCompleteness`, is warn-only and stays out of this
 // gate). These three are NOT `briefSchema` sections and cannot live in
 // `runBuiltin`'s table above: they grade what the rationale fields SAY

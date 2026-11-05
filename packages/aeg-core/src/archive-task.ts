@@ -12,12 +12,15 @@ import { extractIssue } from '../../../harness/kernel/adapters/code-host/github/
  * posted by hand on real PRs.
  */
 
-import { hasLabel } from '@attalabs/aeg-forge-state'
+import { hasLabel } from '../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
 import { type AnchorField, anchoredRegion, stripCode } from '../../../harness/kernel/gates/checks/anchored-region'
-import { headerRegion } from './brief-validation'
-import { readTierFromPrBody } from './pr-tier'
-import { parseTaskBranchIdentity } from './task-branch-identity'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
+import { headerRegion } from '../../../harness/processes/vinaya-strict/tools/task-contract/brief-validation'
+import { readTierFromPrBody } from '../../../harness/processes/vinaya-strict/tools/task-contract/pr-tier'
+import { parseTaskBranchIdentity } from '../../../harness/processes/vinaya-strict/tools/task-contract/task-branch-identity'
+import {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict
+} from '../../../harness/processes/vinaya-strict/tools/task-contract/verdict-extraction'
 
 export type MergedPrFacts = {
   number: number

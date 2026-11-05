@@ -19,7 +19,7 @@ import { ACTIONS, CROSSING_KEYWORDS } from './actions'
 import type { DoctrineContent } from './doctrine-source'
 import { findHeadingLine, findTable } from '../../../kernel/gates/checks/markdown-table'
 import { parseEnforcementRegistry } from './registry-parse'
-import type { Tranche } from '../../../../packages/aeg-core/src/types'
+import type { Tranche } from './task-contract/types'
 
 export type DiagramNodeKind = 'ring' | 'gate' | 'check' | 'action' | 'role' | 'contract'
 export type RenderState = 'active' | 'disabled'

@@ -30,13 +30,7 @@ const REPO_ROOT = join(import.meta.dir, '..', '..', '..')
  *   4's doctrine rewrite); editing the quote to disagree with the doctrine
  *   it quotes would be the actual regression.
  */
-const SCAN_ROOTS = [
-  'packages/aeg-core/src',
-  'packages/aeg-forge-state/src',
-  'packages/aeg-types/src',
-  'apps/cli/src',
-  'harness/kernel'
-]
+const SCAN_ROOTS = ['packages/aeg-core/src', 'harness/processes/vinaya-strict', 'apps/cli/src', 'harness/kernel']
 
 const ALLOWLISTED_FILES = new Set([
   'apps/cli/src/commands/doctrine.ts',

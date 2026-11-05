@@ -18,23 +18,20 @@ import {
   type NormalizedOutcome,
   type OutcomeSignals
 } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
+import { isPrincipal } from '../../../../tools/task-contract/waiver-label'
+import { issueBranchName, parseTaskBranchIdentity } from '../../../../tools/task-contract/task-branch-identity'
 import {
-  isPrincipal,
-  issueBranchName,
   newestPrincipalRulingAuthor,
   newestPrincipalRulingOrdinal,
   parseRulingIdentity,
-  principalRulingTextById,
-  type Objective,
-  objectivesOf,
-  objectivesVersion,
-  extractSourceRevision,
-  parseTaskBranchIdentity,
-  resolveNewestFrozenBrief,
-  type ReviewPolicy
-} from '@attalabs/aeg-core'
+  principalRulingTextById
+} from '../../../../tools/task-contract/ruling-ordinal'
+import { type Objective, objectivesOf, objectivesVersion } from '../../../../tools/task-contract/objectives'
+import { extractSourceRevision } from '../../../../tools/task-contract/brief-render'
+import { resolveNewestFrozenBrief } from '../../../../tools/task-contract/brief-validation'
+import type { ReviewPolicy } from '../../../../tools/task-contract/review-policy'
 import { extractShortVersion } from '../../../../tools/docs/published-prose'
-import { hasLabel } from '@attalabs/aeg-forge-state'
+import { hasLabel } from '../../../../tools/task-contract/forge/labels'
 import { type GateStep, resolveGateStep } from '../../../../checks/registry.js'
 import { resolveDoctrineRoot } from '../../../../../../../apps/cli/src/commands/doctrine.js'
 import { buildRolePlan } from '../../../../integration/roles/plan.js'

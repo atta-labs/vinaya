@@ -65,7 +65,7 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TASK_TOOL_NAMES } from '../../../harness/kernel/tools/catalog/task-tools'
-import { trancheLabel } from '@attalabs/aeg-core'
+import { trancheLabel } from '../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
 import { COMMANDS } from '@attalabs/vinaya-sources'
 // Current source's registry, read to derive the expectation the published
 // artifact is measured against — the same "derive, never hand-maintain"

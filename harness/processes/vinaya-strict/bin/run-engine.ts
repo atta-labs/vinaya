@@ -14,16 +14,9 @@ import {
   defaultControlStoreDeps,
   writeExecutionRoundMirror
 } from '../../../kernel/connectors/checkpoint/control-store/index'
-import {
-  initialLoopState,
-  buildReviewInputManifest,
-  DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
-  DEFAULT_REVIEW_POLICY,
-  type DevReviewLoopEventInput,
-  type LoopConfig,
-  type LoopState,
-  type ReviewInputManifest
-} from '@attalabs/aeg-core'
+import { initialLoopState, type DevReviewLoopEventInput, type LoopConfig, type LoopState } from '@attalabs/aeg-core'
+import { buildReviewInputManifest, type ReviewInputManifest } from '../tools/task-contract/review-input-manifest'
+import { DEFAULT_READY_PUSH_TIMEOUT_MINUTES, DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import {
   createRunControl,
   type RunControl,
@@ -111,7 +104,8 @@ import {
   RequiredSourcesUnavailable,
   realSourceProviderDeps
 } from '../../../kernel/tools/source-provider'
-import { briefHash as briefHashOf, extractSourceRevision, policyDigest as policyDigestOf } from '@attalabs/aeg-core'
+import { briefHash as briefHashOf, policyDigest as policyDigestOf } from '../tools/task-contract/review-input-manifest'
+import { extractSourceRevision } from '../tools/task-contract/brief-render'
 import type { PauseReason } from '@attalabs/aeg-core'
 import { reviewerDevToolContext, type DevToolContext, type DevToolResult } from '../../../kernel/tools/dev-tools-server'
 import { createReadSourceTool } from '../../../kernel/tools/read-source'

@@ -11,7 +11,10 @@ import {
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative } from 'node:path'
-import { beyondSurfacePaths, withBeyondSurfaceBlock } from '@attalabs/aeg-core'
+import {
+  beyondSurfacePaths,
+  withBeyondSurfaceBlock
+} from '../../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
 import { redact } from '../../../../../harness/kernel/log/redact'
 import {
   addCodexWritableDirs,

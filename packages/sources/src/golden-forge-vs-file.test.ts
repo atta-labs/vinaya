@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { parseTranche } from '@attalabs/aeg-core'
+import { parseTranche } from '../../../harness/processes/vinaya-strict/tools/task-contract/parse-tranche'
 import { describe, expect, it } from 'bun:test'
 
 /**

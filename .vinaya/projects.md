@@ -19,8 +19,6 @@ is derived from the folder tree.
 | cli | `apps/cli` | `apps/cli/specs/` | (state tracked globally for now) |
 | log-server | `apps/log-server` | `apps/log-server/specs/` | (state tracked globally for now) |
 | aeg-core | `packages/aeg-core` | `packages/aeg-core/specs/` | (state tracked globally for now) |
-| aeg-forge-state | `packages/aeg-forge-state` | `packages/aeg-forge-state/specs/` | (state tracked globally for now) |
-| aeg-types | `packages/aeg-types` | `packages/aeg-types/specs/` | (state tracked globally for now) |
 | sources | `packages/sources` | `packages/sources/specs/` | (state tracked globally for now) |
 | vinaya | `.` | `specs/` | (state tracked globally) |
 | vinaya-portal | `apps/vinaya-portal` | `apps/vinaya-portal/specs/` | (state tracked globally) |
@@ -35,7 +33,7 @@ package, so this is the intent rather than a universal.
 > removed once every open task Issue declares a real project. #104 needs a
 > `Project:` field **added**, not remapped: it names its project only inside
 > its `**Project(s) + blast radius**` heading, which `projectsFromBody`
-> (`packages/aeg-forge-state/src/list-tasks.ts:43`) deliberately does not
+> (`harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.ts:43`) deliberately does not
 > read, so a remap-only pass would leave it resolving to nothing.
 
 > **The `Specs` paths are declared, not yet real** — only `apps/cli/specs/`
@@ -43,7 +41,7 @@ package, so this is the intent rather than a universal.
 > (`harness/processes/vinaya-strict/tools/file-classify.ts:50`) and `isDocFile` (`:35`) both
 > match `apps/**/specs/**` only, so a spec at `packages/<name>/specs/` is
 > invisible to `verify-docs` and to tier derivation
-> (`packages/aeg-core/src/pr-tier.ts:24`). Nothing reads `specsPath` today
+> (`harness/processes/vinaya-strict/tools/task-contract/pr-tier.ts:24`). Nothing reads `specsPath` today
 > outside `vinaya init product`'s row writer. `isDocFile` also now
 > recognizes a package-level `apps/<name>/README.md` / `packages/<name>/README.md`
 > (`:36`), independent of this unsettled `specsPath` question.

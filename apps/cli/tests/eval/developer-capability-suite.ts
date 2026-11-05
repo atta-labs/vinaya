@@ -27,7 +27,7 @@ import {
   beyondSurfacePaths,
   globCoversPath,
   recordedBeyondSurfacePaths
-} from '@attalabs/aeg-core'
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
 import { defaultControlStoreDeps } from '../../../../harness/kernel/connectors/checkpoint/control-store/index'
 import { TASK_TOOL_NAMES } from '../../../../harness/kernel/tools/catalog/task-tools'
 

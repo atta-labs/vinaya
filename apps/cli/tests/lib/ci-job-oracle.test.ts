@@ -18,7 +18,9 @@
  * every such omission must be caught.
  */
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
@@ -37,19 +39,37 @@ const { judgePlan, mutatePlan, readBundle, replayCase } = (await import(join(REP
 }
 const bundle = readBundle(join(REPO_ROOT, 'apps/cli/tests/fixtures/ci-impact/replay.json'))
 
-/** Package folder → name, from the root manifest's workspaces and each member's own manifest. */
-function workspacePackages(): { dir: string; name: string }[] {
-  const root = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as { workspaces: string[] }
+/** Read both native-oracle inputs from the replay revision, using the already-installed Turbo binary offline. */
+function atReplayRevision<T>(read: (root: string) => T): T {
+  const root = mkdtempSync(join(tmpdir(), 'vinaya-oracle-revision-'))
+  const git = (args: string[]) => execFileSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' })
+  try {
+    const paths = git(['ls-tree', '-r', '--name-only', bundle.base]).split('\n')
+    for (const path of paths) {
+      if (!/(?:^|\/)(?:package\.json|turbo\.json)$/.test(path) && path !== 'bun.lock') continue
+      const target = join(root, path)
+      mkdirSync(dirname(target), { recursive: true })
+      writeFileSync(target, git(['show', `${bundle.base}:${path}`]))
+    }
+    return read(root)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+/** Package folder → name, from the replay revision's workspaces and each member's own manifest. */
+function workspacePackages(oracleRoot: string): { dir: string; name: string }[] {
+  const root = JSON.parse(readFileSync(join(oracleRoot, 'package.json'), 'utf8')) as { workspaces: string[] }
   const out: { dir: string; name: string }[] = []
   for (const glob of root.workspaces) {
     const dirs = glob.endsWith('/*')
-      ? (new Bun.Glob(`${glob.slice(0, -2)}/*/package.json`).scanSync({ cwd: REPO_ROOT }) as Iterable<string>)
+      ? (new Bun.Glob(`${glob.slice(0, -2)}/*/package.json`).scanSync({ cwd: oracleRoot }) as Iterable<string>)
       : [`${glob}/package.json`]
     for (const manifest of dirs) {
-      if (!existsSync(join(REPO_ROOT, manifest))) continue
+      if (!existsSync(join(oracleRoot, manifest))) continue
       out.push({
         dir: dirname(manifest),
-        name: (JSON.parse(readFileSync(join(REPO_ROOT, manifest), 'utf8')) as { name: string }).name
+        name: (JSON.parse(readFileSync(join(oracleRoot, manifest), 'utf8')) as { name: string }).name
       })
     }
   }
@@ -57,11 +77,11 @@ function workspacePackages(): { dir: string; name: string }[] {
 }
 
 /** Package → every package whose typecheck task depends on its typecheck task, transitively, from turbo's own graph. */
-function typecheckDependents(): Map<string, Set<string>> {
+function typecheckDependents(oracleRoot: string): Map<string, Set<string>> {
   const run = spawnSyncBudgeted(
-    'bunx',
-    ['turbo', 'run', 'build', 'typecheck', 'test', '--dry=json'],
-    { cwd: REPO_ROOT, encoding: 'utf8', env: { ...stripVinayaEnv(), TURBO_TELEMETRY_DISABLED: '1' } },
+    join(REPO_ROOT, 'node_modules/.bin/turbo'),
+    ['run', 'build', 'typecheck', 'test', '--dry=json'],
+    { cwd: oracleRoot, encoding: 'utf8', env: { ...stripVinayaEnv(), TURBO_TELEMETRY_DISABLED: '1' } },
     60_000
   )
   expect(run.status).toBe(0)
@@ -89,8 +109,10 @@ function typecheckDependents(): Map<string, Set<string>> {
   return closure
 }
 
-const packages = workspacePackages()
-const dependents = typecheckDependents()
+const { packages, dependents } = atReplayRevision((root) => ({
+  packages: workspacePackages(root),
+  dependents: typecheckDependents(root)
+}))
 
 /** The packages turbo's graph says must be typechecked for these changed paths. */
 function turboExpectation(changed: readonly string[]): string[] {

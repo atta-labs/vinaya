@@ -77,13 +77,8 @@ import { type DocsCoherenceEntry, evaluateDocsCoherence } from '../docs/docs-coh
 import { evaluatePublishedProse, type PublishedProseEntry } from '../../tools/docs/published-prose'
 import { modelBackedDocPaths } from '../../tools/docs/surfaced-manifest'
 import { parseDocFrontmatter } from '../docs/parse-doc'
-import {
-  deriveTierFromDiff,
-  isWaiverLabelActorVerified,
-  overrideActive,
-  readTierFromPrBody,
-  WAIVER_LABEL
-} from '../../../../../packages/aeg-core/src/index'
+import { deriveTierFromDiff, overrideActive, readTierFromPrBody } from '../../tools/task-contract/pr-tier'
+import { isWaiverLabelActorVerified, WAIVER_LABEL } from '../../tools/task-contract/waiver-label'
 import type { DoctrineContent } from '../../tools/doctrine-source'
 import { deriveDiagramModel } from '../../tools/diagram-model'
 import { checkDocClaims } from '../../tools/doc-claim'
@@ -93,7 +88,7 @@ import { hasStatusBlock } from '../status-block'
 import { isCodeFile, isDocFile, isSpecFile } from '../../tools/file-classify'
 import { globToRegex } from '../../../../kernel/gates/glob-to-regex'
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point'
-import { readConfigPrincipals } from '../../../../../packages/aeg-core/src/principals-config'
+import { readConfigPrincipals } from '../../tools/task-contract/principals-config'
 
 const DOCS_INVOCATION_CWD = process.cwd()
 const REPO_ROOT = (() => {

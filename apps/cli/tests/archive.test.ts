@@ -1,4 +1,4 @@
-import { parseTokensLines } from '@attalabs/aeg-core'
+import { parseTokensLines } from '../../../harness/processes/vinaya-strict/tools/pr-report/tokens/parse-token-report'
 import type { MeteringCapability } from '../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

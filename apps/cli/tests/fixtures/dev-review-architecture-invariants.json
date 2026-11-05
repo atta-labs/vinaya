@@ -2925,10 +2925,10 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "packages/aeg-forge-state/src/list-tasks.ts"
+          "path": "harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.ts"
         }
       ],
-      "tests": ["packages/aeg-forge-state/src/duplicate-task-ids.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/task-contract/forge/duplicate-task-ids.test.ts"],
       "loopSpec": [],
       "reason": "Shipped fix. Evidence: a forge read failure was reported as a duplicate-task-id condition; the process around task numbering, not the loop, produced the duplicate. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
@@ -3184,7 +3184,7 @@
           "symbol": "renderReviewerDispatchPrompt"
         },
         {
-          "path": "packages/aeg-core/src/review-policy.ts",
+          "path": "harness/processes/vinaya-strict/tools/task-contract/review-policy.ts",
           "symbol": "blockingSeverities"
         }
       ],
@@ -3245,7 +3245,7 @@
           "symbol": "validateIssueContent"
         },
         {
-          "path": "packages/aeg-core/src/issue-validation.ts",
+          "path": "harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts",
           "symbol": "checkProjectsRegistered"
         }
       ],
@@ -3283,7 +3283,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/issue-validation.ts",
+          "path": "harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts",
           "symbol": "checkDocumentationReadable"
         }
       ],
@@ -3306,7 +3306,7 @@
           "symbol": "validateIssueContent"
         },
         {
-          "path": "packages/aeg-core/src/issue-validation.ts",
+          "path": "harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts",
           "symbol": "checkConflictCompleteness"
         }
       ],
@@ -3427,7 +3427,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/issue-validation.ts",
+          "path": "harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts",
           "symbol": "checkIssueRationale"
         }
       ],
@@ -3464,7 +3464,7 @@
       "scenarios": ["invalid-reviews"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/review-policy.ts",
+          "path": "harness/processes/vinaya-strict/tools/task-contract/review-policy.ts",
           "symbol": "SECURITY_SEVERITY_ORDER"
         }
       ],
@@ -4004,7 +4004,7 @@
       "id": "DEF-29",
       "summary": "Two task Issues sharing one task number made the forge query fail with a duplicate error that hid the real forge error; a query error keeps its real identity.",
       "code": {
-        "path": "packages/aeg-forge-state/src/list-tasks.ts"
+        "path": "harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.ts"
       },
       "spec": {
         "path": "apps/cli/specs/loop.md"
@@ -4159,7 +4159,7 @@
       "id": "DEF-40",
       "summary": "The Issue write gate does not check that an in-repo Documentation path exists; every Documentation source resolves.",
       "code": {
-        "path": "packages/aeg-core/src/issue-validation.ts",
+        "path": "harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts",
         "locator": "checkDocumentationReadable"
       },
       "spec": {
@@ -4264,7 +4264,7 @@
       "id": "DEF-47",
       "summary": "The single-fix Issue form requires the planned-task fields (sizing, blast radius, dependency rationale) that no gate grades, and a free-text sentence about code passes every gate; an Issue carries only content a gate checks, and facts about code are premises.",
       "code": {
-        "path": "packages/aeg-core/src/issue-validation.ts",
+        "path": "harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts",
         "locator": "checkIssueRationale"
       },
       "spec": {

@@ -34,21 +34,20 @@
  */
 
 import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
-import {
-  deriveTrancheFromForge,
-  fetchProvenance,
-  fetchTrancheIssuesAsync,
-  indexTrancheMilestonesForSlugAsync,
-  issueMilestonesFromIssues,
-  tasksFromIssues
-} from '@attalabs/aeg-forge-state'
+import { deriveTrancheFromForge } from '../../tools/task-contract/forge/derive-from-forge'
+import { fetchProvenance } from '../forge/fetch-provenance'
+import { fetchTrancheIssuesAsync, tasksFromIssues } from '../../tools/task-contract/forge/list-tasks'
+import { indexTrancheMilestonesForSlugAsync } from '../../tools/task-contract/forge/fetch-milestone'
+import { issueMilestonesFromIssues } from '../forge/list-issue-milestones'
 import type { GhIssue } from '../../../../../harness/kernel/adapters/code-host/github/gh'
-import type { SlugMilestoneIndex, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
+import type { SlugMilestoneIndex, TrancheMilestoneIndex } from '../../tools/task-contract/forge/fetch-milestone'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { fetchForgeFacts, fetchOpenIssuesByLabel, parseRegistry } from '@attalabs/aeg-core'
+import { fetchForgeFacts } from '../../tools/task-contract/forge/fetch-forge-facts'
+import { fetchOpenIssuesByLabel } from '../../tools/task-contract/forge/fetch-open-issues'
+import { parseRegistry } from '../../tools/task-contract/parse-registry'
 import {
   checkA1,
   checkA2,

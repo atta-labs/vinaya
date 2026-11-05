@@ -17,18 +17,19 @@ import {
   CODE_REVIEW_SEVERITY_ORDER,
   classifyFinding,
   type DeferralReason,
-  extractCodeReviewVerdict,
-  extractSecurityReviewVerdict,
   type FindingDeferralContext,
-  globCoversPath,
   isProseLocation,
-  type IssueSurface,
-  type Objective,
-  type ReviewInputManifest,
   SECURITY_SEVERITY_ORDER,
-  type ReviewPolicy,
-  type VerdictObservation
-} from '@attalabs/aeg-core'
+  type ReviewPolicy
+} from '../../../../tools/task-contract/review-policy'
+import {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict
+} from '../../../../tools/task-contract/verdict-extraction'
+import { globCoversPath, type IssueSurface } from '../../../../tools/task-contract/issue-validation'
+import type { Objective } from '../../../../tools/task-contract/objectives'
+import type { ReviewInputManifest } from '../../../../tools/task-contract/review-input-manifest'
+import type { VerdictObservation } from '@attalabs/aeg-core'
 import {
   defaultControlStoreDeps,
   type ManifestInput,

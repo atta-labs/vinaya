@@ -4,14 +4,9 @@ import { MemorySaver } from '@langchain/langgraph'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parse } from 'yaml'
-import {
-  assessRound,
-  buildReviewInputManifest,
-  DEFAULT_REVIEW_POLICY,
-  initialLoopState,
-  type LoopState,
-  type Observations
-} from '@attalabs/aeg-core'
+import { assessRound, initialLoopState, type LoopState, type Observations } from '@attalabs/aeg-core'
+import { buildReviewInputManifest } from '../tools/task-contract/review-input-manifest'
+import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import { buildHeader } from '../../../kernel/log/envelope'
 import { DevReviewLoopEventSchema, HandoffEventSchema, RoleAttemptEventSchema } from '../../../kernel/log/schema'
 import { createRunControl, type RunOutcome, type SpawnedProcessLike } from '@atta/executor-agent-spawn'

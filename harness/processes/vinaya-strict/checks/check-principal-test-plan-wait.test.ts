@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { renderLiveRecordBlock } from '@attalabs/aeg-core'
+import { renderLiveRecordBlock } from '../tools/task-contract/live-record'
 import { buildPrincipalTestPlanWaitErrors, runPrincipalTestPlanWait } from './bin/check-principal-test-plan-wait'
 import type { LiveCheckDeps } from './frozen-brief'
 

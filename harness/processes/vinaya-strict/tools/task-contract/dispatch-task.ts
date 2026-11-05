@@ -30,15 +30,11 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  AEG_BRIEF_V1_MARKER,
-  briefHash,
-  briefMarkerFor,
-  isPrincipal,
-  parseIssueSurface,
-  parseRationaleFields,
-  resolveNewestFrozenBrief
-} from '@attalabs/aeg-core'
+import { AEG_BRIEF_V1_MARKER, briefMarkerFor, resolveNewestFrozenBrief } from './brief-validation'
+import { briefHash } from './review-input-manifest'
+import { isPrincipal } from './waiver-label'
+import { parseIssueSurface } from './issue-validation'
+import { parseRationaleFields } from './brief-render'
 import { decideIssueAssignment } from '../../../../kernel/adapters/tracker/github-issues/issue-assignment'
 import {
   dispatchRole,
@@ -52,7 +48,8 @@ import { collectTaskIssueErrors, currentGhLogin, postMarkedComment } from './for
 import { isForgeReadOversize, readIssueComments } from '../../../../kernel/adapters/code-host/github/forge-read.js'
 import { emitCheckError } from '../../../../kernel/gates/checks/contract'
 
-export { AEG_BRIEF_V1_MARKER, briefHash, contentAfterTwoLines } from '@attalabs/aeg-core'
+export { AEG_BRIEF_V1_MARKER, contentAfterTwoLines } from './brief-validation'
+export { briefHash } from './review-input-manifest'
 
 /**
  * The coding-agent vendor `--agent` names — distinct from `agent-vendors.ts`'s

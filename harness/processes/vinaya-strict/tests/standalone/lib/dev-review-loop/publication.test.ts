@@ -15,18 +15,22 @@
 import { describe, expect, it } from 'vitest'
 import {
   briefHash,
-  consequentialFindings,
   policyDigest,
+  type ReviewInputManifest
+} from '../../../../tools/task-contract/review-input-manifest'
+import {
+  consequentialFindings,
   DEFAULT_REVIEW_POLICY,
   evaluateCodeReview,
   evaluateSecurityReview,
-  extractCodeReviewVerdict,
-  extractSecurityReviewVerdict,
-  type ReviewInputManifest,
   type ReviewPolicy
-} from '@attalabs/aeg-core'
+} from '../../../../tools/task-contract/review-policy'
+import {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict
+} from '../../../../tools/task-contract/verdict-extraction'
 import { checkReviewGate } from '../../../../tools/review-gate'
-import type { VerdictExtraction } from '@attalabs/aeg-core'
+import type { VerdictExtraction } from '../../../../tools/task-contract/verdict-extraction'
 import {
   bindingOfPosted,
   publicationComment,

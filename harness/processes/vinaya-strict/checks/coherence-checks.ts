@@ -6,7 +6,8 @@
  * topology are injected by the caller (`bin/verify-coherence.ts`, the I/O shim).
  */
 
-import { parseRationaleDeps, trancheLabel, label } from '@attalabs/aeg-forge-state'
+import { parseRationaleDeps } from '../tools/task-contract/forge/parse-rationale-deps'
+import { trancheLabel, label } from '../tools/task-contract/forge/labels'
 import { anchoredRegion, stripCode } from '../../../kernel/gates/checks/anchored-region'
 import {
   checkIssueObjectives,
@@ -18,12 +19,12 @@ import {
   isTaskIssueLabelSet,
   parseIssueSurface,
   type TaskSurfaceFacts
-} from '../../../../packages/aeg-core/src/issue-validation'
-import { parseTaskBranchIdentity } from '../../../../packages/aeg-core/src/task-branch-identity'
-import { isPrincipal } from '../../../../packages/aeg-core/src/waiver-label'
-import type { ForgeIssue, TaskIssueRef } from '@attalabs/aeg-types'
+} from '../tools/task-contract/issue-validation'
+import { parseTaskBranchIdentity } from '../tools/task-contract/task-branch-identity'
+import { isPrincipal } from '../tools/task-contract/waiver-label'
+import type { ForgeIssue, TaskIssueRef } from '../tools/task-contract/tranche-types'
 import type { GhIssue } from '../../../kernel/adapters/code-host/github/gh'
-import type { ForgeFacts, Tranche, Task } from '../../../../packages/aeg-core/src/types'
+import type { ForgeFacts, Tranche, Task } from '../tools/task-contract/types'
 
 // ---------- grandfather cutoff -----------------------------------------------
 

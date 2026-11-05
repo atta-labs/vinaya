@@ -20,7 +20,7 @@ import { parseChangedLineRanges } from '../../../../harness/kernel/connectors/gi
  * `Judged head:`) is rendered by this command's own code from validated
  * enum/sha inputs, never from a caller-supplied string.
  *
- * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
  * Before any post reaches the forge, `checkRenderedComment` runs the exact
@@ -84,28 +84,34 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   briefHash,
+  policyDigest as reviewPolicyDigest
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/review-input-manifest'
+import {
   CODE_REVIEW_SEVERITY_ORDER,
   codeReviewBlockingSeverities,
   consequentialFindings,
   evaluateCodeReview,
   evaluateSecurityReview,
+  type ReviewPolicy,
+  SECURITY_SEVERITY_ORDER,
+  securityBlockingSeverities
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/review-policy'
+import {
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
+  parseFindingState,
+  type VerdictExtraction
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/verdict-extraction'
+import {
   isIssueNotFoundError,
-  isPrincipal,
-  newestPrincipalRulingOrdinal,
   type Objective,
   objectivesOf,
   objectivesVersion,
-  parseFindingState,
-  policyDigest as reviewPolicyDigest,
-  resolveNewestFrozenBrief,
-  type ReviewPolicy,
-  resolveObjectivesSource,
-  SECURITY_SEVERITY_ORDER,
-  securityBlockingSeverities,
-  type VerdictExtraction
-} from '@attalabs/aeg-core'
+  resolveObjectivesSource
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/objectives'
+import { isPrincipal } from '../../../../harness/processes/vinaya-strict/tools/task-contract/waiver-label'
+import { newestPrincipalRulingOrdinal } from '../../../../harness/processes/vinaya-strict/tools/task-contract/ruling-ordinal'
+import { resolveNewestFrozenBrief } from '../../../../harness/processes/vinaya-strict/tools/task-contract/brief-validation'
 import type { ReviewGateComment } from '../../../../harness/processes/vinaya-strict/tools/review-gate'
 import { extractIssue } from '../../../../harness/kernel/adapters/code-host/github/extract-issue'
 import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolveReviewPolicy } from '../lib/config'
@@ -398,7 +404,9 @@ export type CodeReviewVerdict = 'APPROVE' | 'REQUEST_CHANGES'
 
 export type CodeReviewInput = TokensInput & {
   manifestVersion?: 2
-  pauseBoundRuling?: import('@attalabs/aeg-core').PauseBoundRuling | null
+  pauseBoundRuling?:
+    | import('../../../../harness/processes/vinaya-strict/tools/task-contract/review-input-manifest').PauseBoundRuling
+    | null
   headSha: string
   verdict: CodeReviewVerdict
   briefConformance: string
@@ -497,7 +505,7 @@ export function renderCodeReviewComment(input: CodeReviewInput): string {
     )
   }
   if (input.scopeEvidence !== null) {
-    // AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+    // AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
     // Directly below the verdict block, per `reviewer.md`'s own evidence
     // rule — safe as free multi-line text now that the gate's extractors
     // read only a comment's first five lines (that same ruling,
@@ -529,7 +537,9 @@ export type SecurityVerdict = 'PASS' | 'FAIL'
 
 export type SecurityInput = TokensInput & {
   manifestVersion?: 2
-  pauseBoundRuling?: import('@attalabs/aeg-core').PauseBoundRuling | null
+  pauseBoundRuling?:
+    | import('../../../../harness/processes/vinaya-strict/tools/task-contract/review-input-manifest').PauseBoundRuling
+    | null
   headSha: string
   verdict: SecurityVerdict
   findings: readonly Finding[]
@@ -690,7 +700,7 @@ export function renderSecurityComment(input: SecurityInput): string {
 // --- pre-render check ---------------------------------------------------------
 
 /**
- * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
  * A ruling set this window, later widened from three to five lines:
@@ -792,7 +802,9 @@ export function isEscalationClass(value: string): value is EscalationClass {
 
 export type EscalationInput = TokensInput & {
   manifestVersion?: 2
-  pauseBoundRuling?: import('@attalabs/aeg-core').PauseBoundRuling | null
+  pauseBoundRuling?:
+    | import('../../../../harness/processes/vinaya-strict/tools/task-contract/review-input-manifest').PauseBoundRuling
+    | null
   headSha: string
   escalationClass: EscalationClass
   summary: string

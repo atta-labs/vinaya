@@ -195,7 +195,7 @@ const PATTERN_EXEMPT: Record<string, string[]> = {
   'decisions-legacy': [
     'harness/processes/vinaya-strict/tools/file-classify.ts',
     'harness/processes/vinaya-strict/tools/file-classify.test.ts',
-    'packages/aeg-core/src/pr-tier.test.ts',
+    'harness/processes/vinaya-strict/tools/task-contract/pr-tier.test.ts',
     // Legitimate archive-index pointers ("see X for history"), not claims that
     // the frozen archive is a live/writable artifact (task-729 sweep).
     'docs-index.md',
@@ -270,7 +270,7 @@ const EXEMPT = [
  * The scope `RETIRED_IN_PRODUCT` checks against.
  *
  * Repo-wide (`['.']`), not an enumerated adopter-surface list. It used to be
- * a 7-path array (`aeg-root`, `packages/aeg-core`, `packages/aeg-forge-state`,
+ * a 7-path array (`aeg-root`, `packages/aeg-core`, `harness/processes/vinaya-strict/tools/task-contract/forge`,
  * `apps/vinaya`, `.vinaya`, and 2 of 22 `.claude/skills`) — but an enumerated
  * list has the exact blind-spot shape that let a `D-###` citation sit
  * unwatched in root `CLAUDE.md` and a dangling reference survive a real
@@ -288,7 +288,7 @@ const PRODUCT = ['.']
  * `PRODUCT` above: an enumerated surface has the exact blind-spot shape that
  * lets a new path go unwatched, and it drifted concretely here. The prior
  * 8-path list (`.aeg`, `aeg-root`, `.claude`, `.github`, `.vinaya`,
- * `packages/aeg-core`, `apps/vinaya`, `packages/aeg-forge-state`) named three
+ * `packages/aeg-core`, `apps/vinaya`, `harness/processes/vinaya-strict/tools/task-contract/forge`) named three
  * paths this repo doesn't have (`.aeg`, `.claude`, `apps/vinaya` — leftovers
  * from the attalabs layout this suite was copied from) and one tool's own
  * directory (`.claude`) that has no business in an agent-agnostic product's

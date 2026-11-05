@@ -1,0 +1,397 @@
+/**
+ * Public entry point for the local GitHub read adapter.
+ *
+ * Given a list of tasks for a tranche, return a `Map<TaskId, ForgeFacts>`
+ * matching the `ForgeFacts` contract (`@attalabs/aeg-types`). One batched GraphQL
+ * query covers all tasks (issue + ref + latest PR per task, aliased) —
+ * rate-limit-friendly and avoids aggregating REST `/reviews` for
+ * `reviewDecision`.
+ *
+ * Read-only, always. No writes, no labels, no comments.
+ *
+ * Graceful degradation contract:
+ *   - No token discoverable → returns `{ facts: empty, unavailable: true }`.
+ *   - Network error / 401 / 403 / 5xx → same.
+ *   - Tasks with no Issue number (`null`) are omitted from the query and the
+ *     map; `deriveTranche` treats absent entries as `todo`.
+ *
+ * SERVER-ONLY. Pulls `node:child_process` transitively via
+ * `resolveGithubToken`.
+ *
+ * Lives in `@attalabs/aeg-forge-state`, not `@attalabs/aeg-core` (an
+ * aeg-core-purity fix) — `@attalabs/aeg-core/src` is zero-I/O and this
+ * module performs `@octokit/graphql` I/O. Re-exported from `@attalabs/aeg-core`
+ * for every existing call site that imports it from there.
+ */
+
+import { graphql } from '@octokit/graphql'
+import type {
+  FetchForgeFactsInput,
+  ForgeFacts,
+  ForgeFactsSnapshot,
+  PrRef,
+  RawTaskFacts,
+  TaskRef
+} from '../tranche-types'
+import { resolveGithubToken } from '../../../../../kernel/adapters/code-host/github/github-token'
+import { trancheLabel } from './labels'
+import { mapForgeFacts } from './map-forge-facts'
+
+/** Branch ref convention: `task/<tranche>/<id>` (tranche-model.md). */
+export function buildBranchName(tranche: string, taskId: string): string {
+  return `task/${tranche}/${taskId}`
+}
+
+/**
+ * Discover tranche task refs from the forge by querying Issues labeled
+ * `vinaya/tranche:<slug>`. Returns an empty array when:
+ *   - No token is available.
+ *   - The label has no issues (e.g. archived tranches that pre-date the label
+ *     convention).
+ *   - Any network/API error occurs.
+ *
+ * Callers use this to resolve `#TBD` issue numbers in the topology file;
+ * the result is merged with topology refs by the caller's own snapshot logic.
+ */
+export async function fetchForgeTasksByLabel(input: {
+  owner: string
+  repo: string
+  trancheSlug: string
+  token?: string
+}): Promise<Array<{ id: string; issue: number }>> {
+  const token = await resolveGithubToken(input.token)
+  if (!token) return []
+
+  const client = graphql.defaults({ headers: { authorization: `bearer ${token}` } })
+
+  let response: LabelIssuesResponse | null
+  try {
+    response = await client<LabelIssuesResponse>(LABEL_ISSUES_QUERY, {
+      owner: input.owner,
+      repo: input.repo,
+      label: trancheLabel(input.trancheSlug)
+    })
+  } catch {
+    response = null
+  }
+
+  const refs: Array<{ id: string; issue: number }> = []
+  for (const node of response?.repository?.issues?.nodes ?? []) {
+    const taskId = parseTaskIdFromTitle(node.title, input.trancheSlug)
+    if (taskId === null) continue
+    refs.push({ id: taskId, issue: node.number })
+  }
+  return refs
+}
+
+const LABEL_ISSUES_QUERY = `
+  query TrancheIssues($owner: String!, $repo: String!, $label: String!) {
+    repository(owner: $owner, name: $repo) {
+      issues(first: 50, labels: [$label], states: [OPEN, CLOSED]) {
+        nodes {
+          number
+          title
+        }
+      }
+    }
+  }
+`
+
+type LabelIssuesResponse = {
+  repository: {
+    issues: { nodes: Array<{ number: number; title: string }> }
+  } | null
+}
+
+/**
+ * Parse the task ID from the AEG issue title convention:
+ *   `[<tranche-slug>] <task-id> — <title>`
+ *
+ * Returns `null` for titles that do not follow the convention.
+ */
+function parseTaskIdFromTitle(title: string, trancheSlug: string): string | null {
+  const escapedSlug = trancheSlug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = title.match(new RegExp(`^\\[${escapedSlug}\\]\\s+(\\S+)\\s+[—-]`))
+  return match?.[1] ?? null
+}
+
+/** Facts keyed by Issue number — the one key two tasks can never share. */
+export type ForgeFactsByIssue = {
+  facts: Map<number, ForgeFacts>
+  prRefs: Map<number, PrRef>
+  unavailable: boolean
+  reason?: string
+}
+
+/**
+ * Same batched read as `fetchForgeFacts`, but every result is keyed by Issue
+ * number, so two Issues carrying one task number (a re-cut task: a closed
+ * not-planned Issue beside its open replacement) stay distinct. A failed query
+ * reports `unavailable: true` with its own `reason`.
+ */
+export async function fetchForgeFactsByIssue(input: FetchForgeFactsInput): Promise<ForgeFactsByIssue> {
+  const token = await resolveGithubToken(input.token)
+  if (!token) {
+    return {
+      facts: new Map(),
+      prRefs: new Map(),
+      unavailable: true,
+      reason: 'No GitHub token available (set GITHUB_TOKEN/GH_TOKEN or `gh auth login`).'
+    }
+  }
+
+  // One sub-query per Issue: a repeated Issue number would repeat an alias.
+  const seen = new Set<number>()
+  const queriedTasks = input.tasks.filter((t): t is TaskRef & { issue: number } => {
+    if (t.issue === null || seen.has(t.issue)) return false
+    seen.add(t.issue)
+    return true
+  })
+  if (queriedTasks.length === 0) {
+    return { facts: new Map(), prRefs: new Map(), unavailable: false }
+  }
+
+  const client = graphql.defaults({ headers: { authorization: `bearer ${token}` } })
+
+  const query = buildBatchQuery(input.tranche, queriedTasks)
+  let response: BatchResponse
+  try {
+    response = await client<BatchResponse>(query, { owner: input.owner, repo: input.repo })
+  } catch (err) {
+    return {
+      facts: new Map(),
+      prRefs: new Map(),
+      unavailable: true,
+      reason: `GitHub query failed: ${describeError(err)}`
+    }
+  }
+
+  const facts = new Map<number, ForgeFacts>()
+  const prRefs = new Map<number, PrRef>()
+  if (!response.repository) {
+    return {
+      facts,
+      prRefs,
+      unavailable: true,
+      reason: `Repository ${input.owner}/${input.repo} not visible to this token.`
+    }
+  }
+
+  for (const task of queriedTasks) {
+    const raw = extractRawFromResponse(response.repository, aliasFor(task.issue))
+    const mapped = mapForgeFacts(raw)
+    if (mapped) facts.set(task.issue, mapped)
+    // A ClosedEvent closer can be a Commit, in which case the `... on
+    // PullRequest` fragment yields an empty object — guard on `number`.
+    const pr = raw.pullRequest
+    if (pr && typeof pr.number === 'number' && typeof pr.url === 'string') {
+      prRefs.set(task.issue, { number: pr.number, url: pr.url, state: pr.state })
+    }
+  }
+
+  return { facts, prRefs, unavailable: false }
+}
+
+export async function fetchForgeFacts(input: FetchForgeFactsInput): Promise<ForgeFactsSnapshot> {
+  const byIssue = await fetchForgeFactsByIssue(input)
+  if (byIssue.unavailable) {
+    return { facts: new Map(), prRefs: new Map(), unavailable: true, reason: byIssue.reason }
+  }
+
+  // Map back to task ids. Where several Issues share a task id, the open one
+  // wins, then the highest Issue number (the latest re-cut).
+  const facts = new Map<string, ForgeFacts>()
+  const prRefs = new Map<string, PrRef>()
+  const winner = new Map<string, number>()
+  for (const task of input.tasks) {
+    if (task.issue === null) continue
+    const current = winner.get(task.id)
+    if (current === undefined || outranks(byIssue.facts, task.issue, current)) winner.set(task.id, task.issue)
+  }
+  for (const [taskId, issue] of winner) {
+    const f = byIssue.facts.get(issue)
+    if (f) facts.set(taskId, f)
+    const pr = byIssue.prRefs.get(issue)
+    if (pr) prRefs.set(taskId, pr)
+  }
+  return { facts, prRefs, unavailable: false }
+}
+
+function outranks(facts: Map<number, ForgeFacts>, candidate: number, current: number): boolean {
+  const candidateOpen = facts.get(candidate)?.issueState === 'open'
+  const currentOpen = facts.get(current)?.issueState === 'open'
+  if (candidateOpen !== currentOpen) return candidateOpen
+  return candidate > current
+}
+
+// ---------- internal: GraphQL query construction ----------------------------
+
+/**
+ * Build one batched GraphQL query with three aliased sub-queries per Issue:
+ *   <alias>_issue   — issue.state, assignees count, labels, closing PR via timelineItems
+ *   <alias>_ref     — ref existence for refs/heads/task/<tranche>/<id>
+ *   <alias>_prs     — latest PR with that head branch (fallback when no closing PR)
+ *
+ * The issue sub-query includes timelineItems(CLOSED_EVENT) to surface the PR
+ * that actually closed the issue — this is the primary source for prState/merged.
+ * It queries `last: 1`, not `first: 1`: an issue closed once (e.g. manually,
+ * `closer: null`), reopened, then closed again by a real merged PR has two
+ * ClosedEvents, and only the last one reflects reality (confirmed live as a
+ * real regression). The branch-based _prs query is kept as a fallback for
+ * in-flight tasks whose PR is on the conventionally-named branch but the
+ * issue is still open.
+ *
+ * The same ClosedEvent node also carries `actor { login }` — the GitHub user
+ * who performed the close, independent of `closer` (which is null on a
+ * manual close). This is the sole anchor for recognizing a hand-closed
+ * dependency as a resolved one; fetched in
+ * the same batched query rather than a second round-trip per task, same
+ * discipline as every other fact here.
+ *
+ * Costs ~3 nodes per task. For 8 tasks that's ~24 nodes / 1 HTTP call;
+ * comfortably under GitHub's per-hour points budget (default 5000).
+ */
+function buildBatchQuery(tranche: string, tasks: Array<TaskRef & { issue: number }>): string {
+  const perTask = tasks
+    .map((task) => {
+      const a = aliasFor(task.issue)
+      const branch = buildBranchName(tranche, task.id)
+      // String interpolation here is safe because aliases pass `aliasFor`
+      // (alphanum + underscore only) and the branch is escaped via JSON.stringify.
+      return `
+    ${a}_issue: issue(number: ${task.issue}) {
+      state
+      stateReason
+      closedAt
+      assignees(first: 1) { totalCount }
+      labels(first: 50) { nodes { name } }
+      timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) {
+        nodes {
+          ... on ClosedEvent {
+            actor { login }
+            closer {
+              ... on PullRequest {
+                number
+                url
+                state
+                reviewDecision
+                mergedAt
+              }
+            }
+          }
+        }
+      }
+    }
+    ${a}_ref: ref(qualifiedName: ${JSON.stringify(`refs/heads/${branch}`)}) {
+      name
+    }
+    ${a}_prs: pullRequests(
+      first: 1,
+      headRefName: ${JSON.stringify(branch)},
+      orderBy: { field: CREATED_AT, direction: DESC }
+    ) {
+      nodes { number url state reviewDecision mergedAt }
+    }`
+    })
+    .join('')
+
+  return `query ForgeFacts($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {${perTask}
+  }
+}`
+}
+
+/** Stable alias suffix by Issue number: `1065` → `i_1065`. An Issue number is
+ * unique where a task number is not, so two tasks can never share an alias. */
+function aliasFor(issue: number): string {
+  return `i_${issue}`
+}
+
+type PrCloserNode = {
+  number: number
+  url: string
+  state: 'OPEN' | 'CLOSED' | 'MERGED'
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null
+  mergedAt: string | null
+} | null
+
+type IssueNode = {
+  state: 'OPEN' | 'CLOSED'
+  /** GitHub's native close reason. `null` while the issue is open. */
+  stateReason: 'COMPLETED' | 'NOT_PLANNED' | 'REOPENED' | null
+  closedAt: string | null
+  assignees: { totalCount: number }
+  labels: { nodes: Array<{ name: string }> }
+  /**
+   * Last CLOSED_EVENT (chronologically) — the PR (or commit) that actually
+   * closed the issue, if any. Using `last: 1` (not `first: 1`) matters: an
+   * issue can be closed, reopened, then closed again by a real merged PR —
+   * `first: 1` would return the stale original ClosedEvent (e.g. `closer:
+   * null` from a manual close) instead of the real one. GitHub's GraphQL
+   * connections preserve chronological (ascending) order regardless of
+   * `first`/`last`, so `last: 1`'s single result still lands at `nodes[0]`.
+   */
+  timelineItems: {
+    nodes: Array<{ closer: PrCloserNode; actor: { login: string } | null }>
+  }
+} | null
+
+type RefNode = { name: string } | null
+
+type PrsNode = {
+  nodes: Array<{
+    number: number
+    url: string
+    state: 'OPEN' | 'CLOSED' | 'MERGED'
+    reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null
+    mergedAt: string | null
+  }>
+}
+
+type BatchResponse = {
+  repository:
+    | (Record<string, IssueNode | RefNode | PrsNode> & {
+        // The dynamic aliased fields land here; this index signature keeps the
+        // type loose without resorting to `any`.
+      })
+    | null
+}
+
+function extractRawFromResponse(repository: NonNullable<BatchResponse['repository']>, alias: string): RawTaskFacts {
+  const issue = repository[`${alias}_issue`] as IssueNode | undefined
+  const ref = repository[`${alias}_ref`] as RefNode | undefined
+  const prs = repository[`${alias}_prs`] as PrsNode | undefined
+
+  // Prefer the PR that actually closed the issue (branch-name-independent).
+  // Fall back to the branch-named PR for in-flight tasks (open issue, PR open
+  // on the task/<tranche>/<id> branch) — and also when a ClosedEvent closer is a
+  // Commit, in which case the `... on PullRequest` fragment yields an empty
+  // object, not `null`. Guard on `number`/`url` (same shape-check `prRefs`
+  // below already applies) so that empty object doesn't win over `branchPr`.
+  const timelineNode = issue?.timelineItems?.nodes?.[0]
+  const rawCloser = timelineNode?.closer ?? null
+  const closingPr =
+    rawCloser && typeof rawCloser.number === 'number' && typeof rawCloser.url === 'string' ? rawCloser : null
+  const branchPr = prs && prs.nodes.length > 0 && prs.nodes[0] ? prs.nodes[0] : null
+
+  return {
+    issue: issue
+      ? {
+          state: issue.state,
+          stateReason: issue.stateReason,
+          closedAt: issue.closedAt ?? null,
+          assigneesCount: issue.assignees.totalCount,
+          labels: issue.labels.nodes.map((n) => n.name)
+        }
+      : null,
+    refExists: Boolean(ref && ref.name.length > 0),
+    pullRequest: closingPr ?? branchPr,
+    closedByActor: timelineNode?.actor?.login ?? null
+  }
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (typeof err === 'string') return err
+  return 'unknown error'
+}

@@ -1,5 +1,5 @@
 import { execFileSync, execSync } from 'node:child_process'
-import * as realForgeState from '@attalabs/aeg-forge-state'
+import * as realForgeState from '../../tools/task-contract/forge/fetch-milestone'
 import { describe, expect, it, mock } from 'bun:test'
 
 /**
@@ -24,7 +24,7 @@ import { describe, expect, it, mock } from 'bun:test'
  */
 
 const actual = { ...realForgeState }
-mock.module('@attalabs/aeg-forge-state', () => {
+mock.module('../../tools/task-contract/forge/fetch-milestone', () => {
   return {
     ...actual,
     indexTrancheMilestonesAsync: async () => {

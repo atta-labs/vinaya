@@ -16,14 +16,14 @@ import {
   renderSecurityComment
 } from '../../../../../../../apps/cli/src/commands/review-post.js'
 import { spliceObjectivesSection } from '../../../../../../../apps/cli/src/commands/issue-objectives.js'
+import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
 import {
-  DEFAULT_REVIEW_POLICY,
   objectivesOf,
   objectivesVersion,
-  policyDigest,
   renderObjectives,
   type Objective
-} from '@attalabs/aeg-core'
+} from '../../../../tools/task-contract/objectives'
+import { policyDigest } from '../../../../tools/task-contract/review-input-manifest'
 import { checkReviewGate } from '../../../../tools/review-gate'
 import { cleanupWorlds, controlDir as ipControlDir, makeWorld, runLoopInProcess } from '../dev-review-loop-harness.js'
 import { DEFAULT_POLICY_DIGEST, tempDirs as sharedTempDirs } from './driver-test-support.js'

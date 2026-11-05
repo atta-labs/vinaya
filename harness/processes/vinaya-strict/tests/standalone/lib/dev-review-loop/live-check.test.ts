@@ -13,13 +13,8 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import {
-  type DevReviewLoopEventInput,
-  type LoopState,
-  carryLiveRecord,
-  readLiveRecord,
-  withLiveRecord
-} from '@attalabs/aeg-core'
+import type { DevReviewLoopEventInput, LoopState } from '@attalabs/aeg-core'
+import { carryLiveRecord, readLiveRecord, withLiveRecord } from '../../../../tools/task-contract/live-record'
 import { evaluateTestPlanGate } from '../../../../checks/test-plan-gate'
 import { buildPrincipalTestPlanWaitErrors } from '../../../../checks/bin/check-principal-test-plan-wait.js'
 import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'

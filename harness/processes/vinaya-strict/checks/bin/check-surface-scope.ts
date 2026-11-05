@@ -59,9 +59,9 @@ import { readFileSync } from 'node:fs'
 import {
   checkSurfaceScope,
   parseIssueSurface,
-  parseTaskBranchIdentity,
   recordedBeyondSurfacePaths
-} from '@attalabs/aeg-core'
+} from '../../tools/task-contract/issue-validation'
+import { parseTaskBranchIdentity } from '../../tools/task-contract/task-branch-identity'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import {
   exitOnIncompleteForgeSnapshot,

@@ -1,4 +1,4 @@
-import { NO_GATE_CUTOVERS } from '@attalabs/aeg-core'
+import { NO_GATE_CUTOVERS } from '../../../../harness/processes/vinaya-strict/tools/task-contract/gate-cutovers'
 import { describe, expect, it } from 'bun:test'
 import { resolveGateCutovers, type VinayaConfig } from '../../src/lib/config'
 

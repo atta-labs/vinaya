@@ -1,8 +1,8 @@
 import { execSync } from 'node:child_process'
 import { describe, it } from 'bun:test'
-import { deriveTrancheFromForge } from '@attalabs/aeg-forge-state'
+import { deriveTrancheFromForge } from '../../tools/task-contract/forge/derive-from-forge'
 import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
-import { parseTranche } from '../../../../../packages/aeg-core/src/index'
+import { parseTranche } from '../../tools/task-contract/parse-tranche'
 
 /**
  * Golden comparison (aeg-forge-state-v1 3b, #437, Part 3): proves the

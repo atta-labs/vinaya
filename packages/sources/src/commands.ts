@@ -162,7 +162,7 @@ export const COMMANDS: readonly Command[] = [
       { flag: '--out <path>', description: 'Write the rendered brief to a file instead of stdout' }
     ],
     details: [
-      // AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:export function renderBrief(facts: BriefFacts, template: string): RenderResult {
+      // AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:export function renderBrief(facts: BriefFacts, template: string): RenderResult {
       // AEG:CLAIM: apps/cli/src/commands/brief.ts contains:refuse(`cannot render — missing fact(s):
       "Reads the task Issue (`vinaya/tranche:<tranche>`-labeled, id `<n>`) and the tree, and fills every section a program can derive: the header `Project:`/`Tier:`/`Closes #N`, the Step 0 worktree line, the dispatch-gate status as the pre-flight line, §4's file list (with consumer packages and a `sha256` premise pin per file, and Out of surface from the Issue's own `## Surface` `out:` list), §6 from the Issue's `## Parts`, §7 from the `.vinaya/doc-owners` derivation, §9 from the Issue's `## Test plan`, §10 from the Issue's `## Stop conditions` plus the rationale's Stop-and-escalate field, and every remaining section from the Issue's eight-field Planner rationale. Refuses — naming the missing section — when it cannot be derived: no Issue, the dispatch gate not clear, a `--surfaces` glob matching no tracked file, or the Issue missing/malformed `## Surface`/`## Parts`/`## Test plan`/`## Stop conditions` — never a bracketed placeholder.",
       'Never writes under `aeg-root/` or to the Issue — a brief is pasted to the Developer, never committed. Reads `aeg-root/templates/brief-template.md` at run time for its one fixed sentence and the standing autonomy clause; every other byte is generated from the forge/tree facts.'
@@ -176,7 +176,7 @@ export const COMMANDS: readonly Command[] = [
       'Deprecated — render, pin, and post the brief on the Issue as the frozen original; start the developer',
     flags: [{ flag: '--agent <claude|codex>', description: 'Start the developer through dispatchRole once posted' }],
     details: [
-      // AEG:CLAIM: packages/aeg-core/src/brief-validation.ts contains:export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
+      // AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts contains:export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
       "Renders the brief from the Issue and the tree (the same assembly `brief render` uses) and posts it once as an Issue comment whose first line is `<!-- aeg:brief:v1 -->` and whose second line is `Brief hash: <sha256>` — the hash covers only the body below those two lines, so any reader recomputes it. Refuses outright, naming the existing comment's URL, when a `v1` comment already exists on the Issue — the brief is frozen by design, never overwritten or silently reissued.",
       'With `--agent`, starts the Developer through `dispatchRole` when `apps/cli/src/lib/dispatch.ts` exports it; otherwise prints the rendered brief and the manual dispatch instruction and exits `0` — a soft dependency, never a hard block.',
       'Principal-only, with or without `--agent`: refuses before any render, forge read, or post when the authenticated `gh` identity is not on the Principal allowlist (or cannot be resolved at all) — dispatching is the `todo → in-flight` transition, not a general-purpose comment poster.',
@@ -402,7 +402,7 @@ export const COMMANDS: readonly Command[] = [
       { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
     ],
     details: [
-      // AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+      // AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
       "Refuses before posting when the file's first line reads as an escalation (`ESCALATE:`), or when the file carries verdict grammar anywhere `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` would treat as a candidate — a `VERDICT:` line past the extractor's own first-five-line window still counts, since the whole-body candidate test is what disqualifies the file, not merely a clean read.",
       'Marker numbers (`<!-- aeg:principal:ruling:<pr>-<k> -->`) are counted on the forge at post time from `gh pr view --json comments`, never derived from a local file — two rulings racing to the same number are a known, undocumented-lock case.'
     ],
@@ -654,7 +654,7 @@ export const COMMANDS: readonly Command[] = [
       "Every structural line (`VERDICT:`, `Judged head:`) is rendered from this command's own validated enum/sha inputs — never from a caller-supplied string — so a Reviewer's free-typed prose can no longer produce a shape the merge gate's line-anchored regex fails to see.",
       "The verdict is derived, not typed: a BLOCKER (or CRITICAL/HIGH) finding forces REQUEST_CHANGES/FAIL and its absence forces APPROVE/PASS, before posting anything — an explicit `--verdict` that disagrees is refused naming the derived value. When a same-role verdict comment already exists on the PR, a new findings file must carry every prior id with a state and no non-blocking finding outside the diff since that comment's judged head, or the post is refused.",
       "Renders an `OBJECTIVES:` block (one `O<n>: MET | NOT MET — <evidence>` line per objective) after `SPEC CONFORMANCE:`/before `CONFIG SCAN:`, and an `Objectives version:` line at line 5 — resolved from the closed Issue's `## Objectives` list, or the PR body's own section when it closes none. A clean verdict (`APPROVE`/`PASS`) is refused alongside any `NOT MET`; an Issue below the objectives cutover renders neither line at all, matching the merge gate's own skip.",
-      // AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+      // AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
       // AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
       // AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
       "Before the post ever reaches the forge, runs the exact `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` functions `checkReviewGate` calls over its own rendered text and refuses (exit 2) unless exactly the intended verdict extracts and the other role extracts none — an escalation requires both to extract none. Both extractors read only a comment's first five lines; a code-review or security render's caller-supplied fields never open one of those lines, but an escalation's `--summary` can (pre-cutover, it becomes line 5 unprefixed) — this pre-post re-parse, not the render's construction, is what catches that case before it ever reaches the forge.",
@@ -696,7 +696,7 @@ export const COMMANDS: readonly Command[] = [
       }
     ],
     details: [
-      'Resolves the Claude Code collection adapter (`resolveMeteringCapability`, `summarizeTranscript`, `formatTokensLine`) from the INSTALLED `@attalabs/aeg-core` package, never by a repo-relative path — the fix for `packages/aeg-core/bin/report-tokens.ts` not existing in an adopter repo with no local `packages/`.',
+      'Resolves the Claude Code collection adapter (`resolveMeteringCapability`, `summarizeTranscript`, `formatTokensLine`) from the INSTALLED `@attalabs/aeg-core` package, never by a repo-relative path — the fix for `harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.ts` not existing in an adopter repo with no local `packages/`.',
       "Refuses — never emits a `0/0/—` line — when no transcript resolves, a resolved transcript can't be read, or it summarizes to zero usage records (empty, unparseable, or not yet flushed to disk). Capability is probed by actually attempting resolution, never declared from the host being Claude Code."
     ],
     status: 'shipped'

@@ -31,6 +31,41 @@ const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
 const SOURCE_ROOTS = [
   join(REPO_ROOT, 'apps', 'cli', 'src'),
   join(REPO_ROOT, 'packages', 'aeg-core', 'src'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/brief-render.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/consumer-enumeration.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/derive-section7.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/derive-tranche.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/milestone-validation.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/objectives.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/parse-registry.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/parse-tranche.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/pr-tier.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/premise-check.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/principals-config.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/protected-paths.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/review-policy.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/review-status.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/ruling-ordinal.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/state-machine-model.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/task-branch-identity.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/test-plan-section.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/waiver-label.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/gate-cutovers.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/live-record.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/objectives-cutover-config.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/state-source.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/types.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pr-report/tokens/parse-ledger.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pr-report/tokens/parse-token-report.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pr-report/tokens/report-tokens.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pr-report/tokens/sum-ledger.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/checks/pr-report-density.ts'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-phase-history.ts'),
   join(REPO_ROOT, 'packages', 'sources', 'src')
 ]
 
@@ -142,6 +177,10 @@ const RETIRED_SEGMENTS: ReadonlyArray<{ segment: string; nowAt: string }> = [
 function sourceFiles(): string[] {
   const out: string[] = []
   const walk = (dir: string): void => {
+    if (statSync(dir).isFile()) {
+      out.push(dir)
+      return
+    }
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry)
       if (statSync(full).isDirectory()) {

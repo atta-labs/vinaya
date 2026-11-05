@@ -260,7 +260,7 @@ function pathFlag(args: string[]): string {
  * A backtick is a different failure from the pipe/newline pair above: it
  * doesn't corrupt the table, it corrupts the *value*. The registry writes
  * paths inside a backtick-wrapped code span, and `parseRegistry`
- * (`packages/aeg-core/src/parse-registry.ts`) strips backticks from every
+ * (`harness/processes/vinaya-strict/tools/task-contract/parse-registry.ts`) strips backticks from every
  * cell on read — that's the registry's own convention, not a bug in the
  * parser. A declared path containing a literal backtick is therefore
  * written verbatim and read back as a different path, silently, with

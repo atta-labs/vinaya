@@ -69,7 +69,7 @@ describe("reassertPrBodyPremise — a real PR's own body (round 1 review, PR #47
     // The reference copy of the brief in the `<details>` block carries its
     // own, different `Premise:` block (three `sha256` pins). If the check
     // read those too, they'd very likely fail (that copy's pin on
-    // `packages/aeg-core/bin/open-pr.ts` describes a file this task's real
+    // `harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts` describes a file this task's real
     // diff never touches the way the brief originally assumed) and this
     // body would never pass.
     expect(LIVE).toContain('<!-- AEG:PREMISE:START -->')

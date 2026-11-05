@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { renderBeyondSurfaceBlock } from '@attalabs/aeg-core'
+import { renderBeyondSurfaceBlock } from '../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
 
 import type { DeveloperTurnResult } from '../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result'
 import {

@@ -101,8 +101,9 @@
  */
 
 import { anchoredRegionBounds } from '../../../kernel/gates/checks/anchored-region'
-import { objectivesSectionBounds, TIER_FIELD } from '@attalabs/aeg-core'
-import { PROJECT_SLUG, unwrapValue } from '@attalabs/aeg-forge-state'
+import { objectivesSectionBounds } from './task-contract/objectives'
+import { TIER_FIELD } from './task-contract/pr-tier'
+import { PROJECT_SLUG, unwrapValue } from './task-contract/forge/list-tasks'
 import { ScanContext } from '../../../kernel/gates/checks/scan-context'
 
 export type BareDigitViolation = { line: number; text: string }

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { checkSurfaceScope, renderBeyondSurfaceBlock } from '@attalabs/aeg-core'
+import { checkSurfaceScope, renderBeyondSurfaceBlock } from '../tools/task-contract/issue-validation'
 import { describe, expect, it } from 'bun:test'
 
 const BIN_PATH = join(import.meta.dir, 'bin', 'check-surface-scope.ts')

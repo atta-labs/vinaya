@@ -6,7 +6,7 @@ import { globToRegex } from '../../../kernel/gates/glob-to-regex'
  */
 
 import { isCodeFile } from './file-classify'
-import { WAIVER_LABEL } from '../../../../packages/aeg-core/src/waiver-label'
+import { WAIVER_LABEL } from './task-contract/waiver-label'
 
 export const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 

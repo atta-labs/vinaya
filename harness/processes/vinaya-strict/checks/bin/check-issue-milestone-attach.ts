@@ -17,7 +17,7 @@
  * `vinaya check --all`, and never on create.
  */
 
-import { checkMilestoneAttach } from '@attalabs/aeg-core'
+import { checkMilestoneAttach } from '../../tools/task-contract/issue-validation'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { readIssueCheckEnv } from '../issue-check-env'
 

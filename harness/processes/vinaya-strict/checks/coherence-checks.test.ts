@@ -24,7 +24,7 @@ import {
   scopeT2ToPlanPr,
   type TaskEntry
 } from './coherence-checks'
-import type { ForgeFacts, Task } from '../../../../packages/aeg-core/src/types'
+import type { ForgeFacts, Task } from '../tools/task-contract/types'
 
 // ---------- fixture helpers ---------------------------------------------------
 

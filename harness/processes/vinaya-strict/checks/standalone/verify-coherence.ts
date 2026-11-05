@@ -31,25 +31,21 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  fetchProvenance,
-  fetchTaskIssueRefs,
-  fetchTrancheIssuesAsync,
-  indexTrancheMilestonesAsync,
-  issueMilestonesFromIssues,
-  trancheFromIssues
-} from '@attalabs/aeg-forge-state'
+import { fetchProvenance } from '../forge/fetch-provenance'
+import { fetchTaskIssueRefs } from '../forge/fetch-task-issue-refs'
+import { fetchTrancheIssuesAsync } from '../../tools/task-contract/forge/list-tasks'
+import { indexTrancheMilestonesAsync } from '../../tools/task-contract/forge/fetch-milestone'
+import { issueMilestonesFromIssues } from '../forge/list-issue-milestones'
+import { trancheFromIssues } from '../../tools/task-contract/forge/derive-from-forge'
 import { resolveGithubToken } from '../../../../kernel/adapters/code-host/github/github-token'
 import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
 import type { GhIssue } from '../../../../kernel/adapters/code-host/github/gh'
-import type { TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
-import type { Tranche } from '@attalabs/aeg-types'
-import {
-  fetchForgeFacts,
-  fetchOpenIssuesByLabel,
-  parseRegistry,
-  parseTranche
-} from '../../../../../packages/aeg-core/src/index'
+import type { TrancheMilestoneIndex } from '../../tools/task-contract/forge/fetch-milestone'
+import type { Tranche } from '../../tools/task-contract/tranche-types'
+import { fetchForgeFacts } from '../../tools/task-contract/forge/fetch-forge-facts'
+import { fetchOpenIssuesByLabel } from '../../tools/task-contract/forge/fetch-open-issues'
+import { parseRegistry } from '../../tools/task-contract/parse-registry'
+import { parseTranche } from '../../tools/task-contract/parse-tranche'
 import {
   checkA1,
   checkA2,
@@ -75,9 +71,9 @@ import { checkManifestValidity } from '../manifest-validity'
 import { DOC_OWNERS_PATH } from '../../tools/doc-owners'
 import { touchesAnyTopology } from '../../tools/single-plan-pr'
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point'
-import type { ForgeFacts } from '../../../../../packages/aeg-core/src/index'
+import type { ForgeFacts } from '../../tools/task-contract/tranche-types'
 import type { CheckResult, TrancheFile, TaskEntry } from '../coherence-checks'
-import { readConfigPrincipals } from '../../../../../packages/aeg-core/src/principals-config'
+import { readConfigPrincipals } from '../../tools/task-contract/principals-config'
 
 const COHERENCE_INVOCATION_CWD = process.cwd()
 const REPO_ROOT = (() => {

@@ -139,7 +139,7 @@ TESTS: [honest | issues listed in findings]
 DOCS: [tier-appropriate | missing items listed in findings]
 ```
 
-<!-- AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
 <!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string { -->
 <!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult { -->
 - **BLOCKER** — wrong behavior, a dishonest test, a promised document that is absent or backwards, a scope violation, or a **spec contradiction**.
@@ -151,7 +151,7 @@ Repository policy derives the verdict from the findings after applying prose cap
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts contains:location: line === null ? 'PR body' -->
 Repository policy decides whether a finding is actionable in this round from its location, the task surface and the round-to-round change. Assign the severity that describes the defect; do not encode actionability by weakening it.
 
-<!-- AEG:CLAIM: packages/aeg-core/src/review-policy.ts contains:export const DEFAULT_MAX_ROUNDS = 3 -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/review-policy.ts contains:export const DEFAULT_MAX_ROUNDS = 3 -->
 <!-- AEG:CLAIM: packages/aeg-core/src/dev-review-loop/assess-round.ts contains:if (obs.round >= state.config.maxRounds) { -->
 A re-review verifies the current state of every prior finding and reassesses the changed artifact rather than trusting a fix claim. For documentation correctness, repeat the repository-wide search and read every match.
 

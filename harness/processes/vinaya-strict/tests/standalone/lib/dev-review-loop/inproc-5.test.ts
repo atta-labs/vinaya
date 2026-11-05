@@ -8,7 +8,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { newestPrincipalRulingOrdinal, recordedBeyondSurfacePaths, withBeyondSurfaceBlock } from '@attalabs/aeg-core'
+import { newestPrincipalRulingOrdinal } from '../../../../tools/task-contract/ruling-ordinal'
+import { recordedBeyondSurfacePaths, withBeyondSurfaceBlock } from '../../../../tools/task-contract/issue-validation'
 import {
   cleanupWorlds,
   controlDir,

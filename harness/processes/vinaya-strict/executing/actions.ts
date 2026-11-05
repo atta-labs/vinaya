@@ -3,20 +3,19 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   assessRound,
-  parseLiveTestPlanItems,
-  readLiveRecord,
   recordDeveloperAttempt,
-  withLiveRecord,
   type Confidence,
   type DevReviewLoopEventInput,
   type LoopState,
   type Observations,
   type PauseReason,
-  type ReviewInputManifest,
   type RoundStats,
   type TaskClock,
   type VerdictObservation
 } from '@attalabs/aeg-core'
+import { parseLiveTestPlanItems } from '../tools/task-contract/issue-validation'
+import { readLiveRecord, withLiveRecord } from '../tools/task-contract/live-record'
+import type { ReviewInputManifest } from '../tools/task-contract/review-input-manifest'
 import type { PostedVerdictBodies } from '../tools/review-gate'
 import type { RoleBinaryConfig, StepNodeResult } from '@atta/executor-agent-spawn'
 import { generateClaudeSettings } from '../../../../harness/kernel/adapters/agents/claude-code/settings'

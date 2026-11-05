@@ -10,9 +10,9 @@ import { basename, dirname, join, resolve } from 'node:path'
 import {
   DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
   DEFAULT_REVIEW_POLICY,
-  objectivesVersion,
   type ReviewPolicy
-} from '@attalabs/aeg-core'
+} from '../../../tools/task-contract/review-policy'
+import { objectivesVersion } from '../../../tools/task-contract/objectives'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../../../harness/kernel/dev-process-socket/loader/load-process'
 import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, useRuntimeDir } from '../../../tests/round-fakes'

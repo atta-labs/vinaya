@@ -18,8 +18,8 @@
  * line per failure, naming the exact task/Issue/PR involved.
  */
 
-import type { PriorTrancheArchivalFact } from '@attalabs/aeg-forge-state'
-import { edgesNameEachOther } from '../../../../packages/aeg-core/src/issue-validation'
+import type { PriorTrancheArchivalFact } from './prior-tranche-archival'
+import { edgesNameEachOther } from './task-contract/issue-validation'
 
 /** The one edge reader both gates use — the write gate's own function, re-exposed so a test can assert identity. */
 export const conflictEdgeReader = edgesNameEachOther
@@ -40,8 +40,8 @@ export function siblingsSharingConflictEdge<S extends ConflictEdgeParty>(
   return siblings.filter((s) => s.ref !== subject.ref && conflictEdgeReader(subject, s))
 }
 
-import type { Task } from '../../../../packages/aeg-core/src/types'
-import { isPrincipal } from '../../../../packages/aeg-core/src/waiver-label'
+import type { Task } from './task-contract/types'
+import { isPrincipal } from './task-contract/waiver-label'
 
 export type DispatchIssueFact = { number: number; state: 'open' | 'closed' } | null
 

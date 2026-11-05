@@ -36,9 +36,10 @@
 
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import { newestPrincipalRulingOrdinal, WAIVER_LABEL_REVIEW } from '../../../../../packages/aeg-core/src/index'
+import { newestPrincipalRulingOrdinal } from '../../tools/task-contract/ruling-ordinal'
+import { WAIVER_LABEL_REVIEW } from '../../tools/task-contract/waiver-label'
 import { checkReviewGate } from '../../tools/review-gate'
-import { readConfigPrincipals } from '../../../../../packages/aeg-core/src/principals-config'
+import { readConfigPrincipals } from '../../tools/task-contract/principals-config'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../../..')
 process.chdir(REPO_ROOT)

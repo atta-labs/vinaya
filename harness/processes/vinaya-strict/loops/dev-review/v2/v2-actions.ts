@@ -40,14 +40,12 @@ import {
 import { readUnpushedWorkDetail } from '../standalone/dev-review-loop/unpushed-work'
 import { spawnSync } from 'node:child_process'
 import { relative, resolve, sep } from 'node:path'
+import { assessRound, type DevReviewLoopEventInput, type PauseReason } from '@attalabs/aeg-core'
 import {
-  assessRound,
   DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
   DEFAULT_REVIEW_POLICY,
-  type DevReviewLoopEventInput,
-  type PauseReason,
   type ReviewPolicy
-} from '@attalabs/aeg-core'
+} from '../../../tools/task-contract/review-policy'
 import { decideApprovalCarry, type PostedVerdictBodies } from '../../../tools/review-gate'
 import { ownPatchIdAt, ownPatchInterdiff } from '../../../../../kernel/connectors/git/patch-id'
 import {

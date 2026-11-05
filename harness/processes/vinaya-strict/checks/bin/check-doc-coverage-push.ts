@@ -47,7 +47,8 @@
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { isWaiverLabelActorVerified, overrideActive, WAIVER_LABEL } from '@attalabs/aeg-core'
+import { isWaiverLabelActorVerified, WAIVER_LABEL } from '../../tools/task-contract/waiver-label'
+import { overrideActive } from '../../tools/task-contract/pr-tier'
 import { DOC_OWNERS_PATH, evaluateC5 } from '../../tools/doc-owners'
 import { fileDiffAgainst } from '../../../../../harness/kernel/connectors/git/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'

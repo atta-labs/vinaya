@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { WAIVER_LABEL } from '@attalabs/aeg-core'
+import { WAIVER_LABEL } from '../tools/task-contract/waiver-label'
 import { type CheckError, CHECK_SCHEMA_VERSION } from '../../../kernel/gates/checks/contract'
 import { EVIDENCE_PLACEHOLDER_TEXT } from './evidence-fresh-logic'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../apps/cli/tests/lib/process-fixture'

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { contentAfterTwoLines } from '../../../../../packages/aeg-core/src/index'
+import { contentAfterTwoLines } from '../../tools/task-contract/brief-validation'
 
 /**
  * `contentAfterTwoLines` is now the ONE promoted `@attalabs/aeg-core` export

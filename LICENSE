@@ -11,8 +11,6 @@ Copyright (C) 2026 Daniel Estevez.
 
    - @attalabs/vinaya            apps/cli/LICENSE
    - @attalabs/aeg-core          packages/aeg-core/LICENSE
-   - @attalabs/aeg-forge-state   packages/aeg-forge-state/LICENSE
-   - @attalabs/aeg-types         packages/aeg-types/LICENSE
    - @attalabs/vinaya-sources    packages/sources/LICENSE
 
    The @attalabs/vinaya tarball also carries the aeg-root/ doctrine and the

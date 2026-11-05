@@ -14,7 +14,10 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { parse } from 'yaml'
-import { LABELS, parseRegistry, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
+import { LABELS } from '../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
+import { parseRegistry } from '../../../harness/processes/vinaya-strict/tools/task-contract/parse-registry'
+import { VERDICT_MARKER_SOURCE } from '../../../harness/processes/vinaya-strict/tools/task-contract/verdict-extraction'
+import { WAIVER_LABEL_REVIEW } from '../../../harness/processes/vinaya-strict/tools/task-contract/waiver-label'
 import { DOC_OWNERS_PATH } from '../../../harness/processes/vinaya-strict/tools/doc-owners'
 import { AGENT_VENDORS, type AgentVendor } from '../../../harness/kernel/adapters/agents/agent-vendors.js'
 import {
@@ -1296,8 +1299,12 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       join(import.meta.dir, '..', '..', '..', 'harness/processes/vinaya-strict/integration/artifacts.ts'),
       'utf-8'
     )
-    expect(generatorSource).toMatch(/import\s*\{[^}]*VERDICT_MARKER_SOURCE[^}]*\}\s*from\s*'@attalabs\/aeg-core'/)
-    expect(generatorSource).toMatch(/import\s*\{[^}]*WAIVER_LABEL_REVIEW[^}]*\}\s*from\s*'@attalabs\/aeg-core'/)
+    expect(generatorSource).toMatch(
+      /import\s*\{[^}]*VERDICT_MARKER_SOURCE[^}]*\}\s*from\s*'\.\.\/tools\/task-contract\/verdict-extraction'/
+    )
+    expect(generatorSource).toMatch(
+      /import\s*\{[^}]*WAIVER_LABEL_REVIEW[^}]*\}\s*from\s*'\.\.\/tools\/task-contract\/waiver-label'/
+    )
     expect(generatorSource).toContain('jqStringEscape(VERDICT_MARKER_SOURCE)')
     expect(generatorSource).toContain('${WAIVER_LABEL_REVIEW}')
 

@@ -1,0 +1,966 @@
+import type { Mock } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { describe, expect, it, mock } from 'bun:test'
+import { createGhMock } from '../../test-support/mock-gh'
+
+mock.module('../../../../../kernel/adapters/code-host/github/gh', () => createGhMock())
+
+const { ghApiGet, ghApiGetAsync, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIssueListByLabelAsync } = await import(
+  '../../../../../kernel/adapters/code-host/github/gh'
+)
+const {
+  findMilestoneForSlug,
+  hasExplicitMilestoneFlag,
+  hasTrancheIntentsSection,
+  indexTrancheMilestonesAsync,
+  indexTrancheMilestonesForSlugAsync,
+  listActiveTrancheSlugs,
+  listArchivedTrancheSlugs,
+  intentGoalForSlug,
+  intentLines,
+  milestoneLifecycleFromTrancheLifecycles,
+  releaseFromDescription,
+  resolveMilestoneAttachTarget,
+  tranchesAttachedToMilestone
+} = await import('./fetch-milestone')
+
+const OWNER = 'daniboomerang'
+const REPO = 'attalabs'
+const FIXTURES = join(__dirname, 'fixtures')
+/** Captured live 2026-07-06 via `gh api repos/daniboomerang/attalabs/milestones?state=all` —
+ * the real, current state: no Milestone exists yet for any active tranche. */
+const emptyMilestones = JSON.parse(readFileSync(join(FIXTURES, 'milestones-empty.json'), 'utf8'))
+
+/** Minimal valid `GhIssue`, state-only — every other field is irrelevant to lifecycle derivation. */
+function issue(state: 'OPEN' | 'CLOSED') {
+  return { number: 1, title: 'x', body: '', state, labels: [], milestone: null }
+}
+
+describe('findMilestoneForSlug', () => {
+  it('returns goal + active lifecycle for an open milestone matching the slug exactly', () => {
+    mocked(ghApiGet).mockReturnValue([
+      { title: 'some-unrelated-slug', description: 'not this one', state: 'open' },
+      { title: 'aeg-forge-state-v1', description: 'Migrate this repo governance state.', state: 'open' }
+    ])
+    mocked(ghIssueListByLabel).mockReturnValue([])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')).toEqual({
+      goal: 'Migrate this repo governance state.',
+      lifecycle: 'active'
+    })
+  })
+
+  it('returns goal + complete lifecycle for a closed milestone with nothing live under its label', () => {
+    mocked(ghApiGet).mockReturnValue([{ title: 'vinaya-cli-v1', description: 'Ship the CLI.', state: 'closed' }])
+    mocked(ghIssueListByLabel).mockReturnValue([])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'vinaya-cli-v1')).toEqual({
+      goal: 'Ship the CLI.',
+      lifecycle: 'complete'
+    })
+  })
+
+  it('treats a missing description as an empty goal', () => {
+    mocked(ghApiGet).mockReturnValue([{ title: 'aeg-forge-state-v1', description: null, state: 'open' }])
+    mocked(ghIssueListByLabel).mockReturnValue([])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')).toEqual({ goal: '', lifecycle: 'active' })
+  })
+
+  it('a legacy Milestone with nothing under its label is trusted as-is, no override', () => {
+    mocked(ghApiGet).mockReturnValue([{ title: 'aeg-forge-state-v1', description: null, state: 'open' }])
+    mocked(ghIssueListByLabel).mockClear()
+    mocked(ghIssueListByLabel).mockReturnValue([])
+
+    const result = findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')
+
+    expect(ghIssueListByLabel).toHaveBeenCalledTimes(1)
+    expect(result?.lifecycle).toBe('active')
+  })
+
+  it('a slug retired via `vinaya milestone adopt` — legacy Milestone closed, real Issues live under the label — reads active from the label, not complete from the stale Milestone', () => {
+    mocked(ghApiGet).mockReturnValue([
+      { title: 'vinaya-agentic-interface-v1', description: 'old goal', state: 'closed' }
+    ])
+    mocked(ghIssueListByLabel).mockReturnValue([issue('OPEN'), issue('CLOSED')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'vinaya-agentic-interface-v1')).toEqual({
+      goal: 'old goal',
+      lifecycle: 'active'
+    })
+  })
+
+  it('a closed legacy Milestone whose label Issues are ALL closed still reads complete — the label branch, not just the Milestone-state branch, must reach the same answer', () => {
+    mocked(ghApiGet).mockReturnValue([{ title: 'finished-v1', description: 'Shipped.', state: 'closed' }])
+    mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED'), issue('CLOSED')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'finished-v1')).toEqual({ goal: 'Shipped.', lifecycle: 'complete' })
+  })
+
+  it('an OPEN legacy Milestone is never overridden by its label, even when the label Issues would otherwise resolve complete — the override is gated on closed, adopt never produces an open+labeled legacy Milestone', () => {
+    mocked(ghApiGet).mockReturnValue([
+      { title: 'aeg-forge-state-v1', description: 'Migrate this repo governance state.', state: 'open' }
+    ])
+    // Stray manual labeling, or any state the real `adopt` write path never
+    // produces — all-closed label Issues under a Milestone that is itself
+    // still open. Without the `state === 'closed'` gate, this would wrongly
+    // flip a genuinely active tranche to `complete`.
+    mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED'), issue('CLOSED')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')).toEqual({
+      goal: 'Migrate this repo governance state.',
+      lifecycle: 'active'
+    })
+  })
+
+  it('derives active from the label’s Issues when no legacy Milestone matches (the real, current fixture — no Milestone exists yet for any active tranche)', () => {
+    mocked(ghApiGet).mockReturnValue(emptyMilestones)
+    mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED'), issue('OPEN')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')).toEqual({ goal: '', lifecycle: 'active' })
+    expect(ghIssueListByLabel).toHaveBeenCalledWith(OWNER, REPO, 'vinaya/tranche:aeg-forge-state-v1')
+  })
+
+  it('derives complete from the label’s Issues when every one is closed and no legacy Milestone matches', () => {
+    mocked(ghApiGet).mockReturnValue(emptyMilestones)
+    mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED'), issue('CLOSED')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')).toEqual({ goal: '', lifecycle: 'complete' })
+  })
+
+  it('derives planned (not complete) when the label carries zero Issues — the at-least-one guard', () => {
+    mocked(ghApiGet).mockReturnValue(emptyMilestones)
+    mocked(ghIssueListByLabel).mockReturnValue([])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'brand-new-slug')).toEqual({ goal: '', lifecycle: 'planned' })
+  })
+
+  it('a Milestone shared by two tranches resolves both correctly from their own labels — neither reads the other', () => {
+    // Neither slug legacy-matches: the shared Milestone is titled something
+    // else entirely (e.g. a sprint name), never either tranche's own slug.
+    mocked(ghApiGet).mockReturnValue([{ title: 'sprint-42', description: 'Q3 sprint', state: 'open' }])
+    mocked(ghIssueListByLabel).mockImplementation((_owner, _repo, label) => {
+      if (label === 'vinaya/tranche:tranche-a') return [issue('OPEN')]
+      if (label === 'vinaya/tranche:tranche-b') return [issue('CLOSED')]
+      throw new Error(`unexpected label ${label}`)
+    })
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'tranche-a')).toEqual({ goal: '', lifecycle: 'active' })
+    expect(findMilestoneForSlug(OWNER, REPO, 'tranche-b')).toEqual({ goal: '', lifecycle: 'complete' })
+  })
+
+  it('a label-derived tranche picks up its goal from the matching intent line in a non-legacy Milestone', () => {
+    const description = [
+      'Ship the milestone model.',
+      '',
+      '### Tranche intents',
+      '- vinaya-milestone-model-v1: A milestone can be created and refused when malformed.'
+    ].join('\n')
+    mocked(ghApiGet).mockReturnValue([{ title: 'sprint-42', description, state: 'open' }])
+    mocked(ghIssueListByLabel).mockReturnValue([issue('OPEN')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'vinaya-milestone-model-v1')).toEqual({
+      goal: 'A milestone can be created and refused when malformed.',
+      lifecycle: 'active'
+    })
+  })
+
+  it('a label with no matching intent line keeps the empty goal, exactly as before', () => {
+    const description = ['Ship something else.', '', '### Tranche intents', '- other-slug: unrelated.'].join('\n')
+    mocked(ghApiGet).mockReturnValue([{ title: 'sprint-42', description, state: 'open' }])
+    mocked(ghIssueListByLabel).mockReturnValue([issue('OPEN')])
+
+    expect(findMilestoneForSlug(OWNER, REPO, 'vinaya-milestone-model-v1')).toEqual({ goal: '', lifecycle: 'active' })
+  })
+})
+
+describe('resolveMilestoneAttachTarget', () => {
+  it('resolves an open legacy Milestone (title equals slug) by its own number + title', () => {
+    const milestones = [{ number: 9, title: 'aeg-review-gate-v1', description: '', state: 'open' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'aeg-review-gate-v1')).toEqual({
+      number: 9,
+      title: 'aeg-review-gate-v1'
+    })
+  })
+
+  it('returns null for a CLOSED legacy Milestone with no successor — never itself a valid --milestone target', () => {
+    const milestones = [{ number: 3, title: 'vinaya-cli-v1', description: '', state: 'closed' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'vinaya-cli-v1')).toBeNull()
+  })
+
+  it('falls through to the intent-declared successor when the legacy match is closed — the `vinaya milestone adopt` shape (milestone-model.md §4), and the exact gap this function exists to close', () => {
+    const successorDescription = [
+      'Ship the Engine.',
+      '',
+      '### Tranche intents',
+      '- vinaya-agentic-interface-v1: Real agent spawn.'
+    ].join('\n')
+    const milestones = [
+      { number: 7, title: 'vinaya-agentic-interface-v1', description: 'old goal', state: 'closed' as const },
+      { number: 13, title: 'Engine', description: successorDescription, state: 'open' as const }
+    ]
+    expect(resolveMilestoneAttachTarget(milestones, 'vinaya-agentic-interface-v1')).toEqual({
+      number: 13,
+      title: 'Engine'
+    })
+  })
+
+  it('resolves an intent-declared Milestone by ITS OWN title — the bug this function exists to fix, since gh resolves --milestone by title, not slug', () => {
+    const description = [
+      'Ship the Engine.',
+      '',
+      '### Tranche intents',
+      '- engine-agent-spawn-v1: Real agent spawn.'
+    ].join('\n')
+    const milestones = [{ number: 64, title: 'Engine', description, state: 'open' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'engine-agent-spawn-v1')).toEqual({ number: 64, title: 'Engine' })
+  })
+
+  it('never matches a CLOSED intent-declaring Milestone', () => {
+    const description = [
+      'Ship the Engine.',
+      '',
+      '### Tranche intents',
+      '- engine-agent-spawn-v1: Real agent spawn.'
+    ].join('\n')
+    const milestones = [{ number: 64, title: 'Engine', description, state: 'closed' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'engine-agent-spawn-v1')).toBeNull()
+  })
+
+  it('prefers the legacy exact-title match over an intent-declared match, when somehow both exist', () => {
+    const description = [
+      'Sprint goal.',
+      '',
+      '### Tranche intents',
+      '- aeg-review-gate-v1: unrelated intent line.'
+    ].join('\n')
+    const milestones = [
+      { number: 1, title: 'sprint-42', description, state: 'open' as const },
+      { number: 9, title: 'aeg-review-gate-v1', description: '', state: 'open' as const }
+    ]
+    expect(resolveMilestoneAttachTarget(milestones, 'aeg-review-gate-v1')).toEqual({
+      number: 9,
+      title: 'aeg-review-gate-v1'
+    })
+  })
+
+  it('returns null when nothing — legacy or intent-declared — matches the slug at all', () => {
+    const milestones = [{ number: 1, title: 'sprint-42', description: 'Just a sprint.', state: 'open' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'brand-new-tranche')).toBeNull()
+  })
+
+  it('picks the first OPEN intent-declaring Milestone when more than one somehow declares the same slug', () => {
+    const desc = (s: string) => `### Tranche intents\n- ${s}: intent.`
+    const milestones = [
+      { number: 1, title: 'sprint-41', description: desc('engine-agent-spawn-v1'), state: 'open' as const },
+      { number: 2, title: 'sprint-42', description: desc('engine-agent-spawn-v1'), state: 'open' as const }
+    ]
+    expect(resolveMilestoneAttachTarget(milestones, 'engine-agent-spawn-v1')).toEqual({ number: 1, title: 'sprint-41' })
+  })
+})
+
+describe('hasExplicitMilestoneFlag', () => {
+  it('is true for a bare --milestone flag', () => {
+    expect(hasExplicitMilestoneFlag(['--title', 't', '--milestone', 'x'])).toBe(true)
+  })
+
+  it('is true for the -m short flag', () => {
+    expect(hasExplicitMilestoneFlag(['-m', 'x'])).toBe(true)
+  })
+
+  it('is true for the --milestone=<value> inline-equals form', () => {
+    expect(hasExplicitMilestoneFlag(['--milestone=x'])).toBe(true)
+  })
+
+  it('is false when no milestone flag is present', () => {
+    expect(hasExplicitMilestoneFlag(['--title', 't'])).toBe(false)
+  })
+})
+
+describe('releaseFromDescription', () => {
+  it('returns null when no Release: field exists', () => {
+    expect(releaseFromDescription('A milestone with no version.')).toBeNull()
+  })
+
+  it('reads a bold-inline Release: field', () => {
+    expect(releaseFromDescription('The goal.\n\n**Release:** 1.2.0')).toBe('1.2.0')
+  })
+
+  it('reads a plain Release: field', () => {
+    expect(releaseFromDescription('The goal.\n\nRelease: 1.2.0')).toBe('1.2.0')
+  })
+
+  it('returns null for a malformed version', () => {
+    expect(releaseFromDescription('Release: whenever it ships')).toBeNull()
+  })
+
+  it('never matches inside a fenced code example', () => {
+    const body = ['The goal.', '', '```', 'Release: 1.0.0', '```', ''].join('\n')
+    expect(releaseFromDescription(body)).toBeNull()
+  })
+})
+
+describe('intentGoalForSlug', () => {
+  it('returns empty string when there is no Tranche intents section', () => {
+    expect(intentGoalForSlug('Just a goal, no intents.', 'some-slug')).toBe('')
+  })
+
+  it('returns the matching intent line', () => {
+    const description = ['Ship the milestone model.', '', '### Tranche intents', '- a-slug: Its intent text.'].join(
+      '\n'
+    )
+    expect(intentGoalForSlug(description, 'a-slug')).toBe('Its intent text.')
+  })
+
+  it('returns empty string when the section exists but no line matches this slug', () => {
+    const description = ['Goal.', '', '### Tranche intents', '- other-slug: unrelated.'].join('\n')
+    expect(intentGoalForSlug(description, 'a-slug')).toBe('')
+  })
+})
+
+describe('hasTrancheIntentsSection', () => {
+  it('false when the description carries no intents heading at all', () => {
+    expect(hasTrancheIntentsSection('Just a goal, no intents.')).toBe(false)
+  })
+
+  it('true for a section holding readable bullets', () => {
+    expect(hasTrancheIntentsSection('Goal.\n\n### Tranche intents\n- one-v1: do a thing')).toBe(true)
+  })
+
+  it('true for a section whose every line is unreadable — a declaration this parser cannot read is still a declaration', () => {
+    const description = ['Goal.', '', '### Tranche intents', '', 'TBD — slugs not chosen yet'].join('\n')
+    expect(intentLines(description)).toEqual([])
+    expect(hasTrancheIntentsSection(description)).toBe(true)
+  })
+
+  it('true for an empty section', () => {
+    expect(hasTrancheIntentsSection('Goal.\n\n### Tranche intents\n\n## Next\n\nmore prose')).toBe(true)
+  })
+
+  it('false when the only intents heading is inside a fenced code block', () => {
+    expect(hasTrancheIntentsSection('Goal.\n\n```md\n### Tranche intents\n- one-v1: a thing\n```\n')).toBe(false)
+  })
+})
+
+describe('intentLines', () => {
+  it('returns an empty array when there is no Tranche intents section', () => {
+    expect(intentLines('Just a goal, no intents.')).toEqual([])
+  })
+
+  it('returns every bullet, in source order, lowercasing the slug', () => {
+    const description = [
+      'Ship the milestone model.',
+      '',
+      '### Tranche intents',
+      '- plan-brief-v1: the brief is a function of the task Issue. (complete 2026-09-09)',
+      '- Review-Validity-v1: a verdict binds to everything it judged.'
+    ].join('\n')
+    expect(intentLines(description)).toEqual([
+      { slug: 'plan-brief-v1', goal: 'the brief is a function of the task Issue. (complete 2026-09-09)' },
+      { slug: 'review-validity-v1', goal: 'a verdict binds to everything it judged.' }
+    ])
+  })
+
+  it("skips a non-bullet line rather than refusing — malformed-body rejection is checkMilestoneShape's job, not this reader's", () => {
+    const description = ['Goal.', '', '### Tranche intents', 'not a bullet at all', '- a-slug: real one.'].join('\n')
+    expect(intentLines(description)).toEqual([{ slug: 'a-slug', goal: 'real one.' }])
+  })
+
+  it('returns an empty array when the section heading exists but declares no bullets', () => {
+    const description = ['Goal.', '', '### Tranche intents', '', '## Next section', 'prose'].join('\n')
+    expect(intentLines(description)).toEqual([])
+  })
+
+  it("stops at the next heading, matching intentGoalForSlug's own section boundary", () => {
+    const description = [
+      'Goal.',
+      '',
+      '### Tranche intents',
+      '- a-slug: in section.',
+      '',
+      '## Not intents',
+      '- b-slug: outside the section, must not be read.'
+    ].join('\n')
+    expect(intentLines(description)).toEqual([{ slug: 'a-slug', goal: 'in section.' }])
+  })
+})
+
+describe('milestoneLifecycleFromTrancheLifecycles', () => {
+  it('derives planned when the milestone holds zero tranches — the at-least-one guard, one altitude up', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles([])).toBe('planned')
+  })
+
+  it('derives planned when every declared tranche is itself still planned', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['planned', 'planned'])).toBe('planned')
+  })
+
+  it('derives active when any tranche is active', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['planned', 'active'])).toBe('active')
+  })
+
+  it('derives complete only when every tranche is complete', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['complete', 'complete'])).toBe('complete')
+  })
+
+  it('derives active for a mix of complete and planned — not yet fully done', () => {
+    expect(milestoneLifecycleFromTrancheLifecycles(['complete', 'planned'])).toBe('active')
+  })
+})
+
+describe('listActiveTrancheSlugs', () => {
+  function mockGh(milestones: unknown[], labelNames: string[]) {
+    mocked(ghApiGet).mockImplementation((path: string) => {
+      if (path.includes('/labels')) return labelNames.map((name) => ({ name }))
+      return milestones
+    })
+  }
+
+  it('maps every open legacy milestone to its slug + goal, when no tranche labels exist', () => {
+    mockGh(
+      [
+        { title: 'aeg-forge-state-v1', description: 'Migrate this repo governance state.', state: 'open' },
+        { title: 'herald-hardening-v1', description: null, state: 'open' }
+      ],
+      []
+    )
+    mocked(ghIssueListByLabel).mockReturnValue([])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual(
+      expect.arrayContaining([
+        { slug: 'aeg-forge-state-v1', goal: 'Migrate this repo governance state.' },
+        { slug: 'herald-hardening-v1', goal: '' }
+      ])
+    )
+  })
+
+  it('requests the full state=all Milestone set, plus the label set — not the state=open-only set', () => {
+    mockGh([], [])
+    mocked(ghIssueListByLabel).mockReturnValue([])
+    listActiveTrancheSlugs(OWNER, REPO)
+    expect(ghApiGet).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/milestones?state=all&per_page=100`)
+    expect(ghApiGet).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/labels?per_page=100`)
+  })
+
+  it('returns an empty list when nothing is open or active (the real, current fixture)', () => {
+    mockGh(emptyMilestones, [])
+    mocked(ghIssueListByLabel).mockReturnValue([])
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+
+  it('resolves a label-only tranche (no Milestone at all) as active when it has an open Issue', () => {
+    mockGh([], ['vinaya/tranche:label-only-v1'])
+    mocked(ghIssueListByLabel).mockReturnValue([issue('OPEN')])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([{ slug: 'label-only-v1', goal: '' }])
+  })
+
+  it('excludes a label-only tranche whose Issues are all closed — complete, not active', () => {
+    mockGh([], ['vinaya/tranche:done-v1'])
+    mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED')])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+
+  it('excludes a label-only tranche with zero Issues — planned, not active', () => {
+    mockGh([], ['vinaya/tranche:planned-v1'])
+    mocked(ghIssueListByLabel).mockReturnValue([])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+
+  it('a closed legacy Milestone with nothing under its label stays complete, not active', () => {
+    mockGh([{ title: 'shipped-v1', description: 'Done.', state: 'closed' }], ['vinaya/tranche:shipped-v1'])
+    mocked(ghIssueListByLabel).mockReturnValue([])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+
+  it('a closed legacy Milestone retired via `vinaya milestone adopt` — real open Issues live under its label — resolves active, not the stale closed Milestone', () => {
+    mockGh(
+      [{ title: 'vinaya-agentic-interface-v1', description: 'old goal', state: 'closed' }],
+      ['vinaya/tranche:vinaya-agentic-interface-v1']
+    )
+    mocked(ghIssueListByLabel).mockReturnValue([issue('OPEN')])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([{ slug: 'vinaya-agentic-interface-v1', goal: 'old goal' }])
+  })
+
+  it('a free-text-titled Architect Milestone is never listed as a phantom tranche', () => {
+    // An Architect Milestone's title is
+    // free text, not a tranche slug. Before the shape guard, EVERY
+    // Milestone's title fed the candidate-slug set, so this title
+    // trivially legacy-matched itself and was listed as a fake tranche.
+    mockGh([{ title: 'Vinaya milestone model — Test Plan proof', description: 'The goal.', state: 'open' }], [])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+
+  it('a single-word, mixed-case free-text title is also never listed as a phantom tranche', () => {
+    // Code review round 2: the shape guard first shipped by reusing
+    // PROJECT_SLUG, whose `i` flag matches capital letters — so a one-word
+    // title with no space and no dash ("MilestoneModel", "Vinaya") slipped
+    // through and still phantom-matched. Every real tranche slug in this
+    // repo is lowercase, so the guard must be case-sensitive.
+    mockGh([{ title: 'MilestoneModel', description: 'The goal.', state: 'open' }], [])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+
+  it('a lowercase, hyphenated free-text title with no version suffix is also never listed as a phantom tranche', () => {
+    // Code review round 3: a plausible kebab-case product-goal title
+    // ("improve-onboarding-flow") still phantom-matched, since every real
+    // tranche slug is ALSO lowercase and hyphenated — the shape guard needed
+    // one more property that distinguishes them: every real slug in this
+    // repo ends in a `-v<N>` version suffix, which an ordinary free-text
+    // title is unlikely to carry by accident.
+    mockGh([{ title: 'improve-onboarding-flow', description: 'A product goal, not a tranche.', state: 'open' }], [])
+
+    expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+})
+
+describe('listArchivedTrancheSlugs', () => {
+  function mockGh(milestones: unknown[], labelNames: string[]) {
+    mocked(ghApiGet).mockImplementation((path: string) => {
+      if (path.includes('/labels')) return labelNames.map((name) => ({ name }))
+      return milestones
+    })
+  }
+
+  it('maps every closed legacy milestone with nothing under its label to its slug + goal', () => {
+    mockGh([{ title: 'vinaya-cli-v1', description: 'Ship the CLI.', state: 'closed' }], [])
+    mocked(ghIssueListByLabel).mockReturnValue([])
+
+    expect(listArchivedTrancheSlugs(OWNER, REPO)).toEqual([{ slug: 'vinaya-cli-v1', goal: 'Ship the CLI.' }])
+  })
+
+  it('includes a label-only tranche whose Issues are all closed', () => {
+    mockGh([], ['vinaya/tranche:done-v1'])
+    mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED'), issue('CLOSED')])
+
+    expect(listArchivedTrancheSlugs(OWNER, REPO)).toEqual([{ slug: 'done-v1', goal: '' }])
+  })
+
+  it('excludes a label-only tranche with zero Issues — planned is neither active nor archived', () => {
+    mockGh([], ['vinaya/tranche:planned-v1'])
+    mocked(ghIssueListByLabel).mockReturnValue([])
+
+    expect(listArchivedTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+
+  it('a free-text-titled Architect Milestone is never listed as a phantom archived tranche', () => {
+    mockGh([{ title: 'Vinaya milestone model — Test Plan proof', description: 'The goal.', state: 'closed' }], [])
+
+    expect(listArchivedTrancheSlugs(OWNER, REPO)).toEqual([])
+  })
+})
+
+describe('indexTrancheMilestonesAsync', () => {
+  const MILESTONES = [
+    { title: 'aeg-forge-state-v1', description: 'Migrate this repo governance state.', state: 'open' },
+    { title: 'herald-hardening-v1', description: null, state: 'open' },
+    { title: 'vinaya-cli-v1', description: 'Ship the CLI.', state: 'closed' }
+  ]
+
+  function mockPages(milestones: unknown[], labels: unknown[]) {
+    mocked(ghApiGetAllPagesAsync).mockImplementation(async (path: string) => {
+      if (path.includes('/labels')) return labels
+      return milestones
+    })
+  }
+
+  it('splits the legacy Milestone population into active and archived lists, as before', async () => {
+    mockPages(MILESTONES, [])
+    mocked(ghIssueListByLabelAsync).mockResolvedValue([])
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.active).toEqual([
+      { slug: 'aeg-forge-state-v1', goal: 'Migrate this repo governance state.' },
+      { slug: 'herald-hardening-v1', goal: '' }
+    ])
+    expect(index.archived).toEqual([{ slug: 'vinaya-cli-v1', goal: 'Ship the CLI.' }])
+    expect(index.legacySlugs).toEqual(new Set(['aeg-forge-state-v1', 'herald-hardening-v1', 'vinaya-cli-v1']))
+  })
+
+  it('yields, per legacy slug, exactly what findMilestoneForSlug returns for the same data', async () => {
+    mockPages(MILESTONES, [])
+    mocked(ghApiGet).mockImplementation((path: string) => {
+      if (path.includes('/labels')) return []
+      return MILESTONES
+    })
+    mocked(ghIssueListByLabelAsync).mockResolvedValue([])
+    mocked(ghIssueListByLabel).mockReturnValue([])
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    for (const slug of ['aeg-forge-state-v1', 'herald-hardening-v1', 'vinaya-cli-v1']) {
+      expect(index.facts.get(slug) ?? null).toEqual(findMilestoneForSlug(OWNER, REPO, slug))
+    }
+  })
+
+  it('a slug absent from both populations has no entry, and findMilestoneForSlug agrees it is planned', async () => {
+    mockPages(MILESTONES, [])
+    mocked(ghApiGet).mockImplementation((path: string) => {
+      if (path.includes('/labels')) return []
+      return MILESTONES
+    })
+    mocked(ghIssueListByLabel).mockReturnValue([])
+    mocked(ghIssueListByLabelAsync).mockResolvedValue([])
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.facts.get('no-such-slug')).toBeUndefined()
+    expect(findMilestoneForSlug(OWNER, REPO, 'no-such-slug')).toEqual({ goal: '', lifecycle: 'planned' })
+  })
+
+  it('folds in a label-only tranche (no matching Milestone at all), fetched exactly once by that slug', async () => {
+    mockPages(MILESTONES, [{ name: 'vinaya/tranche:label-only-v1' }])
+    mocked(ghIssueListByLabelAsync).mockClear()
+    mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) =>
+      label === 'vinaya/tranche:label-only-v1' ? [issue('OPEN'), issue('CLOSED')] : []
+    )
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.active).toContainEqual({ slug: 'label-only-v1', goal: '' })
+    expect(index.legacySlugs.has('label-only-v1')).toBe(false)
+    const labelOnlyCalls = mocked(ghIssueListByLabelAsync).mock.calls.filter(
+      ([, , label]) => label === 'vinaya/tranche:label-only-v1'
+    )
+    expect(labelOnlyCalls).toHaveLength(1)
+  })
+
+  it('a label matching a legacy slug is fetched exactly once, and a live open Issue under it overrides a stale-closed legacy Milestone', async () => {
+    mockPages(MILESTONES, [{ name: 'vinaya/tranche:vinaya-cli-v1' }])
+    mocked(ghIssueListByLabelAsync).mockClear()
+    // That label's slug legacy-matches a CLOSED Milestone in `MILESTONES` — before
+    // this fix that alone made it `complete` forever. A live open Issue under
+    // its label (the post-`adopt` shape) must override that stale read.
+    mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) =>
+      label === 'vinaya/tranche:vinaya-cli-v1' ? [issue('OPEN')] : []
+    )
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.active).toContainEqual({ slug: 'vinaya-cli-v1', goal: 'Ship the CLI.' })
+    expect(index.archived.filter((r) => r.slug === 'vinaya-cli-v1')).toHaveLength(0)
+    const cliCalls = mocked(ghIssueListByLabelAsync).mock.calls.filter(
+      ([, , label]) => label === 'vinaya/tranche:vinaya-cli-v1'
+    )
+    expect(cliCalls).toHaveLength(1)
+  })
+
+  it('a label-only tranche with zero Issues is planned — absent from both active and archived', async () => {
+    mockPages(MILESTONES, [{ name: 'vinaya/tranche:brand-new-v1' }])
+    mocked(ghIssueListByLabelAsync).mockResolvedValue([])
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.active.some((r) => r.slug === 'brand-new-v1')).toBe(false)
+    expect(index.archived.some((r) => r.slug === 'brand-new-v1')).toBe(false)
+    expect(index.facts.get('brand-new-v1')).toEqual({ goal: '', lifecycle: 'planned' })
+  })
+
+  it('hands back each slug’s Issue list as read, and every other field is unchanged by it', async () => {
+    mockPages(MILESTONES, [{ name: 'vinaya/tranche:label-only-v1' }])
+    const labelOnly = [issue('OPEN'), issue('CLOSED')]
+    mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) =>
+      label === 'vinaya/tranche:label-only-v1' ? labelOnly : []
+    )
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.issuesBySlug?.get('label-only-v1')).toBe(labelOnly)
+    expect(index.issuesBySlug?.get('vinaya-cli-v1')).toEqual([])
+    expect([...(index.issuesBySlug?.keys() ?? [])].sort()).toEqual(
+      ['aeg-forge-state-v1', 'herald-hardening-v1', 'label-only-v1', 'vinaya-cli-v1'].sort()
+    )
+    const { issuesBySlug: _issues, ...rest } = index
+    const retried = await indexTrancheMilestonesAsync(OWNER, REPO, { retryFailedReads: true })
+    const { issuesBySlug: _again, ...restRetried } = retried
+    expect(restRetried).toEqual(rest)
+    expect(rest.active).toContainEqual({ slug: 'label-only-v1', goal: '' })
+  })
+
+  it('with retryFailedReads, a label read that fails once is made once more and the index still answers', async () => {
+    mockPages(MILESTONES, [{ name: 'vinaya/tranche:label-only-v1' }])
+    mocked(ghIssueListByLabelAsync).mockReset()
+    let failed = false
+    mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) => {
+      if (label === 'vinaya/tranche:label-only-v1' && !failed) {
+        failed = true
+        throw new Error('read: connection reset by peer')
+      }
+      return label === 'vinaya/tranche:label-only-v1' ? [issue('OPEN')] : []
+    })
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO, { retryFailedReads: true })
+
+    expect(index.active).toContainEqual({ slug: 'label-only-v1', goal: '' })
+    const calls = mocked(ghIssueListByLabelAsync).mock.calls.filter(
+      ([, , label]) => label === 'vinaya/tranche:label-only-v1'
+    )
+    expect(calls).toHaveLength(2)
+  })
+
+  it('with retryFailedReads, a read that fails twice still rejects; without it, one failure rejects', async () => {
+    mockPages(MILESTONES, [{ name: 'vinaya/tranche:label-only-v1' }])
+    mocked(ghIssueListByLabelAsync).mockReset()
+    mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) => {
+      if (label === 'vinaya/tranche:label-only-v1') throw new Error('read: connection reset by peer')
+      return []
+    })
+    const labelOnlyCalls = () =>
+      mocked(ghIssueListByLabelAsync).mock.calls.filter(([, , label]) => label === 'vinaya/tranche:label-only-v1')
+
+    await expect(indexTrancheMilestonesAsync(OWNER, REPO, { retryFailedReads: true })).rejects.toThrow(
+      'connection reset'
+    )
+    expect(labelOnlyCalls()).toHaveLength(2)
+
+    mocked(ghIssueListByLabelAsync).mockClear()
+    await expect(indexTrancheMilestonesAsync(OWNER, REPO)).rejects.toThrow('connection reset')
+    expect(labelOnlyCalls()).toHaveLength(1)
+  })
+
+  it('returns empty lists and no facts when the repo has no milestones or labels', async () => {
+    mockPages(emptyMilestones, [])
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.active).toEqual([])
+    expect(index.archived).toEqual([])
+    expect(index.facts.size).toBe(0)
+    expect(index.legacySlugs.size).toBe(0)
+  })
+
+  it('a free-text-titled Architect Milestone is never indexed as a phantom tranche', async () => {
+    // Before the shape guard, every real
+    // Milestone in the paginated fetch was unconditionally treated as a
+    // legacy tranche (`legacySlugs = new Set(milestones.map(m => m.title))`,
+    // no `matchesLegacyMilestone` gate at all in this async path) — so an
+    // Architect's free-text-titled goal Milestone landed in `active`/`archived`
+    // with its raw description as the "goal".
+    mockPages(
+      [...MILESTONES, { title: 'Vinaya milestone model — Test Plan proof', description: 'The goal.', state: 'open' }],
+      []
+    )
+    mocked(ghIssueListByLabelAsync).mockResolvedValue([])
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    const phantomSlug = 'Vinaya milestone model — Test Plan proof'
+    expect(index.legacySlugs.has(phantomSlug)).toBe(false)
+    expect(index.active.some((r) => r.slug === phantomSlug)).toBe(false)
+    expect(index.archived.some((r) => r.slug === phantomSlug)).toBe(false)
+    expect(index.facts.has(phantomSlug)).toBe(false)
+  })
+})
+
+/**
+ * Guards the pagination decision itself, not just its output. Milestones and
+ * labels are both append-only in practice, so a single `per_page=100` page is
+ * a countdown rather than a bound: the day a repo's 101st Milestone (or
+ * label) is created, a non-paginated index starts omitting tranches from the
+ * repo-wide sweep it is the enumeration authority for — silently, with no
+ * error. Swapping this reader back to the single-page `ghApiGetAsync` is
+ * therefore a real regression that no output-shape assertion above would
+ * notice, since every fixture here is smaller than one page.
+ */
+describe('indexTrancheMilestonesAsync reads every page', () => {
+  it('uses the paginated reader for both Milestones and labels, never the single-page one', async () => {
+    mocked(ghApiGetAllPagesAsync).mockResolvedValue([])
+    mocked(ghApiGetAsync).mockClear()
+
+    await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(ghApiGetAllPagesAsync).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/milestones?state=all&per_page=100`)
+    expect(ghApiGetAllPagesAsync).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/labels?per_page=100`)
+    expect(ghApiGetAsync).not.toHaveBeenCalled()
+  })
+
+  it('indexes a legacy Milestone population larger than one page', async () => {
+    // What the paginated reader returns once it has walked past page 1.
+    // Titled `tranche-N-v1` (not bare `tranche-N`) so this fixture still
+    // matches TRANCHE_SLUG_SHAPE now that it requires the `-v<N>` suffix
+    // every real legacy Milestone title in this repo actually carries
+    // (round 3 code review) — the pagination behaviour under test is
+    // unaffected by the title shape.
+    const many = Array.from({ length: 137 }, (_, i) => ({
+      title: `tranche-${i}-v1`,
+      description: null,
+      state: i % 2 === 0 ? 'open' : 'closed'
+    }))
+    mocked(ghApiGetAllPagesAsync).mockImplementation(async (path: string) => (path.includes('/labels') ? [] : many))
+    mocked(ghIssueListByLabelAsync).mockResolvedValue([])
+
+    const index = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+    expect(index.facts.size).toBe(137)
+    expect(index.active).toHaveLength(69)
+    expect(index.archived).toHaveLength(68)
+    // The entries that only exist beyond the first page must be present, in
+    // both lifecycles (even index ⇒ open ⇒ active, odd ⇒ closed ⇒ complete).
+    expect(index.facts.get('tranche-136-v1')).toEqual({ goal: '', lifecycle: 'active' })
+    expect(index.facts.get('tranche-135-v1')).toEqual({ goal: '', lifecycle: 'complete' })
+  })
+})
+
+// O3 — the tranche-count fact `requireTrancheQualifiedEdges`
+// needs: how many distinct tranches share one Milestone.
+//
+// O1: fetches labels only, paginated, through
+// `ghApiGetAllPagesAsync` (the buffered async `gh` client) rather than a
+// single unpaginated, un-filtered `ghApiGet` — so it is async now, and its
+// own fixtures exercise the paginated fetcher directly rather than `ghApiGet`.
+describe('tranchesAttachedToMilestone', () => {
+  it('collects every distinct vinaya/tranche:* label among the Milestone issues, deduplicated', async () => {
+    mocked(ghApiGetAllPagesAsync).mockResolvedValue([
+      { labels: [{ name: 'vinaya/tranche:tranche-a' }, { name: 'vinaya/tier:1' }] },
+      { labels: [{ name: 'vinaya/tranche:tranche-b' }] },
+      { labels: [{ name: 'vinaya/tranche:tranche-a' }] }
+    ])
+    expect((await tranchesAttachedToMilestone(OWNER, REPO, 42)).sort()).toEqual(['tranche-a', 'tranche-b'])
+  })
+
+  it('requests the labels-only, state=all issue set for the given Milestone number, via a -q server-side filter', async () => {
+    mocked(ghApiGetAllPagesAsync).mockResolvedValue([])
+    await tranchesAttachedToMilestone(OWNER, REPO, 7)
+    expect(ghApiGetAllPagesAsync).toHaveBeenCalledWith(`repos/${OWNER}/${REPO}/issues?milestone=7&state=all`, {
+      jq: '[.[] | {labels: .labels}]'
+    })
+  })
+
+  it('returns a single-entry list for an ordinary, single-tranche Milestone', async () => {
+    mocked(ghApiGetAllPagesAsync).mockResolvedValue([
+      { labels: [{ name: 'vinaya/tranche:solo-tranche' }] },
+      { labels: [{ name: 'vinaya/tranche:solo-tranche' }] }
+    ])
+    expect(await tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual(['solo-tranche'])
+  })
+
+  it('returns an empty list when no issue carries a tranche label at all', async () => {
+    mocked(ghApiGetAllPagesAsync).mockResolvedValue([{ labels: [{ name: 'vinaya/tier:0' }] }])
+    expect(await tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual([])
+  })
+
+  it('tolerates the REST API returning a bare label-string array, not just {name} objects', async () => {
+    mocked(ghApiGetAllPagesAsync).mockResolvedValue([{ labels: ['vinaya/tranche:tranche-a'] }])
+    expect(await tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual(['tranche-a'])
+  })
+
+  it('collects a tranche label whose Issue only exists past the first 100-item page', async () => {
+    // A Milestone of 250 Issues: the 101st+ Issue is exactly the
+    // range a single-page `per_page=100` read used to drop silently.
+    const pastFirstPage: Array<{ labels: Array<{ name: string }> }> = []
+    for (let i = 0; i < 250; i++) {
+      pastFirstPage.push({ labels: [{ name: i === 249 ? 'vinaya/tranche:tail-tranche' : 'vinaya/tier:0' }] })
+    }
+    mocked(ghApiGetAllPagesAsync).mockResolvedValue(pastFirstPage)
+    expect(await tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual(['tail-tranche'])
+  })
+
+  it('a Milestone holding 80+ Issues with full bodies over 1MB each, delivered across three pages, yields the union of their tranche slugs — the fixture the ENOBUFS fix must survive', async () => {
+    const bigBody = 'x'.repeat(1024 * 1024 + 1)
+    // The real REST payload `gh` would have downloaded per Issue (full body
+    // and all) — proving the fix does not depend on the fixture already
+    // being labels-only, only on `ghApiGetAllPagesAsync`'s own `-q` filter
+    // trimming it before this reader ever sees it (this fake forge, standing
+    // in for that filter, returns the trimmed `{labels}` shape directly).
+    const page = (start: number, count: number, slug: string) =>
+      Array.from({ length: count }, (_, i) => ({
+        number: start + i,
+        body: bigBody,
+        labels: [{ name: `vinaya/tranche:${slug}` }]
+      }))
+    mocked(ghApiGetAllPagesAsync).mockResolvedValue([
+      ...page(1, 30, 'tranche-a'),
+      ...page(31, 30, 'tranche-b'),
+      ...page(61, 25, 'tranche-c')
+    ])
+    expect((await tranchesAttachedToMilestone(OWNER, REPO, 15)).sort()).toEqual(['tranche-a', 'tranche-b', 'tranche-c'])
+  })
+})
+
+describe('indexTrancheMilestonesForSlugAsync', () => {
+  const BRANCH = 'branch-tranche-v1'
+  const NOISE_LABELS = Array.from({ length: 47 }, (_, n) => ({ name: `vinaya/tranche:noise-${n}-v1` }))
+
+  function mockForge(
+    milestones: unknown[],
+    labelNames: string[],
+    issuesByLabel: Record<string, ReturnType<typeof issue>[]>
+  ) {
+    mocked(ghApiGetAllPagesAsync).mockImplementation(async (path: string) =>
+      path.includes('/labels') ? [...NOISE_LABELS, ...labelNames.map((name) => ({ name }))] : milestones
+    )
+    mocked(ghIssueListByLabelAsync).mockClear()
+    mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) => issuesByLabel[label] ?? [])
+  }
+
+  const shapes: Array<{ name: string; milestones: unknown[]; labels: string[]; issues: ReturnType<typeof issue>[] }> = [
+    { name: 'a label-only tranche', milestones: [], labels: [`vinaya/tranche:${BRANCH}`], issues: [issue('OPEN')] },
+    {
+      name: 'a legacy-titled tranche',
+      milestones: [{ title: BRANCH, description: 'Legacy goal.', state: 'open' }],
+      labels: [],
+      issues: []
+    },
+    {
+      name: 'an archived tranche',
+      milestones: [{ title: 'holder', description: `### Tranche intents\n- ${BRANCH}: Done goal.`, state: 'open' }],
+      labels: [`vinaya/tranche:${BRANCH}`],
+      issues: [issue('CLOSED')]
+    },
+    {
+      name: 'a closed legacy tranche whose Issues are still open',
+      milestones: [{ title: BRANCH, description: 'Adopted away.', state: 'closed' }],
+      labels: [`vinaya/tranche:${BRANCH}`],
+      issues: [issue('OPEN')]
+    },
+    { name: 'a planned tranche with no Issues', milestones: [], labels: [`vinaya/tranche:${BRANCH}`], issues: [] },
+    { name: 'a tranche with no label and no slug-titled Milestone', milestones: [], labels: [], issues: [] }
+  ]
+
+  for (const shape of shapes) {
+    it(`matches the repository-wide index for ${shape.name}, with one Issue read for its own label`, async () => {
+      mockForge(shape.milestones, shape.labels, { [`vinaya/tranche:${BRANCH}`]: shape.issues })
+      const full = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+      mockForge(shape.milestones, shape.labels, { [`vinaya/tranche:${BRANCH}`]: shape.issues })
+      const scoped = await indexTrancheMilestonesForSlugAsync(OWNER, REPO, BRANCH)
+
+      expect(mocked(ghIssueListByLabelAsync).mock.calls.map((c) => c[2])).toEqual([`vinaya/tranche:${BRANCH}`])
+      expect(scoped.facts.get(BRANCH)).toEqual(full.facts.get(BRANCH))
+      expect(scoped.active).toEqual(full.active.filter((r) => r.slug === BRANCH))
+      expect(scoped.archived).toEqual(full.archived.filter((r) => r.slug === BRANCH))
+      expect(scoped.legacySlugs.has(BRANCH)).toBe(full.legacySlugs.has(BRANCH))
+      expect([...scoped.facts.keys()].every((k) => k === BRANCH)).toBe(true)
+    })
+  }
+
+  it('names every other open slug-titled Milestone, in list order, from the same Milestone list', async () => {
+    mockForge(
+      [
+        { title: 'other-open-v2', description: null, state: 'open' },
+        { title: BRANCH, description: 'Legacy goal.', state: 'open' },
+        { title: 'other-closed-v1', description: null, state: 'closed' },
+        { title: 'Improve onboarding flow', description: null, state: 'open' },
+        { title: 'another-open-v1', description: null, state: 'open' }
+      ],
+      [],
+      { [`vinaya/tranche:${BRANCH}`]: [issue('OPEN')] }
+    )
+    const scoped = await indexTrancheMilestonesForSlugAsync(OWNER, REPO, BRANCH)
+
+    expect(scoped.otherOpenLegacySlugs).toEqual(['other-open-v2', 'another-open-v1'])
+    expect(mocked(ghIssueListByLabelAsync).mock.calls.map((c) => c[2])).toEqual([`vinaya/tranche:${BRANCH}`])
+    expect(scoped.active).toEqual([{ slug: BRANCH, goal: 'Legacy goal.' }])
+    expect([...scoped.facts.keys()]).toEqual([BRANCH])
+  })
+})
+
+const mocked = <T extends (...args: never[]) => unknown>(value: T) =>
+  value as unknown as Mock<(...args: Parameters<T>) => ReturnType<T>>

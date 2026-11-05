@@ -20,7 +20,9 @@
 // repo's own battle-tested gates, not invented blanks — the failure it
 // kills is blank-config paralysis.
 
-import { LABELS, type LabelKey, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
+import { LABELS, type LabelKey } from '../tools/task-contract/forge/labels'
+import { VERDICT_MARKER_SOURCE } from '../tools/task-contract/verdict-extraction'
+import { WAIVER_LABEL_REVIEW } from '../tools/task-contract/waiver-label'
 import { DOC_OWNERS_PATH } from '../tools/doc-owners'
 import { resolveDoctrineRoot } from '../../../../apps/cli/src/commands/doctrine.js'
 import type { AgentVendor } from '../../../kernel/adapters/agents/agent-vendors.js'
@@ -2108,7 +2110,7 @@ function starterDocOwners(): string {
 // this repo runs on. Every `form: 'literal'` entry is seeded — the ONE
 // exception is the `tranche` key (`form: 'prefix'`): its suffix is
 // open-ended by design (cut per-tranche, not at install), so it has its own
-// creation path in `packages/aeg-core/bin/open-issue.ts` instead. Metadata
+// creation path in `harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts` instead. Metadata
 // is a `Record` keyed by every literal `LabelKey`, so a future addition to
 // `LABELS` fails to typecheck here until it is given a color + description —
 // the exact 6-of-16 gap this task closes cannot silently reopen.

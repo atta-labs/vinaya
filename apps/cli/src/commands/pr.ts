@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { parsePremiseBlock } from '@attalabs/aeg-core'
+import { parsePremiseBlock } from '../../../../harness/processes/vinaya-strict/tools/task-contract/premise-check'
 import { printJson } from '../../../../harness/kernel/effects/envelope'
 import {
   type BodyResult,

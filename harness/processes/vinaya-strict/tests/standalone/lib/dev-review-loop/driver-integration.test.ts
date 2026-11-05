@@ -49,7 +49,7 @@ import { heldVerdictPath } from '../../../../loops/dev-review/standalone/dev-rev
 import { reviewerCandidateInputPaths } from '../../../../loops/dev-review/standalone/dev-review-loop/reviewer-isolation.js'
 import { renderDeferredFindingsIssueBody } from '../../../../tools/task-contract/forge/forge-write.js'
 import { buildReexecArgs, setStandaloneLogIdentity } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import { objectivesVersion } from '@attalabs/aeg-core'
+import { objectivesVersion } from '../../../../tools/task-contract/objectives'
 import { REVIEW_FINDING_DESCRIPTION_MAX_LENGTH } from '../../../../../../kernel/log/schema'
 import {
   CLEAN_REVIEWER,

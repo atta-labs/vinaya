@@ -48,7 +48,7 @@ import {
   summarizePhaseSamples,
   type HistoryComment,
   type PhaseSamples
-} from '@attalabs/aeg-core'
+} from '../../../tools/task-phase-history'
 import type { TaskPhaseHistory } from '../../../../../kernel/tools/catalog/task-tools'
 
 /** How many merged task pull requests the history read may open. Bounded on purpose: a status read is a glance, and the newest few merged tasks are what "typical in this repository, lately" means. */

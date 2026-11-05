@@ -25,7 +25,12 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { type BriefFacts, NO_GATE_CUTOVERS, parseRationaleFields, renderBrief } from '@attalabs/aeg-core'
+import {
+  type BriefFacts,
+  parseRationaleFields,
+  renderBrief
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/brief-render'
+import { NO_GATE_CUTOVERS } from '../../../../harness/processes/vinaya-strict/tools/task-contract/gate-cutovers'
 
 export const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
 
@@ -70,7 +75,7 @@ export const SUITE_INPUTS: readonly string[] = [
   'apps/cli/tests/eval/developer-capability-suite.ts',
   // The brief renderer and the types it is built from.
   'packages/aeg-core/src/',
-  'packages/aeg-types/src/',
+  'harness/processes/vinaya-strict/tools/task-contract/',
   'bun.lock',
   'vinaya.config.json',
   '.github/workflows/ci.yml'

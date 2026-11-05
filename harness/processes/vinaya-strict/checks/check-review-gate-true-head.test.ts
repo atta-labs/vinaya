@@ -3,7 +3,8 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { DEFAULT_REVIEW_POLICY, policyDigest } from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
+import { policyDigest } from '../tools/task-contract/review-input-manifest'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../apps/cli/tests/lib/process-fixture'
 
 const BIN = join(import.meta.dir, 'bin/check-review-gate.ts')

@@ -433,9 +433,9 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
     const oracle = bundlerOracle(REPO_ROOT, testFiles)
     const barrel = join(REPO_ROOT, 'packages/aeg-core/src/index.ts')
     const sample = [
-      'packages/aeg-core/src/review-input-manifest.ts',
+      'harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.ts',
       'harness/kernel/gates/checks/anchored-region.ts',
-      'packages/aeg-core/src/parse-registry.ts'
+      'harness/processes/vinaya-strict/tools/task-contract/parse-registry.ts'
     ].map((f) => join(REPO_ROOT, f))
     let checkedNonEmpty = 0
     for (const changed of sample) {
@@ -681,7 +681,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // process-lifetime trust-anchor memo it drops in its own teardown — so a
 // `log-sink.ts` change now selects that one extra suite. Same rule.
 //
-// Raised 23 → 24: `apps/cli/tests/lib/planning-collisions.test.ts` newly
+// Raised 23 → 24: `harness/processes/vinaya-strict/tools/task-contract/forge/planning-collisions.test.ts` newly
 // imports `config.ts` directly (to cover `resolveCollisionThreshold`, the
 // pinned-file collision threshold's own resolver), so a `config.ts` change
 // now selects that one extra suite. Same rule.
@@ -771,7 +771,7 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
   it('a change to one leaf module selects at most 5 files', () => {
     // `sum-ledger.ts` — a small, narrowly-consumed utility with no re-export
     // fan-out of its own.
-    const changed = join(REPO_ROOT, 'packages/aeg-core/src/sum-ledger.ts')
+    const changed = join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pr-report/tokens/sum-ledger.ts')
     const { selected } = selectAffectedTestFiles(REPO_ROOT, [changed], { depth: 'one' })
     expect(selected.length).toBeLessThanOrEqual(5)
   }, 30_000)

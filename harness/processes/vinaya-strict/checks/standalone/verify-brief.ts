@@ -43,24 +43,25 @@
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { buildConsumersOf, type PackageManifest } from '../../tools/task-contract/consumer-enumeration'
 import {
-  buildConsumersOf,
   checkBriefSections,
   checkForgeTitle,
   checkPlanPrNoCloses,
-  hasObjectivesHeading,
   inferBranchFromBody,
   isBriefShaped,
+  resolveNewestFrozenBrief
+} from '../../tools/task-contract/brief-validation'
+import {
+  hasObjectivesHeading,
   isIssueNotFoundError,
   type Objective,
-  type PackageManifest,
-  objectivesOf,
-  readTierFromPrBody,
-  resolveNewestFrozenBrief
-} from '../../../../../packages/aeg-core/src/index'
+  objectivesOf
+} from '../../tools/task-contract/objectives'
+import { readTierFromPrBody } from '../../tools/task-contract/pr-tier'
 import { extractIssue } from '../../../../kernel/adapters/code-host/github/extract-issue'
-import { readConfigObjectivesSinceIssue } from '../../../../../packages/aeg-core/src/objectives-cutover-config'
-import { readConfigPrincipals } from '../../../../../packages/aeg-core/src/principals-config'
+import { readConfigObjectivesSinceIssue } from '../../tools/task-contract/objectives-cutover-config'
+import { readConfigPrincipals } from '../../tools/task-contract/principals-config'
 
 /** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */
 function listDirs(dir: string): string[] {

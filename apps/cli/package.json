@@ -1,7 +1,7 @@
 {
   "name": "@attalabs/vinaya",
   "version": "0.41.0",
-  "description": "Vinaya — Agentic Engineering Harness. Deterministic checks every AI coding agent must satisfy before merge.",
+  "description": "Vinaya \u2014 Agentic Engineering Harness. Deterministic checks every AI coding agent must satisfy before merge.",
   "type": "module",
   "license": "FSL-1.1-ALv2",
   "author": "Daniel Estevez",
@@ -66,8 +66,6 @@
     "@atta/executor-agent-spawn": "file:tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
     "@atta/models": "file:tests/fixtures/atta-engine/atta-models-0.1.0.tgz",
     "@attalabs/aeg-core": "workspace:*",
-    "@attalabs/aeg-forge-state": "workspace:*",
-    "@attalabs/aeg-types": "workspace:*",
     "@atta/typescript-config": "workspace:*",
     "@attalabs/vinaya-sources": "workspace:*",
     "@types/bun": "latest",

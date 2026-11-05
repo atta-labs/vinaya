@@ -30,8 +30,8 @@ import { execFile, execFileSync } from 'node:child_process'
 import { lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join, sep, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
-import { issueBranchName } from '@attalabs/aeg-core'
-import { hasLabel } from '@attalabs/aeg-forge-state'
+import { issueBranchName } from '../../../tools/task-contract/task-branch-identity'
+import { hasLabel } from '../../../tools/task-contract/forge/labels'
 import {
   developerBranchFor as realDeveloperBranchFor,
   fetchPrBody as realFetchPrBody,

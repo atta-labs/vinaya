@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '../verdict-extraction'
+import {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/verdict-extraction'
 import { isPublishedSummaryComment } from './journal-reconstruction'
 import { parseSummaryConfidenceRows, renderPublishedMarker } from './render-summary'
 import type { RoundRecord } from './types'

@@ -12,7 +12,7 @@ import {
   checkMilestoneAttach,
   checkIntroducedConfigKeysCovered,
   checkTestPlanDeveloperRunnable
-} from '@attalabs/aeg-core'
+} from '../../tools/task-contract/issue-validation'
 import {
   collectTaskIssueErrors,
   DEFERRED_FINDINGS_LABEL,
@@ -31,7 +31,7 @@ import {
   validateIssueContent
 } from '../../tools/task-contract/forge/forge-write'
 import { readFileSync } from 'node:fs'
-import { resolveMilestoneAttachTarget } from '@attalabs/aeg-forge-state'
+import { resolveMilestoneAttachTarget } from '../../tools/task-contract/forge/fetch-milestone'
 import { COMMANDS } from '@attalabs/vinaya-sources'
 
 const CLI_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', 'apps', 'cli')
@@ -52,7 +52,7 @@ const FAKE_PRINCIPAL_OWED_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', '
 // ---------------------------------------------------------------------------
 
 // The three forced-companion rules are exercised in
-// `packages/aeg-core/src/issue-validation.test.ts` against fixture references;
+// `harness/processes/vinaya-strict/tools/task-contract/issue-validation.test.ts` against fixture references;
 // here they are handed their dormant (nothing-in-this-tree) facts, so these
 // cases keep grading exactly the check each one names.
 const DORMANT_COMMAND_REFERENCE = { file: null, binary: 'vinaya', commands: [], text: '' }

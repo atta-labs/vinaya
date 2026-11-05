@@ -1,6 +1,6 @@
 // Emitter for the Claude Code Stop hook that records each session's
 // transcript pointer — the fact
-// `packages/aeg-core/bin/report-tokens.ts`'s `resolveTranscriptPath()` needs
+// `harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.ts`'s `resolveTranscriptPath()` needs
 // to resolve capable in a fresh Claude Code adopter, not just in a repo that
 // happens to carry its own hand-rolled equivalent (attalabs' own
 // `.claude/hooks/track-transcript.sh`, never installed by vinaya itself).
@@ -62,7 +62,7 @@ const SH_PREAMBLE = '#!/usr/bin/env sh\n'
  * Pointer FORMAT — session id and transcript path, tab-separated — and the
  * key algorithm (`sanitizeKey`'s `[^A-Za-z0-9]+` collapsed to one `-`, then
  * `-` plus a full SHA-256 hex digest of the uncollapsed `projectDir`) match
- * `packages/aeg-core/bin/report-tokens.ts`'s `sanitizeKey`/
+ * `harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.ts`'s `sanitizeKey`/
  * `collisionResistantKey`/`transcriptPointerPath` byte-for-byte, confirmed by
  * reading that file's parser directly (re-confirmed against a later
  * migration that added the digest suffix — before it, distinct project directories

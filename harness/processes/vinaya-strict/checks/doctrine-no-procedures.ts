@@ -12,7 +12,7 @@
  * `doctrine-portability.ts` beside it.
  */
 
-import { COMMAND_WORDS, extractFencedBlocks } from '../../../../packages/aeg-core/src/brief-validation'
+import { COMMAND_WORDS, extractFencedBlocks } from '../tools/task-contract/brief-validation'
 import { VENDOR_EXAMPLE_END, VENDOR_EXAMPLE_START } from './doctrine-portability'
 
 export type DoctrineFile = { path: string; content: string }

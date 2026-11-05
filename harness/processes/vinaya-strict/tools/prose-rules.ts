@@ -43,7 +43,7 @@ export const RETIRED_PATTERN_EXEMPTIONS: Readonly<Record<string, readonly string
   'decisions-legacy': [
     'harness/processes/vinaya-strict/tools/file-classify.ts',
     'harness/processes/vinaya-strict/tools/file-classify.test.ts',
-    'packages/aeg-core/src/pr-tier.test.ts',
+    'harness/processes/vinaya-strict/tools/task-contract/pr-tier.test.ts',
     'docs-index.md',
     '.claude/skills/database/SKILL.md',
     '.claude/skills/vada-architecture/SKILL.md',

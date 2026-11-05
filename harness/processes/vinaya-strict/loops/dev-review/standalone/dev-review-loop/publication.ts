@@ -14,19 +14,22 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   compareManifest,
-  consequentialFindings,
   type EchoedManifest,
+  type ManifestBindingResult,
+  type ReviewInputManifest
+} from '../../../../tools/task-contract/review-input-manifest'
+import {
+  consequentialFindings,
   evaluateCodeReview,
   evaluateSecurityReview,
+  type ReviewPolicy
+} from '../../../../tools/task-contract/review-policy'
+import {
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
-  type Journal,
-  type ManifestBindingResult,
-  renderPublishedMarker,
-  type ReviewInputManifest,
-  type ReviewPolicy,
   type VerdictExtraction
-} from '@attalabs/aeg-core'
+} from '../../../../tools/task-contract/verdict-extraction'
+import { type Journal, renderPublishedMarker } from '@attalabs/aeg-core'
 import { defaultControlStoreDeps } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
 import { principalBodies } from '../../../../../../../apps/cli/src/commands/review-post.js'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../../../../../../kernel/effects/effects.js'

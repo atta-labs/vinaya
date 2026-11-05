@@ -48,13 +48,15 @@ import { join } from 'node:path'
 import { resolveRepo } from '../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import {
   checkBriefSections,
-  checkIssueRationale,
+  isTaskBranch
+} from '../../../harness/processes/vinaya-strict/tools/task-contract/brief-validation'
+import { checkIssueRationale } from '../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
+import {
   checkPremises,
-  isTaskBranch,
   parsePremiseBlock,
-  type PremiseAssertion,
-  readTierFromPrBody
-} from '../src/index'
+  type PremiseAssertion
+} from '../../../harness/processes/vinaya-strict/tools/task-contract/premise-check'
+import { readTierFromPrBody } from '../../../harness/processes/vinaya-strict/tools/task-contract/pr-tier'
 import { extractClosesReferences } from '../../../harness/processes/vinaya-strict/checks/coherence-checks'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')

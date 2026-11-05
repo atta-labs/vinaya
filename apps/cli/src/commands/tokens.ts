@@ -1,6 +1,9 @@
 import { execFileSync } from 'node:child_process'
 import { resolve as resolvePath } from 'node:path'
-import { formatBreakdown, formatTokensLine } from '@attalabs/aeg-core'
+import {
+  formatBreakdown,
+  formatTokensLine
+} from '../../../../harness/processes/vinaya-strict/tools/pr-report/tokens/report-tokens'
 import { hardenedMeteringDeps } from '../../../../harness/kernel/adapters/agents/claude-code/metering-io-guard'
 import { resolveMeteringCapability } from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import type {
@@ -25,8 +28,8 @@ import type { TokensCollectTrustEntry, VinayaConfig } from '../lib/config.js'
 /**
  * `vinaya tokens` — the portable front door over the token-report
  * collection adapter (`aeg-root/tranche-model.md` §12 layer 2). Fixes the
- * gap `packages/aeg-core/bin/report-tokens.ts` cannot: that script is
- * invoked by a repo-relative path (`bun packages/aeg-core/bin/report-tokens.ts`)
+ * gap `harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.ts` cannot: that script is
+ * invoked by a repo-relative path (`bun harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.ts`)
  * that exists only inside this monorepo checkout, never in an adopter that
  * installed `@attalabs/vinaya` as a package. This command imports
  * `resolveMeteringCapability`/`formatTokensLine`/`formatBreakdown` from the

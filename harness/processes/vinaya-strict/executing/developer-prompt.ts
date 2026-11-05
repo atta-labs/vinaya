@@ -1,4 +1,5 @@
-import { briefHash, policyDigest, type ReviewPolicy } from '@attalabs/aeg-core'
+import { briefHash, policyDigest } from '../tools/task-contract/review-input-manifest'
+import type { ReviewPolicy } from '../tools/task-contract/review-policy'
 import type { StepNodeResult } from '@atta/executor-agent-spawn'
 import {
   buildDeveloperDeltaPacket,
