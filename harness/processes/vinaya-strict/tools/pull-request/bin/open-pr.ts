@@ -58,7 +58,6 @@ import { checkForgeTitle } from '../../task-contract/brief-validation'
 import { checkSinglePlanPr, trancheSlugFromTopologyPath, type OpenPrFiles } from '../../single-plan-pr'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../../../..')
-process.chdir(REPO_ROOT)
 
 function fail(msg: string): never {
   console.error(`\n[open-pr] REFUSED — ${msg}`)
@@ -348,5 +347,6 @@ export function main(): void {
 }
 
 if (import.meta.main) {
+  process.chdir(REPO_ROOT)
   main()
 }

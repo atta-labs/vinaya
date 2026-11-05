@@ -95,7 +95,6 @@ import { readConfigObjectivesSinceIssue } from '../../../tools/task-contract/obj
 import { parseRegistry } from '../../../tools/task-contract/parse-registry'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../../../..')
-process.chdir(REPO_ROOT)
 
 /** Trailing digits off a bare number or an Issue URL — mirrors `apps/cli/src/lib/forge-write.ts`'s `parseIssueNumberFromRef` (not importable here: `apps/cli` is downstream of this package). */
 function parseIssueNumberFromRef(ref: string): number | null {
@@ -1031,5 +1030,6 @@ export function main(): void {
 }
 
 if (import.meta.main) {
+  process.chdir(REPO_ROOT)
   main()
 }
