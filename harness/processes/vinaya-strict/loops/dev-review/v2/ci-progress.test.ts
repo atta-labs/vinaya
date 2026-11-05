@@ -301,6 +301,9 @@ describe('the required-CI wait with progress on', () => {
       bound: {
         readWorktreeHead: () => HEAD,
         fetchCiConclusion: () => 'pending',
+        // Read on each pending poll; left out, the real reader asks the forge about a pull request that does not exist.
+        fetchMergeableState: () => 'MERGEABLE',
+        fetchConflictingFiles: () => [],
         fetchFailingCheckRuns: () => options.failingRuns ?? [],
         discardHeldVerdicts: () => {}
       }
