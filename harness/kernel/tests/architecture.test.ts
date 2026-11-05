@@ -663,15 +663,15 @@ describe('a moved file is moving, never adding', () => {
   test('(b) a package barrel split across its own module and a re-exported package still counts once', () => {
     const caller = 'apps/cli/src/caller.ts'
     const coreMember = 'packages/aeg-core/src/core-member.ts'
-    const forgeMember = 'packages/aeg-forge-state/src/forge-member.ts'
+    const forgeMember = 'packages/shared-fixture/src/forge-member.ts'
     const coreBarrel = 'packages/aeg-core/src/index.ts'
-    const forgeBarrel = 'packages/aeg-forge-state/src/index.ts'
+    const forgeBarrel = 'packages/shared-fixture/src/index.ts'
     const { root, base } = plantedRepository({
       'packages/aeg-core/package.json': '{"main":"./src/index.ts"}',
-      'packages/aeg-forge-state/package.json': '{"main":"./src/index.ts"}',
+      'packages/shared-fixture/package.json': '{"main":"./src/index.ts"}',
       [coreMember]: `export const x = 1\n${BODY}\n`,
       [forgeMember]: `export const y = 2\n${REWRITTEN}\n`,
-      [coreBarrel]: "export { x } from './core-member'\nexport { y } from '@attalabs/aeg-forge-state'\n",
+      [coreBarrel]: "export { x } from './core-member'\nexport { y } from '@attalabs/shared-fixture'\n",
       [forgeBarrel]: "export { y } from './forge-member'\n",
       [caller]: "import { x, y } from '@attalabs/aeg-core'\n"
     })
@@ -683,7 +683,7 @@ describe('a moved file is moving, never adding', () => {
       [caller]:
         "import { x } from '../../../harness/processes/vinaya-strict/tools/core-member'\nimport { y } from '../../../harness/processes/vinaya-strict/tools/forge-member'\n"
     })
-    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 2, headTotal: 1 })
+    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 1, headTotal: 1 })
   })
 
   test('(b) an import of a file split into two added files counts once, and a third counted import is growth', () => {
