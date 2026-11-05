@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DEFAULT_COLLISION_THRESHOLD } from '@attalabs/aeg-core'
+import { DEFAULT_COLLISION_THRESHOLD } from '../tools/task-contract/issue-validation'
 import type { BriefSection } from '../../../../apps/cli/src/lib/config'
 import { resetTrustAnchorConfigMemo } from '../../../kernel/log/log-sink.js'
 import {
@@ -165,13 +165,13 @@ afterEach(() => {
 })
 
 // The three forced-companion rules are exercised in
-// `packages/aeg-core/src/issue-validation.test.ts` against fixture references;
+// `harness/processes/vinaya-strict/tools/task-contract/issue-validation.test.ts` against fixture references;
 // here they are handed their dormant (nothing-in-this-tree) facts, so these
 // cases keep grading exactly the check each one names.
 const DORMANT_COMMAND_REFERENCE = { file: null, binary: 'vinaya', commands: [], text: '' }
 const DORMANT_CONFIG_REFERENCE = { files: [], keys: [], text: '' }
 
-// The Issue-only content checks `packages/aeg-core/bin/open-issue.ts` gates
+// The Issue-only content checks `harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts` gates
 // task Issues on, plus `checkSurfaceExcludesBoundDoc` (task-run-v1 9) —
 // wired into `apps/cli`'s real validation path. `validateIssueContent` is
 // pure over its inputs; `sharedPackages`/`projectPaths`/`docOwnersContent`

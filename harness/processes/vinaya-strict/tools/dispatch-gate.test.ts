@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'bun:test'
-import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
+import { parseRationaleDeps } from './task-contract/forge/parse-rationale-deps'
 import {
   checkDispatchReadiness,
   conflictEdgeReader,
   siblingsSharingConflictEdge,
   type DispatchGateInput
 } from './dispatch-gate'
-import { edgesNameEachOther } from '../../../../packages/aeg-core/src/issue-validation'
-import type { Task } from '../../../../packages/aeg-core/src/types'
+import { edgesNameEachOther } from './task-contract/issue-validation'
+import type { Task } from './task-contract/types'
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {

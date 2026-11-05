@@ -17,11 +17,9 @@ import {
 import {
   compareManifest,
   manifestAsEchoed,
-  nextRoundNumber,
-  type LoopState,
-  type ReconstructedJournal,
   type ReviewInputManifest
-} from '@attalabs/aeg-core'
+} from '../tools/task-contract/review-input-manifest'
+import { nextRoundNumber, type LoopState, type ReconstructedJournal } from '@attalabs/aeg-core'
 import {
   readRunCheckpoint,
   readRunOutcome,

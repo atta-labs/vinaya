@@ -3,14 +3,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   type FrozenBriefCandidate,
+  resolveNewestFrozenBrief
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/brief-validation'
+import {
   type Objective,
   objectivesOf,
   objectivesVersion,
-  parseIssueParts,
-  renderObjectives,
-  resolveNewestFrozenBrief
-} from '@attalabs/aeg-core'
-import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
+  renderObjectives
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/objectives'
+import { parseIssueParts } from '../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
+import { resolveTaskIssueRef } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks'
 import { prepareTaskOrIssue } from '../../../../harness/processes/vinaya-strict/tools/task-contract/dispatch-task.js'
 import {
   isForgeReadOversize,

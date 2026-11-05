@@ -37,23 +37,25 @@
 import { execFileSync } from 'node:child_process'
 import {
   briefHash,
-  extractPauseBoundRuling,
+  pauseBoundRulingDigest,
+  type PauseBoundRuling
+} from '../../tools/task-contract/review-input-manifest'
+import { extractPauseBoundRuling } from '../../tools/task-contract/verdict-extraction'
+import {
   isIssueNotFoundError,
-  isPrincipal,
-  isWaiverLabelActorVerified,
-  newestPrincipalRulingOrdinal,
   objectivesOf,
   objectivesVersion,
-  parseDeveloperRoundMarker,
+  resolveObjectivesSource
+} from '../../tools/task-contract/objectives'
+import { isPrincipal, isWaiverLabelActorVerified, WAIVER_LABEL_REVIEW } from '../../tools/task-contract/waiver-label'
+import {
+  newestPrincipalRulingOrdinal,
   parseRulingIdentity,
-  pauseBoundRulingDigest,
-  principalRulingTextById,
-  type PauseBoundRuling,
-  resolveNewestFrozenBrief,
-  resolveObjectivesSource,
-  WAIVER_LABEL_REVIEW,
-  type ReviewGateFact
-} from '@attalabs/aeg-core'
+  principalRulingTextById
+} from '../../tools/task-contract/ruling-ordinal'
+import { parseDeveloperRoundMarker } from '../../tools/task-contract/review-status'
+import { resolveNewestFrozenBrief } from '../../tools/task-contract/brief-validation'
+import type { ReviewGateFact } from '@attalabs/aeg-core'
 import {
   checkReviewGate,
   newestVerdictBodies,

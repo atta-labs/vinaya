@@ -26,8 +26,6 @@
   },
   "dependencies": {
     "@attalabs/harness": "workspace:*",
-    "@attalabs/aeg-forge-state": "0.41.0",
-    "@attalabs/aeg-types": "0.41.0",
     "gray-matter": "^4.0.3",
     "zod": "3.25.76"
   },

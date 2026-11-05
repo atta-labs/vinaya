@@ -138,14 +138,14 @@ describe('checkG2', () => {
 
   it('G2 skips a non-gate standalone script under the process checks/standalone prefix', () => {
     const rows: GateRow[] = [makeRow({ implementation: 'a.ts' })]
-    const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/report-tokens.ts'])
+    const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/eval-agent-compliance.ts'])
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
   })
 
   it('a NON_GATE_BINS-listed aeg-core bin needs no row at all — the honest fix is the gate stops asking', () => {
     const rows: GateRow[] = [makeRow({ implementation: 'a.ts' })]
-    const result = checkG2(rows, ['packages/aeg-core/bin/report-tokens.ts'])
+    const result = checkG2(rows, ['packages/aeg-core/bin/eval-agent-compliance.ts'])
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
   })

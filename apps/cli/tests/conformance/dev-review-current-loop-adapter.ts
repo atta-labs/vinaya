@@ -1,13 +1,13 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { DEFAULT_REVIEW_POLICY } from '../../../../harness/processes/vinaya-strict/tools/task-contract/review-policy'
 import {
-  DEFAULT_REVIEW_POLICY,
   type Objective,
   objectivesOf,
   objectivesVersion,
   renderObjectives
-} from '@attalabs/aeg-core'
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/objectives'
 import {
   cancelDevReviewLoop,
   type LoopDeps,

@@ -11,7 +11,7 @@ import {
   TASK as V2_TASK,
   tearDownWorld
 } from '../loops/dev-review/v2/v2-world'
-import { DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import { recordedHandoff } from './handoff-fakes'
 import { PASSING_FORGE_GATES } from './round-fakes'
 import { Database } from 'bun:sqlite'

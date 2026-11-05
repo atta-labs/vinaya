@@ -28,7 +28,9 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkIssueRationale, fetchForgeFacts, fetchOpenIssuesByLabel } from '@attalabs/aeg-core'
+import { checkIssueRationale } from '../../tools/task-contract/issue-validation'
+import { fetchForgeFacts } from '../../tools/task-contract/forge/fetch-forge-facts'
+import { fetchOpenIssuesByLabel } from '../../tools/task-contract/forge/fetch-open-issues'
 import {
   checkDispatchReadiness,
   type DispatchConflictsWithFact,
@@ -37,7 +39,7 @@ import {
 } from '../../tools/dispatch-gate'
 import { checkFirstPushDispatchGate, parseTaskBranch, type DispatchReadinessFact } from '../first-push-dispatch-gate'
 import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
-import { resolvePriorTrancheArchival } from '@attalabs/aeg-forge-state'
+import { resolvePriorTrancheArchival } from '../../tools/prior-tranche-archival'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'

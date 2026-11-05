@@ -19,17 +19,21 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import {
   buildConsumersOf as buildConsumersOfShared,
+  type PackageManifest
+} from '../../tools/task-contract/consumer-enumeration'
+import {
   checkBriefSections,
-  hasObjectivesHeading,
   isBriefShaped,
-  isIssueNotFoundError,
   isTaskBranch,
+  partitionBriefErrorsByRollout
+} from '../../tools/task-contract/brief-validation'
+import {
+  hasObjectivesHeading,
+  isIssueNotFoundError,
   type Objective,
-  type PackageManifest,
-  objectivesOf,
-  partitionBriefErrorsByRollout,
-  readTierFromPrBody
-} from '@attalabs/aeg-core'
+  objectivesOf
+} from '../../tools/task-contract/objectives'
+import { readTierFromPrBody } from '../../tools/task-contract/pr-tier'
 import { extractIssue } from '../../../../../harness/kernel/adapters/code-host/github/extract-issue'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { resolveTaskFrozenBrief } from '../frozen-brief'

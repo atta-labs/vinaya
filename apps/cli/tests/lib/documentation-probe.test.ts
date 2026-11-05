@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { checkDocumentationReadable } from '@attalabs/aeg-core'
+import { checkDocumentationReadable } from '../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
 import {
   type DocumentationResponse,
   probeDocumentationUrl

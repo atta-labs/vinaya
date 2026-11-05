@@ -24,7 +24,7 @@ import {
 } from '../integration/claude-stop-hook-emitter.js'
 
 /**
- * Mirrors `packages/aeg-core/bin/report-tokens.ts`'s `sanitizeKey`/
+ * Mirrors `harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.ts`'s `sanitizeKey`/
  * `collisionResistantKey`/`transcriptPointerPath` — reimplemented here (not
  * imported across the package boundary; that file is a `bin/` adapter, not
  * this package's public export) directly from that file's own source, read

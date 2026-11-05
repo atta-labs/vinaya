@@ -6,8 +6,8 @@ import {
   isReviewGateExemptBranch,
   newestVerdictBodies
 } from './review-gate'
-import { policyDigest, type ReviewInputManifest } from '../../../../packages/aeg-core/src/review-input-manifest'
-import { DEFAULT_REVIEW_POLICY } from '../../../../packages/aeg-core/src/review-policy'
+import { policyDigest, type ReviewInputManifest } from './task-contract/review-input-manifest'
+import { DEFAULT_REVIEW_POLICY } from './task-contract/review-policy'
 
 import type { ReviewGateComment } from './review-gate'
 

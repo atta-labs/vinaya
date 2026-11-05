@@ -17,7 +17,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { withBeyondSurfaceBlock } from '@attalabs/aeg-core'
+import { withBeyondSurfaceBlock } from '../../../../tools/task-contract/issue-validation'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { withDeveloperModelsLine } from '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'

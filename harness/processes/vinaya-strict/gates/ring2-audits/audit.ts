@@ -25,7 +25,7 @@ import {
   type DeadBranchFact,
   type DeadBranchPush
 } from '../../../../kernel/gates/ring2-audits/dead-branch-push-audit'
-import { label } from '@attalabs/aeg-core'
+import { label } from '../../tools/task-contract/forge/labels'
 import { loadConfig } from '../../../../../apps/cli/src/lib/config.js'
 import { detectGitRepo, type RepoInfo } from '../../../../kernel/connectors/git/detect.js'
 import { printJson } from '../../../../kernel/effects/envelope.js'

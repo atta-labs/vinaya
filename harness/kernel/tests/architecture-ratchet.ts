@@ -41,14 +41,7 @@ export function* sourceFiles(folder: string): Generator<string> {
 }
 
 /** The roots the ratchet scans. A root that no longer exists is skipped. */
-export const SCOPE_ROOTS = [
-  'harness',
-  'packages/aeg-core',
-  'packages/aeg-forge-state',
-  'packages/aeg-types',
-  'packages/sources',
-  'apps/cli/src'
-]
+export const SCOPE_ROOTS = ['harness', 'packages/aeg-core', 'packages/sources', 'apps/cli/src']
 const EXCLUDED_ROOTS = ['harness/processes']
 
 /** Whether a repository-relative source file is counted: inside a scope root, outside a process, and not a test or fixture. */

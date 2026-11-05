@@ -35,7 +35,8 @@ import {
   type TaskToolError,
   type TaskToolRef
 } from '../../../../../kernel/tools/catalog/task-tools'
-import { findTrancheSlug, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
+import { findTrancheSlug } from '../../../tools/task-contract/forge/labels'
+import { resolveTaskIssueRef } from '../../../tools/task-contract/forge/list-tasks'
 import { runtimeDir } from '../standalone/dev-review-loop.js'
 import {
   gatherTaskStatusList,

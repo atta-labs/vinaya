@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { GhIssue } from '../../../kernel/adapters/code-host/github/gh'
-import type { TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
+import type { TrancheMilestoneIndex } from '../tools/task-contract/forge/fetch-milestone'
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

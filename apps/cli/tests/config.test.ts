@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CheckSpec } from '../../../harness/kernel/gates/checks/contract'
 import { runChecks } from '../../../harness/kernel/gates/checks/runner'
-import { DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY } from '../../../harness/processes/vinaya-strict/tools/task-contract/review-policy'
 import {
   isCanonicalHookBlockPath,
   lintEnvDeclarations,

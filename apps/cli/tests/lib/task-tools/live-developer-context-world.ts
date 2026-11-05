@@ -1,5 +1,5 @@
 import { defaultControlStoreDeps } from '../../../../../harness/kernel/connectors/checkpoint/control-store/index'
-import type { IssueSurface } from '@attalabs/aeg-core'
+import type { IssueSurface } from '../../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
 import { ProtectedPathError, scopeTarget } from '../../../../../harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from '../broker/vinaya-broker'
 import type { DispatchTeeRecoveryDeps } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch'

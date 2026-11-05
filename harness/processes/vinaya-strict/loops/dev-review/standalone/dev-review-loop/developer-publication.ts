@@ -20,10 +20,9 @@
 import {
   type BeyondSurfacePath,
   beyondSurfacePaths,
-  COMMIT_TYPE_STYLE,
-  COMMIT_TYPES,
   type IssueSurface
-} from '@attalabs/aeg-core'
+} from '../../../../tools/task-contract/issue-validation'
+import { COMMIT_TYPE_STYLE, COMMIT_TYPES } from '../../../../tools/task-contract/brief-validation'
 
 // --- commit-header validation (O2) ------------------------------------------
 

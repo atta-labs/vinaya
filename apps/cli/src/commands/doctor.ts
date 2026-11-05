@@ -21,9 +21,9 @@ import {
 import {
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
-  parsePnpmWorkspaceYaml,
-  parseRegistry
-} from '@attalabs/aeg-core'
+  parsePnpmWorkspaceYaml
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains'
+import { parseRegistry } from '../../../../harness/processes/vinaya-strict/tools/task-contract/parse-registry'
 import {
   classifyDocOwnersManifest,
   DOC_OWNERS_PATH,
@@ -743,7 +743,7 @@ function diagnoseDocOwnersHealth(repoRoot: string): Finding[] {
 // ---------------------------------------------------------------------------
 // blast-radius diagnostic — permanent, unconditioned on install state:
 // `checkBlastRadiusScope` (`@attalabs/aeg-core`'s `issue-validation.ts`, run
-// from `packages/aeg-core/bin/open-issue.ts`) now derives its `packages/*`
+// from `harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts`) now derives its `packages/*`
 // collision domains live from `package.json` `workspaces` and ships a
 // built-in cross-cutting default set (lockfile/monorepo-config/CI/git-hooks
 // presence-checks) — see `blast-radius-domains.ts`. The legacy static

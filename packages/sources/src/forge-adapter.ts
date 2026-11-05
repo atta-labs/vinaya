@@ -1,4 +1,4 @@
-import { deriveTrancheFromForge } from '@attalabs/aeg-forge-state'
+import { deriveTrancheFromForge } from '../../../harness/processes/vinaya-strict/tools/task-contract/forge/derive-from-forge'
 import type { StateSource } from './contract'
 
 export type ForgeSourceConfig = {

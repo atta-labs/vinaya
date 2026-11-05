@@ -10,7 +10,7 @@
  * call-site error-handling policies this extraction does not change.
  *
  * Mints lazily, on first use, by design — never called to bootstrap the
- * full label vocabulary (`@attalabs/aeg-forge-state`'s `labels.ts`) ahead of
+ * full process-specific label vocabulary ahead of
  * need.
  */
 

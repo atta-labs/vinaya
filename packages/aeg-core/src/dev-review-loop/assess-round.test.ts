@@ -17,7 +17,10 @@ import {
   renderTaskBudgetDetail,
   taskBudgetExceeded
 } from './assess-round'
-import { activeBudgetMs, isActiveBudgetPhase } from '../task-phase-history'
+import {
+  activeBudgetMs,
+  isActiveBudgetPhase
+} from '../../../../harness/processes/vinaya-strict/tools/task-phase-history'
 import { initialLoopState, SEVERITY_COLUMNS } from './types'
 import type { LoopConfig, TaskClock } from './types'
 

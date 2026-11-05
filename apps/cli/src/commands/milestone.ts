@@ -17,18 +17,20 @@ import {
   type AdoptTargetFacts,
   checkAdoptable,
   checkMilestoneShape
-} from '@attalabs/aeg-core'
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/milestone-validation'
+import { checkMilestoneAttachment } from '../../../../harness/processes/vinaya-strict/tools/milestone/check-milestone-attachment'
 import {
-  checkMilestoneAttachment,
   deriveTrancheFromForge,
-  fetchTrancheIssuesAsync,
+  trancheFromIssues
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/derive-from-forge'
+import { fetchTrancheIssuesAsync } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks'
+import {
   findMilestoneForSlug,
   hasTrancheIntentsSection,
   intentLines,
-  resolveMilestoneAttachTarget,
-  trancheFromIssues,
-  trancheLabel
-} from '@attalabs/aeg-forge-state'
+  resolveMilestoneAttachTarget
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/fetch-milestone'
+import { trancheLabel } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
 import { detectGitRepo } from '../../../../harness/kernel/connectors/git/detect.js'
 import { printJson } from '../../../../harness/kernel/effects/envelope.js'
 import {

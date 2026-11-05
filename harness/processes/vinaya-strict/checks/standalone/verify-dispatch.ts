@@ -78,25 +78,22 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import {
   AmbiguousBareEdgeError,
-  deriveTrancheFromForge,
-  fetchProvenance,
-  trancheLabel,
   parseRationaleDeps,
-  resolvePriorTrancheArchival,
   requireTrancheQualifiedEdges,
-  splitSlugQualifiedEdge,
-  tranchesAttachedToMilestone
-} from '@attalabs/aeg-forge-state'
+  splitSlugQualifiedEdge
+} from '../../tools/task-contract/forge/parse-rationale-deps'
+import { deriveTrancheFromForge } from '../../tools/task-contract/forge/derive-from-forge'
+import { fetchProvenance } from '../forge/fetch-provenance'
+import { trancheLabel } from '../../tools/task-contract/forge/labels'
+import { resolvePriorTrancheArchival } from '../../tools/prior-tranche-archival'
+import { tranchesAttachedToMilestone } from '../../tools/task-contract/forge/fetch-milestone'
 import { resolveGithubToken } from '../../../../kernel/adapters/code-host/github/github-token'
 import { resolveRepo, type RepoRef } from '../../../../kernel/adapters/code-host/github/resolve-repo'
-import {
-  checkIssueRationale,
-  checkPremises,
-  deriveSection7,
-  issueBranchName,
-  parsePremiseBlock,
-  resolveNewestFrozenBrief
-} from '../../../../../packages/aeg-core/src/index'
+import { checkIssueRationale } from '../../tools/task-contract/issue-validation'
+import { checkPremises, parsePremiseBlock } from '../../tools/task-contract/premise-check'
+import { deriveSection7 } from '../../tools/task-contract/derive-section7'
+import { issueBranchName } from '../../tools/task-contract/task-branch-identity'
+import { resolveNewestFrozenBrief } from '../../tools/task-contract/brief-validation'
 import { type BaselineEntry, captureBaseline, compareToBaseline } from '../baseline-capture'
 import {
   checkDispatchReadiness,
@@ -107,8 +104,8 @@ import {
 import { classifyLeftover, leftoverBlocksDispatch } from '../../tools/task-contract/bin/leftover-detection'
 import { classifyDocOwnersManifest, DOC_OWNERS_PATH } from '../../tools/doc-owners'
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point'
-import { readConfigPrincipals } from '../../../../../packages/aeg-core/src/principals-config'
-import type { Tranche, Task } from '../../../../../packages/aeg-core/src/types'
+import { readConfigPrincipals } from '../../tools/task-contract/principals-config'
+import type { Tranche, Task } from '../../tools/task-contract/types'
 
 const DISPATCH_INVOCATION_CWD = process.cwd()
 

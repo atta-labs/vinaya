@@ -105,9 +105,7 @@ describe('harness never imports a process', () => {
 
 /** The packages whose subpaths a kernel import is followed through, by workspace folder. */
 export const COMPATIBILITY_PACKAGES: Readonly<Record<string, string>> = {
-  '@attalabs/aeg-core': 'packages/aeg-core',
-  '@attalabs/aeg-forge-state': 'packages/aeg-forge-state',
-  '@attalabs/aeg-types': 'packages/aeg-types'
+  '@attalabs/aeg-core': 'packages/aeg-core'
 }
 
 export type PackageImportTarget = { file: string; specifier: string; symbol: string; target: string }

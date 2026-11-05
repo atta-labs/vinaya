@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DEFAULT_REVIEW_POLICY, evaluateCodeReview, type ReviewInputManifest } from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY, evaluateCodeReview } from '../../../../tools/task-contract/review-policy'
+import type { ReviewInputManifest } from '../../../../tools/task-contract/review-input-manifest'
 import {
   defaultControlStoreDeps,
   readManifest

@@ -1,4 +1,8 @@
-import { findTrancheSlug, isTaskIssueBodyShaped, isTaskIssueLabelSet } from '@attalabs/aeg-core'
+import { findTrancheSlug } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
+import {
+  isTaskIssueBodyShaped,
+  isTaskIssueLabelSet
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
 import { printJson } from '../../../../harness/kernel/effects/envelope'
 import {
   type BodyResult,

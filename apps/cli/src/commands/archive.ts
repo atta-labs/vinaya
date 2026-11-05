@@ -14,23 +14,26 @@
 import { execFileSync } from 'node:child_process'
 import {
   buildProvenanceBlock,
-  formatTokensLine,
   hasProvenance,
   isEligibleForProvenance,
-  parseDeveloperRoundMarker,
-  resolveNewestFrozenBrief,
   taskRefFromBranch,
-  trancheLabel,
-  trancheSlugOf,
   type MergedPrFacts
 } from '@attalabs/aeg-core'
+import { formatTokensLine } from '../../../../harness/processes/vinaya-strict/tools/pr-report/tokens/report-tokens'
+import { parseDeveloperRoundMarker } from '../../../../harness/processes/vinaya-strict/tools/task-contract/review-status'
+import { resolveNewestFrozenBrief } from '../../../../harness/processes/vinaya-strict/tools/task-contract/brief-validation'
+import {
+  trancheLabel,
+  trancheSlugOf
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
 import { extractIssue } from '../../../../harness/kernel/adapters/code-host/github/extract-issue'
 import {
   resolveMeteringCapability,
   type MeteringCapability
 } from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import type { TranscriptSummary } from '../../../../harness/kernel/adapters/agents/claude-code/transcript-summary'
-import { deriveTrancheFromForge, hasTrancheIntentsSection } from '@attalabs/aeg-forge-state'
+import { deriveTrancheFromForge } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/derive-from-forge'
+import { hasTrancheIntentsSection } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/fetch-milestone'
 import { detectGitRepo, type RepoInfo } from '../../../../harness/kernel/connectors/git/detect.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
 import { loadConfig, PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../lib/config.js'

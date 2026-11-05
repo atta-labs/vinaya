@@ -1,6 +1,9 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '@attalabs/aeg-core'
+import {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/verdict-extraction'
 import { printJson } from '../../../../harness/kernel/effects/envelope'
 import {
   countMarkerComments,
@@ -13,7 +16,7 @@ import {
 const RETRY = 'vinaya pr rule <pr> --file <ruling.md>'
 
 /**
- * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` treat "no
  * candidate line anywhere in the body" as the ONE case where `danglingNote`
  * carries this exact sentinel text — every other outcome (a clean verdict

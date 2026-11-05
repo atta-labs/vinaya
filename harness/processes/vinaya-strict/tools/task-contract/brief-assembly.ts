@@ -16,34 +16,35 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { buildConsumersOf, type PackageManifest } from './consumer-enumeration'
 import {
-  buildConsumersOf,
   boundaryPinnedFiles,
   checkIssueRationale,
   checkPremisesHold,
-  extractBoundaryFilePaths,
-  fetchForgeFacts,
-  fetchOpenIssuesByLabel,
   isTaskIssueLabelSet,
-  objectivesOf,
   parseIssueParts,
   parseIssuePremises,
   parseIssueStopConditions,
   parseIssueSurface,
   parseIssueTestPlan,
-  parseRationaleFields,
   surfaceEntryResolves,
-  type PackageManifest,
-  renderBrief,
-  trancheLabel,
-  type BriefFacts,
   type IssuePart,
   type IssueSurface,
-  type IssueTestPlan,
+  type IssueTestPlan
+} from './issue-validation'
+import {
+  extractBoundaryFilePaths,
+  parseRationaleFields,
+  renderBrief,
+  type BriefFacts,
   type LocalGateCommands,
-  type SurfaceFileFact,
-  type Task
-} from '@attalabs/aeg-core'
+  type SurfaceFileFact
+} from './brief-render'
+import { fetchForgeFacts } from './forge/fetch-forge-facts'
+import { fetchOpenIssuesByLabel } from './forge/fetch-open-issues'
+import { objectivesOf } from './objectives'
+import { trancheLabel } from './forge/labels'
+import type { Task } from './tranche-types'
 import {
   checkDispatchReadiness,
   type DispatchBlocker,
@@ -52,7 +53,7 @@ import {
   type DispatchGateInput,
   type DispatchPriorTrancheFact
 } from '../dispatch-gate'
-import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
+import { parseRationaleDeps } from './forge/parse-rationale-deps'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve.js'
 import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config.js'

@@ -1,4 +1,4 @@
-import type { Tranche } from '../../../../packages/aeg-core/src/types'
+import type { Tranche } from '../tools/task-contract/types'
 
 /**
  * Branch↔topology gate. Pure — no

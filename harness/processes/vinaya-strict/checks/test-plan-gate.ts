@@ -33,9 +33,9 @@
  * older head only — counts as an unticked `[live]` line.
  */
 
-import { type LiveRecordLine, readLiveRecord } from '../../../../packages/aeg-core/src/live-record'
-import { locateTestPlanSection } from '../../../../packages/aeg-core/src/test-plan-section'
-import { parseTaskBranchIdentity } from '../../../../packages/aeg-core/src/task-branch-identity'
+import { type LiveRecordLine, readLiveRecord } from '../tools/task-contract/live-record'
+import { locateTestPlanSection } from '../tools/task-contract/test-plan-section'
+import { parseTaskBranchIdentity } from '../tools/task-contract/task-branch-identity'
 
 export type TestPlanGateVerdict = 'pass' | 'fail'
 export type TestPlanGateResult = {

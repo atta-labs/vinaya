@@ -12,7 +12,9 @@ import {
 import { createHash } from 'node:crypto'
 import { hostname, tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
-import { buildReviewInputManifest, DEFAULT_REVIEW_POLICY, objectivesVersion } from '@attalabs/aeg-core'
+import { buildReviewInputManifest } from '../../../../harness/processes/vinaya-strict/tools/task-contract/review-input-manifest'
+import { DEFAULT_REVIEW_POLICY } from '../../../../harness/processes/vinaya-strict/tools/task-contract/review-policy'
+import { objectivesVersion } from '../../../../harness/processes/vinaya-strict/tools/task-contract/objectives'
 import {
   type ControlStoreDeps,
   defaultControlStoreDeps

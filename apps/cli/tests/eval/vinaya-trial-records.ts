@@ -9,7 +9,10 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { beyondSurfacePaths, withBeyondSurfaceBlock } from '@attalabs/aeg-core'
+import {
+  beyondSurfacePaths,
+  withBeyondSurfaceBlock
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
 import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import {
   renderCase,

@@ -53,7 +53,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { isPrincipal } from '@attalabs/aeg-core'
+import { isPrincipal } from '../../tools/task-contract/waiver-label'
 import { agentCommandText, extractAgentCommandLines } from '../../../../../apps/cli/src/commands/pr-report'
 import { resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'
 import {

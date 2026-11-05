@@ -14,7 +14,10 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { parse } from 'yaml'
-import { LABELS, parseRegistry, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
+import { LABELS } from '../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
+import { parseRegistry } from '../../../harness/processes/vinaya-strict/tools/task-contract/parse-registry'
+import { VERDICT_MARKER_SOURCE } from '../../../harness/processes/vinaya-strict/tools/task-contract/verdict-extraction'
+import { WAIVER_LABEL_REVIEW } from '../../../harness/processes/vinaya-strict/tools/task-contract/waiver-label'
 import { DOC_OWNERS_PATH } from '../../../harness/processes/vinaya-strict/tools/doc-owners'
 import { AGENT_VENDORS, type AgentVendor } from '../../../harness/kernel/adapters/agents/agent-vendors.js'
 import {

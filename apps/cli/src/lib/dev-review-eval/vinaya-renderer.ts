@@ -29,7 +29,10 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { type IssueSurface, recordedBeyondSurfacePaths } from '@attalabs/aeg-core'
+import {
+  type IssueSurface,
+  recordedBeyondSurfacePaths
+} from '../../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
 import type { RoleContract } from '../../../../../harness/kernel/adapters/agents/manifest'
 import { parseDeveloperTurnResult } from '../../../../../harness/processes/vinaya-strict/executing/developer/developer-turn-result'
 import {
@@ -877,9 +880,9 @@ export const MAPPING_SOURCE_PATHS: readonly string[] = [
   'harness/kernel/tools/role-grants.ts',
   'harness/processes/vinaya-strict/integration/policies/roles.ts',
   'harness/kernel/adapters/agents/manifest.ts',
-  'packages/aeg-core/src/review-policy.ts',
+  'harness/processes/vinaya-strict/tools/task-contract/review-policy.ts',
   'harness/kernel/log/schema.ts',
-  'packages/aeg-core/src/issue-validation.ts',
+  'harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts',
   'harness/kernel/gates/checks/anchored-region.ts',
   'harness/kernel/adapters/code-host/github/strip-code.ts'
 ]

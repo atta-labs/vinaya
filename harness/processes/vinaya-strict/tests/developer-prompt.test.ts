@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { briefHash, initialLoopState, policyDigest } from '@attalabs/aeg-core'
+import { briefHash, policyDigest } from '../tools/task-contract/review-input-manifest'
+import { initialLoopState } from '@attalabs/aeg-core'
 import type { StepNodeResult } from '@atta/executor-agent-spawn'
 import {
   buildDeveloperDeltaPacket,

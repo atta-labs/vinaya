@@ -1,7 +1,7 @@
 import * as realChildProcess from 'node:child_process'
 import { promisify } from 'node:util'
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
-import type { Task, Tranche } from '../../../../../packages/aeg-core/src/types'
+import type { Task, Tranche } from '../../tools/task-contract/types'
 
 /**
  * Regression coverage for #196 — the Issue's failure table, one test per row,

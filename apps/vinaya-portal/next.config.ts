@@ -4,7 +4,7 @@ const config: NextConfig = {
   // The portal's docs read the installed doctrine at build time; @attalabs packages ship raw .ts
   transpilePackages: [
     '@attalabs/aeg-core',
-    '@attalabs/aeg-forge-state',
+    '@attalabs/process-vinaya',
     '@attalabs/harness',
     '@attalabs/vinaya-sources'
   ],

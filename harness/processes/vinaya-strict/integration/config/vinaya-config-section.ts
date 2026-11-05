@@ -6,15 +6,14 @@ import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
-  DEFAULT_COLLISION_THRESHOLD,
   DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
   DEFAULT_REVIEW_POLICY,
-  type GateCutovers,
   isKnownSeverity,
-  NO_GATE_CUTOVERS,
   type ReviewPolicy,
   SECURITY_SEVERITY_ORDER
-} from '@attalabs/aeg-core'
+} from '../../tools/task-contract/review-policy'
+import { DEFAULT_COLLISION_THRESHOLD } from '../../tools/task-contract/issue-validation'
+import { type GateCutovers, NO_GATE_CUTOVERS } from '../../tools/task-contract/gate-cutovers'
 import { DEFAULT_RELEASE_ACTOR } from '../../tools/review-gate'
 import { normalizeSpecPath } from '../../tools/reader-resolvable-prose'
 import {
@@ -321,7 +320,7 @@ export const VINAYA_CONFIG_FRAGMENT = {
   // compatibility, so this is now the ONLY way to declare one beyond
   // derivation. `checkBlastRadiusScope`'s domain list
   // (`harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts`'s `readSharedPackages`, mirroring
-  // `packages/aeg-core/bin/open-issue.ts`'s own) is live-derived from
+  // `harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts`'s own) is live-derived from
   // `package.json` workspaces plus a built-in cross-cutting default set
   // (lockfile, monorepo config, CI, git hooks); an adopter who needs a
   // domain beyond those (a `migrations/` folder, a codegen output dir)

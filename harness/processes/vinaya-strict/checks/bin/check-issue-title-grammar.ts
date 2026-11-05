@@ -12,7 +12,7 @@
  * gate's runner), never from `vinaya check --all`.
  */
 
-import { checkForgeTitle } from '@attalabs/aeg-core'
+import { checkForgeTitle } from '../../tools/task-contract/brief-validation'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { readIssueCheckEnv } from '../issue-check-env'
 

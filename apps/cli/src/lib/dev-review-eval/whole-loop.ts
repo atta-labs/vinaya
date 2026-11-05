@@ -44,10 +44,10 @@ import { dirname, join, resolve } from 'node:path'
 import {
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
-  issueBranchName,
-  PUBLISHED_MARKER_LINE,
   type VerdictExtraction
-} from '@attalabs/aeg-core'
+} from '../../../../../harness/processes/vinaya-strict/tools/task-contract/verdict-extraction'
+import { issueBranchName } from '../../../../../harness/processes/vinaya-strict/tools/task-contract/task-branch-identity'
+import { PUBLISHED_MARKER_LINE } from '@attalabs/aeg-core'
 import { NO_LOCAL_TESTS_MARKER } from '../../../../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
 import type { ReviewerRole } from '../../../../../harness/processes/vinaya-strict/executing/code-reviewer/review-result'
 import { PROTECTED_REPOSITORY, REPOSITORY_NAME } from './freeze-record'

@@ -12,7 +12,12 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { objectivesOf, objectivesVersion, renderObjectives, type Objective } from '@attalabs/aeg-core'
+import {
+  objectivesOf,
+  objectivesVersion,
+  renderObjectives,
+  type Objective
+} from '../../../../tools/task-contract/objectives'
 import {
   cleanupWorlds,
   makeInProcessDeps,

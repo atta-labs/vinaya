@@ -98,7 +98,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: [
       'apps/cli/src/',
       'packages/aeg-core/bin/',
-      'packages/aeg-core/src/brief-validation.ts',
+      'harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts',
       'aeg-root/enforcement.md',
       '.claude/hooks/'
     ],

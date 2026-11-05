@@ -3,11 +3,8 @@
 // differently. Each caller supplies its own special case for the tranche it
 // is closing through the per-slug lifecycle reader.
 
-import {
-  type deriveTrancheFromForge,
-  intentLines,
-  milestoneLifecycleFromTrancheLifecycles
-} from '@attalabs/aeg-forge-state'
+import type { deriveTrancheFromForge } from '../../tools/task-contract/forge/derive-from-forge'
+import { intentLines, milestoneLifecycleFromTrancheLifecycles } from '../../tools/task-contract/forge/fetch-milestone'
 
 /** The three lifecycles a tranche can be in, read off the one derivation `@attalabs/aeg-forge-state` owns rather than restated here. */
 export type TrancheLifecycle = Awaited<ReturnType<typeof deriveTrancheFromForge>>['lifecycle']

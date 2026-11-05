@@ -134,7 +134,7 @@ SECRETS: [none found — atta-labs/secret-scan passed | listed above, redacted]
 <notes from your own read of the diff, if any, on the lines below>
 ```
 
-<!-- AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
 <!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string { -->
 <!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult { -->
 - **CRITICAL** — leaked live credential, auth bypass, or key sent to a client.

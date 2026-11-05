@@ -69,13 +69,9 @@ import {
   type DeferredFindingsIssueRef,
   markedCommentBody
 } from '../../../tools/task-contract/forge/forge-write.js'
-import {
-  DEFAULT_REVIEW_POLICY,
-  type IssueSurface,
-  objectivesOf,
-  objectivesVersion,
-  renderObjectives
-} from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY } from '../../../tools/task-contract/review-policy'
+import type { IssueSurface } from '../../../tools/task-contract/issue-validation'
+import { objectivesOf, objectivesVersion, renderObjectives } from '../../../tools/task-contract/objectives'
 import { FIXTURE_REPO, isolatedConfigFixture } from '../../../../../../apps/cli/tests/lib/process-fixture.js'
 
 /** A fake reviewer/security dispatch's outcome, in a compact line grammar `fakeReviewOutput` turns into the structured ReviewResult it returns. */

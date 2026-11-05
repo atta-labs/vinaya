@@ -1453,7 +1453,7 @@ describe('selection follows the changed names, and widens to file level when it 
   // an ordinary unit test, which this one outgrew: it failed for load alone,
   // on an untouched checkout, reporting nothing about the selector.
   it('on the real repository, a one-name change selects strictly fewer files than the file-level answer', () => {
-    const changed = join(REPO_ROOT, 'packages/aeg-core/src/review-input-manifest.ts')
+    const changed = join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.ts')
     const fileLevel = selectAffectedTestFiles(REPO_ROOT, [changed]).selected.length
     const oneName = selectAffectedTestFiles(REPO_ROOT, [changed], {
       affectedNames: new Map([[changed, new Set(['isBoundToPolicy'])]])

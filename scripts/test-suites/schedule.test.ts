@@ -264,7 +264,7 @@ describe('local grouping and CI placement take the same identity set', () => {
 
 describe('what a CI run schedules', () => {
   const cliTest = view.tests.find((t) => t.owner === CI_SHARD_LIST_OWNER) as TestIdentity
-  const forgeState = view.tests.find((t) => t.owner === '@attalabs/aeg-forge-state') as TestIdentity
+  const forgeState = view.tests.find((t) => t.owner === '@attalabs/log-server') as TestIdentity
 
   test('a selected run schedules the selected files, every root-suite test and the whole-run suite with its reason', () => {
     const input = ciScheduleInput(view, { scope: 'selected', selected: [cliTest.id], native: [forgeState.id] })

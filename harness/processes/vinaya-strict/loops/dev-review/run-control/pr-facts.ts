@@ -34,12 +34,9 @@
 
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
-import {
-  extractCodeReviewVerdict,
-  extractSecurityReviewVerdict,
-  isPrincipal,
-  parseDeveloperRoundMarker
-} from '@attalabs/aeg-core'
+import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '../../../tools/task-contract/verdict-extraction'
+import { isPrincipal } from '../../../tools/task-contract/waiver-label'
+import { parseDeveloperRoundMarker } from '../../../tools/task-contract/review-status'
 import {
   MAX_RETURNED_TEXT_CHARS,
   type TaskPrCheck,

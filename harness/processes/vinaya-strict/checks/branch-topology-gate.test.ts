@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'bun:test'
 import { checkBranchTopology, taskBranchTopologyFields } from './branch-topology-gate'
-import { parseTranche } from '../../../../packages/aeg-core/src/parse-tranche'
+import { parseTranche } from '../tools/task-contract/parse-tranche'
 
 /**
  * Parity oracle: the EXACT grep invocation `.husky/pre-push` ran before

@@ -68,26 +68,13 @@ import {
   type OpenedAgentConfigEntry,
   type TurnWriteAttribution
 } from '../../../../../kernel/isolation/worker-boundary.js'
+import { activeBudgetMs } from '../../../tools/task-phase-history'
 import {
-  activeBudgetMs,
   assessRound,
-  briefHash as briefHashOf,
-  parseLiveTestPlanItems,
-  readLiveRecord,
-  withLiveRecord,
-  buildReviewInputManifest,
-  compareManifest,
   concludedLoopRefusal,
-  DEFAULT_REVIEW_POLICY,
   initialLoopState,
   isConcludedJournal,
-  type IssueSurface,
-  globCoversPath,
-  manifestAsEchoed,
   nextRoundNumber,
-  pauseBoundRulingFromResolution,
-  parseIssueSurface,
-  policyDigest as policyDigestOf,
   recordDeveloperAttempt,
   type Confidence,
   type Decision,
@@ -95,16 +82,31 @@ import {
   type LoopConfig,
   type LoopState,
   type Observations,
-  type PauseBoundRuling,
   type PauseReason,
   type ReconstructedJournal,
-  type ReviewInputManifest,
-  type ReviewPolicy,
   type RoundStats,
   type TaskClock,
-  type VerdictObservation,
-  extractSourceRevision
+  type VerdictObservation
 } from '@attalabs/aeg-core'
+import {
+  briefHash as briefHashOf,
+  buildReviewInputManifest,
+  compareManifest,
+  manifestAsEchoed,
+  pauseBoundRulingFromResolution,
+  policyDigest as policyDigestOf,
+  type PauseBoundRuling,
+  type ReviewInputManifest
+} from '../../../tools/task-contract/review-input-manifest'
+import {
+  parseLiveTestPlanItems,
+  type IssueSurface,
+  globCoversPath,
+  parseIssueSurface
+} from '../../../tools/task-contract/issue-validation'
+import { readLiveRecord, withLiveRecord } from '../../../tools/task-contract/live-record'
+import { DEFAULT_REVIEW_POLICY, type ReviewPolicy } from '../../../tools/task-contract/review-policy'
+import { extractSourceRevision } from '../../../tools/task-contract/brief-render'
 import {
   defaultControlStoreDeps,
   readEarliestOwnership,
@@ -581,7 +583,7 @@ export type LoopDeps = {
    * fresh-dispatch path calls it once, ONLY when the branch exists neither as
    * an open PR nor on the remote (O2 leaves an existing one untouched) —
    * BEFORE the first Developer dispatch, so the brief's own Step 0 can enter
-   * the worktree rather than create it (`packages/aeg-core/src/brief-render.ts`).
+   * the worktree rather than create it (`harness/processes/vinaya-strict/tools/task-contract/brief-render.ts`).
    * Never pushes from this process's own default-branch checkout (Traps to
    * avoid — that checkout's own pre-push hook judges `main`, not the task,
    * and refuses), and never force-pushes. Throwing is tolerated by the one
@@ -3017,7 +3019,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   /** True when `--resume` continues a pause raised before the pull request existed and bound to it since: its ruling is on the task Issue (`escalationPrOf`), so the next Developer dispatch on the pull request is handed the Issue's rulings after the frozen brief. */
   let issueRulingsOwed = false
   /** The Principal ruling that authenticated the pause this run resumed. */
-  let pauseBoundRuling: import('@attalabs/aeg-core').PauseBoundRuling | null = null
+  let pauseBoundRuling: import('../../../tools/task-contract/review-input-manifest').PauseBoundRuling | null = null
 
   if ('resumePr' in input) {
     const resumePr = input.resumePr
@@ -6444,7 +6446,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // that worktree, BEFORE the first Developer turn below. This is
             // what makes `devWorktreeDir` (below) non-null from round 1 on, so
             // the brief's own Step 0 can simply enter the worktree rather than
-            // create it (`packages/aeg-core/src/brief-render.ts`), and so a
+            // create it (`harness/processes/vinaya-strict/tools/task-contract/brief-render.ts`), and so a
             // dashboard reading only GitHub counts this task in flight from its
             // first minute instead of only after the Developer's first push.
             // A failed push is logged and swallowed here, never a reason the

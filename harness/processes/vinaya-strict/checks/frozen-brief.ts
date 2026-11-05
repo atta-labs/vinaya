@@ -1,10 +1,7 @@
 import { extractIssue } from '../../../kernel/adapters/code-host/github/extract-issue'
-import {
-  isIssueNotFoundError,
-  isTaskBranch,
-  parseLiveTestPlanItems,
-  resolveNewestFrozenBrief
-} from '@attalabs/aeg-core'
+import { isIssueNotFoundError } from '../tools/task-contract/objectives'
+import { isTaskBranch, resolveNewestFrozenBrief } from '../tools/task-contract/brief-validation'
+import { parseLiveTestPlanItems } from '../tools/task-contract/issue-validation'
 import type { LiveGateInputs } from './test-plan-gate'
 import { PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../../../../apps/cli/src/lib/config'
 import { isForgeReadOversize, readIssueComments } from '../../../kernel/adapters/code-host/github/forge-read'

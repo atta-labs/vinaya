@@ -13,7 +13,6 @@ tests/lib/dispatch/documentation-read-content.test.ts
 tests/lib/artifacts/workflow.test.ts
 tests/lib/turbo-test-task-uncached.test.ts
 tests/log-destination-isolation.test.ts
-tests/lib/planning-collisions.test.ts
 tests/lib/dispatch/fetch-documentation-tool.test.ts
 tests/conformance/dev-review-engine-architecture-exit.test.ts
 tests/conformance/dev-review-engine-shadow.test.ts

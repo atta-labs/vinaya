@@ -1,9 +1,5 @@
 import { expect, test } from 'bun:test'
 import * as core from '../../../../packages/aeg-core/src/index'
-import * as forge from '../../../../packages/aeg-forge-state/src/index'
-import * as types from '../../../../packages/aeg-types/src/index'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 
 const retired = {
   core: [
@@ -213,20 +209,8 @@ const retired = {
     'TaskOutcomeStatus',
     'TransitionInput',
     'TransitionRecord'
-  ],
-  forge: ['GhIssue', 'resolveGithubToken', 'stripCode', 'StripCodeOptions', 'resolveRepo', 'RepoRef']
+  ]
 }
 test('retired package entries expose none of the relocated kernel symbols', () => {
   for (const name of retired.core) expect(Object.hasOwn(core, name)).toBe(false)
-  for (const name of retired.forge) expect(Object.hasOwn(forge, name)).toBe(false)
-  for (const name of ['DEV_TOOLS_TOOL_TIMEOUT_SEC']) expect(Object.hasOwn(types, name)).toBe(false)
-  for (const [pkg, subpath] of [
-    ['aeg-types', './dev-tools'],
-    ['aeg-forge-state', './strip-code']
-  ]) {
-    const manifest = JSON.parse(
-      readFileSync(join(import.meta.dir, '../../../../packages', pkg as string, 'package.json'), 'utf8')
-    )
-    expect(manifest.exports).not.toHaveProperty(subpath as string)
-  }
 })

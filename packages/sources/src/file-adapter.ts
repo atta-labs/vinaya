@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { parseTranche } from '@attalabs/aeg-core'
+import { parseTranche } from '../../../harness/processes/vinaya-strict/tools/task-contract/parse-tranche'
 import type { StateSource } from './contract'
 
 /** Default governance root when no config value is supplied. Never read

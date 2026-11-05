@@ -2,11 +2,11 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
   beyondSurfacePaths,
-  carryLiveRecord,
   globCoversPath,
   type IssueSurface,
   withBeyondSurfaceBlock
-} from '@attalabs/aeg-core'
+} from '../../../tools/task-contract/issue-validation'
+import { carryLiveRecord } from '../../../tools/task-contract/live-record'
 import { defaultControlStoreDeps } from '../../../../../kernel/connectors/checkpoint/control-store/index'
 import { createBroker, type InvocationContext, scopeTarget } from '../../../../../kernel/tools/host/broker.js'
 import { normalizeTouchedPath } from '../../../../../kernel/tools/host/touched-path.js'

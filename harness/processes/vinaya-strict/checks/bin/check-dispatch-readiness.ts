@@ -68,7 +68,10 @@ import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { sep } from 'node:path'
 import { promisify } from 'node:util'
-import { checkIssueRationale, fetchOpenIssuesByLabel, parseTaskBranchIdentity, type Task } from '@attalabs/aeg-core'
+import { checkIssueRationale } from '../../tools/task-contract/issue-validation'
+import { fetchOpenIssuesByLabel } from '../../tools/task-contract/forge/fetch-open-issues'
+import { parseTaskBranchIdentity } from '../../tools/task-contract/task-branch-identity'
+import type { Task } from '../../tools/task-contract/tranche-types'
 import {
   checkDispatchReadiness,
   type DispatchBlockerClass,
@@ -76,12 +79,10 @@ import {
   type DispatchDependsOnFact,
   type DispatchGateInput
 } from '../../tools/dispatch-gate'
-import {
-  fetchForgeFactsByIssue,
-  parseRationaleDeps,
-  resolveDuplicateTasks,
-  resolvePriorTrancheArchival
-} from '@attalabs/aeg-forge-state'
+import { fetchForgeFactsByIssue } from '../../tools/task-contract/forge/fetch-forge-facts'
+import { parseRationaleDeps } from '../../tools/task-contract/forge/parse-rationale-deps'
+import { resolveDuplicateTasks } from '../../tools/task-contract/forge/list-tasks'
+import { resolvePriorTrancheArchival } from '../../tools/prior-tranche-archival'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'

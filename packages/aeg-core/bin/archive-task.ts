@@ -23,16 +23,11 @@
 
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import {
-  buildProvenanceBlock,
-  hasProvenance,
-  isEligibleForProvenance,
-  resolveNewestFrozenBrief,
-  taskRefFromBranch
-} from '../src/index'
+import { buildProvenanceBlock, hasProvenance, isEligibleForProvenance, taskRefFromBranch } from '../src/archive-task'
+import { resolveNewestFrozenBrief } from '../../../harness/processes/vinaya-strict/tools/task-contract/brief-validation'
 import { extractIssue } from '../../../harness/kernel/adapters/code-host/github/extract-issue'
-import type { MergedPrFacts } from '../src/index'
-import { readConfigPrincipals } from '../src/principals-config'
+import type { MergedPrFacts } from '../src/archive-task'
+import { readConfigPrincipals } from '../../../harness/processes/vinaya-strict/tools/task-contract/principals-config'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)

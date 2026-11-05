@@ -36,15 +36,11 @@ import {
   readEffects,
   readLoopState
 } from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import {
-  isPrincipal,
-  isPublishedSummaryComment,
-  parseSummaryConfidenceRows,
-  resolveNewestFrozenBrief,
-  taskPhaseLabel,
-  type PauseReason
-} from '@attalabs/aeg-core'
-import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
+import { isPrincipal } from '../../../tools/task-contract/waiver-label'
+import { isPublishedSummaryComment, parseSummaryConfidenceRows, type PauseReason } from '@attalabs/aeg-core'
+import { resolveNewestFrozenBrief } from '../../../tools/task-contract/brief-validation'
+import { taskPhaseLabel } from '../../../tools/task-phase-history'
+import { resolveTaskIssueRef } from '../../../tools/task-contract/forge/list-tasks'
 import { resolveTrustedPrincipals, type TaskRunner } from '../../../../../../apps/cli/src/lib/config.js'
 import { readEngineRun, readTaskRunner, type EngineRunReading } from './task-run-engine.js'
 import { findOpenPrForBranch, runtimeDir } from '../standalone/dev-review-loop.js'

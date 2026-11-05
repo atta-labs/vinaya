@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
-import { DEFAULT_REVIEW_POLICY, policyDigest } from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
+import { policyDigest } from '../../../../tools/task-contract/review-input-manifest'
 import { checkReviewGate } from '../../../../tools/review-gate'
 
 export const CLI_ROOT = join(

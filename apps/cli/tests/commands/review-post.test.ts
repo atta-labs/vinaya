@@ -5,11 +5,13 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_REVIEW_POLICY,
-  extractCodeReviewVerdict,
-  extractSecurityReviewVerdict,
-  OBJECTIVES_SINCE_ISSUE,
   type ReviewPolicy
-} from '@attalabs/aeg-core'
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/review-policy'
+import {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/verdict-extraction'
+import { OBJECTIVES_SINCE_ISSUE } from '../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import {
   checkDocCorrectnessSearch,

@@ -165,14 +165,7 @@ export const CLI_CHECK_RING: Readonly<Record<string, 0 | 1 | 2>> = {
  * writers and one-shot reporters. Listed explicitly rather than pattern-matched
  * so a NEW file cannot slip through by being named unlike a gate.
  */
-export const NON_GATE_BINS = [
-  'archive-task',
-  'dead-branch-audit',
-  'eval-agent-compliance',
-  'open-issue',
-  'open-pr',
-  'report-tokens'
-] as const
+export const NON_GATE_BINS = ['archive-task', 'dead-branch-audit', 'eval-agent-compliance'] as const
 
 export function isShipped(a: GateAudience): a is ShippedGate {
   return 'shippedAs' in a

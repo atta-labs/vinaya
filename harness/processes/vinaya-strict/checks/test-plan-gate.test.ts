@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { renderLiveRecordBlock } from '../../../../packages/aeg-core/src/live-record'
+import { renderLiveRecordBlock } from '../tools/task-contract/live-record'
 import { evaluateTestPlanGate } from './test-plan-gate'
 
 const TASK_BRANCH = 'task/herald-hardening-v1/2'

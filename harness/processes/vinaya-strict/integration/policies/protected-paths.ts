@@ -6,7 +6,7 @@
  * so the broker and the check never hold two copies of the list.
  */
 
-import { isProtectedAdminPath } from '@attalabs/aeg-core'
+import { isProtectedAdminPath } from '../../tools/task-contract/protected-paths'
 import type { ProtectedPathPolicy } from '../../../../kernel/tools/host/broker.js'
 
 export const VINAYA_PROTECTED_PATHS: ProtectedPathPolicy = {

@@ -116,7 +116,7 @@ import {
   readLoopState,
   readResolution
 } from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import { principalRulingMarker } from '@attalabs/aeg-core'
+import { principalRulingMarker } from '../../../tools/task-contract/ruling-ordinal'
 import {
   TaskStartInputSchema,
   type TaskResumeResult,

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { briefHash } from '@attalabs/aeg-core'
+import { briefHash } from '../../../../harness/processes/vinaya-strict/tools/task-contract/review-input-manifest'
 import { redact } from '../../../../harness/kernel/log/redact'
 import type {
   LoopDeps,

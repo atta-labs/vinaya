@@ -11,7 +11,7 @@
  */
 
 import { siblingsSharingConflictEdge, type DispatchConflictsWithFact } from '../tools/dispatch-gate'
-import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
+import { parseRationaleDeps } from '../tools/task-contract/forge/parse-rationale-deps'
 
 export type OpenSiblingIssue = { number: number; body: string }
 export type ResolveConflictEdge = (edge: string) => Promise<{ issue: number | null; open: boolean }>

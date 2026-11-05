@@ -21,7 +21,7 @@ import { ensureLabelExists as ensureLabelExistsShared } from '../../../../kernel
 import { findDeadBranchPushes } from '../../../../kernel/gates/ring2-audits/dead-branch-push-audit'
 import type { DeadBranchFact } from '../../../../kernel/gates/ring2-audits/dead-branch-push-audit'
 import type { DeadBranchPush } from '../../../../kernel/gates/ring2-audits/dead-branch-push-audit'
-import { label } from '@attalabs/aeg-forge-state'
+import { label } from '../../tools/task-contract/forge/labels'
 import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../../..')

@@ -22,7 +22,7 @@
  * immediately after it — so `!src/**​/*.test.ts` never matches a top-level
  * `src/foo.test.ts` (no directory between `src/` and the filename), only a
  * NESTED one. This repo's own fixed-group members put their test files
- * directly in `src/` (e.g. `packages/aeg-core/src/milestone-validation.test.ts`),
+ * directly in `src/` (e.g. `harness/processes/vinaya-strict/tools/task-contract/milestone-validation.test.ts`),
  * which is exactly the shape that quirk misses — found while writing this
  * predicate's own tests, before it ever shipped: every ordinary test-only PR
  * to a fixed-group package would have been misread as touching a SHIPPED

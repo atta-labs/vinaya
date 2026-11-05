@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { readLiveRecord } from '@attalabs/aeg-core'
+import { readLiveRecord } from '../../../../tools/task-contract/live-record'
 import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
 import {
   cleanupWorlds,

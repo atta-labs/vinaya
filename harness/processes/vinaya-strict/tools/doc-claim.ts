@@ -45,7 +45,7 @@
  */
 
 import { maskCode } from '../../../kernel/adapters/code-host/github/strip-code'
-import { checkPremises, type PremiseAssertion } from '../../../../packages/aeg-core/src/premise-check'
+import { checkPremises, type PremiseAssertion } from './task-contract/premise-check'
 import { isValidCitedFilePath } from './quoted-command'
 
 export type DocClaimSourceFile = { path: string; content: string }

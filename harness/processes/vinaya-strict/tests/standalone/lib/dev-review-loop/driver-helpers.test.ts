@@ -33,12 +33,10 @@ import {
   turnResultInstruction,
   surfaceOpenedAgentConfigPaths
 } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import {
-  DEFAULT_REVIEW_POLICY,
-  objectivesVersion,
-  policyDigest,
-  type DevReviewLoopEventInput
-} from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
+import { objectivesVersion } from '../../../../tools/task-contract/objectives'
+import { policyDigest } from '../../../../tools/task-contract/review-input-manifest'
+import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
 import { cleanupWorlds } from '../dev-review-loop-harness.js'
 import { TASK, HEAD_SHA, BASE_SHA, tempDirs as sharedTempDirs } from './driver-test-support.js'
 

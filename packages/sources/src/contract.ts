@@ -5,5 +5,5 @@
  * importing from `@attalabs/vinaya-sources` don't need to know the contract's
  * origin package.
  */
-export type { StateSource } from '@attalabs/aeg-core'
+export type { StateSource } from '../../../harness/processes/vinaya-strict/tools/task-contract/state-source'
 export type { DoctrineContent, DoctrineSource } from '../../../harness/processes/vinaya-strict/tools/doctrine-source.js'

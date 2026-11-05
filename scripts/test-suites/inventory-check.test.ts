@@ -103,7 +103,7 @@ describe('the committed inventory validates against this repository', () => {
     ]
     for (const [id, suite, runner, cwd, preload] of expectations)
       expect(byId.get(id), id).toMatchObject({ suite, runner, cwd, preload })
-    const forgeState = head.tests.filter((t) => t.suite === 'aeg-forge-state')
+    const forgeState = head.tests.filter((t) => t.suite === 'log-server')
     expect(forgeState.length).toBeGreaterThan(0)
     expect(forgeState.every((t) => t.runner === 'vitest')).toBe(true)
     // The Workers pool is read from the log server's own configuration.
@@ -116,12 +116,7 @@ describe('the committed inventory validates against this repository', () => {
 
   test('the type packages and shared TypeScript configuration are recorded as type inputs', () => {
     const paths = head.typeInputs.map((t) => t.path)
-    for (const path of [
-      'packages/aeg-types',
-      'packages/typescript-config',
-      'packages/typescript-config/base.json',
-      'tsconfig.json'
-    ])
+    for (const path of ['packages/typescript-config', 'packages/typescript-config/base.json', 'tsconfig.json'])
       expect(paths).toContain(path)
   })
 

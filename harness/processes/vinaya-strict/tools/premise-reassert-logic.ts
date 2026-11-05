@@ -18,7 +18,7 @@
  */
 import { readFileSync, realpathSync } from 'node:fs'
 import { sep } from 'node:path'
-import { checkPremises, parsePremiseBlock } from '@attalabs/aeg-core'
+import { checkPremises, parsePremiseBlock } from './task-contract/premise-check'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../../kernel/gates/checks/contract'
 import { containedAbs } from '../../../kernel/gates/ops'
 

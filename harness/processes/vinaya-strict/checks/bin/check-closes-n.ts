@@ -24,7 +24,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { fetchTaskIssueRefs, parseTaskBranchIdentity } from '@attalabs/aeg-core'
+import { fetchTaskIssueRefs } from '../forge/fetch-task-issue-refs'
+import { parseTaskBranchIdentity } from '../../tools/task-contract/task-branch-identity'
 import { checkClosesNTopology, extractClosesReferences, type TrancheFile } from '../coherence-checks'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'

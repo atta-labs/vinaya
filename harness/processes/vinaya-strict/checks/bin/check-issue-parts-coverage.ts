@@ -14,7 +14,7 @@
  * `harness/processes/vinaya-strict/checks/standalone/verify-coherence.ts` and in `vinaya check coherence`.
  */
 
-import { checkPartsCiteDefinedObjectives } from '@attalabs/aeg-core'
+import { checkPartsCiteDefinedObjectives } from '../../tools/task-contract/issue-validation'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { readIssueCheckEnv } from '../issue-check-env'
 

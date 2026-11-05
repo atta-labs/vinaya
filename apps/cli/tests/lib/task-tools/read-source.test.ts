@@ -8,7 +8,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
+import { DEFAULT_REVIEW_POLICY } from '../../../../../harness/processes/vinaya-strict/tools/task-contract/review-policy'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

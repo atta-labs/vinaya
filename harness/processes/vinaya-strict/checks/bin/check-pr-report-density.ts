@@ -7,7 +7,7 @@
  * scope: diff — reads only the PR body, never the whole repo.
  */
 
-import { checkPrReportDensity } from '@attalabs/aeg-core'
+import { checkPrReportDensity } from '../pr-report-density'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'pr-report-density'

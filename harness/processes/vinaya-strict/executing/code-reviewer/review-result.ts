@@ -31,7 +31,8 @@
  */
 
 import { createHash } from 'node:crypto'
-import { CODE_REVIEW_SEVERITY_ORDER, type ReviewInputManifest, SECURITY_SEVERITY_ORDER } from '@attalabs/aeg-core'
+import { CODE_REVIEW_SEVERITY_ORDER, SECURITY_SEVERITY_ORDER } from '../../tools/task-contract/review-policy'
+import type { ReviewInputManifest } from '../../tools/task-contract/review-input-manifest'
 import { z } from 'zod/v4'
 
 /** The one schema version this module produces and accepts. */

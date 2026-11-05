@@ -38,7 +38,8 @@
 import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { checkPremiseCoverage, checkPremises, parsePremiseBlock } from '../../../../../packages/aeg-core/src/index'
+import { checkPremiseCoverage } from '../../tools/task-contract/brief-validation'
+import { checkPremises, parsePremiseBlock } from '../../tools/task-contract/premise-check'
 
 const REPO_ROOT = join(import.meta.dir, '../../../../..')
 process.chdir(REPO_ROOT)

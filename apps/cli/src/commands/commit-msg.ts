@@ -20,7 +20,10 @@
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { COMMIT_TYPE_STYLE, COMMIT_TYPES } from '@attalabs/aeg-core'
+import {
+  COMMIT_TYPE_STYLE,
+  COMMIT_TYPES
+} from '../../../../harness/processes/vinaya-strict/tools/task-contract/brief-validation'
 
 function mergeInProgress(): boolean {
   try {
