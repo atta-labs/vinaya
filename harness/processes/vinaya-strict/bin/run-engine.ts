@@ -1746,8 +1746,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     } catch {
       devToolsTimeoutSec = undefined
     }
-    const roles: Record<string, RoleLauncher[string]> = {
-      ...createRoleLaunchers({
+    const generateRoleLaunchers = () =>
+      createRoleLaunchers({
         vendor: vendorOf(args.agent),
         generatedRoot: join(runDir, 'generated'),
         variables: options.taskInput?.worktreePath
@@ -1760,7 +1760,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         stageCodexLogin: true,
         timeouts: roleTimeouts(lifecycle.dispatchConfig)
       })
-    }
+    const roles: Record<string, RoleLauncher[string]> = { ...generateRoleLaunchers() }
     // Each Developer launch carries the turn schema the standalone loop builds per turn: the task's current
     // required sources and known finding ids, never the static role schema (which allows no source use).
     if (options.taskInput?.developerContext && roles.developer) {
@@ -1788,8 +1788,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       const vendor = vendorOf(args.agent)
       const developer = roles.developer
       const { taskInput } = options
-      taskInput.sandboxPlan = () =>
-        sandboxProbePlanFor(vendor, developer, join(runDir, 'generated', 'developer'), taskInput.worktreePath)
+      taskInput.sandboxPlan = () => {
+        // prepare-run has now created the worktree: refresh exact git-dir grants for both agents.
+        generateRoleLaunchers()
+        return sandboxProbePlanFor(vendor, developer, join(runDir, 'generated', 'developer'), taskInput.worktreePath)
+      }
     }
     // Every flow's shared actions, and version 2's own beside them; a flow binds only the ones it names.
     const base = options.actions ?? { ...createActions(options.taskInput), ...createV2Actions(options.taskInput) }

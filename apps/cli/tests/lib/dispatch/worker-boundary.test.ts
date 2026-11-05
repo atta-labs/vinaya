@@ -41,6 +41,7 @@ import {
   LINUX_CLAUDE_SANDBOX_TOOLS,
   resolveGitFirstPath,
   resolveGitCommonDir,
+  resolveGitDir,
   agentOwnConfigDirs,
   agentOwnConfigSubpaths,
   resolveOpenedAgentConfigPaths,
@@ -711,7 +712,7 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     expect(settings.sandbox.filesystem.allowWrite).not.toContain(linkedWorktree)
   })
 
-  it('O1: never adds the worktree’s own git common dir to allowWrite itself — Claude Code’s own sandbox already grants a linked worktree’s shared .git', () => {
+  it('grants the exact linked git dir while Claude supplies its shared common-dir access', () => {
     const { repoDir, worktreeDir, gitCommonDir } = initRealGitWorktree()
     const scratchDir = tempDir('vinaya-claude-settings-scratch-')
     try {
@@ -719,7 +720,8 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
       expect(settings.sandbox.filesystem.allowWrite).toEqual([
         realpathSync(worktreeDir),
         realpathSync(scratchDir),
-        resolveBunInstallCacheDir()
+        resolveBunInstallCacheDir(),
+        resolveGitDir(worktreeDir)!
       ])
       expect(settings.sandbox.filesystem.allowWrite).not.toContain(gitCommonDir)
     } finally {

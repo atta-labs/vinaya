@@ -12,7 +12,7 @@ capabilities:
     default: allow
     allow: ["git worktree add", "git worktree list", "git fetch", "git pull", "git status", "git diff", "git log", "git show", "git add", "git commit", "git config", "git branch", "git checkout", "git merge", "git rebase", "bun install", "bun run", "bun test", "bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts", "bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts", "bun harness/processes/vinaya-strict/checks/standalone/verify-task.ts", "bun apps/cli/src/index.ts"]
     deny: ["git push", "gh", "git commit --no-verify*", "git commit -n*", "git stash*", "git reset --hard*", "rm -rf*", "sudo*", "security", "launchctl", "defaults", "systemsetup", "networksetup", "pmset", "dscl", "crontab", "chsh", "git config --global", "git config --system", "sudo"]
-  write_files: ["${WORKTREE}", "${SCRATCH}", "${BUN_INSTALL_CACHE}", "${GIT_COMMON_DIR}"]
+  write_files: ["${WORKTREE}", "${SCRATCH}", "${BUN_INSTALL_CACHE}", "${GIT_COMMON_DIR}", "${GIT_DIR}"]
   network: [github.com, api.github.com, raw.githubusercontent.com, codeload.github.com, objects.githubusercontent.com, registry.npmjs.org, api.anthropic.com]
   web_fetch: allow
   web_search: deny

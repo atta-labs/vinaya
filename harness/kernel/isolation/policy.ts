@@ -31,8 +31,11 @@ export interface GeneratorPaths {
 }
 
 export function resolveGrantValues(values: string[], variables: Record<string, string> = {}): string[] {
-  return values.map((value) =>
-    value.replace(/\$\{([A-Z0-9_]+)\}/g, (_, name: string) => variables[name] ?? `\${${name}}`)
+  return (
+    values
+      // A linked worktree's exact git dir is optional until the driver creates it.
+      .filter((value) => value !== '${GIT_DIR}' || variables.GIT_DIR !== undefined)
+      .map((value) => value.replace(/\$\{([A-Z0-9_]+)\}/g, (_, name: string) => variables[name] ?? `\${${name}}`))
   )
 }
 
