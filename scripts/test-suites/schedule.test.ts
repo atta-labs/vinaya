@@ -353,6 +353,16 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
     'pkg/bun/package.json': '{ "name": "@fx/bun", "scripts": { "test": "bun test" } }\n',
     'pkg/bun/tests/a.test.ts': bunTest,
     'pkg/bun/moved/tests/a.test.ts': bunTest,
+    // A synchronous child that never returns freezes Bun's whole runner: the test timeout cannot interrupt it.
+    'pkg/bun/tests/freeze-once.test.ts': [
+      "import { test } from 'bun:test'",
+      "import { existsSync, writeFileSync } from 'node:fs'",
+      "import { spawnSync } from 'node:child_process'",
+      "test('freezes on its first run only', () => { const marker = `${import.meta.dir}/.froze`; if (!existsSync(marker)) { writeFileSync(marker, ''); spawnSync('sleep', ['600']) } })",
+      ''
+    ].join('\n'),
+    'pkg/bun/tests/freeze.test.ts':
+      "import { test } from 'bun:test'\nimport { spawnSync } from 'node:child_process'\ntest('always freezes', () => { spawnSync('sleep', ['600']) })\n",
     'pkg/bun/tests/kill.test.ts':
       "import { test } from 'bun:test'\ntest('killed', () => { process.kill(process.pid, 'SIGTERM'); return new Promise((r) => setTimeout(r, 5000)) })\n",
     // A test that changes directory, as several CLI tests do: Bun then names its file a second time, from the new folder.
@@ -407,6 +417,8 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
       bun('pkg/bun/tests/a.test.ts'),
       bun('pkg/bun/moved/tests/a.test.ts'),
       bun('pkg/bun/tests/kill.test.ts'),
+      bun('pkg/bun/tests/freeze-once.test.ts'),
+      bun('pkg/bun/tests/freeze.test.ts'),
       bun('pkg/bun/tests/chdir.test.ts'),
       vt('pkg/vt/src/run.test.ts'),
       vt('pkg/vt/legacy/src/run.test.ts'),
@@ -482,6 +494,28 @@ describe('real runners execute exactly their group', () => {
       spawn: (() => ({ status: 0, signal: null })) as unknown as typeof import('node:child_process').spawnSync
     })
     expect(silent.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['unreadable bun@default'])
+  }, 60_000)
+
+  test('a runner frozen by a synchronous child is stopped at its limit and run once more', () => {
+    const lines: string[] = []
+    const result = runGroups(root, groupsFor(['pkg/bun/tests/freeze-once.test.ts']), {
+      log: (line) => lines.push(line),
+      groupTimeLimitMs: 4_000
+    })
+    expect(lines.filter((line) => line.includes('running it once more'))).toHaveLength(1)
+    expect(result.failedRunners).toEqual([])
+    expect(result.problems).toEqual([])
+  }, 60_000)
+
+  test('a runner frozen twice fails as interrupted instead of hanging', () => {
+    const lines: string[] = []
+    const result = runGroups(root, groupsFor(['pkg/bun/tests/freeze.test.ts']), {
+      log: (line) => lines.push(line),
+      groupTimeLimitMs: 4_000
+    })
+    expect(lines.filter((line) => line.includes('running it once more'))).toHaveLength(1)
+    expect(result.failedRunners).toEqual(['bun@default'])
+    expect(result.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['interrupted bun@default'])
   }, 60_000)
 
   test('a test that changes directory is still one execution of its own file', () => {
