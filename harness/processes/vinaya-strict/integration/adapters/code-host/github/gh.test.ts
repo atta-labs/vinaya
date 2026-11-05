@@ -1,3 +1,4 @@
+import * as realChildProcess from 'node:child_process'
 import { promisify } from 'node:util'
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
 
@@ -23,19 +24,30 @@ const forge = {
   respond: (_page: number, _args: string[]): unknown[] => []
 }
 
+// The real functions, captured before the mock replaces the module: only `gh` is answered here, so a process the
+// suite starts for any other binary (the Log sink's repository lookup, for one) still runs for real.
+const realExecFile = realChildProcess.execFile
+const realExecFileSync = realChildProcess.execFileSync
+
 mock.module('node:child_process', () => {
   const execFile = (() => {
     throw new Error('callback form not used by these tests')
   }) as unknown as ((...args: unknown[]) => void) & Record<symbol, unknown>
 
-  execFile[promisify.custom] = async (_bin: string, args: string[]) => {
+  execFile[promisify.custom] = async (bin: string, args: string[], ...rest: unknown[]) => {
+    if (bin !== 'gh') return (promisify(realExecFile) as (...a: unknown[]) => Promise<unknown>)(bin, args, ...rest)
     forge.requested.push(args)
     const path = args[1] as string
     const page = Number(new URLSearchParams(path.split('?')[1] ?? '').get('page') ?? '1')
     return { stdout: JSON.stringify(forge.respond(page, args)), stderr: '' }
   }
 
-  return { execFile, execFileSync: () => '[]' }
+  return {
+    ...realChildProcess,
+    execFile,
+    execFileSync: (bin: string, ...rest: unknown[]) =>
+      bin === 'gh' ? '[]' : (realExecFileSync as (...a: unknown[]) => unknown)(bin, ...rest)
+  }
 })
 
 const freshGhPath = '../../../../../../kernel/adapters/code-host/github/gh?fresh-after-mock'
