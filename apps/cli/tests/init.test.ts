@@ -1299,8 +1299,12 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       join(import.meta.dir, '..', '..', '..', 'harness/processes/vinaya-strict/integration/artifacts.ts'),
       'utf-8'
     )
-    expect(generatorSource).toMatch(/import\s*\{[^}]*VERDICT_MARKER_SOURCE[^}]*\}\s*from\s*'@attalabs\/aeg-core'/)
-    expect(generatorSource).toMatch(/import\s*\{[^}]*WAIVER_LABEL_REVIEW[^}]*\}\s*from\s*'@attalabs\/aeg-core'/)
+    expect(generatorSource).toMatch(
+      /import\s*\{[^}]*VERDICT_MARKER_SOURCE[^}]*\}\s*from\s*'\.\.\/tools\/task-contract\/verdict-extraction'/
+    )
+    expect(generatorSource).toMatch(
+      /import\s*\{[^}]*WAIVER_LABEL_REVIEW[^}]*\}\s*from\s*'\.\.\/tools\/task-contract\/waiver-label'/
+    )
     expect(generatorSource).toContain('jqStringEscape(VERDICT_MARKER_SOURCE)')
     expect(generatorSource).toContain('${WAIVER_LABEL_REVIEW}')
 

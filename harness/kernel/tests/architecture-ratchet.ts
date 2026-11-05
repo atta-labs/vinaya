@@ -572,7 +572,36 @@ function derivedFrom(
   const inside = (path: string): boolean =>
     path === baseTarget || path.startsWith(`${baseTarget}/`) || (folder !== null && path.startsWith(`${folder}/`))
   const origin = changes.from.get(headTarget)
-  if (origin !== undefined) return inside(origin)
+  if (origin !== undefined) {
+    if (inside(origin)) return true
+    const packageEntry = (scope: string): string | null => {
+      const dir = packageFolder(scope)
+      if (dir === null) return null
+      try {
+        const manifest = JSON.parse(sources.base(`${dir}/package.json`) ?? '{}') as {
+          main?: string
+          exports?: Record<string, string>
+        }
+        const entry = manifest.exports?.['.'] ?? manifest.main ?? './src/index.ts'
+        return typeof entry === 'string' ? resolvePath(entry, `${dir}/package.json`, baseTree, true) : null
+      } catch {
+        return null
+      }
+    }
+    // A relative barrel import owns only the modules it actually re-exported at the base, not its whole folder.
+    const seen = new Set<string>()
+    const reexportsOrigin = (file: string): boolean => {
+      if (file === origin) return true
+      if (seen.has(file) || !baseTree.isFile(file)) return false
+      seen.add(file)
+      for (const match of withoutComments(sources.base(file) ?? '').matchAll(FORWARDING)) {
+        const target = resolvePath(match[2] ?? '', file, baseTree, true) ?? packageEntry(match[2] ?? '')
+        if (target !== null && reexportsOrigin(target)) return true
+      }
+      return false
+    }
+    return reexportsOrigin(packageEntry(baseTarget) ?? baseTarget)
+  }
   if (baseTree.isFile(headTarget) || !changes.added.has(headTarget)) return false
   const arrived = significantLines(sources.head(headTarget) ?? '')
   return [...changes.touched].filter(inside).some((file) => {
@@ -635,7 +664,7 @@ function relocatedUnits(
   }
   for (const located of unmatched) {
     if (located.contribution === 0) continue
-    const origin = pending.find((p) => p.contribution > 0 && derivedFrom(located.target, p.target, env))
+    const origin = pending.find((p) => derivedFrom(located.target, p.target, env))
     if (origin === undefined) continue
     if (!origin.taken) {
       origin.taken = true

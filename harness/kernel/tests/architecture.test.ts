@@ -637,6 +637,55 @@ describe('a moved file is moving, never adding', () => {
     )
   })
 
+  test('(b) a relative barrel keeps its zero count when its re-exported module moves, but no unrelated import is excused', () => {
+    const caller = 'packages/aeg-core/bin/tool.ts'
+    const member = 'packages/aeg-core/src/member.ts'
+    const barrel = 'packages/aeg-core/src/index.ts'
+    const { root, base } = plantedRepository({
+      [member]: `export const x = 1\n${BODY}\n`,
+      [barrel]: "export { x } from './member'\n",
+      [PROCESS_FILE('unrelated')]: 'export const y = 2\n',
+      [caller]: `import { x } from '../src/index'\n${BODY}\n`
+    })
+    const movedImport = "import { x } from '../../../harness/processes/vinaya-strict/tools/member'\n"
+    commitBaseline(root, {
+      ...move(root, member, PROCESS_FILE('member'), `export const x = 1\n${BODY}\n`),
+      [barrel]: '',
+      [caller]: `${movedImport}${BODY}\n`
+    })
+    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 0, headTotal: 0 })
+    commitBaseline(root, {
+      [caller]: `${movedImport}import { y } from '../../../harness/processes/vinaya-strict/tools/unrelated'\n${BODY}\n`
+    })
+    expect(compareBase(root, base).failures[0]).toContain('counts 1, base 0')
+  })
+
+  test('(b) a package barrel split across its own module and a re-exported package still counts once', () => {
+    const caller = 'apps/cli/src/caller.ts'
+    const coreMember = 'packages/aeg-core/src/core-member.ts'
+    const forgeMember = 'packages/aeg-forge-state/src/forge-member.ts'
+    const coreBarrel = 'packages/aeg-core/src/index.ts'
+    const forgeBarrel = 'packages/aeg-forge-state/src/index.ts'
+    const { root, base } = plantedRepository({
+      'packages/aeg-core/package.json': '{"main":"./src/index.ts"}',
+      'packages/aeg-forge-state/package.json': '{"main":"./src/index.ts"}',
+      [coreMember]: `export const x = 1\n${BODY}\n`,
+      [forgeMember]: `export const y = 2\n${REWRITTEN}\n`,
+      [coreBarrel]: "export { x } from './core-member'\nexport { y } from '@attalabs/aeg-forge-state'\n",
+      [forgeBarrel]: "export { y } from './forge-member'\n",
+      [caller]: "import { x, y } from '@attalabs/aeg-core'\n"
+    })
+    commitBaseline(root, {
+      ...move(root, coreMember, PROCESS_FILE('core-member')),
+      ...move(root, forgeMember, PROCESS_FILE('forge-member')),
+      [coreBarrel]: '',
+      [forgeBarrel]: '',
+      [caller]:
+        "import { x } from '../../../harness/processes/vinaya-strict/tools/core-member'\nimport { y } from '../../../harness/processes/vinaya-strict/tools/forge-member'\n"
+    })
+    expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 2, headTotal: 1 })
+  })
+
   test('(b) an import of a file split into two added files counts once, and a third counted import is growth', () => {
     const importing = (...names: string[]): string =>
       `${names.map((n) => `import { ${n} } from '../../../harness/processes/vinaya-strict/tools/${n}.js'`).join('\n')}\n${BODY}\n`
