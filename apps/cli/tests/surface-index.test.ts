@@ -91,10 +91,64 @@ const KERNEL_LIBRARY_FILES = [
   'gates/ring1-ci/workflows/managed-workflow-paths.ts'
 ].map((file) => `/harness/kernel/${file}`)
 const KERNEL_LIBRARY_FOLDERS = ['/harness/kernel/gates/ring0-hooks/pre-push/verification/']
+/** Relocated policy modules retain their original unrestricted classification. */
+const MOVED_POLICY_FILES = [
+  '/harness/processes/vinaya-strict/checks/forge/fetch-provenance.ts',
+  '/harness/processes/vinaya-strict/checks/forge/fetch-task-issue-refs.ts',
+  '/harness/processes/vinaya-strict/checks/forge/list-issue-milestones.ts',
+  '/harness/processes/vinaya-strict/checks/pr-report-density.ts',
+  '/harness/processes/vinaya-strict/thinking/planner/tools/amend-rationale-deps.ts',
+  '/harness/processes/vinaya-strict/tools/milestone/check-milestone-attachment.ts',
+  '/harness/processes/vinaya-strict/tools/pr-report/tokens/parse-ledger.ts',
+  '/harness/processes/vinaya-strict/tools/pr-report/tokens/parse-token-report.ts',
+  '/harness/processes/vinaya-strict/tools/pr-report/tokens/report-tokens.ts',
+  '/harness/processes/vinaya-strict/tools/pr-report/tokens/sum-ledger.ts',
+  '/harness/processes/vinaya-strict/tools/prior-tranche-archival.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/brief-render.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/consumer-enumeration.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/derive-section7.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/derive-tranche.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/forge/derive-from-forge.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/forge/fetch-forge-facts.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/forge/fetch-milestone.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/forge/fetch-open-issues.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/forge/labels.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/forge/map-forge-facts.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/forge/parse-rationale-deps.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/gate-cutovers.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/live-record.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/milestone-validation.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/objectives-cutover-config.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/objectives.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/parse-registry.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/parse-tranche.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/pr-tier.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/premise-check.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/principals-config.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/protected-paths.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/review-policy.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/review-status.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/ruling-ordinal.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/state-machine-model.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/state-source.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/task-branch-identity.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/test-plan-section.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/tranche-types.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/types.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts',
+  '/harness/processes/vinaya-strict/tools/task-contract/waiver-label.ts',
+  '/harness/processes/vinaya-strict/tools/task-phase-history.ts'
+]
 const isMovedLibrary = (filePath: string): boolean =>
   KERNEL_LIBRARY_FILES.some((file) => filePath.endsWith(file)) ||
   KERNEL_LIBRARY_FOLDERS.some((folder) => filePath.includes(folder)) ||
-  (!filePath.includes('/harness/processes/vinaya-strict/tests/') &&
+  (!MOVED_POLICY_FILES.some((file) => filePath.endsWith(file)) &&
+    !filePath.includes('/harness/processes/vinaya-strict/tests/') &&
     // `roles/plan.ts` sat beside `lib/`, never inside it, so it stays outside the library here too.
     !filePath.includes('/harness/processes/vinaya-strict/integration/roles/') &&
     (MOVED_LIBRARY_FOLDERS.some((folder) => filePath.includes(folder)) ||

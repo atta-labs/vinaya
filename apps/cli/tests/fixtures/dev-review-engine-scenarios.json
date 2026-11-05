@@ -14,15 +14,15 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "sha256": "f3d4c961b5bf4c9a1df66650e460c94c1e1e77d012eda3bd5199da124ec6f665"
+        "sha256": "672916b906f6bbb592a45b9ae2caca9075aa94d3b7634675704ad09f30b8333f"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.ts",
-        "sha256": "536aa86397fe0176c85e9125ee73125af03464a4fcd02d34fa9c9e72d36c85ff"
+        "sha256": "ce805e3bf9bd7f8ee2ab41f8f7327e5e557931e8e54850506f100a27c521a2e5"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-publication.ts",
-        "sha256": "946531212e2e0ffde71b31d4f69ac62f7ccc95a9589cb19593c32fd624597684"
+        "sha256": "7c9e47721ee32995abf5fecedff452fcdcc917ff6e03eb15fd9d520ccd6d0723"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts",
@@ -30,27 +30,27 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/gate-reading.ts",
-        "sha256": "b74e309a417d68c2c821ae43d4b53b25b91be97c0ad07a1a723309ddda6f4045"
+        "sha256": "a7372b4199e7f3db612e5cdc827705dc92eb4d94fb692c6ec015a66436bf4d38"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/journal-history.ts",
-        "sha256": "53c5a21e597dffaf3e4e46e9a17cef061fa24697c43019e10e42634a182770bb"
+        "sha256": "fbacc24e50dd3fb00cc0b0336d8a879226ab4dd5a421720a89e119f097fb68cb"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/live-check.ts",
-        "sha256": "6e67cc0c714ddb636125249a1d89c3e1281e933e345fdbbc38d2a02fe8f58249"
+        "sha256": "2d6f28696376595a1c81795f1ad303a01857063833489721b518dd41af24f344"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts",
-        "sha256": "d53252282f7630e17487a33d59e0c4c1bcf361847b5d5bc5e0941737a1c0d3d6"
+        "sha256": "5d4c3bf3a3f241f0c42cfaa22b31718d7f894f9cfb327100b96fd1d8adafd950"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts",
-        "sha256": "b32a8f8200fb4aa6096cfae07acf65d2088d61cf614e0fb62dd895cc52d34a55"
+        "sha256": "9db3a93701a5eb514163572628f9c79613eca4649e4218f9fe1637f054521cc7"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts",
-        "sha256": "fe16f2665d3832033fe5282fd05431baa742079194631980b61c1e547b02f982"
+        "sha256": "9ba47cddd9a5d82bd2b38a7d48805d17470beee6aa35c9c77b3c039ade5f8a78"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.ts",
@@ -58,7 +58,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.ts",
-        "sha256": "c04899c1ec02ff1b1ea8f64418f1cc0a9f16c494f0bbe4b6efe637d1366abf22"
+        "sha256": "e09941b10508f19bc10a7457e34b8bfaeedba277384341e6453afe0855e6fd9c"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/security-scan-command.ts",
@@ -74,7 +74,7 @@
       },
       {
         "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
-        "sha256": "59f8075bc62041ef69edc24a41292418042b3e880241cf1433c6f742810996dd"
+        "sha256": "66cb2ac1457d26af378c57649d911785e8472992a4a6929a6db3dfeefedc8a82"
       },
       {
         "path": "packages/aeg-core/src/dev-review-loop/fakes.ts",
@@ -94,7 +94,7 @@
       },
       {
         "path": "packages/aeg-core/src/dev-review-loop/types.ts",
-        "sha256": "909fbf41648eca256b8b78c76931a84ba939935f5a9e4f3f5c0251693832792a"
+        "sha256": "2f4d91a549ad2856e6a87e18b2d451bb3e23812257c692a6dad7ddafc3018773"
       }
     ]
   },

@@ -888,7 +888,7 @@ describe('sandbox conformance — the inputs the skip decision watches', () => {
     const { modules, packages } = suiteImports()
     expect(modules.size).toBeGreaterThan(3)
     expect([...modules].filter((m) => !isSuiteInput(m))).toEqual([])
-    expect(packages.has('@attalabs/aeg-core')).toBe(true)
+    expect(modules.has('harness/processes/vinaya-strict/tools/task-contract/brief-render')).toBe(true)
     const uncovered = [...packages].filter(
       (p) => !isSuiteInput(`packages/${p.slice('@attalabs/'.length)}/src/index.ts`)
     )
