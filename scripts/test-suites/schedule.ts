@@ -37,7 +37,7 @@
  *     and fails when a runner fails, is interrupted, leaves no readable report,
  *     or reports a file it was not given or misses one it was.
  */
-import { spawnSync } from 'node:child_process'
+import { spawn as spawnAsync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, posix } from 'node:path'
@@ -698,6 +698,12 @@ export function runGroups(
           ...(limit !== undefined ? { timeout: limit, killSignal: 'SIGKILL' as const } : {}),
           ...(options.env ? { env: options.env } : {})
         })
+      // DEBUG ONLY: after 10 minutes, print the stuck process tree into the log.
+      const dumpScript = `sleep 600; echo "=== FREEZE DUMP ${group.id} ==="; ps -N --ppid 2 -o pid,ppid,pgid,etime,stat,wchan:32,pcpu,args --forest | grep -v "ps -eo"; for p in $(pgrep -f "bun|git|gh|sleep"); do echo "--- pid $p: $(tr '\\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-400)"; grep -E "^(State|PPid|SigBlk|SigCgt)" /proc/$p/status 2>/dev/null; echo "wchan: $(cat /proc/$p/wchan 2>/dev/null)"; sudo cat /proc/$p/stack 2>/dev/null | head -12; ls -l /proc/$p/fd 2>/dev/null | awk '{print $9,$10,$11}' | head -25; for t in /proc/$p/task/*; do echo "  task $(basename $t) $(cat $t/stat 2>/dev/null | cut -d' ' -f3) $(cat $t/wchan 2>/dev/null)"; done | head -20; done; echo "=== END DUMP ==="`
+      const dumper =
+        process.env.GITHUB_ACTIONS === 'true'
+          ? spawnAsync('bash', ['-c', dumpScript], { stdio: 'inherit', detached: true })
+          : null
       let run = start()
       // A runner stopped at the limit is started once more: a test whose synchronous child never returns freezes its
       // whole runner, and the freeze is intermittent. A second stop fails the group as interrupted.
@@ -707,6 +713,11 @@ export function runGroups(
         )
         rmSync(report, { force: true })
         run = start()
+      }
+      if (dumper?.pid) {
+        try {
+          process.kill(-dumper.pid, 'SIGKILL')
+        } catch {}
       }
       if (run.signal) {
         executions.push({ group: group.id, outcome: 'signaled', detail: run.signal, files: [] })
