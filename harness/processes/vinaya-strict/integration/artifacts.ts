@@ -820,13 +820,13 @@ ${graphqlBudgetStep('start')}      # No checkout, no build: read whether a verdi
       # before this pre-check existed.
       #
       # Both string constants spliced into the \`jq\` calls below are read
-      # from \`packages/aeg-core\` at CLI-GENERATION time — \`WAIVER_LABEL_REVIEW\`
+      # from the process's task contract at CLI-GENERATION time — \`WAIVER_LABEL_REVIEW\`
       # (\`waiver-label.ts\`) and \`VERDICT_MARKER_SOURCE\` (\`verdict-extraction.ts\`)
       # — the SAME constants \`check-review-gate.ts\` reads for the full gate,
       # never a second hand-typed copy of either fact (\`#525\`).
       #
       # Line-anchored \`VERDICT:\` — same anchor discipline
-      # \`packages/aeg-core/src/verdict-extraction.ts\` standardizes on
+      # \`harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts\` standardizes on
       # (security-review FAIL finding, PR #636/#639): a bare substring/word
       # search matches ordinary prose that merely mentions "VERDICT" (an
       # escalation, a reviewer report, this very step's own description) and
@@ -840,7 +840,7 @@ ${graphqlBudgetStep('start')}      # No checkout, no build: read whether a verdi
       # that module's full extraction (no first-five-lines window, no
       # value-side match, no most-recent-comment selection, no code-span
       # exclusion) — deliberately so: this step never runs after a checkout,
-      # so it cannot import \`packages/aeg-core\` at RUN time (the constant is
+      # so it cannot import the process code at RUN time (the constant is
       # instead read once, at CLI-generation time, and spliced in below). A
       # false positive here only wastes a trusted build; the downstream
       # \`vinayaRun(selfHost, 'check review-gate')\` step, which DOES run the
