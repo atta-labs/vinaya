@@ -826,7 +826,7 @@ ${graphqlBudgetStep('start')}      # No checkout, no build: read whether a verdi
       # never a second hand-typed copy of either fact (\`#525\`).
       #
       # Line-anchored \`VERDICT:\` — same anchor discipline
-      # \`harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts\` standardizes on
+      # \`packages/aeg-core/src/verdict-extraction.ts\` standardizes on
       # (security-review FAIL finding, PR #636/#639): a bare substring/word
       # search matches ordinary prose that merely mentions "VERDICT" (an
       # escalation, a reviewer report, this very step's own description) and
