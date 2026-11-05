@@ -646,7 +646,7 @@ function scheduledTestOf(group: NativeGroup, written: string, repoRoot: string):
  * reader counts only those files. `onGroupEnd` hears what each group proved,
  * right after its report is read.
  */
-/** The longest one test runner may take; the slowest group seen on a shard takes about four minutes. */
+/** The longest one CI shard's test runner may take; the slowest group seen on a shard takes about four minutes. */
 export const GROUP_TIME_LIMIT_MS = 15 * 60_000
 
 /** Whether a runner was stopped at its time limit rather than ending by itself. */
@@ -663,7 +663,7 @@ export function runGroups(
     env?: NodeJS.ProcessEnv
     announce?: boolean
     onGroupEnd?: (outcome: GroupOutcome, index: number) => void
-    /** How long one runner may take before it is stopped; defaults to {@link GROUP_TIME_LIMIT_MS}. */
+    /** How long one runner may take before it is stopped and run once more; none when absent. */
     groupTimeLimitMs?: number
   } = {}
 ): RunResult {
@@ -690,13 +690,12 @@ export function runGroups(
       )
       if (options.announce)
         log(testGroupStartLine({ group: group.id, runner: group.runner, cwd: group.cwd, tests: group.tests }))
-      const limit = options.groupTimeLimitMs ?? GROUP_TIME_LIMIT_MS
+      const limit = options.groupTimeLimitMs
       const start = () =>
         spawn(command[0] as string, command.slice(1), {
           cwd: join(repoRoot, group.cwd),
           stdio: 'inherit',
-          timeout: limit,
-          killSignal: 'SIGKILL',
+          ...(limit !== undefined ? { timeout: limit, killSignal: 'SIGKILL' as const } : {}),
           ...(options.env ? { env: options.env } : {})
         })
       let run = start()
@@ -704,7 +703,7 @@ export function runGroups(
       // whole runner, and the freeze is intermittent. A second stop fails the group as interrupted.
       if (timedOut(run)) {
         log(
-          `vinaya schedule: ${group.id} stopped after ${Math.round(limit / 60_000)} min with no end; running it once more`
+          `vinaya schedule: ${group.id} stopped after ${Math.round((limit ?? 0) / 60_000)} min with no end; running it once more`
         )
         rmSync(report, { force: true })
         run = start()
@@ -831,7 +830,7 @@ function main(argv: readonly string[]): number {
         `- ${g.owner} (${g.runner}, in \`${g.cwd}\`): ${g.tests.length} file(s)${g.scope === 'suite' ? ` — whole suite: ${g.reason}` : ''}`
     )
   ])
-  const result = runGroups(repoRoot, groups)
+  const result = runGroups(repoRoot, groups, { groupTimeLimitMs: GROUP_TIME_LIMIT_MS })
   for (const p of result.problems)
     process.stderr.write(`vinaya schedule: ${p.code} ${p.path}${p.group ? ` (${p.group})` : ''}: ${p.detail}\n`)
   if (result.failedRunners.length > 0)
