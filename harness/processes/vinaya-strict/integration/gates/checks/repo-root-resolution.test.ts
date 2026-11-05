@@ -216,7 +216,7 @@ describe('RC2 — coherence/dispatch-readiness evaluate the CALLER’s repo, nev
       git(root, ['remote', 'add', 'origin', 'https://github.com/fixture-owner-xyz/fixture-repo-xyz.git'])
       git(root, ['checkout', '-b', 'task/fixture-tranche-xyz/1'])
 
-      const binPath = join(import.meta.dir, '../../../../../../apps/cli/src/checks/bin/check-dispatch-readiness.ts')
+      const binPath = join(import.meta.dir, '../../../checks/bin/check-dispatch-readiness.ts')
       const result = spawnSync('bun', [binPath], { cwd: root, encoding: 'utf8', env: principalsGhEnv(root) })
       const combined = `${result.stdout}\n${result.stderr}`
 
@@ -244,7 +244,7 @@ describe('RC2 — coherence/dispatch-readiness evaluate the CALLER’s repo, nev
       git(root, ['remote', 'add', 'origin', 'https://github.com/fixture-owner-abc/fixture-repo-abc.git'])
       git(root, ['checkout', '-b', 'task/fixture-tranche-abc/1'])
 
-      const binPath = join(import.meta.dir, '../../../../../../apps/cli/src/checks/bin/check-coherence.ts')
+      const binPath = join(import.meta.dir, '../../../checks/bin/check-coherence.ts')
       const result = spawnSync('bun', [binPath], { cwd: root, encoding: 'utf8', env: principalsGhEnv(root) })
       const combined = `${result.stdout}\n${result.stderr}`
 
@@ -282,7 +282,7 @@ describe('RC2 — coherence/dispatch-readiness evaluate the CALLER’s repo, nev
       git(root, ['add', 'fixture-marker.ts'])
       git(root, ['commit', '-q', '-m', 'Chore: add the bound fixture file'])
 
-      const binPath = join(import.meta.dir, '../../../../../../apps/cli/src/checks/bin/check-doc-coverage.ts')
+      const binPath = join(import.meta.dir, '../../../checks/bin/check-doc-coverage.ts')
       const result = spawnSync('bun', [binPath], {
         cwd: root,
         encoding: 'utf8',

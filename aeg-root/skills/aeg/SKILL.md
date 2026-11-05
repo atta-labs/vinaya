@@ -73,7 +73,7 @@ Principal → Planner → Developer → Reviewer (code + security) → merge, pl
 - **Tiers**: Tier 0 trivial · Tier 1 implementation · Tier 3 project/roadmap. No Tier 2. When in doubt, Tier 3.
 - **Decisions** follow `state-machine.md` Section 6, "Recording why."
 - **Ratification windows**: 1–2 daily; the Principal resolves Type 1s, Tier 3 merges, `severity:product` escalations.
-- **verify-docs** (`packages/aeg-core/bin/verify-docs.ts`; in this repo it runs at authoring time — `open-pr.ts` / `bun run verify-docs --pr` — with its CI counterparts the `brief-shape`/`doc-coverage` checks in `.github/workflows/vinaya-checks.yml`; in the attalabs reference implementation it is a step of that repo's consolidated gate job) is a real blocking gate: changed specs need a `Status:` block, Tier 1+ code needs a doc change, Tier 3 states its reasoning in the pull request.
+- **verify-docs** (`harness/processes/vinaya-strict/checks/standalone/verify-docs.ts`; in this repo it runs at authoring time — `open-pr.ts` / `bun run verify-docs --pr` — with its CI counterparts the `brief-shape`/`doc-coverage` checks in `.github/workflows/vinaya-checks.yml`; in the attalabs reference implementation it is a step of that repo's consolidated gate job) is a real blocking gate: changed specs need a `Status:` block, Tier 1+ code needs a doc change, Tier 3 states its reasoning in the pull request.
 
 ## 10. The anti-regression rules — never violate
 
@@ -117,7 +117,7 @@ gh pr list --label "vinaya/needs:principal-input" --state open
 
 **"What merged recently?"** — `gh pr list --state merged --limit 20`
 
-**"Is a specific task dispatchable?"** — don't hand-derive it: `bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>` (or the shipped `dispatch-readiness` check in an adopter repo) answers with the exact blocker.
+**"Is a specific task dispatchable?"** — don't hand-derive it: `bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts <tranche> <n>` (or the shipped `dispatch-readiness` check in an adopter repo) answers with the exact blocker.
 
 Anything genuinely non-derivable — a pending manual operation, a known production issue — is an **ordinary open Issue, closed when resolved**: never a hand-edited-in-place state document, never a label pretending to be a status field.
 

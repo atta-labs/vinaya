@@ -7,7 +7,7 @@
  * into any CI gate.
  */
 
-import { parseDocOwners } from './doc-owners'
+import { parseDocOwners } from '../../../harness/processes/vinaya-strict/tools/doc-owners'
 
 export type Section7Match = { surface: string; glob: string; pointer: string; lineNum: number }
 

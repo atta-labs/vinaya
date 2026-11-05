@@ -8,7 +8,7 @@ import { installVinayaCheckRegistry } from '../../checks/registry.js'
 // directly instead of only from the `daily-drift` and
 // `direct-main-push-detection` jobs in the generated `vinaya-archivist.yml`
 // (see lib/artifacts.ts's `archivistWorkflow()`). Wraps this monorepo's own
-// `packages/aeg-core/bin/dead-branch-audit.ts` (never-red — a notification
+// `harness/processes/vinaya-strict/checks/standalone/dead-branch-audit.ts` (never-red — a notification
 // channel) and `check-direct-main-push.ts` (a real pass/fail), calling the
 // same pure `findDeadBranchPushes` / `checkDirectMainPush` homed in
 // `@attalabs/aeg-core`.

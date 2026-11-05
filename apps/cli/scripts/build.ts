@@ -74,7 +74,8 @@ async function build(entrypoints: string[], outdir: string): Promise<void> {
 await build([join(pkgRoot, 'src', 'index.ts')], join(pkgRoot, 'dist'))
 normalizeExecutable(join(pkgRoot, 'dist', 'index.js'))
 
-const checkBinDir = join(pkgRoot, 'src', 'checks', 'bin')
+const processChecksDir = join(pkgRoot, '..', '..', 'harness', 'processes', 'vinaya-strict', 'checks')
+const checkBinDir = join(processChecksDir, 'bin')
 const checkEntrypoints = readdirSync(checkBinDir)
   .filter((f) => f.endsWith('.ts'))
   .map((f) => join(checkBinDir, f))
@@ -87,7 +88,7 @@ for (const f of readdirSync(checkBinDir).filter((f) => f.endsWith('.ts'))) {
 // The loop's existing-work dispatch verification lives in the core package,
 // whose published files carry no scripts: bundle it beside the checks so the
 // readiness gate resolves it through the installed CLI, never a source path.
-const verifyDispatchSource = join(pkgRoot, '..', '..', 'packages', 'aeg-core', 'bin', 'verify-dispatch.ts')
+const verifyDispatchSource = join(processChecksDir, 'standalone', 'verify-dispatch.ts')
 if (!existsSync(verifyDispatchSource)) {
   console.error(`cannot bundle the existing-work dispatch verification: ${verifyDispatchSource} is missing`)
   process.exit(1)
@@ -95,7 +96,7 @@ if (!existsSync(verifyDispatchSource)) {
 // verify-dispatch counts findings by running verify-docs and verify-coherence,
 // so their built copies ship beside it.
 const verifyToolSources = ['verify-docs', 'verify-coherence'].map((n) =>
-  join(pkgRoot, '..', '..', 'packages', 'aeg-core', 'bin', `${n}.ts`)
+  join(processChecksDir, 'standalone', `${n}.ts`)
 )
 await build([verifyDispatchSource, ...verifyToolSources], checkOutdir)
 if (!existsSync(join(checkOutdir, 'verify-dispatch.js'))) {
@@ -134,7 +135,8 @@ await build(
       'pre-push-select-tests.ts': 'harness/processes/vinaya-strict/integration/pre-push-select-tests.ts',
       'pre-push-changed-files.ts': 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-changed-files.ts',
       'pre-push-mode.ts': 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode.ts',
-      'pre-push-record-tests.ts': 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts'
+      'pre-push-record-tests.ts': 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts',
+      'pre-push-cache-test-run.ts': 'harness/processes/vinaya-strict/tools/pr-report/pre-push-cache-test-run.ts'
     }
     return sources[f] ? join(pkgRoot, '..', '..', sources[f] as string) : join(libBinDir, f)
   }),

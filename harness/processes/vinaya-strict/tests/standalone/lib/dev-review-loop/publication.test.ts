@@ -15,7 +15,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   briefHash,
-  checkReviewGate,
   consequentialFindings,
   policyDigest,
   DEFAULT_REVIEW_POLICY,
@@ -26,6 +25,7 @@ import {
   type ReviewInputManifest,
   type ReviewPolicy
 } from '@attalabs/aeg-core'
+import { checkReviewGate } from '../../../../tools/review-gate'
 import type { VerdictExtraction } from '@attalabs/aeg-core'
 import {
   bindingOfPosted,

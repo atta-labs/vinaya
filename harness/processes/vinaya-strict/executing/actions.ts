@@ -12,12 +12,12 @@ import {
   type LoopState,
   type Observations,
   type PauseReason,
-  type PostedVerdictBodies,
   type ReviewInputManifest,
   type RoundStats,
   type TaskClock,
   type VerdictObservation
 } from '@attalabs/aeg-core'
+import type { PostedVerdictBodies } from '../tools/review-gate'
 import type { RoleBinaryConfig, StepNodeResult } from '@atta/executor-agent-spawn'
 import { generateClaudeSettings } from '../../../../harness/kernel/adapters/agents/claude-code/settings'
 import { generateCodexConfig } from '../../../../harness/kernel/adapters/agents/codex/config'

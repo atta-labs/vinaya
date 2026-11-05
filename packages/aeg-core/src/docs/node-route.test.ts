@@ -1,9 +1,9 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { deriveDiagramModel } from '../diagram-model'
-import type { DiagramNode } from '../diagram-model'
-import type { DoctrineContent } from '../doctrine-source'
+import { deriveDiagramModel } from '../../../../harness/processes/vinaya-strict/tools/diagram-model'
+import type { DiagramNode } from '../../../../harness/processes/vinaya-strict/tools/diagram-model'
+import type { DoctrineContent } from '../../../../harness/processes/vinaya-strict/tools/doctrine-source'
 import { nodeDocHref, nodeDocRoute } from './node-route'
 
 function node(kind: DiagramNode['kind'], id: string, extra: Partial<DiagramNode> = {}): DiagramNode {

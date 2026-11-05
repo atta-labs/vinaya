@@ -30,7 +30,11 @@ import type { DoctorDeps } from './doctor.js'
 import { probeLogDestinationServer, resolveLogDestinationForDoctor, runDoctor } from './doctor.js'
 import type { InitDeps } from './init.js'
 import { runInit, runInitProduct } from './init.js'
-import { applyDocOwnersBinding, planDocOwnersBinding, renderDocOwnersBindingDiffLine } from '../lib/doc-owners-write.js'
+import {
+  applyDocOwnersBinding,
+  planDocOwnersBinding,
+  renderDocOwnersBindingDiffLine
+} from '../../../../harness/processes/vinaya-strict/tools/doc-owners-write.js'
 import {
   branchProtectionConfigured,
   checkGhAuth,

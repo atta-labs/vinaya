@@ -17,11 +17,11 @@ import {
   type DevReviewLoopEventInput,
   type LoopState,
   carryLiveRecord,
-  evaluateTestPlanGate,
   readLiveRecord,
   withLiveRecord
 } from '@attalabs/aeg-core'
-import { buildPrincipalTestPlanWaitErrors } from '../../../../../../../apps/cli/src/checks/bin/check-principal-test-plan-wait.js'
+import { evaluateTestPlanGate } from '../../../../checks/test-plan-gate'
+import { buildPrincipalTestPlanWaitErrors } from '../../../../checks/bin/check-principal-test-plan-wait.js'
 import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
 import {
   type LiveRun,

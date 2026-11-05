@@ -790,7 +790,7 @@ export async function milestoneCloseCommand(args: string[]): Promise<void> {
 // PR-merge-verifying dispatch-status pipeline, which queries
 // `@octokit/graphql` directly over HTTP rather than through a stubbable
 // `gh` binary (documented in `apps/cli/tests/commands/brief-render.test.ts`
-// and `apps/cli/tests/checks/branch-topology.test.ts`) and so cannot be
+// and `harness/processes/vinaya-strict/checks/branch-topology.test.ts`) and so cannot be
 // exercised by this file's fake-`gh`-on-PATH unit tests at all. "merged"
 // here means "closed, not explicitly `NOT_PLANNED`" — the same honest
 // terminal reading `derive-tranche.ts`'s own status derivation gives a

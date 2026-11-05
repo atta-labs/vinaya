@@ -32,7 +32,7 @@
  *
  * Historical outcome, per PR:
  *   - waived  — the PR carries any `vinaya/waiver:*` label.
- *   - rework  — a commit landed after the earliest reviewer `VERDICT:`
+ *   - rework  — a commit landed after the earliest `VERDICT:`
  *               comment (this repo's code-review/security bots post verdicts
  *               as PR comments, not native GitHub reviews).
  *   - clean   — neither of the above.
@@ -50,12 +50,12 @@ import {
   checkBriefSections,
   checkIssueRationale,
   checkPremises,
-  extractClosesReferences,
   isTaskBranch,
   parsePremiseBlock,
+  type PremiseAssertion,
   readTierFromPrBody
 } from '../src/index'
-import type { PremiseAssertion } from '../src/index'
+import { extractClosesReferences } from '../../../harness/processes/vinaya-strict/checks/coherence-checks'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)

@@ -92,7 +92,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: ['harness/processes/'],
     trigger: 'content'
   },
-  { test: 'apps/cli/tests/checks/bin-permissions.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'harness/processes/vinaya-strict/checks/bin-permissions.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'apps/cli/tests/checks/registry-gates.test.ts',
     roots: [
@@ -105,8 +105,8 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'content'
   },
   {
-    test: 'apps/cli/tests/checks/shipped-bin-audience.test.ts',
-    roots: ['apps/cli/src/checks/bin/'],
+    test: 'harness/processes/vinaya-strict/checks/shipped-bin-audience.test.ts',
+    roots: ['harness/processes/vinaya-strict/checks/bin/'],
     trigger: 'content'
   },
   { test: 'apps/cli/tests/commands/sync.test.ts', roots: ['apps/cli/src/commands/sync.ts'], trigger: 'content' },
@@ -187,15 +187,19 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: ['apps/vinaya-portal/src/'],
     trigger: 'content'
   },
-  { test: 'packages/aeg-core/src/actions.test.ts', roots: ['aeg-root/roles/'], trigger: 'content' },
-  { test: 'packages/aeg-core/src/diagram-model.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'harness/processes/vinaya-strict/tools/actions.test.ts', roots: ['aeg-root/roles/'], trigger: 'content' },
+  { test: 'harness/processes/vinaya-strict/tools/diagram-model.test.ts', roots: ['.'], trigger: 'content' },
   {
-    test: 'packages/aeg-core/src/docs/docs-coherence.test.ts',
-    roots: ['packages/aeg-core/tests/fixtures/docs-coherence/'],
+    test: 'harness/processes/vinaya-strict/checks/docs/docs-coherence.test.ts',
+    roots: ['harness/processes/vinaya-strict/checks/docs/fixtures/docs-coherence/'],
     trigger: 'content'
   },
   { test: 'packages/aeg-core/src/docs/node-route.test.ts', roots: ['.'], trigger: 'content' },
-  { test: 'packages/aeg-core/src/gate-audience.test.ts', roots: ['packages/aeg-core/bin/'], trigger: 'content' },
-  { test: 'packages/aeg-core/src/no-binary-sources.test.ts', roots: ['.'], trigger: 'content' },
-  { test: 'packages/aeg-core/src/retired-vocabulary.test.ts', roots: ['.'], trigger: 'content' }
+  {
+    test: 'harness/processes/vinaya-strict/checks/gate-audience.test.ts',
+    roots: ['packages/aeg-core/bin/', 'harness/processes/vinaya-strict/checks/standalone/'],
+    trigger: 'content'
+  },
+  { test: 'harness/processes/vinaya-strict/checks/no-binary-sources.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'harness/processes/vinaya-strict/checks/retired-vocabulary.test.ts', roots: ['.'], trigger: 'content' }
 ]

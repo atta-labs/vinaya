@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
+import { DOC_OWNERS_PATH } from '../../../harness/processes/vinaya-strict/tools/doc-owners'
 import type { DoctorDeps } from '../src/commands/doctor.js'
 import type { InitDeps } from '../src/commands/init.js'
 import type { QuickstartDeps } from '../src/commands/quickstart.js'

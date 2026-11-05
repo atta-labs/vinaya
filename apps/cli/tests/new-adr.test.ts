@@ -3,7 +3,10 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DECISION_RECORD_CITATION_ID, resolveProseRules } from '@attalabs/aeg-core'
+import {
+  DECISION_RECORD_CITATION_ID,
+  resolveProseRules
+} from '../../../harness/processes/vinaya-strict/tools/prose-rules'
 import {
   indexWithRecord,
   kebabTitle,

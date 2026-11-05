@@ -1,0 +1,269 @@
+#!/usr/bin/env bun
+
+/**
+ * Core check: brief-shape. Thin adapter over `@attalabs/aeg-core`'s
+ * `checkBriefSections` — mirrors `harness/processes/vinaya-strict/checks/standalone/verify-brief.ts`'s
+ * input assembly (PR_BODY/BRANCH env, tier via `readTierFromPrBody`, the
+ * non-task/non-brief-shaped bypass, `requireClosesN: isTaskBranch(branch)`),
+ * but emits the check contract (JSON lines on stderr, exit 0/1)
+ * instead of human text — the reason this is a new executable rather than a
+ * wrapper around `bin/*` (`packages/aeg-core/bin/*` is out of this task's
+ * boundary to edit).
+ *
+ * scope: diff — the PR body is what's graded; the one filesystem read added
+ * here is the workspace `package.json` manifests, read
+ * once to build `checkConsumerTests`'s consumer enumeration — not a diff of
+ * the repo's own content, so the "diff" scope is otherwise unchanged.
+ */
+
+import { readdirSync, readFileSync } from 'node:fs'
+import {
+  buildConsumersOf as buildConsumersOfShared,
+  checkBriefSections,
+  hasObjectivesHeading,
+  isBriefShaped,
+  isIssueNotFoundError,
+  isTaskBranch,
+  type Objective,
+  type PackageManifest,
+  objectivesOf,
+  partitionBriefErrorsByRollout,
+  readTierFromPrBody
+} from '@attalabs/aeg-core'
+import { extractIssue } from '../../../../../harness/kernel/adapters/code-host/github/extract-issue'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { resolveTaskFrozenBrief } from '../frozen-brief'
+import { readIssueBody, readIssueComments } from '../../../../../harness/kernel/adapters/code-host/github/forge-read'
+import { exitOnIncompleteForgeSnapshot } from '../../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
+import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'
+
+const CHECK_NAME = 'brief-shape'
+
+type GradedBodyResolution = { ok: true; body: string } | { ok: false; message: string }
+
+/**
+ * The body `checkBriefSections` actually grades. On a task branch, the
+ * brief lives on the task Issue's frozen `aeg:brief:v<k>` comment, posted by
+ * `vinaya task brief`/`dispatchTask` — never in the PR body — so that
+ * comment, not `PR_BODY`, is what this check grades. A non-task (standalone
+ * `fix/*`) branch is unchanged: its brief, if any, is still authored
+ * directly into the PR body.
+ *
+ * Resolved through `resolveTaskFrozenBrief` (`../frozen-brief`), which
+ * `test-plan` shares, so a supersession is picked up here too rather than
+ * this check grading a stale, since-corrected version.
+ */
+function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResolution {
+  if (!taskBranch) return { ok: true, body: prBody }
+
+  const resolved = resolveTaskFrozenBrief(
+    prBody,
+    (issue) => readIssueComments(issue, `Issue #${issue}`),
+    () => resolveTrustedPrincipals(),
+    'grade the dispatched brief'
+  )
+  if (resolved.ok) return { ok: true, body: resolved.content }
+  // Same treatment `resolveObjectivesApplicability` already gives an
+  // unresolvable Issue number just below (a fixture's placeholder
+  // `Closes #NNN`, a deleted Issue): additive exemption, never a new
+  // hard-failure mode for a resource nothing required before this task.
+  // A DIFFERENT fetch failure (network, auth, rate-limit) still hard-fails,
+  // and so does a Principal list that does not resolve: with none, no frozen
+  // brief can be trusted.
+  if (resolved.notFound) return { ok: true, body: prBody }
+  return { ok: false, message: resolved.message }
+}
+
+/** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */
+function listDirs(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+  } catch {
+    return []
+  }
+}
+
+function readJson(path: string): Record<string, unknown> {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function readManifest(dir: string): PackageManifest | null {
+  const manifest = readJson(`${dir}/package.json`)
+  return Object.keys(manifest).length === 0 ? null : (manifest as PackageManifest)
+}
+
+/**
+ * `checkConsumerTests`'s consumer enumeration (a round-2 ruling) —
+ * `@attalabs/aeg-core`'s `buildConsumersOf`, the SAME
+ * enumeration `harness/processes/vinaya-strict/checks/standalone/verify-brief.ts` wires for the
+ * authoring-time entry point, so CI and pre-dispatch can never disagree
+ * about which workspace members count as consumers.
+ */
+function buildConsumersOf(): (pkg: string) => string[] {
+  const root = readJson('package.json')
+  const workspaces = Array.isArray(root.workspaces) ? (root.workspaces as string[]) : []
+  return buildConsumersOfShared(workspaces, listDirs, readManifest)
+}
+
+function fetchIssueBody(issueNumber: number): string {
+  return readIssueBody(issueNumber, `Issue #${issueNumber}`)
+}
+
+type ObjectivesResolution =
+  | { applies: false }
+  | { applies: true; objectives: Objective[] }
+  | { applies: true; fetchError: string }
+
+/**
+ * Same applicability rule `verify-brief.ts`'s `resolveIssueObjectives`
+ * uses — `applies: false` skips the objectives checks entirely: a task
+ * branch whose `Closes #N` is missing/malformed, an Issue below the resolved
+ * Objectives cutover (`objectivesSinceIssue`; `null` = no cutover, every Issue
+ * graded, O1), a standalone brief with no `## Objectives`
+ * section at all, or an Issue number that does not resolve (a fixture's
+ * placeholder `Closes #NNN`, a deleted Issue) — additive exemptions, never
+ * a new hard-failure mode for a resource nothing required before this
+ * task. A DIFFERENT fetch failure (network, `gh` auth, rate-limit) is its
+ * own named finding (`fetchError`) instead: it means the comparison could
+ * not be run, not that it passed, and CI must report that rather than
+ * silently passing on exactly the failure mode most likely in practice.
+ */
+function resolveObjectivesApplicability(
+  prBody: string,
+  taskBranch: boolean,
+  objectivesSinceIssue: number | null
+): ObjectivesResolution {
+  if (!taskBranch) {
+    if (!hasObjectivesHeading(prBody)) return { applies: false }
+    const own = objectivesOf(prBody)
+    return { applies: true, objectives: own.ok ? own.objectives : [] }
+  }
+  const { issue } = extractIssue(prBody)
+  // A `null` cutover means no grandfathering — every Issue is graded (O1).
+  if (issue === null || (objectivesSinceIssue !== null && issue < objectivesSinceIssue)) return { applies: false }
+  try {
+    const parsed = objectivesOf(fetchIssueBody(issue))
+    // A malformed section on an at/above-cutover Issue is `checkIssueObjectives`'s
+    // own failure to diagnose, not this gate's — skip rather than comparing
+    // the brief against an Issue the Issue gate should already have refused.
+    return parsed.ok ? { applies: true, objectives: parsed.objectives } : { applies: false }
+  } catch (err) {
+    if (isIssueNotFoundError(err)) {
+      process.stdout.write(
+        `brief-shape: Issue #${issue} does not resolve (\`gh issue view\`) — skipping the objectives checks for this run.\n`
+      )
+      return { applies: false }
+    }
+    return {
+      applies: true,
+      fetchError: `could not fetch Issue #${issue}'s body (\`gh issue view\`) to compare Objectives: ${(err as Error).message}`
+    }
+  }
+}
+
+function main(): void {
+  // In CI the task Issue's body and comments come from the run's forge
+  // snapshot (`readIssueBody`/`readIssueComments` route there); an
+  // incomplete one fails here, before any read.
+  exitOnIncompleteForgeSnapshot(CHECK_NAME)
+  const prBody = process.env.PR_BODY ?? ''
+  if (!prBody) {
+    // No PR body to check (local dev outside a CI/PR context) — nothing to do.
+    process.exit(0)
+  }
+
+  const branch = process.env.BRANCH ?? ''
+  const taskBranch = isTaskBranch(branch)
+
+  // The resolved gate cutovers from the working-tree config — an absent
+  // `gateCutovers` key resolves every field to `null` (no cutover: the gates
+  // apply from Issue/PR 1, O1); this repo restates its own historical values
+  // (O2). Read from `loadConfig`, not the trust anchor, for the reason in
+  // `resolveGateCutovers`'s own doc comment.
+  const gateCutovers = resolveGateCutovers(loadConfig())
+
+  // A non-task branch whose body isn't brief-shaped has no brief to grade —
+  // an ordinary one-line dependency-bump PR must not be forced to grow one
+  // (mirrors verify-brief.ts's identical bypass).
+  if (branch && !taskBranch && !isBriefShaped(prBody)) {
+    process.exit(0)
+  }
+
+  const gradedBodyResolution = resolveGradedBody(prBody, taskBranch)
+  if (!gradedBodyResolution.ok) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `brief-shape: ${gradedBodyResolution.message}`,
+      agent_recovery_prompt:
+        'Dispatch this task with `vinaya task dispatch <tranche> <n>` (posts the `aeg:brief:v1` Issue comment), or check `gh auth status`/network, then re-run `vinaya check brief-shape`. ' +
+        'When the message says no Principal is configured, apply the fix it names instead.'
+    })
+    process.exit(1)
+  }
+  const gradedBody = gradedBodyResolution.body
+
+  const objectivesResolution = resolveObjectivesApplicability(prBody, taskBranch, gateCutovers.objectivesSinceIssue)
+  if (objectivesResolution.applies && 'fetchError' in objectivesResolution) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `brief-validation objectives copy: ${objectivesResolution.fetchError}`,
+      agent_recovery_prompt: 'Check `gh auth status` and network, then re-run `vinaya check brief-shape`.'
+    })
+    process.exit(1)
+  }
+
+  const { errors } = checkBriefSections(gradedBody, readTierFromPrBody, {
+    requireClosesN: taskBranch,
+    consumersOf: buildConsumersOf(),
+    issueObjectives: objectivesResolution.applies ? objectivesResolution.objectives : undefined
+  })
+
+  // Grandfathering (task 10 round-2 ruling addendum 1) — a PR opened before a
+  // configured rollout cutover predates the rules `checkBriefSections` added; a
+  // finding from one of them is informational there, never a failure.
+  // `verify-brief.ts` (no PR number, authoring time) has no such exemption —
+  // grandfathering is a CI rollout concern, not a grammar relaxation. The
+  // cutovers come from `gateCutovers` (an absent key → all `null` → nothing
+  // grandfathered, every finding blocks from PR 1, O1). A missing/unparseable
+  // PR_NUMBER parses to `null`, which `partitionBriefErrorsByRollout` treats as
+  // NOT grandfathered (fail-closed).
+  const parsedPrNumber = Number.parseInt(process.env.PR_NUMBER ?? '', 10)
+  const prNumber = Number.isInteger(parsedPrNumber) ? parsedPrNumber : null
+  const { blocking, info } = partitionBriefErrorsByRollout(errors, prNumber, gateCutovers)
+
+  if (info.length > 0) {
+    process.stdout.write(
+      `${CHECK_NAME}: PR #${prNumber} predates a configured gate cutover — ${info.length} finding(s) grandfathered, not a failure:\n${info.join('\n')}\n`
+    )
+  }
+
+  if (blocking.length > 0) {
+    for (const message of blocking) {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message,
+        agent_recovery_prompt:
+          'Open the PR body and add or fix the section named above, following the canonical PR-body template ' +
+          '(`aeg-root/roles/developer.md` § PR body — canonical form / `aeg-root/templates/pr-report-template.md`). ' +
+          'Commit the corrected PR body, then re-run `vinaya check brief-shape`.'
+      })
+    }
+    process.exit(1)
+  }
+
+  process.exit(0)
+}
+
+main()

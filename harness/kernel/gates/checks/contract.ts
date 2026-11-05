@@ -149,7 +149,7 @@ export type CheckSpec = {
    * for a check that grades the code diff itself, never forge-write content.
    *
    * This is the ONE taxonomy `harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts`'s pre-write
-   * validation and `packages/aeg-core/bin/verify-coherence.ts`'s open-Issue
+   * validation and `verify-coherence.ts`'s open-Issue
    * sweep filter the registry by: a check registered with
    * `validates: 'body'` is picked up by every `pr`/Issue-body write with no
    * further wiring, and a check registered with `validates: 'issue'` runs at

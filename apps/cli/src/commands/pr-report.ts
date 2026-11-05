@@ -16,7 +16,7 @@ import {
 import { runBodyChecks } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
 // Re-exported so every existing import of this command file's own path
-// (`apps/cli/src/checks/bin/check-evidence-fresh.ts`'s `agentCommandText`/
+// (`harness/processes/vinaya-strict/checks/bin/check-evidence-fresh.ts`'s `agentCommandText`/
 // `extractAgentCommandLines`, `apps/cli/src/commands/pr-verify-evidence.ts`'s
 // `buildReport`, this command's own test suite) keeps resolving unchanged —
 // see `harness/processes/vinaya-strict/tools/pr-report/pr-report-engine.ts`'s own module doc.

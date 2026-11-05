@@ -739,7 +739,8 @@ describe('an ownership transfer that keeps a forwarding entry is a relocation', 
   const OLD = 'packages/aeg-core/src/baseline-capture.ts'
   const OWNER = 'harness/processes/vinaya-strict/tools/baseline-capture.ts'
   const FORWARD = "export * from '../../../harness/processes/vinaya-strict/tools/baseline-capture.ts'\n"
-  const captured = readFileSync(join(REPOSITORY_ROOT, OLD), 'utf8')
+  const CAPTURED_FROM = 'harness/processes/vinaya-strict/checks/baseline-capture.ts'
+  const captured = readFileSync(join(REPOSITORY_ROOT, CAPTURED_FROM), 'utf8')
 
   function transferred(oldContent: string): { root: string; base: string } {
     const { root, base } = plantedRepository({ [OLD]: captured, 'harness/kernel/gates/kernel.ts': 'export {}\n' })

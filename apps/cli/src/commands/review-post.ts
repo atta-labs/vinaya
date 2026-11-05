@@ -100,13 +100,13 @@ import {
   parseFindingState,
   policyDigest as reviewPolicyDigest,
   resolveNewestFrozenBrief,
-  type ReviewGateComment,
   type ReviewPolicy,
   resolveObjectivesSource,
   SECURITY_SEVERITY_ORDER,
   securityBlockingSeverities,
   type VerdictExtraction
 } from '@attalabs/aeg-core'
+import type { ReviewGateComment } from '../../../../harness/processes/vinaya-strict/tools/review-gate'
 import { extractIssue } from '../../../../harness/kernel/adapters/code-host/github/extract-issue'
 import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolveReviewPolicy } from '../lib/config'
 import { printJson } from '../../../../harness/kernel/effects/envelope'

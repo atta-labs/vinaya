@@ -18,7 +18,7 @@
  * (`assembleAndRenderBrief` -> `createForgeSource`/`fetchOpenIssuesByLabel`)
  * goes straight to `@octokit/graphql` over HTTP, never through a stubbable
  * `gh` binary — the same reason `apps/cli/tests/commands/brief-render.test.ts`
- * and `apps/cli/tests/checks/branch-topology.test.ts` document for declining
+ * and `harness/processes/vinaya-strict/checks/branch-topology.test.ts` document for declining
  * to build a live-network/GraphQL-mock fixture themselves. See this task's
  * PR Decisions section.
  */

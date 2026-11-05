@@ -57,7 +57,7 @@ const REPO_ROOT = join(CLI_ROOT, '..', '..')
  * `contentAfterTwoLines` and `AEG_BRIEF_V1_MARKER` are the promoted
  * `@attalabs/aeg-core` exports (plan-brief-v1 task 3, #428) — `dispatch-task.ts`
  * re-exports them rather than carrying its own copy. Pinned identically in
- * `packages/aeg-core/bin/verify-dispatch.content-after-two-lines.test.ts`,
+ * `harness/processes/vinaya-strict/checks/standalone/verify-dispatch.content-after-two-lines.test.ts`,
  * proving both packages agree on the SAME function.
  */
 const CONTENT_AFTER_TWO_LINES_VECTORS: Array<{ name: string; input: string; expected: string }> = [

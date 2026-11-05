@@ -1,0 +1,231 @@
+#!/usr/bin/env bun
+
+/**
+ * Core check: retired-vocabulary. Thin adapter over `@attalabs/aeg-core`'s
+ * `scanRetiredVocabulary` — the genuinely-retired half
+ * of `retired-vocabulary.test.ts`'s original scan, "today only a vitest
+ * test inside `packages/aeg-core`, executed by no adopter ever."
+ *
+ * Deliberately NOT the forge-number / tranche-slug / legacy-slug class that
+ * test file also carries: those ban a LIVE, unexplained citation, and are
+ * already `reader-resolvable-prose` (`checkUnresolvableReferences`) —
+ * shipping both under two check names would double-report the identical
+ * match. See `scanRetiredVocabulary`'s own module header for the full
+ * reasoning.
+ *
+ * **Scope: `<doctrineRoot>/**` only, not the whole adopter repo.** What
+ * `RETIRED_PATTERNS` bans is AEG's own methodology history (the decision
+ * log, the lock, the `team-leader` role, …) — vocabulary that only means
+ * anything inside AEG's own doctrine, which is exactly what `vinaya init`
+ * installs at `<doctrineRoot>` and nowhere else in an adopter's repo.
+ * Sweeping the adopter's own unrelated source (their business logic, their
+ * own "decision log" feature, whatever "CONTRADICTION" means to their
+ * domain) would misfire on words that carry no AEG meaning there at all.
+ * This is a narrower scope than the vitest suite's own `PRODUCT = ['.']` —
+ * a deliberate scope decision for the adopter-facing adapter, not a change
+ * to `RETIRED_PATTERNS`/`RETIRED_EXEMPT_SUBSTRINGS`/`PATTERN_EXEMPT`
+ * themselves, which are unmodified from the vitest suite.
+ *
+ * Shares `vinaya.config.json`'s `proseGates.doctrineRoot` with
+ * `reader-resolvable-prose` — one config key, two checks reading the same
+ * doctrine-root fact, never two separate knobs for the same thing.
+ *
+ * Blocking: the doctrine tree carries zero findings, so a finding prints as
+ * `error` severity and the check exits `1`, failing `check --all`. It shipped
+ * report-only under the same rollout precedent as `reader-resolvable-prose`
+ * (`aeg-root/enforcement.md`'s G1/G2 period) and turned blocking once its
+ * backlog was cleared. Orthogonal exception:
+ * a genuinely unresolvable doctrine root is not a backlog finding —
+ * `main()` exits non-`0`/non-`1` for that case, so it reads as a distinct
+ * `status: 'error'`, never a clean pass.
+ *
+ * scope: full — the SWEEP stays the whole doctrine tree (a retired-vocabulary
+ * leak can sit in any doctrine file regardless of what a given PR touches).
+ * Which findings get REPORTED is diff-scoped (`resolveChangedFiles`,
+ * lib/diff-evidence.ts) — same fix, same reason, as `reader-resolvable-prose`
+ * (a real regression): without it, every PR reprinted this package's
+ * entire shipped-doctrine backlog regardless of what changed.
+ */
+
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { resolveProseRules, rulesOfGroup } from '../../tools/prose-rules'
+import { scanRetiredVocabulary, type VocabSourceFile } from '../retired-vocabulary'
+import { hasDoctrineEntry, resolveDoctrineRoot } from '../../../../../apps/cli/src/commands/doctrine.js'
+import { loadConfigChecked } from '../../../../../apps/cli/src/lib/config'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { findingsInThisDiff, repoRoot } from '../../../../../harness/kernel/connectors/git/diff-evidence'
+
+const CHECK_NAME = 'retired-vocabulary'
+
+/**
+ * Loaded with its validation surfaced, never swallowed — the same discipline
+ * `reader-resolvable-prose` follows: a malformed `proseGates.rules` entry
+ * refuses the run instead of silently meaning "the defaults only".
+ */
+const CONFIG = loadConfigChecked()
+const proseGates = CONFIG.ok ? CONFIG.config?.proseGates : undefined
+
+/**
+ * Same default, same config key, and same fix as `reader-resolvable-prose`
+ * — see that file's `resolveCheckDoctrineRoot()` for the full
+ * reasoning: `resolveDoctrineRoot()`'s own default resolves relative to
+ * wherever ITS OWN calling module physically sits on disk, which makes
+ * whether it finds this repo's `aeg-root/` depend on checkout-path shape
+ * rather than on whether that `aeg-root/` exists. `repoRoot()` (`git
+ * rev-parse --show-toplevel`) is the deterministic anchor instead; falling
+ * back to `resolveDoctrineRoot()`'s package-relative "my own shipped copy"
+ * resolution only when the repo under check has no local `aeg-root/` of its
+ * own (a `vinaya init` adopter). `null` — a genuinely
+ * unresolvable root — is reported by `main()` as its own distinct outcome,
+ * never silently as a clean zero-finding pass.
+ */
+function resolveCheckDoctrineRoot(): string | null {
+  const configured = proseGates?.doctrineRoot
+  if (configured !== undefined) return configured
+  const root = repoRoot()
+  if (root !== null) {
+    const candidate = join(root, 'aeg-root')
+    if (hasDoctrineEntry(candidate)) return candidate
+  }
+  return resolveDoctrineRoot()
+}
+
+const DOCTRINE_ROOT = resolveCheckDoctrineRoot()
+
+/** Text extensions worth sweeping — mirrors `retired-vocabulary.test.ts`'s own `grep --include` list. */
+function isSweptFile(name: string): boolean {
+  return /\.(md|ts|tsx|yml)$/.test(name) || name === 'doc-owners' || name === 'packages'
+}
+
+/** Recursively collects repo-relative paths under `dir` whose name passes `isSweptFile`. Missing/unreadable `dir` degrades to `[]`, never throws — an unreadable subtree is skipped, not reported. */
+function collect(dir: string, out: string[] = []): string[] {
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return out
+  }
+  for (const name of entries) {
+    const full = join(dir, name)
+    let isDir: boolean
+    try {
+      isDir = statSync(full).isDirectory()
+    } catch {
+      continue
+    }
+    if (isDir) {
+      if (name === 'node_modules' || name === '.git' || name === '.next' || name === '.turbo') continue
+      collect(full, out)
+    } else if (isSweptFile(name)) {
+      out.push(full)
+    }
+  }
+  return out
+}
+
+function readAll(paths: string[]): VocabSourceFile[] {
+  return paths.map((p) => ({ path: p, content: readFileSync(p, 'utf8') }))
+}
+
+function main(): void {
+  if (!CONFIG.ok) {
+    console.log(`${CHECK_NAME}: configuration refused — sweep did not run.`)
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `${CONFIG.path}: ${CONFIG.error}`,
+      agent_recovery_prompt:
+        'Fix the vinaya.config.json keys named above; every refused key is named with the reason. This check does ' +
+        'not fall back to its defaults while the configuration is malformed.'
+    })
+    process.exit(2)
+  }
+
+  // Genuinely unresolvable — see `check-reader-resolvable-prose.ts`'s
+  // identical guard for the full reasoning. A non-{0,1} exit code (never
+  // the `1` a reportable finding below exits with) makes the runner mark
+  // this run `status: 'error'`, never
+  // `'pass'` with zero findings — structurally indistinguishable, before
+  // this fix, from "swept the real tree and found nothing".
+  if (DOCTRINE_ROOT === null) {
+    console.log(`${CHECK_NAME}: doctrine root unresolvable — sweep did not run.`)
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message:
+        'doctrine root unresolvable: no aeg-root found at the repo root under check, and no bundled copy found ' +
+        "relative to this package's own install.",
+      agent_recovery_prompt:
+        'Set proseGates.doctrineRoot in vinaya.config.json to the doctrine tree this repo actually uses, or ' +
+        "confirm aeg-root/ exists at the repo root (or that this package's own bundled aeg-root/ is present)."
+    })
+    process.exit(2)
+  }
+
+  const paths = collect(DOCTRINE_ROOT)
+  const files = readAll(paths)
+  // Only the retired group: the reader-resolvable group is
+  // `reader-resolvable-prose`'s, and running it here too would print each of
+  // its findings twice.
+  const rules = resolveProseRules(proseGates?.rules, { repoRoot: repoRoot() ?? process.cwd() })
+  const retiredRules = rulesOfGroup(rules, 'retired-vocabulary')
+  const customIds = new Set(retiredRules.filter((rule) => rule.custom).map((rule) => rule.id))
+  const findings = scanRetiredVocabulary(files, rules)
+  // Same absolute-path comparison (`resolveChangedFiles()` resolves against
+  // the real repo root, never an assumed `process.cwd()`) AND same
+  // `null`-means-unfiltered handling `check-reader-resolvable-prose.ts`
+  // needs, for the identical reasons: `finding.file` comes from
+  // `collect(DOCTRINE_ROOT)`, usually already absolute but not always
+  // (`DOCTRINE_ROOT` can be a relative `proseGates.doctrineRoot` config
+  // value). Anchor to the SAME real repo
+  // root `resolveChangedFiles()` used (`repoRoot()`, a MINOR review finding)
+  // rather than a second, independent `process.cwd()` assumption that
+  // could diverge from it outside the common invocation shape; and
+  // `resolveChangedFiles()` returns `null` — never `[]` — when no diff
+  // boundary could be established at all (a bare/single-commit fixture, or a
+  // shallow clone/orphan history with no merge base, a BLOCKER review
+  // finding), so that case reports every finding unfiltered instead of
+  // silencing a real sweep.
+  // Line-scoped, not merely file-scoped: a finding prints only when
+  // its own line falls inside a changed hunk of a file this diff touched.
+  // `findingsInThisDiff` owns both halves — one hunk parser for the whole
+  // repo, and the same "indeterminate reports everything" rule
+  // `resolveChangedFiles` already established. Full-sweep mode (no diff
+  // boundary resolvable at all) is unchanged.
+  const reportable = findingsInThisDiff(findings)
+
+  // stdout only — this check's stderr is the CheckError JSON channel
+  // (`contract.ts`'s `emitCheckError`); a plain-text line there would make
+  // the runner treat this human-readable summary as malformed output and
+  // report `status: 'error'` regardless of exit code.
+  console.log(
+    `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; ${paths.length} file(s) swept; ${retiredRules.length} rule(s) (${customIds.size} custom); ${findings.length} finding(s), ${reportable.length} in this diff`
+  )
+
+  let hasBlocking = false
+  for (const finding of reportable) {
+    if (finding.blocking) hasBlocking = true
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: finding.blocking ? 'error' : 'warning',
+      message: `${finding.file}:${finding.line}: ${finding.message}`,
+      file: finding.file,
+      line: finding.line,
+      agent_recovery_prompt: customIds.has(finding.rule)
+        ? "This text matches one of this repository's own writing rules (proseGates.rules.custom in " +
+          'vinaya.config.json); the finding names the rule and what it means. Rewrite the text so it no longer ' +
+          "matches, or, where the rule should not read this file, add the path to that rule's exempt list."
+        : 'This doctrine page claims a mechanism AEG itself retired is still live (a decision-log entry, the lock, ' +
+          'the `team-leader` role, the tranche topology file, …). Rewrite it to describe the CURRENT mechanism, or remove the claim — never ' +
+          'describe a retired concept as something a reader can still do today.'
+    })
+  }
+
+  process.exit(hasBlocking ? 1 : 0)
+}
+
+main()

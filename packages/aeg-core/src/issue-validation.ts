@@ -30,8 +30,17 @@ import {
 import { maskCode } from '../../../harness/kernel/adapters/code-host/github/strip-code'
 import { anchoredRegion, anchoredRegionBounds, stripCode } from '../../../harness/kernel/gates/checks/anchored-region'
 import { checkTestPlan, extractFencedBlocks } from './brief-validation'
-import { type ClaimBinding, type ClaimVoice, evaluateClaimBindings } from './doc-claim'
-import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'
+import {
+  type ClaimBinding,
+  type ClaimVoice,
+  evaluateClaimBindings
+} from '../../../harness/processes/vinaya-strict/tools/doc-claim'
+import {
+  DOC_OWNERS_PATH,
+  isUrlPointer,
+  parseDocOwners,
+  pointerToPath
+} from '../../../harness/processes/vinaya-strict/tools/doc-owners'
 import { globsOverlap } from './derive-section7'
 import { objectivesOf, objectivesVersion } from './objectives'
 import {
@@ -45,7 +54,7 @@ import {
 } from '@attalabs/harness/issue-documentation'
 import { normalizeTouchedPath } from '@attalabs/harness/tools/host/touched-path'
 import { isProtectedAdminPath } from './protected-paths'
-import { isValidCitedFilePath } from './quoted-command'
+import { isValidCitedFilePath } from '../../../harness/processes/vinaya-strict/tools/quoted-command'
 import { locateTestPlanSection } from './test-plan-section'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }

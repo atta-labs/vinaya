@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  *    mock below inspects the outgoing query text to decide whether to hand
  *    back the first or last fixture entry, so it genuinely fails if the
  *    query regresses to `first: 1` — mirroring the established pattern in
- *    `packages/aeg-core/bin/verify-coherence.test.ts`.
+ *    `harness/processes/vinaya-strict/checks/standalone/verify-coherence.test.ts`.
  *
  * Mocks `@octokit/graphql` per-task by alias (`i_<issue>_issue` / `_ref` /
  * `_prs`), mirroring the shape `buildBatchQuery` emits.
@@ -62,7 +62,7 @@ vi.mock('@octokit/graphql', () => ({
       // regresses to `timelineItems(first: 1, ...)`, `usesLast` goes false
       // and the mock hands back the FIRST fixture entry (the stale one),
       // which fails the reopen-regression test below. Mirrors the pattern in
-      // `packages/aeg-core/bin/verify-coherence.test.ts`.
+      // `harness/processes/vinaya-strict/checks/standalone/verify-coherence.test.ts`.
       const usesLast = /timelineItems\(last:\s*1/.test(query)
       const repository: Record<string, unknown> = {}
       for (const [alias, fx] of Object.entries(fixtures)) {

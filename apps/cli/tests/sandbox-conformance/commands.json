@@ -64,14 +64,16 @@
     },
     {
       "id": "verify-dispatch-premise",
-      "forms": ["bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --premise <body-file>"],
+      "forms": [
+        "bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts <tranche> <n> --premise <body-file>"
+      ],
       "notRun": "re-asserts a brief's Premise block — it needs the dispatched brief text as its body file, which only a real dispatch has"
     },
     {
       "id": "verify-docs",
       "forms": [
         "bun run verify-docs --pr",
-        "bun packages/aeg-core/bin/verify-docs.ts --pr",
+        "bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts --pr",
         "vinaya check doc-coverage"
       ],
       "notRun": "judges the PR body the Developer wrote (PR_BODY); with no body its verdict is about the body, never the sandbox"
@@ -83,7 +85,7 @@
     },
     {
       "id": "verify-task",
-      "forms": ["bun packages/aeg-core/bin/verify-task.ts"],
+      "forms": ["bun harness/processes/vinaya-strict/checks/standalone/verify-task.ts"],
       "notRun": "the composite of typecheck, format-and-lint, the pre-push test selection and verify-docs — the driver runs it at PR-open time, and its sandbox-relevant parts are entries of their own here"
     },
     {

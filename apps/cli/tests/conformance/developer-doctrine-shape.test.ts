@@ -7,7 +7,7 @@ import {
   ROLE_BLOCKS,
   SHORT_VERSION_MAX_WORDS,
   SHORT_VERSION_MIN_WORDS
-} from '@attalabs/aeg-core/docs'
+} from '../../../../harness/processes/vinaya-strict/tools/docs/published-prose'
 import { resolveDoctrineRoot } from '../../src/commands/doctrine'
 import {
   assembleDeveloperDoctrine,

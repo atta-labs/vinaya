@@ -14,11 +14,11 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "sha256": "c42bb2970beb290921cebdb11af3975705d7ece9f56b475c30d11a4ac4a7d059"
+        "sha256": "f3d4c961b5bf4c9a1df66650e460c94c1e1e77d012eda3bd5199da124ec6f665"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.ts",
-        "sha256": "b5200ffb501c2e26f79209927f74c411f549159d6a79037b8ddb7c315ff2c387"
+        "sha256": "536aa86397fe0176c85e9125ee73125af03464a4fcd02d34fa9c9e72d36c85ff"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-publication.ts",
@@ -30,7 +30,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/gate-reading.ts",
-        "sha256": "1f6acde54e47d879a09a6b5463f6e83cc8de3d77a039623bc82e66be89b2c6ce"
+        "sha256": "b74e309a417d68c2c821ae43d4b53b25b91be97c0ad07a1a723309ddda6f4045"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/journal-history.ts",

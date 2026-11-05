@@ -1,7 +1,7 @@
 /**
  * The per-file diff `evaluateC5` reads to verify a `Doc-neutral:` declaration
  * Shared by both doc-coverage check bins so the two
- * cannot drift; `packages/aeg-core/bin/verify-docs.ts` carries its own copy
+ * cannot drift; `verify-docs.ts` carries its own copy
  * because it lives in a different package and aeg-core's `src/` is zero-I/O
  * by charter — that boundary, not an oversight, is why there are two.
  *

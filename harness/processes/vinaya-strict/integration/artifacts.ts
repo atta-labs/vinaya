@@ -20,7 +20,8 @@
 // repo's own battle-tested gates, not invented blanks — the failure it
 // kills is blank-config paralysis.
 
-import { DOC_OWNERS_PATH, LABELS, type LabelKey, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
+import { LABELS, type LabelKey, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
+import { DOC_OWNERS_PATH } from '../tools/doc-owners'
 import { resolveDoctrineRoot } from '../../../../apps/cli/src/commands/doctrine.js'
 import type { AgentVendor } from '../../../kernel/adapters/agents/agent-vendors.js'
 import { buildAgentsSkillsOps, discoverRoleNames } from './agents-skills-emitter.js'
@@ -38,7 +39,7 @@ import { buildGeminiCommandOp } from './gemini-command-emitter.js'
 import { type HookDir, TRACKED_HOOK_DIR } from '../../../kernel/gates/ring0-hooks/init-hook-paths.js'
 import type { CreateLabelOp, Op } from '../../../kernel/gates/ops.js'
 import { ownVersion } from '../../../../apps/cli/src/lib/own-version.js'
-import { REVIEW_GATE_WORKFLOW_NAME } from '../../../../apps/cli/src/lib/review-gate-check-name.js'
+import { REVIEW_GATE_WORKFLOW_NAME } from '../tools/review-gate-check-name.js'
 import {
   ADOPTER_TEST_RUNNER,
   NO_LOCAL_TESTS_MARKER,
@@ -1823,7 +1824,7 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # test run itself already succeeded) so a "pr report" evidence build for
   # the same head/tree naming the identical command reuses it rather than
   # running it again.
-  ${libBinInvocation(selfHost, 'apps/cli/src/lib/pre-push-cache-test-run.ts', 'vinaya-cache-test-run')} "$VINAYA_TEST_CMD" "$VINAYA_TEST_LOG" || true
+  ${libBinInvocation(selfHost, 'harness/processes/vinaya-strict/tools/pr-report/pre-push-cache-test-run.ts', 'vinaya-cache-test-run')} "$VINAYA_TEST_CMD" "$VINAYA_TEST_LOG" || true
   ${libBinInvocation(selfHost, 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts', 'vinaya-record-tests')} passed "$VINAYA_TEST_LOG" "$VINAYA_TEST_ELAPSED" 1>&2 || true
   rm -f "$VINAYA_TEST_LOG"
   echo "vinaya pre-push: selected \${VINAYA_SELECTED_COUNT} file(s), \${VINAYA_TEST_ELAPSED}s — all green"

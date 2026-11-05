@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildDocNav } from './build-doc-nav'
-import type { Doc } from './types'
+import type { Doc } from '../../../../harness/processes/vinaya-strict/tools/docs/types'
 
 const doc = (overrides: Partial<Doc> & Pick<Doc, 'slug' | 'title' | 'section'>): Doc => ({
   description: undefined,

@@ -1,0 +1,319 @@
+import { execFileSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, describe, expect, it } from 'bun:test'
+
+/**
+ * CLI-level coverage for the two behaviors that live in the shim rather than in
+ * `brief-validation.ts`: *when* `checkBriefSections` runs (branch vs body shape)
+ * and the `--body-file` authoring-time entry. The section grammar itself is
+ * covered in `src/brief-validation.test.ts` — this file only asserts routing.
+ *
+ * Live failure being regressed: a standalone fix brief on `fix/studio-tranche-href`
+ * shipped with no §7 documentation-update list and CI stayed green, because the
+ * branch-only bypass exempted every non-`task/*` branch before any section check
+ * ran.
+ */
+
+const SCRIPT = join(import.meta.dirname, 'verify-brief.ts')
+
+/** A login on this repository's `vinaya.config.json` `principals` list, which the spawned script reads. */
+const CONFIGURED_PRINCIPAL = 'daniboomerang'
+
+/** A complete standalone-fix brief: every required section, and no `Closes #N` (it has no task Issue). */
+const FIX_BRIEF = `**For:** Sonnet (coding-agent CLI, dispatched locally)
+**Project:** aeg-core
+
+## Summary
+
+Standalone fix — not an AEG task.
+
+## Test plan
+
+\`\`\`
+bun test → passes
+\`\`\`
+
+## Scope
+
+One package.
+
+**Tier:** 1
+
+## Technical surface map
+
+- \`packages/aeg-core/src/brief-validation.ts\`
+
+## Pre-flight
+
+Step 0 (worktree):
+\`\`\`
+git worktree add .worktrees/fix/x -b fix/x origin/main
+\`\`\`
+
+## Documentation-update list
+
+- \`aeg-root/state-machine.md\`
+
+## Stop conditions
+
+- Pre-flight failure.
+
+## Constraints
+
+**Autonomy:** Do not stop to ask clarifying questions. For any ambiguity not
+covered by a stop condition, choose the most reasonable option.
+`
+
+/** The exact live failure shape: a real brief whose §7 documentation-update list is absent. */
+const FIX_BRIEF_NO_DOC_LIST = FIX_BRIEF.replace(/## Documentation-update list[\s\S]*?(?=## Stop conditions)/, '')
+
+/** An ordinary non-AEG PR body — the exemption the bypass exists to protect. */
+const DEPENDENCY_BUMP = `## Summary
+
+Bumps \`zod\` from 3.23.8 to 3.24.1.
+
+## Test plan
+
+\`\`\`
+bun test → passes
+\`\`\`
+
+## Scope
+
+Lockfile only.
+
+**Tier:** 0
+`
+
+type CliResult = { code: number; output: string }
+
+function runCli(args: string[], env: Record<string, string> = {}): CliResult {
+  try {
+    const output = execFileSync('bun', [SCRIPT, ...args], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+      timeout: 60_000,
+      env: { ...process.env, PR_BODY: '', PR_TITLE: '', BRANCH: '', ...env }
+    })
+    return { code: 0, output }
+  } catch (err) {
+    const e = err as { status?: number; stdout?: string; stderr?: string }
+    return { code: e.status ?? 1, output: `${e.stdout ?? ''}${e.stderr ?? ''}` }
+  }
+}
+
+const tmp = mkdtempSync(join(tmpdir(), 'verify-brief-'))
+afterAll(() => rmSync(tmp, { recursive: true, force: true }))
+
+function briefFile(name: string, contents: string): string {
+  const path = join(tmp, name)
+  writeFileSync(path, contents)
+  return path
+}
+
+/** A fake `gh` on PATH whose `issue view` subcommand exits 1 printing `stderrText` — for exercising the fetch-failure branch of the Objectives comparison without a real network call. */
+function fakeGhPath(stderrText: string): string {
+  const dir = mkdtempSync(join(tmp, 'fake-gh-'))
+  const gh = join(dir, 'gh')
+  writeFileSync(gh, `#!/bin/sh\necho '${stderrText}' 1>&2\nexit 1\n`)
+  chmodSync(gh, 0o755)
+  return `${dir}:${process.env.PATH}`
+}
+
+/** A minimal task-branch, brief-shaped body closing a real-numbered (post-cutover) Issue — enough to reach the live Objectives fetch. */
+const TASK_BRIEF_CLOSING_500 = FIX_BRIEF.replace(
+  'git worktree add .worktrees/fix/x -b fix/x origin/main',
+  'git worktree add .worktrees/task/iter/3 -b task/iter/3 origin/main'
+).replace('## Summary', 'Closes #500\n\n## Summary')
+
+/**
+ * A fake `gh` on PATH whose `issue view --json comments` returns exactly one
+ * comment with `commentBody`, authored by `CONFIGURED_PRINCIPAL` —
+ * `resolveNewestFrozenBrief` (task 4, Issue #483, O3) requires a
+ * principal-authored comment, unlike the old raw marker-match this replaced.
+ */
+function fakeGhWithComments(commentBody: string): string {
+  const dir = mkdtempSync(join(tmp, 'fake-gh-comments-'))
+  const gh = join(dir, 'gh')
+  const responseFile = join(dir, 'response.json')
+  writeFileSync(
+    responseFile,
+    JSON.stringify({ comments: [{ body: commentBody, author: { login: CONFIGURED_PRINCIPAL } }] })
+  )
+  writeFileSync(gh, `#!/bin/sh\ncat "${responseFile}"\n`)
+  chmodSync(gh, 0o755)
+  return `${dir}:${process.env.PATH}`
+}
+
+/** A complete task-branch brief closing Issue #12 — below `OBJECTIVES_SINCE_ISSUE` (404), so the Objectives fetch never fires and these tests exercise only `resolveGradedBody`'s own `gh` call. */
+const TASK_BRIEF_CLOSING_12 = FIX_BRIEF.replace(
+  'git worktree add .worktrees/fix/x -b fix/x origin/main',
+  'git worktree add .worktrees/task/iter/12 -b task/iter/12 origin/main'
+).replace('## Summary', 'Closes #12\n\n## Summary')
+
+describe('verify-brief — brief-shaped bodies are validated on any branch', () => {
+  it('FAILS a brief-shaped body missing its doc-update list on a fix/* branch (was silently bypassed)', () => {
+    const { code, output } = runCli([], { BRANCH: 'fix/x', PR_BODY: FIX_BRIEF_NO_DOC_LIST })
+    expect(code).toBe(1)
+    expect(output).toMatch(/Documentation-update list/)
+  })
+
+  it('PASSES a complete brief-shaped body on a fix/* branch — no `Closes #N` required', () => {
+    const { code, output } = runCli([], { BRANCH: 'fix/x', PR_BODY: FIX_BRIEF })
+    expect(output).toMatch(/Closes #N` not required/)
+    expect(code).toBe(0)
+  })
+
+  it('still exempts an ordinary non-brief body on a fix/* branch', () => {
+    const { code, output } = runCli([], { BRANCH: 'fix/x', PR_BODY: DEPENDENCY_BUMP })
+    expect(code).toBe(0)
+    expect(output).toMatch(/not brief-shaped — bypass/)
+  })
+
+  it('still requires `Closes #N` on a task branch', () => {
+    const { code, output } = runCli([], { BRANCH: 'task/iter/3', PR_BODY: FIX_BRIEF })
+    expect(code).toBe(1)
+    expect(output).toMatch(/Closes #N/)
+  })
+
+  it('keeps the plan-PR Closes guard running ahead of any exemption', () => {
+    const { code, output } = runCli([], { BRANCH: 'plan/x', PR_BODY: `${DEPENDENCY_BUMP}\n\nCloses #12\n` })
+    expect(code).toBe(1)
+    expect(output).toMatch(/plan-PR Closes guard/)
+  })
+})
+
+describe('verify-brief — Objectives quick lane on a non-task branch (dev-review-loop-v1 task 1)', () => {
+  it('does not force `## Objectives` onto a standalone brief that never had one', () => {
+    // Regression guard: FIX_BRIEF predates this task and carries no
+    // `## Objectives` section — it must keep passing exactly as before.
+    const { code } = runCli([], { BRANCH: 'fix/x', PR_BODY: FIX_BRIEF })
+    expect(code).toBe(0)
+  })
+
+  it('is refused when a brief opts into `## Objectives` with a malformed section (self-compare catches the parse error)', () => {
+    const withBadObjectives = FIX_BRIEF.replace(
+      '## Summary',
+      '## Objectives\n\n1. wrong grammar — missing the `O` prefix.\n\n## Summary'
+    )
+    const { code, output } = runCli([], { BRANCH: 'fix/x', PR_BODY: withBadObjectives })
+    expect(code).toBe(1)
+    expect(output).toMatch(/objectives copy/)
+  })
+
+  it('passes when a brief carries a well-formed, self-consistent `## Objectives` section citing itself in §6', () => {
+    const withObjectives = FIX_BRIEF.replace(
+      '## Summary',
+      '## Objectives\n\nO1. The fix does the thing described in Summary.\n\n## Summary'
+    ).replace('## Pre-flight', '## 6. Numbered parts\n\nPart 1 (O1) — the fix.\n\n## Pre-flight')
+    const { code } = runCli([], { BRANCH: 'fix/x', PR_BODY: withObjectives })
+    expect(code).toBe(0)
+  })
+})
+
+describe('verify-brief — Objectives fetch failure on a task branch (review round 1, finding 4)', () => {
+  it('skips the objectives comparison — never a hard failure — when the Issue genuinely does not resolve', () => {
+    const path = fakeGhPath(
+      'GraphQL: Could not resolve to an issue or pull request with the number of 500. (repository.issue)'
+    )
+    const { code, output } = runCli([], { BRANCH: 'task/iter/3', PR_BODY: TASK_BRIEF_CLOSING_500, PATH: path })
+    expect(code).toBe(0)
+    expect(output).toMatch(/does not resolve.*skipping/)
+  })
+
+  it('hard-fails — never silently skips — on a genuine fetch failure (network, auth, rate-limit)', () => {
+    const path = fakeGhPath('gh: authentication failed')
+    const { code, output } = runCli([], { BRANCH: 'task/iter/3', PR_BODY: TASK_BRIEF_CLOSING_500, PATH: path })
+    expect(code).toBe(1)
+    expect(output).toMatch(/FAILED.*could not fetch Issue #500/)
+  })
+})
+
+describe('verify-brief — grades the dispatched Issue comment, not PR_BODY, on a task branch (plan-brief-v1 task 3, #428)', () => {
+  it('grades the frozen aeg:brief:v1 Issue comment body instead of PR_BODY when the two disagree', () => {
+    const commentBody = `<!-- aeg:brief:v1 -->\nBrief hash: abc123\n${TASK_BRIEF_CLOSING_12}`
+    const path = fakeGhWithComments(commentBody)
+    // PR_BODY carries only `Closes #12` — nothing else. If verify-brief
+    // graded PR_BODY directly (the old behavior) this would fail on every
+    // missing section; it must grade the Issue comment instead and pass.
+    const { code, output } = runCli([], { BRANCH: 'task/iter/12', PR_BODY: 'Closes #12\n', PATH: path })
+    expect(code).toBe(0)
+    expect(output).toMatch(/PASS/)
+  })
+
+  it('fails with a clear message, never silently falling back to PR_BODY, when the Issue carries no aeg:brief:v1 comment', () => {
+    const path = fakeGhWithComments('some other unrelated comment, no marker line')
+    const { code, output } = runCli([], { BRANCH: 'task/iter/12', PR_BODY: 'Closes #12\n', PATH: path })
+    expect(code).toBe(1)
+    expect(output).toMatch(/not dispatched.*no `aeg:brief:v<k>` comment on Issue #12/)
+  })
+
+  it('fails before ever attempting to fetch the Issue when `Closes #N` is missing on a task branch', () => {
+    const { code, output } = runCli([], { BRANCH: 'task/iter/12', PR_BODY: 'no closes field at all' })
+    expect(code).toBe(1)
+    expect(output).toMatch(/not dispatched.*no `Closes #N`/)
+  })
+})
+
+describe('verify-brief --body-file (authoring-time gate)', () => {
+  it('PASSES a complete brief file', () => {
+    const { code, output } = runCli(['--body-file', briefFile('complete.md', FIX_BRIEF)])
+    expect(output).toMatch(/PASS/)
+    expect(code).toBe(0)
+  })
+
+  it('FAILS the same brief with its doc-update list stripped', () => {
+    const { code, output } = runCli(['--body-file', briefFile('no-doc-list.md', FIX_BRIEF_NO_DOC_LIST)])
+    expect(code).toBe(1)
+    expect(output).toMatch(/Documentation-update list/)
+  })
+
+  it('FAILS loudly when the path does not exist', () => {
+    const { code, output } = runCli(['--body-file', join(tmp, 'nope.md')])
+    expect(code).toBe(1)
+    expect(output).toMatch(/could not read --body-file/)
+  })
+
+  it('infers the branch from the brief Step 0 when no BRANCH is set', () => {
+    // Discriminating case (PR #631 review MINOR): asserting only that the fix
+    // brief exits 0 proves nothing — an inference that silently returned '' also
+    // exits 0 (empty branch → no bypass → validated with `requireClosesN: false`
+    // → passes). A brief whose Step 0 declares a TASK branch and carries no
+    // `Closes #N` separates the two: it can only fail if inference actually read
+    // `task/iter/3` off the worktree line.
+    const taskBrief = FIX_BRIEF.replace(
+      'git worktree add .worktrees/fix/x -b fix/x origin/main',
+      'git worktree add .worktrees/task/iter/3 -b task/iter/3 origin/main'
+    )
+    const inferred = runCli(['--body-file', briefFile('infer-task.md', taskBrief)])
+    expect(inferred.code).toBe(1)
+    expect(inferred.output).toMatch(/Closes #N/)
+
+    // Same body, same absent `Closes #N`, but a fix/* Step 0 — passes.
+    const { code } = runCli(['--body-file', briefFile('infer-fix.md', FIX_BRIEF)])
+    expect(code).toBe(0)
+  })
+
+  it('FAILS loudly when --body-file is passed with no value, instead of degrading to PR_BODY', () => {
+    // Silent-green path (PR #631 review MAJOR): a fumbled path used to leave
+    // `--body-file` ignored, fall through to an empty PR_BODY, and exit 0 —
+    // handing the Planner a green on a brief nobody graded.
+    const bare = runCli(['--body-file'])
+    expect(bare.code).toBe(1)
+    expect(bare.output).toMatch(/`--body-file` was passed with no value/)
+
+    const beforeAnotherFlag = runCli(['--body-file', '--branch', 'fix/x'])
+    expect(beforeAnotherFlag.code).toBe(1)
+
+    const emptyInline = runCli(['--body-file='])
+    expect(emptyInline.code).toBe(1)
+  })
+
+  it('FAILS loudly when --branch is passed with no value', () => {
+    const { code, output } = runCli(['--branch'], { PR_BODY: FIX_BRIEF })
+    expect(code).toBe(1)
+    expect(output).toMatch(/`--branch` was passed with no value/)
+  })
+})

@@ -13,7 +13,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { extractShortVersionAndChecklist } from '@attalabs/aeg-core/docs'
+import { extractShortVersionAndChecklist } from '../../tools/docs/published-prose'
 import { createFileDoctrineSource } from '@attalabs/vinaya-sources'
 import { resolveDoctrineRoot } from '../../../../../apps/cli/src/commands/doctrine'
 import { configPath, loadConfigChecked } from '../../../../../apps/cli/src/lib/config'
@@ -73,7 +73,7 @@ export async function buildRolePlan(
   const core: RoleContract[] = []
   for (const file of doctrine.roles) {
     const validation = validateRoleContract(file.content)
-    // Core doctrine is already gated by `packages/aeg-core/bin/verify-registry.ts`'s
+    // Core doctrine is already gated by `harness/processes/vinaya-strict/checks/standalone/verify-registry.ts`'s
     // own G5 check — a structurally invalid core file here would be a
     // doctrine bug, not a config error, and is silently excluded rather
     // than surfaced as a `roles` resolution failure (the same precedent

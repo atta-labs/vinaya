@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { DoctrineContent, DoctrineSource } from '@attalabs/aeg-core'
+import type { DoctrineContent, DoctrineSource } from '../../../harness/processes/vinaya-strict/tools/doctrine-source.js'
 import { DEFAULT_GOVERNANCE_ROOT } from './file-adapter'
 
 export type DoctrineFileSourceConfig = {

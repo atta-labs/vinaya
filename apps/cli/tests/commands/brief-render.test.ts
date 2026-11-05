@@ -13,7 +13,7 @@ import { expandGlob, packageNameForPath, sha256OfFile } from '../../src/commands
  * `fetchForgeFacts`/`fetchOpenIssuesByLabel` go straight to `@octokit/graphql`
  * over HTTP, not through a stubbable `gh` binary the way most other CLI
  * command tests fake the forge — same discipline
- * `apps/cli/tests/checks/branch-topology.test.ts` documents for the same
+ * `harness/processes/vinaya-strict/checks/branch-topology.test.ts` documents for the same
  * reason: exercise the pure/local pieces directly rather than a live network
  * call. The pure renderer itself (`renderBrief`/`parseRationaleFields`) is
  * covered exhaustively in `packages/aeg-core/src/brief-render.test.ts`.

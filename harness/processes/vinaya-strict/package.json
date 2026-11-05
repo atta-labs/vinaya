@@ -5,7 +5,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "run-engine": "bun bin/run-engine.ts",
-    "test": "bun test --timeout=30000",
+    "test": "bun test --isolate --timeout=30000",
     "clean": "rm -rf dist .turbo"
   },
   "devDependencies": {
@@ -13,11 +13,17 @@
     "@atta/executor-agent-spawn": "file:../../../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
     "@atta/typescript-config": "workspace:*",
     "@attalabs/aeg-core": "workspace:*",
+    "@attalabs/aeg-forge-state": "workspace:*",
+    "@attalabs/aeg-types": "workspace:*",
     "@attalabs/harness": "workspace:*",
     "@attalabs/vinaya": "workspace:*",
+    "@attalabs/vinaya-sources": "workspace:*",
     "@langchain/langgraph": "0.2.74",
     "@types/bun": "latest",
+    "gray-matter": "^4.0.3",
+    "safe-regex2": "5.1.1",
     "typescript": "^5.7.0",
-    "yaml": "2.9.0"
+    "yaml": "2.9.0",
+    "zod": "3.25.76"
   }
 }

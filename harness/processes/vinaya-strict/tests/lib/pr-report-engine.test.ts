@@ -18,14 +18,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildPrincipalTestPlanWaitErrors } from '../../../../../apps/cli/src/checks/bin/check-principal-test-plan-wait'
-import {
-  compareEvidenceBlock,
-  EVIDENCE_PLACEHOLDER_TEXT
-} from '../../../../../apps/cli/src/checks/evidence-fresh-logic'
+import { buildPrincipalTestPlanWaitErrors } from '../../checks/bin/check-principal-test-plan-wait'
+import { compareEvidenceBlock, EVIDENCE_PLACEHOLDER_TEXT } from '../../checks/evidence-fresh-logic'
 import { resolveAnchoredRegion, ScanContext } from '../../../../kernel/gates/checks/scan-context'
 import { agentCommandText, extractAgentCommandLines } from '../../../../../apps/cli/src/commands/pr-report'
-import { checkBareDigits } from '../../../../../apps/cli/src/checks/body-bare-digits-logic'
+import { checkBareDigits } from '../../tools/body-bare-digits-logic'
 import {
   buildReport,
   commandRunsCheckAll,

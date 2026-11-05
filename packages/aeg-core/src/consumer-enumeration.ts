@@ -15,7 +15,7 @@
  * re-derived a second time.
  *
  * Zero I/O: `listDirs`/`readManifest` are injected by each of the two real
- * entry points — `packages/aeg-core/bin/verify-brief.ts` (authoring-time,
+ * entry points — `harness/processes/vinaya-strict/checks/standalone/verify-brief.ts` (authoring-time,
  * pre-dispatch) and `apps/cli`'s `check-brief-shape.ts` (CI) — so both share
  * ONE enumeration rather than two independently-maintained copies that can
  * silently diverge (round-2 ruling item 4).

@@ -40,7 +40,7 @@ package, so this is the intent rather than a universal.
 
 > **The `Specs` paths are declared, not yet real** — only `apps/cli/specs/`
 > exists. Where a package's specs belong is unsettled: `isSpecFile`
-> (`packages/aeg-core/src/file-classify.ts:50`) and `isDocFile` (`:35`) both
+> (`harness/processes/vinaya-strict/tools/file-classify.ts:50`) and `isDocFile` (`:35`) both
 > match `apps/**/specs/**` only, so a spec at `packages/<name>/specs/` is
 > invisible to `verify-docs` and to tier derivation
 > (`packages/aeg-core/src/pr-tier.ts:24`). Nothing reads `specsPath` today

@@ -320,7 +320,7 @@ import {
 } from './dev-review-loop/turn-result.js'
 import type { DeveloperTurnResult } from '../../../executing/developer/developer-turn-result.js'
 import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from '../../../tools/pr-report/pr-report-engine.js'
-import type { PremiseReassertResult } from '../../../../../../apps/cli/src/checks/premise-reassert-logic.js'
+import type { PremiseReassertResult } from '../../../tools/premise-reassert-logic.js'
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
 import { patchIdAt } from '../../../../../kernel/connectors/git/patch-id.js'
 import {

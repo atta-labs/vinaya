@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildPrincipalTestPlanWaitErrors } from '../../../../../apps/cli/src/checks/bin/check-principal-test-plan-wait'
+import { buildPrincipalTestPlanWaitErrors } from '../../checks/bin/check-principal-test-plan-wait'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../../../kernel/gates/checks/contract'
 import { sha256Hex } from '../../../../kernel/effects/effects'
 import {

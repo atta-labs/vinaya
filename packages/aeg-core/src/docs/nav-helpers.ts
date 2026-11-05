@@ -1,4 +1,4 @@
-import type { Doc, DocNav } from './types'
+import type { Doc, DocNav } from '../../../../harness/processes/vinaya-strict/tools/docs/types'
 
 export function findDoc(nav: DocNav, slug: string): Doc | undefined {
   return nav.flat.find((d) => d.slug === slug)

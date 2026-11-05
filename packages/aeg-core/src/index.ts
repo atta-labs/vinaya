@@ -1,8 +1,5 @@
 export * from './types'
 export type { StateSource } from './state-source'
-export type { DoctrineContent, DoctrineSource } from './doctrine-source'
-export { CLI_CHECK_RING, GATE_AUDIENCE, NON_GATE_BINS, SHIPPED_BIN_AUDIENCE, isShipped } from './gate-audience'
-export type { GateAudience, InternalGate, ShippedGate } from './gate-audience'
 
 export { parseRegistry } from './parse-registry'
 export {
@@ -52,22 +49,6 @@ export type { TokenReportRowInput, TokensLineInput } from './report-tokens'
 // The hardened deps every real caller of `resolveMeteringCapability` should
 // build from — a sibling module, not part of the pure adapter above.
 
-export { declarationsIn, findCollisions } from './symbol-collisions'
-export type { SymbolCollision, SymbolDeclaration } from './symbol-collisions'
-export { isCodeFile, isDocFile, isSpecFile } from './file-classify'
-export { hasStatusBlock } from './status-block'
-export {
-  classifyDocOwnersManifest,
-  DOC_OWNERS_PATH,
-  evaluateC5,
-  isMechanicallyNeutralDiff,
-  isUrlPointer,
-  parseDocOwners,
-  pointerToPath,
-  readDocAcks,
-  readDocNeutrals
-} from './doc-owners'
-export type { C5Result, DocAck, DocNeutral, DocOwnersBinding, DocOwnersManifestState } from './doc-owners'
 export {
   isPrincipal,
   isWaiverLabelActorVerified,
@@ -107,15 +88,6 @@ export type {
 } from './review-policy'
 export { deriveSection7, globsOverlap } from './derive-section7'
 export type { Section7Match } from './derive-section7'
-export { checkManifestValidity, parseNoDocRules } from './manifest-validity'
-export type { NoDocRule } from './manifest-validity'
-export { evaluateVocabularyCitation } from './vocabulary-citation'
-export type {
-  VocabularyCheckResult,
-  VocabularyFinding,
-  VocabularyHit,
-  VocabularyPattern
-} from './vocabulary-citation'
 export { deriveTierFromDiff, overrideActive, readTierFromPrBody, TIER_FIELD } from './pr-tier'
 export {
   checkAutonomyClause,
@@ -171,41 +143,8 @@ export type {
   FrozenBriefCandidate,
   ResolvedFrozenBrief
 } from './brief-validation'
-export { checkDoctrineNoProcedures } from './doctrine-no-procedures'
-export type { DoctrineFile, DoctrineProcedureFinding } from './doctrine-no-procedures'
 export { checkDecisionsDensity, checkPrReportDensity, checkScopeDensity } from './pr-report-density'
 export type { DensityResult } from './pr-report-density'
-export {
-  checkA1,
-  checkA2,
-  checkA3,
-  checkClosesNTopology,
-  checkD1,
-  checkL1,
-  checkL2,
-  checkL3,
-  checkL4,
-  checkL5,
-  checkR1,
-  checkR2,
-  checkR3,
-  checkT1,
-  checkT2,
-  checkT3,
-  COHERENCE_ENFORCED_FROM,
-  extractClosesReferences,
-  isGrandfathered,
-  R1_GRANDFATHERED_ISSUES,
-  scopeT2ToPlanPr
-} from './coherence-checks'
-export type {
-  CheckFailure,
-  CheckResult,
-  CoherenceFailureCode,
-  ForgeIssue,
-  TrancheFile,
-  TaskEntry
-} from './coherence-checks'
 export { buildProvenanceBlock, hasProvenance, isEligibleForProvenance, taskRefFromBranch } from './archive-task'
 export type { MergedPrFacts } from './archive-task'
 export {
@@ -216,23 +155,6 @@ export {
   VERDICT_MARKER_SOURCE
 } from './verdict-extraction'
 export type { VerdictExtraction } from './verdict-extraction'
-export {
-  CHANGESET_RELEASE_BRANCH,
-  checkReviewGate,
-  decideApprovalCarry,
-  DEFAULT_RELEASE_ACTOR,
-  isChangesetsReleasePr,
-  isReviewGateExemptBranch,
-  newestVerdictBodies
-} from './review-gate'
-export type {
-  ApprovalCarryDecision,
-  PostedVerdictBodies,
-  ReviewGateComment,
-  ReviewGateInput,
-  ReviewGateResult,
-  ReviewGateVerdict
-} from './review-gate'
 export {
   newestPrincipalRulingAuthor,
   newestPrincipalRulingOrdinal,
@@ -363,41 +285,6 @@ export type {
   TaskSurfaceFacts
 } from './issue-validation'
 
-export { deriveDiagramModel } from './diagram-model'
-export type {
-  DiagramConfig,
-  DiagramEdge,
-  DiagramFinding,
-  DiagramModel,
-  DiagramNode,
-  DiagramNodeKind,
-  RenderState
-} from './diagram-model'
-export { parseEnforcementRegistry } from './registry-parse'
-export type { GateRing, GateRow } from './registry-parse'
-export {
-  type CheckG7Input,
-  checkG1,
-  checkG2,
-  checkG3,
-  checkG4,
-  checkG5,
-  checkG6,
-  checkG7,
-  findUnshippedHookRefs,
-  reachesProducer
-} from './registry-checks'
-export type {
-  HookReferenceInput,
-  HookScanFile,
-  RegistryCheckResult,
-  RegistryCheckStatus,
-  RegistryFinding
-} from './registry-checks'
-export { applyScaffoldPlan, computeScaffoldPlan, PLACEHOLDER } from './registry-scaffold'
-export type { ScaffoldPlan, ScaffoldSkip, ScaffoldStub } from './registry-scaffold'
-export { ACTIONS, CROSSING_KEYWORDS } from './actions'
-export type { Action, ActionCrossing } from './actions'
 export {
   DERIVABLE_STATUSES,
   DERIVATION_RULES,
@@ -408,121 +295,9 @@ export {
 export type { DerivationRule, ForgeFactInput } from './state-machine-model'
 export { checkPremises, parsePremiseBlock } from './premise-check'
 export type { PremiseAssertion, PremiseCheckResult } from './premise-check'
-export { checkDocClaims } from './doc-claim'
-export type { ClaimBinding, ClaimFinding, ClaimVoice, DocClaimSourceFile } from './doc-claim'
-export { classifyLeftover, leftoverBlocksDispatch } from './leftover-detection'
-export type { LeftoverInput, LeftoverResult, LeftoverVerdict } from './leftover-detection'
 
-export { captureBaseline, compareToBaseline } from './baseline-capture'
-export type { BaselineComparison, BaselineEntry, BaselineToolComparison } from './baseline-capture'
-export { checkDoctrinePortability } from './doctrine-portability'
-export type { PortabilityFinding, PortabilitySourceFile } from './doctrine-portability'
-export {
-  checkReaderResolvableProse,
-  checkSourceComments,
-  checkUndefinedVocabulary,
-  checkUnresolvableReferences,
-  classifyProseFile,
-  DEFAULT_SPEC_PATHS,
-  extractComments,
-  legacySlugPattern,
-  normalizeSpecPath,
-  parseGlossaryTerms,
-  PRODUCT_SLUG_SCOPE,
-  specGrandfatherPaths,
-  stripNonProse,
-  TASK_NUMBER_PATTERN
-} from './reader-resolvable-prose'
-export type {
-  ProseFileClass,
-  ProseFinding,
-  ProseSourceFile,
-  ProseSweepOptions,
-  SpecGrandfather
-} from './reader-resolvable-prose'
-export {
-  checkQuotedCommandStaleness,
-  evaluateCitedQuotes,
-  findCitedQuotes,
-  isValidCitedFilePath
-} from './quoted-command'
-export type { CitedQuote, QuotedCommandFinding, QuotedCommandSourceFile } from './quoted-command'
-export {
-  PATTERN_EXEMPT,
-  RETIRED_EXEMPT_SUBSTRINGS,
-  RETIRED_PATTERNS,
-  scanRetiredVocabulary
-} from './retired-vocabulary'
-export type { VocabFinding, VocabSourceFile } from './retired-vocabulary'
-export {
-  allowedScopesFor,
-  CONFIGURABLE_DEFAULT_RULES,
-  CONFIGURABLE_PROSE_SCOPES,
-  CONFIGURED_PATTERN_MAX_LENGTH,
-  CONFIGURED_PROSE_FLAGS,
-  DECISION_RECORD_CITATION_ID,
-  DECISION_RECORD_CITATION_SCOPES,
-  DEFAULT_PROSE_RULE_SET,
-  DEFAULT_PROSE_RULES,
-  decisionRecordCitationPattern,
-  decisionRecordCitationRule,
-  groupOfScope,
-  RESOLVABLE_SCOPES,
-  RETIRED_SCOPES,
-  resolveProseRules,
-  rulesForGroup,
-  rulesOfGroup
-} from './prose-rules'
-export type {
-  CustomProseRule,
-  DefaultProseRule,
-  ProseCheckGroup,
-  ProseRuleOverride,
-  ProseRuleSet,
-  ProseRuleSeverity,
-  ProseRuleSeveritySetting,
-  ProseRulesConfig,
-  ResolvedProseRule
-} from './prose-rules'
-export { checkLocalAnchorCoverage } from './local-anchor-coverage'
-export type {
-  AnchorCoverageFinding,
-  AnchorCoverageScope,
-  AnchorSourceFile,
-  LocalAnchorCoverageOptions,
-  LocalAnchorCoverageResult
-} from './local-anchor-coverage'
-export { checkDispatchReadiness, siblingsSharingConflictEdge } from './dispatch-gate'
-export type { ConflictEdgeParty } from './dispatch-gate'
-export type {
-  DispatchBlocker,
-  DispatchBlockerClass,
-  DispatchConflictsWithFact,
-  DispatchDependsOnFact,
-  DispatchEdgeFact,
-  DispatchGateInput,
-  DispatchIssueFact,
-  DispatchPriorTrancheFact,
-  DispatchPriorTaskFact,
-  DispatchResult
-} from './dispatch-gate'
-export { checkSinglePlanPr, trancheSlugFromTopologyPath, touchesAnyTopology } from './single-plan-pr'
-export type { OpenPrFiles } from './single-plan-pr'
-export { isNewDiskStateFile } from './no-disk-state'
-export type { DiskStateFileStatus } from './no-disk-state'
-
-export { checkBranchTopology, taskBranchTopologyFields } from './branch-topology-gate'
-export type { BranchTopologyInput, BranchTopologyResult, BranchTopologyVerdict } from './branch-topology-gate'
 export { issueBranchName, parseTaskBranchIdentity } from './task-branch-identity'
 export type { TaskBranchIdentity } from './task-branch-identity'
-
-export { checkFirstPushDispatchGate, parseTaskBranch } from './first-push-dispatch-gate'
-export type {
-  DispatchReadinessFact,
-  FirstPushDispatchGateInput,
-  FirstPushDispatchGateResult,
-  FirstPushDispatchGateVerdict
-} from './first-push-dispatch-gate'
 
 export { locateTestPlanSection } from './test-plan-section'
 export type { TestPlanSection } from './test-plan-section'
@@ -535,8 +310,6 @@ export {
   renderLiveRecordLine,
   withLiveRecord
 } from './live-record'
-export { evaluateTestPlanGate } from './test-plan-gate'
-export type { LiveGateInputs, TestPlanGateResult, TestPlanGateVerdict } from './test-plan-gate'
 export {
   AEG_BLOCKED_LABEL,
   buildBranchName,

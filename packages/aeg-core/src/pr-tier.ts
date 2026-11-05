@@ -8,7 +8,7 @@
 
 import { hasLabel, label } from '@attalabs/aeg-forge-state'
 import { anchoredRegion } from '../../../harness/kernel/gates/checks/anchored-region'
-import { isDocFile, isSpecFile } from './file-classify'
+import { isDocFile, isSpecFile } from '../../../harness/processes/vinaya-strict/tools/file-classify'
 
 /**
  * Derive a tier from the changed-file list when no `Tier:` field is in the PR body.

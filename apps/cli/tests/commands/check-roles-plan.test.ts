@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extractShortVersionAndChecklist } from '@attalabs/aeg-core/docs'
+import { extractShortVersionAndChecklist } from '../../../../harness/processes/vinaya-strict/tools/docs/published-prose'
 import { buildRolePlan } from '../../../../harness/processes/vinaya-strict/integration/roles/plan'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')

@@ -41,7 +41,11 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, posix } from 'node:path'
-import { CI_SHARD_COUNT, CI_SHARD_LIST_OWNER, shardFileRelPath } from '../../apps/cli/src/lib/ci-shard-membership.js'
+import {
+  CI_SHARD_COUNT,
+  CI_SHARD_LIST_OWNER,
+  shardFileRelPath
+} from '../../harness/processes/vinaya-strict/checks/ci-shard-membership.js'
 import type { CiDecision } from '../../harness/processes/vinaya-strict/integration/ci-test-selection.js'
 import {
   DEFAULT_CONFIGURATION,

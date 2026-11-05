@@ -1,15 +1,5 @@
 scripts/bundle-doctrine.test.ts
 tests/archive.test.ts
-tests/checks/check-doc-claims.test.ts
-tests/checks/check-pr-premise-reassert.test.ts
-tests/checks/check-review-gate-true-head.test.ts
-tests/checks/dead-branch-push-bin.test.ts
-tests/checks/first-push-dispatch-bin.test.ts
-tests/checks/edge-parity.test.ts
-tests/checks/rate-limit-fail-closed.test.ts
-tests/checks/principals-refusal.test.ts
-tests/checks/quoted-command-bin.test.ts
-tests/checks/shipped-bin-audience.test.ts
 tests/ci-limits-diagnostic.test.ts
 tests/ci-shards.test.ts
 tests/commands.test.ts
@@ -25,7 +15,6 @@ tests/commands/pr-verify-evidence-cwd.test.ts
 tests/commands/review-post-print-only.test.ts
 tests/commands/review-post.test.ts
 tests/commands/review-status.test.ts
-tests/doc-owners-write.test.ts
 tests/doctor.test.ts
 tests/init.test.ts
 tests/lib/issue-surface.test.ts

@@ -33,7 +33,6 @@ import {
 } from '../../../../../kernel/adapters/code-host/github/forge-read'
 import {
   boundaryPinnedFiles,
-  CHANGESET_RELEASE_BRANCH,
   checkAutonomyClause,
   checkBlastRadiusScope,
   checkBoundaryClaimsNeedPremise,
@@ -64,9 +63,6 @@ import {
   checkPartsCoverageAndSequence,
   checkPinnedFileChecksDecided,
   checkPinnedFileImportersCovered,
-  classifyProseFile,
-  DEFAULT_SPEC_PATHS,
-  normalizeSpecPath,
   type PinnedFileChecks,
   checkNewTestFilesCoverShards,
   checkNewLoopFilesCoverInvariantMap,
@@ -99,13 +95,10 @@ import {
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
   extractBoundaryFilePaths,
-  type DispatchBlockerClass,
-  DOC_OWNERS_PATH,
   findTrancheSlug,
   type FrozenBriefCandidate,
   frozenSectionsChanged,
   isBriefShaped,
-  isChangesetsReleasePr,
   isPrincipal,
   isTaskBranch,
   isTaskIssueBodyShaped,
@@ -121,6 +114,10 @@ import {
   type TaskSurfaceFacts,
   trancheLabel
 } from '@attalabs/aeg-core'
+import { CHANGESET_RELEASE_BRANCH, isChangesetsReleasePr } from '../../review-gate'
+import { classifyProseFile, DEFAULT_SPEC_PATHS, normalizeSpecPath } from '../../reader-resolvable-prose'
+import type { DispatchBlockerClass } from '../../dispatch-gate'
+import { DOC_OWNERS_PATH } from '../../doc-owners'
 import { globToRegex } from '../../../../../kernel/gates/glob-to-regex'
 import {
   assembleAndRenderBrief,
@@ -268,7 +265,7 @@ export function extractLabels(args: string[]): string[] {
 // Refusal — the CheckError contract, one JSON line per finding on stderr.
 // ---------------------------------------------------------------------------
 
-/** Builds a well-formed `CheckError` with the current schema version. `severity` defaults to `'error'` — the one shape every existing call site already produced; a caller naming an informational finding (O2, `packages/aeg-core/src/dispatch-gate.ts`'s `depends-on-not-merged`/`conflicts-with` classes, folded by `validateRenderedBriefForIssue`) passes `'warning'` explicitly. */
+/** Builds a well-formed `CheckError` with the current schema version. `severity` defaults to `'error'` — the one shape every existing call site already produced; a caller naming an informational finding (O2, `harness/processes/vinaya-strict/tools/dispatch-gate.ts`'s `depends-on-not-merged`/`conflicts-with` classes, folded by `validateRenderedBriefForIssue`) passes `'warning'` explicitly. */
 export function makeCheckError(
   check: string,
   message: string,

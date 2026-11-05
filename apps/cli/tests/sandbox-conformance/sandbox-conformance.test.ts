@@ -1020,7 +1020,10 @@ for (const agent of AGENTS) {
       for (const title of titles) {
         const m = title.match(/^\[([^\]]+)\] (\d+) — /)
         if (!m?.[1] || !m[2]) continue
-        const probe = await session.runOutside(`bun packages/aeg-core/bin/verify-dispatch.ts ${m[1]} ${m[2]}`, {})
+        const probe = await session.runOutside(
+          `bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts ${m[1]} ${m[2]}`,
+          {}
+        )
         if (probe.exitCode === 0) return { tranche: m[1], n: m[2] }
       }
       return null

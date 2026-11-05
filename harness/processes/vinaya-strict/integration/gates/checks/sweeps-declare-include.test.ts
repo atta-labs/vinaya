@@ -21,7 +21,7 @@ import { coreCheckRegistry } from '../../../checks/registry'
  * check's own `include` globs — so this test asserts the DECLARATION, not a
  * runtime skip.
  */
-const BIN_DIR = join(import.meta.dir, '../../../../../../apps/cli/src/checks/bin')
+const BIN_DIR = join(import.meta.dir, '../../../../../../harness/processes/vinaya-strict/checks/bin')
 
 function readBinSource(checkName: string): string {
   return readFileSync(join(BIN_DIR, `check-${checkName}.ts`), 'utf8')

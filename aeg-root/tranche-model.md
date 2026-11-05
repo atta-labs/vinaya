@@ -76,7 +76,7 @@ A task **is** a forge Issue. Its status is not a field anyone writes — it is *
 
 <!-- AEG:CLAIM: packages/aeg-forge-state/src/list-tasks.ts contains:export function resolveDuplicateTasks -->
 <!-- AEG:CLAIM: packages/aeg-forge-state/src/fetch-forge-facts.ts contains:export async function fetchForgeFactsByIssue -->
-<!-- AEG:CLAIM: apps/cli/src/checks/bin/check-dispatch-readiness.ts contains:resolveDuplicateTasks( -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/checks/bin/check-dispatch-readiness.ts contains:resolveDuplicateTasks( -->
 
 So: there is **no status column anywhere.** The Developer does not "flip to in-review" — *opening the PR is the in-review signal*. The close-out does not "flip to merged" — *the merge is that signal*. The branch-name convention `task/<tranche>/<n>` is what links a task number to its branch and PR, so any role finds a task's live status with one forge query and writes nothing. `blocked` is the one state with no native forge fact, so it is a label (cheap, native, doesn't race).
 

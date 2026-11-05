@@ -14,7 +14,7 @@ import {
   resolveShippableArgs,
   validateForgeWrite
 } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
-import { checkBareDigits } from '../checks/body-bare-digits-logic'
+import { checkBareDigits } from '../../../../harness/processes/vinaya-strict/tools/body-bare-digits-logic'
 import type { CheckError } from '../../../../harness/kernel/gates/checks/contract'
 
 const RETRY_CREATE = 'vinaya pr create --validate-only …'
@@ -468,6 +468,6 @@ export async function prEditCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'pr create': { date: '2026-09-29', callsToday: 8, retiresVia: 'forgeWrite' },
-  'pr edit': { date: '2026-09-11', callsToday: 9, retiresVia: 'forgeWrite' }
+  'pr create': { date: '2026-09-29', callsToday: 9, retiresVia: 'forgeWrite' },
+  'pr edit': { date: '2026-09-11', callsToday: 10, retiresVia: 'forgeWrite' }
 }
