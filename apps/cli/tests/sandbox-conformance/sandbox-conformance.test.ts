@@ -221,7 +221,7 @@ describe('Engine controller-boundary probes — matrix coverage', () => {
     }
   })
 
-  it('flushes exactly one verdict before an immediately refused probe exits', async () => {
+  it('emits exactly one verdict before an immediately refused probe exits', async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'probe-refusal-')))
     try {
       const result = await spawnBudgetedAsync(
@@ -799,7 +799,7 @@ describe('Engine containment probes — the command, canary, deny-rule and launc
     })
   })
 
-  it('flushes exactly one verdict before an immediately refused probe exits', async () => {
+  it('emits exactly one verdict before an immediately refused probe exits', async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'probe-refusal-')))
     try {
       const result = await spawnBudgetedAsync(
@@ -1278,13 +1278,11 @@ for (const agent of AGENTS) {
         const { targets } = live as NonNullable<typeof live>
         const missingSocket = join((session as SandboxSession).worktreeDir, 'no-such-probe.sock')
         const command =
-          `printf 'PROBE-CLIENT-START\\n'; ${JSON.stringify(targets.bun)} ${JSON.stringify(targets.probeScript)} ` +
-          `${JSON.stringify(missingSocket)} run_checks '{}'; result=$?; printf '\\nPROBE-CLIENT-END:%s\\n' "$result"; exit "$result"`
+          `${JSON.stringify(targets.bun)} ${JSON.stringify(targets.probeScript)} ` +
+          `${JSON.stringify(missingSocket)} run_checks '{}'`
         const result = await (session as SandboxSession).run(command, {})
         const verdict = controllerProbeVerdict(result.output)
-        // This command only targets a nonexistent socket, passes no capability, and reads no canary or credential.
-        // Its output is safe to diagnose; never echo output from the credential/attack probes below.
-        if (verdict === null) console.info(`[constant probe client ${agent}/${role}] ${JSON.stringify(result)}`)
+        expect(result.exitCode).toBe(3)
         expect(verdict).toEqual({ reached: false, succeeded: false, check: null, seen: '' })
       })
 

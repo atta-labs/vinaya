@@ -21,8 +21,10 @@ repository-suite command. The remaining tests keep their native suite commands,
 including `--isolate` where their package declares it. The CI group watchdog in
 `schedule.ts` remains an infrastructure backstop, not a substitute for this fix.
 
-Sandbox controller probes must flush their piped verdict before exiting, including
-an immediate socket refusal. `controller-probe.ts` guards against duplicate error
-and close callbacks and exits only from the stdout write callback. The parent
-requires the structured verdict as well as a refusal exit status; it never treats
-missing output as proof that a boundary held.
+Sandbox controller probes write their verdict directly to the inherited stdout
+file descriptor before exiting. On Linux, newer Bun's `process.stdout.write`
+loses output inside Codex's no-network reviewer sandbox, while `writeSync(1, …)`
+works under the same policy. This opens no file and grants no network access.
+The live suite checks an immediate refusal inside each generated role, and the
+parent still requires a structured verdict as well as the refusal exit status;
+missing output never counts as proof that a boundary held.

@@ -14,22 +14,17 @@
  * Usage: bun controller-probe.ts <socket> <tool> <arguments-json> [capability]
  */
 
+import { writeSync } from 'node:fs'
 import net from 'node:net'
 
 const [socketPath, tool, argumentsJson, capability] = process.argv.slice(2)
 const CAPABILITY_ARGUMENT = '__vinayaDispatchCapability'
 
-let reported = false
-function report(verdict: { reached: boolean; succeeded: boolean; check: string | null }): void {
-  if (reported) return
-  reported = true
-  clearTimeout(timer)
-  socket.destroy()
-  // A refusal can happen immediately. Flush its piped verdict before exiting,
-  // otherwise the sandbox sees the refusal status but the parent loses the proof.
-  process.stdout.write(`CONTROLLER-PROBE ${JSON.stringify(verdict)}\n`, () => {
-    process.exit(verdict.succeeded ? 0 : 3)
-  })
+function report(verdict: { reached: boolean; succeeded: boolean; check: string | null }): never {
+  // Newer Bun streams lose this write in a Linux no-network sandbox. Writing
+  // the inherited stdout descriptor needs no filesystem or network grant.
+  writeSync(1, `CONTROLLER-PROBE ${JSON.stringify(verdict)}\n`)
+  process.exit(verdict.succeeded ? 0 : 3)
 }
 
 if (!socketPath || !tool || !argumentsJson) {
@@ -41,7 +36,7 @@ const args = JSON.parse(argumentsJson) as Record<string, unknown>
 const socket = net.connect(socketPath)
 let reached = false
 let buffer = ''
-const timer = setTimeout(() => report({ reached, succeeded: false, check: 'no-answer' }), 15_000)
+setTimeout(() => report({ reached, succeeded: false, check: 'no-answer' }), 15_000)
 socket.setEncoding('utf8')
 socket.on('error', () => report({ reached, succeeded: false, check: null }))
 socket.on('close', () => report({ reached, succeeded: false, check: 'closed' }))
