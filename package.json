@@ -1,7 +1,7 @@
 {
   "name": "vinaya",
   "private": true,
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.4.4",
   "workspaces": [
     "apps/*",
     "packages/*",

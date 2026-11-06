@@ -71,6 +71,7 @@
         "scripts/vinaya-checks/ui-rules.test.ts",
         "scripts/vinaya-checks/process-version-bump.test.ts",
         "scripts/test-suites/inventory-check.test.ts",
+        "scripts/test-suites/bun-runtime.test.ts",
         "scripts/test-suites/relocation-fixture.test.ts",
         "scripts/test-suites/schedule.test.ts",
         "scripts/test-suites/staged-driver-move.test.ts"
@@ -363,6 +364,13 @@
         }
       ],
       "reason": "The inventory check's test validates the committed declarations against the tree; the schedule tests place the tests they declare."
+    },
+    {
+      "id": "bun-spawn-gc-fixture",
+      "kind": "fixture",
+      "paths": ["scripts/test-suites/fixtures/bun-spawn-gc/"],
+      "readers": [{ "kind": "raw-bytes", "tests": ["scripts/test-suites/bun-runtime.test.ts"] }],
+      "reason": "The runtime regression executes the GC and synchronous-child probe in an asynchronously supervised process."
     },
     {
       "id": "selection-library-fixtures",
