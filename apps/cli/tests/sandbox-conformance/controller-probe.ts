@@ -14,13 +14,16 @@
  * Usage: bun controller-probe.ts <socket> <tool> <arguments-json> [capability]
  */
 
+import { writeSync } from 'node:fs'
 import net from 'node:net'
 
 const [socketPath, tool, argumentsJson, capability] = process.argv.slice(2)
 const CAPABILITY_ARGUMENT = '__vinayaDispatchCapability'
 
 function report(verdict: { reached: boolean; succeeded: boolean; check: string | null }): never {
-  process.stdout.write(`CONTROLLER-PROBE ${JSON.stringify(verdict)}\n`)
+  // Newer Bun streams lose this write in a Linux no-network sandbox. Writing
+  // the inherited stdout descriptor needs no filesystem or network grant.
+  writeSync(1, `CONTROLLER-PROBE ${JSON.stringify(verdict)}\n`)
   process.exit(verdict.succeeded ? 0 : 3)
 }
 

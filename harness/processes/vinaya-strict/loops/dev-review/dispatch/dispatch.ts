@@ -150,6 +150,7 @@ import {
   resolveClaudeConfinement,
   resolveCodexConfinement,
   resolveGitCommonDir,
+  resolveGitDir,
   reuseStagedCodexHome,
   stageCodexPolicyHome,
   type ClaudeSandboxSettings,
@@ -4573,6 +4574,7 @@ export async function dispatchRole(
   // absent (no worktree to confine to) or `git` cannot resolve one —
   // contributes nothing extra to the grant, the same best-effort posture
   // every other optional grant in this module already takes.
+  const codexGitDir = codexRequireIsolation && opts.cwd !== undefined ? resolveGitDir(opts.cwd) : null
   const codexGitCommonDir = codexRequireIsolation && opts.cwd !== undefined ? resolveGitCommonDir(opts.cwd) : null
   // Round 4 Principal ruling: `bun install` writes its package cache under
   // the operator's real home (`resolveBunInstallCacheDir`, `worker-
@@ -4599,6 +4601,7 @@ export async function dispatchRole(
             ...(opts.extraWritableDirs ?? []),
             ...(codexScratchDir !== null ? [codexScratchDir] : []),
             ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+            ...(codexGitDir !== null ? [codexGitDir] : []),
             ...(codexBunCacheDir !== null ? [codexBunCacheDir] : []),
             ...agentConfigOpenedPaths
           ],
@@ -4911,6 +4914,7 @@ export async function dispatchRole(
             ...(opts.extraWritableDirs ?? []),
             ...(codexScratchDir !== null ? [codexScratchDir] : []),
             ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+            ...(codexGitDir !== null ? [codexGitDir] : []),
             ...(codexBunCacheDir !== null ? [codexBunCacheDir] : []),
             ...(opts.developerFiles ?? []).map((file) => dirname(file))
           ]
@@ -5136,6 +5140,7 @@ export async function dispatchRole(
                   [
                     ...(codexScratchDir !== null ? [codexScratchDir] : []),
                     ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+                    ...(codexGitDir !== null ? [codexGitDir] : []),
                     ...(codexBunCacheDir !== null ? [codexBunCacheDir] : [])
                   ],
                   true

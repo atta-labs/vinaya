@@ -973,6 +973,19 @@ export function resolveGitCommonDir(worktreeDir: string): string | null {
   }
 }
 
+/** Exact per-worktree metadata directory; never infer it before worktree creation. */
+export function resolveGitDir(worktreeDir: string): string | null {
+  try {
+    const out = execFileSync('git', ['-C', worktreeDir, 'rev-parse', '--path-format=absolute', '--absolute-git-dir'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+    return out.length > 0 ? realpathSync(out) : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Principal ruling (round 4): a live Mac probe found `bun install
  * --frozen-lockfile` failing under BOTH agents' sandboxes with "bun is
@@ -1310,6 +1323,7 @@ export function buildClaudeSandboxSettings(
           worktreeDir,
           scratchDir,
           resolveBunInstallCacheDir(),
+          ...[resolveGitDir(worktreeDir)].filter((dir): dir is string => dir !== null),
           ...(request.extraWritableDirs ?? []).map(real)
         ],
         ...((request.controllerOwnedDirs ?? []).length > 0

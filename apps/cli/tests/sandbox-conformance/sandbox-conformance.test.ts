@@ -221,6 +221,21 @@ describe('Engine controller-boundary probes — matrix coverage', () => {
     }
   })
 
+  it('emits exactly one verdict before an immediately refused probe exits', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'probe-refusal-')))
+    try {
+      const result = await spawnBudgetedAsync(
+        [process.execPath, join(import.meta.dir, 'controller-probe.ts'), join(dir, 'missing.sock'), 'run_checks', '{}'],
+        { env: stripVinayaEnv() }
+      )
+      expect(result.status).toBe(3)
+      expect(result.stdout.trim().split('\n')).toHaveLength(1)
+      expect(controllerProbeVerdict(result.stdout)).toEqual({ reached: false, succeeded: false, check: null, seen: '' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('reads a verdict only from the line the probe printed', () => {
     expect(controllerProbeVerdict('noise\nCONTROLLER-PROBE {"succeeded":false} signal\n')).toEqual({
       succeeded: false,
@@ -784,6 +799,21 @@ describe('Engine containment probes — the command, canary, deny-rule and launc
     })
   })
 
+  it('emits exactly one verdict before an immediately refused probe exits', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'probe-refusal-')))
+    try {
+      const result = await spawnBudgetedAsync(
+        [process.execPath, join(import.meta.dir, 'controller-probe.ts'), join(dir, 'missing.sock'), 'run_checks', '{}'],
+        { env: stripVinayaEnv() }
+      )
+      expect(result.status).toBe(3)
+      expect(result.stdout.trim().split('\n')).toHaveLength(1)
+      expect(controllerProbeVerdict(result.stdout)).toEqual({ reached: false, succeeded: false, check: null, seen: '' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('reads a verdict only from the line the probe printed', () => {
     expect(containmentVerdict('noise\nCONTAINMENT-PROBE {"succeeded":false} push\n')).toEqual({
       succeeded: false,
@@ -1242,6 +1272,18 @@ for (const agent of AGENTS) {
       afterAll(async () => {
         await live?.close()
         session?.dispose()
+      })
+
+      it('a client aimed at a nonexistent socket emits a refusal verdict inside this role', async () => {
+        const { targets } = live as NonNullable<typeof live>
+        const missingSocket = join((session as SandboxSession).worktreeDir, 'no-such-probe.sock')
+        const command =
+          `${JSON.stringify(targets.bun)} ${JSON.stringify(targets.probeScript)} ` +
+          `${JSON.stringify(missingSocket)} run_checks '{}'`
+        const result = await (session as SandboxSession).run(command, {})
+        const verdict = controllerProbeVerdict(result.output)
+        expect(result.exitCode).toBe(3)
+        expect(verdict).toEqual({ reached: false, succeeded: false, check: null, seen: '' })
       })
 
       it('the same probe client is served outside any sandbox, from inside its own dispatch', async () => {

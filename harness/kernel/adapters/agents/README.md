@@ -87,3 +87,11 @@ When a role has `read_files: allow` and `run_commands: deny`, its Codex shell ma
 - **plan**, **view_image**, **web_fetch**, **web_search**, **subagents**.
 
 The test requires both vendors to agree for every role and for every combination of capabilities.
+
+Developer write grants include both `GIT_COMMON_DIR` and the realpath of Git's
+exact `GIT_DIR` (`rev-parse --path-format=absolute --absolute-git-dir`). On macOS,
+Codex requires the linked worktree's own metadata directory as an explicit
+writable root to stage and commit. Claude receives the same exact path. Engine
+v2 refreshes generated role configs after worktree creation, before its sandbox
+probe; an unresolved `GIT_DIR` contributes no root. Standalone dispatch resolves
+the same directory after its driver creates the worktree.
