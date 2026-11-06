@@ -3,7 +3,7 @@
 Status: draft
 
 Scope: the standalone developer-review loop as it ships today
-(`apps/cli/specs/loop.md`), frozen as the behavioral oracle for the
+(`harness/processes/vinaya-strict/loops/dev-review/loop.md`), frozen as the behavioral oracle for the
 Atta Engine productionization described in the Linear "Tech spec —
 Developer-review on Atta Engine", revision 17, section 16. That design keeps the
 standalone path as oracle, fallback and regression source, but does not
@@ -27,13 +27,13 @@ text:
 - implementation: `apps/cli/src/commands/dev-review-loop.ts`,
   `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts`, every `.ts` file in
   `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/`, and every non-test `.ts` file in
-  `packages/aeg-core/src/dev-review-loop/`;
+  `harness/processes/vinaya-strict/tools/dev-review-policy/`;
 - tests: `apps/cli/tests/commands/dev-review-loop.test.ts`, every
   `apps/cli/tests/lib/dev-review-loop*` test file, every test file in
   `apps/cli/tests/lib/dev-review-loop/`, and the `*.test.ts` files beside
-  the policy layer in `packages/aeg-core/src/dev-review-loop/`.
+  the policy layer in `harness/processes/vinaya-strict/tools/dev-review-policy/`.
 
-At the baseline revision `d01194ea` this gives **15 implementation
+With the retired policy barrel removed, the baseline records **14 implementation
 modules and 26 test files**, listed by path in the fixture's `baseline`
 block. Two files on the surface are neither: `fakes.ts`, the policy
 layer's test fakes, and `dev-review-loop-harness.ts`, the in-process
@@ -61,13 +61,12 @@ source moved from the file the Developer wrote to the structured output
 the CLI returns.
 
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts contains:const excluded = new Set(inv.exclusions.filter((e) => e.reason.trim().length > 0).map((e) => e.path)) -->
-<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"path": "packages/aeg-core/src/dev-review-loop/index.ts", -->
+<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"path": "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-real-process-debt.test.ts", -->
 Every surface file is either cited by at least one invariant (as a
 source or as a test) or listed under `exclusions` with a concrete reason
-why it encodes no loop behavior. There are two exclusions:
-`packages/aeg-core/src/dev-review-loop/index.ts`, a re-export barrel, and
-`dev-review-loop-real-process-debt.test.ts`, a ratchet over another test
-file's source text. An invariant may also cite a file outside the
+why it encodes no loop behavior.
+`dev-review-loop-real-process-debt.test.ts` is a ratchet over another test
+file's source text; the policy re-export barrel has been removed. An invariant may also cite a file outside the
 surface, such as `dispatch.ts` for the Documentation read-gate and
 reviewer permissions, where the behavior is actually decided there.
 
@@ -278,7 +277,7 @@ ruling can, and that ruling's status is then recorded on the entry.
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts contains:function staleReasonCitations(inv: Inventory): string[] { -->
 The register's normative design is revision 17 of the Engine specification,
 and the fixture's `normativeDesign` names it with the sections the register
-rests on. This file, `apps/cli/specs/dev-review-engine-state-machine.md` and
+rests on. This file, `harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md` and
 `harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md` state the same
 revision, and the architecture test fails when any of the four disagrees.
 Every entry, defect and ambiguity was re-read against revision 17's section

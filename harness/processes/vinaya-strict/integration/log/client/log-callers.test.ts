@@ -56,7 +56,7 @@ const LOG_WEBHOOK_DRAIN_LIB_PATH = 'harness/kernel/log/client/log-webhook-drain.
 const EFFECTS_PATH = 'harness/kernel/effects/effects.ts'
 const BROKER_PATH = 'harness/kernel/tools/host/broker.ts'
 const SCHEMA_PATH = 'harness/kernel/log/schema.ts'
-const ASSESS_ROUND_PATH = 'packages/aeg-core/src/dev-review-loop/assess-round.ts'
+const ASSESS_ROUND_PATH = 'harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 /**
  * `vinaya doctor` reports whether the configured destination actually works

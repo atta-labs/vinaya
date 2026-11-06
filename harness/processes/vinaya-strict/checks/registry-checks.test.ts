@@ -66,11 +66,11 @@ describe('checkG2', () => {
   it('reports fail for a row still carrying the scaffold placeholder marker in its summary', () => {
     const rows: GateRow[] = [
       makeRow({
-        implementation: 'packages/aeg-core/bin/check-new-thing.ts',
+        implementation: 'harness/processes/vinaya-strict/checks/standalone/check-new-thing.ts',
         summary: '[undocumented — fill in why]'
       })
     ]
-    const result = checkG2(rows, ['packages/aeg-core/bin/check-new-thing.ts'])
+    const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/check-new-thing.ts'])
     expect(result.status).toBe('fail')
     expect(result.findings).toHaveLength(1)
     expect(result.findings[0]?.reason).toContain('placeholder')
@@ -89,14 +89,14 @@ describe('checkG2', () => {
   it('a stub-bearing table still yields findings even though every candidate is now named (§6 Part 3 test)', () => {
     const rows: GateRow[] = [
       makeRow({
-        implementation: 'packages/aeg-core/bin/check-new-thing.ts',
+        implementation: 'harness/processes/vinaya-strict/checks/standalone/check-new-thing.ts',
         summary: '[undocumented — fill in why]',
         description: '[undocumented — fill in why]'
       })
     ]
     // The candidate IS named now (the orphan half would pass clean) — the
     // placeholder half is what still surfaces it.
-    const result = checkG2(rows, ['packages/aeg-core/bin/check-new-thing.ts'])
+    const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/check-new-thing.ts'])
     expect(result.status).toBe('fail')
     expect(result.findings.length).toBeGreaterThan(0)
   })
@@ -104,13 +104,13 @@ describe('checkG2', () => {
   it('does not flag a normal, fully-documented row with no placeholder anywhere', () => {
     const rows: GateRow[] = [
       makeRow({
-        implementation: 'packages/aeg-core/bin/verify-registry.ts',
+        implementation: 'harness/processes/vinaya-strict/checks/standalone/verify-registry.ts',
         summary: 'Ever found a script nobody remembers?',
         description: 'Re-checks orphan hooks.',
         spec: 'Every file under bin/ is named by some row.'
       })
     ]
-    const result = checkG2(rows, ['packages/aeg-core/bin/verify-registry.ts'])
+    const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/verify-registry.ts'])
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
   })
@@ -121,7 +121,9 @@ describe('checkG2', () => {
   // claimed check name(s) overlapping some OTHER row's claimed name(s) is
   // enough — no second row is invented for the same fact.
   it('a shipped-bin candidate whose own name is claimed by a DIFFERENT row (its aeg-core twin) passes', () => {
-    const rows: GateRow[] = [makeRow({ implementation: 'packages/aeg-core/bin/verify-brief.ts' })]
+    const rows: GateRow[] = [
+      makeRow({ implementation: 'harness/processes/vinaya-strict/checks/standalone/verify-brief.ts' })
+    ]
     const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/bin/check-brief-shape.ts'])
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
@@ -131,21 +133,21 @@ describe('checkG2', () => {
     const rows: GateRow[] = [
       makeRow({ implementation: 'harness/processes/vinaya-strict/checks/bin/check-brief-shape.ts' })
     ]
-    const result = checkG2(rows, ['packages/aeg-core/bin/verify-brief.ts'])
+    const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/verify-brief.ts'])
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
   })
 
   it('G2 skips a non-gate standalone script under the process checks/standalone prefix', () => {
     const rows: GateRow[] = [makeRow({ implementation: 'a.ts' })]
-    const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/eval-agent-compliance.ts'])
+    const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/dead-branch-audit.ts'])
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
   })
 
   it('a NON_GATE_BINS-listed aeg-core bin needs no row at all — the honest fix is the gate stops asking', () => {
     const rows: GateRow[] = [makeRow({ implementation: 'a.ts' })]
-    const result = checkG2(rows, ['packages/aeg-core/bin/eval-agent-compliance.ts'])
+    const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/dead-branch-audit.ts'])
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
   })
@@ -158,15 +160,19 @@ describe('checkG2', () => {
   })
 
   it('an explicitly excepted twin candidate passes even with no claimable overlap', () => {
-    const rows: GateRow[] = [makeRow({ implementation: 'packages/aeg-core/bin/verify-coherence.ts' })]
+    const rows: GateRow[] = [
+      makeRow({ implementation: 'harness/processes/vinaya-strict/checks/standalone/verify-coherence.ts' })
+    ]
     const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/bin/check-closes-n.ts'])
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
   })
 
   it('a genuinely unrelated aeg-core bin (not NON_GATE_BINS, no claimed-name overlap) still fails', () => {
-    const rows: GateRow[] = [makeRow({ implementation: 'packages/aeg-core/bin/verify-brief.ts' })]
-    const result = checkG2(rows, ['packages/aeg-core/bin/totally-unrelated.ts'])
+    const rows: GateRow[] = [
+      makeRow({ implementation: 'harness/processes/vinaya-strict/checks/standalone/verify-brief.ts' })
+    ]
+    const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/totally-unrelated.ts'])
     expect(result.status).toBe('fail')
     expect(result.findings).toHaveLength(1)
   })
@@ -174,17 +180,24 @@ describe('checkG2', () => {
 
 describe('checkG3', () => {
   it('fails when a GitHub-crossing file is not named by any Ring-0 row', () => {
-    const ring0Rows: GateRow[] = [makeRow({ ring: 'ring0', implementation: 'packages/aeg-core/bin/open-pr.ts' })]
-    const crossingFiles = ['packages/aeg-core/bin/open-pr.ts', 'packages/aeg-core/bin/rogue-github-caller.ts']
+    const ring0Rows: GateRow[] = [
+      makeRow({ ring: 'ring0', implementation: 'harness/processes/vinaya-strict/checks/standalone/open-pr.ts' })
+    ]
+    const crossingFiles = [
+      'harness/processes/vinaya-strict/checks/standalone/open-pr.ts',
+      'harness/processes/vinaya-strict/checks/standalone/rogue-github-caller.ts'
+    ]
     const result = checkG3(ring0Rows, crossingFiles)
     expect(result.status).toBe('fail')
     expect(result.findings).toHaveLength(1)
-    expect(result.findings[0]?.path).toBe('packages/aeg-core/bin/rogue-github-caller.ts')
+    expect(result.findings[0]?.path).toBe('harness/processes/vinaya-strict/checks/standalone/rogue-github-caller.ts')
   })
 
   it('passes when every crossing file is named by a Ring-0 row', () => {
-    const ring0Rows: GateRow[] = [makeRow({ ring: 'ring0', implementation: 'packages/aeg-core/bin/open-pr.ts' })]
-    const result = checkG3(ring0Rows, ['packages/aeg-core/bin/open-pr.ts'])
+    const ring0Rows: GateRow[] = [
+      makeRow({ ring: 'ring0', implementation: 'harness/processes/vinaya-strict/checks/standalone/open-pr.ts' })
+    ]
+    const result = checkG3(ring0Rows, ['harness/processes/vinaya-strict/checks/standalone/open-pr.ts'])
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
   })
@@ -305,7 +318,7 @@ describe('checkG6', () => {
       makeRow({
         action: 'Documentation gate',
         audience: 'product',
-        implementation: 'packages/aeg-core/bin/verify-docs.ts'
+        implementation: 'harness/processes/vinaya-strict/checks/standalone/verify-docs.ts'
       })
     ]
     expect(checkG6(rows, new Set(['doc-coverage'])).status).toBe('pass')
@@ -319,7 +332,7 @@ describe('checkG6', () => {
       makeRow({
         action: 'Opening a task PR (final self-check before creation)',
         audience: 'product',
-        implementation: 'packages/aeg-core/bin/verify-task.ts'
+        implementation: 'harness/processes/vinaya-strict/checks/standalone/verify-task.ts'
       })
     ]
     const result = checkG6(rows, new Set(['registry-gates', 'coherence', 'dispatch-readiness']))
@@ -357,7 +370,7 @@ describe('checkG6', () => {
         action: 'G1 — implementation exists',
         ring: 'ring1',
         audience: 'product',
-        implementation: 'packages/aeg-core/bin/verify-registry.ts'
+        implementation: 'harness/processes/vinaya-strict/checks/standalone/verify-registry.ts'
       }),
       makeRow({
         action: 'Some repo-own row',

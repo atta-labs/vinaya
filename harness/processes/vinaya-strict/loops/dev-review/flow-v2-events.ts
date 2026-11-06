@@ -1,3 +1,4 @@
+import type { DevReviewLoopEventInput } from '../../tools/dev-review-policy/types'
 /**
  * The Log events of review locally, push once (the developer-review flow's
  * version 2), and the per-phase time both flows record. Builders only: each
@@ -5,7 +6,6 @@
  * writes it. Kept in one file so the event names and their fields have one
  * home that the Log coverage check reads.
  */
-import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
 
 type Loop = { loopId: string; round: number }
 

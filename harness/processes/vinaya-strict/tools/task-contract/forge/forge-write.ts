@@ -3267,7 +3267,7 @@ export function reconcileGhComment(
 // every other loop forge write, FOUND by a body marker naming the pull
 // request (never by title, so a re-titled Issue is still the same one), and
 // labelled `vinaya/deferred` with NO tranche label so it never reads as a
-// planned task. See `apps/cli/specs/loop.md` § "The deferred-findings Issue."
+// planned task. See `harness/processes/vinaya-strict/loops/dev-review/loop.md` § "The deferred-findings Issue."
 // ---------------------------------------------------------------------------
 
 /** The fixed label every deferred-findings tracking Issue carries — a backlog label, never a `vinaya/tranche:*` task label, so no plan gate applies to it. */

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { parseLedger } from './parse-ledger'
 import { sumLedger } from './sum-ledger'
 
-const FIXTURES = join(__dirname, '../../../../../../packages/aeg-core/tests/fixtures')
+const FIXTURES = join(__dirname, './fixtures')
 const aegUiTokensMd = readFileSync(join(FIXTURES, 'aeg-ui-v1-tokens.md'), 'utf8')
 
 describe('sumLedger', () => {

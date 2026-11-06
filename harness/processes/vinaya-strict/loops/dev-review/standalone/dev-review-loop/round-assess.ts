@@ -9,6 +9,12 @@
  * path it always had.
  */
 
+import type {
+  Decision,
+  DevReviewLoopEventInput,
+  LoopState,
+  RoundStats
+} from '../../../../tools/dev-review-policy/types'
 import { readFileSync } from 'node:fs'
 import { CODE_TOKEN_PATTERN } from '../../../../../../kernel/log/schema'
 import {
@@ -20,7 +26,7 @@ import {
   type ParsedRecord,
   type RoundHeadIdentity
 } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import type { Decision, DevReviewLoopEventInput, LoopState, RoundStats } from '@attalabs/aeg-core'
+
 import type { PauseBoundRuling } from '../../../../tools/task-contract/review-input-manifest'
 import type { AgentVendor, DispatchHandle, SandboxProbeRefusal, UsageLimit } from '../../dispatch/dispatch.js'
 import { controlStoreRoot } from '../../../../../../kernel/effects/effects.js'

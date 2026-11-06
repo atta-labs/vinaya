@@ -1,4 +1,4 @@
-import type { VerdictObservation } from '@attalabs/aeg-core'
+import type { VerdictObservation } from '../tools/dev-review-policy/types'
 import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import type { EngineForge } from '../bin/run-engine'
 import { LOG_FOLDER_ONLY_ENV } from '../../../kernel/log/log-sink'

@@ -12,7 +12,7 @@ import type { ToolGrantPolicy } from '../../../../kernel/tools/role-grants.js'
 import type { RouterRolePolicy } from '../../../../kernel/tools/host/router.js'
 import type { BoundaryRolePolicy } from '../../../../kernel/isolation/worker-boundary.js'
 
-// --- tool grants (`apps/cli/specs/dev-review-capabilities-contracts.md` §3) --
+// --- tool grants (`harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md` §3) --
 
 /** The roles the driver dispatches against the tool server's grant table. The controller is listed so its empty grant is explicit, not implied. */
 export const GRANTED_ROLES = ['developer', 'code-reviewer', 'security', 'controller'] as const

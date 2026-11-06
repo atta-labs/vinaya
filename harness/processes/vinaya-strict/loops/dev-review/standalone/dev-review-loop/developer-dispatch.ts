@@ -1379,7 +1379,7 @@ export function reconcileLaunch(
   }
 }
 
-/** Thrown by the driver's resume seam when `recoverDeveloperLaunch` returns a `pause` (a required session is gone) or a `live` prior launch (a second worker must never race the first) — caught by the loop's own outer handler and turned into the decided `pause{reason:'infrastructure'}` every thrown driver-path failure already becomes (`apps/cli/specs/loop.md`), so no new pause plumbing is added. */
+/** Thrown by the driver's resume seam when `recoverDeveloperLaunch` returns a `pause` (a required session is gone) or a `live` prior launch (a second worker must never race the first) — caught by the loop's own outer handler and turned into the decided `pause{reason:'infrastructure'}` every thrown driver-path failure already becomes (`harness/processes/vinaya-strict/loops/dev-review/loop.md`), so no new pause plumbing is added. */
 export class LaunchContinuityLost extends Error {
   constructor(public readonly detail: string) {
     super(`devReviewLoop: cannot continue the developer's launch: ${detail}`)

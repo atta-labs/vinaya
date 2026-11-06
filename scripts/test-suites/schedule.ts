@@ -27,8 +27,7 @@
  * to another folder keeps its place. Nothing here selects: the CI adapter's
  * selection (`harness/processes/vinaya-strict/integration/ci-test-selection.ts --decision`) decides
  * which tests a pull request needs, and a push to the default branch passes
- * `--full`. A suite this schedule cannot narrow — `@attalabs/aeg-core`, whose
- * tests read the whole repository — runs whole, with its reason stated.
+ * `--full`.
  *
  *   bun scripts/test-suites/schedule.ts --dry-run --full
  *     prints every scheduled test once, with its place, runner and working directory.
@@ -70,10 +69,7 @@ export type Placement = 'build' | 'shared' | `shard-${number}`
 export const SHARD_OWNERS: readonly string[] = [CI_SHARD_LIST_OWNER, '@attalabs/harness', '@attalabs/process-vinaya']
 
 /** Suites that run whole on every pull request, by owner, and why. */
-export const WHOLE_SUITE_OWNERS: Readonly<Record<string, string>> = {
-  '@attalabs/aeg-core':
-    'its tests read files across the whole repository, which the selection does not model, so it runs whole'
-}
+export const WHOLE_SUITE_OWNERS: Readonly<Record<string, string>> = {}
 
 /**
  * Suites that run whole on a pull request that changes any path under their

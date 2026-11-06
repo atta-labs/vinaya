@@ -1,9 +1,8 @@
+import type { DevReviewLoopEventInput, LoopState } from '../../../../tools/dev-review-policy/types'
 import {
-  type DevReviewLoopEventInput,
   isConcludedJournal,
-  type LoopState,
   type ReconstructedJournal
-} from '@attalabs/aeg-core'
+} from '../../../../tools/dev-review-policy/journal-reconstruction'
 import { appendRoleLine } from '../../../../../../kernel/log/client/loop-log.js'
 import { errorClassOf } from './round-assess.js'
 
@@ -120,7 +119,7 @@ export function createDriverExitRecorder(
     written = true
     facts.stopHeartbeat()
     const describedDecision = facts.describeDecision()
-    // The role log stays DIAGNOSTIC, not routine (`apps/cli/specs/loop.md`,
+    // The role log stays DIAGNOSTIC, not routine (`harness/processes/vinaya-strict/loops/dev-review/loop.md`,
     // "A driver that exits with no decision on record"): only the abnormal
     // exits it has always traced write a line here — a clean `finished`/
     // `paused` return already leaves its decision on the forge and in the

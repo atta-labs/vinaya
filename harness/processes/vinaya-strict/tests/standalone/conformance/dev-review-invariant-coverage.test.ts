@@ -21,7 +21,7 @@ const INVARIANT_SPEC = 'apps/cli/specs/dev-review-invariants.md'
 /** The specifications that name the normative design's revision beside the register. */
 const DESIGN_SPECS = [
   INVARIANT_SPEC,
-  'apps/cli/specs/dev-review-engine-state-machine.md',
+  'harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md',
   'harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md'
 ] as const
 
@@ -156,7 +156,7 @@ function discoverLoopSurface(): { implementation: string[]; tests: string[]; oth
     ...existing('apps/cli/src/commands/dev-review-loop.ts'),
     ...existing('harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts'),
     ...tsFilesIn('harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop'),
-    ...tsFilesIn('packages/aeg-core/src/dev-review-loop')
+    ...tsFilesIn('harness/processes/vinaya-strict/tools/dev-review-policy')
   ]
   const testSide = [
     ...existing('apps/cli/tests/commands/dev-review-loop.test.ts'),
@@ -352,9 +352,9 @@ const unmapped = unmappedPaths(inventory, [...implementation, ...tests])
 const unresolved = unresolvedPaths(inventory, (rel) => existsSync(join(REPO_ROOT, rel)))
 
 describe('standalone dev-review loop invariant map (O1: every module and test mapped or excluded)', () => {
-  it('the frozen baseline is 15 implementation modules and 26 test files', () => {
-    expect(new Set(inventory.baseline.implementationModules).size).toBe(15)
-    expect(inventory.baseline.implementationModules.length).toBe(15)
+  it('the baseline without the retired barrel is 14 implementation modules and 26 test files', () => {
+    expect(new Set(inventory.baseline.implementationModules).size).toBe(14)
+    expect(inventory.baseline.implementationModules.length).toBe(14)
     expect(new Set(inventory.baseline.testFiles).size).toBe(26)
     expect(inventory.baseline.testFiles.length).toBe(26)
   })

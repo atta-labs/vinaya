@@ -84,7 +84,7 @@ import { vinayaToolGrantPolicy } from '../../../../harness/processes/vinaya-stri
  * The shared adapter-conformance suite (evaluation layer L4): one case list,
  * run unchanged on Claude Code and on Codex, against the contract the
  * developer-review controller holds every agent to
- * (`apps/cli/specs/dev-review-capabilities-contracts.md` §9).
+ * (`harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md` §9).
  *
  * Every case names the role it exercises, the sessions it runs on, the
  * registry suites it executes and how the live run observes it. Its

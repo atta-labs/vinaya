@@ -63,8 +63,8 @@ import { detectVendoredVinaya } from '../../../../../apps/cli/src/lib/self-host.
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 /** The workspace member that owns the unabridged gate derivations a brief may name, and the name it must declare for this repository to be the one that owns them. */
-const AEG_CORE_DIR = 'packages/aeg-core'
-const AEG_CORE_PACKAGE_NAME = '@attalabs/aeg-core'
+const AEG_CORE_DIR = 'harness/processes/vinaya-strict'
+const AEG_CORE_PACKAGE_NAME = '@attalabs/process-vinaya'
 const PACKAGE_ROOT = cliPackageRoot()
 const PACKAGED_TEMPLATE_PATH = join(PACKAGE_ROOT, 'aeg-root', 'templates', 'brief-template.md')
 const TEMPLATE_PATH = existsSync(PACKAGED_TEMPLATE_PATH)

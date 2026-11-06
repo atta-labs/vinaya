@@ -253,7 +253,7 @@ function bunInstallCacheStep(): string {
  */
 export function budgetMarkerStep(): string {
   return `      # When this job failed, print its own token budgets on one line for
-      # the review loop (\`apps/cli/specs/loop.md\`). Reading them spends none.
+      # the review loop (\`harness/processes/vinaya-strict/loops/dev-review/loop.md\`). Reading them spends none.
       - name: Report this job's GitHub token budget
         if: failure()
         env:
@@ -1281,8 +1281,8 @@ ${graphqlBudgetStep('end')}${budgetMarkerStep()}`
 // The ring-2 post-merge/scheduled mechanisms — same three-job shape as this
 // monorepo's own live `.github/workflows/archivist.yml` (triggers,
 // permissions, `continue-on-error` on the drift job), calling `vinaya
-// archive`/`vinaya audit` instead of a repo-internal `bun packages/aeg-core/
-// bin/*.ts` invocation, so any vinaya-init'd repo gets the same post-merge
+// archive`/`vinaya audit` instead of the repo-internal Archivist and audit
+// programs under `harness/processes/vinaya-strict/`, so any vinaya-init'd repo gets the same post-merge
 // provenance/close-out, dead-branch drift notification, and direct-main-push
 // detection — not just this one.
 function archivistWorkflow(selfHost: VendoredVinaya | null): string {
@@ -2105,7 +2105,7 @@ function starterDocOwners(): string {
 // ---------------------------------------------------------------------------
 // Labels — create-if-absent, existing never modified (amendment-4 manifest).
 // Names and the fixed set come from the code-owned vocabulary
-// (`@attalabs/aeg-core`'s re-exported `LABELS`), never written here as
+// (`harness/kernel/adapters/tracker/github-issues/labels.ts`'s `LABELS`), never written here as
 // literals, so an adopter's repo is seeded with exactly the namespaced set
 // this repo runs on. Every `form: 'literal'` entry is seeded — the ONE
 // exception is the `tranche` key (`form: 'prefix'`): its suffix is

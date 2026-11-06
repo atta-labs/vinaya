@@ -15,7 +15,6 @@ import { GATE_AUDIENCE, isShipped, NON_GATE_BINS, SHIPPED_BIN_AUDIENCE } from '.
  * rather than rotting quietly for months.
  */
 const BIN_DIR = fileURLToPath(new URL('./standalone', import.meta.url))
-const AEG_CORE_BIN_DIR = fileURLToPath(new URL('../../../../packages/aeg-core/bin', import.meta.url))
 
 /**
  * RECURSIVE, and every extension — not `readdirSync` + `endsWith('.ts')`.
@@ -50,7 +49,6 @@ function binBasenames(): string[] {
     }
   }
   walk(BIN_DIR, '')
-  walk(AEG_CORE_BIN_DIR, '')
   return out.sort()
 }
 

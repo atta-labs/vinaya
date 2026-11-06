@@ -7,6 +7,8 @@
  * below under the same path it always had.
  */
 
+import type { Journal } from '../../../../tools/dev-review-policy/types'
+import { renderPublishedMarker } from '../../../../tools/dev-review-policy/render-summary'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -29,7 +31,7 @@ import {
   extractSecurityReviewVerdict,
   type VerdictExtraction
 } from '../../../../tools/task-contract/verdict-extraction'
-import { type Journal, renderPublishedMarker } from '@attalabs/aeg-core'
+
 import { defaultControlStoreDeps } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
 import { principalBodies } from '../../../../../../../apps/cli/src/commands/review-post.js'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../../../../../../kernel/effects/effects.js'

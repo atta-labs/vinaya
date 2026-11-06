@@ -2868,7 +2868,7 @@ export type LaunchStatus = 'launched' | 'completed' | 'interrupted'
  * a `role`, an `attempt`, or a vendor `sessionId` field, and this record is
  * this launcher's own concern, not a control-store ownership epoch the
  * generic launcher has no business claiming (the loop's own control-store
- * adoption is deferred — `apps/cli/specs/loop.md`).
+ * adoption is deferred — `harness/processes/vinaya-strict/loops/dev-review/loop.md`).
  */
 export type LaunchRecord = {
   runId: string

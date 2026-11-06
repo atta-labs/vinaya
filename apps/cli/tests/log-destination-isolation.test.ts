@@ -1727,7 +1727,7 @@ describe("no test reads this repository's own log destination", () => {
 
   it('console.log is not a log producer — a member call writes no event', () => {
     const sample = `
-      import { defaultControlStoreDeps } from '@attalabs/aeg-core'
+      import { defaultControlStoreDeps } from '../../../harness/kernel/connectors/checkpoint/control-store/local'
       console.log('nothing is recorded here')
       ${A_DEFAULT_READ}
     `

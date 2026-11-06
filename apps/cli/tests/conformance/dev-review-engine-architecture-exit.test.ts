@@ -12,7 +12,7 @@ import {
 } from '../../../../harness/processes/vinaya-strict/integration/verification-scanner-policy.js'
 import { REFRESH_COMMAND, refreshLoopBaseline } from '../../scripts/refresh-loop-baseline.js'
 import { type Observation, SCENARIO_DRIVERS } from './dev-review-current-loop-adapter.js'
-import { ENGINE_SCENARIO_DRIVERS } from './dev-review-engine-loop-adapter.js'
+import { ENGINE_SCENARIO_DRIVERS } from '../../../../harness/processes/vinaya-strict/tests/dev-review-engine-loop-adapter.js'
 import engineFailureFixture from '../fixtures/dev-review-engine-expected-failures.json'
 
 /**

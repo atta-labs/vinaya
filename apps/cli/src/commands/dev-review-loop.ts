@@ -16,7 +16,7 @@
  * one-lib-call command.
  *
  * issue-711 O4: this command — every flag, `--task` included — stays the
- * one-shot debug/direct entry it always was (`apps/cli/specs/loop.md`,
+ * one-shot debug/direct entry it always was (`harness/processes/vinaya-strict/loops/dev-review/loop.md`,
  * "The command": "`dev-review-loop` below is `task run`'s own debug/direct
  * entry"), never the watching driver (`runDriverLoop`). `vinaya task run`
  * (`commands/task-run.ts`) is the one "normal," unattended entry O4's

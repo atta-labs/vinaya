@@ -41,6 +41,26 @@
  * so no existing import elsewhere in this codebase needed to change.
  */
 
+import { assessRound, recordDeveloperAttempt } from '../../../tools/dev-review-policy/assess-round'
+import {
+  concludedLoopRefusal,
+  isConcludedJournal,
+  nextRoundNumber,
+  type ReconstructedJournal
+} from '../../../tools/dev-review-policy/journal-reconstruction'
+import {
+  initialLoopState,
+  type Confidence,
+  type Decision,
+  type DevReviewLoopEventInput,
+  type LoopConfig,
+  type LoopState,
+  type Observations,
+  type PauseReason,
+  type RoundStats,
+  type TaskClock,
+  type VerdictObservation
+} from '../../../tools/dev-review-policy/types'
 import { cliEntryPath, devBridgePath } from '../../../../../../apps/cli/src/lib/cli-entry.js'
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -69,25 +89,7 @@ import {
   type TurnWriteAttribution
 } from '../../../../../kernel/isolation/worker-boundary.js'
 import { activeBudgetMs } from '../../../tools/task-phase-history'
-import {
-  assessRound,
-  concludedLoopRefusal,
-  initialLoopState,
-  isConcludedJournal,
-  nextRoundNumber,
-  recordDeveloperAttempt,
-  type Confidence,
-  type Decision,
-  type DevReviewLoopEventInput,
-  type LoopConfig,
-  type LoopState,
-  type Observations,
-  type PauseReason,
-  type ReconstructedJournal,
-  type RoundStats,
-  type TaskClock,
-  type VerdictObservation
-} from '@attalabs/aeg-core'
+
 import {
   briefHash as briefHashOf,
   buildReviewInputManifest,
@@ -793,7 +795,7 @@ export type LoopDeps = {
    * `'launched'` record for the next start to misread as still live.
    * Reviewers are dispatched via the SAME `dispatchRole`/`LaunchRecord`
    * machinery the developer is (concurrently, via `Promise.all` — see
-   * "Reviewers" in `apps/cli/specs/loop.md`), so a signal arriving mid-round
+   * "Reviewers" in `harness/processes/vinaya-strict/loops/dev-review/loop.md`), so a signal arriving mid-round
    * can orphan a reviewer's child exactly as it can the developer's; each
    * role's own launch record is checked independently, and a role with
    * nothing in flight is a safe no-op. Injected so a test can observe "the
@@ -826,7 +828,7 @@ export type LoopDeps = {
    * unchanged, so this changes nothing about a real run; a test's fake
    * records to its own world instead of shelling out. This is the one seam
    * this file gained for the in-process harness — documented in
-   * `apps/cli/specs/loop.md` § "The in-process test seam."
+   * `harness/processes/vinaya-strict/loops/dev-review/loop.md` § "The in-process test seam."
    */
   postMarkedComment: typeof postMarkedComment
   postPauseComment: typeof postPauseComment
@@ -5320,7 +5322,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * seam that used to read the durable resume record blind. A prior launch
      * whose child is still running, or one whose required session is gone,
      * both throw `LaunchContinuityLost` — the loop's own outer handler turns it
-     * into a decided `pause{reason:'infrastructure'}` (`apps/cli/specs/loop.md`),
+     * into a decided `pause{reason:'infrastructure'}` (`harness/processes/vinaya-strict/loops/dev-review/loop.md`),
      * so a second worker never races the first and a lost session pauses
      * explicitly instead of silently starting fresh. A recoverable session
      * (now including one bound on an INTERRUPTED attempt — O1) sets
@@ -5894,7 +5896,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
-     * The live check (`apps/cli/specs/loop.md`, "The live check"): once both
+     * The live check (`harness/processes/vinaya-strict/loops/dev-review/loop.md`, "The live check"): once both
      * reviewers have approved `head` and before the task concludes, every
      * `[live]` line of the frozen brief's Test Plan runs here — from this
      * driver's own process, never the Developer's sandbox — in a fresh
@@ -8676,7 +8678,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
  * brief's own wording) means in code — the SAME function call, not a
  * reimplementation of what it does. `'infrastructure'`/`'stale_driver'`
  * pauses need no ruling at all (the same bare-resume allowance `--resume`
- * already grants them — "Pause and `--resume`", `apps/cli/specs/loop.md`)
+ * already grants them — "Pause and `--resume`", `harness/processes/vinaya-strict/loops/dev-review/loop.md`)
  * — they retry after one bounded backoff wait instead of watching for a
  * ruling. A bare retry that itself fails spends one unit of the task's
  * infrastructure-retry budget — the same count the pause record carries,
@@ -8691,7 +8693,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
  * for a decision ends the driver unwatched, as before: its own Issue comment
  * names the command that continues it, in whichever address form this
  * task's branch says `task run` takes for it (`noPushResumeArgv`,
- * `pause-resume.ts`; "Pause and `--resume`", `apps/cli/specs/loop.md`). An
+ * `pause-resume.ts`; "Pause and `--resume`", `harness/processes/vinaya-strict/loops/dev-review/loop.md`). An
  * automatic-recovery one (`isAutomaticRecoveryPause` — an infrastructure
  * hiccup, a GitHub rate limit, a stale driver) is watched by
  * `watchPrePrPauseThenResume` instead: the same one bounded wait, then the
@@ -8706,7 +8708,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
  * `DriverWatchDeps.clearDriverLock`'s own doc comment) — so a genuinely
  * separate `task run`/`--resume` for the same task is refused, naming this
  * live driver, the whole time it watches, exactly as "One driver per task"
- * (`apps/cli/specs/loop.md`) already promises. A resume attempt this
+ * (`harness/processes/vinaya-strict/loops/dev-review/loop.md`) already promises. A resume attempt this
  * watcher makes can still fail for other reasons — a benign race against
  * an operator's own concurrent `--resume`/`--cancel` (`ReplayedResolutionError`),
  * or a transient forge read. Neither crashes this unattended watcher: both
@@ -8716,7 +8718,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
  *
  * A human's own explicit `dev-review-loop --resume <pr>`/`--cancel <pr>`
  * invocation stays exactly as it was before this task — a one-shot debug/
- * direct entry, never itself a watcher (`apps/cli/specs/loop.md`, "The
+ * direct entry, never itself a watcher (`harness/processes/vinaya-strict/loops/dev-review/loop.md`, "The
  * command"). `runDriverLoop` is what `task run` uses instead — the one
  * "normal," unattended entry — so an operator never needs to type a resume
  * command at all for the ordinary case this task exists for; `dev-review-loop`
@@ -8732,7 +8734,7 @@ export type DriverEndReason = 'merged' | 'closed' | 'cancelled'
  * REQUEST, never a round's verdicts) — never added to `Decision` itself,
  * the same "driver-decided, never a policy-layer type" precedent
  * `'infrastructure'`/`'stale_driver'` already set ("Infrastructure
- * failures", `apps/cli/specs/loop.md`) and this task's own declared
+ * failures", `harness/processes/vinaya-strict/loops/dev-review/loop.md`) and this task's own declared
  * Surface keeps: `packages/aeg-core` stays untouched by this member.
  */
 export type DriverDecision = Decision | { type: 'ended'; reason: DriverEndReason }
@@ -8756,7 +8758,7 @@ export type DriverWatchDeps = {
    * own start), never clearing and re-acquiring it in between: a "clear,
    * then call back in" gap would briefly open the task to a genuinely
    * concurrent second `task run`, exactly the race "One driver per task"
-   * (`apps/cli/specs/loop.md`) exists to prevent. `devReviewLoop`'s own
+   * (`harness/processes/vinaya-strict/loops/dev-review/loop.md`) exists to prevent. `devReviewLoop`'s own
    * entry gate recognizes a lock as THIS run's own only when it names both
    * this pid AND this exact token — a bare pid match is never enough (the
    * OS can reissue a crashed driver's exact pid to a fresh, unrelated

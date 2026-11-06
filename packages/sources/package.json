@@ -26,7 +26,6 @@
     "lint": "biome check src"
   },
   "dependencies": {
-    "@attalabs/aeg-core": "0.41.0",
     "zod": "3.25.76"
   },
   "devDependencies": {

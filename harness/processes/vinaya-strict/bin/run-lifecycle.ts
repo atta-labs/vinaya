@@ -1,3 +1,5 @@
+import { nextRoundNumber, type ReconstructedJournal } from '../tools/dev-review-policy/journal-reconstruction'
+import type { LoopState } from '../tools/dev-review-policy/types'
 import { spawn } from 'node:child_process'
 import { accessSync, constants, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { delimiter, join, resolve as resolvePath } from 'node:path'
@@ -19,7 +21,7 @@ import {
   manifestAsEchoed,
   type ReviewInputManifest
 } from '../tools/task-contract/review-input-manifest'
-import { nextRoundNumber, type LoopState, type ReconstructedJournal } from '@attalabs/aeg-core'
+
 import {
   readRunCheckpoint,
   readRunOutcome,

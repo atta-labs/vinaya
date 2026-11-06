@@ -28,14 +28,6 @@
       "preload": null
     },
     {
-      "id": "aeg-core",
-      "owner": "@attalabs/aeg-core",
-      "kind": "workspace",
-      "dir": "packages/aeg-core",
-      "runner": "vitest",
-      "preload": null
-    },
-    {
       "id": "sources",
       "owner": "@attalabs/vinaya-sources",
       "kind": "workspace",
@@ -128,7 +120,6 @@
             "cli",
             "log-server",
             "portal",
-            "aeg-core",
             "sources",
             "kernel",
             "process-vinaya",
@@ -189,16 +180,16 @@
       "reason": "The inventory test reads real lockfiles from before and after two workspace moves from disk, outside any import."
     },
     {
-      "id": "aeg-core-test-fixtures",
+      "id": "pull-request-body-fixture",
       "kind": "fixture",
-      "paths": ["packages/aeg-core/tests/fixtures/"],
+      "paths": ["harness/processes/vinaya-strict/tools/pull-request/bin/fixtures/pr-body-394-as-opened.md"],
       "readers": [
         {
           "kind": "raw-bytes",
           "tests": ["apps/cli/tests/commands/pr.test.ts"]
         }
       ],
-      "reason": "The pr command test reads the core package's pull-request body fixtures from disk, outside any import."
+      "reason": "The pr command test reads this pull-request body fixture from disk, outside any import."
     },
     {
       "id": "ci-workflow",
@@ -225,14 +216,55 @@
     {
       "id": "published-package-trees",
       "kind": "fixture",
-      "paths": ["apps/cli/", "packages/aeg-core/", "packages/sources/", "aeg-root/"],
+      "paths": [
+        "apps/cli/",
+        "harness/processes/vinaya-strict/retrospecting/archivist/bin/archive-task.resolve-brief-url.test.ts",
+        "harness/processes/vinaya-strict/retrospecting/archivist/bin/archive-task.ts",
+        "harness/processes/vinaya-strict/evals/agent-compliance/eval-agent-compliance.test.ts",
+        "harness/processes/vinaya-strict/evals/agent-compliance/eval-agent-compliance.ts",
+        "harness/processes/vinaya-strict/tools/archive-task.test.ts",
+        "harness/processes/vinaya-strict/tools/archive-task.ts",
+        "harness/processes/vinaya-strict/integration/adapters/agents/claude-code/claude-code-transcript.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/fakes.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/journal-reconstruction.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/journal-reconstruction.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/render-summary.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/render-summary.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/types.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/fixtures/aeg-ui-v1-tokens.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/aeg-ui-v1.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/herald-onto-engine.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/issue-188-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/issue-426-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/issue-736-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/issue-863-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/issue-870-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/projects.md",
+        "harness/processes/vinaya-strict/tests/fixtures/fence-shapes.ts",
+        "harness/processes/vinaya-strict/tests/fixtures/legacy-tranche-slugs.txt",
+        "harness/processes/vinaya-strict/integration/gates/checks/fixtures/pr-body-freeform-407.md",
+        "harness/processes/vinaya-strict/checks/fixtures/pr-body-393.md",
+        "harness/processes/vinaya-strict/tools/pull-request/bin/fixtures/pr-body-394-as-opened.md",
+        "harness/processes/vinaya-strict/artifacts/docs/build-doc-nav.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/build-doc-nav.test.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/legacy-anchors.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/legacy-anchors.test.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/nav-helpers.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/nav-helpers.test.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/node-route.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts",
+        "packages/sources/",
+        "aeg-root/"
+      ],
       "readers": [
         {
           "kind": "raw-bytes",
           "tests": ["scripts/package-compat/package-compat.test.ts"]
         }
       ],
-      "reason": "The compatibility suite packs every published package's folder with npm, outside any import: the command-line package from the bundle it builds and the doctrine it copies, the three aeg packages through the assemble step, and installs the tarballs."
+      "reason": "The compatibility suite packs the command-line bundle and doctrine and installs its tarball."
     },
     {
       "id": "package-compat-programs",
@@ -369,7 +401,12 @@
       "id": "bun-spawn-gc-fixture",
       "kind": "fixture",
       "paths": ["scripts/test-suites/fixtures/bun-spawn-gc/"],
-      "readers": [{ "kind": "raw-bytes", "tests": ["scripts/test-suites/bun-runtime.test.ts"] }],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["scripts/test-suites/bun-runtime.test.ts"]
+        }
+      ],
       "reason": "The runtime regression executes the GC and synchronous-child probe in an asynchronously supervised process."
     },
     {
@@ -515,7 +552,6 @@
       "kind": "config",
       "paths": [
         "vinaya.config.json",
-        "packages/aeg-core/src/index.ts",
         "harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.ts",
         "harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.test.ts",
         "harness/processes/vinaya-strict/tools/task-contract/brief-render.ts",
@@ -637,12 +673,27 @@
           "tests": ["harness/processes/vinaya-strict/tools/task-contract/task-contract-placement.test.ts"]
         }
       ],
-      "reason": "The placement guard reads the core index and source-comment roots and checks the exact moved-file set."
+      "reason": "The placement guard reads source-comment roots and checks the exact moved-file set."
     },
     {
       "id": "task-contract-core-fixtures",
       "kind": "fixture",
-      "paths": ["packages/aeg-core/tests/fixtures/"],
+      "paths": [
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/fixtures/aeg-ui-v1-tokens.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/aeg-ui-v1.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/herald-onto-engine.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/issue-188-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/issue-426-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/issue-736-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/issue-863-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/issue-870-body.md",
+        "harness/processes/vinaya-strict/tools/task-contract/fixtures/projects.md",
+        "harness/processes/vinaya-strict/tests/fixtures/fence-shapes.ts",
+        "harness/processes/vinaya-strict/tests/fixtures/legacy-tranche-slugs.txt",
+        "harness/processes/vinaya-strict/integration/gates/checks/fixtures/pr-body-freeform-407.md",
+        "harness/processes/vinaya-strict/checks/fixtures/pr-body-393.md",
+        "harness/processes/vinaya-strict/tools/pull-request/bin/fixtures/pr-body-394-as-opened.md"
+      ],
       "readers": [
         {
           "kind": "raw-bytes",
@@ -718,8 +769,29 @@
       "id": "task-contract-collision-inputs",
       "kind": "fixture",
       "paths": [
-        "packages/aeg-core/src/",
-        "packages/aeg-core/bin/",
+        "harness/processes/vinaya-strict/tools/archive-task.test.ts",
+        "harness/processes/vinaya-strict/tools/archive-task.ts",
+        "harness/processes/vinaya-strict/integration/adapters/agents/claude-code/claude-code-transcript.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/fakes.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/journal-reconstruction.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/journal-reconstruction.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/render-summary.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/render-summary.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/types.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/build-doc-nav.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/build-doc-nav.test.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/legacy-anchors.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/legacy-anchors.test.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/nav-helpers.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/nav-helpers.test.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/node-route.ts",
+        "harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts",
+        "harness/processes/vinaya-strict/retrospecting/archivist/bin/archive-task.resolve-brief-url.test.ts",
+        "harness/processes/vinaya-strict/retrospecting/archivist/bin/archive-task.ts",
+        "harness/processes/vinaya-strict/evals/agent-compliance/eval-agent-compliance.test.ts",
+        "harness/processes/vinaya-strict/evals/agent-compliance/eval-agent-compliance.ts",
         "harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.ts",
         "harness/processes/vinaya-strict/tools/task-contract/brief-render.ts",
         "harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts",
@@ -766,6 +838,42 @@
         }
       ],
       "reason": "The symbol-collision test preserves its pre-move source census and logical identities while reading relocated implementations at their destinations."
+    },
+    {
+      "id": "doc-navigation-doctrine",
+      "kind": "fixture",
+      "paths": ["aeg-root/"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts"]
+        }
+      ],
+      "reason": "The navigation test reads doctrine pages and their enforcement anchors from disk."
+    },
+    {
+      "id": "developer-doctrine-pages",
+      "kind": "fixture",
+      "paths": ["aeg-root/roles/developer.md", "aeg-root/roles/developer/reference.md"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["harness/processes/vinaya-strict/executing/developer/developer-doctrine-shape.test.ts"]
+        }
+      ],
+      "reason": "The doctrine-shape test reads the developer role and its reference through the resolved doctrine root."
+    },
+    {
+      "id": "runner-repository-config",
+      "kind": "config",
+      "paths": ["vinaya.config.json"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["harness/processes/vinaya-strict/loops/dev-review/run-control/runner-repo-default.test.ts"]
+        }
+      ],
+      "reason": "The runner-default test reads the repository configuration from disk."
     }
   ],
   "providers": [

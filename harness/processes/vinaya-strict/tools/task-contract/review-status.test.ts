@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  blockingVerdict,
-  cleanVerdict,
-  fakeGate,
-  fakeVerdicts,
-  runScenario
-} from '../../../../../packages/aeg-core/src/dev-review-loop/fakes'
-import { initialLoopState } from '../../../../../packages/aeg-core/src/dev-review-loop/types'
+import { blockingVerdict, cleanVerdict, fakeGate, fakeVerdicts, runScenario } from '../dev-review-policy/fakes'
+import { initialLoopState } from '../dev-review-policy/types'
 import { deriveReviewStatus, parseDeveloperRoundMarker, renderReviewStatus } from './review-status'
 
 const ALLOWLIST = ['daniboomerang']

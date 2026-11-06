@@ -36,13 +36,14 @@
  * default 1 MiB buffer.
  */
 
-import { isPrincipal } from '../../../../tools/task-contract/waiver-label'
 import {
   isPublishedSummaryComment,
   reconstructRounds,
   type ReconstructedJournal,
   type ReviewGateFact
-} from '@attalabs/aeg-core'
+} from '../../../../tools/dev-review-policy/journal-reconstruction'
+import { isPrincipal } from '../../../../tools/task-contract/waiver-label'
+
 import { parseDeveloperRoundMarker } from '../../../../tools/task-contract/review-status'
 import { markerComments, principalAllowlist, type MarkerComment } from './developer-dispatch.js'
 import { sh } from './gate-reading.js'

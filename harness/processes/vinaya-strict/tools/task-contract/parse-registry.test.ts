@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parseRegistry } from './parse-registry'
 
-const FIXTURES = join(__dirname, '../../../../../packages/aeg-core/tests/fixtures')
+const FIXTURES = join(__dirname, './fixtures')
 const projectsMd = readFileSync(join(FIXTURES, 'projects.md'), 'utf8')
 
 describe('parseRegistry', () => {

@@ -1,7 +1,7 @@
 /**
  * The pull request's record of its `[live]` Test plan lines — the commands
  * that need real signed-in agent sessions, which the review loop runs on its
- * own host only on a head both reviewers approved (`apps/cli/specs/loop.md`,
+ * own host only on a head both reviewers approved (`harness/processes/vinaya-strict/loops/dev-review/loop.md`,
  * "The live check"). Pure: a body in, a body or the record's lines out.
  *
  * The record is an `AEG:LIVE` anchored region the driver owns, like

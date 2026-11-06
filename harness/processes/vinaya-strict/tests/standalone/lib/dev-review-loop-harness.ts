@@ -31,7 +31,7 @@
  * The four forge-WRITE operations (`postMarkedComment`, the two pause
  * comments, `publishRound`) are the seam this landed in
  * `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts` (documented in
- * `apps/cli/specs/loop.md` § "The in-process test seam"): their fakes record
+ * `harness/processes/vinaya-strict/loops/dev-review/loop.md` § "The in-process test seam"): their fakes record
  * to `world.postedComments` instead of shelling out to `gh`.
  */
 

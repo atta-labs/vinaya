@@ -3366,7 +3366,8 @@ function isLoopSurfacePath(path: string): boolean {
   if (path === 'apps/cli/src/commands/dev-review-loop.ts' || path === 'apps/cli/src/lib/dev-review-loop.ts') return true
   if (path === 'apps/cli/tests/commands/dev-review-loop.test.ts') return true
   const direct = (dir: string): boolean => path.startsWith(`${dir}/`) && !path.slice(dir.length + 1).includes('/')
-  if (direct('apps/cli/src/lib/dev-review-loop') || direct('packages/aeg-core/src/dev-review-loop')) return true
+  if (direct('apps/cli/src/lib/dev-review-loop') || direct('harness/processes/vinaya-strict/tools/dev-review-policy'))
+    return true
   if (direct('apps/cli/tests/lib/dev-review-loop')) return true
   return direct('apps/cli/tests/lib') && path.slice('apps/cli/tests/lib/'.length).startsWith('dev-review-loop')
 }

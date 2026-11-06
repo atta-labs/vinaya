@@ -116,7 +116,6 @@ vinaya/
 │   ├── cli/                  # Vinaya CLI (@attalabs/vinaya)
 │   └── vinaya-portal/        # The Vinaya portal site (@vinaya/portal)
 ├── packages/
-│   ├── aeg-core/             # Pure gate evaluators
 │   ├── sources/              # State and doctrine sources
 │   └── typescript-config/    # Shared TypeScript configs
 ├── harness/
@@ -185,7 +184,6 @@ the agent. The Developer's shell runs any command its `grants.yaml` does not den
 
 The five packages this repository publishes to npm — the Vinaya CLI
 ([`@attalabs/vinaya`](apps/cli/LICENSE)) and the engine packages it ships,
-[`@attalabs/aeg-core`](packages/aeg-core/LICENSE),
 [`@attalabs/vinaya-sources`](packages/sources/LICENSE) — are source-available under the
 [Functional Source License, Version 1.1, with an Apache-2.0 future license](https://fsl.software)
 (`FSL-1.1-ALv2`), from version `0.35.0`. Versions `0.34.0` and earlier were released under

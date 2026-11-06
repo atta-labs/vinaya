@@ -3,6 +3,7 @@
  * validation, pause details and the Surface-opened agent configuration paths. Each runs without a loop.
  */
 
+import type { DevReviewLoopEventInput } from '../../../../tools/dev-review-policy/types'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { hostname } from 'node:os'
@@ -36,7 +37,7 @@ import {
 import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
 import { objectivesVersion } from '../../../../tools/task-contract/objectives'
 import { policyDigest } from '../../../../tools/task-contract/review-input-manifest'
-import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
+
 import { cleanupWorlds } from '../dev-review-loop-harness.js'
 import { TASK, HEAD_SHA, BASE_SHA, tempDirs as sharedTempDirs } from './driver-test-support.js'
 
@@ -355,7 +356,7 @@ describe('routeCompletionEvents (pure) — regression, PR #459 MAJOR', () => {
   // The three pause reasons the regression silently dropped on every
   // successful run — `assessVerdicts`'s `reappearance`/`no_progress`/
   // `max_rounds` sites all produce a `pause` decision (see `Decision` in
-  // `packages/aeg-core/src/dev-review-loop/types.ts`: `reason` is not part
+  // `harness/processes/vinaya-strict/tools/dev-review-policy/types.ts`: `reason` is not part
   // of what `routeCompletionEvents` branches on) — so the `'pause'` case in
   // the loop above covers all three by construction. The end-to-end test
   // below ('a paused loop for reason no_progress still logs its completion

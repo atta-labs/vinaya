@@ -60,7 +60,7 @@ function row(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     kind: 'node',
     module: '6.11',
     source: {
-      document: 'apps/cli/specs/dev-review-engine-state-machine.md',
+      document: 'harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md',
       revision: 17,
       section: 'The node contracts (O2)'
     },

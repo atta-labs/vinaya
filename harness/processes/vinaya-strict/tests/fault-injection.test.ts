@@ -21,13 +21,7 @@ import {
   usageLimitWaitMs
 } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 import { loopLogPathFor } from '../../../kernel/log/client/loop-log'
-import {
-  BRANCH,
-  fakeDeps,
-  makeWorld,
-  OUTSIDE,
-  OWN
-} from '../../../../apps/cli/tests/lib/task-tools/live-developer-context-world'
+import { BRANCH, fakeDeps, makeWorld, OUTSIDE, OWN } from './live-developer-context-world'
 import { checkpointPath, engineLiveDevToolsContext, runDirectory } from '../bin/run-engine'
 import { liveResumeDeps, type ResumeDeps, type RulingWatch, USAGE_LIMIT_WAIT_SLICE_MS } from '../bin/run-lifecycle'
 import {

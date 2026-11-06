@@ -10,6 +10,7 @@
  * below under the same path it always had.
  */
 
+import type { VerdictObservation } from '../../../../tools/dev-review-policy/types'
 import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import {
@@ -29,7 +30,7 @@ import {
 import { globCoversPath, type IssueSurface } from '../../../../tools/task-contract/issue-validation'
 import type { Objective } from '../../../../tools/task-contract/objectives'
 import type { ReviewInputManifest } from '../../../../tools/task-contract/review-input-manifest'
-import type { VerdictObservation } from '@attalabs/aeg-core'
+
 import {
   defaultControlStoreDeps,
   type ManifestInput,
