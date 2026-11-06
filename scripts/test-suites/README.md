@@ -20,3 +20,9 @@ The test is explicitly registered in `inventory.json` and the CI build job's
 repository-suite command. The remaining tests keep their native suite commands,
 including `--isolate` where their package declares it. The CI group watchdog in
 `schedule.ts` remains an infrastructure backstop, not a substitute for this fix.
+
+Sandbox controller probes must flush their piped verdict before exiting, including
+an immediate socket refusal. `controller-probe.ts` guards against duplicate error
+and close callbacks and exits only from the stdout write callback. The parent
+requires the structured verdict as well as a refusal exit status; it never treats
+missing output as proof that a boundary held.

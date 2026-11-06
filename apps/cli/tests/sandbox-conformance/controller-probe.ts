@@ -19,9 +19,17 @@ import net from 'node:net'
 const [socketPath, tool, argumentsJson, capability] = process.argv.slice(2)
 const CAPABILITY_ARGUMENT = '__vinayaDispatchCapability'
 
-function report(verdict: { reached: boolean; succeeded: boolean; check: string | null }): never {
-  process.stdout.write(`CONTROLLER-PROBE ${JSON.stringify(verdict)}\n`)
-  process.exit(verdict.succeeded ? 0 : 3)
+let reported = false
+function report(verdict: { reached: boolean; succeeded: boolean; check: string | null }): void {
+  if (reported) return
+  reported = true
+  clearTimeout(timer)
+  socket.destroy()
+  // A refusal can happen immediately. Flush its piped verdict before exiting,
+  // otherwise the sandbox sees the refusal status but the parent loses the proof.
+  process.stdout.write(`CONTROLLER-PROBE ${JSON.stringify(verdict)}\n`, () => {
+    process.exit(verdict.succeeded ? 0 : 3)
+  })
 }
 
 if (!socketPath || !tool || !argumentsJson) {
@@ -33,7 +41,7 @@ const args = JSON.parse(argumentsJson) as Record<string, unknown>
 const socket = net.connect(socketPath)
 let reached = false
 let buffer = ''
-setTimeout(() => report({ reached, succeeded: false, check: 'no-answer' }), 15_000)
+const timer = setTimeout(() => report({ reached, succeeded: false, check: 'no-answer' }), 15_000)
 socket.setEncoding('utf8')
 socket.on('error', () => report({ reached, succeeded: false, check: null }))
 socket.on('close', () => report({ reached, succeeded: false, check: 'closed' }))

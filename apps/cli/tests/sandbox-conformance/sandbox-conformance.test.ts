@@ -221,6 +221,21 @@ describe('Engine controller-boundary probes — matrix coverage', () => {
     }
   })
 
+  it('flushes exactly one verdict before an immediately refused probe exits', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'probe-refusal-')))
+    try {
+      const result = await spawnBudgetedAsync(
+        [process.execPath, join(import.meta.dir, 'controller-probe.ts'), join(dir, 'missing.sock'), 'run_checks', '{}'],
+        { env: stripVinayaEnv() }
+      )
+      expect(result.status).toBe(3)
+      expect(result.stdout.trim().split('\n')).toHaveLength(1)
+      expect(controllerProbeVerdict(result.stdout)).toEqual({ reached: false, succeeded: false, check: null, seen: '' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('reads a verdict only from the line the probe printed', () => {
     expect(controllerProbeVerdict('noise\nCONTROLLER-PROBE {"succeeded":false} signal\n')).toEqual({
       succeeded: false,
@@ -782,6 +797,21 @@ describe('Engine containment probes — the command, canary, deny-rule and launc
       codeReviewerDispatches: 0,
       publishedRounds: []
     })
+  })
+
+  it('flushes exactly one verdict before an immediately refused probe exits', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'probe-refusal-')))
+    try {
+      const result = await spawnBudgetedAsync(
+        [process.execPath, join(import.meta.dir, 'controller-probe.ts'), join(dir, 'missing.sock'), 'run_checks', '{}'],
+        { env: stripVinayaEnv() }
+      )
+      expect(result.status).toBe(3)
+      expect(result.stdout.trim().split('\n')).toHaveLength(1)
+      expect(controllerProbeVerdict(result.stdout)).toEqual({ reached: false, succeeded: false, check: null, seen: '' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('reads a verdict only from the line the probe printed', () => {
