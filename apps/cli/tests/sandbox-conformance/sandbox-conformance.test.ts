@@ -1274,6 +1274,20 @@ for (const agent of AGENTS) {
         session?.dispose()
       })
 
+      it('a client aimed at a nonexistent socket emits a refusal verdict inside this role', async () => {
+        const { targets } = live as NonNullable<typeof live>
+        const missingSocket = join((session as SandboxSession).worktreeDir, 'no-such-probe.sock')
+        const command =
+          `printf 'PROBE-CLIENT-START\\n'; ${JSON.stringify(targets.bun)} ${JSON.stringify(targets.probeScript)} ` +
+          `${JSON.stringify(missingSocket)} run_checks '{}'; result=$?; printf '\\nPROBE-CLIENT-END:%s\\n' "$result"; exit "$result"`
+        const result = await (session as SandboxSession).run(command, {})
+        const verdict = controllerProbeVerdict(result.output)
+        // This command only targets a nonexistent socket, passes no capability, and reads no canary or credential.
+        // Its output is safe to diagnose; never echo output from the credential/attack probes below.
+        if (verdict === null) console.info(`[constant probe client ${agent}/${role}] ${JSON.stringify(result)}`)
+        expect(verdict).toEqual({ reached: false, succeeded: false, check: null, seen: '' })
+      })
+
       it('the same probe client is served outside any sandbox, from inside its own dispatch', async () => {
         const { targets } = live as NonNullable<typeof live>
         const control = await (session as SandboxSession).runOutside(
