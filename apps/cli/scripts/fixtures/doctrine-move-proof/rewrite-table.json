@@ -400,7 +400,7 @@
       "replacement": "context-packets"
     },
     {
-      "pattern": "(?<![\\w/.@:-])aeg(?![\\w:/.-])",
+      "pattern": "(?<![\\w/.@:-])aeg(?![\\w:/.-]| (?:init|add-project|generate-skills)\\b)",
       "replacement": "vinaya"
     }
   ]

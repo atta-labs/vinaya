@@ -27,9 +27,9 @@ Vinaya "init" is not software — it is a **state the repo is in**. A repo is ru
 You can create that by hand, or use **`aeg.sh`** — one self-contained, downloadable shell script (from the Vinaya site). It is a **dumb scaffolder**: it writes files, nothing else. It does not dispatch agents, query the forge, or reason — that's a tool's or a human's job. Self-contained (scaffold embedded, no network) so you can read every byte first. It lays down **every layer above** — not just `vinaya-strict/` — so the unit it produces is complete: nothing the model references is missing. Subcommands:
 
 ```
-vinaya init [folder]                       # scaffold the repo (once): model + enforcement + skills
-vinaya add-project <name> --path <folder>  # register a project (creates/appends projects.md + stubs)
-vinaya generate-skills                     # regenerate the agent-surface skill view from doctrine/skills/
+aeg init [folder]                       # scaffold the repo (once): model + enforcement + skills
+aeg add-project <name> --path <folder>  # register a project (creates/appends projects.md + stubs)
+aeg generate-skills                     # regenerate the agent-surface skill view from doctrine/skills/
 ```
 
 `init` scaffolds the enforcement layer (the verify-docs workflow + script, the Issue template/CI check — blast-radius collision domains need no scaffolded file, see above) and the skills alongside `vinaya-strict/`, because the model docs reference all of them — a unit missing any of them references a gate that isn't there. `add-project` stores the `--path` verbatim (never derives it), refuses to overwrite an existing folder or re-register a name, and on first use promotes a single-project repo to multi-project. `generate-skills` writes the agent-specific skill view (this host's own skill directory, e.g. `.claude/skills/`, or another agent's equivalent) from the canonical skills in `doctrine/skills/` — so the canonical skills travel with the unit and the loadable view is rebuilt, never authored by hand. See `projects.md`. Tasks themselves are **forge Issues**, created by the Planner on the forge — not by `aeg.sh`.
