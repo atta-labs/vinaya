@@ -67,6 +67,12 @@ export type RepositorySelectionOptions = {
   record?: ReadRecord | null
   /** The platform the caller runs on; defaults to this process's. */
   platform?: string
+  /**
+   * How far the static selection walks importers: `one` follows only the tests that import a changed file
+   * directly, `transitive` (the default) the whole import closure. A local push walks `one`, so a change in a
+   * widely imported package does not select nearly every test; CI keeps the transitive closure.
+   */
+  depth?: SelectionPolicy['depth']
 }
 
 /** The root suites the build job runs on every pull request, each under the policy that states the duty. */
@@ -138,9 +144,14 @@ function obligationsOf(repoRoot: string, head: string, view: InventoryView): Sel
 }
 
 /** This repository's selection policy, read from the head commit. */
-export function repositoryPolicy(repoRoot: string, head: string, view: InventoryView): SelectionPolicy {
+export function repositoryPolicy(
+  repoRoot: string,
+  head: string,
+  view: InventoryView,
+  depth: SelectionPolicy['depth'] = 'transitive'
+): SelectionPolicy {
   return {
-    depth: 'transitive',
+    depth,
     scanners: scannerDeclarations(repoRoot, head),
     spawnPrograms: [{ binary: CLI_SPAWN_BINARY, entrypoint: DEFAULT_CLI_ENTRYPOINT }],
     obligations: obligationsOf(repoRoot, head, view),
@@ -158,7 +169,7 @@ export function repositorySelectionInput(repoRoot: string, options: RepositorySe
     base,
     head,
     inventory: { head: inventory.head, base: inventory.base },
-    policy: repositoryPolicy(repoRoot, head, inventory.head),
+    policy: repositoryPolicy(repoRoot, head, inventory.head, options.depth ?? 'transitive'),
     records: options.record ? { record: options.record, platform: options.platform ?? process.platform } : null
   }
 }

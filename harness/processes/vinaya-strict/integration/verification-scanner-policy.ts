@@ -14,7 +14,6 @@
  * repository adapter hands it to the library as policy.
  */
 import type { ScannerDeclaration } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index.js'
-import { doctrineRepoPath } from '../tools/doctrine/doctrine-map.js'
 
 export {
   type RepoScannerTest,
@@ -98,7 +97,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: [
       'apps/cli/src/',
       'harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts',
-      doctrineRepoPath('enforcement.md'),
+      'harness/processes/vinaya-strict/doctrine/enforcement.md',
       '.claude/hooks/'
     ],
     trigger: 'content'
