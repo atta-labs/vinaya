@@ -38,13 +38,28 @@ export function statsUrlFrom(eventsUrl: string): string {
   return swapEventsTail(eventsUrl, 'stats')
 }
 
+/**
+ * `.../events` → `.../live`, with `http(s)` swapped for `ws(s)` — the live
+ * route's own address (`apps/log-server/specs/server.md` § 5), derived the
+ * same way as every other route so a follower never re-derives it. The
+ * query string is dropped: the follower sets its own `after`, and the read
+ * token never travels in it.
+ */
+export function liveUrlFrom(eventsUrl: string): string {
+  const url = new URL(swapEventsTail(eventsUrl, 'live'))
+  url.search = ''
+  if (url.protocol === 'https:') url.protocol = 'wss:'
+  else if (url.protocol === 'http:') url.protocol = 'ws:'
+  return url.toString()
+}
+
 /** `.../events` → `.../rejected` (`apps/log-server/specs/server.md` § 5). */
 export function rejectedUrlFrom(eventsUrl: string): string {
   return swapEventsTail(eventsUrl, 'rejected')
 }
 
 /** The `${VAR}` names a header template references — never a value, named in a refused-credential reason (O5), the same convention `vinaya log selftest` uses. */
-function credentialVarNames(headers: Record<string, string> | undefined): string[] {
+export function credentialVarNames(headers: Record<string, string> | undefined): string[] {
   const names = new Set<string>()
   for (const value of Object.values(headers ?? {})) {
     for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) names.add(match[1] as string)
@@ -60,7 +75,7 @@ function credentialVarNames(headers: Record<string, string> | undefined): string
  * — rightly, since it has no business pulling in the sink's own write-path
  * dependencies for one pure predicate.
  */
-function credentialMissing(headers: Record<string, string> | undefined, env: NodeJS.ProcessEnv): boolean {
+export function credentialMissing(headers: Record<string, string> | undefined, env: NodeJS.ProcessEnv): boolean {
   if (!headers) return false
   for (const value of Object.values(headers)) {
     for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
