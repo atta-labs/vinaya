@@ -1,7 +1,7 @@
 {
   "checks": {
     "fixture-check": {
-      "run": "./tests/fixtures/checks/passing-check.ts",
+      "run": "./harness/kernel/gates/checks/fixtures/passing-check.ts",
       "scope": "diff",
       "include": ["**/*"]
     }

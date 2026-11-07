@@ -3,15 +3,15 @@
   "split": "development",
   "derivedFrom": [
     {
-      "file": "apps/cli/tests/eval/developer-capability-cases.json",
+      "file": "harness/processes/vinaya-strict/executing/developer/evals/developer-capability-cases.json",
       "sha256": "689a53dccd4246e937928ecab12bec3fb00777c0964a6d139d4777b109fb3832"
     },
     {
-      "file": "apps/cli/tests/eval/generic-task-statements.json",
+      "file": "harness/kernel/evals/suites/generic-task-statements.json",
       "sha256": "888116f24c6f626d4204e36bc985b7d8c300d7348e73ef4b60b6bebe37bdd82e"
     },
     {
-      "file": "apps/cli/tests/eval/whole-loop-revision-facts.json",
+      "file": "harness/processes/vinaya-strict/evals/suites/whole-loop-revision-facts.json",
       "sha256": "8a012faa597b21a22327ecb7d157cf65aeffb480de9bb16e8a49258be240663f"
     }
   ],

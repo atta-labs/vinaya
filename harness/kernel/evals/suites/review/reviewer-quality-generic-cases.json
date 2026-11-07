@@ -3,15 +3,15 @@
   "split": "development",
   "derivedFrom": [
     {
-      "file": "apps/cli/tests/eval/code-reviewer-cases.json",
+      "file": "harness/processes/vinaya-strict/executing/code-reviewer/evals/code-reviewer-cases.json",
       "sha256": "32a5d7bd56c8e6c00c870a08fe483e33d451c127d3c1beb2357b5ab23844db76"
     },
     {
-      "file": "apps/cli/tests/eval/security-reviewer-cases.json",
+      "file": "harness/processes/vinaya-strict/executing/security-reviewer/evals/security-reviewer-cases.json",
       "sha256": "312050e90602c7800478c1c976bc42c1cc9838938833a65c1e9532594cdab58e"
     },
     {
-      "file": "apps/cli/tests/eval/generic-task-statements.json",
+      "file": "harness/kernel/evals/suites/generic-task-statements.json",
       "sha256": "888116f24c6f626d4204e36bc985b7d8c300d7348e73ef4b60b6bebe37bdd82e"
     }
   ],

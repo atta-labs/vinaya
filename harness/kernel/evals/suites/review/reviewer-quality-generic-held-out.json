@@ -3,7 +3,7 @@
   "split": "held-out",
   "derivedFrom": [
     {
-      "file": "apps/cli/tests/eval/reviewer-quality-held-out.json",
+      "file": "harness/processes/vinaya-strict/executing/evals/reviewer-quality-held-out.json",
       "sha256": "92a8e368066a4a9ef1473caba017b2cd4faa2fe32d9ac7c2003f29290edf1fc8"
     }
   ],

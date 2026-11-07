@@ -912,7 +912,7 @@ describe('lintEnvDeclarations', () => {
 })
 
 describe('config-registered check runs through the runner', () => {
-  const CLI_ROOT = join(import.meta.dir, '../../../../../../../apps/cli')
+  const CLI_ROOT = join(import.meta.dir, '../../../../../apps/cli')
   const FIXTURE_CONFIG = join(import.meta.dir, 'fixtures', 'checks', 'vinaya.config.json')
 
   it('runs a check registered the way the fixture vinaya.config.json would produce it', async () => {
@@ -922,13 +922,13 @@ describe('config-registered check runs through the runner', () => {
     expect(entry).toBeDefined()
     expect(entry?.run.startsWith('./')).toBe(true)
 
-    // The config's `run` is repo-relative; resolve it against the CLI root
-    // the same way a real vinaya.config.json's entries are resolved relative
-    // to the repo they're registered in.
+    // The config's `run` is repo-relative; resolve it against the repository
+    // root the same way a real vinaya.config.json's entries are resolved
+    // relative to the repo they're registered in.
     const spec: CheckSpec = {
       name: 'fixture-check',
       ...(entry as NonNullable<typeof entry>),
-      run: join(CLI_ROOT, (entry as NonNullable<typeof entry>).run)
+      run: join(CLI_ROOT, '..', '..', (entry as NonNullable<typeof entry>).run)
     }
     const [outcome] = await runChecks([spec], {
       parallel: 1,

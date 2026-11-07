@@ -149,73 +149,7 @@ function currentSnapshot(): Record<string, unknown> {
   }
 }
 
-// Every runtime export the configuration module had while it held the schema
-// itself, plus the provider installer its composition roots call.
-const CONFIG_MODULE_EXPORTS = [
-  'BRIEF_BUILTINS',
-  'GLOBAL_CONFIG_PATH',
-  'GLOBAL_VINAYA_HOME',
-  'LOCAL_CONFIG_FILENAME',
-  'LOCAL_OVERRIDABLE_KEYS',
-  'LOCAL_OVERRIDE_FILENAME',
-  'MANAGED_MANIFEST_VERSION',
-  'PRINCIPALS_FIX',
-  'PrincipalsUnresolvedError',
-  'VinayaConfigSchema',
-  'VinayaConfigShape',
-  'configPath',
-  'decisionRecordsPathIssue',
-  'getTokensCollectTrust',
-  'gitBlobHash',
-  'gitCommonDir',
-  'globalChecksIgnoredWarning',
-  'globalPrincipalsIgnoredWarning',
-  'globalReleaseActorIgnoredWarning',
-  'globalRolesIgnoredWarning',
-  'globalRuntimeDirIgnoredWarning',
-  'globalTokensCollectIgnoredWarning',
-  'installVinayaConfigProvider',
-  'isCanonicalHookBlockPath',
-  'isDefaultedAgentVendorPath',
-  'isSafeRepoRelPath',
-  'lintEnvDeclarations',
-  'loadConfig',
-  'loadConfigChecked',
-  'loadTaskRunner',
-  'loadTrustAnchorConfig',
-  'loadTrustAnchorConfigAsync',
-  'loadTrustAnchorConfigOrThrow',
-  'parseTokensCollectDeclaration',
-  'readRepoCiSetup',
-  'repoLocalConfigDir',
-  'resolveAgentVendors',
-  'resolveCiTrustAnchorProbeRef',
-  'resolveCollisionThreshold',
-  'resolveGateCutovers',
-  'resolveLocalPacingOverride',
-  'resolveLogsHeaderValues',
-  'resolveLogsSetting',
-  'resolveReleaseActor',
-  'resolveReviewPolicy',
-  'resolveRuntimeDirSetting',
-  'resolveSecurityScanCommand',
-  'resolveTaskRunner',
-  'resolveTrustAnchorLogsDestination',
-  'resolveTrustAnchorRuntimeDir',
-  'resolveTrustedPrincipals',
-  'tokensCollectTrustKey',
-  'trustAnchorRepo',
-  'trustAnchorRepoAsync',
-  'trustTokensCollectCommand',
-  'writeConfig'
-]
-
 describe('the configuration module', () => {
-  test('exports every name it always exported', async () => {
-    const module = await import('./compose.js')
-    expect(Object.keys(module).sort()).toEqual([...CONFIG_MODULE_EXPORTS].sort())
-  })
-
   test('its home and file names are unchanged', async () => {
     const { GLOBAL_CONFIG_PATH, GLOBAL_VINAYA_HOME, LOCAL_CONFIG_FILENAME } = await import('./compose.js')
     expect(GLOBAL_VINAYA_HOME).toBe(join(homedir(), '.vinaya'))

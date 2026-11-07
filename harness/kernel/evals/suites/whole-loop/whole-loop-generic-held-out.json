@@ -3,11 +3,11 @@
   "split": "held-out",
   "derivedFrom": [
     {
-      "file": "apps/cli/tests/eval/developer-capability-held-out.json",
+      "file": "harness/processes/vinaya-strict/executing/developer/evals/developer-capability-held-out.json",
       "sha256": "c8b15e498ee3f9de41b367deed8235de199cd960733eeea1fd30bd17e80686c8"
     },
     {
-      "file": "apps/cli/tests/eval/whole-loop-revision-facts.json",
+      "file": "harness/processes/vinaya-strict/evals/suites/whole-loop-revision-facts.json",
       "sha256": "8a012faa597b21a22327ecb7d157cf65aeffb480de9bb16e8a49258be240663f"
     }
   ],

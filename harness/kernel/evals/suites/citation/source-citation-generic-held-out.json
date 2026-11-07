@@ -3,7 +3,7 @@
   "split": "held-out",
   "derivedFrom": [
     {
-      "file": "apps/cli/tests/eval/source-citation-held-out.json",
+      "file": "harness/processes/vinaya-strict/executing/evals/source-citation-held-out.json",
       "sha256": "5c056a748ca70c689592138e46d81c7336b722494dc0b66be8795ac95205363a"
     }
   ],

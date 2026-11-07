@@ -1671,7 +1671,7 @@ export function recutHeldOut(
   const developer = derivedFile(
     DERIVED_FILES.developer.heldOut,
     'held-out',
-    [join(import.meta.dir, developerFile.splits.heldOut.file)],
+    [join(import.meta.dir, '../../executing/developer/evals', developerFile.splits.heldOut.file)],
     [{ suite: GENERIC_SUITE_IDS.developer, cases: developerCases, layerPOnly: [] }],
     undeliverable
   )
@@ -1712,7 +1712,7 @@ export function recutHeldOut(
   const wholeLoop = derivedFile(
     DERIVED_FILES.wholeLoop.heldOut,
     'held-out',
-    [join(import.meta.dir, developerFile.splits.heldOut.file), REVISION_FACTS_PATH],
+    [join(import.meta.dir, '../../executing/developer/evals', developerFile.splits.heldOut.file), REVISION_FACTS_PATH],
     [
       {
         suite: GENERIC_SUITE_IDS.wholeLoop,

@@ -1795,7 +1795,7 @@
       "data": {
         "checks": {
           "fixture-check": {
-            "run": "./tests/fixtures/checks/passing-check.ts",
+            "run": "./harness/kernel/gates/checks/fixtures/passing-check.ts",
             "scope": "diff",
             "include": ["**/*"]
           }
@@ -1868,7 +1868,7 @@
             "value": {
               "checks": {
                 "fixture-check": {
-                  "run": "./tests/fixtures/checks/passing-check.ts",
+                  "run": "./harness/kernel/gates/checks/fixtures/passing-check.ts",
                   "scope": "diff",
                   "include": ["**/*"]
                 }
@@ -2547,7 +2547,7 @@
       "value": {
         "checks": {
           "typo-check": {
-            "run": "./tests/fixtures/checks/passing-check.ts",
+            "run": "./harness/kernel/gates/checks/fixtures/passing-check.ts",
             "scop": "diff"
           }
         }
@@ -3571,7 +3571,7 @@
       "value": {
         "checks": {
           "fixture-check": {
-            "run": "./tests/fixtures/checks/passing-check.ts",
+            "run": "./harness/kernel/gates/checks/fixtures/passing-check.ts",
             "scope": "diff",
             "include": ["**/*"]
           }
@@ -3581,7 +3581,7 @@
       "data": {
         "checks": {
           "fixture-check": {
-            "run": "./tests/fixtures/checks/passing-check.ts",
+            "run": "./harness/kernel/gates/checks/fixtures/passing-check.ts",
             "scope": "diff",
             "include": ["**/*"]
           }
@@ -3654,7 +3654,7 @@
             "value": {
               "checks": {
                 "fixture-check": {
-                  "run": "./tests/fixtures/checks/passing-check.ts",
+                  "run": "./harness/kernel/gates/checks/fixtures/passing-check.ts",
                   "scope": "diff",
                   "include": ["**/*"]
                 }

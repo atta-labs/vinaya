@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
+import { programCommandLine } from '../tools/programs.js'
 import { checkG7, reachesProducer } from './registry-checks'
 import { parseEnforcementRegistry } from '../tools/registry-parse'
 import { findCrossingFiles, globCandidateFiles } from '../../../kernel/gates/checks/github-crossing-files.js'
@@ -52,11 +53,10 @@ describe('registry-gates — task vinaya-adopter-portability-v1 2 (Issue #232)',
   it("the dormancy finding is visible through `vinaya check --all`'s own renderer (findings print under their check regardless of exit code)", () => {
     const root = initFixture('registry-gates-dormant-all')
     try {
-      const indexTs = join(import.meta.dir, '..', '..', '..', '..', 'apps', 'cli', 'src', 'index.ts')
       // The pull-request variables a report run exports describe another
       // repository's branch, never this fixture's.
       const { PR_BODY: _body, PR_NUMBER: _number, BRANCH: _branch, ...ambient } = process.env
-      const result = Bun.spawnSync(['bun', indexTs, 'check', '--all', '--diff-only'], {
+      const result = Bun.spawnSync(['bun', ...(programCommandLine(['check', '--all', '--diff-only']) as string[])], {
         cwd: root,
         env: ambient
       })

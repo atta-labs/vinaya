@@ -141,7 +141,9 @@ describe('real runtime directory guard', () => {
     const home = mkdtempSync(join(tmpdir(), 'guard-home-'))
     const work = mkdtempSync(join(tmpdir(), 'guard-probe-'))
     try {
-      const lib = import.meta.dir
+      // The kernel's generic preload and the process preload that imports it first.
+      const lib = join(import.meta.dir, '..', '..', '..', '..', '..', 'kernel', 'conformance', 'unit')
+      const integration = join(import.meta.dir, '..', '..')
       const root = join(home, '.vinaya', 'runtime', 'o-r')
       const task = join(root, 'tasks-execution', '4242')
       mkdirSync(task, { recursive: true })
@@ -150,39 +152,32 @@ describe('real runtime directory guard', () => {
         probe,
         `import { it } from 'bun:test'\nimport { rmSync, writeFileSync } from 'node:fs'\nit('ends the loop, then writes', () => {\n  rmSync(${JSON.stringify(join(task, 'driver.pid.json'))}, { force: true })\n  writeFileSync(${JSON.stringify(join(task, 'state'))}, 'x')\n})\n`
       )
-      // the same preload, with a core whose start set is removed and every import pointed back at the real files
+      // the same preloads, with a core whose start set is removed and every import pointed back at the real files
       const core = readFileSync(join(lib, 'real-runtime-guard-core.ts'), 'utf-8')
       const mutatedCore = core.replace('root === START_ROOT ? LIVE_AT_START : []', '[]')
       expect(mutatedCore).not.toBe(core)
       writeFileSync(join(work, 'real-runtime-guard-core.ts'), mutatedCore)
-      const factoryImport = "'../../../../harness/processes/vinaya-strict/integration/log/log-sink-factory.js'"
-      const unmutatedPreload = readFileSync(join(lib, 'test-env-preload.ts'), 'utf-8')
-      expect(unmutatedPreload).toContain(factoryImport)
-      const preload = unmutatedPreload
-        .replace(/from '\.\/test-temp-fixture'/, `from ${JSON.stringify(join(lib, 'test-temp-fixture.ts'))}`)
-        .replace(
-          factoryImport,
-          JSON.stringify(
-            join(
-              lib,
-              '..',
-              '..',
-              '..',
-              '..',
-              'harness',
-              'processes',
-              'vinaya-strict',
-              'integration',
-              'log',
-              'log-sink-factory.ts'
-            )
-          )
-        )
-        .replace(
-          /import\('\.\.\/\.\.\/src\/lib\/config\.js'\)/,
-          `import(${JSON.stringify(join(lib, '..', '..', 'src', 'lib', 'config.ts'))})`
-        )
+      const preload = readFileSync(join(lib, 'test-env-preload.ts'), 'utf-8').replace(
+        /from '\.\/test-temp-fixture'/,
+        `from ${JSON.stringify(join(lib, 'test-temp-fixture.ts'))}`
+      )
       writeFileSync(join(work, 'test-env-preload.ts'), preload)
+      const kernelImport = "import '../../../kernel/conformance/unit/test-env-preload.ts'"
+      const processPreload = readFileSync(join(integration, 'test-preload.ts'), 'utf-8')
+      expect(processPreload).toContain(kernelImport)
+      writeFileSync(
+        join(work, 'test-preload.ts'),
+        processPreload
+          .replace(kernelImport, "import './test-env-preload.ts'")
+          .replace(
+            "import('./config/compose.js')",
+            `import(${JSON.stringify(join(integration, 'config', 'compose.ts'))})`
+          )
+          .replace(
+            "import('./log/log-sink-factory.js')",
+            `import(${JSON.stringify(join(integration, 'log', 'log-sink-factory.ts'))})`
+          )
+      )
       const dead = Bun.spawnSync(['true']).pid
       const run = (pid: number, preloadPath: string) => {
         rmSync(join(task, 'state'), { force: true })
@@ -196,7 +191,7 @@ describe('real runtime directory guard', () => {
         })
         return { status: out.status, output: `${out.stdout}${out.stderr}` }
       }
-      const realPreload = join(lib, 'test-env-preload.ts')
+      const realPreload = join(integration, 'test-preload.ts')
       const ended = run(process.pid, realPreload)
       expect(ended.output).not.toContain('tests wrote into the real runtime directory')
       expect(ended.status).toBe(0)
@@ -205,7 +200,7 @@ describe('real runtime directory guard', () => {
       expect(never.output).toContain(
         `tests wrote into the real runtime directory: ${join('tasks-execution', '4242', 'state')}`
       )
-      const mutated = run(process.pid, join(work, 'test-env-preload.ts'))
+      const mutated = run(process.pid, join(work, 'test-preload.ts'))
       expect(mutated.status).not.toBe(0)
       expect(mutated.output).toContain(join('tasks-execution', '4242', 'state'))
     } finally {
@@ -222,11 +217,15 @@ describe('real runtime directory guard', () => {
       probe,
       "import { it } from 'bun:test'\nit('prints', () => console.log('RUNTIME=' + process.env.VINAYA_RUNTIME_DIR))\n"
     )
-    const out = spawnSyncBudgeted('bun', ['test', '--preload', './tests/lib/test-env-preload.ts', probe], {
-      cwd: join(import.meta.dir, '../../../../../../apps/cli'),
-      env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: inherited },
-      encoding: 'utf8'
-    })
+    const out = spawnSyncBudgeted(
+      'bun',
+      ['test', '--preload', '../../harness/processes/vinaya-strict/integration/test-preload.ts', probe],
+      {
+        cwd: join(import.meta.dir, '../../../../../../apps/cli'),
+        env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: inherited },
+        encoding: 'utf8'
+      }
+    )
     const line = `${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]
     expect(line).toBeDefined()
     expect(line).not.toBe(inherited)
@@ -262,11 +261,15 @@ describe('real runtime directory guard', () => {
       probe,
       "import { it } from 'bun:test'\nit('prints', () => console.log(Bun.spawnSync(['sh', '-c', 'echo CHILD=$VINAYA_RUNTIME_DIR']).stdout.toString()))\n"
     )
-    const out = spawnSyncBudgeted('bun', ['test', '--preload', './tests/lib/test-env-preload.ts', probe], {
-      cwd: join(import.meta.dir, '../../../../../../apps/cli'),
-      env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: inherited },
-      encoding: 'utf8'
-    })
+    const out = spawnSyncBudgeted(
+      'bun',
+      ['test', '--preload', '../../harness/processes/vinaya-strict/integration/test-preload.ts', probe],
+      {
+        cwd: join(import.meta.dir, '../../../../../../apps/cli'),
+        env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: inherited },
+        encoding: 'utf8'
+      }
+    )
     const line = `${out.stdout}${out.stderr}`.match(/CHILD=(\S+)/)?.[1]
     expect(line).toBeDefined()
     expect(line).not.toBe(inherited)
@@ -286,11 +289,15 @@ describe('real runtime directory guard', () => {
       [missing, 'vinaya-test-runtime-'],
       ['/dev/null/claude', '/inherited']
     ] as const) {
-      const out = spawnSyncBudgeted('bun', ['test', '--preload', './tests/lib/test-env-preload.ts', probe], {
-        cwd: join(import.meta.dir, '../../../../../../apps/cli'),
-        env: { ...stripVinayaEnv(), TMPDIR: tmp, VINAYA_RUNTIME_DIR: '/inherited' },
-        encoding: 'utf8'
-      })
+      const out = spawnSyncBudgeted(
+        'bun',
+        ['test', '--preload', '../../harness/processes/vinaya-strict/integration/test-preload.ts', probe],
+        {
+          cwd: join(import.meta.dir, '../../../../../../apps/cli'),
+          env: { ...stripVinayaEnv(), TMPDIR: tmp, VINAYA_RUNTIME_DIR: '/inherited' },
+          encoding: 'utf8'
+        }
+      )
       expect(`${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]).toContain(expected)
     }
   })

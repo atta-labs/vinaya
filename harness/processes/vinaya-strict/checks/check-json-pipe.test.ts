@@ -21,7 +21,7 @@ import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from '../../../
  */
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', 'apps', 'cli')
-const DIST_INDEX = join(CLI_ROOT, 'dist', 'index.js')
+const DIST_CHECK = join(CLI_ROOT, 'dist', 'programs', 'check.js')
 
 // Not a claim about any pipe buffer's size — just a threshold comfortably
 // above every plausible one, so the test isn't vacuous on a system with a
@@ -90,7 +90,7 @@ describe('vinaya check --json — pipe flush (Issue #127)', () => {
       // an explicit budget that throws with its own captured stdout/stderr
       // on expiry, rather than falling through to bun:test's bare timeout.
       const { stdout } = await spawnBudgetedAsync(
-        ['node', DIST_INDEX, 'check', 'myteam/bigcheck', '--json'],
+        ['node', DIST_CHECK, 'myteam/bigcheck', '--json'],
         { cwd: repoDir, env: stripVinayaEnv() },
         25_000,
         'vinaya check --json'

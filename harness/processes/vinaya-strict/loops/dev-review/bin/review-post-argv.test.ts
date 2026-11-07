@@ -927,9 +927,7 @@ process.exit(1)
       const r = spawnSync(
         'bun',
         [
-          INDEX,
-          'review',
-          'post',
+          ...(programCommandLine(['review', 'post']) as string[]),
           '--role',
           'code-reviewer',
           '--pr',

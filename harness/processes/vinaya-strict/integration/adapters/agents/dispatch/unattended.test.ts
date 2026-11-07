@@ -438,6 +438,15 @@ describe('vinaya dispatch --unattended — task 3: Claude stages and pre-checks 
   })
 })
 
+/** The outbox lines under `home`, or none when nothing was ever written there. */
+function safeOutboxLines(home: string): unknown[] {
+  try {
+    return outboxLines(home)
+  } catch {
+    return []
+  }
+}
+
 describe('vinaya dispatch — unsupported agents', () => {
   for (const flags of [[], ['--unattended']]) {
     it(`refuses Gemini before spawn ${flags.join(' ')}`, () => {
@@ -449,9 +458,9 @@ describe('vinaya dispatch — unsupported agents', () => {
       expect(existsSync(fixture.markerFile)).toBe(false)
       expect(result.stderr).toContain('claude')
       expect(result.stderr).toContain('codex')
-      expect((outboxLines(fixture.home) as Array<{ event?: string }>).some((line) => line.event === 'dispatched')).toBe(
-        false
-      )
+      // A program run records no command-line operation event, so a refusal may leave no outbox at all.
+      const lines = existsSync(join(fixture.home, '.vinaya')) ? safeOutboxLines(fixture.home) : []
+      expect((lines as Array<{ event?: string }>).some((line) => line.event === 'dispatched')).toBe(false)
     })
   }
 })
