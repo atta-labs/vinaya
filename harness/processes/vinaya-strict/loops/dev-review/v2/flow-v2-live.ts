@@ -917,6 +917,25 @@ function isExecutable(path: string): boolean {
 }
 
 /**
+ * Whether one Test Plan command runs a whole test suite rather than named test files: `turbo run test`, a bare
+ * `bun run test`, or `bun test` given only options. Every part of a `&&`/`;`-joined command is read, after a leading
+ * `cd`. The required CI shards run every suite on each pull request, so the ready push never runs one locally.
+ */
+export function isWholeSuiteCommand(command: string): boolean {
+  return command
+    .split(/&&|;/)
+    .map((part) => part.trim())
+    .some((part) => {
+      if (/^(?:bunx\s+)?turbo\s+run\s+test(?:\s|$)/.test(part)) return true
+      if (/^bun\s+run\s+test\s*$/.test(part)) return true
+      const bunTest = /^bun\s+test(?:\s+(.*))?$/.exec(part)
+      if (bunTest === null) return false
+      const args = (bunTest[1] ?? '').split(/\s+/).filter((arg) => arg !== '')
+      return args.every((arg) => arg.startsWith('-'))
+    })
+}
+
+/**
  * The approved explicit Test Plan commands, run by the driver outside the worker sandbox on the exact head being
  * published, one after another in their Test Plan order, through the report engine's own receipts: a command that
  * already holds a genuine green receipt at this head and tree is reused, never re-run; any other runs under the
@@ -968,6 +987,18 @@ export async function runExplicitCommandsLive(input: {
     for (const command of input.commands) {
       index += 1
       if (input.signal?.aborted) throw new ReadyGateCancelledError()
+      // A whole suite is the required CI shards' work; running it here repeats it and outlasts the command limit.
+      if (isWholeSuiteCommand(command)) {
+        results.push({
+          command,
+          outcome: 'passed',
+          output: 'not run locally: a whole test suite, which the required CI shards run on this pull request',
+          reusedFrom: 'the required CI shards'
+        })
+        log(`ready push: explicit command left to the required CI shards (whole suite): ${command}`)
+        commandDone(command, 'reused', 0)
+        continue
+      }
       const reused = await lookupGreenRun(command, input.worktreePath, cache)
       if (reused) {
         results.push({
