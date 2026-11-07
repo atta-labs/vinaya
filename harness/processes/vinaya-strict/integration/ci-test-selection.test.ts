@@ -223,7 +223,7 @@ describe('eligibility follows the workspace members discovery finds', () => {
       '.changeset/quiet-fox.md',
       'apps/cli/src/lib/widget.ts',
       'apps/cli/tests/widget.test.ts',
-      'packages/aeg-core/src/brief.ts',
+      'packages/sources/src/brief.ts',
       'packages/sources/src/view.tsx'
     ]
     const refused = [
