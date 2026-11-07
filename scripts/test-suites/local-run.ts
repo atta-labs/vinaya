@@ -322,7 +322,7 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
   // record's own paths did not change between the two.
   const reached = reachableRecord(repoRoot, mergeBase)
   const planFrom = (base: string) => {
-    const input = repositorySelectionInput(repoRoot, { base, head, record: reached.record })
+    const input = repositorySelectionInput(repoRoot, { base, head, record: reached.record, depth: 'one' })
     return { plan: selectTests(input), view: input.inventory.head }
   }
   const { plan, view } = planFrom(choice.base)
