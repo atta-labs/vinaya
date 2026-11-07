@@ -447,8 +447,12 @@ export function fetchSourceRevision(issueNumber: number): string {
   return extractSourceRevision(fetchFrozenBrief(issueNumber)) ?? NO_SOURCE_REVISION
 }
 
-export function fetchIssueTitle(issueNumber: number): string {
-  const out = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'title'])
+/** A read of the task Issue's title; `once` asks for a single attempt with no retry backoff. */
+export type IssueTitleRead = (issueNumber: number, options?: { once?: boolean }) => string
+
+/** `once` makes a single attempt with no retry backoff — for a best-effort read whose failure only means no title is recorded. */
+export function fetchIssueTitle(issueNumber: number, options: { once?: boolean } = {}): string {
+  const out = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'title'], options.once ? { attempts: 1 } : {})
   return (JSON.parse(out) as { title: string }).title
 }
 
@@ -662,7 +666,7 @@ const ISSUE_TITLE_SHAPE = /^\[([^\]]+)\]\s+(\d+)\s+[—-]/
  */
 export function developerBranchFor(
   issueNumber: number,
-  fetchTitle: (n: number) => string = fetchIssueTitle,
+  fetchTitle: IssueTitleRead = fetchIssueTitle,
   fetchLabels: (n: number) => string[] = fetchIssueLabels
 ): string {
   return developerBranchAndTitleFor(issueNumber, fetchTitle, fetchLabels).branch
@@ -671,14 +675,15 @@ export function developerBranchFor(
 /**
  * The task Issue's title, or `undefined` when the read fails or gives an empty
  * title — for a loop start whose branch needs no title, so a title the Log
- * only records can never refuse the start.
+ * only records can never refuse the start. One attempt, no retry backoff: a
+ * read that fails costs one call and records no title.
  */
 export function issueTitleOrNone(
   issueNumber: number,
-  fetchTitle: (n: number) => string = fetchIssueTitle
+  fetchTitle: IssueTitleRead = fetchIssueTitle
 ): string | undefined {
   try {
-    const title = fetchTitle(issueNumber)
+    const title = fetchTitle(issueNumber, { once: true })
     return typeof title === 'string' && title.length > 0 ? title : undefined
   } catch {
     return undefined
@@ -694,7 +699,7 @@ export function issueTitleOrNone(
  */
 export function developerBranchAndTitleFor(
   issueNumber: number,
-  fetchTitle: (n: number) => string = fetchIssueTitle,
+  fetchTitle: IssueTitleRead = fetchIssueTitle,
   fetchLabels: (n: number) => string[] = fetchIssueLabels
 ): { branch: string; title?: string } {
   const labels = fetchLabels(issueNumber)
