@@ -318,7 +318,7 @@ jobs:
       - name: Check the test inventory and run the repository suite
         run: |
           bun scripts/test-suites/inventory-check.ts
-          bun test ./scripts/test-suites/bun-runtime.test.ts ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts ./scripts/test-suites/recorded-selection.test.ts ./scripts/test-suites/read-records.test.ts
+          bun test ./scripts/test-suites/bun-runtime.test.ts ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts ./scripts/test-suites/recorded-selection.test.ts ./scripts/test-suites/read-records.test.ts ./scripts/ci/record-reads.test.ts
 
       # The package-compatibility suite (`scripts/package-compat/`): each
       # published package is packed — the three aeg packages through the
@@ -750,17 +750,27 @@ jobs:
   # it with `gh run download`, which needs `actions: read`); a test file that
   # fails while recorded gets no record and keeps its static selection.
   #
-  # It sits outside `aggregate`: nothing needs it, so a failure here never
-  # blocks a merge, and `continue-on-error` keeps the run's own conclusion
-  # about the tests. Its wall time is in the step summary.
+  # The work is split into shards: each records one round-robin slice of the
+  # sorted test list (`--shard <i>/<n>`) and stores a partial artifact, and
+  # `record-reads-merge` combines every slice into the one `read-record.json`
+  # an unsharded run writes, refusing a missing or overlapping slice, so the
+  # artifact's name and contents are unchanged.
+  #
+  # Both sit outside `aggregate`: nothing else needs them, so a failure here
+  # never blocks a merge, and `continue-on-error` keeps the run's own
+  # conclusion about the tests. Each shard's wall time is in the step summary.
   record-reads:
-    name: Record test reads (Linux)
+    name: Record test reads (Linux) — shard ${{ matrix.shard }}
     if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     continue-on-error: true
-    timeout-minutes: 300
+    timeout-minutes: 60
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -785,11 +795,63 @@ jobs:
       # The proof that the tracer attributes a child process's reads to the
       # test file: a test that starts the CLI as a subprocess must record the
       # CLI's entrypoint. A record that misses child-process reads would drop
-      # real breaks silently, so nothing is recorded when this fails.
+      # real breaks silently, so no shard records anything when this fails on
+      # its runner, and the merge then refuses the incomplete set.
       - name: Prove the tracer sees a child process's reads
         run: bun scripts/ci/record-reads.ts --out "$RUNNER_TEMP/read-record-proof" --only apps/cli/tests/package-root.test.ts --expect apps/cli/tests/package-root.test.ts=apps/cli/src/index.ts
-      - name: Record every test file's reads
-        run: bun scripts/ci/record-reads.ts --out "$RUNNER_TEMP/read-record" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Record this shard's test reads
+        run: bun scripts/ci/record-reads.ts --out "$RUNNER_TEMP/read-record" --shard "${{ matrix.shard }}/8" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Store this shard's partial record
+        uses: actions/upload-artifact@v4
+        with:
+          name: read-record-part-${{ github.sha }}-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/read-record/read-record.json
+            ${{ runner.temp }}/read-record/shard.json
+          retention-days: 1
+          if-no-files-found: error
+      # The token reaches only this failure-only step, never the tests the recorder runs.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
+
+  # Combines the shards' partial records into the commit's one record, stored
+  # under the name every reader fetches. It runs only when every shard stored
+  # its slice; the merge refuses a missing, duplicated or overlapping slice and
+  # a set that does not cover every test file the commit schedules.
+  record-reads-merge:
+    name: Record test reads (Linux)
+    needs: record-reads
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Fetch every shard's partial record
+        uses: actions/download-artifact@v4
+        with:
+          pattern: read-record-part-${{ github.sha }}-*
+          path: ${{ runner.temp }}/read-record-parts
+      - name: Merge the shards into one record
+        run: bun scripts/ci/record-reads.ts --merge "$RUNNER_TEMP/read-record-parts" --out "$RUNNER_TEMP/read-record" --summary "$GITHUB_STEP_SUMMARY"
       - name: Store the record for this commit
         uses: actions/upload-artifact@v4
         with:
@@ -797,7 +859,7 @@ jobs:
           path: ${{ runner.temp }}/read-record/read-record.json
           retention-days: 60
           if-no-files-found: error
-      # The token reaches only this failure-only step, never the tests the recorder runs.
+      # The token reaches only this failure-only step, never the merge.
       - name: Report this job's GitHub token budget
         if: failure()
         env:

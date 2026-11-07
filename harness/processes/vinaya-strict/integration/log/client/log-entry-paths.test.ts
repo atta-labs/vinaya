@@ -115,7 +115,9 @@ const workflowWithoutProducers = [
   'workflow:ci.yml:record-reads:Install dependencies',
   'workflow:ci.yml:record-reads:Install the tracer',
   "workflow:ci.yml:record-reads:Prove the tracer sees a child process's reads",
-  "workflow:ci.yml:record-reads:Record every test file's reads",
+  "workflow:ci.yml:record-reads:Record this shard's test reads",
+  'workflow:ci.yml:record-reads-merge:Install dependencies',
+  'workflow:ci.yml:record-reads-merge:Merge the shards into one record',
   'workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Install dependencies',
   "workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Install the checks' own tool",
   'workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Run the suite under both sandboxes',
@@ -146,6 +148,7 @@ const workflowWithoutProducers = [
   "workflow:ci.yml:test-cli-config-anchor:Report this job's GitHub token budget",
   "workflow:ci.yml:sandbox-conformance:Report this job's GitHub token budget",
   "workflow:ci.yml:record-reads:Report this job's GitHub token budget",
+  "workflow:ci.yml:record-reads-merge:Report this job's GitHub token budget",
   "workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Report this job's GitHub token budget",
   "workflow:ci.yml:aggregate:Report this job's GitHub token budget",
   "workflow:ci.yml:build:Print the limits of this job's GitHub reads",
@@ -391,7 +394,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(112)
+    expect(noProducer).toHaveLength(115)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })
