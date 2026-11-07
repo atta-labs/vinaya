@@ -115,7 +115,9 @@ const workflowWithoutProducers = [
   'workflow:ci.yml:record-reads:Install dependencies',
   'workflow:ci.yml:record-reads:Install the tracer',
   "workflow:ci.yml:record-reads:Prove the tracer sees a child process's reads",
-  "workflow:ci.yml:record-reads:Record every test file's reads",
+  "workflow:ci.yml:record-reads:Record this shard's test reads",
+  'workflow:ci.yml:record-reads-merge:Install dependencies',
+  'workflow:ci.yml:record-reads-merge:Merge the shards into one record',
   'workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Install dependencies',
   "workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Install the checks' own tool",
   'workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Run the suite under both sandboxes',
@@ -391,7 +393,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(112)
+    expect(noProducer).toHaveLength(114)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })

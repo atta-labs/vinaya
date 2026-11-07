@@ -371,17 +371,24 @@ describe('the workflow the plan drives', () => {
         'aggregate',
         'build',
         'record-reads',
+        'record-reads-merge',
         'sandbox-conformance',
         'test-cli',
         'test-cli-config-anchor',
         'test-shared-packages'
       ].sort()
     )
-    // The read recorder runs on a push only and nothing, the required check included, waits for it.
-    expect(workflow.jobs['record-reads']?.if).toBe(
-      "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
-    )
-    for (const job of Object.values(workflow.jobs)) expect([job.needs ?? []].flat()).not.toContain('record-reads')
+    // The read recorder's shards and their merge run on a push only, and nothing but the merge, the required check
+    // included, waits for them.
+    for (const recorder of ['record-reads', 'record-reads-merge'])
+      expect(workflow.jobs[recorder]?.if).toBe(
+        "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+      )
+    expect(workflow.jobs['record-reads-merge']?.needs).toBe('record-reads')
+    for (const [id, job] of Object.entries(workflow.jobs)) {
+      if (id !== 'record-reads-merge') expect([job.needs ?? []].flat()).not.toContain('record-reads')
+      expect([job.needs ?? []].flat()).not.toContain('record-reads-merge')
+    }
     expect(workflow.jobs.build?.name).toBe('Build, lint & typecheck')
     expect(workflow.jobs.build?.needs).toBeUndefined()
     for (const job of ['test-cli', 'test-shared-packages', 'test-cli-config-anchor', 'sandbox-conformance'])
