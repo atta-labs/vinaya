@@ -665,11 +665,46 @@ export function developerBranchFor(
   fetchTitle: (n: number) => string = fetchIssueTitle,
   fetchLabels: (n: number) => string[] = fetchIssueLabels
 ): string {
+  return developerBranchAndTitleFor(issueNumber, fetchTitle, fetchLabels).branch
+}
+
+/**
+ * The task Issue's title, or `undefined` when the read fails or gives an empty
+ * title — for a loop start whose branch needs no title, so a title the Log
+ * only records can never refuse the start.
+ */
+export function issueTitleOrNone(
+  issueNumber: number,
+  fetchTitle: (n: number) => string = fetchIssueTitle
+): string | undefined {
+  try {
+    const title = fetchTitle(issueNumber)
+    return typeof title === 'string' && title.length > 0 ? title : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * `developerBranchFor`, also returning the task Issue's title — the one title
+ * read a driver makes at loop start, so the loop records it in `loop_started`
+ * without a second forge read. A tranche task's title is the one the branch
+ * derivation reads; a backlog task's branch needs none, so its title is read
+ * once here, and a read that fails leaves `title` absent rather than refusing.
+ */
+export function developerBranchAndTitleFor(
+  issueNumber: number,
+  fetchTitle: (n: number) => string = fetchIssueTitle,
+  fetchLabels: (n: number) => string[] = fetchIssueLabels
+): { branch: string; title?: string } {
   const labels = fetchLabels(issueNumber)
-  if (!hasLabel('tranche', labels)) return issueBranchName(issueNumber)
+  if (!hasLabel('tranche', labels)) {
+    const title = issueTitleOrNone(issueNumber, fetchTitle)
+    return { branch: issueBranchName(issueNumber), ...(title === undefined ? {} : { title }) }
+  }
   const title = fetchTitle(issueNumber)
   const m = ISSUE_TITLE_SHAPE.exec(title)
-  if (m) return `task/${m[1]}/${m[2]}`
+  if (m) return { branch: `task/${m[1]}/${m[2]}`, title }
   throw new Error(
     `developerBranchFor: Issue #${issueNumber}'s title \`${title}\` does not match the \`[<tranche>] <n> — …\` shape, but it carries a vinaya/tranche:* label — cannot derive the developer's branch.`
   )

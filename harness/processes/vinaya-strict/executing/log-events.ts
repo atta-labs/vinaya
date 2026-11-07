@@ -116,7 +116,7 @@ function readLiveOutcome(steps: RecordedSteps): LiveOutcome | null {
 
 /** The loop state fields a resumed leg's restart events name, as the deciding steps record them. */
 interface RecordedLoopState {
-  config: Pick<LoopConfig, 'task' | 'maxRounds' | 'reviewers' | 'models'>
+  config: Pick<LoopConfig, 'task' | 'title' | 'maxRounds' | 'reviewers' | 'models'>
   pending: { round: number; stats: { baseHead: string } } | null
 }
 
@@ -204,6 +204,8 @@ export function createVinayaLogProducers(
       loop({
         event: 'loop_started',
         task: state.config.task,
+        // The title the recorded state kept from the Issue read at loop start, so a restarted run still names it.
+        ...(typeof state.config.title === 'string' ? { title: state.config.title } : {}),
         policy: { max_rounds: state.config.maxRounds, reviewers: state.config.reviewers, models: state.config.models }
       }),
       ...(baseHead === null

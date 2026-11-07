@@ -74,6 +74,8 @@ function openLoop(rec: Recorder): LoopEmit {
     )
   emit('loop_started', {
     task: rec.issue,
+    // The task Issue's title, as a driver reads it at loop start — it names the run from `loop_started` alone.
+    title: `[fixtures] ${rec.issue} — A recorded execution`,
     policy: {
       max_rounds: 5,
       reviewers: ['code-reviewer'],

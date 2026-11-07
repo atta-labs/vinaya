@@ -367,6 +367,8 @@ export type LoopConfig = {
   /** Set once by the driver at loop start (`startLoop`, spec §16) — never generated here; this module has no random source. */
   loopId: string
   task: number
+  /** The task Issue's title, taken by the driver from the Issue read it already makes at loop start — absent when that read gave none. Recorded in `loop_started`, and kept in the recorded loop state so a restarted loop names it again. */
+  title?: string
   reviewers: string[]
   models: Record<string, string>
   /** The round cap — resolved by the driver from `ReviewPolicy.maxRounds` (repository config), never read here: this module has no config read of its own. */
