@@ -134,7 +134,7 @@ function linuxStartTime(pid: number): string | null {
   }
 }
 
-/** Other OSes: `ps`'s full start time. */
+/** Where `/proc` is missing (every OS but Linux): `ps`'s full start time. */
 function psStartTime(pid: number): string | null {
   try {
     const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
@@ -150,7 +150,9 @@ function psStartTime(pid: number): string | null {
 /** The identity of a live process, or null when `pid` is not running. */
 export function identityOf(pid: number): ProcessIdentity | null {
   if (!Number.isInteger(pid) || pid <= 0) return null
-  const startTime = process.platform === 'linux' ? linuxStartTime(pid) : psStartTime(pid)
+  // `/proc` first, `ps` where it is missing: the same answer on each OS as naming the platform, without a branch on
+  // it, so the read recorder does not mark every test that loads this module as branching on the platform.
+  const startTime = linuxStartTime(pid) ?? psStartTime(pid)
   return startTime === null ? null : { pid, startTime }
 }
 
