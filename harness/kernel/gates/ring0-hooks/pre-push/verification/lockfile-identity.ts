@@ -112,3 +112,39 @@ export function bunLockIdentity(parsed: unknown): unknown {
   }
   return out
 }
+
+/** The installed package a lockfile `packages` key names: its last package name, scoped or not (`a/@s/b` is `@s/b`). */
+export function lockKeyPackageName(key: string): string {
+  const segments = key.split('/')
+  let name = ''
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i] as string
+    if (segment.startsWith('@') && i + 1 < segments.length) {
+      name = `${segment}/${segments[i + 1]}`
+      i++
+    } else name = segment
+  }
+  return name
+}
+
+/**
+ * The names of the installed packages whose entry differs between two lockfile identities (`bunLockIdentity`'s
+ * result), added and removed ones included; `null` when either side is not an identity with a `packages` object, or
+ * when anything beyond `packages` and `workspaces` (an override or catalog) differs, so the caller treats every package
+ * as changed. A workspace's declared ranges alone install nothing new: only `packages` says what is installed.
+ */
+export function changedLockPackages(
+  before: unknown,
+  after: unknown,
+  same: (a: unknown, b: unknown) => boolean
+): string[] | null {
+  if (!isRecord(before) || !isRecord(after) || !isRecord(before.packages) || !isRecord(after.packages)) return null
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)]))
+    if (key !== 'packages' && key !== 'workspaces' && !same(before[key], after[key])) return null
+  const names = new Set<string>()
+  const a = before.packages
+  const b = after.packages
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)]))
+    if (!(key in a) || !(key in b) || !same(a[key], b[key])) names.add(lockKeyPackageName(key))
+  return [...names].sort()
+}

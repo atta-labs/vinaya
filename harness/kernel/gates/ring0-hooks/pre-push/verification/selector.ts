@@ -140,7 +140,16 @@ import {
   validateInventory
 } from './inventory.js'
 import { globToRegex, inputCovers, underDeclaredRoot } from './path-pattern.js'
-import { type PathChange, type RecordIndex, indexRecordedTest, recordReach } from './recorded-reads.js'
+import { changedLockPackages } from './lockfile-identity.js'
+import {
+  anyDependencyRead,
+  DEPENDENCY_PACKAGE_SEPARATOR,
+  dependencyRead,
+  type PathChange,
+  type RecordIndex,
+  indexRecordedTest,
+  recordReach
+} from './recorded-reads.js'
 import { type ScannerDeclaration, scannedRootsOf, scannerTriggered } from './scanner-inputs.js'
 import { type SpawnProgram, spawnEdgeOf, startedScriptsOf } from './spawn-inputs.js'
 import type {
@@ -2328,11 +2337,45 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
     scope.tests.push(test)
   }
   const records = input.records ?? null
+  // The inputs whose reads the record keeps per installed package (`bun.lock#zod`), and the parser of their format.
+  const dependencyInputs = new Set<string>()
+  for (const entry of Object.values(records?.record.tests ?? {}))
+    for (const read of entry.reads) {
+      const at = read.indexOf(DEPENDENCY_PACKAGE_SEPARATOR)
+      if (at > 0) dependencyInputs.add(read.slice(0, at))
+    }
+  const lockParser = (policy.parsers ?? {})['bun-lock']
+  /**
+   * A change to a per-package input also reaches the reads of each package whose lockfile entry changed, or of every
+   * package when the two sides cannot be compared package by package.
+   */
+  function withDependencyPackages<T extends PathChange[] | null>(list: T, from: string, to: string): T {
+    if (list === null || dependencyInputs.size === 0) return list
+    return list.flatMap((change): PathChange[] => {
+      if (!dependencyInputs.has(change.path)) return [change]
+      let names: string[] | null = null
+      if (change.status === 'modified' && lockParser)
+        try {
+          const before = repo.read(from, change.path)
+          const after = repo.read(to, change.path)
+          if (before !== null && after !== null)
+            names = changedLockPackages(
+              lockParser(before),
+              lockParser(after),
+              (a, b) => stableJson(a) === stableJson(b)
+            )
+        } catch {
+          names = null
+        }
+      const reads = names === null ? [anyDependencyRead(change.path)] : names.map((n) => dependencyRead(change.path, n))
+      return [change, ...reads.map((path) => ({ path, status: 'modified' as const }))]
+    }) as T
+  }
   if (!records) {
     for (const test of allTests)
       leaveToStatic(test, 'no-reachable-record', 'no record of the comparison commit was reachable')
   } else {
-    const drift = changesBetween(repo, records.record.commit, base)
+    const drift = withDependencyPackages(changesBetween(repo, records.record.commit, base), records.record.commit, base)
     for (const test of allTests) {
       const entry = records.record.tests[test]
       if (drift === null) {
@@ -2373,13 +2416,17 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
       }
     }
   }
-  const pathChanges: PathChange[] = changes.flatMap((change): PathChange[] =>
-    change.status === 'renamed'
-      ? [
-          { path: change.path, status: 'added' },
-          { path: change.from as string, status: 'deleted' }
-        ]
-      : [{ path: change.path, status: change.status }]
+  const pathChanges: PathChange[] = withDependencyPackages(
+    changes.flatMap((change): PathChange[] =>
+      change.status === 'renamed'
+        ? [
+            { path: change.path, status: 'added' },
+            { path: change.from as string, status: 'deleted' }
+          ]
+        : [{ path: change.path, status: change.status }]
+    ),
+    base,
+    head
   )
   const closureCache = new Map<string, ReadonlySet<string>>()
   /** An exported-declaration-only change to a file the test imports, whose changed names its import closure does not reach, on every side that holds the test. */
@@ -2411,7 +2458,7 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
       for (const [test, index] of decided) {
         const reach = recordReach(index, change)
         if (!reach) continue
-        recordRead.add(change.path)
+        recordRead.add(change.path.split(DEPENDENCY_PACKAGE_SEPARATOR)[0] as string)
         if (test !== change.path && reach.exact && change.status === 'modified' && narrowable(test, change.path))
           continue
         addReason(test, { kind: 'recorded-read', detail: reach.detail, via: reach.via, revision: 'head' })
