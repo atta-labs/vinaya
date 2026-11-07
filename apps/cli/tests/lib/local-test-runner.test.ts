@@ -122,16 +122,16 @@ describe('the plan a push freezes', () => {
     expect(local.identities).toEqual(['apps/cli/tests/a.test.ts@default', 'apps/cli/tests/failed.test.ts@default'])
   })
 
-  it('a suite its runner cannot narrow runs whole, with its reason, before anything starts', () => {
+  it('a selected Vitest suite without a whole-suite owner runs only its planned files', () => {
     const local = localNativePlan({
       plan: plan({ required: [{ ...required('packages/aeg-core/src/x.test.ts'), suite: 'aeg-core' }] }),
       view: VIEW,
       obligations: []
     })
     expect(local.groups.map((g) => [g.id, g.scope, g.tests])).toEqual([
-      ['aeg-core@default', 'suite', ['packages/aeg-core/src/x.test.ts', 'packages/aeg-core/src/y.test.ts']]
+      ['aeg-core@default', 'files', ['packages/aeg-core/src/x.test.ts']]
     ])
-    expect(local.expanded).toEqual([{ suite: 'aeg-core', reason: expect.stringContaining('runs whole') }])
+    expect(local.expanded).toEqual([])
   })
 
   it('a change under a suite whose inputs the selection does not model runs that suite whole', () => {
@@ -931,7 +931,7 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     git('update-ref', 'refs/remotes/origin/main', 'HEAD')
     git('checkout', '-q', '-b', 'task/x/1')
     // The clone shares this checkout's installed dependencies.
-    for (const pkg of ['.', 'apps/cli', 'packages/sources', 'packages/aeg-core', 'harness/processes/vinaya-strict']) {
+    for (const pkg of ['.', 'apps/cli', 'packages/sources', 'harness/processes/vinaya-strict']) {
       const from = join(REPO_ROOT, pkg, 'node_modules')
       if (existsSync(from) && !existsSync(join(dir, pkg, 'node_modules')))
         symlinkSync(from, join(dir, pkg, 'node_modules'))
