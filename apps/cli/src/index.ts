@@ -4,59 +4,9 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { archiveCommand, archiveTrancheCommand, archiveTranchesCommand } from './commands/archive.js'
-import { briefRenderCommand } from './commands/brief.js'
-import { checkCommand } from './commands/check.js'
-import { commitMsgCommand } from './commands/commit-msg.js'
-import { demoBreakCommand } from './commands/demo.js'
-import { devReviewLoopCommand } from './commands/dev-review-loop.js'
-import { dispatchCommand, installVinayaLogSinkFactory, installVinayaCheckRegistry } from './commands/dispatch.js'
-import { doctorCommand } from './commands/doctor.js'
-import { logEmitCommand } from './commands/log-emit.js'
-import { logSelftestCommand } from './commands/log-selftest.js'
-import { logSendCommand } from './commands/log-send.js'
-import { doctrineCommand } from './commands/doctrine.js'
-import { ejectCommand } from './commands/eject.js'
-import { initCommand, initProductCommand } from './commands/init.js'
-import { issueCreateCommand, issueEditCommand, issueSurfaceCommand } from './commands/issue.js'
-import { issueObjectivesEditCommand } from './commands/issue-objectives.js'
-import {
-  milestoneAdoptCommand,
-  milestoneCloseCommand,
-  milestoneCreateCommand,
-  milestoneEditCommand,
-  milestoneStatusCommand
-} from './commands/milestone.js'
-import { newCheckCommand } from './commands/new-check.js'
-import { newNoopCheckCommand } from './commands/new-noop-check.js'
-import { newAdrCommand } from './commands/new-adr.js'
-import { newRoleCommand } from './commands/new-role.js'
-import { prCreateCommand, prEditCommand } from './commands/pr.js'
-import { prRuleCommand } from './commands/pr-rule.js'
-import { prSnapshotCommand } from './commands/pr-snapshot.js'
-import { prReportCommand } from './commands/pr-report.js'
-import { prVerifyEvidenceCommand } from './commands/pr-verify-evidence.js'
-import { quickstartCommand } from './commands/quickstart.js'
-import { releaseCommand } from './commands/release.js'
-import { reviewPostCommand } from './commands/review-post.js'
-import { reviewStatusCommand } from './commands/review-status.js'
-import { runStudio } from './commands/studio.js'
-import { syncCommand } from './commands/sync.js'
-import { taskBriefCommand, taskDispatchCommand } from './commands/task.js'
-import { taskRunCommand } from './commands/task-run.js'
-import { taskSwitchCommand } from './commands/task-switch.js'
-import { taskStatusCommand } from './commands/task-status.js'
-import { taskSweepCommand } from './commands/task-sweep.js'
-import {
-  taskToolsDevProofCommand,
-  taskToolsResultProofCommand,
-  taskToolsReviewResultProofCommand,
-  taskToolsServeCommand
-} from './commands/task-tools.js'
-import { tokensCommand } from './commands/tokens.js'
-import { upgradeCommand } from './commands/upgrade.js'
-import { waiverCommand } from './commands/waiver.js'
 import { printJson } from '../../../harness/kernel/effects/envelope.js'
+import { installVinayaLogSinkFactory } from '../../../harness/processes/vinaya-strict/integration/log/log-sink-factory.js'
+import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry.js'
 import { ensureGhOnPath } from '../../../harness/kernel/adapters/code-host/github/gh-path.js'
 import { recordCliOperationAtExit } from '../../../harness/kernel/log/client/cli-operation-log.js'
 import { logSync } from '../../../harness/kernel/log/log-sink.js'
@@ -65,6 +15,8 @@ import { packageRoot } from './lib/package-root.js'
 import { resolveAuthorRepoSourceEntry } from './lib/self-host.js'
 import { installVinayaConfigProvider } from './lib/config.js'
 
+// Each command's module loads only when that command runs, so a run, and a test that runs one command, reads
+// no other command's code.
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 /**
@@ -157,64 +109,64 @@ try {
       break
     }
     case 'studio': {
-      const code = await runStudio(process.cwd(), args)
+      const code = await (await import('./commands/studio.js')).runStudio(process.cwd(), args)
       process.exit(code)
       break
     }
     case 'init': {
       const [subcommand, ...rest] = args
       if (subcommand === 'product') {
-        await initProductCommand(rest)
+        await (await import('./commands/init.js')).initProductCommand(rest)
       } else {
-        await initCommand(args)
+        await (await import('./commands/init.js')).initCommand(args)
       }
       break
     }
     case 'eject': {
-      await ejectCommand(args)
+      await (await import('./commands/eject.js')).ejectCommand(args)
       break
     }
     case 'doctor': {
-      await doctorCommand(args)
+      await (await import('./commands/doctor.js')).doctorCommand(args)
       break
     }
     case 'doctrine': {
-      await doctrineCommand(args)
+      await (await import('./commands/doctrine.js')).doctrineCommand(args)
       break
     }
     case 'upgrade': {
-      await upgradeCommand(args)
+      await (await import('./commands/upgrade.js')).upgradeCommand(args)
       break
     }
     case 'check': {
-      await checkCommand(args)
+      await (await import('./commands/check.js')).checkCommand(args)
       break
     }
     case 'commit-msg': {
-      commitMsgCommand(args)
+      ;(await import('./commands/commit-msg.js')).commitMsgCommand(args)
       break
     }
     case 'archive': {
       const [subcommand, ...rest] = args
       if (subcommand === 'tranche') {
-        await archiveTrancheCommand(rest)
+        await (await import('./commands/archive.js')).archiveTrancheCommand(rest)
       } else if (subcommand === 'tranches') {
-        await archiveTranchesCommand(rest)
+        await (await import('./commands/archive.js')).archiveTranchesCommand(rest)
       } else {
-        await archiveCommand(args)
+        await (await import('./commands/archive.js')).archiveCommand(args)
       }
       break
     }
     case 'new': {
       const [subcommand, ...rest] = args
       if (subcommand === 'check') {
-        newCheckCommand(rest)
+        ;(await import('./commands/new-check.js')).newCheckCommand(rest)
       } else if (subcommand === 'noop-check') {
-        newNoopCheckCommand(rest)
+        ;(await import('./commands/new-noop-check.js')).newNoopCheckCommand(rest)
       } else if (subcommand === 'role') {
-        newRoleCommand(rest)
+        ;(await import('./commands/new-role.js')).newRoleCommand(rest)
       } else if (subcommand === 'adr') {
-        newAdrCommand(rest)
+        ;(await import('./commands/new-adr.js')).newAdrCommand(rest)
       } else {
         console.error(
           `Unknown 'new' subcommand: ${subcommand ?? '(none)'} (expected 'check', 'noop-check', 'role', or 'adr')`
@@ -226,7 +178,7 @@ try {
     case 'brief': {
       const [subcommand, ...rest] = args
       if (subcommand === 'render') {
-        await briefRenderCommand(rest)
+        await (await import('./commands/brief.js')).briefRenderCommand(rest)
       } else {
         console.error(`Unknown 'brief' subcommand: ${subcommand ?? '(none)'} (expected 'render')`)
         process.exit(2)
@@ -236,17 +188,17 @@ try {
     case 'pr': {
       const [subcommand, ...rest] = args
       if (subcommand === 'create') {
-        await prCreateCommand(rest)
+        await (await import('./commands/pr.js')).prCreateCommand(rest)
       } else if (subcommand === 'edit') {
-        await prEditCommand(rest)
+        await (await import('./commands/pr.js')).prEditCommand(rest)
       } else if (subcommand === 'report') {
-        await prReportCommand(rest)
+        await (await import('./commands/pr-report.js')).prReportCommand(rest)
       } else if (subcommand === 'verify-evidence') {
-        await prVerifyEvidenceCommand(rest)
+        await (await import('./commands/pr-verify-evidence.js')).prVerifyEvidenceCommand(rest)
       } else if (subcommand === 'rule') {
-        prRuleCommand(rest)
+        ;(await import('./commands/pr-rule.js')).prRuleCommand(rest)
       } else if (subcommand === 'snapshot') {
-        prSnapshotCommand(rest)
+        ;(await import('./commands/pr-snapshot.js')).prSnapshotCommand(rest)
       } else {
         console.error(
           `Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create', 'edit', 'report', 'verify-evidence', 'rule', or 'snapshot')`
@@ -265,13 +217,13 @@ try {
       const subcommand = rawSubcommand === 'objectives' && rest[0] === 'edit' ? 'objectives edit' : rawSubcommand
       const passthrough = subcommand === 'objectives edit' ? rest.slice(1) : rest
       if (subcommand === 'create') {
-        await issueCreateCommand(passthrough)
+        await (await import('./commands/issue.js')).issueCreateCommand(passthrough)
       } else if (subcommand === 'edit') {
-        await issueEditCommand(passthrough)
+        await (await import('./commands/issue.js')).issueEditCommand(passthrough)
       } else if (subcommand === 'objectives edit') {
-        await issueObjectivesEditCommand(passthrough)
+        await (await import('./commands/issue-objectives.js')).issueObjectivesEditCommand(passthrough)
       } else if (subcommand === 'surface') {
-        issueSurfaceCommand(passthrough)
+        ;(await import('./commands/issue.js')).issueSurfaceCommand(passthrough)
       } else {
         console.error(
           `Unknown 'issue' subcommand: ${rawSubcommand ?? '(none)'} (expected 'create', 'edit', 'surface', or 'objectives edit')`
@@ -283,17 +235,17 @@ try {
     case 'task': {
       const [subcommand, ...rest] = args
       if (subcommand === 'dispatch') {
-        await taskDispatchCommand(rest)
+        await (await import('./commands/task.js')).taskDispatchCommand(rest)
       } else if (subcommand === 'brief') {
-        await taskBriefCommand(rest)
+        await (await import('./commands/task.js')).taskBriefCommand(rest)
       } else if (subcommand === 'run') {
-        await taskRunCommand(rest)
+        await (await import('./commands/task-run.js')).taskRunCommand(rest)
       } else if (subcommand === 'switch') {
-        await taskSwitchCommand(rest)
+        await (await import('./commands/task-switch.js')).taskSwitchCommand(rest)
       } else if (subcommand === 'status') {
-        await taskStatusCommand(rest)
+        await (await import('./commands/task-status.js')).taskStatusCommand(rest)
       } else if (subcommand === 'sweep') {
-        await taskSweepCommand(rest)
+        await (await import('./commands/task-sweep.js')).taskSweepCommand(rest)
       } else {
         console.error(
           `Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch', 'brief', 'run', 'switch', 'status', or 'sweep')`
@@ -305,13 +257,13 @@ try {
     case 'task-tools': {
       const [subcommand, ...rest] = args
       if (subcommand === 'serve') {
-        await taskToolsServeCommand(rest)
+        await (await import('./commands/task-tools.js')).taskToolsServeCommand(rest)
       } else if (subcommand === 'dev-proof') {
-        await taskToolsDevProofCommand(rest)
+        await (await import('./commands/task-tools.js')).taskToolsDevProofCommand(rest)
       } else if (subcommand === 'result-proof') {
-        await taskToolsResultProofCommand(rest)
+        await (await import('./commands/task-tools.js')).taskToolsResultProofCommand(rest)
       } else if (subcommand === 'review-result-proof') {
-        await taskToolsReviewResultProofCommand(rest)
+        await (await import('./commands/task-tools.js')).taskToolsReviewResultProofCommand(rest)
       } else {
         console.error(
           `Unknown 'task-tools' subcommand: ${subcommand ?? '(none)'} (expected 'serve', 'dev-proof', 'result-proof' or 'review-result-proof')`
@@ -323,15 +275,15 @@ try {
     case 'milestone': {
       const [subcommand, ...rest] = args
       if (subcommand === 'create') {
-        await milestoneCreateCommand(rest)
+        await (await import('./commands/milestone.js')).milestoneCreateCommand(rest)
       } else if (subcommand === 'adopt') {
-        await milestoneAdoptCommand(rest)
+        await (await import('./commands/milestone.js')).milestoneAdoptCommand(rest)
       } else if (subcommand === 'edit') {
-        await milestoneEditCommand(rest)
+        await (await import('./commands/milestone.js')).milestoneEditCommand(rest)
       } else if (subcommand === 'close') {
-        await milestoneCloseCommand(rest)
+        await (await import('./commands/milestone.js')).milestoneCloseCommand(rest)
       } else if (subcommand === 'status') {
-        await milestoneStatusCommand(rest)
+        await (await import('./commands/milestone.js')).milestoneStatusCommand(rest)
       } else {
         console.error(
           `Unknown 'milestone' subcommand: ${subcommand ?? '(none)'} (expected create/adopt/edit/close/status)`
@@ -343,9 +295,9 @@ try {
     case 'review': {
       const [subcommand, ...rest] = args
       if (subcommand === 'post') {
-        await reviewPostCommand(rest)
+        await (await import('./commands/review-post.js')).reviewPostCommand(rest)
       } else if (subcommand === 'status') {
-        await reviewStatusCommand(rest)
+        await (await import('./commands/review-status.js')).reviewStatusCommand(rest)
       } else {
         console.error(`Unknown 'review' subcommand: ${subcommand ?? '(none)'} (expected post/status)`)
         process.exit(2)
@@ -355,7 +307,7 @@ try {
     case 'demo': {
       const [subcommand, ...rest] = args
       if (subcommand === 'break') {
-        await demoBreakCommand(rest)
+        await (await import('./commands/demo.js')).demoBreakCommand(rest)
       } else {
         console.error(`Unknown 'demo' subcommand: ${subcommand ?? '(none)'} (expected 'break')`)
         process.exit(2)
@@ -363,41 +315,41 @@ try {
       break
     }
     case 'waiver': {
-      await waiverCommand(args)
+      await (await import('./commands/waiver.js')).waiverCommand(args)
       break
     }
     case 'release': {
-      await releaseCommand(args)
+      await (await import('./commands/release.js')).releaseCommand(args)
       break
     }
     case 'quickstart': {
-      await quickstartCommand(args)
+      await (await import('./commands/quickstart.js')).quickstartCommand(args)
       break
     }
     case 'tokens': {
-      tokensCommand(args)
+      ;(await import('./commands/tokens.js')).tokensCommand(args)
       break
     }
     case 'dispatch': {
-      await dispatchCommand(args)
+      await (await import('./commands/dispatch.js')).dispatchCommand(args)
       break
     }
     case 'dev-review-loop': {
-      await devReviewLoopCommand(args)
+      await (await import('./commands/dev-review-loop.js')).devReviewLoopCommand(args)
       break
     }
     case 'sync': {
-      process.exit(await syncCommand(args))
+      process.exit(await (await import('./commands/sync.js')).syncCommand(args))
       break
     }
     case 'log': {
       const [subcommand, ...rest] = args
       if (subcommand === 'send') {
-        await logSendCommand(rest)
+        await (await import('./commands/log-send.js')).logSendCommand(rest)
       } else if (subcommand === 'selftest') {
-        process.exit(await logSelftestCommand(rest))
+        process.exit(await (await import('./commands/log-selftest.js')).logSelftestCommand(rest))
       } else if (subcommand === 'emit') {
-        process.exit(await logEmitCommand(rest))
+        process.exit(await (await import('./commands/log-emit.js')).logEmitCommand(rest))
       } else {
         console.error(`Unknown 'log' subcommand: ${subcommand ?? '(none)'} (expected 'selftest', 'send' or 'emit')`)
         process.exit(2)
