@@ -155,6 +155,22 @@
   ],
   "paths": [
     {
+      "from": "`aeg-root/` scaffold (exists ONCE, at the repo root only)",
+      "to": "`harness/processes/vinaya-strict/` scaffold (exists ONCE, in the process folder only)"
+    },
+    {
+      "from": "repo-root `aeg-root/` (the model exists once, at the root only)",
+      "to": "the process folder `harness/processes/vinaya-strict/` (the model exists once, there only)"
+    },
+    {
+      "from": "the **root** `aeg-root/`",
+      "to": "the process folder `harness/processes/vinaya-strict/`"
+    },
+    {
+      "from": "at the repo-root `aeg-root/`",
+      "to": "in the process folder `harness/processes/vinaya-strict/`"
+    },
+    {
       "from": "aeg-root/skills/aeg-context-packets/examples/operator-start.md",
       "to": "doctrine/skills/context-packets/examples/operator-start.md"
     },
@@ -383,6 +399,14 @@
     "replacement": "vinaya-strict"
   },
   "terms": [
+    {
+      "pattern": "Agentic Execution Governance \\(AEG\\)",
+      "replacement": "Vinaya"
+    },
+    {
+      "pattern": "\\bAEG = \\*\\*Agentic Execution Governance\\.\\*\\*",
+      "replacement": "Vinaya is **an agentic execution governance model.**"
+    },
     {
       "pattern": "\\ban AEG\\b(?!:| provenance|\\.\\*provenance)",
       "replacement": "a Vinaya"

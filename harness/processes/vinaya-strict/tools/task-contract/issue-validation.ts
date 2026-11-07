@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process'
  * `checkIssueRationale` before any task Issue can reach the forge.
  *
  * A task Issue's body must carry every producer field of the
- * `harness/processes/vinaya-strict/doctrine/contracts/planner-brief.md` contract — the eight Planner's
+ * planner-to-brief contract — the eight Planner's
  * rationale fields. makes cutting the Issue with its rationale the
  * canonical plan act; an Issue without the full rationale forces the Brief
  * Author to re-derive the Planner's dig cold, the exact loss the contract
@@ -1844,7 +1844,7 @@ export function checkNoBriefContent(body: string): IssueSectionResult {
   const text = stripCode(body)
   const errors = BRIEF_MARKERS.filter((m) => m.pattern.test(text)).map(
     (m) =>
-      `issue-validation brief content: the Issue body carries a brief-shaped "${m.name}" section. Brief-time content (surface pointers, skills-to-read, premise, test plan) belongs in the brief, not the Issue — it goes stale before work starts (harness/processes/vinaya-strict/doctrine/skills/brief-authoring/SKILL.md). Move it to the brief.`
+      `issue-validation brief content: the Issue body carries a brief-shaped "${m.name}" section. Brief-time content (surface pointers, skills-to-read, premise, test plan) belongs in the brief, not the Issue — it goes stale before work starts. Move it to the brief.`
   )
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }

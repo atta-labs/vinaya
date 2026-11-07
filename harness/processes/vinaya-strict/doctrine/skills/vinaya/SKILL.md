@@ -1,7 +1,7 @@
 ---
 name: vinaya
 sidebar_title: Operating Model (vinaya)
-description: The front door to Agentic Execution Governance (Vinaya) — the operating model every agent works inside. Load at the start of ANY session in this repo, before doing anything substantive, regardless of role. Covers what Vinaya is, the four truth domains, forge-derived status, the plan as a Milestone plus labeled Issues, where the plan vs the flow vs governance live, the dispatch gates, the brief, the anti-regression rules, the doctrine tree at `vinaya-strict/` with all living state on the forge, and the model-vs-product distinction. Ends by routing to your role's entry point and the reading order. Does NOT cover role specifics (see roles + roles/*.md) or the mechanics of dispatching one task's brief (see `roles/planner/reference.md` § The dispatch act).
+description: The front door to Vinaya — the operating model every agent works inside. Load at the start of ANY session in this repo, before doing anything substantive, regardless of role. Covers what Vinaya is, the four truth domains, forge-derived status, the plan as a Milestone plus labeled Issues, where the plan vs the flow vs governance live, the dispatch gates, the brief, the anti-regression rules, the doctrine tree at `vinaya-strict/` with all living state on the forge, and the model-vs-product distinction. Ends by routing to your role's entry point and the reading order. Does NOT cover role specifics (see roles + roles/*.md) or the mechanics of dispatching one task's brief (see `roles/planner/reference.md` § The dispatch act).
 ---
 
 <!-- CANONICAL SOURCE. This file is the canonical home of the `vinaya` skill, inside the Vinaya unit (doctrine/skills/). provides for an agent-specific GENERATED VIEW under `.claude/skills/` (or another agent's equivalent), rebuilt from this file rather than authored by hand — but no such generator exists yet, and this repo has no generated view of this skill: agents are pointed at vinaya-strict/ directly (this repo's root agent-context file). Edit THIS file; if a generator is ever built, regenerate rather than hand-editing its output. -->
@@ -10,7 +10,7 @@ description: The front door to Agentic Execution Governance (Vinaya) — the ope
 
 **Load this first, every session, before anything substantive — whatever your role.** It is the one-read picture of how work happens in this repo. When you finish it you will know what Vinaya is, what is true and where it is stored, and which role doc to open next. It does not reproduce the role docs or the brief rules — it points to them.
 
-Vinaya = **Agentic Execution Governance.** It is a small set of accountable roles coordinating AI agents through briefs, independent review, and blocking escalation. It is **governance + orchestration of delegated AI execution** — it is *not* project management: there is no plan, timeline, or resource tracking inside Vinaya (that lives in the backlogs / a company tool, outside the flow).
+Vinaya is **an agentic execution governance model.** It is a small set of accountable roles coordinating AI agents through briefs, independent review, and blocking escalation. It is **governance + orchestration of delegated AI execution** — it is *not* project management: there is no plan, timeline, or resource tracking inside Vinaya (that lives in the backlogs / a company tool, outside the flow).
 
 Vinaya is **agent-agnostic and tool-agnostic.** The roles below describe *what an agent must do*, not which agent does it — any capable coding agent can take a role by reading its doc. The model names no vendor as a dependency.
 
@@ -18,7 +18,7 @@ Vinaya is **agent-agnostic and tool-agnostic.** The roles below describe *what a
 
 ## 1. Vinaya is two things sharing one name (don't confuse them)
 
-- **Vinaya the model** — this operating model: the governance/flow constitution. It lives at repo-root `vinaya-strict/` (the model exists once, at the root only) and governs the whole repo. *This skill is the model.*
+- **Vinaya the model** — this operating model: the governance/flow constitution. It lives at the process folder `harness/processes/vinaya-strict/` (the model exists once, there only) and governs the whole repo. *This skill is the model.*
 - **Vinaya the product** — a deployed UI (**Studio**) that *visualizes* a repo's Vinaya execution, plus the CLI that lays the Vinaya structure into any repo. That product is **Vinaya**. The CLI and Studio are maintained as separate source trees, in separate repositories — an adopter installing Vinaya gets the CLI; Studio, where it runs, is a hosted or self-run separate deployment, not something this project's own repo layout says anything about.
 
 When someone says "Vinaya," default to the model unless the context is clearly the product (the UI, the website, the scaffolder).
@@ -44,7 +44,7 @@ Conversation logs / thinking are **not** artifacts — never cite them as author
 
 - **The plan (backlogs)** → a unit's `specs/`: `specs/<unit>-backlog.md` (per unit / per project) and a repo-level backlog in the root `specs/`. **Out of the flow.** The Planner *may* read it to compose a tranche but the flow never operates on it.
 - **The plan for a batch of work (a tranche)** → the forge: a Milestone plus the Issues carrying its `tranche:<slug>` label, each Issue's body declaring its own `Depends-on` / `Conflicts-with` edges. No file in the repo holds it.
-- **The flow + governance (the model)** → the **root** `vinaya-strict/`: the constitution, the role docs, the contracts, the models, the skills. Exists **once**, at the repo root only.
+- **The flow + governance (the model)** → the process folder `harness/processes/vinaya-strict/`: the constitution, the role docs, the contracts, the models, the skills. Exists **once**, at the repo root only.
 - **The living state** → forge-native, never the model and never a file: active/blocked/next is derived from Issue/branch/PR state, and completed-work history, lessons, per-project operational state, and ratification items live on the forge.
 - **`roadmap.md` is retired**. Never read or write it.
 

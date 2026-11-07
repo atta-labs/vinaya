@@ -3,7 +3,7 @@ sidebar_title: Manual Flow
 ---
 # Vinaya — Running the Flow by Hand
 
-**Agentic Execution Governance (Vinaya)**, manual mode. The playbook for running the flow with nothing but a coding agent, a Git forge, and this repo — no orchestration tool required.
+**Vinaya**, manual mode. The playbook for running the flow with nothing but a coding agent, a Git forge, and this repo — no orchestration tool required.
 
 Companion to `process.md` (the eleven-phase walkthrough), `state-machine.md` (the constitution), `tranche-model.md` (the tranche + task model), and the `roles/` docs. This file is the operator's guide: what a human does, in what order, calling which agent, with what in hand.
 
@@ -15,7 +15,7 @@ Companion to `process.md` (the eleven-phase walkthrough), `state-machine.md` (th
 
 Vinaya "init" is not software — it is a **state the repo is in**. A repo is running Vinaya when **everything the flow references is present**:
 
-1. **The model layer** — `vinaya-strict/` scaffold (exists ONCE, at the repo root only): `state-machine.md`, `process.md`, `manual-flow.md`, `tranche-model.md`, `roles/`, `skills/` (the Vinaya skills — canonical home); plus `projects.md` only once multi-project.
+1. **The model layer** — `harness/processes/vinaya-strict/` scaffold (exists ONCE, in the process folder only): `state-machine.md`, `process.md`, `manual-flow.md`, `tranche-model.md`, `roles/`, `skills/` (the Vinaya skills — canonical home); plus `projects.md` only once multi-project.
 2. **The living-state layer** — forge-native. State only, never the model: active/blocked/next is derived from Issue/branch/PR state, and completed-work history, lessons, per-project operational state, and ratification items live in `git log`/PR history, pinned Issues, and the `needs:principal-input` label respectively.
 3. **The enforcement layer (referenced by the model, so it must travel with it):**
    - Blast-radius collision domains (conflicts are package-level, `tranche-model.md` §5) — live-derived from `package.json`'s `workspaces` (or `pnpm-workspace.yaml`'s `packages:` list, on a pnpm repo — pnpm ignores `package.json`'s `workspaces` key entirely) for `packages/*`, plus a built-in cross-cutting default set (lockfile, monorepo config, CI, git hooks); `vinaya.config.json`'s `blastRadius.extraDomains` for anything beyond those. No file to scaffold — the legacy static `.aeg/packages` list is retired, no longer read at all.

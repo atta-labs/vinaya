@@ -234,8 +234,7 @@ export function isAgentVendor(value: string): value is AgentVendor {
 /**
  * The three-value vocabulary `harness/processes/vinaya-strict/thinking/planner/doctrine.md` names for a task's
  * "Suggested agent-class" (high/mid/fast) — the Planner's sizing judgment,
- * confirmed or overridden by whoever dispatches at brief time
- * (`harness/processes/vinaya-strict/doctrine/skills/brief-authoring/SKILL.md`). Not a model catalogue: this
+ * confirmed or overridden by whoever dispatches at brief time. Not a model catalogue: this
  * is the fixed, small vocabulary a rationale field is written in, never an
  * enumeration of every model any vendor accepts.
  */

@@ -12,7 +12,7 @@ these seams allowed file/forge reads. Implements `StateSource` and
   `src/forge-adapter.ts`'s docstring.
 - **`createFileSource`** (`src/file-adapter.ts`) — transitional. Wraps
   `@attalabs/aeg-core`'s `parseTranche` over a configurable governance root
-  (`FileSourceConfig.root`, default `harness/processes/vinaya-strict`). Deliberate throwaway,
+  (`FileSourceConfig.root`; unset, it reads the retired `aeg-root/tranches` state). Deliberate throwaway,
   deleted once every consumer of `StateSource` is forge-backed.
 
 `selectSource` (`src/select-source.ts`) picks between the two from a

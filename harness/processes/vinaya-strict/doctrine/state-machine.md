@@ -1,9 +1,9 @@
 ---
 sidebar_title: State Machine
 ---
-# State Machine — the Agentic Execution Governance (Vinaya) Model
+# State Machine — the Vinaya Model
 
-The constitution. This document defines the **Agentic Execution Governance (Vinaya)** model — the authoritative reference for artifacts, mutation permissions, authority hierarchy, escalation paths, and governance mechanics. Vinaya is governance plus orchestration of delegated AI execution; it is not project management (there is no product plan, timeline, or resource tracking here).
+The constitution. This document defines the **Vinaya** model — the authoritative reference for artifacts, mutation permissions, authority hierarchy, escalation paths, and governance mechanics. Vinaya is governance plus orchestration of delegated AI execution; it is not project management (there is no product plan, timeline, or resource tracking here).
 
 **Vinaya is forge-native, orchestrator-independent.** It depends on a Git forge (GitHub/GitLab) as its source of truth for execution state — task status is *derived* from Issue/branch/PR/merge state, never stored. It does not depend on any orchestration tool. Where this document names a specific tool (in this repo, Cetana), it is naming *this repo's* orchestration tool by way of example; Vinaya itself names no tool, and a tool may know Vinaya while Vinaya does not know the tool.
 
@@ -42,7 +42,7 @@ The conversational role set is: **Principal, Planner, Developer, Reviewer** (plu
 
 ### One Vinaya model, at the root. Always orient from there.
 
-There is exactly one Vinaya model in this monorepo, at the repo-root `vinaya-strict/` (constitution, flow, roles, skills, contracts, the project registry `projects.md`). It exists nowhere else. **Any agent, executing any task for any project — an app, a package, a library, the monorepo itself — orients from `vinaya-strict/` first:** it reads the constitution and the role doc there, and the active tranche on the forge — its Milestone and labeled Issues. It never expects a per-project copy of the model.
+There is exactly one Vinaya model in this monorepo, in the process folder `harness/processes/vinaya-strict/` (constitution, flow, roles, skills, contracts, the project registry `projects.md`). It exists nowhere else. **Any agent, executing any task for any project — an app, a package, a library, the monorepo itself — orients from `vinaya-strict/` first:** it reads the constitution and the role doc there, and the active tranche on the forge — its Milestone and labeled Issues. It never expects a per-project copy of the model.
 
 Living **state** is held in no folder at all. Active, blocked and finished work is derived from the forge — Issues, branches, pull requests, Milestones — and anything genuinely non-derivable is an ordinary open Issue, closed when resolved. No project carries a state directory or a copy of the model, which is what forces every agent back to `vinaya-strict/` for the rules and to the forge for the state.
 

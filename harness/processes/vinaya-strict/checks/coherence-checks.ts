@@ -492,7 +492,7 @@ export type { ForgeIssue }
 
 /**
  * R1: Every active-tranche task Issue's body carries the full eight-field
- * Planner's rationale (`harness/processes/vinaya-strict/doctrine/contracts/planner-brief.md`), and every
+ * Planner's rationale, and every
  * project its `Project:` field names has a `.vinaya/projects.md` row.
  * Fail class: `missing-rationale-field`
  *
