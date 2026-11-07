@@ -67,7 +67,8 @@
         "scripts/test-suites/relocation-fixture.test.ts",
         "scripts/test-suites/schedule.test.ts",
         "scripts/test-suites/staged-driver-move.test.ts",
-        "scripts/test-suites/recorded-selection.test.ts"
+        "scripts/test-suites/recorded-selection.test.ts",
+        "scripts/test-suites/read-records.test.ts"
       ]
     },
     {

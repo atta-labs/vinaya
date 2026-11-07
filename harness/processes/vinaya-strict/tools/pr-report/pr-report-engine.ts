@@ -549,6 +549,8 @@ export type GroupC = { commands: GroupCCommandResult[] }
  */
 export type TestRunCacheRecord = {
   output: string
+  /** The head a carried Test Plan pass ran on (`test-plan-carry.ts`); set only on its `carry:` record. */
+  head?: string
   exitCode: 0
   timedOut: false
   overflowed: false

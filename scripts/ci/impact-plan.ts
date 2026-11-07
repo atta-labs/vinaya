@@ -58,7 +58,7 @@ import {
   revisionReader,
   type TreeReader
 } from '../test-suites/inventory-check.ts'
-import { type ReachedRecord, reachableRecord } from '../test-suites/read-records.ts'
+import { nearestReachableRecord, type ReachedRecord } from '../test-suites/read-records.ts'
 import { repositorySelectionInput, resolveCommit } from '../test-suites/repository-selection.ts'
 import { buildTestSchedule, checkSchedule, ciScheduleInput } from '../test-suites/schedule.ts'
 import { ADVISORY_JOBS, type CiJob, GOVERNANCE_OBLIGATIONS } from './governance-obligations.ts'
@@ -404,7 +404,7 @@ export function ciSelection(
   repoRoot: string,
   base: string,
   head: string,
-  reach: RecordReach = reachableRecord
+  reach: RecordReach = (root, commit) => nearestReachableRecord(root, commit)
 ): { plan: SelectionPlan; view: InventoryView; recordNote: string } {
   const resolved = resolveCommit(repoRoot, base)
   const reached = reach(repoRoot, resolved)

@@ -73,6 +73,11 @@ export type RepositorySelectionOptions = {
    * widely imported package does not select nearly every test; CI keeps the transitive closure.
    */
   depth?: SelectionPolicy['depth']
+  /**
+   * Whether the build job's own suites (the repository suite and the package-compatibility suite) are obligations.
+   * CI runs them on every pull request, so a local push leaves them out (`false`); the default keeps them.
+   */
+  buildGates?: boolean
 }
 
 /** The root suites the build job runs on every pull request, each under the policy that states the duty. */
@@ -135,7 +140,8 @@ export function alwaysRunObligations(repoRoot: string, head: string, view: Inven
 }
 
 /** What every caller adds on top of what the change requires: the always-run policies and the build-gate suites. */
-function obligationsOf(repoRoot: string, head: string, view: InventoryView): SelectionObligation[] {
+function obligationsOf(repoRoot: string, head: string, view: InventoryView, buildGates = true): SelectionObligation[] {
+  if (!buildGates) return alwaysRunObligations(repoRoot, head, view)
   const gates = BUILD_GATES.flatMap(({ policy: id, suite }) => {
     const gate = view.policies.find((policy) => policy.id === id)
     return gate ? [{ id: gate.id, kind: 'policy' as const, reason: gate.duty, suites: [suite] }] : []
@@ -148,13 +154,14 @@ export function repositoryPolicy(
   repoRoot: string,
   head: string,
   view: InventoryView,
-  depth: SelectionPolicy['depth'] = 'transitive'
+  depth: SelectionPolicy['depth'] = 'transitive',
+  buildGates = true
 ): SelectionPolicy {
   return {
     depth,
     scanners: scannerDeclarations(repoRoot, head),
     spawnPrograms: [{ binary: CLI_SPAWN_BINARY, entrypoint: DEFAULT_CLI_ENTRYPOINT }],
-    obligations: obligationsOf(repoRoot, head, view),
+    obligations: obligationsOf(repoRoot, head, view, buildGates),
     parsers: { toml: (text) => Bun.TOML.parse(text), 'bun-lock': bunLockParser }
   }
 }
@@ -169,7 +176,7 @@ export function repositorySelectionInput(repoRoot: string, options: RepositorySe
     base,
     head,
     inventory: { head: inventory.head, base: inventory.base },
-    policy: repositoryPolicy(repoRoot, head, inventory.head, options.depth ?? 'transitive'),
+    policy: repositoryPolicy(repoRoot, head, inventory.head, options.depth ?? 'transitive', options.buildGates ?? true),
     records: options.record ? { record: options.record, platform: options.platform ?? process.platform } : null
   }
 }
