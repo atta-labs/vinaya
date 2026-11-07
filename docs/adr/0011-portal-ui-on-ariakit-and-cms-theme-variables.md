@@ -1,6 +1,6 @@
 # 0011. Portal UI on Ariakit and CMS theme variables
 
-**Status:** Accepted; its placement of the component library inside the portal is superseded by [0015](0015-vinaya-web-apps-share-one-ui-package-and-one-cms-package.md)
+**Status:** Accepted; its placement of the component library inside the portal is superseded by [0016](0016-vinaya-web-apps-share-one-ui-package-and-one-cms-package.md)
 
 **Date:** 2026-10-20
 
