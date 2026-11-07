@@ -169,6 +169,18 @@ describe('the counted ratchet', () => {
     expect(compareWithBaseline(countTree(REPOSITORY_ROOT), readBaseline(REPOSITORY_ROOT))).toEqual([])
   })
 
+  test('every file the baseline counts has one exception row, with its reason and owner, and no row names another', () => {
+    const rows = JSON.parse(readFileSync(join(import.meta.dir, 'architecture-exceptions.json'), 'utf8')) as {
+      file: string
+      reason: string
+      owner: string
+    }[]
+    const baselineFiles = Object.keys(readBaseline(REPOSITORY_ROOT)).sort()
+    expect(rows.map((row) => row.file).sort()).toEqual(baselineFiles)
+    expect(new Set(rows.map((row) => row.file)).size).toBe(rows.length)
+    expect(rows.filter((row) => row.reason.trim() === '' || row.owner.trim() === '')).toEqual([])
+  })
+
   test('the count is the same on two runs over an unchanged tree', () => {
     expect(serializeBaseline(countTree(REPOSITORY_ROOT))).toBe(serializeBaseline(countTree(REPOSITORY_ROOT)))
   })
@@ -283,9 +295,9 @@ describe('the base comparison', () => {
 
   test('a new scanned file with a token fails against a base with no entry for it', () => {
     const { root, base } = plantedRepository({ 'apps/cli/src/a.ts': 'the developer' })
-    commitBaseline(root, { 'packages/sources/src/b.ts': 'the planner' })
+    commitBaseline(root, { 'packages/aeg-core/src/b.ts': 'the planner' })
     expect(compareBase(root, base).failures[0]).toContain(
-      'packages/sources/src/b.ts: counts 1, base 0 — a file with no base entry counts above zero'
+      'packages/aeg-core/src/b.ts: counts 1, base 0 — a file with no base entry counts above zero'
     )
   })
 
@@ -310,6 +322,43 @@ describe('the base comparison', () => {
 // ── Relocation equivalence ──────────────────────────────────────────────────
 
 describe('a relocated dependency is unchanged, never growth', () => {
+  test('an import re-pointed from a deleted forwarding module straight to the module it forwarded keeps its count', () => {
+    const owner = 'harness/processes/vinaya-strict/integration/config/compose.ts'
+    const { root, base } = plantedRepository({
+      [owner]: `export function loadConfig() {}\n${BODY}\n`,
+      'apps/cli/src/lib/config.ts': `export { loadConfig } from '../../../../${owner.replace(/\.ts$/, '.js')}'\n`,
+      'apps/cli/src/commands/doctor.ts': `import { loadConfig } from '../lib/config.js'\n${BODY}\n`
+    })
+    commitBaseline(root, {
+      'apps/cli/src/lib/config.ts': null,
+      'apps/cli/src/commands/doctor.ts': `import { loadConfig } from '../../../../${owner.replace(/\.ts$/, '.js')}'\n${BODY}\n`
+    })
+    expect(compareBase(root, base)).toMatchObject({ failures: [] })
+
+    // An import of another process module is still growth.
+    commitBaseline(root, {
+      'harness/processes/vinaya-strict/integration/other.ts': `${BODY}\n`,
+      'apps/cli/src/commands/doctor.ts': `import { loadConfig } from '../../../../${owner.replace(/\.ts$/, '.js')}'\nimport { other } from '../../../../harness/processes/vinaya-strict/integration/other.js'\n${BODY}\n`
+    })
+    expect(compareBase(root, base).failures[0]).toContain('apps/cli/src/commands/doctor.ts: counts 1, base 0')
+  })
+
+  test('a workspace package import re-pointed to the module the package held keeps its count, whatever its folder is named', () => {
+    const { root, base } = plantedRepository({
+      'packages/sources/package.json': '{ "name": "@attalabs/vinaya-sources" }',
+      'packages/sources/src/commands.ts': `export const COMMANDS = []\n${BODY}\n`,
+      'packages/sources/src/index.ts': "export { COMMANDS } from './commands'\n",
+      'apps/cli/src/lib/output.ts': `import { COMMANDS } from '@attalabs/vinaya-sources'\n${BODY}\n`
+    })
+    commitBaseline(root, {
+      ...move(root, 'packages/sources/src/commands.ts', 'harness/processes/vinaya-strict/integration/commands.ts'),
+      'packages/sources/package.json': null,
+      'packages/sources/src/index.ts': null,
+      'apps/cli/src/lib/output.ts': `import { COMMANDS } from '../../../../harness/processes/vinaya-strict/integration/commands.js'\n${BODY}\n`
+    })
+    expect(compareBase(root, base)).toMatchObject({ failures: [] })
+  })
+
   const launcher = (path: string): string =>
     `import { resolve } from 'node:path'\nexport const launcher = (root: string) => resolve(root, '${path}')\n`
 
@@ -365,7 +414,7 @@ describe('a relocated dependency is unchanged, never growth', () => {
     const claim = (path: string): string => `// AEG:CLAIM: ${path} contains:export function dispatchRole(\n`
     const { root, base } = plantedRepository({
       'apps/cli/src/lib/dispatch.ts': `export function dispatchRole() {}\n${BODY}\n`,
-      'harness/processes/vinaya-strict/integration/commands.ts': `${claim('apps/cli/src/lib/dispatch.ts')}${BODY}\n`
+      'packages/aeg-core/src/commands.ts': `${claim('apps/cli/src/lib/dispatch.ts')}${BODY}\n`
     })
     expect(countTree(root)).toEqual({})
     commitBaseline(root, {
@@ -374,17 +423,17 @@ describe('a relocated dependency is unchanged, never growth', () => {
         'apps/cli/src/lib/dispatch.ts',
         'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts'
       ),
-      'harness/processes/vinaya-strict/integration/commands.ts': `${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts')}${BODY}\n`
+      'packages/aeg-core/src/commands.ts': `${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts')}${BODY}\n`
     })
-    expect(countTree(root)).toEqual({ 'harness/processes/vinaya-strict/integration/commands.ts': 1 })
+    expect(countTree(root)).toEqual({ 'packages/aeg-core/src/commands.ts': 1 })
     expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 0, headTotal: 0 })
 
     commitBaseline(root, {
       'harness/processes/vinaya-strict/loops/dev-review/dispatch/seats.ts': `export function dispatchRole() {}\n${BODY}\n`,
-      'harness/processes/vinaya-strict/integration/commands.ts': `${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts')}${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/seats.ts')}${BODY}\n`
+      'packages/aeg-core/src/commands.ts': `${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts')}${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/seats.ts')}${BODY}\n`
     })
     expect(compareBase(root, base).failures[0]).toContain(
-      'harness/processes/vinaya-strict/integration/commands.ts: counts 1, base 0 — above its base entry'
+      'packages/aeg-core/src/commands.ts: counts 1, base 0 — above its base entry'
     )
   })
 })
@@ -560,22 +609,22 @@ describe('a moved file is moving, never adding', () => {
     const comment = (path: string): string => `// The entry point lives in ${path}.\n${BODY}\n`
     const { root, base } = plantedRepository({
       'apps/cli/src/lib/dispatch.ts': `export function dispatchRole() {}\n${BODY}\n`,
-      'packages/sources/src/notes.ts': comment('apps/cli/src/lib/dispatch.ts')
+      'packages/aeg-core/src/notes.ts': comment('apps/cli/src/lib/dispatch.ts')
     })
     expect(countTree(root)).toEqual({})
     commitBaseline(root, {
       ...move(root, 'apps/cli/src/lib/dispatch.ts', 'harness/processes/vinaya-strict/loops/dispatch.ts'),
-      'packages/sources/src/notes.ts': comment('harness/processes/vinaya-strict/loops/dispatch.ts')
+      'packages/aeg-core/src/notes.ts': comment('harness/processes/vinaya-strict/loops/dispatch.ts')
     })
-    expect(countTree(root)).toEqual({ 'packages/sources/src/notes.ts': 1 })
+    expect(countTree(root)).toEqual({ 'packages/aeg-core/src/notes.ts': 1 })
     expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 0, headTotal: 0 })
 
     commitBaseline(root, {
       'harness/processes/vinaya-strict/loops/seats.ts': `export function seats() {}\n${BODY}\n`,
-      'packages/sources/src/notes.ts': `${comment('harness/processes/vinaya-strict/loops/dispatch.ts')}${comment('harness/processes/vinaya-strict/loops/seats.ts')}`
+      'packages/aeg-core/src/notes.ts': `${comment('harness/processes/vinaya-strict/loops/dispatch.ts')}${comment('harness/processes/vinaya-strict/loops/seats.ts')}`
     })
     expect(compareBase(root, base).failures[0]).toContain(
-      'packages/sources/src/notes.ts: counts 1, base 0 — above its base entry'
+      'packages/aeg-core/src/notes.ts: counts 1, base 0 — above its base entry'
     )
   })
 
