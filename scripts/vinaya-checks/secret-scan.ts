@@ -20,7 +20,7 @@
  * `ci.setup`'s job (`vinaya.config.json`), which runs once per CI job before
  * any check invocation. Locally, `gitleaks` is expected on PATH (already the
  * convention for this repo's manual pre-push use, see
- * `aeg-root/roles/security.md`).
+ * `harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md`).
  */
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'

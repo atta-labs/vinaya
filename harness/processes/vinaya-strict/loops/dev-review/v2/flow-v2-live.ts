@@ -98,6 +98,7 @@ import {
 import { checkReadyBaseline } from './ready-baseline'
 import { readRequiredCiLive } from './ci-recovery'
 import { CONTROL_FD, parseSupervisedCommandResult, RESULT_FD } from './supervised-command'
+import { carriedPass, carryKey } from './test-plan-carry'
 
 // The live wiring of review locally, push once (version 2 of the developer-review Flow) for the Engine runner: the
 // staged pull request the Developer's `open_pull_request` saves, the storage-push marker its worktree's pre-push hook
@@ -917,6 +918,24 @@ function isExecutable(path: string): boolean {
   }
 }
 
+/** A Test Plan command's pass carried from an earlier head of the branch, when nothing since then reaches its tests. */
+function carriedTestPlanPass(
+  command: string,
+  worktreePath: string,
+  head: string,
+  cache: TestRunCache
+): { command: string; output: string; exitCode: 0; timedOut: false; overflowed: false; reusedFrom: string } | null {
+  const carried = carriedPass({
+    command,
+    repoRoot: worktreePath,
+    head,
+    record: cache.get(carryKey(command, worktreePath))
+  })
+  return carried
+    ? { command, output: carried.output, exitCode: 0, timedOut: false, overflowed: false, reusedFrom: carried.from }
+    : null
+}
+
 /**
  * Whether one Test Plan command runs a whole test suite rather than named test files: `turbo run test`, a bare
  * `bun run test`, or `bun test` given only options. Every part of a `&&`/`;`-joined command is read, after a leading
@@ -1000,7 +1019,9 @@ export async function runExplicitCommandsLive(input: {
         commandDone(command, 'reused', 0)
         continue
       }
-      const reused = await lookupGreenRun(command, input.worktreePath, cache)
+      const reused =
+        (await lookupGreenRun(command, input.worktreePath, cache)) ??
+        carriedTestPlanPass(command, input.worktreePath, input.head, cache)
       if (reused) {
         results.push({
           command,
@@ -1067,6 +1088,15 @@ export async function runExplicitCommandsLive(input: {
         const after = await worktreeDrift(input.worktreePath, input.head, input.signal)
         if (after !== null) return finish('drift', { detail: after })
         await recordGreenTestRun(command, output, input.worktreePath, 'pr-report', cache)
+        cache.set(carryKey(command, input.worktreePath), {
+          output: truncateAgentOutput(output),
+          head: input.head,
+          exitCode: 0,
+          timedOut: false,
+          overflowed: false,
+          recordedAt: new Date().toISOString(),
+          source: 'pr-report'
+        })
         results.push({ command, outcome: 'passed', output, wallMs })
         log(`ready push: explicit command passed in ${wallMs} ms: ${command}`)
         commandDone(command, 'pass', wallMs)

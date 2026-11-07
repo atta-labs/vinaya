@@ -16,6 +16,7 @@ import { DEFAULT_COLLISION_THRESHOLD } from '../../tools/task-contract/issue-val
 import { type GateCutovers, NO_GATE_CUTOVERS } from '../../tools/task-contract/gate-cutovers'
 import { DEFAULT_RELEASE_ACTOR } from '../../tools/review-gate'
 import { normalizeSpecPath } from '../../tools/reader-resolvable-prose'
+import { DOCTRINE_TREE } from '../../tools/doctrine/doctrine-map'
 import {
   fetchFailureReason,
   GIT_IDENTITY_TIMEOUT_MS,
@@ -255,7 +256,7 @@ export const VINAYA_CONFIG_FRAGMENT = {
   // `body-bare-digits`, a merge-authority decision.
   releaseActor: z.string().min(1).optional(),
   // Adopter-declared token-usage collection for `vinaya tokens`
-  // (`aeg-root/tranche-model.md` §12 layer 2), for a non-Claude-Code host —
+  // (`harness/processes/vinaya-strict/doctrine/tranche-model.md` §12 layer 2), for a non-Claude-Code host —
   // whose stdout must be a JSON object shaped `{ inputTokens, outputTokens,
   // cacheCreationInputTokens, cacheReadInputTokens, model }` — the
   // `TranscriptSummary` seam flattened to JSON. Absent, `vinaya tokens`
@@ -332,12 +333,12 @@ export const VINAYA_CONFIG_FRAGMENT = {
   // `check-retired-vocabulary.ts`), never at generation time, so editing it
   // takes effect on the very next `vinaya check` with no `upgrade` needed.
   // Every field is optional and additive: an adopter who sets nothing gets
-  // this repo's own prior hardcoded defaults (`doctrineRoot: 'aeg-root'`, a
+  // this repo's own defaults (the doctrine map's source paths under `harness/processes/vinaya-strict`, a
   // dormant reader-facing sweep, `legacySlugDir` derived from `doctrineRoot`).
   proseGates: z
     .object({
       // The doctrine directory these checks sweep in full (`ships` class) —
-      // `aeg-root/**` by default, this repo's own doctrine root. An adopter
+      // the doctrine map's source paths under `harness/processes/vinaya-strict` by default. An adopter
       // who names their installed doctrine tree differently sets this once;
       // both checks read it the same way.
       doctrineRoot: z.string().min(1).optional(),
@@ -648,7 +649,7 @@ export type VinayaSectionConfig = z.infer<z.ZodObject<typeof VINAYA_CONFIG_FRAGM
 /**
  * Why `decisionRecords.path` is refused, or `null` when it names a folder
  * inside the repository and outside the doctrine tree. The doctrine tree is
- * `proseGates.doctrineRoot`, or `aeg-root` when that is unset: decision
+ * `proseGates.doctrineRoot`, or the doctrine map's tree `harness/processes/vinaya-strict` when that is unset: decision
  * records are the repository's own, never part of the doctrine it ships.
  */
 export function decisionRecordsPathIssue(path: string, doctrineRoot: string | undefined): string | null {
@@ -656,7 +657,7 @@ export function decisionRecordsPathIssue(path: string, doctrineRoot: string | un
   if (reason) return reason
   const folder = normalizeSpecPath(path)
   if (folder === '' || folder === '.') return 'must name a folder, not the repository root'
-  const root = normalizeSpecPath(doctrineRoot ?? 'aeg-root')
+  const root = normalizeSpecPath(doctrineRoot ?? DOCTRINE_TREE)
   if (folder === root || folder.startsWith(`${root}/`)) {
     return `must be outside the doctrine tree "${root}" — decision records belong to this repository, not to the doctrine it ships`
   }
@@ -984,7 +985,7 @@ export function resolveCollisionThreshold(config: VinayaSectionConfig | null): n
  * branch protection has a useful convention, not a security control, and one
  * setting it *with* branch protection has closed merge-without-a-report and
  * nothing further — the reviewer closes the rest. The docs must never imply
- * otherwise in either direction. See `aeg-root/enforcement.md`'s ring-0
+ * otherwise in either direction. See `harness/processes/vinaya-strict/doctrine/enforcement.md`'s ring-0
  * "Spawning a check" row for the full statement.
  */
 

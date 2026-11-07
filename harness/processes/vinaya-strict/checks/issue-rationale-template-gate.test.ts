@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { boundaryPinnedFiles, DEFAULT_COLLISION_THRESHOLD } from '../tools/task-contract/issue-validation'
 import { NO_GATE_CUTOVERS } from '../tools/task-contract/gate-cutovers'
 import type { CheckError } from '../../../kernel/gates/checks/contract'
-import { resolveDoctrineRoot } from '../../../../apps/cli/src/commands/doctrine'
+import { resolveDoctrineRoot } from '../tools/doctrine/resolve-doctrine'
+import { doctrineSource } from '../tools/doctrine/doctrine-map'
 import type { BriefSection } from '../../../../apps/cli/src/lib/config'
 import { validateForgeWrite, validateIssueContent } from '../tools/task-contract/forge/forge-write'
 
@@ -22,7 +23,7 @@ import { validateForgeWrite, validateIssueContent } from '../tools/task-contract
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
 const root = resolveDoctrineRoot()
 if (root === null) throw new Error('no doctrine root resolves from this checkout')
-const template = readFileSync(join(root, 'templates', 'issue-rationale-template.md'), 'utf8')
+const template = readFileSync(join(root, doctrineSource('templates/issue-rationale-template.md')), 'utf8')
 
 const PINNED_FILE = 'apps/demo/src/greeting.ts'
 const DOC_SOURCE = 'apps/demo/README.md'

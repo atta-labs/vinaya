@@ -12,7 +12,7 @@ Copyright (C) 2026 Daniel Estevez.
    - @attalabs/vinaya            apps/cli/LICENSE
    - @attalabs/vinaya-sources    packages/sources/LICENSE
 
-   The @attalabs/vinaya tarball also carries the aeg-root/ doctrine and the
+   The @attalabs/vinaya tarball also carries the vinaya-strict/ doctrine and the
    studio-standalone/ dashboard. From version 0.35.0 onward, both are
    distributed under the same FSL-1.1-ALv2 terms as the CLI, except the
    bundled third-party dependencies, which keep their own licenses.

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'bun:test'
 import { reassertPrBodyPremise } from '../tools/premise-reassert-logic'
 
 /**
- * The own-PR fixture rule (`aeg-root/enforcement.md`): a pull request that
+ * The own-PR fixture rule (`harness/processes/vinaya-strict/doctrine/enforcement.md`): a pull request that
  * adds a check reading a PR body ships a test running that check over THAT
  * PR's own body — the one input a synthetic fixture the author also wrote
  * can never exercise, because the author's fixture agrees with the author's
@@ -50,7 +50,8 @@ describe("reassertPrBodyPremise — a real PR's own body (round 1 review, PR #47
     try {
       const movedPaths: Record<string, string> = {
         'apps/cli/src/checks/registry.ts': 'harness/processes/vinaya-strict/checks/registry.ts',
-        [`${AEG_CORE_SRC}/gate-audience.ts`]: 'harness/processes/vinaya-strict/checks/gate-audience.ts'
+        [`${AEG_CORE_SRC}/gate-audience.ts`]: 'harness/processes/vinaya-strict/checks/gate-audience.ts',
+        'aeg-root/enforcement.md': 'harness/processes/vinaya-strict/doctrine/enforcement.md'
       }
       return readFileSync(join(REPO_ROOT, movedPaths[path] ?? path), 'utf8')
     } catch {

@@ -33,7 +33,7 @@
  * Blocking: the doctrine tree carries zero findings, so a finding prints as
  * `error` severity and the check exits `1`, failing `check --all`. It shipped
  * report-only under the same rollout precedent as `reader-resolvable-prose`
- * (`aeg-root/enforcement.md`'s G1/G2 period) and turned blocking once its
+ * (`harness/processes/vinaya-strict/doctrine/enforcement.md`'s G1/G2 period) and turned blocking once its
  * backlog was cleared. Orthogonal exception:
  * a genuinely unresolvable doctrine root is not a backlog finding —
  * `main()` exits non-`0`/non-`1` for that case, so it reads as a distinct
@@ -47,11 +47,12 @@
  * entire shipped-doctrine backlog regardless of what changed.
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveProseRules, rulesOfGroup } from '../../tools/prose-rules'
 import { scanRetiredVocabulary, type VocabSourceFile } from '../retired-vocabulary'
-import { hasDoctrineEntry, resolveDoctrineRoot } from '../../../../../apps/cli/src/commands/doctrine.js'
+import { hasDoctrineEntry, resolveDoctrineRoot } from '../../tools/doctrine/resolve-doctrine'
+import { DOCTRINE_MAP, DOCTRINE_TREE } from '../../tools/doctrine/doctrine-map'
 import { loadConfigChecked } from '../../../../../apps/cli/src/lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { findingsInThisDiff, repoRoot } from '../../../../../harness/kernel/connectors/git/diff-evidence'
@@ -71,11 +72,11 @@ const proseGates = CONFIG.ok ? CONFIG.config?.proseGates : undefined
  * — see that file's `resolveCheckDoctrineRoot()` for the full
  * reasoning: `resolveDoctrineRoot()`'s own default resolves relative to
  * wherever ITS OWN calling module physically sits on disk, which makes
- * whether it finds this repo's `aeg-root/` depend on checkout-path shape
- * rather than on whether that `aeg-root/` exists. `repoRoot()` (`git
+ * whether it finds this repo's `harness/processes/vinaya-strict/` depend on checkout-path shape
+ * rather than on whether that `harness/processes/vinaya-strict/` exists. `repoRoot()` (`git
  * rev-parse --show-toplevel`) is the deterministic anchor instead; falling
  * back to `resolveDoctrineRoot()`'s package-relative "my own shipped copy"
- * resolution only when the repo under check has no local `aeg-root/` of its
+ * resolution only when the repo under check has no local `harness/processes/vinaya-strict/` of its
  * own (a `vinaya init` adopter). `null` — a genuinely
  * unresolvable root — is reported by `main()` as its own distinct outcome,
  * never silently as a clean zero-finding pass.
@@ -85,7 +86,7 @@ function resolveCheckDoctrineRoot(): string | null {
   if (configured !== undefined) return configured
   const root = repoRoot()
   if (root !== null) {
-    const candidate = join(root, 'aeg-root')
+    const candidate = join(root, DOCTRINE_TREE)
     if (hasDoctrineEntry(candidate)) return candidate
   }
   return resolveDoctrineRoot()
@@ -156,16 +157,19 @@ function main(): void {
       check: CHECK_NAME,
       severity: 'error',
       message:
-        'doctrine root unresolvable: no aeg-root found at the repo root under check, and no bundled copy found ' +
+        'doctrine root unresolvable: no doctrine map source paths found under harness/processes/vinaya-strict at the repo root under check, and no bundled vinaya-strict/ copy found ' +
         "relative to this package's own install.",
       agent_recovery_prompt:
         'Set proseGates.doctrineRoot in vinaya.config.json to the doctrine tree this repo actually uses, or ' +
-        "confirm aeg-root/ exists at the repo root (or that this package's own bundled aeg-root/ is present)."
+        "confirm the doctrine map's source paths exist under harness/processes/vinaya-strict/ at the repo root (or that this package's own bundled vinaya-strict/ is present)."
     })
     process.exit(2)
   }
 
-  const paths = collect(DOCTRINE_ROOT)
+  const paths =
+    proseGates?.doctrineRoot !== undefined
+      ? collect(DOCTRINE_ROOT)
+      : DOCTRINE_MAP.map((entry) => join(DOCTRINE_ROOT, entry.source)).filter((p) => existsSync(p))
   const files = readAll(paths)
   // Only the retired group: the reader-resolvable group is
   // `reader-resolvable-prose`'s, and running it here too would print each of

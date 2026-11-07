@@ -611,6 +611,20 @@ export function groupOutcomeOf(
         totals.failedTests <= mapped.reduce((n, e) => n + e.count, 0)
     }
   }
+  // Under `--isolate` every file runs in its own context, so an error a file throws outside its tests (Bun's "unhandled
+  // error between tests") cannot come from another file: Bun drops that file from the report and exits non-zero. When
+  // the report names no failure and the only gap is files it does not list, the listed passes stand and only the
+  // unlisted files stay obligations. Without `--isolate` such an error may come from any file, so the group stays
+  // untrusted.
+  if (
+    !trusted &&
+    group.runner === 'bun' &&
+    group.environment.isolate === true &&
+    failures.length === 0 &&
+    unreported.length > 0 &&
+    bunJunitFailures(text)?.total === 0
+  )
+    trusted = true
   if (!trusted) return untrusted(executed, failed, unreported)
   const unconfirmed = new Set([...failed, ...unreported])
   const confirmed = executed.filter((id) => !unconfirmed.has(id))

@@ -8949,15 +8949,85 @@
           "path": "aeg-root/adr"
         }
       },
-      "accepted": false,
-      "issues": [
-        {
-          "code": "custom",
-          "path": ["decisionRecords", "path"],
-          "message": "must be outside the doctrine tree \"aeg-root\" — decision records belong to this repository, not to the doctrine it ships"
+      "accepted": true,
+      "data": {
+        "decisionRecords": {
+          "path": "aeg-root/adr"
         }
-      ],
-      "detail": "decisionRecords.path: must be outside the doctrine tree \"aeg-root\" — decision records belong to this repository, not to the doctrine it ships"
+      },
+      "resolved": {
+        "resolveReviewPolicy": {
+          "value": {
+            "codeReviewThreshold": "BLOCKER",
+            "securityThreshold": "HIGH",
+            "maxRounds": 3,
+            "maxTaskMinutes": 180,
+            "readyPushTimeoutMinutes": 20
+          }
+        },
+        "resolveGateCutovers": {
+          "value": {
+            "objectivesSinceIssue": null,
+            "briefSectionsSinceIssue": null,
+            "documentationSinceIssue": null,
+            "briefRulesSincePr": null,
+            "agentBoxesRefusedSincePr": null
+          }
+        },
+        "resolveCollisionThreshold": {
+          "value": 3
+        },
+        "resolveReleaseActor": {
+          "value": "github-actions[bot]"
+        },
+        "resolveSecurityScanCommand": {
+          "value": null
+        },
+        "resolveRuntimeDirSetting": {
+          "value": null
+        },
+        "resolveTrustAnchorRuntimeDir": {
+          "value": null
+        },
+        "resolveLogsSetting": {
+          "value": null
+        },
+        "resolveTrustAnchorLogsDestination": {
+          "value": null
+        },
+        "resolveLogsHeaderValues": {
+          "value": null
+        },
+        "resolveAgentVendors": {
+          "value": ["skills", "claude", "gemini"]
+        },
+        "isDefaultedAgentVendorPath": {
+          "value": [true, true, true, true, false]
+        },
+        "resolveTaskRunner": {
+          "value": "standalone"
+        },
+        "lintEnvDeclarations": {
+          "value": []
+        },
+        "decisionRecordsPathIssue": {
+          "value": null
+        },
+        "resolveTrustedPrincipals": {
+          "error": "no Principal is configured (vinaya.config.json on the default branch sets no \"principals\") — add \"principals\": [...] to vinaya.config.json on the default branch.",
+          "kind": "not-configured"
+        },
+        "loadTrustAnchorConfig": {
+          "result": {
+            "value": {
+              "decisionRecords": {
+                "path": "aeg-root/adr"
+              }
+            }
+          },
+          "stdout": ""
+        }
+      }
     },
     {
       "value": {
@@ -8965,15 +9035,117 @@
           "path": "aeg-root"
         }
       },
+      "accepted": true,
+      "data": {
+        "decisionRecords": {
+          "path": "aeg-root"
+        }
+      },
+      "resolved": {
+        "resolveReviewPolicy": {
+          "value": {
+            "codeReviewThreshold": "BLOCKER",
+            "securityThreshold": "HIGH",
+            "maxRounds": 3,
+            "maxTaskMinutes": 180,
+            "readyPushTimeoutMinutes": 20
+          }
+        },
+        "resolveGateCutovers": {
+          "value": {
+            "objectivesSinceIssue": null,
+            "briefSectionsSinceIssue": null,
+            "documentationSinceIssue": null,
+            "briefRulesSincePr": null,
+            "agentBoxesRefusedSincePr": null
+          }
+        },
+        "resolveCollisionThreshold": {
+          "value": 3
+        },
+        "resolveReleaseActor": {
+          "value": "github-actions[bot]"
+        },
+        "resolveSecurityScanCommand": {
+          "value": null
+        },
+        "resolveRuntimeDirSetting": {
+          "value": null
+        },
+        "resolveTrustAnchorRuntimeDir": {
+          "value": null
+        },
+        "resolveLogsSetting": {
+          "value": null
+        },
+        "resolveTrustAnchorLogsDestination": {
+          "value": null
+        },
+        "resolveLogsHeaderValues": {
+          "value": null
+        },
+        "resolveAgentVendors": {
+          "value": ["skills", "claude", "gemini"]
+        },
+        "isDefaultedAgentVendorPath": {
+          "value": [true, true, true, true, false]
+        },
+        "resolveTaskRunner": {
+          "value": "standalone"
+        },
+        "lintEnvDeclarations": {
+          "value": []
+        },
+        "decisionRecordsPathIssue": {
+          "value": null
+        },
+        "resolveTrustedPrincipals": {
+          "error": "no Principal is configured (vinaya.config.json on the default branch sets no \"principals\") — add \"principals\": [...] to vinaya.config.json on the default branch.",
+          "kind": "not-configured"
+        },
+        "loadTrustAnchorConfig": {
+          "result": {
+            "value": {
+              "decisionRecords": {
+                "path": "aeg-root"
+              }
+            }
+          },
+          "stdout": ""
+        }
+      }
+    },
+    {
+      "value": {
+        "decisionRecords": {
+          "path": "harness/processes/vinaya-strict/adr"
+        }
+      },
       "accepted": false,
       "issues": [
         {
           "code": "custom",
           "path": ["decisionRecords", "path"],
-          "message": "must be outside the doctrine tree \"aeg-root\" — decision records belong to this repository, not to the doctrine it ships"
+          "message": "must be outside the doctrine tree \"harness/processes/vinaya-strict\" — decision records belong to this repository, not to the doctrine it ships"
         }
       ],
-      "detail": "decisionRecords.path: must be outside the doctrine tree \"aeg-root\" — decision records belong to this repository, not to the doctrine it ships"
+      "detail": "decisionRecords.path: must be outside the doctrine tree \"harness/processes/vinaya-strict\" — decision records belong to this repository, not to the doctrine it ships"
+    },
+    {
+      "value": {
+        "decisionRecords": {
+          "path": "harness/processes/vinaya-strict"
+        }
+      },
+      "accepted": false,
+      "issues": [
+        {
+          "code": "custom",
+          "path": ["decisionRecords", "path"],
+          "message": "must be outside the doctrine tree \"harness/processes/vinaya-strict\" — decision records belong to this repository, not to the doctrine it ships"
+        }
+      ],
+      "detail": "decisionRecords.path: must be outside the doctrine tree \"harness/processes/vinaya-strict\" — decision records belong to this repository, not to the doctrine it ships"
     },
     {
       "value": {

@@ -63,13 +63,13 @@
  *      anchors).
  *   2. `maskDetailsBlocks` — blind the collapsed `<details>` block that
  *      carries the frozen, verbatim reference-brief copy
- *      (`aeg-root/templates/pr-report-template.md`: "the gates read the
+ *      (`harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md`: "the gates read the
  *      anchored fields above, never this block").
  *   3. Blank each present `AEG:*` anchor region (`anchoredRegionBounds`) —
  *      the one region kind this task's own rule names explicitly.
  *   4. Blank the `## Token report` section (heading to next heading or
  *      end-of-body) — a mandatory, un-anchored table on every PR
- *      (`aeg-root/roles/developer.md` §"Reporting exact tokens") whose
+ *      (`harness/processes/vinaya-strict/executing/developer/doctrine.md` §"Reporting exact tokens") whose
  *      cells are self-reported turn metadata, not a claim about the code
  *      under review; exempting it by heading was its own separate,
  *      Principal-approved decision, not a digit-shape classifier.
@@ -144,7 +144,7 @@ type ExemptAnchorField = (typeof EXEMPT_ANCHOR_FIELDS)[number]
 
 /**
  * The canonical section each exempt field is documented to live in
- * (`aeg-root/templates/pr-report-template.md`): `CLOSES`/`PROJECT` sit in
+ * (`harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md`): `CLOSES`/`PROJECT` sit in
  * the header block, before the first `##` heading; `TIER`/`EVIDENCE` sit
  * under their own named heading.
  *
@@ -243,7 +243,7 @@ function isInCanonicalSection(body: string, field: ExemptAnchorField, outerStart
  * Closed the way round 7 closed the Tier/Project structural-field gap:
  * reuse, don't invent a new classifier. Every real anchored body already
  * repeats that field's own declaration INSIDE the pair, per the canonical
- * template (`aeg-root/templates/pr-report-template.md`) itself — a decoy
+ * template (`harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md`) itself — a decoy
  * that skips reproducing it is the actual, reliable tell. `TIER`/`PROJECT`
  * reuse the exact grammars `blankTierField`/`blankProjectField` already
  * import for the unanchored fallback (`TIER_FIELD`, `PROJECT_LABEL`); the
@@ -266,7 +266,7 @@ const FIELD_CONTENT_SIGNATURE: Record<ExemptAnchorField, RegExp> = {
 
 /**
  * The Premise-pin carve-out. A Premise pin
- * (`aeg-root/roles/developer.md` §"Entry gate",
+ * (`harness/processes/vinaya-strict/executing/developer/doctrine.md` §"Entry gate",
  * `@attalabs/aeg-core`'s `premise-check.ts`) asserts a literal, verbatim
  * fact about a file's current byte content — `checkPremises` re-checks it
  * with a plain `content.includes(a.value)`. Backtick-wrapping a pin's value

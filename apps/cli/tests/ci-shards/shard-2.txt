@@ -7,7 +7,6 @@ tests/commands/pr.test.ts
 tests/commands/task.test.ts
 tests/commands/upgrade-stop-hook.test.ts
 tests/commit-msg.test.ts
-tests/doctrine-resolution.test.ts
 tests/lib/forge-read.test.ts
 tests/lib/codex-execpolicy.test.ts
 tests/new-adr.test.ts
@@ -20,3 +19,4 @@ tests/lib/broker/policy-required.test.ts
 tests/lib/role-policy-parity.test.ts
 tests/lib/task-tools/policy-required.test.ts
 tests/lib/worker-boundary-policy.test.ts
+tests/lib/command-loading.test.ts

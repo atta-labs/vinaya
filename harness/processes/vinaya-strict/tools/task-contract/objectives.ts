@@ -33,7 +33,7 @@ const OBJECTIVE_LINE_RE = /^O(\d+)\.[ \t]*(.*)$/
  *
  * Every heading search in this module runs against this masked view, never
  * the raw body: a pull request following this repo's own deliverable
- * template (`aeg-root/templates/pr-report-template.md`) pastes the full,
+ * template (`harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md`) pastes the full,
  * frozen brief — which, for a task with `O<n>.` objectives, always carries
  * its OWN `## Objectives` heading — inside a collapsed `<details>`
  * reference-copy block below the live report. Searching the raw body let

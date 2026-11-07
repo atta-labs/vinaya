@@ -16,6 +16,8 @@
  * rank preceding it on the scale) blocks; everything below it does not.
  */
 
+import { DOCTRINE_MAP, doctrineRepoPath } from '../doctrine/doctrine-map'
+
 export const CODE_REVIEW_SEVERITY_ORDER = ['BLOCKER', 'MAJOR', 'MINOR'] as const
 export type CodeReviewSeverity = (typeof CODE_REVIEW_SEVERITY_ORDER)[number]
 
@@ -118,14 +120,19 @@ const FILE_SHAPED_LOCATION = /\.[a-zA-Z0-9]{1,10}(:\d+)?\s*$/
  * `apps/cli/tests/commands/pr-create-brief-comment.test.ts`, or any of the
  * repo's own `pr-body-*.md` fixtures — is a source or test file, never
  * prose, no matter which of these patterns its path text also matches. The
- * `aeg-root/roles/` pattern is deliberately NOT in this group and is checked
+ * role-doctrine pattern (the doctrine map's role files under `harness/processes/vinaya-strict/`) is deliberately NOT in this group and is checked
  * separately, ungated: it IS a real file, and is still prose by this task's
  * own design (see `isProseLocation` below).
  */
 const PROSE_LOCATION_PATTERNS = [/\bpr\s*body\b/i, /\bcomment\b/i] as const
 
 /** A role doc IS a file, yet still counts as prose — the one deliberate exception the file-shape gate never applies to. */
-const ROLE_FILE_LOCATION = /(^|\/)aeg-root\/roles\//i
+const ROLE_FILE_LOCATION = new RegExp(
+  `(^|\\/)(?:${DOCTRINE_MAP.filter((entry) => entry.key.startsWith('roles/'))
+    .map((entry) => doctrineRepoPath(entry.key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|')})`,
+  'i'
+)
 
 export function isProseLocation(location: string): boolean {
   if (ROLE_FILE_LOCATION.test(location)) return true

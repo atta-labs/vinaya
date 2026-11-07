@@ -442,7 +442,7 @@ export type ForgeValidationInput = {
    * CI-time gate applies (`checks/bin/check-brief-shape.ts`). Without it a
    * standalone `fix/*` PR is refused here for a `Closes #N` its branch cannot
    * carry, while CI passes the identical body — the divergence
-   * `aeg-root/enforcement.md` rules out: "one codebase, two enforcement
+   * `harness/processes/vinaya-strict/doctrine/enforcement.md` rules out: "one codebase, two enforcement
    * points, so the local gates and CI can never disagree".
    *
    * Omitted, empty, or the literal `HEAD` (git's detached-HEAD sentinel) all
@@ -1668,7 +1668,7 @@ const ISSUE_CONTENT_RECOVERY = {
   noBriefContent:
     "Move the brief-shaped section named above out of the Issue body and into the brief — the Issue carries the Planner's durable rationale, not the brief's just-in-time surface — then re-run `{cmd}`.",
   rationaleNamesDocs:
-    'Name a concrete doc/skill path (e.g. `aeg-root/…`, `.claude/skills/…/SKILL.md`) in "Docs to keep coherent" or "Traps", or write the `no-doc-surface` sentinel if the surface genuinely has none, then re-run `{cmd}`.',
+    'Name a concrete doc/skill path (e.g. `harness/processes/vinaya-strict/…`, `.claude/skills/…/SKILL.md`) in "Docs to keep coherent" or "Traps", or write the `no-doc-surface` sentinel if the surface genuinely has none, then re-run `{cmd}`.',
   surfaceGlobsResolve:
     'Fix the named `## Surface` `in:` glob so it matches at least one real tracked file (a typo, or a directory that does not exist yet), then re-run `{cmd}`.',
   partsCiteObjectives:
@@ -3078,7 +3078,7 @@ export async function writeValidatedIssueEdit(input: {
 
 // ---------------------------------------------------------------------------
 // Principal-only gate — `issue objectives edit` and `pr rule` are
-// Principal-only actions per `aeg-root/roles/principal.md`, but `gh`
+// Principal-only actions per `harness/processes/vinaya-strict/doctrine/roles/principal.md`, but `gh`
 // authenticates as "whoever is logged in": without this, any collaborator's
 // (or co-resident agent session's) token can post a comment indistinguishable
 // from a genuine Principal ruling, or silently rewrite a task's Objectives —

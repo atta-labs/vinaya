@@ -1,0 +1,124 @@
+---
+name: vinaya
+sidebar_title: Operating Model (vinaya)
+description: The front door to Vinaya — the operating model every agent works inside. Load at the start of ANY session in this repo, before doing anything substantive, regardless of role. Covers what Vinaya is, the four truth domains, forge-derived status, the plan as a Milestone plus labeled Issues, where the plan vs the flow vs governance live, the dispatch gates, the brief, the anti-regression rules, the doctrine tree at `vinaya-strict/` with all living state on the forge, and the model-vs-product distinction. Ends by routing to your role's entry point and the reading order. Does NOT cover role specifics (see roles + roles/*.md) or the mechanics of dispatching one task's brief (see `roles/planner/reference.md` § The dispatch act).
+---
+
+<!-- CANONICAL SOURCE. This file is the canonical home of the `vinaya` skill, inside the Vinaya unit (doctrine/skills/). provides for an agent-specific GENERATED VIEW under `.claude/skills/` (or another agent's equivalent), rebuilt from this file rather than authored by hand — but no such generator exists yet, and this repo has no generated view of this skill: agents are pointed at vinaya-strict/ directly (this repo's root agent-context file). Edit THIS file; if a generator is ever built, regenerate rather than hand-editing its output. -->
+
+# Vinaya — the operating model (front door)
+
+**Load this first, every session, before anything substantive — whatever your role.** It is the one-read picture of how work happens in this repo. When you finish it you will know what Vinaya is, what is true and where it is stored, and which role doc to open next. It does not reproduce the role docs or the brief rules — it points to them.
+
+Vinaya is **an agentic execution governance model.** It is a small set of accountable roles coordinating AI agents through briefs, independent review, and blocking escalation. It is **governance + orchestration of delegated AI execution** — it is *not* project management: there is no plan, timeline, or resource tracking inside Vinaya (that lives in the backlogs / a company tool, outside the flow).
+
+Vinaya is **agent-agnostic and tool-agnostic.** The roles below describe *what an agent must do*, not which agent does it — any capable coding agent can take a role by reading its doc. The model names no vendor as a dependency.
+
+---
+
+## 1. Vinaya is two things sharing one name (don't confuse them)
+
+- **Vinaya the model** — this operating model: the governance/flow constitution. It lives at the process folder `harness/processes/vinaya-strict/` (the model exists once, there only) and governs the whole repo. *This skill is the model.*
+- **Vinaya the product** — a deployed UI (**Studio**) that *visualizes* a repo's Vinaya execution, plus the CLI that lays the Vinaya structure into any repo. That product is **Vinaya**. The CLI and Studio are maintained as separate source trees, in separate repositories — an adopter installing Vinaya gets the CLI; Studio, where it runs, is a hosted or self-run separate deployment, not something this project's own repo layout says anything about.
+
+When someone says "Vinaya," default to the model unless the context is clearly the product (the UI, the website, the scaffolder).
+
+## 2. Forge-native, orchestrator-independent
+
+Vinaya runs on **the Repo + the Git forge (GitHub/GitLab) + plain git worktrees**, and depends on **no orchestration tool**. It can be run entirely by hand. An orchestrator may *automate* the dispatch/escalation slice, but knowledge flows one way: **a tool may know Vinaya; Vinaya does not know the tool.** Never assume an orchestrator exists; never make the model depend on one. *(In this repo, the optional orchestrator is Cetana — but the model never names it as a requirement.)*
+
+## 3. The four truth domains — every fact lives in exactly one place
+
+1. **The Git forge** (Issue / branch / PR / review / merge state) = **all live execution status, DERIVED not stored.** A task *is* a forge Issue. There is no status field and no `status:*` label anywhere — status is *read* from the forge:
+   - branch `task/<tranche>/<n>` exists → in-flight
+   - PR open → in-review · review = CHANGES_REQUESTED → changes-requested
+   - PR merged → merged · `aeg:blocked` label → blocked
+   Labels are only `tier:*`, `aeg:blocked`, `needs:*-input` — never status.
+2. **The Repo** = code, specs, and the doctrine tree (`vinaya-strict/`: role docs, contracts, the models, skills), plus the per-role entry points `vinaya init` installs (§11). The source of truth for **governance** — not for the plan, which is a Milestone plus labeled Issues on the forge (§5), and not for live status.
+3. **The task Issue's `aeg:brief:v1` comment** = the **just-in-time brief** — a task's full execution context, rendered mechanically and posted once, frozen, never hand-written. The PR body carries only the Developer's report (optionally a reference copy of the brief in a collapsed `<details>` block).
+4. **Local filesystem** = orchestration-tool runtime, worktrees, dev servers. Ephemeral, never canonical.
+
+Conversation logs / thinking are **not** artifacts — never cite them as authority.
+
+## 4. Where the plan / the flow / governance live
+
+- **The plan (backlogs)** → a unit's `specs/`: `specs/<unit>-backlog.md` (per unit / per project) and a repo-level backlog in the root `specs/`. **Out of the flow.** The Planner *may* read it to compose a tranche but the flow never operates on it.
+- **The plan for a batch of work (a tranche)** → the forge: a Milestone plus the Issues carrying its `tranche:<slug>` label, each Issue's body declaring its own `Depends-on` / `Conflicts-with` edges. No file in the repo holds it.
+- **The flow + governance (the model)** → the process folder `harness/processes/vinaya-strict/`: the constitution, the role docs, the contracts, the models, the skills. Exists **once**, at the repo root only.
+- **The living state** → forge-native, never the model and never a file: active/blocked/next is derived from Issue/branch/PR state, and completed-work history, lessons, per-project operational state, and ratification items live on the forge.
+- **`roadmap.md` is retired**. Never read or write it.
+
+The Vinaya skills are part of the model and live at `doctrine/skills/` (canonical).
+
+## 5. The tranche — a Milestone plus labeled Issues
+
+A tranche is **a Milestone plus the Issues that carry its tranche label**: one Issue per task, each declaring its own `depends-on` / `conflicts-with` edges. **No status, no PR numbers, no dates, no priority, no estimates** on any of them. It is the active slice of work the Planner pulled from a backlog. The link from backlog → tranche is a *human* (the Planner), not a file. (Full model: `doctrine/tranche-model.md`.)
+
+## 6. Conflicts and the two dispatch gates
+
+Conflicts are **package-level, and mostly derived, not hand-declared** (collision domains live-derived from `package.json`'s `packages/*` workspace members, plus a built-in cross-cutting default set — `vinaya.config.json`'s `blastRadius.extraDomains` adds anything beyond that; the legacy static `.aeg/packages` file is retired) — there is **no dynamic path-overlap scanner**. When unsure two tasks collide, declare the conflict and serialize. Two gates, both forge-answerable with zero stored state:
+- never start a task whose `depends-on` isn't **merged**;
+- never start a task while a `conflicts-with` sibling's **PR is open**.
+
+## 7. The brief
+
+The brief is the task's full execution context: **rendered mechanically, never hand-written, posted once frozen as the task Issue's own `aeg:brief:v1` comment**, amended only via escalation. If it isn't in the brief, it doesn't exist. Rendering + dispatch rules: `roles/planner/reference.md` § The dispatch act. Brief Step 0 is always worktree creation (`git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/main`).
+
+## 8. Roles (one line each — load the role doc for detail)
+
+Principal → Planner → Developer → Reviewer (code + security) → merge, plus the non-conversational Archivist. The Planner has two acts, one role: its **plan act** turns intent plus a backlog slice into a tranche — it cuts the Milestone's Issues — and its **dispatch act** checks one task's gates and posts its rendered brief. The **Operator** runs one already-planned task through the controller with its task tools — start it, read its status, read why its pull request is red, present an escalation, request resume or cancel — and never plans, codes, rules, or merges. **Do not operate from this list — load your role doc.** The **roles** skill routes you to the right one.
+
+## 9. Tiers, decisions, ratification (the governance layer)
+
+- **Tiers**: Tier 0 trivial · Tier 1 implementation · Tier 3 project/roadmap. No Tier 2. When in doubt, Tier 3.
+- **Decisions** follow `state-machine.md` Section 6, "Recording why."
+- **Ratification windows**: 1–2 daily; the Principal resolves Type 1s, Tier 3 merges, `severity:product` escalations.
+- **verify-docs** (`harness/processes/vinaya-strict/checks/standalone/verify-docs.ts`; in this repo it runs at authoring time — `open-pr.ts` / `bun run verify-docs --pr` — with its CI counterparts the `brief-shape`/`doc-coverage` checks in `.github/workflows/vinaya-checks.yml`; in the attalabs reference implementation it is a step of that repo's consolidated gate job) is a real blocking gate: changed specs need a `Status:` block, Tier 1+ code needs a doc change, Tier 3 states its reasoning in the pull request.
+
+## 10. The anti-regression rules — never violate
+
+- ❌ Never write task status anywhere (file, Issue field, label) — it is derived from the forge.
+- ❌ Never add execution metadata (status, PR #, dates) to a task Issue — its body holds the plan only.
+- ❌ Never hand-write the brief into the Issue body — it is rendered mechanically and posted frozen as the Issue's own `aeg:brief:v1` comment, never in the PR body.
+- ❌ Never put planning metadata (priority, estimates, points) on an Issue — that's the roadmap, outside Vinaya.
+- ❌ Never build a dynamic conflict scanner — declare conservatively and serialize.
+- ❌ Never read or write `roadmap.md` — retired.
+- ❌ Never put a backlog anywhere but a `specs/` folder.
+- ❌ Never let a Developer review its own work — review is a separate fresh-context invocation.
+
+## 11. What to do next (the reading order)
+
+After this skill, load in order: **`roles`** (routes you to your role) → your role's doctrine, through the entry point your agent reads: a skill per role under `.agents/skills/vinaya-<role>/` for an agent that reads the shared skills directory, or the one `/vinaya <role>` command under `.claude/commands/` or `.gemini/commands/` for an agent that reads a per-host command directory — each prints the same `roles/<role>.md` → the altitude you're working at — **`doctrine/milestone-model.md`** (declaring or reading a goal), **`doctrine/tranche-model.md`** (planning or executing across a batch), and/or **`doctrine/task-model.md`** (executing one task) — → the session-start forge queries below. When anything disagrees, `state-machine.md` wins.
+
+## 12. Session-start forge queries — deriving current state
+
+Execution state is **derived from the forge, never read from a file** — there is no state file, no status doc, no hand-maintained state Issue. (`coordination.md`, which once carried a session-start protocol plus a pinned per-project state-Issue layer, is retired: its queries cited label names that don't exist in any adopter, and the state-Issue layer duplicated what Milestones and tranche labels already derive — the one live instance drifted stale and was closed.) Substitute your repo's label namespace — the queries below use this repo's `vinaya/` prefix:
+
+**"What's active?"** — two independent queries, not a sequence:
+```bash
+gh issue list --label "vinaya/tranche:<slug>" --state open
+```
+```bash
+gh pr list --state open
+```
+
+**"What's blocked?"**
+```bash
+gh issue list --label "vinaya/blocked" --state open
+```
+
+**"What needs the Principal?"** — two independent queries, not a sequence:
+```bash
+gh issue list --label "vinaya/needs:principal-input" --state open
+```
+```bash
+gh pr list --label "vinaya/needs:principal-input" --state open
+```
+
+**"What merged recently?"** — `gh pr list --state merged --limit 20`
+
+**"Is a specific task dispatchable?"** — don't hand-derive it: `bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts <tranche> <n>` (or the shipped `dispatch-readiness` check in an adopter repo) answers with the exact blocker.
+
+Anything genuinely non-derivable — a pending manual operation, a known production issue — is an **ordinary open Issue, closed when resolved**: never a hand-edited-in-place state document, never a label pretending to be a status field.
+
+No brief, no audit finding, no "next steps" recommendation is valid without a forge check. Forge state > file state > memory. Always.

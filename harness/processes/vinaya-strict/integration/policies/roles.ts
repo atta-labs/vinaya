@@ -81,7 +81,7 @@ export const VINAYA_BOUNDARY_ROLES: BoundaryRolePolicy = {
 // --- the task-tool router -----------------------------------------------------
 
 /**
- * The Operator's grant (`aeg-root/roles/operator.md`'s allowed tools, mirrored
+ * The Operator's grant (`harness/processes/vinaya-strict/executing/operator/doctrine.md`'s allowed tools, mirrored
  * by `OPERATOR_TOOL_GRANT`), and the names its refusals print: a shell, a forge
  * write, an Issue edit, a review publish or a merge is asked of the Planner or
  * Principal instead.

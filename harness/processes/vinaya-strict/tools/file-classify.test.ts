@@ -3,7 +3,7 @@ import { isCodeFile, isDocFile, isSpecFile } from './file-classify'
 
 describe('isDocFile', () => {
   it('matches aeg-root, aeg-project, spec, and skill markdown', () => {
-    expect(isDocFile('aeg-root/roles/developer.md')).toBe(true)
+    expect(isDocFile('harness/processes/vinaya-strict/executing/developer/doctrine.md')).toBe(true)
     expect(isDocFile('aeg-project/state.md')).toBe(true)
     expect(isDocFile('apps/herald-ai/aeg-project/state.md')).toBe(true)
     expect(isDocFile('.vinaya/projects.md')).toBe(true)

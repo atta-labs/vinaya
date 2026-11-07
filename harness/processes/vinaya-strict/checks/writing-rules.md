@@ -120,7 +120,7 @@ names a folder, relative to the repository root, that holds them; with the
 key absent, every check, command and finding behaves exactly as before it
 existed. The loader refuses, naming the key, a path that leaves the
 repository, names the repository root itself, or sits inside the doctrine
-tree (`proseGates.doctrineRoot`, or `aeg-root` when that is unset).
+tree (`proseGates.doctrineRoot`, or `harness/processes/vinaya-strict` when that is unset).
 
 With the key set, three things change:
 

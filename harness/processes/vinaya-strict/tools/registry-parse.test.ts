@@ -4,7 +4,7 @@ import { describe, expect, it } from 'bun:test'
 import { type GateRow, parseEnforcementRegistry } from './registry-parse'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../..')
-const ENFORCEMENT_PATH = join(REPO_ROOT, 'aeg-root/enforcement.md')
+const ENFORCEMENT_PATH = join(REPO_ROOT, 'harness/processes/vinaya-strict/doctrine/enforcement.md')
 
 describe('parseEnforcementRegistry', () => {
   it('parses an inline fixture with differing middle columns per ring', () => {

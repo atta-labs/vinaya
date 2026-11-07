@@ -5,7 +5,7 @@
  * per the measurement below.
  *
  * **The measurement that disqualifies a phrase blacklist.** A phrase
- * blacklist tested against the real corpus (all of `aeg-root` plus 1,157
+ * blacklist tested against the real corpus (all of `harness/processes/vinaya-strict` plus 1,157
  * TypeScript files) scored 14 hits, 14 false positives, 0 true positives —
  * "a review was *requested*"; "could *this change* leak a secret"; "*I have*
  * X, Y, Z" inside a quoted example. The fix is not tuning the word list; it
@@ -24,7 +24,7 @@
  *   - Class 2 (vocabulary): not "is this word forbidden" but "does this
  *     reader-facing file use a coined term while neither defining it inline
  *     nor linking a definition." The term list is derived from
- *     `aeg-root/glossary.md`'s own entry headings — never hard-coded — so it
+ *     `harness/processes/vinaya-strict/doctrine/glossary.md`'s own entry headings — never hard-coded — so it
  *     cannot drift the first time an entry is added.
  *
  * Zero I/O: every input (file paths + contents, the glossary's term list, the
@@ -50,7 +50,7 @@ export type ProseFinding = {
 
 /**
  * The default of `proseGates.productPaths`: path prefixes under which a
- * tranche-slug citation in product code is a blocking finding — copied verbatim (aeg-root dropped) from the scope list
+ * tranche-slug citation in product code is a blocking finding — copied verbatim (harness/processes/vinaya-strict dropped) from the scope list
  * `retired-vocabulary.test.ts`'s `PATTERN_SCOPE[TRANCHE_SLUG_VN_PATTERN]` used
  * to grep directly; that suite no longer greps these paths itself
  * (`prose-product-scope.test.ts` pins this list against drift instead).
@@ -73,12 +73,12 @@ function isProductScopeFile(path: string, productPaths: readonly string[]): bool
 }
 
 /**
- * `aeg-root/**` by default — what this repo's own package carries and
- * `/docs` publishes. Every caller below takes `shipsPrefix` as its LAST,
+ * The doctrine map's tree, `harness/processes/vinaya-strict/`, by default —
+ * what this repo's own package carries and `/docs` publishes. Every caller below takes `shipsPrefix` as its LAST,
  * defaulted parameter so an adopter whose installed doctrine tree lives
  * somewhere else can override it without breaking any existing positional call.
  */
-const SHIPS_PREFIX = 'aeg-root/'
+const SHIPS_PREFIX = `${DOCTRINE_TREE}/`
 
 /** `<shipsPrefix>tranches/completed/` — history, never rewritten. Same exemption `retired-vocabulary.test.ts` already carries for the identical reason: an archived tranche legitimately cites the forge numbers and slugs it closed. */
 function shipsArchivePrefix(shipsPrefix: string): string {
@@ -122,7 +122,7 @@ export function normalizeSpecPath(entry: string): string {
  * or any `.md` file at — or under — one of `specPaths`' entries. Both are
  * swept with the SAME rules `ships`/doctrine pages already carry (a spec is
  * as reader-facing as a doctrine page; a fork or an export reads it with no
- * forge to resolve a citation against, same as `aeg-root/**`). The
+ * forge to resolve a citation against, same as the doctrine). The
  * `apps/<product>/specs/**` half was formerly classified `internal`
  * (exempt) on the theory that "this reader has this forge" — the wrong
  * reader: a spec ships to the SAME audience doctrine does, and a spec that
@@ -179,9 +179,10 @@ export function classifyProseFile(
   specPaths: readonly string[] = DEFAULT_SPEC_PATHS,
   productPaths: readonly string[] = PRODUCT_SLUG_SCOPE
 ): ProseFileClass | null {
-  if (path.startsWith(shipsPrefix)) {
-    return path.startsWith(shipsArchivePrefix(shipsPrefix)) ? 'internal' : 'ships'
-  }
+  if (path.startsWith(shipsArchivePrefix(shipsPrefix))) return 'internal'
+  // The default doctrine tree is the process folder, which also holds the
+  // process's own code: only the doctrine map's source paths ship from it.
+  if (shipsPrefix === SHIPS_PREFIX ? isDoctrineRepoPath(path) : path.startsWith(shipsPrefix)) return 'ships'
   if (path.startsWith(readerFacingPrefix) && path.endsWith(readerFacingSuffix)) {
     return 'reader-facing'
   }
@@ -253,6 +254,7 @@ import {
   rulesForGroup,
   rulesInScope
 } from './prose-rules'
+import { DOCTRINE_TREE, isDoctrineRepoPath } from './doctrine/doctrine-map'
 
 const readerRules = rulesForGroup('reader-resolvable')
 const readerPattern = (id: string, scope = 'prose'): RegExp => {
@@ -510,7 +512,7 @@ function definesOrLinksGlossary(content: string, term: string): boolean {
  * Class 2 — undefined coined vocabulary. Not "is this word forbidden" — it
  * is "does this reader-facing file use a coined term while neither defining
  * it inline nor linking a definition." `glossaryTerms` is read by the
- * adapter from `aeg-root/glossary.md`'s own entry headings — never
+ * adapter from `harness/processes/vinaya-strict/doctrine/glossary.md`'s own entry headings — never
  * hard-coded here, so the check cannot silently rot the first time an entry
  * is added.
  */
@@ -759,7 +761,7 @@ export function checkReaderResolvableProse(
   ]
 }
 
-/** Parses `aeg-root/glossary.md`'s `**Term** — definition` entry headings into a bare term list. */
+/** Parses `harness/processes/vinaya-strict/doctrine/glossary.md`'s `**Term** — definition` entry headings into a bare term list. */
 export function parseGlossaryTerms(glossaryContent: string): string[] {
   const terms: string[] = []
   const re = /^\*\*(.+?)\*\* —/gm

@@ -2,8 +2,8 @@
  * PR-report density (aeg-governance-hardening, dogfooding finding 2026-09-02).
  * Pure — no `fs`, no `fetch`, no `process.env`.
  *
- * `aeg-root/roles/developer.md` § "PR body — canonical form" and
- * `aeg-root/templates/pr-report-template.md` both require `## Decisions`
+ * `harness/processes/vinaya-strict/executing/developer/doctrine.md` § "PR body — canonical form" and
+ * `harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md` both require `## Decisions`
  * (`## Summary` before an earlier rename — see below) and `## Scope`
  * to hold exactly one blank-line-delimited block — narrative root-cause
  * detail belongs in a section of its own below the canonical four, a commit
@@ -112,7 +112,7 @@ function checkSectionDensity(prBody: string, heading: string): DensityResult {
   return {
     status: 'fail',
     errors: [
-      `pr-report-density ${heading}: "## ${heading}" holds ${count} paragraphs — the canonical PR-report form (aeg-root/roles/developer.md § PR body) requires exactly one. Collapse it to one paragraph; move the rest into a section of your own below the canonical four ("Add anything you want beneath the four sections", developer.md), a commit message, or the changeset — never into the AEG:EVIDENCE block, which is emitted only, never hand-typed.`
+      `pr-report-density ${heading}: "## ${heading}" holds ${count} paragraphs — the canonical PR-report form (harness/processes/vinaya-strict/executing/developer/doctrine.md § PR body) requires exactly one. Collapse it to one paragraph; move the rest into a section of your own below the canonical four ("Add anything you want beneath the four sections", developer.md), a commit message, or the changeset — never into the AEG:EVIDENCE block, which is emitted only, never hand-typed.`
     ]
   }
 }

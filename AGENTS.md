@@ -94,7 +94,7 @@ in-repo copy to drift. This pointer names that package, never a filesystem
 path: where a package sits is a property of one machine, and this file is
 committed for every clone.
 
-The doctrine's own front door is `aeg-root/skills/aeg/SKILL.md` inside that
+The doctrine's own front door is `doctrine/skills/vinaya/SKILL.md` inside that
 package — read first every session regardless of role. Resolve it on this
 machine with:
 
@@ -103,7 +103,7 @@ machine with:
    It prints the front door's absolute path on this machine (build the
    CLI first if that file is missing:
    `bun install --frozen-lockfile && bun run --cwd apps/cli build`);
-   the `aeg-root/` directory above it is the full doctrine.
+   the `vinaya-strict/` directory above it is the full doctrine.
 
 Live task status is derived from the forge (Issues, labels, comments) via
 `vinaya check` — it is never written into a file here.

@@ -113,8 +113,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Whether a diff touches only `**/*.md`, `.changeset/**`, and
-      # `aeg-root/**` doc files — reported in this job's summary. What lint
+      # Whether a diff touches only `**/*.md` (the doctrine under
+      # `harness/processes/vinaya-strict/` included) and `.changeset/**` doc files — reported in this job's summary. What lint
       # and typecheck run is the CI plan's, below. Reports a real "true" on
       # this job's own check run rather than a `skipped` job — this job's
       # `if:` is never false.
@@ -132,7 +132,7 @@ jobs:
             exit 0
           fi
           CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD)
-          NON_DOCS=$(echo "$CHANGED" | grep -vE '\.md$|^\.changeset/|^aeg-root/' || true)
+          NON_DOCS=$(echo "$CHANGED" | grep -vE '\.md$|^\.changeset/' || true)
           if [ -n "$CHANGED" ] && [ -z "$NON_DOCS" ]; then
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           else
@@ -289,7 +289,7 @@ jobs:
 
       - name: Docs-only skip report
         if: steps.docs-only.outputs.docs_only == 'true'
-        run: echo "Docs-only diff (**/*.md, .changeset/**, aeg-root/**) — lint/typecheck/test skipped." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Docs-only diff (**/*.md, .changeset/**) — lint/typecheck/test skipped." >> "$GITHUB_STEP_SUMMARY"
 
       # The counted architecture ratchet: the head tree's process and role
       # names in non-process code must equal the committed baseline, and that
@@ -318,7 +318,7 @@ jobs:
       - name: Check the test inventory and run the repository suite
         run: |
           bun scripts/test-suites/inventory-check.ts
-          bun test ./scripts/test-suites/bun-runtime.test.ts ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts ./scripts/test-suites/recorded-selection.test.ts
+          bun test ./scripts/test-suites/bun-runtime.test.ts ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts ./scripts/test-suites/recorded-selection.test.ts ./scripts/test-suites/read-records.test.ts
 
       # The package-compatibility suite (`scripts/package-compat/`): each
       # published package is packed — the three aeg packages through the

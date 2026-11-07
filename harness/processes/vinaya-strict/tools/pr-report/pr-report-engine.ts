@@ -43,7 +43,7 @@ import {
 
 /**
  * The `AEG:EVIDENCE` engine — every function that computes, or writes, the
- * anchored block `aeg-root/roles/developer.md`'s PR-body canonical form
+ * anchored block `harness/processes/vinaya-strict/executing/developer/doctrine.md`'s PR-body canonical form
  * describes. Moved out of `apps/cli/src/commands/pr-report.ts`:
  * a COMMAND (`apps/cli/src/commands/pr-report.ts`'s
  * `prReportCommand`, argv-parsing and console I/O only) and the loop's own
@@ -549,6 +549,8 @@ export type GroupC = { commands: GroupCCommandResult[] }
  */
 export type TestRunCacheRecord = {
   output: string
+  /** The head a carried Test Plan pass ran on (`test-plan-carry.ts`); set only on its `carry:` record. */
+  head?: string
   exitCode: 0
   timedOut: false
   overflowed: false
@@ -1612,10 +1614,10 @@ export function replaceEvidenceBlock(body: string, blockInner: string): string {
  * Thrown by `spliceIntoLiveBody` when the live PR body carries no real
  * `AEG:EVIDENCE` pair. `replaceEvidenceBlock` itself APPENDS a fresh pair in
  * that case — the right behaviour for `--write`'s local draft, which starts
- * from `aeg-root/templates/pr-report-template.md` and is expected to grow the
+ * from `harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md` and is expected to grow the
  * pair on first adoption. A LIVE, already-open PR body with no pair is a
  * different fact: the template's Evidence section was never carried into the
- * opened body, which is malformed per `aeg-root/roles/developer.md`'s PR-body
+ * opened body, which is malformed per `harness/processes/vinaya-strict/executing/developer/doctrine.md`'s PR-body
  * canonical form. `--push` must never paper over that by silently appending —
  * appending here would let a PR open without the section its own review gates
  * assume, then have `--push` manufacture one no reviewer ever saw form.
@@ -1625,7 +1627,7 @@ export class MissingEvidenceAnchorError extends Error {
     super(
       'the live PR body carries no AEG:EVIDENCE anchor pair. `--push` never appends one the way `--write` ' +
         'does for a fresh local draft — a live PR body without the pair is malformed. Add the `## Evidence` ' +
-        'section (see aeg-root/templates/pr-report-template.md) to the PR body first, then re-run --push.'
+        'section (see harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md) to the PR body first, then re-run --push.'
     )
     this.name = 'MissingEvidenceAnchorError'
   }
@@ -1662,7 +1664,7 @@ function stripAnchoredRegion(body: string, field: AnchorField): string {
  * The `--push` self-verification predicate: with the `AEG:EVIDENCE` region
  * removed from both, are `before` and `after` the exact same bytes? That
  * region is the only one a `--push` run is authorized to change
- * (`aeg-root/roles/developer.md`'s frozen-body rule); anything else
+ * (`harness/processes/vinaya-strict/executing/developer/doctrine.md`'s frozen-body rule); anything else
  * differing means the edit clobbered content it had no business touching — a
  * whole-body overwrite racing a Principal's `[principal]` tick, a line-ending
  * conversion round-tripped through the forge, or a bug in this engine.
@@ -1802,7 +1804,7 @@ export async function ghEditBody(pr: string, body: string): Promise<void> {
  * The outcome of pushing a freshly-built Evidence report onto an
  * OPEN pull request's LIVE body — `runReportForOpenPr`'s own return type.
  * `'ok'` is not "no gate failed"; a red gate still writes the block
- * (recording the failure honestly, `aeg-root/roles/developer.md`) — `'ok'`
+ * (recording the failure honestly, `harness/processes/vinaya-strict/executing/developer/doctrine.md`) — `'ok'`
  * means the PUSH ITSELF (fetch, splice, edit, self-verify) went through
  * cleanly. Every other case names exactly which step refused, mirroring the
  * distinct messages `prReportCommand`'s own `--push` branch always printed,

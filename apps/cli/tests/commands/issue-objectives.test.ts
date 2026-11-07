@@ -693,7 +693,7 @@ exit 1
     // a tracked file but the Boundary names none of them; this shared
     // fixture's own `## Surface` `in: aeg-root` resolves to real tracked
     // files, so the Boundary must name one.
-    '**Boundary** \u2014 In: `aeg-root/templates/brief-template.md`, the fixture\u2019s own committed doctrine file. Out: nothing.',
+    '**Boundary** \u2014 In: `harness/processes/vinaya-strict/artifacts/templates/brief-template.md`, the fixture\u2019s own committed doctrine file. Out: nothing.',
     '',
     ...[
       'reader-resolvable-prose',
@@ -724,13 +724,13 @@ exit 1
     const tmp = tempDir('issue-objectives-backlog-')
     const remoteDir = join(tmp, 'remote')
     const localDir = join(tmp, 'local')
-    mkdirSync(join(remoteDir, 'aeg-root', 'templates'), { recursive: true })
+    mkdirSync(join(remoteDir, 'harness/processes/vinaya-strict/artifacts/templates'), { recursive: true })
     gitCmd(tmp, ['init', '-q', '-b', 'main', remoteDir])
     gitCmd(remoteDir, ['config', 'user.email', 'a@example.com'])
     gitCmd(remoteDir, ['config', 'user.name', 'A'])
     cpSync(
-      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
-      join(remoteDir, 'aeg-root', 'templates', 'brief-template.md')
+      join(REPO_ROOT, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md'),
+      join(remoteDir, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md')
     )
     gitCmd(remoteDir, ['add', '.'])
     gitCmd(remoteDir, ['commit', '-q', '-m', 'seed'])
@@ -752,7 +752,7 @@ exit 1
       '',
       '## Surface',
       '',
-      'in: aeg-root',
+      'in: harness/processes/vinaya-strict',
       'out: \u2014',
       '',
       '## Parts',
@@ -905,13 +905,13 @@ process.exit(1)
     const tmp = tempDir('issue-objectives-backlog-supersede-')
     const remoteDir = join(tmp, 'remote')
     const localDir = join(tmp, 'local')
-    mkdirSync(join(remoteDir, 'aeg-root', 'templates'), { recursive: true })
+    mkdirSync(join(remoteDir, 'harness/processes/vinaya-strict/artifacts/templates'), { recursive: true })
     gitCmd(tmp, ['init', '-q', '-b', 'main', remoteDir])
     gitCmd(remoteDir, ['config', 'user.email', 'a@example.com'])
     gitCmd(remoteDir, ['config', 'user.name', 'A'])
     cpSync(
-      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
-      join(remoteDir, 'aeg-root', 'templates', 'brief-template.md')
+      join(REPO_ROOT, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md'),
+      join(remoteDir, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md')
     )
     gitCmd(remoteDir, ['add', '.'])
     gitCmd(remoteDir, ['commit', '-q', '-m', 'seed'])
@@ -935,7 +935,7 @@ process.exit(1)
       '',
       '## Surface',
       '',
-      'in: aeg-root',
+      'in: harness/processes/vinaya-strict',
       'out: —',
       '',
       '## Parts',

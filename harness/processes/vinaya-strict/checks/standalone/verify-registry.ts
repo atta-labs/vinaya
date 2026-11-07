@@ -2,7 +2,7 @@
 
 /**
  * verify-registry — G1–G6, the deterministic checks that make
- * `aeg-root/enforcement.md`'s three ring tables load-bearing (aeg-core-purity
+ * `harness/processes/vinaya-strict/doctrine/enforcement.md`'s three ring tables load-bearing (aeg-core-purity
  * discipline: this is the thin I/O shim; the pure evaluators live in
  * `../src/registry-parse.ts` / `../src/registry-checks.ts`).
  *
@@ -17,7 +17,7 @@
  * registry-gates`) for the full G1–G6 gate set.
  *
  * `--scaffold`: auto-inserts a stub row for every G2 orphan candidate whose
- * ring is derivable (registry-scaffold.ts), writes `aeg-root/enforcement.md`,
+ * ring is derivable (registry-scaffold.ts), writes `harness/processes/vinaya-strict/doctrine/enforcement.md`,
  * and prints what it inserted. Deliberately only here, never in the shipped
  * `check-registry-gates.ts` (apps/cli) — adopter checks stay read-only over
  * doctrine; this repo's own maintainers run the writer directly, from
@@ -35,15 +35,27 @@ import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolv
 import { applyScaffoldPlan, computeScaffoldPlan } from '../registry-scaffold'
 import { checkG1, checkG2, checkG3, checkG4, checkG5 } from '../registry-checks'
 import { parseEnforcementRegistry } from '../../tools/registry-parse'
+import {
+  CONTRACT_ENTRIES,
+  type DoctrineMapEntry,
+  doctrineRepoPath,
+  ROLE_KEY_ENTRIES
+} from '../../tools/doctrine/doctrine-map'
 import type { GateRow } from '../../tools/registry-parse'
 import type { RegistryCheckResult } from '../registry-checks'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../../..')
 process.chdir(REPO_ROOT)
 
-const ENFORCEMENT_PATH = 'aeg-root/enforcement.md'
-const ROLES_DIR = 'aeg-root/roles'
-const CONTRACTS_DIR = 'aeg-root/contracts'
+const ENFORCEMENT_PATH = doctrineRepoPath('enforcement.md')
+
+/** The repository-relative paths of the map rows that exist in this checkout, in logical-key order. */
+function presentPaths(entries: readonly DoctrineMapEntry[]): string[] {
+  return [...entries]
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map((entry) => doctrineRepoPath(entry.key))
+    .filter((path) => existsSync(join(REPO_ROOT, path)))
+}
 
 function sh(cmd: string): string {
   try {
@@ -223,32 +235,26 @@ type RegistryRoleFrontmatter = { file: string; role_id: string; performs: string
 type RegistryContractFrontmatter = { file: string; producer: string; consumer: string }
 
 function readRoles(): RegistryRoleFrontmatter[] {
-  return readdirSync(join(REPO_ROOT, ROLES_DIR))
-    .filter((name) => name.endsWith('.md'))
-    .map((name) => {
-      const rel = `${ROLES_DIR}/${name}`
-      const { data } = matter(readFileSync(join(REPO_ROOT, rel), 'utf8'))
-      return {
-        file: rel,
-        role_id: typeof data.role_id === 'string' ? data.role_id : '',
-        performs: Array.isArray(data.performs) ? data.performs.map(String) : [],
-        refuses_when: typeof data.refuses_when === 'string' ? data.refuses_when : ''
-      }
-    })
+  return presentPaths(ROLE_KEY_ENTRIES).map((rel) => {
+    const { data } = matter(readFileSync(join(REPO_ROOT, rel), 'utf8'))
+    return {
+      file: rel,
+      role_id: typeof data.role_id === 'string' ? data.role_id : '',
+      performs: Array.isArray(data.performs) ? data.performs.map(String) : [],
+      refuses_when: typeof data.refuses_when === 'string' ? data.refuses_when : ''
+    }
+  })
 }
 
 function readContracts(): RegistryContractFrontmatter[] {
-  return readdirSync(join(REPO_ROOT, CONTRACTS_DIR))
-    .filter((name) => name.endsWith('.md'))
-    .map((name) => {
-      const rel = `${CONTRACTS_DIR}/${name}`
-      const { data } = matter(readFileSync(join(REPO_ROOT, rel), 'utf8'))
-      return {
-        file: rel,
-        producer: typeof data.producer === 'string' ? data.producer : '',
-        consumer: typeof data.consumer === 'string' ? data.consumer : ''
-      }
-    })
+  return presentPaths(CONTRACT_ENTRIES).map((rel) => {
+    const { data } = matter(readFileSync(join(REPO_ROOT, rel), 'utf8'))
+    return {
+      file: rel,
+      producer: typeof data.producer === 'string' ? data.producer : '',
+      consumer: typeof data.consumer === 'string' ? data.consumer : ''
+    }
+  })
 }
 
 // ---------- output --------------------------------------------------------------

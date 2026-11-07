@@ -5364,7 +5364,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       if (rec) devResumeId = rec.resumeId
     }
 
-    /** O2/O3: the developer's own worktree convention (`aeg-root/roles/developer.md`) — `.worktrees/<branch>` under this repo's root. */
+    /** O2/O3: the developer's own worktree convention (`harness/processes/vinaya-strict/executing/developer/doctrine.md`) — `.worktrees/<branch>` under this repo's root. */
     function worktreePathForBranch(): string {
       return join(repoRoot, '.worktrees', branch)
     }

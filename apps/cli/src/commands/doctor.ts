@@ -56,7 +56,10 @@ import {
 import { CLAUDE_COMMAND_PATH } from '../../../../harness/processes/vinaya-strict/integration/claude-command-emitter.js'
 import { CLAUDE_SETTINGS_PATH } from '../../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../../../../harness/processes/vinaya-strict/integration/gemini-command-emitter.js'
-import { type DoctrineSource, resolveDoctrineRootInfo } from './doctrine.js'
+import {
+  type DoctrineSource,
+  resolveDoctrineRootInfo
+} from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
   type BriefSection,

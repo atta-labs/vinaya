@@ -10,7 +10,7 @@
  *
  * **The corpus is the standalone documentation verifier's, with the doctrine
  * root read from configuration** — every tracked doctrine page under
- * `proseGates.doctrineRoot` (`aeg-root` when unset) and every tracked
+ * `proseGates.doctrineRoot` (the doctrine map's source paths under `harness/processes/vinaya-strict/` when unset) and every tracked
  * `.ts`/`.md` file under `apps/` and `packages/`. Discovery goes through `git ls-files`,
  * never a directory walk, so a scratch file nobody committed is never swept.
  *
@@ -32,12 +32,14 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { checkDocClaims } from '../../tools/doc-claim'
+import { DOCTRINE_REPO_PATHS } from '../../tools/doctrine/doctrine-map'
 import { loadConfig } from '../../../../../apps/cli/src/lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'doc-claims'
 
-const DOCTRINE_ROOT = loadConfig()?.proseGates?.doctrineRoot ?? 'aeg-root'
+/** The configured doctrine folder, swept in full; unset, the sweep is the doctrine map's source paths. */
+const DOCTRINE_ROOT = loadConfig()?.proseGates?.doctrineRoot
 
 /** The apps and packages pathspecs the standalone documentation verifier sweeps for its doc-claim bindings. */
 const SOURCE_PATHSPECS = ['apps/*.ts', 'apps/*.md', 'harness/*.ts', 'harness/*.md', 'packages/*.ts', 'packages/*.md']
@@ -53,8 +55,10 @@ function doctrinePathspec(root: string): string | null {
   return rel === '' ? '*.md' : `${rel.replace(/\\/g, '/')}/*.md`
 }
 
-const DOCTRINE_PATHSPEC = doctrinePathspec(DOCTRINE_ROOT)
-const CORPUS_PATHSPECS = DOCTRINE_PATHSPEC === null ? SOURCE_PATHSPECS : [DOCTRINE_PATHSPEC, ...SOURCE_PATHSPECS]
+const CONFIGURED_PATHSPEC = DOCTRINE_ROOT === undefined ? null : doctrinePathspec(DOCTRINE_ROOT)
+const DOCTRINE_PATHSPECS: readonly string[] =
+  DOCTRINE_ROOT === undefined ? DOCTRINE_REPO_PATHS : CONFIGURED_PATHSPEC === null ? [] : [CONFIGURED_PATHSPEC]
+const CORPUS_PATHSPECS = [...DOCTRINE_PATHSPECS, ...SOURCE_PATHSPECS]
 
 function gitLsFiles(pathspecs: readonly string[]): string[] {
   return execFileSync('git', ['ls-files', '--', ...pathspecs], {

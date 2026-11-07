@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { DOCTRINE_REPO_PATHS } from './doctrine/doctrine-map'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
@@ -19,13 +20,13 @@ describe('findCitedQuotes — marker discovery', () => {
     const content =
       'one job — <!-- AEG:QUOTES-FILE:START:.github/workflows/x.yml -->`vinaya check --all`<!-- AEG:QUOTES-FILE:END --> today'
     const quotes = findCitedQuotes(
-      [{ path: 'aeg-root/enforcement.md', content }],
+      [{ path: 'harness/processes/vinaya-strict/doctrine/enforcement.md', content }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
     expect(quotes).toEqual([
       {
-        file: 'aeg-root/enforcement.md',
+        file: 'harness/processes/vinaya-strict/doctrine/enforcement.md',
         line: 1,
         quotedText: 'vinaya check --all',
         citedFile: '.github/workflows/x.yml'
@@ -36,15 +37,19 @@ describe('findCitedQuotes — marker discovery', () => {
   it('finds a two-line pair, reporting the line the marker pair starts on', () => {
     const content = [
       'preamble',
-      '<!-- AEG:QUOTES-FILE:START:aeg-root/glossary.md -->',
+      '<!-- AEG:QUOTES-FILE:START:harness/processes/vinaya-strict/doctrine/glossary.md -->',
       '`some quoted text`',
       '<!-- AEG:QUOTES-FILE:END -->',
       'trailer'
     ].join('\n')
-    const quotes = findCitedQuotes([{ path: 'aeg-root/x.md', content }], READER_FACING_PREFIX, READER_FACING_SUFFIX)
+    const quotes = findCitedQuotes(
+      [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
     expect(quotes).toHaveLength(1)
     expect(quotes[0]?.quotedText).toBe('some quoted text')
-    expect(quotes[0]?.citedFile).toBe('aeg-root/glossary.md')
+    expect(quotes[0]?.citedFile).toBe('harness/processes/vinaya-strict/doctrine/glossary.md')
     expect(quotes[0]?.line).toBe(2)
   })
 
@@ -53,7 +58,11 @@ describe('findCitedQuotes — marker discovery', () => {
       '<!-- AEG:QUOTES-FILE:START:a.txt -->`one`<!-- AEG:QUOTES-FILE:END -->',
       '<!-- AEG:QUOTES-FILE:START:b.txt -->`two`<!-- AEG:QUOTES-FILE:END -->'
     ].join('\n')
-    const quotes = findCitedQuotes([{ path: 'aeg-root/x.md', content }], READER_FACING_PREFIX, READER_FACING_SUFFIX)
+    const quotes = findCitedQuotes(
+      [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
     expect(quotes.map((q) => q.quotedText)).toEqual(['one', 'two'])
     expect(quotes.map((q) => q.citedFile)).toEqual(['a.txt', 'b.txt'])
   })
@@ -67,18 +76,27 @@ describe('findCitedQuotes — marker discovery', () => {
       '<!-- AEG:QUOTES-FILE:END -->',
       '```'
     ].join('\n')
-    const quotes = findCitedQuotes([{ path: 'aeg-root/x.md', content }], READER_FACING_PREFIX, READER_FACING_SUFFIX)
+    const quotes = findCitedQuotes(
+      [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
     expect(quotes).toEqual([])
   })
 
   it('does NOT fire on an unterminated START with no following END', () => {
     const content = '<!-- AEG:QUOTES-FILE:START:a.txt -->`dangling, no end marker`'
-    const quotes = findCitedQuotes([{ path: 'aeg-root/x.md', content }], READER_FACING_PREFIX, READER_FACING_SUFFIX)
+    const quotes = findCitedQuotes(
+      [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
     expect(quotes).toEqual([])
   })
 
   it('never sweeps apps/*/specs/** or CLAUDE.md — this reader already has this forge', () => {
-    const content = '<!-- AEG:QUOTES-FILE:START:aeg-root/enforcement.md -->`x`<!-- AEG:QUOTES-FILE:END -->'
+    const content =
+      '<!-- AEG:QUOTES-FILE:START:harness/processes/vinaya-strict/doctrine/enforcement.md -->`x`<!-- AEG:QUOTES-FILE:END -->'
     const quotes = findCitedQuotes(
       [
         { path: 'apps/cli/specs/self-hosting.md', content },
@@ -98,7 +116,11 @@ describe('findCitedQuotes — marker discovery', () => {
       '```',
       '<!-- AEG:QUOTES-FILE:END -->'
     ].join('\n')
-    const quotes = findCitedQuotes([{ path: 'aeg-root/x.md', content }], READER_FACING_PREFIX, READER_FACING_SUFFIX)
+    const quotes = findCitedQuotes(
+      [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
     expect(quotes[0]?.quotedText).toBe('line one')
   })
 })
@@ -128,26 +150,34 @@ describe('isValidCitedFilePath — closing the file-content oracle (security fin
 
   it('accepts an ordinary repo-relative path', () => {
     expect(isValidCitedFilePath('.github/workflows/vinaya-checks.yml')).toBe(true)
-    expect(isValidCitedFilePath('aeg-root/enforcement.md')).toBe(true)
+    expect(isValidCitedFilePath('harness/processes/vinaya-strict/doctrine/enforcement.md')).toBe(true)
   })
 })
 
 describe('findCitedQuotes — a traversal/absolute citedFile is not a valid citation at all', () => {
   it('a `..`-traversal citedFile never becomes a discovered quote — same as no marker present', () => {
     const content = '<!-- AEG:QUOTES-FILE:START:../../../../../etc/hosts -->`localhost`<!-- AEG:QUOTES-FILE:END -->'
-    const quotes = findCitedQuotes([{ path: 'aeg-root/x.md', content }], READER_FACING_PREFIX, READER_FACING_SUFFIX)
+    const quotes = findCitedQuotes(
+      [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
     expect(quotes).toEqual([])
   })
 
   it('an absolute citedFile never becomes a discovered quote', () => {
     const content = '<!-- AEG:QUOTES-FILE:START:/etc/hosts -->`localhost`<!-- AEG:QUOTES-FILE:END -->'
-    const quotes = findCitedQuotes([{ path: 'aeg-root/x.md', content }], READER_FACING_PREFIX, READER_FACING_SUFFIX)
+    const quotes = findCitedQuotes(
+      [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
     expect(quotes).toEqual([])
   })
 
   it('a hostile marker produces zero findings end to end, indistinguishable from no marker — no oracle signal survives', () => {
     const hostile: QuotedCommandSourceFile = {
-      path: 'aeg-root/x.md',
+      path: 'harness/processes/vinaya-strict/doctrine/glossary.md',
       content: '<!-- AEG:QUOTES-FILE:START:../../../../../etc/hosts -->`root:x:0:0`<!-- AEG:QUOTES-FILE:END -->'
     }
     const findings = checkQuotedCommandStaleness(
@@ -214,7 +244,7 @@ describe('checkQuotedCommandStaleness — end to end over a small fixture', () =
   it('composes discovery and evaluation in one call', () => {
     const files: QuotedCommandSourceFile[] = [
       {
-        path: 'aeg-root/enforcement.md',
+        path: 'harness/processes/vinaya-strict/doctrine/enforcement.md',
         content: '<!-- AEG:QUOTES-FILE:START:wf.yml -->`vinaya@X check --all`<!-- AEG:QUOTES-FILE:END -->'
       }
     ]
@@ -236,29 +266,14 @@ describe('checkQuotedCommandStaleness — end to end over a small fixture', () =
   })
 })
 
-/** Recursively collects repo-relative `.md` paths under `dir`, POSIX-separated. */
-function collectMarkdown(dir: string, out: string[] = []): string[] {
-  let entries: string[]
-  try {
-    entries = readdirSync(join(REPO_ROOT, dir))
-  } catch {
-    return out
-  }
-  for (const name of entries) {
-    const rel = `${dir}/${name}`
-    const abs = join(REPO_ROOT, rel)
-    if (statSync(abs).isDirectory()) {
-      collectMarkdown(rel, out)
-    } else if (name.endsWith('.md')) {
-      out.push(rel)
-    }
-  }
-  return out
+/** The repo-relative doctrine pages the doctrine map names that exist in this checkout, POSIX-separated. */
+function collectMarkdown(): string[] {
+  return DOCTRINE_REPO_PATHS.filter((path) => existsSync(join(REPO_ROOT, path)))
 }
 
 describe('corpus test — the real aeg-root/** tree', () => {
   it('produces zero findings against this repo as it stands today', () => {
-    const docPaths = collectMarkdown('aeg-root')
+    const docPaths = collectMarkdown()
     const files: QuotedCommandSourceFile[] = docPaths.map((p) => ({
       path: p,
       content: readFileSync(join(REPO_ROOT, p), 'utf8')
@@ -279,7 +294,7 @@ describe('corpus test — the real aeg-root/** tree', () => {
   })
 
   it('carries at least one real, live annotation today — this check ships with a true-positive-capable case, not only synthetic fixtures', () => {
-    const docPaths = collectMarkdown('aeg-root')
+    const docPaths = collectMarkdown()
     const files: QuotedCommandSourceFile[] = docPaths.map((p) => ({
       path: p,
       content: readFileSync(join(REPO_ROOT, p), 'utf8')

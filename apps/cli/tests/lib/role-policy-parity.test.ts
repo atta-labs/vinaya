@@ -190,9 +190,9 @@ describe('broker — authentication and push refusals read as before', () => {
       'vinaya.config.json',
       '.vinaya/doc-owners',
       '.github/workflows/ci.yml',
-      'aeg-root/roles/developer.md',
+      'harness/processes/vinaya-strict/executing/developer/doctrine.md',
       '../.github/workflows/ci.yml',
-      'foo/../aeg-root/x'
+      'foo/../harness/processes/vinaya-strict/doctrine/enforcement.md'
     ]) {
       let thrown: unknown
       try {

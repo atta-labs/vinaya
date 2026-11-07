@@ -54,7 +54,7 @@ import {
   CLAUDE_STOP_HOOK_MARKER,
   CLAUDE_STOP_HOOK_SCRIPT_PATH
 } from '../../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
-import { resolveDoctrineRoot } from './doctrine.js'
+import { resolveDoctrineRoot } from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
 import {
   isDefaultedAgentVendorPath,

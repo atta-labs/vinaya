@@ -70,7 +70,7 @@ describe('resolveAuthorRepoSourceEntry', () => {
   })
 
   function withAuthorRepoShape(): string {
-    const roleFile = join(repoRoot, 'aeg-root', 'roles', 'x.md')
+    const roleFile = join(repoRoot, 'harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md')
     mkdirSync(dirname(roleFile), { recursive: true })
     writeFileSync(roleFile, '# x\n')
     const entry = join(repoRoot, 'apps', 'cli', 'src', 'index.ts')
@@ -95,7 +95,7 @@ describe('resolveAuthorRepoSourceEntry', () => {
   })
 
   it('returns null when the repo carries aeg-root/roles/ but no apps/cli/src/index.ts of its own', () => {
-    const roleFile = join(repoRoot, 'aeg-root', 'roles', 'x.md')
+    const roleFile = join(repoRoot, 'harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md')
     mkdirSync(dirname(roleFile), { recursive: true })
     writeFileSync(roleFile, '# x\n')
     const installedPkg = join(tmpdir(), 'fake-install', 'node_modules', '@attalabs', 'vinaya')
@@ -113,7 +113,7 @@ describe('resolveAuthorRepoSourceEntry', () => {
     // The exact spoof named in review: a repo that merely carries the two
     // paths (a shared sample/tutorial/fork) must not be treated as the
     // author repository just because the shape matches.
-    const roleFile = join(repoRoot, 'aeg-root', 'roles', 'x.md')
+    const roleFile = join(repoRoot, 'harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md')
     mkdirSync(dirname(roleFile), { recursive: true })
     writeFileSync(roleFile, '# x\n')
     const entry = join(repoRoot, 'apps', 'cli', 'src', 'index.ts')
@@ -126,7 +126,7 @@ describe('resolveAuthorRepoSourceEntry', () => {
   })
 
   it('returns null when apps/cli/package.json is missing entirely, even though the directory shape matches', () => {
-    const roleFile = join(repoRoot, 'aeg-root', 'roles', 'x.md')
+    const roleFile = join(repoRoot, 'harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md')
     mkdirSync(dirname(roleFile), { recursive: true })
     writeFileSync(roleFile, '# x\n')
     const entry = join(repoRoot, 'apps', 'cli', 'src', 'index.ts')

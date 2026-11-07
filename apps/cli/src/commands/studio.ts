@@ -243,7 +243,7 @@ function ensureStudioNodeModules(bundleRoot: string): void {
  *  fix: `AEG_REPO` only survives the chdir for git-remote/GitHub-API reads
  *  (`resolveRepo()`). The app's FILE-based repo-root walks — `.vinaya/
  *  projects.md` (`web/src/lib/repo-state/read-root.ts`), `vinaya.config.json`
- *  (`web/src/lib/github-links.ts`), and `aeg-root/` (`web/src/lib/docs/
+ *  (`web/src/lib/github-links.ts`), and `harness/processes/vinaya-strict/` (`web/src/lib/docs/
  *  load-aeg-docs.ts`) — all default to a bare `process.cwd()` walk with no
  *  override, so they silently resolved the installed package's own tree
  *  post-chdir and returned empty/missing state (found live: Projects showed

@@ -25,18 +25,24 @@ describe('publishedMergeBase — anchored to the renderer’s own line', () => {
 
 describe('normaliseLines', () => {
   test('strips the local repo root wherever it appears in a line', () => {
-    expect(normaliseLines('warning: /work/vinaya/aeg-root/x.md:3: term', ROOT)).toEqual([
-      'warning: aeg-root/x.md:3: term'
-    ])
+    expect(
+      normaliseLines('warning: /work/vinaya/harness/processes/vinaya-strict/doctrine/glossary.md:3: term', ROOT)
+    ).toEqual(['warning: harness/processes/vinaya-strict/doctrine/glossary.md:3: term'])
   })
 
   // The MAJOR the old tautology test hid: the published block is routinely
   // generated on a different machine, whose root this process never knows.
   test('strips a FOREIGN checkout root too — the two-machine case', () => {
-    const ci = normaliseLines('warning: /home/runner/work/vinaya/vinaya/aeg-root/x.md:3: term', ROOT)
-    const laptop = normaliseLines('warning: /private/tmp/wt310/aeg-root/x.md:3: term', ROOT)
+    const ci = normaliseLines(
+      'warning: /home/runner/work/vinaya/vinaya/harness/processes/vinaya-strict/doctrine/glossary.md:3: term',
+      ROOT
+    )
+    const laptop = normaliseLines(
+      'warning: /private/tmp/wt310/harness/processes/vinaya-strict/doctrine/glossary.md:3: term',
+      ROOT
+    )
     expect(ci).toEqual(laptop)
-    expect(ci).toEqual(['warning: aeg-root/x.md:3: term'])
+    expect(ci).toEqual(['warning: harness/processes/vinaya-strict/doctrine/glossary.md:3: term'])
   })
 
   test('removes C0 control characters before anything is compared or echoed', () => {
@@ -176,10 +182,16 @@ describe('normalisation must not create a false MATCH (security review, round tw
 
   // The property the second pass exists for must still hold.
   test('but a genuine foreign checkout root is still normalised away', () => {
-    const ci = normaliseLines('warning: /home/runner/work/vinaya/vinaya/aeg-root/x.md:3: t', ROOT)
-    const laptop = normaliseLines('warning: /private/tmp/wt310/aeg-root/x.md:3: t', ROOT)
+    const ci = normaliseLines(
+      'warning: /home/runner/work/vinaya/vinaya/harness/processes/vinaya-strict/doctrine/glossary.md:3: t',
+      ROOT
+    )
+    const laptop = normaliseLines(
+      'warning: /private/tmp/wt310/harness/processes/vinaya-strict/doctrine/glossary.md:3: t',
+      ROOT
+    )
     expect(ci).toEqual(laptop)
-    expect(ci).toEqual(['warning: aeg-root/x.md:3: t'])
+    expect(ci).toEqual(['warning: harness/processes/vinaya-strict/doctrine/glossary.md:3: t'])
   })
 })
 

@@ -147,15 +147,15 @@ describe('surface-scope check-bin — a beyond-Surface path passes only when the
 describe('surface-scope check-bin — a protected administrative path the Surface does not name', () => {
   it('fails even when the body block records it, saying the Surface must name it', () => {
     const fixture = issueBranchFixture(
-      ['aeg-root/enforcement.md'],
+      ['harness/processes/vinaya-strict/doctrine/enforcement.md'],
       '## Surface\n\nin: apps/cli/src\nout: packages/aeg-forge-state\n'
     )
     try {
-      const body = `## Scope\n\n${renderBeyondSurfaceBlock([{ path: 'aeg-root/enforcement.md', reason: 'in', glob: null }])}\n`
+      const body = `## Scope\n\n${renderBeyondSurfaceBlock([{ path: 'harness/processes/vinaya-strict/doctrine/enforcement.md', reason: 'in', glob: null }])}\n`
       const result = runIssueBranch(fixture, body)
       expect(result.exitCode).toBe(1)
       const error = JSON.parse(result.stderr.toString().trim())
-      expect(error.file).toBe('aeg-root/enforcement.md')
+      expect(error.file).toBe('harness/processes/vinaya-strict/doctrine/enforcement.md')
       expect(error.message).toContain('protected administrative path')
       expect(error.message).toContain('Surface must name it')
     } finally {
@@ -172,8 +172,8 @@ describe('surface-scope check-bin — a changed path whose content equals the ba
   function withMainChange(files: string[], mainContent: string): { root: string; binDir: string } {
     const fixture = issueBranchFixture(files, surface)
     execFileSync('git', ['checkout', '-q', 'main'], { cwd: fixture.root })
-    mkdirSync(join(fixture.root, 'aeg-root'), { recursive: true })
-    writeFileSync(join(fixture.root, 'aeg-root', 'enforcement.md'), mainContent)
+    mkdirSync(join(fixture.root, 'harness/processes/vinaya-strict/doctrine'), { recursive: true })
+    writeFileSync(join(fixture.root, 'harness/processes/vinaya-strict/doctrine/enforcement.md'), mainContent)
     execFileSync('git', ['add', '-A'], { cwd: fixture.root })
     execFileSync('git', ['commit', '-q', '-m', 'Chore: main changes enforcement'], { cwd: fixture.root })
     execFileSync('git', ['checkout', '-q', 'task/issue-541'], { cwd: fixture.root })
@@ -182,7 +182,10 @@ describe('surface-scope check-bin — a changed path whose content equals the ba
 
   it('passes a branch whose only protected-path difference holds exactly the content the base holds', () => {
     // The fixture writes `export {}\n` into every changed file.
-    const fixture = withMainChange(['aeg-root/enforcement.md', 'apps/cli/src/in-scope.ts'], 'export {}\n')
+    const fixture = withMainChange(
+      ['harness/processes/vinaya-strict/doctrine/enforcement.md', 'apps/cli/src/in-scope.ts'],
+      'export {}\n'
+    )
     try {
       const result = runIssueBranch(fixture, '## Scope\n')
       expect(result.stderr.toString()).toBe('')
@@ -194,12 +197,15 @@ describe('surface-scope check-bin — a changed path whose content equals the ba
   })
 
   it('still fails a branch that changed a protected path to content the base does not hold', () => {
-    const fixture = withMainChange(['aeg-root/enforcement.md', 'apps/cli/src/in-scope.ts'], '# main\n')
+    const fixture = withMainChange(
+      ['harness/processes/vinaya-strict/doctrine/enforcement.md', 'apps/cli/src/in-scope.ts'],
+      '# main\n'
+    )
     try {
       const result = runIssueBranch(fixture, '## Scope\n')
       expect(result.exitCode).toBe(1)
       const error = JSON.parse(result.stderr.toString().trim())
-      expect(error.file).toBe('aeg-root/enforcement.md')
+      expect(error.file).toBe('harness/processes/vinaya-strict/doctrine/enforcement.md')
       expect(error.message).toContain('protected administrative path')
     } finally {
       rmSync(fixture.root, { recursive: true, force: true })

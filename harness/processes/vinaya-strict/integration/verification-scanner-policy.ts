@@ -85,7 +85,6 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: ['apps/cli/tests/', 'harness/processes/'],
     trigger: 'process-start'
   },
-  { test: 'apps/cli/scripts/bundle-doctrine.test.ts', roots: ['.'], trigger: 'content' },
   { test: 'harness/processes/vinaya-strict/tests/run-engine.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'harness/kernel/dev-process-socket/loader/load-process.test.ts',
@@ -98,7 +97,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: [
       'apps/cli/src/',
       'harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts',
-      'aeg-root/enforcement.md',
+      'harness/processes/vinaya-strict/doctrine/enforcement.md',
       '.claude/hooks/'
     ],
     trigger: 'content'
@@ -109,7 +108,6 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'content'
   },
   { test: 'apps/cli/tests/commands/sync.test.ts', roots: ['apps/cli/src/commands/sync.ts'], trigger: 'content' },
-  { test: 'apps/cli/tests/doctrine.test.ts', roots: ['apps/cli/src/index.ts'], trigger: 'content' },
   { test: 'apps/cli/tests/eval/not-shipped.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'apps/cli/tests/eval/registry.test.ts',
@@ -172,7 +170,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   },
   // Spelled in two halves: the retired role id this test hunts is refused
   // anywhere under a source directory, this table included.
-  { test: `apps/cli/tests/no-brief-${'author'}.test.ts`, roots: ['.'], trigger: 'content' },
+  { test: `harness/processes/vinaya-strict/doctrine/no-brief-${'author'}.test.ts`, roots: ['.'], trigger: 'content' },
   { test: 'harness/processes/vinaya-strict/integration/run-paths-only.test.ts', roots: ['.'], trigger: 'content' },
   { test: 'apps/cli/tests/surface-index.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
   { test: 'apps/cli/tests/surface-spec-exports.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
@@ -186,14 +184,11 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: ['apps/vinaya-portal/src/'],
     trigger: 'content'
   },
-  { test: 'harness/processes/vinaya-strict/tools/actions.test.ts', roots: ['aeg-root/roles/'], trigger: 'content' },
-  { test: 'harness/processes/vinaya-strict/tools/diagram-model.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'harness/processes/vinaya-strict/checks/docs/docs-coherence.test.ts',
     roots: ['harness/processes/vinaya-strict/checks/docs/fixtures/docs-coherence/'],
     trigger: 'content'
   },
-  { test: 'harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'harness/processes/vinaya-strict/checks/gate-audience.test.ts',
     roots: ['harness/processes/vinaya-strict/checks/standalone/'],

@@ -18,7 +18,7 @@
  * same deliberate fail-open choice `dead-branch-push-guard.ts` already makes
  * for the sibling gate: a guard that can block *all* pushes on a
  * transient forge-reachability issue is worse than the bug it fixes. See
- * `aeg-root/enforcement.md`.
+ * `harness/processes/vinaya-strict/doctrine/enforcement.md`.
  */
 
 /** A `task/<tranche>/<n>` branch parses to its two topology coordinates; anything else does not. */

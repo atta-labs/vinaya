@@ -12,23 +12,24 @@
 // pointer's own output IS the role's operating instructions, not a second
 // path the agent must read again.
 //
-// Role discovery is live-scanned from the package's resolved `aeg-root/roles/*.md`,
-// never hardcoded, so additions to doctrine surface automatically in future upgrades.
+// Role discovery reads the doctrine map's role rows under the package's resolved doctrine root,
+// never a hardcoded name list, so additions to doctrine surface automatically in future upgrades.
 //
 // Human-only roles are excluded, not just skipped by convention. Every role file's
-// frontmatter carries an `actor: human|agent|either` field (`aeg-root/roles/*.md`) —
+// frontmatter carries an `actor: human|agent|either` field (the role doctrine) —
 // `principal` is `actor: human`, the one seat this doctrine deliberately never grants
-// an agent. A skill file telling a third-party AI tool to "Act as the AEG Principal"
+// an agent. A skill file telling a third-party AI tool to "Act as the Vinaya Principal"
 // would hand that authority to exactly the actor the model withholds it from. Filtered
 // on the same structured signal the doctrine already carries, never a hardcoded name
 // exclusion — a future human-only role is excluded automatically, the same reason role
 // discovery itself is live-scanned rather than hardcoded.
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import matter from 'gray-matter'
 import type { CreateFileOp } from '../../../kernel/gates/ops.js'
 import type { VendoredVinaya } from '../../../../apps/cli/src/lib/self-host.js'
+import { ROLE_ENTRIES, roleEntry } from '../tools/doctrine/doctrine-map'
 
 export const AGENTS_SKILLS_GROUP = 'Agent skills (.agents/skills/)'
 export const CLAUDE_SKILLS_GROUP = 'Claude Code skills (.claude/skills/)'
@@ -60,7 +61,7 @@ export function formatRoleTitle(roleName: string): string {
  *
  * Retirement is a STATED fact, never derived from a role file's absence. The
  * doctrine file may legitimately outlive the code's knowledge of the role —
- * `aeg-root/roles/brief-author.md` stays on disk until the doctrine task
+ * a retired role's doctrine file may stay on disk until the doctrine task
  * deletes it, because `registry-gates`' G5 refuses a contract naming a role
  * with no file. Inferring "retired" from a missing file therefore gets BOTH
  * consumers of `discoverRoleNames` wrong while that window is open:
@@ -74,24 +75,27 @@ export function formatRoleTitle(roleName: string): string {
 export const RETIRED_ROLE_NAMES: ReadonlySet<string> = new Set(['brief-author'])
 
 /**
- * Discover role names available under `<doctrineRoot>/roles/`, from `*.md` filenames —
+ * Discover role names whose role doctrine the doctrine map names and `<doctrineRoot>` holds —
  * excluding any role whose frontmatter declares `actor: human` (agent-skill files are
  * only ever generated for `agent` or `either` actors) and any role named in
  * `RETIRED_ROLE_NAMES`. Results are sorted alphabetically for deterministic,
  * idempotent output.
  */
 export function discoverRoleNames(doctrineRoot: string): string[] {
-  const rolesDir = join(doctrineRoot, 'roles')
-  if (!existsSync(rolesDir)) return []
-  return readdirSync(rolesDir)
-    .filter((name) => name.endsWith('.md'))
-    .map((name) => name.slice(0, -'.md'.length))
+  return ROLE_ENTRIES.filter((entry) => existsSync(join(doctrineRoot, entry.source)))
+    .map((entry) => entry.role as string)
     .filter((roleName) => !RETIRED_ROLE_NAMES.has(roleName))
     .filter((roleName) => {
-      const { data } = matter(readFileSync(join(rolesDir, `${roleName}.md`), 'utf8'))
+      const { data } = matter(readFileSync(roleFile(doctrineRoot, roleName), 'utf8'))
       return data.actor !== 'human'
     })
     .sort()
+}
+
+/** The role doctrine file of a role id under `doctrineRoot`, at the source path the doctrine map names for it. */
+function roleFile(doctrineRoot: string, roleName: string): string {
+  const entry = roleEntry(roleName)
+  return entry === undefined ? join(doctrineRoot, `${roleName}.md`) : join(doctrineRoot, entry.source)
 }
 
 /** The relative path for a role skill file under `.agents/skills/` or `.claude/skills/`. */
@@ -119,7 +123,7 @@ function doctrineInvocation(selfHost: VendoredVinaya | null): string {
  * enforce; a role with no grant is unchanged.
  */
 export function roleAllowedTools(doctrineRoot: string, roleName: string): string[] {
-  const file = join(doctrineRoot, 'roles', `${roleName}.md`)
+  const file = roleFile(doctrineRoot, roleName)
   if (!existsSync(file)) return []
   const { data } = matter(readFileSync(file, 'utf8'))
   const raw = data['allowed-tools']
@@ -145,7 +149,7 @@ export function roleAllowedTools(doctrineRoot: string, roleName: string): string
  * same vocabulary `performs` already uses for what a role DOES.
  */
 export function roleDeniedTools(doctrineRoot: string, roleName: string): string[] {
-  const file = join(doctrineRoot, 'roles', `${roleName}.md`)
+  const file = roleFile(doctrineRoot, roleName)
   if (!existsSync(file)) return []
   const { data } = matter(readFileSync(file, 'utf8'))
   const raw = data['denied-tools']
@@ -194,7 +198,7 @@ export function renderAgentSkill(
       : ''
   return `---
 name: vinaya-${roleName}
-description: Act as the AEG ${roleTitle} for this repo.
+description: Act as the Vinaya ${roleTitle} for this repo.
 ${grantLine}---
 Run \`${doctrineInvocation(selfHost)} --role ${roleName} --print\` and follow its output as your operating instructions for this session.
 ${deniedLine}`

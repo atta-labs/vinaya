@@ -51,7 +51,7 @@ function initRepo(root: string): void {
  * carried the real checkout path straight into every finding.
  */
 function scaffoldFixture(root: string, docContent: string, citedContent: string): void {
-  const doctrineRoot = join(root, 'aeg-root')
+  const doctrineRoot = join(root, 'doctrine-tree')
   writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ proseGates: { doctrineRoot } }))
   mkdirSync(doctrineRoot, { recursive: true })
   writeFileSync(join(doctrineRoot, 'doc.md'), docContent)
@@ -94,7 +94,7 @@ describe('check-quoted-command (bin) — path relativization', () => {
 
     const findings = parseFindings(stderr)
     expect(findings).toHaveLength(1)
-    expect(findings[0]?.file).toBe('aeg-root/doc.md')
+    expect(findings[0]?.file).toBe('doctrine-tree/doc.md')
     expect(findings[0]?.file).not.toContain(root)
     expect(findings[0]?.message).not.toContain(root)
   })

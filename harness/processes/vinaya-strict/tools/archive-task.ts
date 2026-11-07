@@ -4,7 +4,7 @@ import { extractIssue } from '../../../kernel/adapters/code-host/github/extract-
  * (`bin/archive-task.ts`) resolves the merged PR via `gh`, gathers
  * `MergedPrFacts`, and calls these functions.
  *
- * The cardinal constraint (`aeg-root/roles/archivist.md`): ASSEMBLE, never
+ * The cardinal constraint (`harness/processes/vinaya-strict/retrospecting/archivist/doctrine.md`): ASSEMBLE, never
  * author. Every provenance field is copied from a fact the merge already
  * froze — the PR body, PR metadata, or PR comments. A field whose source
  * fact is absent becomes a DANGLING entry, never an inferred or defaulted

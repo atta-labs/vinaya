@@ -165,7 +165,7 @@ export const COMMANDS: readonly Command[] = [
       // AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:export function renderBrief(facts: BriefFacts, template: string): RenderResult {
       // AEG:CLAIM: apps/cli/src/commands/brief.ts contains:refuse(`cannot render — missing fact(s):
       "Reads the task Issue (`vinaya/tranche:<tranche>`-labeled, id `<n>`) and the tree, and fills every section a program can derive: the header `Project:`/`Tier:`/`Closes #N`, the Step 0 worktree line, the dispatch-gate status as the pre-flight line, §4's file list (with consumer packages and a `sha256` premise pin per file, and Out of surface from the Issue's own `## Surface` `out:` list), §6 from the Issue's `## Parts`, §7 from the `.vinaya/doc-owners` derivation, §9 from the Issue's `## Test plan`, §10 from the Issue's `## Stop conditions` plus the rationale's Stop-and-escalate field, and every remaining section from the Issue's eight-field Planner rationale. Refuses — naming the missing section — when it cannot be derived: no Issue, the dispatch gate not clear, a `--surfaces` glob matching no tracked file, or the Issue missing/malformed `## Surface`/`## Parts`/`## Test plan`/`## Stop conditions` — never a bracketed placeholder.",
-      'Never writes under `aeg-root/` or to the Issue — a brief is pasted to the Developer, never committed. Reads `aeg-root/templates/brief-template.md` at run time for its one fixed sentence and the standing autonomy clause; every other byte is generated from the forge/tree facts.'
+      'Never writes under `vinaya-strict/` or to the Issue — a brief is pasted to the Developer, never committed. Reads `artifacts/templates/brief-template.md` at run time for its one fixed sentence and the standing autonomy clause; every other byte is generated from the forge/tree facts.'
     ],
     status: 'shipped'
   },
@@ -705,7 +705,7 @@ export const COMMANDS: readonly Command[] = [
     name: 'doctrine',
     needs: [],
     description:
-      "Print the absolute path of the bundled doctrine's front door (aeg-root/skills/aeg/SKILL.md) on this machine",
+      "Print the absolute path of the bundled doctrine's front door (doctrine/skills/vinaya/SKILL.md) on this machine",
     flags: [
       {
         flag: '--role <name>',
@@ -723,8 +723,8 @@ export const COMMANDS: readonly Command[] = [
       { flag: '--json', description: 'Enveloped JSON output (schema: 1) — `{ root, entry }`' }
     ],
     details: [
-      'The committed root `AGENTS.md` pointer names the `@attalabs/vinaya` package, never a filesystem path — where the package sits is a property of each machine, not of the repo, and the pointer is committed for every clone. This command is the read-time resolution step the pointer hands the reader: it resolves the installed package\'s own bundled `aeg-root/` wherever the CLI physically sits and prints the front door\'s absolute path, so `cat "$(vinaya doctrine)"` opens the doctrine on any machine at any version.',
-      "In a repo that vendors the CLI, the bundled copy is a gitignored pack-time artifact, so the command falls back to the monorepo root's own `aeg-root/` — the same directory `bundle-doctrine` copies from. Exits 1 with a corrective message when neither location holds a doctrine."
+      'The committed root `AGENTS.md` pointer names the `@attalabs/vinaya` package, never a filesystem path — where the package sits is a property of each machine, not of the repo, and the pointer is committed for every clone. This command is the read-time resolution step the pointer hands the reader: it resolves the installed package\'s own bundled `vinaya-strict/` wherever the CLI physically sits and prints the front door\'s absolute path, so `cat "$(vinaya doctrine)"` opens the doctrine on any machine at any version.',
+      "In a repo that vendors the CLI, the bundled copy is a gitignored pack-time artifact, so the command falls back to the monorepo's own `harness/processes/vinaya-strict/` — the same directory `bundle-doctrine` copies from. Exits 1 with a corrective message when neither location holds a doctrine."
     ],
     status: 'shipped'
   },

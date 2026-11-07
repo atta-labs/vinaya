@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cliPackageRoot } from '../../../../apps/cli/src/lib/package-root.js'
+import { DOCTRINE_REPO_PATHS } from '../tools/doctrine/doctrine-map'
 import type { CheckSpec } from '../../../kernel/gates/checks/contract'
 
 // `cliPackageRoot()` walks up to the nearest `package.json`
@@ -66,7 +67,7 @@ export function resolveGateStep(
 }
 
 /**
- * `ring` — which of `aeg-root/enforcement.md`'s three ring tables this core
+ * `ring` — which of `harness/processes/vinaya-strict/doctrine/enforcement.md`'s three ring tables this core
  * check's own row belongs in, when the registry-scaffold writer
  * (`harness/processes/vinaya-strict/checks/registry-scaffold.ts`) needs to auto-insert a stub
  * row for it. Derived mechanically, not by re-reading each check's prose:
@@ -118,7 +119,7 @@ export type CoreCheckRing = 0 | 1 | 2
  * corpus from `vinaya.config.json`'s `proseGates` key (`lib/config.ts`),
  * defaulting to this repo's own prior hardcoded shape when unset, so an
  * install that sets nothing behaves exactly as before this task. Both
- * registered report-only (`aeg-root/enforcement.md`'s G1/G2 precedent) — a
+ * registered report-only (`harness/processes/vinaya-strict/doctrine/enforcement.md`'s G1/G2 precedent) — a
  * `warning` finding, never a failing exit code — so registering them could
  * not newly fail any existing install's CI. `retired-vocabulary` has since
  * turned blocking, once the shipped doctrine tree it sweeps carried zero
@@ -550,7 +551,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       timeoutMs: 30_000,
       // `resolveRepo()`'s only env read; falls back to `git remote get-url
       // origin` when unset. The bin is otherwise dormant (exit 0) when
-      // `aeg-root/enforcement.md` doesn't exist — no other env dependency.
+      // `harness/processes/vinaya-strict/doctrine/enforcement.md` doesn't exist — no other env dependency.
       // Tokens forwarded so its `gh auth status` / `gh issue|pr view`
       // string-form shell-outs authenticate on CI runners (without them
       // `ghReachable()` reports false there and the forge-number
@@ -766,7 +767,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `PRODUCT_SLUG_SCOPE` in `reader-resolvable-prose.ts` — the surface
       // whose tranche-slug citation is now this check's one blocking class.
       include: [
-        'aeg-root/**/*.md',
+        ...DOCTRINE_REPO_PATHS,
         'apps/cli/src/**',
         '.github/workflows/**',
         '.vinaya/**',
@@ -790,7 +791,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
         VINAYA_COMMIT_HOOK: { optional: true }
       },
       // See `reader-resolvable-prose`'s identical `include` comment above.
-      include: ['aeg-root/**/*.md']
+      include: [...DOCTRINE_REPO_PATHS]
     },
     0
   ],
@@ -811,7 +812,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
         VINAYA_COMMIT_HOOK: { optional: true }
       },
       // See `reader-resolvable-prose`'s identical `include` comment above.
-      include: ['aeg-root/**/*.md']
+      include: [...DOCTRINE_REPO_PATHS]
     },
     0
   ],
@@ -825,7 +826,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
       env: {},
       // See `reader-resolvable-prose`'s identical `include` comment above.
-      include: ['aeg-root/**/*.md']
+      include: [...DOCTRINE_REPO_PATHS]
     },
     0
   ],
@@ -843,7 +844,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // changes, which may sit anywhere in the repository. The registry is
       // static and never reads configuration, so this lists the default
       // doctrine root; the bin derives the configured one.
-      include: ['aeg-root/**/*.md', 'apps/**/*.ts', 'apps/**/*.md', 'packages/**/*.ts', 'packages/**/*.md']
+      include: [...DOCTRINE_REPO_PATHS, 'apps/**/*.ts', 'apps/**/*.md', 'packages/**/*.ts', 'packages/**/*.md']
     },
     0
   ],
@@ -902,9 +903,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       },
       // See `reader-resolvable-prose`'s identical `include` comment above —
       // named here per the Issue's own list even though this sweep's real
-      // domain is `apps`/`packages`, not `aeg-root`; harmless either way
+      // domain is `apps`/`packages`, not the doctrine under `harness/processes/vinaya-strict`; harmless either way
       // while `include` has no runtime effect on a `scope: 'full'` entry.
-      include: ['aeg-root/**/*.md']
+      include: [...DOCTRINE_REPO_PATHS]
     },
     0
   ],
@@ -944,7 +945,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // scope: the sweep covers the whole doctrine tree whatever the diff.
       env: {},
       // See `reader-resolvable-prose`'s identical `include` comment above.
-      include: ['aeg-root/**/*.md']
+      include: [...DOCTRINE_REPO_PATHS]
     },
     0
   ],

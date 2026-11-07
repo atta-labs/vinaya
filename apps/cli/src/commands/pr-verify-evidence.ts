@@ -95,7 +95,7 @@ function assertNoBaseOverride(): void {
  *
  * `buildReport()` spawns the gate suite with `cwd: process.cwd()`
  * (`pr-report.ts`'s `runRealGates`), and several gates resolve their scan root
- * from that cwd. Run from `apps/cli` there is no `aeg-root/` above them, so
+ * from that cwd. Run from `apps/cli` there is no `harness/processes/vinaya-strict/` above them, so
  * `reader-resolvable-prose` collects nothing and `registry-gates` reports
  * itself dormant — an entire class of findings vanishes from the regenerated
  * Group B with no error, and a block with those findings deleted compares

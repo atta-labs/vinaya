@@ -40,7 +40,7 @@ The cap was reached on 2026-10-01: a backlog of events queued on developers' mac
 
 ## 3. Identity and duplicates
 
-Every stored event has one identity: `meta.event_id` for a `schema: 2`, `schema: 3` or `schema: 4` line, `${meta.run_id}:${meta.seq}` for a `schema: 1` line — `recordIdentity` from the kernel's Log schema (`harness/kernel/log`), the same function the sender's storage contract uses, so the server and the sender can never disagree about what counts as the same event. The identity column is `UNIQUE` and every insert is `INSERT OR IGNORE`: a batch resent after a lost acknowledgement stores nothing new and reports the repeats as duplicates.
+Every stored event has one identity: `meta.event_id` for a `schema: 2`, `schema: 3` or `schema: 4` line, `${meta.run_id}:${meta.seq}` for a `schema: 1` line — `recordIdentity` from the kernel's Log schema (`harness/kernel/log`), the same function the sender's storage contract uses, so the server and the sender can never disagree about what counts as the same event. The identity column is `UNIQUE` and every insert is `INSERT OR IGNORE`: a batch resent after a lost acknowledgement stores nothing new and reports the repeats as duplicates. Every other `meta` field is stored as the sender wrote it — `meta.doctrine`, for one, is `doctrine@<id>` from a sender running in a repository that holds the doctrine at `harness/processes/vinaya-strict`, and the package version from an installed one.
 
 Each line is classified with that module's `classifyStoredLine`, the same read-side validation and redaction the sender runs before it posts:
 

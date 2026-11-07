@@ -23,6 +23,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
 import { resolveBranchIssue } from './branch-issue.js'
+import { vinayaDoctrineIdentity } from './doctrine-version.js'
 
 type BranchReadInputs = Pick<Partial<LogSinkDeps>, 'cwd' | 'env'>
 
@@ -42,16 +43,25 @@ function branchReader(inputs: BranchReadInputs): LogSinkDeps['resolveBranchIssue
  * Builds a Log sink with the Vinaya branch reader, shared across this
  * process by directory (`shareBranchIssue`) because it reads a process-wide
  * fact. A caller that gives its own `resolveBranchIssue` keeps it, and its
- * answer stays private to that sink.
+ * answer stays private to that sink. The sink's doctrine version follows the
+ * Vinaya rule (`vinayaDoctrineIdentity`, `./doctrine-version.ts`); a caller
+ * that gives its own `doctrineIdentity` keeps it.
  */
 export function createVinayaLogSink(overrides: Partial<LogSinkDeps> = {}): LogSink {
   const vinayaVersion = overrides.vinayaVersion ?? readVinayaVersion
+  const doctrineIdentity = overrides.doctrineIdentity ?? vinayaDoctrineIdentity
   if (overrides.resolveBranchIssue !== undefined) {
-    return createLogSink({ ...overrides, vinayaVersion, resolveBranchIssue: overrides.resolveBranchIssue })
+    return createLogSink({
+      ...overrides,
+      vinayaVersion,
+      doctrineIdentity,
+      resolveBranchIssue: overrides.resolveBranchIssue
+    })
   }
   return createLogSink({
     ...overrides,
     vinayaVersion,
+    doctrineIdentity,
     resolveBranchIssue: branchReader(overrides),
     shareBranchIssue: true
   })

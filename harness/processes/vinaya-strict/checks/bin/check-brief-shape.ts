@@ -260,7 +260,7 @@ function main(): void {
         message,
         agent_recovery_prompt:
           'Open the PR body and add or fix the section named above, following the canonical PR-body template ' +
-          '(`aeg-root/roles/developer.md` § PR body — canonical form / `aeg-root/templates/pr-report-template.md`). ' +
+          '(`harness/processes/vinaya-strict/executing/developer/doctrine.md` § PR body — canonical form / `harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md`). ' +
           'Commit the corrected PR body, then re-run `vinaya check brief-shape`.'
       })
     }

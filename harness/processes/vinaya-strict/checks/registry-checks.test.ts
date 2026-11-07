@@ -233,7 +233,10 @@ describe('checkG4', () => {
    * `retired-vocabulary.test.ts` already applies to itself.
    */
   it('fires against the real enforcement.md content plus one fabricated citation', () => {
-    const realContent = readFileSync(join(import.meta.dirname, '../../../../aeg-root/enforcement.md'), 'utf8')
+    const realContent = readFileSync(
+      join(import.meta.dirname, '../../../../harness/processes/vinaya-strict/doctrine/enforcement.md'),
+      'utf8'
+    )
     const fabricatedNumber = 900001
     const content = `${realContent}\n\nFabricated citation for vacuity test: #${fabricatedNumber}.\n`
     const resolveFn = (n: number) => n !== fabricatedNumber

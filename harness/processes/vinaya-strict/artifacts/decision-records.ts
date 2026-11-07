@@ -2,11 +2,12 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeSpecPath } from '../tools/reader-resolvable-prose'
-import { resolveDoctrineRoot } from '../../../../apps/cli/src/commands/doctrine.js'
+import { resolveDoctrineRoot } from '../tools/doctrine/resolve-doctrine'
+import { doctrineSource } from '../tools/doctrine/doctrine-map'
 import { loadConfigChecked } from '../../../../apps/cli/src/lib/config.js'
 
-/** The shipped template, under the doctrine root's `templates/`. */
-export const DECISION_RECORD_TEMPLATE = join('templates', 'decision-record-template.md')
+/** The shipped template, at the source path the doctrine map names for it under the doctrine root. */
+export const DECISION_RECORD_TEMPLATE = doctrineSource('templates/decision-record-template.md')
 
 /** The folder's index page, created on the first record. */
 export const DECISION_RECORD_INDEX = 'README.md'

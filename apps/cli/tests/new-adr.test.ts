@@ -16,7 +16,13 @@ import {
 import { spawnBudgetedAsync, stripVinayaEnv } from './lib/process-fixture'
 
 const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')
-const TEMPLATE = join(import.meta.dir, '..', '..', '..', 'aeg-root', 'templates', 'decision-record-template.md')
+const TEMPLATE = join(
+  import.meta.dir,
+  '..',
+  '..',
+  '..',
+  'harness/processes/vinaya-strict/artifacts/templates/decision-record-template.md'
+)
 
 let tmpDir: string | undefined
 

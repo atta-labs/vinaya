@@ -29,9 +29,9 @@ function newRepo(doc: string, cited: string): string {
   git(root, ['init', '-q', '-b', 'main'])
   git(root, ['config', 'user.email', 'test@example.com'])
   git(root, ['config', 'user.name', 'Test'])
-  mkdirSync(join(root, 'aeg-root'), { recursive: true })
+  mkdirSync(join(root, 'harness/processes/vinaya-strict/doctrine'), { recursive: true })
   mkdirSync(join(root, 'apps', 'demo'), { recursive: true })
-  writeFileSync(join(root, 'aeg-root', 'doc.md'), doc)
+  writeFileSync(join(root, 'harness/processes/vinaya-strict/doctrine/glossary.md'), doc)
   writeFileSync(join(root, 'apps', 'demo', 'code.ts'), cited)
   git(root, ['add', '-A'])
   return root
@@ -80,7 +80,7 @@ describe('check-doc-claims bin', () => {
     expect(findings).toHaveLength(1)
     expect(findings[0]?.check).toBe('doc-claims')
     expect(findings[0]?.severity).toBe('error')
-    expect(findings[0]?.file).toBe('aeg-root/doc.md')
+    expect(findings[0]?.file).toBe('harness/processes/vinaya-strict/doctrine/glossary.md')
     expect(findings[0]?.line).toBe(2)
     expect(findings[0]?.message).toContain('no longer holds')
   })
@@ -139,6 +139,9 @@ describe('check-doc-claims bin', () => {
     const { exitCode, stderr, stdout } = await runBin(root)
     expect(stderr.trim()).toBe('')
     expect(exitCode).toBe(0)
-    expect(stdout).toContain('0 binding(s) verified')
+    // The doctrine half is empty; the one binding is the doctrine page's,
+    // read by the source half, which sweeps every tracked `.md` under
+    // `harness/` — where the doctrine map's pages live.
+    expect(stdout).toContain('1 binding(s) verified')
   })
 })
