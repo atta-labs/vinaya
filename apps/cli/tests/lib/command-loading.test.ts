@@ -36,10 +36,16 @@ function staticClosure(entry: string): string[] {
   return [...seen].map((file) => relative(REPO_ROOT, file)).sort()
 }
 
-it('the entry point imports no command module statically', () => {
+/**
+ * The one command module the entry point imports at start: it forwards the process's startup installers, which the
+ * entry point runs before any command, and the architecture ratchet keeps the process's own path out of the entry point.
+ */
+const STARTUP_FORWARDER = 'apps/cli/src/commands/dispatch.ts'
+
+it('the entry point imports no command module statically but the startup forwarder', () => {
   const closure = staticClosure(ENTRY)
   expect(closure).toContain('apps/cli/src/index.ts')
-  expect(closure.filter((file) => file.startsWith('apps/cli/src/commands/'))).toEqual([])
+  expect(closure.filter((file) => file.startsWith('apps/cli/src/commands/'))).toEqual([STARTUP_FORWARDER])
 })
 
 it('every command module the entry point names is one it loads on demand', () => {
