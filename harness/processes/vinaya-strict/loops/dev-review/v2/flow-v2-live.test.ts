@@ -27,6 +27,7 @@ import {
   READY_GATE_DEADLINE_MS,
   readFetchedMainTip,
   readyGateEvidence,
+  isWholeSuiteCommand,
   runExplicitCommandsLive,
   runReadyGateLive,
   stagedPullRequestStore,
@@ -856,6 +857,44 @@ describe('the explicit Test Plan commands the driver runs at the publication bou
     expect(merged.outcome).toBe('passed')
     expect(merged.results[0]?.reusedFrom).toBeUndefined()
     expect(count(runs)).toBe(2)
+  })
+
+  test('a whole-suite command is left to the required CI shards and never run locally', async () => {
+    const dir = repo()
+    const result = await runExplicitCommandsLive({
+      worktreePath: dir,
+      head: headOf(dir),
+      branch: 'b',
+      body: '',
+      commands: ['bunx turbo run test --affected', 'cd sub && bun run test', 'echo ran'],
+      deadlineAt: Date.now() + 60_000,
+      cache: memoryCache()
+    })
+    expect(result.outcome).toBe('passed')
+    expect(result.results.map((r) => [r.command, r.reusedFrom ?? null])).toEqual([
+      ['bunx turbo run test --affected', 'the required CI shards'],
+      ['cd sub && bun run test', 'the required CI shards'],
+      ['echo ran', null]
+    ])
+  })
+
+  test('only a command that runs a whole suite counts as one', () => {
+    for (const whole of [
+      'bunx turbo run test --affected',
+      'turbo run test',
+      'cd harness/processes/vinaya-strict && bun run test',
+      'cd apps/cli && bun test --timeout=30000',
+      'bun test'
+    ])
+      expect([whole, isWholeSuiteCommand(whole)]).toEqual([whole, true])
+    for (const narrow of [
+      'cd apps/cli && bun test --timeout=30000 tests/config.test.ts',
+      'bun test --isolate --timeout=120000 tools/archive-task.test.ts',
+      'bunx turbo run typecheck --affected',
+      'bun run test:unit',
+      'echo bun test'
+    ])
+      expect([narrow, isWholeSuiteCommand(narrow)]).toEqual([narrow, false])
   })
 
   test('a failing command stops the phase with its command and output, and records no receipt', async () => {
