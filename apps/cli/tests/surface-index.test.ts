@@ -254,6 +254,18 @@ function findCalledIdentifier(node: ts.Node): string | undefined {
       found = n.expression.text
       return
     }
+    // A command loaded on demand: `(await import('./commands/x.js')).entry(args)`.
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      ts.isParenthesizedExpression(n.expression.expression) &&
+      ts.isAwaitExpression(n.expression.expression.expression) &&
+      ts.isCallExpression(n.expression.expression.expression.expression) &&
+      n.expression.expression.expression.expression.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      found = n.expression.name.text
+      return
+    }
     ts.forEachChild(n, visit)
   }
   visit(node)
