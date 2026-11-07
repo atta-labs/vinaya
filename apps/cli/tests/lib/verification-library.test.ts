@@ -44,12 +44,8 @@ const REPOSITORY_SELECTION = join(REPO_ROOT, 'scripts/test-suites/repository-sel
 const INVENTORY_CHECK = join(REPO_ROOT, 'scripts/test-suites/inventory-check.ts')
 
 /** This repository's adapter, run as its own process against `repo`. */
-function repositorySelection(
-  repo: string,
-  options: { base: string; head: string; consumer: 'local' | 'ci'; depth?: 'one' | 'transitive' }
-): SelectionPlan {
-  const args = [REPOSITORY_SELECTION, '--base', options.base, '--head', options.head, '--consumer', options.consumer]
-  if (options.depth) args.push('--depth', options.depth)
+function repositorySelection(repo: string, options: { base: string; head: string }): SelectionPlan {
+  const args = [REPOSITORY_SELECTION, '--base', options.base, '--head', options.head]
   const run = spawnSyncBudgeted('bun', args, { cwd: repo, encoding: 'utf8', env: bareEnv(repo) }, 60_000)
   if (run.status !== 0) throw new Error(run.stderr)
   return JSON.parse(run.stdout) as SelectionPlan
@@ -522,8 +518,8 @@ function adapterFixture(): Record<string, string> {
   }
 }
 
-describe('the local and CI adapters', () => {
-  it('require the same tests for the same commits and depth, and state their own obligations apart', () => {
+describe('the one repository adapter', () => {
+  it('gives every caller the same transitive answer, and states the same obligations apart', () => {
     const repo = scratch('verification-adapter-')
     try {
       const files = adapterFixture()
@@ -536,18 +532,12 @@ describe('the local and CI adapters', () => {
       })
       git(repo, ['commit', '-q', '-am', 'head'])
 
-      for (const depth of ['one', 'transitive'] as const) {
-        const local = repositorySelection(repo, { base: 'HEAD~1', head: 'HEAD', consumer: 'local', depth })
-        const ci = repositorySelection(repo, { base: 'HEAD~1', head: 'HEAD', consumer: 'ci', depth })
-        expect(local.required).toEqual(ci.required)
-        expect(local.fallbacks).toEqual(ci.fallbacks)
-        expect(local.context.base).toBe(git(repo, ['rev-parse', 'HEAD~1']))
-        expect(local.obligations.map((o) => `${o.obligation} ${o.test}`)).toEqual([
-          'pre-push-always-run packages/app/tests/add.test.ts'
-        ])
-        expect(ci.obligations.map((o) => `${o.obligation} ${o.test}`)).toEqual(['inventory-gate scripts/check.test.ts'])
-      }
-      const transitive = repositorySelection(repo, { base: 'HEAD~1', head: 'HEAD', consumer: 'ci' })
+      const transitive = repositorySelection(repo, { base: 'HEAD~1', head: 'HEAD' })
+      expect(transitive.context.base).toBe(git(repo, ['rev-parse', 'HEAD~1']))
+      expect(transitive.obligations.map((o) => `${o.obligation} ${o.test}`)).toEqual([
+        'inventory-gate scripts/check.test.ts',
+        'pre-push-always-run packages/app/tests/add.test.ts'
+      ])
       expect(transitive.required.map((t) => t.test)).toEqual([
         'packages/app/tests/add.test.ts',
         'packages/app/tests/mul.test.ts',
@@ -601,6 +591,7 @@ describe('the existing paths forward to the library', () => {
       .map((t) => `${t.id} ${t.suite}`)
     expect(owned).toEqual([
       'harness/kernel/gates/ring0-hooks/pre-push/verification/tests/native.test.ts kernel',
+      'harness/kernel/gates/ring0-hooks/pre-push/verification/tests/recorded-reads.test.ts kernel',
       'harness/kernel/gates/ring0-hooks/pre-push/verification/tests/selection.test.ts kernel'
     ])
     const fixtures = view.edges.find(

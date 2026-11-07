@@ -140,6 +140,7 @@ import {
   validateInventory
 } from './inventory.js'
 import { globToRegex, inputCovers, underDeclaredRoot } from './path-pattern.js'
+import { type PathChange, type RecordIndex, indexRecordedTest, recordReach } from './recorded-reads.js'
 import { type ScannerDeclaration, scannedRootsOf, scannerTriggered } from './scanner-inputs.js'
 import { type SpawnProgram, spawnEdgeOf, startedScriptsOf } from './spawn-inputs.js'
 import type {
@@ -149,6 +150,8 @@ import type {
   PlannedObligation,
   PlannedTest,
   PlanReason,
+  PlanRecords,
+  RecordFallbackScope,
   RepositoryReader,
   SelectionPlan,
   SelectionPolicy,
@@ -1585,6 +1588,9 @@ function buildSelectionGraph(tree: SourceTree, options: GraphOptions): Selection
   }
 }
 
+// static-fallback begin: the package-level non-source edge and the prose exemption decide only a test with no
+// valid record; a record decides every other test by the paths it read.
+
 /** Folders whose files are a package's test, spec or fixture data, never part of what an importer resolves. */
 const PACKAGE_TEST_DATA_FOLDERS = new Set(['tests', 'test', '__tests__', 'specs', 'fixtures'])
 
@@ -1639,6 +1645,8 @@ function changeFactsFor(
     }
   }
 }
+
+// static-fallback end
 
 // ── The file-list selection ─────────────────────────────────────────────────
 
@@ -1986,6 +1994,37 @@ export function plannedTests(plan: SelectionPlan): string[] {
 }
 
 /**
+ * Every path that differs between two revisions, a rename as an addition and a
+ * deletion; `null` when either revision cannot be listed.
+ */
+function changesBetween(repo: RepositoryReader, from: string, to: string): PathChange[] | null {
+  if (from === to) return []
+  let fromFiles: readonly string[]
+  let toFiles: readonly string[]
+  try {
+    fromFiles = repo.list(from)
+    toFiles = repo.list(to)
+  } catch {
+    return null
+  }
+  const key = (revision: string, path: string): string | null => {
+    const id = repo.identity?.(revision, path)
+    if (id) return id
+    const text = repo.read(revision, path)
+    return text === null ? null : createHash('sha256').update(text).digest('hex')
+  }
+  const fromSet = new Set(fromFiles)
+  const toSet = new Set(toFiles)
+  return [
+    ...toFiles
+      .filter((p) => fromSet.has(p) && key(from, p) !== key(to, p))
+      .map((path): PathChange => ({ path, status: 'modified' })),
+    ...toFiles.filter((p) => !fromSet.has(p)).map((path): PathChange => ({ path, status: 'added' })),
+    ...fromFiles.filter((p) => !toSet.has(p)).map((path): PathChange => ({ path, status: 'deleted' }))
+  ]
+}
+
+/**
  * The tests a change between two committed revisions requires, with every
  * reason, every named fallback scope, every obligation the policy adds, and
  * the context that reproduces it.
@@ -2111,6 +2150,8 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
   const accounted = new Map<string, Set<string>>([...allChanged].map((p) => [p, new Set<string>()]))
   const account = (path: string, by: string) => accounted.get(path)?.add(by)
   let programMs = 0
+  /** Each side's graph, kept so a recorded read of an exported declaration the import closure does not reach can narrow. */
+  const sideGraphs: { root: string; graph: SelectionGraph }[] = []
 
   const walk = (
     side: 'base' | 'head',
@@ -2145,6 +2186,7 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
       extraEdges
     })
     programMs += graph.programMs
+    sideGraphs.push({ root, graph })
     // The graph accounts for a changed path only when some test's closure
     // reaches it: a source file no test imports may still be run another way
     // (a program a test starts without declaring it), so it is not modeled.
@@ -2275,17 +2317,116 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
       )
   }
   for (const path of unreadable) fallback('unreadable', 'the path is listed but could not be read', path)
+
+  // ── Recorded reads: for a test with a valid record, the record decides.
+  const allTests = headView.tests.map((t) => t.id).sort()
+  const decided = new Map<string, RecordIndex>()
+  const recordFallbacks = new Map<string, RecordFallbackScope>()
+  const leaveToStatic = (test: string, id: string, reason: string) => {
+    const scope = recordFallbacks.get(id) ?? { id, reason, tests: [] }
+    recordFallbacks.set(id, scope)
+    scope.tests.push(test)
+  }
+  const records = input.records ?? null
+  if (!records) {
+    for (const test of allTests)
+      leaveToStatic(test, 'no-reachable-record', 'no record of the comparison commit was reachable')
+  } else {
+    const drift = changesBetween(repo, records.record.commit, base)
+    for (const test of allTests) {
+      const entry = records.record.tests[test]
+      if (drift === null) {
+        leaveToStatic(
+          test,
+          'record-unreadable',
+          `the record's commit ${records.record.commit} cannot be compared with the base`
+        )
+      } else if (!entry) {
+        leaveToStatic(
+          test,
+          'no-record',
+          'the test has no valid record: it was added since, failed while recorded, or was not recorded'
+        )
+      } else if (entry.fallback) {
+        leaveToStatic(test, 'record-git-read', 'the test read under .git/, which a record cannot say what changes')
+      } else if (entry.branchesOnPlatform && records.platform !== 'linux') {
+        leaveToStatic(
+          test,
+          'record-platform-branch',
+          `the test branches on process.platform and this push runs on ${records.platform}, not the recorded linux`
+        )
+      } else {
+        const index = indexRecordedTest(entry)
+        if (drift.some((change) => recordReach(index, change) !== null))
+          leaveToStatic(
+            test,
+            'record-input-changed',
+            'a path in the test record changed between the record commit and the base'
+          )
+        else decided.set(test, index)
+      }
+    }
+  }
+  const pathChanges: PathChange[] = changes.flatMap((change): PathChange[] =>
+    change.status === 'renamed'
+      ? [
+          { path: change.path, status: 'added' },
+          { path: change.from as string, status: 'deleted' }
+        ]
+      : [{ path: change.path, status: change.status }]
+  )
+  const closureCache = new Map<string, ReadonlySet<string>>()
+  /** An exported-declaration-only change to a file the test imports, whose changed names its import closure does not reach, on every side that holds the test. */
+  const narrowable = (test: string, path: string): boolean => {
+    const attributed = names.get(path)
+    if (attributed === undefined || attributed === 'all') return false
+    let judged = 0
+    for (const { root, graph } of sideGraphs) {
+      const start = `${ALL_PREFIX}${join(root, test)}`
+      if (!graph.edges.has(start)) continue
+      const abs = join(root, path)
+      if (!graph.allSourceFiles.has(abs)) return false
+      if (reaches(start, graph.edges, changeFactsFor(graph, new Set([abs]), names))) return false
+      const key = `${root}\0${test}`
+      let files = closureCache.get(key)
+      if (!files) {
+        files = closureOf(graph, [start]).files
+        closureCache.set(key, files)
+      }
+      if (!files.has(abs)) return false
+      judged++
+    }
+    return judged > 0
+  }
+  const recordRead = new Set<string>()
+  if (decided.size > 0) {
+    for (const test of decided.keys()) reasons.delete(test)
+    for (const change of pathChanges) {
+      for (const [test, index] of decided) {
+        const reach = recordReach(index, change)
+        if (!reach) continue
+        recordRead.add(change.path)
+        if (test !== change.path && reach.exact && change.status === 'modified' && narrowable(test, change.path))
+          continue
+        addReason(test, { kind: 'recorded-read', detail: reach.detail, via: reach.via, revision: 'head' })
+      }
+    }
+  }
+  const undecided = allTests.filter((test) => !decided.has(test))
+
   for (const change of changes) {
     for (const path of [change.path, ...(change.from ? [change.from] : [])])
       for (const by of accounted.get(path) ?? []) if (!change.accountedBy.includes(by)) change.accountedBy.push(by)
     if (change.accountedBy.length === 0) {
-      fallback(
-        'unattributed',
-        'no graph node, declared input, folder-scanning test or test identity accounts for the path',
-        change.path
-      )
-      change.accountedBy.push('fallback:unattributed')
-    }
+      if (undecided.length > 0) {
+        fallback(
+          'unattributed',
+          'no graph node, declared input, folder-scanning test or test identity accounts for the path',
+          change.path
+        )
+        change.accountedBy.push('fallback:unattributed')
+      } else change.accountedBy.push(recordRead.has(change.path) ? 'record' : 'record:no-reader')
+    } else if (recordRead.has(change.path)) change.accountedBy.push('record')
     change.accountedBy.sort()
   }
 
@@ -2306,10 +2447,17 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
   }
   obligations.sort((a, b) => a.obligation.localeCompare(b.obligation) || a.test.localeCompare(b.test))
 
-  const allTests = headView.tests.map((t) => t.id).sort()
   const fallbacks: FallbackScope[] = [...fallbackScopes]
-    .map(([id, scope]) => ({ id, reason: scope.reason, paths: [...scope.paths].sort(), tests: allTests }))
+    .map(([id, scope]) => ({ id, reason: scope.reason, paths: [...scope.paths].sort(), tests: undecided }))
+    .filter((scope) => scope.tests.length > 0)
     .sort((a, b) => a.id.localeCompare(b.id))
+  const planRecords: PlanRecords = {
+    commit: records ? records.record.commit : null,
+    recorded: [...decided.keys()].sort(),
+    fallbacks: [...recordFallbacks.values()]
+      .map((scope) => ({ ...scope, tests: scope.tests.sort() }))
+      .sort((a, b) => a.id.localeCompare(b.id))
+  }
   const required: PlannedTest[] = [...reasons]
     .map(([test, list]) => {
       const identity = headTests.get(test) as InventoryView['tests'][number]
@@ -2370,6 +2518,7 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
     required,
     fallbacks,
     obligations,
+    records: planRecords,
     policies: [...engaged.values()]
       .map((p) => ({ id: p.id, kind: p.kind, duty: p.duty, via: [...p.via].sort() }))
       .sort((a, b) => a.id.localeCompare(b.id)),

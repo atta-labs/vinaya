@@ -460,7 +460,7 @@ describe('a configuration change reaches each reader by how it reads', () => {
 
 describe('the lockfile is read as its dependency identity, so a path move alone reaches no reader', () => {
   const { head } = readTestInventory(REPO_ROOT)
-  const policy = repositoryPolicy(REPO_ROOT, 'HEAD', head, 'local', 'one')
+  const policy = repositoryPolicy(REPO_ROOT, 'HEAD', head)
   const fixture = (name: string) => readFileSync(join(import.meta.dir, 'fixtures', 'bun-lock', name), 'utf8')
   const moves = ['harness-kernel', 'process-folder'].map((move) => ({
     move,

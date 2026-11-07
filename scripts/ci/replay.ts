@@ -32,7 +32,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { guardRepository } from './base-guard.ts'
-import { buildCiPlan, type CiPlan, type GuardInput } from './impact-plan.ts'
+import { buildCiPlan, type CiPlan, type GuardInput, type RecordReach } from './impact-plan.ts'
 
 /** One file change of a case: new content, an appended line, one text replaced, a deletion, or a move. */
 export type FileChange =
@@ -209,14 +209,25 @@ export function mutatePlan(plan: CiPlan, mutant: string): CiPlan {
 }
 
 /** The plan CI would make for one case. */
-export function planCase(repoRoot: string, base: string, replayCase: ReplayCase): CiPlan {
+export function planCase(repoRoot: string, base: string, replayCase: ReplayCase, reachRecord?: RecordReach): CiPlan {
   const head = syntheticCommit(repoRoot, base, replayCase.changes)
   const guard: GuardInput =
     replayCase.guard === 'plan'
       ? { verdict: 'plan', reason: 'bypassed by the case, to judge the narrowed plan itself', guarded: [] }
       : guardRepository(repoRoot, base, head)
-  return buildCiPlan({ repoRoot, event: 'pull_request', base, approvedHead: head, testedTree: head, guard })
+  return buildCiPlan({
+    repoRoot,
+    event: 'pull_request',
+    base,
+    approvedHead: head,
+    testedTree: head,
+    guard,
+    reachRecord: reachRecord ?? STATIC_ONLY
+  })
 }
+
+/** A replay judges the static selection unless it is given records: it never reaches for a workflow artifact. */
+const STATIC_ONLY: RecordReach = () => ({ record: null, reason: 'the replay holds no read record for this commit' })
 
 export type CaseResult = { id: string; misses: string[]; uncaught: string[]; plan: CiPlan }
 
@@ -251,7 +262,8 @@ export function replayHistory(
   repoRoot: string,
   ref: string,
   count: number,
-  observations: Observations = {}
+  observations: Observations = {},
+  reachRecord: RecordReach = STATIC_ONLY
 ): HistoryEntry[] {
   const commits = git(repoRoot, ['rev-list', '--first-parent', `--max-count=${count}`, ref])
     .split('\n')
@@ -265,7 +277,8 @@ export function replayHistory(
       base: parent,
       approvedHead: commit,
       testedTree: commit,
-      guard
+      guard,
+      reachRecord
     })
     const tree = git(repoRoot, ['rev-parse', `${commit}^{tree}`])
     const seen = observations[commit] ?? observations[tree]

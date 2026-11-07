@@ -50,6 +50,10 @@ export type FailedTestsRecord = {
   selectionCompleted?: boolean
   /** The native verification context ({@link NativeSelection.context}) the refused run executed under, when it was a native run. */
   context?: string
+  /** The context's parts, so a later push can tell which part moved instead of treating any change as a different context. */
+  contextParts?: ContextParts
+  /** Repository-relative tests of the refused run that it confirmed passing, each proven at {@link head}. */
+  confirmed?: string[]
   /**
    * Set only by the native recorder: {@link failed} holds every test of its run that the run did not confirm as
    * passed — each named failing test, each scheduled file no runner reported, every test of a runner whose verdict
@@ -83,6 +87,12 @@ export type NativeSelection = {
   inventory: string
   /** The verification context the plan executes under: the context digest, {@link inventory} and the engine. */
   context: string
+  /** The parts {@link context} is made of, when they were readable. */
+  contextParts?: ContextParts
+  /** Tests an earlier run on this branch proved that this plan does not run again, each with the head that proved it. */
+  reused?: { test: string; provenAt: string }[]
+  /** The read record's use: the commit it was taken at (or none) and the tests left to static selection. */
+  records?: { commit: string | null; recorded: number; fallbacks: { id: string; reason: string; tests: number }[] }
   /** Every expected `<test>@<configuration>`, sorted. */
   identities: string[]
   /** The unresolved failed tests the push added on top of the selection, repository-relative. */
@@ -124,7 +134,31 @@ export type PassingRecord = {
   selectionCompleted: true
   /** {@link VerificationContext.digest} the run executed under. */
   context: string
+  /** The parts of {@link context}, when they were readable. */
+  contextParts?: ContextParts
+  /** Every test this branch has proven, repository-relative, with the head that proved it: carried forward from run to run. */
+  proven?: Record<string, string>
   recordedAt: string
+}
+
+/** What a native context is made of: the verification context's parts and the head inventory's identity. */
+export type ContextParts = {
+  policy: string
+  inputs: string
+  lockfile: string
+  runner: string
+  environment: string
+  inventory: string
+}
+
+/**
+ * Whether a pass or refusal recorded under `recorded` still says something about this checkout. The selection policy and
+ * the execution environment decide how a test runs, so a change to either makes the record say nothing. The inputs,
+ * the lockfile, the runner configuration and the inventory are committed files: a change to one is a diff the selection
+ * reads, and it re-runs only the tests that reach it — it is no reason to re-run a test that passed.
+ */
+export function contextReusable(recorded: ContextParts | undefined, now: ContextParts | null | undefined): boolean {
+  return Boolean(recorded && now && recorded.policy === now.policy && recorded.environment === now.environment)
 }
 
 /** The fields every selection note carries, whatever mode chose the tests. */
@@ -461,6 +495,8 @@ export type NativeBaseInputs = {
   passing: PassingRecord | null
   /** The native verification context now; `null` when unreadable. */
   context: string | null
+  /** The parts of {@link context}; with a record's own parts they tell whether the record still says something. */
+  contextParts?: ContextParts | null
   /** Whether the verification inputs are clean; `null` when git could not say. */
   inputsClean: boolean | null
   isAncestor: (ancestor: string) => boolean
@@ -568,6 +604,7 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
     if (obligations.length !== record.failed.length)
       return full('a failed test file of the last refused push no longer exists', obligations)
     if (record.selectionCompleted !== true || context === null) return full(otherContext, obligations)
+    const compatible = contextReusable(record.contextParts, inputs.contextParts)
     const merged = inputs.mergeAware
       ? mergeAwareBase({
           repoRoot: inputs.repoRoot,
@@ -578,7 +615,9 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
           reads: inputs.mergeAware
         })
       : null
-    if (merged === null && record.context !== context) return full(otherContext, obligations)
+    // A context that moved only in committed files is no reason to run a passed test again: the comparison stays at
+    // the refused head, so the merge's own changes are read like any other and re-run only the tests they reach.
+    if (merged === null && record.context !== context && !compatible) return full(otherContext, obligations)
     const from = merged ?? record.head
     if (!narrowable(record.head) || !narrowable(from))
       return full('the changes since the refused push could not be narrowed', obligations)
@@ -590,6 +629,7 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
   if (!passing || passing.selectionCompleted !== true || passing.branch !== inputs.branch)
     return full('no passing run on this branch to build on')
   if (context === null) return full('the passing run had another verification context')
+  const compatible = contextReusable(passing.contextParts, inputs.contextParts)
   const merged = inputs.mergeAware
     ? mergeAwareBase({
         repoRoot: inputs.repoRoot,
@@ -600,7 +640,8 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
         reads: inputs.mergeAware
       })
     : null
-  if (merged === null && passing.context !== context) return full('the passing run had another verification context')
+  if (merged === null && passing.context !== context && !compatible)
+    return full('the passing run had another verification context')
   if (!inputs.isAncestor(passing.head)) return full('the passing head is not in this branch history')
   const from = merged ?? passing.head
   if (!narrowable(passing.head) || !narrowable(from))
@@ -616,6 +657,8 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
  */
 export function nativePassingRecord(input: {
   note: SelectionNote | null
+  /** The passing record the branch holds now: what it proved and has not been re-run stays proven, at the head that proved it. */
+  previous?: PassingRecord | null
   completion: NativeCompletion
   head: string
   branch: string
@@ -634,6 +677,11 @@ export function nativePassingRecord(input: {
   const expected = [...native.identities].sort()
   const executed = [...completion.executed].sort()
   if (expected.length !== executed.length || expected.some((id, i) => id !== executed[i])) return null
+  const proven: Record<string, string> = {}
+  const earlier = input.previous
+  if (earlier && earlier.branch === input.branch)
+    for (const [test, head] of Object.entries(earlier.proven ?? {})) proven[test] = head
+  for (const identity of native.identities) proven[identity.replace(/@[^@]*$/, '')] = input.head
   return {
     version: PASSING_RECORD_VERSION,
     kind: 'passed',
@@ -642,6 +690,8 @@ export function nativePassingRecord(input: {
     selection: [...note.selected],
     selectionCompleted: true,
     context: native.context,
+    ...(native.contextParts ? { contextParts: native.contextParts } : {}),
+    proven,
     recordedAt: input.now.toISOString()
   }
 }

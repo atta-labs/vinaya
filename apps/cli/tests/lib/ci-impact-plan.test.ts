@@ -22,6 +22,8 @@ import { SUITE_INPUTS } from '../sandbox-conformance/command-sources.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..')
+// These plans are the static selection's: no workflow artifact is fetched for the base commit.
+process.env.VINAYA_READ_RECORD = 'off'
 
 // The repository's CI scripts sit outside this package's type program, so they load by path, never by a
 // static import; the inventory declares them as this test's code input.
@@ -225,25 +227,23 @@ describe('the CI plan', () => {
   it('a new outbox writer no test imports still runs the outbox scanner, kept by the always-run list', () => {
     const scanner = plan.tests.find((t) => t.test.endsWith('/log-callers.test.ts'))
     expect(scanner).toBeDefined()
-    expect(scanner?.why.some((w) => w.startsWith('obligation pre-push-always-run: unmodeled input:'))).toBe(true)
+    expect(scanner?.why.some((w) => w.startsWith('obligation pre-push-always-run:'))).toBe(true)
   })
 
-  it('takes its tests from the shared selection: for the same commits and depth, local and CI require the same tests', () => {
-    const local = repositorySelection(REPO_ROOT, { base: BASE, head: writer, consumer: 'local', depth: 'transitive' })
+  it('takes its tests from the one shared selection: local and CI get the same plan for the same inputs', () => {
+    const local = repositorySelection(REPO_ROOT, { base: BASE, head: writer })
     const ci = ciSelection(REPO_ROOT, BASE, writer).plan
     expect(ci.required).toEqual(local.required)
     expect(ci.fallbacks).toEqual(local.fallbacks)
-    expect(ci.context.base).toBe(local.context.base)
-    expect(ci.context.head).toBe(local.context.head)
-    // CI's additions are stated obligations, never folded into what the change requires.
+    expect(ci.obligations).toEqual(local.obligations)
+    expect(ci.identity).toBe(local.identity)
+    // Every caller adds the same stated obligations, never folded into what the change requires.
     const added = [...new Set(ci.obligations.map((o) => o.obligation))].sort()
     expect(added).toEqual(['inventory-gate', 'pre-push-always-run'])
-    for (const o of ci.obligations.filter((x) => x.obligation === 'pre-push-always-run'))
-      expect(o.reason.startsWith('unmodeled input:')).toBe(true)
   }, 60_000)
 
-  it('covers the local push it defers: every test the depth-one local plan names runs in CI', () => {
-    const local = repositorySelection(REPO_ROOT, { base: BASE, head: writer, consumer: 'local' })
+  it('covers the local push: every test the local plan names runs in CI', () => {
+    const local = repositorySelection(REPO_ROOT, { base: BASE, head: writer })
     const ran = new Set(plan.tests.map((t) => t.test))
     expect(plannedTests(local).filter((test) => !ran.has(test))).toEqual([])
   }, 60_000)
@@ -357,6 +357,7 @@ describe('the workflow the plan drives', () => {
   type Job = {
     name?: string
     needs?: string | string[]
+    if?: string
     steps?: { name?: string; run?: string }[]
     outputs?: Record<string, string>
   }
@@ -366,8 +367,19 @@ describe('the workflow the plan drives', () => {
 
   it('keeps the job names and build-only dependencies the loop reader keys on, and adds no planning job', () => {
     expect(Object.keys(workflow.jobs).sort()).toEqual(
-      ['aggregate', 'build', 'sandbox-conformance', 'test-cli', 'test-cli-config-anchor', 'test-shared-packages'].sort()
+      [
+        'aggregate',
+        'build',
+        'record-reads',
+        'sandbox-conformance',
+        'test-cli',
+        'test-cli-config-anchor',
+        'test-shared-packages'
+      ].sort()
     )
+    // The read recorder runs on a push only and nothing, the required check included, waits for it.
+    expect(workflow.jobs['record-reads']?.if).toBe("github.event_name == 'push'")
+    for (const job of Object.values(workflow.jobs)) expect([job.needs ?? []].flat()).not.toContain('record-reads')
     expect(workflow.jobs.build?.name).toBe('Build, lint & typecheck')
     expect(workflow.jobs.build?.needs).toBeUndefined()
     for (const job of ['test-cli', 'test-shared-packages', 'test-cli-config-anchor', 'sandbox-conformance'])

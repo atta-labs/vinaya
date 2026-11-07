@@ -2,15 +2,17 @@
 /**
  * This repository's local push adapter: the tests a push runs come from the
  * shared selection library, through the same adapter CI uses
- * (`repository-selection.ts`, its `local` consumer), and run once each under
- * their own native runner, one runner start after another.
+ * (`repository-selection.ts`), and run once each under their own native
+ * runner, one runner start after another.
  *
  * The adapter chooses only what is the push's own:
  *
  * - the base the selector compares the head with — the merge base with the
  *   push's remote base, or a verified incremental base: the head of the last
- *   passing run, or of the last refused one, on this branch, under this very
- *   verification context (`chooseNativeBase`);
+ *   passing run, or of the last refused one, on this branch, whose selection
+ *   policy and environment are this push's (`chooseNativeBase`); a test that
+ *   passed there is reused, listed with the head that proved it, unless the
+ *   change since reaches it;
  * - the unresolved failed tests of the last refused push, added on top of the
  *   selection as obligations, never handed to the selector;
  * - the suites a runner cannot narrow to files, run whole and said so before
@@ -46,6 +48,7 @@ import {
   changedBetween,
   chooseNativeBase,
   clearRecordOfKind,
+  type ContextParts,
   computeVerificationContext,
   currentBranch,
   currentHead,
@@ -93,6 +96,7 @@ import {
   type WholeSuiteRequest
 } from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
 import { readTestInventory } from './inventory-check.js'
+import { reachableRecord } from './read-records.js'
 import { repositorySelectionInput } from './repository-selection.js'
 import { type GroupOutcome, type RunResult, runGroups, WHOLE_ON_CHANGE_OWNERS, WHOLE_SUITE_OWNERS } from './schedule.js'
 
@@ -189,6 +193,9 @@ export function localNativePlan(input: LocalPlanInput): LocalPlan {
   }
   const changed = plan.changes.flatMap((c) => (c.from ? [c.path, c.from] : [c.path]))
   const wholeSuites: WholeSuiteRequest[] = []
+  // static-fallback begin: a suite whose inputs the selection does not model runs whole — its tests with no
+  // record only; a record decides the others.
+  const recorded = new Set(plan.records.recorded)
   for (const suite of view.suites) {
     const prefix = suite.dir === '.' ? '' : `${suite.dir}/`
     const selected = known.some((t) => t.suite === suite.id)
@@ -199,8 +206,10 @@ export function localNativePlan(input: LocalPlanInput): LocalPlan {
           ? WHOLE_ON_CHANGE_OWNERS[suite.owner]
           : undefined
     if (reason === undefined) continue
-    wholeSuites.push({ suite: suite.id, reason, identities: view.tests.filter((t) => t.suite === suite.id) })
+    const identities = view.tests.filter((t) => t.suite === suite.id && !recorded.has(t.id))
+    if (identities.length > 0) wholeSuites.push({ suite: suite.id, reason, identities })
   }
+  // static-fallback end
   const whole = new Set(wholeSuites.map((w) => w.suite))
   const tests: NativeTestRequest[] = known
     .filter((t) => !whole.has(t.suite))
@@ -262,8 +271,12 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
   if (!mergeBase) throw new Error(`no merge base between ${remoteBase} and ${head}`)
   const headView = readTestInventory(repoRoot, { head }).head
   const inputsClean = verificationInputsDirty(repoRoot) === false
-  const verification = computeVerificationContext(repoRoot)?.digest ?? null
+  const verificationContext = computeVerificationContext(repoRoot)
+  const verification = verificationContext?.digest ?? null
   const context = nativeContext(verification, headView.contextIdentity)
+  const contextParts: ContextParts | null = verificationContext
+    ? { ...verificationContext.parts, inventory: headView.contextIdentity }
+    : null
   const viewAt = (revision: string): InventoryView | null => {
     try {
       return readTestInventory(repoRoot, { head: revision }).head
@@ -288,6 +301,7 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
     failed: readFailedTestsRecord(repoRoot),
     passing: readPassingRecord(repoRoot),
     context,
+    contextParts,
     inputsClean,
     isAncestor: (ancestor) => isAncestor(repoRoot, ancestor, head),
     exists: existsSync,
@@ -304,8 +318,11 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
   })
   const relative = (path: string) => path.slice(repoRoot.length + 1)
   const obligations = choice.obligations.map(relative)
+  // The record is the merge base's; the comparison base may be a later proven head, and the selection checks the
+  // record's own paths did not change between the two.
+  const reached = reachableRecord(repoRoot, mergeBase)
   const planFrom = (base: string) => {
-    const input = repositorySelectionInput(repoRoot, { base, head, consumer: 'local' })
+    const input = repositorySelectionInput(repoRoot, { base, head, record: reached.record })
     return { plan: selectTests(input), view: input.inventory.head }
   }
   const { plan, view } = planFrom(choice.base)
@@ -316,6 +333,23 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
     )
   const selected = [...new Set(local.groups.flatMap((g) => g.tests))].sort().map((id) => join(repoRoot, id))
   const usable = context !== null && inputsClean ? context : null
+  // Every test an earlier run on this branch proved that this plan leaves alone, with the head that proved it.
+  const planned = new Set(local.identities.map((id) => id.replace(/@[^@]*$/, '')))
+  const proofs = new Map<string, string>()
+  const passed = readPassingRecord(repoRoot)
+  if (passed && passed.branch === branch)
+    for (const [test, at] of Object.entries(passed.proven ?? {})) proofs.set(test, at)
+  const refused = readFailedTestsRecord(repoRoot)
+  if (refused && refused.branch === branch)
+    for (const test of refused.confirmed ?? []) if (!proofs.has(test)) proofs.set(test, refused.head)
+  const exists = new Set(view.tests.map((t) => t.id))
+  const reused =
+    choice.kind === 'merge-base'
+      ? []
+      : [...proofs]
+          .filter(([test]) => exists.has(test) && !planned.has(test))
+          .map(([test, provenAt]) => ({ test, provenAt }))
+          .sort((a, b) => compare(a.test, b.test))
   const native: NativeSelection = {
     version: 1,
     base: choice.base,
@@ -323,6 +357,13 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
     plan: plan.identity,
     inventory: view.contextIdentity,
     context: context ?? '',
+    ...(contextParts ? { contextParts } : {}),
+    reused,
+    records: {
+      commit: plan.records.commit,
+      recorded: plan.records.recorded.length,
+      fallbacks: plan.records.fallbacks.map((f) => ({ id: f.id, reason: f.reason, tests: f.tests.length }))
+    },
     identities: local.identities,
     obligations,
     groups: local.groups,
@@ -349,6 +390,10 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
       `compared with ${choice.kind} ${choice.base.slice(0, 12)} (${choice.reason}) ` +
       `[${elapsed.toFixed(0)} ms selection, ${plan.profile.programMs.toFixed(0)} ms program]`,
     ...obligations.map((test) => `vinaya pre-push: re-running unresolved failed test ${test}`),
+    ...reused.map((r) => `vinaya pre-push: reusing ${r.test}, proven at ${r.provenAt.slice(0, 12)}`),
+    reached.record
+      ? `vinaya pre-push: ${plan.records.recorded.length} test(s) decided by the read record of ${reached.record.commit.slice(0, 12)}; ${plan.records.fallbacks.map((f) => `${f.tests.length} by static selection (${f.id})`).join(', ') || 'none left to static selection'}`
+      : `vinaya pre-push: every test decided by static selection (${reached.reason})`,
     ...local.expanded.map((e) => `vinaya pre-push: ${e.suite} runs whole: ${e.reason}`),
     ...(context === null
       ? ['vinaya pre-push: the verification context is unreadable; the run will be refused even if every runner passes']
@@ -412,7 +457,8 @@ function unprovenRecord(input: {
     failed: planTests(input.native).map((id) => join(input.repoRoot, id)),
     recordedAt: input.now.toISOString(),
     selectionCompleted: false,
-    ...(input.native.context ? { context: input.native.context } : {})
+    ...(input.native.context ? { context: input.native.context } : {}),
+    ...(input.native.contextParts ? { contextParts: input.native.contextParts } : {})
   }
 }
 
@@ -439,6 +485,8 @@ function unconfirmedRecord(input: {
     recordedAt: input.now.toISOString(),
     selectionCompleted: true,
     ...(input.native.context ? { context: input.native.context } : {}),
+    ...(input.native.contextParts ? { contextParts: input.native.contextParts } : {}),
+    confirmed: planTests(input.native).filter((id) => !input.unconfirmed.includes(id)),
     failedHoldsUnconfirmed: true,
     unreported: absolute(input.unreported),
     ...(input.runStartedAt ? { runStartedAt: input.runStartedAt } : {})
@@ -634,6 +682,7 @@ export async function recordLocalRun(input: {
   if (outcome.passed) {
     const passing = nativePassingRecord({
       note,
+      previous: readPassingRecord(repoRoot),
       completion: outcome.completion,
       head,
       branch,

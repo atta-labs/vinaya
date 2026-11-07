@@ -4,6 +4,7 @@
  * it returns. Every path is repository-relative and `/`-separated.
  */
 import type { TypeScriptApi } from './compiler-graph.js'
+import type { ReadRecord } from './recorded-reads.js'
 import type { ScannerDeclaration } from './scanner-inputs.js'
 import type { SpawnProgram } from './spawn-inputs.js'
 
@@ -216,19 +217,46 @@ export type SelectionPolicy = {
   typescript?: TypeScriptApi | null
 }
 
+/**
+ * The recorded reads a selection may decide by: the record of one commit, and
+ * the platform the caller's push runs on. A test with a valid record is decided
+ * by it; every other test is decided by the static selection, unchanged.
+ */
+export type SelectionRecords = {
+  /** The record taken at `record.commit`; the selection uses it for tests whose reads did not change between that commit and the base. */
+  record: ReadRecord
+  /** The platform the caller runs on (`process.platform`). */
+  platform: string
+}
+
 export type SelectTestsInput = {
   repo: RepositoryReader
   base: string
   head: string
   inventory: SelectionInventory
   policy: SelectionPolicy
+  /** The recorded reads, when the caller could reach the record of the comparison's commit; absent, static selection decides every test. */
+  records?: SelectionRecords | null
+}
+
+/** A test decided by static selection instead of a record, and why. */
+export type RecordFallbackScope = { id: string; reason: string; tests: string[] }
+
+/** What the record decided and what it left to static selection. */
+export type PlanRecords = {
+  /** The commit whose record was used, or `null` when none was reachable. */
+  commit: string | null
+  /** The tests the record decided. */
+  recorded: string[]
+  /** Every test the static selection decided instead, grouped by reason. */
+  fallbacks: RecordFallbackScope[]
 }
 
 // ── The plan ───────────────────────────────────────────────────────────────
 
 /** Why a test is in a plan. `revision` names the graph that found it — the base graph keeps an edge the head removed. */
 export type PlanReason = {
-  kind: 'direct-dependency' | 'transitive-dependency' | 'declared-input' | 'conservative-fallback'
+  kind: 'direct-dependency' | 'transitive-dependency' | 'declared-input' | 'conservative-fallback' | 'recorded-read'
   detail: string
   via: string
   revision: 'base' | 'head'
@@ -286,6 +314,8 @@ export type SelectionPlan = {
   required: PlannedTest[]
   fallbacks: FallbackScope[]
   obligations: PlannedObligation[]
+  /** What the recorded reads decided, and every test left to static selection with its reason. */
+  records: PlanRecords
   /** Mandatory and security duties the changed inputs engage. */
   policies: { id: string; kind: PolicyDeclaration['kind']; duty: string; via: string[] }[]
   removedTests: string[]

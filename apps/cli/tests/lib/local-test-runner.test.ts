@@ -102,6 +102,7 @@ const plan = (over: Partial<SelectionPlan> = {}): SelectionPlan =>
     required: [],
     fallbacks: [],
     obligations: [],
+    records: { commit: null, recorded: [], fallbacks: [] },
     removedTests: [],
     ...over
   }) as unknown as SelectionPlan
@@ -460,6 +461,7 @@ describe('what a failed native run confirms', () => {
         recordedAt: '2026-11-01T00:00:00.000Z',
         selectionCompleted: true,
         context: 'ctx',
+        confirmed: ['apps/cli/tests/a.test.ts'],
         failedHoldsUnconfirmed: true,
         unreported: [],
         runStartedAt: '2026-11-01T00:00:00.000Z'

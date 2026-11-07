@@ -1195,6 +1195,87 @@ describe('merge-aware base', () => {
     }
   })
 
+  const PARTS = {
+    policy: 'p',
+    inputs: 'i',
+    lockfile: 'l',
+    runner: 'r',
+    environment: 'e',
+    inventory: 'v'
+  }
+
+  it('a context that moved only in committed files keeps the proof: the comparison stays at the record, not at the merge', () => {
+    const f = fixture()
+    try {
+      const moved = { ...PARTS, inputs: 'i2', lockfile: 'l2', runner: 'r2', inventory: 'v2' }
+      const choice = choose(f, {
+        failed: failedRecord(f, { contextParts: PARTS }),
+        contextParts: moved,
+        mergeAware: reads(f, { contextAtRecord: () => 'digest-moved' })
+      })
+      expect(choice).toMatchObject({ base: f.recordHead, kind: 'rerun', obligations: [f.test] })
+      // The default branch's own changes since the record are read like any other, so the tests they reach re-run.
+      expect(changedBetween(f.dir, choice.base, 'HEAD')?.length).toBeGreaterThan(1)
+      expect(
+        choose(f, {
+          passing: passingRecord(f, { contextParts: PARTS }),
+          contextParts: moved,
+          mergeAware: reads(f, { contextAtRecord: () => 'digest-moved' })
+        })
+      ).toMatchObject({ base: f.recordHead, kind: 'since-green' })
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a moved selection policy or execution environment still widens', () => {
+    const f = fixture()
+    try {
+      for (const part of ['policy', 'environment'] as const)
+        widened(
+          f,
+          choose(f, {
+            failed: failedRecord(f, { contextParts: PARTS }),
+            contextParts: { ...PARTS, [part]: 'moved' },
+            mergeAware: reads(f, { contextAtRecord: () => 'digest-moved' })
+          })
+        )
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a pass carries every proven test forward with the head that proved it', () => {
+    const f = fixture()
+    try {
+      const identities = ['apps/cli/tests/a.test.ts@default']
+      const record = nativePassingRecord({
+        note: {
+          version: 1,
+          head: f.merge,
+          selected: [f.test],
+          mode: 'full',
+          fullCount: 1,
+          native: { identities, context: BEFORE } as never
+        } as never,
+        previous: passingRecord(f, { proven: { 'apps/cli/tests/earlier.test.ts': f.mergeBase } }),
+        completion: { version: 1, completed: true, executed: identities, failedRunners: [], problems: [] },
+        head: f.merge,
+        branch: 'task/x/1',
+        context: BEFORE,
+        inputsClean: true,
+        treeClean: true,
+        now: new Date('2026-10-30T00:00:00.000Z')
+      })
+      expect(record?.proven).toEqual({
+        'apps/cli/tests/earlier.test.ts': f.mergeBase,
+        'apps/cli/tests/a.test.ts': f.merge
+      })
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
   it('a recorded test whose runner facts moved with the merge widens', () => {
     const f = fixture()
     try {

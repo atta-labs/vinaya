@@ -9,6 +9,9 @@ import {
   memoryRepository,
   parseHunkRanges,
   plannedTests,
+  READ_RECORD_SCHEMA,
+  type ReadRecord,
+  type RecordedTest,
   type RepositoryReader,
   type ResolvedEdge,
   SelectionInputError,
@@ -325,6 +328,174 @@ describe('an independent mutation oracle', () => {
       policy: { depth: 'one', ...fx.policy }
     })
     expect(plannedTests(plan)).toContain('packages/app/tests/opaque.test.ts')
+  })
+})
+
+// ── Recorded reads ─────────────────────────────────────────────────────────
+
+describe('selectTests decided by recorded reads', () => {
+  const fx = fixture('workspaces-repo.json')
+  const RECORD_COMMIT = 'record'
+  const core = 'packages/core/src'
+  const reading: Record<string, Partial<RecordedTest>> = {
+    'packages/app/tests/add.test.ts': { reads: [`${core}/index.ts`, `${core}/add.ts`] },
+    'packages/app/tests/mul.test.ts': { reads: [`${core}/index.ts`, `${core}/mul.ts`, `${core}/add.ts`] },
+    'packages/app/tests/square.test.ts': { reads: [`${core}/index.ts`, `${core}/mul.ts`, `${core}/add.ts`] },
+    'packages/app/tests/tree.test.ts': { reads: [], listed: [core] },
+    'packages/app/tests/opaque.test.ts': { reads: ['opaque/input.json', 'scratch/notes.txt'] }
+  }
+  /** A record taken at the comparison's base, one entry per test of the fixture unless an override drops it. */
+  const record = (overrides: Record<string, Partial<RecordedTest> | null> = {}, commit = 'base'): ReadRecord => {
+    const tests: Record<string, RecordedTest> = {}
+    for (const test of viewOf('head', fx.files, fx.inventory).tests.map((t) => t.id)) {
+      if (overrides[test] === null) continue
+      const own = { ...(reading[test] ?? {}), ...(overrides[test] ?? {}) }
+      tests[test] = { ...own, reads: [...new Set([test, ...(own.reads ?? [])])], listed: own.listed ?? [] }
+    }
+    return { schema: READ_RECORD_SCHEMA, schemaVersion: 1, commit, platform: 'linux', tests }
+  }
+  const scenario = (change: Record<string, string | null>): Scenario => ({
+    name: 'recorded',
+    depth: 'transitive',
+    change,
+    required: [],
+    fallbacks: []
+  })
+  const select = (change: Record<string, string | null>, records: ReadRecord | null, platform = 'linux') =>
+    selectTests({
+      ...scenarioInput(fx, scenario(change)),
+      records: records ? { record: records, platform } : null
+    })
+  const headOf = (change: Record<string, string | null>) => {
+    const files = { ...fx.files }
+    for (const [path, text] of Object.entries(change)) {
+      if (text === null) delete files[path]
+      else files[path] = text
+    }
+    return files
+  }
+
+  it('a path nothing models selects only the test whose record read it, and falls back for no one', () => {
+    const plan = select({ 'scratch/notes.txt': 'changed\n' }, record())
+    expect(plan.required.map((t) => t.test)).toEqual(['packages/app/tests/opaque.test.ts'])
+    expect(plan.required[0]?.reasons[0]?.kind).toBe('recorded-read')
+    expect(plan.fallbacks).toEqual([])
+    expect(plan.records.commit).toBe('base')
+    expect(plan.records.fallbacks).toEqual([])
+    expect(plan.changes[0]?.accountedBy).toContain('record')
+  })
+
+  it('without a record the same change falls back to every test, named', () => {
+    const plan = select({ 'scratch/notes.txt': 'changed\n' }, null)
+    expect(plan.fallbacks.map((f) => f.id)).toEqual(['unattributed'])
+    expect(plan.records.fallbacks.map((f) => f.id)).toEqual(['no-reachable-record'])
+    expect(plan.records.recorded).toEqual([])
+  })
+
+  it('a test with no record is decided statically while the others are decided by their records', () => {
+    const plan = select({ 'scratch/notes.txt': 'changed\n' }, record({ 'packages/app/tests/data.test.ts': null }))
+    expect(plan.fallbacks.map((f) => f.id)).toEqual(['unattributed'])
+    expect(plan.fallbacks[0]?.tests).toEqual(['packages/app/tests/data.test.ts'])
+    expect(plan.required.map((t) => t.test)).toEqual(['packages/app/tests/opaque.test.ts'])
+    expect(plan.records.fallbacks).toEqual([
+      expect.objectContaining({ id: 'no-record', tests: ['packages/app/tests/data.test.ts'] })
+    ])
+  })
+
+  it('an added or deleted path selects the test that listed its folder; a modified one does not', () => {
+    const added = select({ [`${core}/extra.ts`]: 'export const extra = 1\n' }, record())
+    expect(added.required.map((t) => t.test)).toEqual(['packages/app/tests/tree.test.ts'])
+    const deleted = select({ [`${core}/add.ts`]: null }, record())
+    expect(deleted.required.map((t) => t.test)).toContain('packages/app/tests/tree.test.ts')
+    const modified = select(
+      { [`${core}/add.ts`]: 'export function add(a: number, b: number): number {\n  return b + a\n}\n' },
+      record()
+    )
+    expect(modified.required.map((t) => t.test)).not.toContain('packages/app/tests/tree.test.ts')
+  })
+
+  it('a lookup that failed is a read: the path added later selects the test', () => {
+    const plan = select(
+      { 'probe/missing.json': '{}\n' },
+      record({ 'packages/app/tests/data.test.ts': { reads: ['probe/missing.json'] } })
+    )
+    expect(plan.required.map((t) => t.test)).toEqual(['packages/app/tests/data.test.ts'])
+  })
+
+  it('a changed exported declaration the import closure does not reach narrows the recorded read', () => {
+    const mul = fx.files[`${core}/mul.ts`] as string
+    const plan = select({ [`${core}/mul.ts`]: mul.replace('return a * a', 'return a ** 2') }, record())
+    expect(plan.required.map((t) => t.test)).toEqual(['packages/app/tests/square.test.ts'])
+  })
+
+  it('top-level code, an import or an initialiser always selects every test whose record contains the file', () => {
+    const mul = fx.files[`${core}/mul.ts`] as string
+    const plan = select({ [`${core}/mul.ts`]: `${mul}\nconsole.log('loaded')\n` }, record())
+    expect(plan.required.map((t) => t.test)).toEqual([
+      'packages/app/tests/mul.test.ts',
+      'packages/app/tests/square.test.ts'
+    ])
+  })
+
+  it('a folder read selects on any path beneath it, and a read under a package build output is its source folder', () => {
+    const plan = select(
+      { [`${core}/mul.ts`]: `${fx.files[`${core}/mul.ts`]}\n// edit\n` },
+      record({ 'packages/app/tests/cli.test.ts': { reads: [`${core}/`] } })
+    )
+    expect(plan.required.map((t) => t.test)).toContain('packages/app/tests/cli.test.ts')
+  })
+
+  it('a test that read under .git/ is decided statically, with the reason', () => {
+    const plan = select(
+      { 'scratch/notes.txt': 'changed\n' },
+      record({ 'packages/app/tests/data.test.ts': { fallback: 'git-read' } })
+    )
+    expect(plan.records.fallbacks.map((f) => f.id)).toEqual(['record-git-read'])
+    expect(plan.fallbacks[0]?.tests).toEqual(['packages/app/tests/data.test.ts'])
+  })
+
+  it('a test that branches on process.platform is decided statically when the push is not from Linux', () => {
+    const records = record({ 'packages/app/tests/data.test.ts': { branchesOnPlatform: true } })
+    const linux = select({ 'scratch/notes.txt': 'changed\n' }, records, 'linux')
+    expect(linux.records.fallbacks).toEqual([])
+    const mac = select({ 'scratch/notes.txt': 'changed\n' }, records, 'darwin')
+    expect(mac.records.fallbacks.map((f) => f.id)).toEqual(['record-platform-branch'])
+    expect(mac.fallbacks[0]?.tests).toEqual(['packages/app/tests/data.test.ts'])
+  })
+
+  it('a record is used for a test only when none of its paths changed between the record commit and the base', () => {
+    const changed = { ...fx.files, 'scratch/notes.txt': 'moved on\n' }
+    const input = scenarioInput(fx, scenario({ 'opaque/input.json': '{ "value": 9 }\n' }))
+    const plan = selectTests({
+      ...input,
+      repo: memoryRepository({
+        [RECORD_COMMIT]: changed,
+        base: fx.files,
+        head: headOf({ 'opaque/input.json': '{ "value": 9 }\n' })
+      }),
+      records: { record: record({}, RECORD_COMMIT), platform: 'linux' }
+    })
+    const drifted = plan.records.fallbacks.find((f) => f.id === 'record-input-changed')
+    expect(drifted?.tests).toEqual(['packages/app/tests/opaque.test.ts'])
+    expect(plan.records.recorded).not.toContain('packages/app/tests/opaque.test.ts')
+  })
+
+  it('a record whose commit cannot be listed decides nothing', () => {
+    const input = scenarioInput(fx, scenario({ 'scratch/notes.txt': 'changed\n' }))
+    const plan = selectTests({ ...input, records: { record: record({}, RECORD_COMMIT), platform: 'linux' } })
+    expect(plan.records.recorded).toEqual([])
+    expect(plan.records.fallbacks.map((f) => f.id)).toEqual(['record-unreadable'])
+    expect(plan.fallbacks.map((f) => f.id)).toEqual(['unattributed'])
+  })
+
+  it('the inventory readers and the package-level non-source edge no longer decide a recorded test', () => {
+    // settings.json is a declared input the static selection reads through a package edge; a record that never read it decides.
+    const input = scenarioInput(fx, scenario({ 'packages/app/settings.json': '{ "theme": "light", "lang": "en" }\n' }))
+    const statically = selectTests(input)
+    expect(plannedTests(statically)).toContain('packages/app/tests/settings.test.ts')
+    const decided = selectTests({ ...input, records: { record: record(), platform: 'linux' } })
+    expect(decided.required.map((t) => t.test)).toEqual([])
+    expect(decided.fallbacks).toEqual([])
   })
 })
 

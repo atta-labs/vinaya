@@ -62,6 +62,21 @@ export {
   type WholeSuiteRequest
 } from './native.js'
 export { globRegex, globToRegex, inputCovers, underDeclaredRoot } from './path-pattern.js'
+export {
+  createTraceReader,
+  indexRecordedTest,
+  isReadRecord,
+  type PathChange,
+  READ_RECORD_SCHEMA,
+  type ReadRecord,
+  type RecordFallback,
+  type RecordedTest,
+  type RecordIndex,
+  readsOfTrace,
+  recordReach,
+  type TraceOptions,
+  type TraceReads
+} from './recorded-reads.js'
 export { type ScannerDeclaration, type ScannerTrigger, scannerTriggered } from './scanner-inputs.js'
 export {
   diskTree,
@@ -89,6 +104,9 @@ export type {
   PlannedObligation,
   PlannedTest,
   PlanReason,
+  PlanRecords,
+  RecordFallbackScope,
+  SelectionRecords,
   PolicyDeclaration,
   ReaderKind,
   RepositoryReader,

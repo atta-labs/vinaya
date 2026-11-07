@@ -71,17 +71,20 @@ export const SHARD_OWNERS: readonly string[] = [CI_SHARD_LIST_OWNER, '@attalabs/
 /** Suites that run whole on every pull request, by owner, and why. */
 export const WHOLE_SUITE_OWNERS: Readonly<Record<string, string>> = {}
 
+// static-fallback begin
 /**
  * Suites that run whole on a pull request that changes any path under their
  * folder, by owner, and why: the selection narrows every portal path without
  * modeling the portal's non-TypeScript inputs (its JSON fixtures, styles,
  * manifest and configuration), so a portal change runs the portal's whole
- * suite, as `turbo --affected` did before this schedule.
+ * suite, as `turbo --affected` did before this schedule. It applies only to a
+ * test with no valid record: a record decides every other test.
  */
 export const WHOLE_ON_CHANGE_OWNERS: Readonly<Record<string, string>> = {
   '@vinaya/portal':
     'the pull request changes a path under its folder, and the selection does not model the portal inputs, so it runs whole'
 }
+// static-fallback end
 
 export type ScheduleEntry = { test: string; configuration: string; placement: Placement }
 
@@ -294,15 +297,20 @@ export function ciScheduleInput(
   const unknown = ids.find((id) => !byId.has(id))
   if (unknown) return everything(`the selection names ${unknown}, which the test inventory does not hold`)
   const changed = decision.changed ?? []
+  // static-fallback begin: a suite whose inputs the selection does not model runs whole on a change under its
+  // folder — for its tests with no record only; a record decides the others.
+  const recorded = new Set(decision.recorded ?? [])
   const whole = [
     ...wholeSuites((owner) => WHOLE_SUITE_OWNERS[owner]),
     ...view.suites.flatMap((suite) => {
       const why = WHOLE_ON_CHANGE_OWNERS[suite.owner]
       const prefix = suite.dir === '.' ? '' : `${suite.dir}/`
       if (why === undefined || !changed.some((path) => path.startsWith(prefix))) return []
-      return [{ suite: suite.id, reason: why, identities: view.tests.filter((t) => t.suite === suite.id) }]
+      const identities = view.tests.filter((t) => t.suite === suite.id && !recorded.has(t.id))
+      return identities.length === 0 ? [] : [{ suite: suite.id, reason: why, identities }]
     })
   ]
+  // static-fallback end
   const wholeIds = new Set(whole.flatMap((w) => w.identities.map((t) => t.id)))
   // Root suites — the repository suite and the package-compatibility suite — run whatever the change selects.
   const roots = view.tests.filter((t) => t.kind !== 'workspace')

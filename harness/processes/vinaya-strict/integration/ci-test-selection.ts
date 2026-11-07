@@ -182,7 +182,14 @@ export function discoveredLayout(repoRoot: string): WorkspaceLayout {
  */
 export type CiDecision =
   | { scope: 'all'; reason: string }
-  | { scope: 'selected'; selected: readonly string[]; native?: readonly string[]; changed?: readonly string[] }
+  | {
+      scope: 'selected'
+      selected: readonly string[]
+      native?: readonly string[]
+      changed?: readonly string[]
+      /** The tests a record of their reads decided; the static whole-suite rules apply to no other. */
+      recorded?: readonly string[]
+    }
 
 /** The facts a decision is made from, each read by {@link readCiFacts}. */
 export type CiFacts = {
@@ -249,7 +256,8 @@ export function repositoryDecision(
     scope: 'selected',
     selected: rel(decision.selected),
     native: rel(decision.native ?? []),
-    changed: [...new Set(changed)].sort()
+    changed: [...new Set(changed)].sort(),
+    ...(decision.recorded ? { recorded: [...decision.recorded].sort() } : {})
   }
 }
 
