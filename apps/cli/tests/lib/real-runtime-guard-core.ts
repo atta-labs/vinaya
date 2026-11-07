@@ -32,6 +32,9 @@ import { join, relative } from 'node:path'
 
 export const PROCESS_START_MS = Date.now() - process.uptime() * 1000 - 1000
 
+/** `realRuntimeDir()`'s answer, kept after its first call. */
+let resolvedRuntimeDir: string | undefined
+
 /** The real runtime directory, and its live tasks' exempt prefixes, taken when this module loads. */
 const START_ROOT = realRuntimeDir()
 const LIVE_AT_START = liveTaskPrefixes(START_ROOT)
@@ -40,13 +43,17 @@ const LIVE_AT_START = liveTaskPrefixes(START_ROOT)
  * The real runtime directory, `~/.vinaya/runtime/<owner>-<repo>`, resolved from
  * the default home — never from `VINAYA_RUNTIME_DIR`, which a test or a
  * dispatched run may point elsewhere. The repository comes from `AEG_REPO`,
- * else `origin`, as `run-paths.ts` resolves it; it is derived here rather than
- * imported so this adds no dependent to the path resolver's own test selection.
+ * else `GITHUB_REPOSITORY` (set on every Actions runner), else `origin`; it is
+ * derived here rather than imported so this adds no dependent to the path
+ * resolver's own test selection. It is resolved once per process: every test
+ * process loads this module, and a `git` call reads under `.git/`, which makes
+ * the read recorder drop that test's record.
  */
 export function realRuntimeDir(): string {
+  if (resolvedRuntimeDir !== undefined) return resolvedRuntimeDir
   let owner: string | undefined
   let repo: string | undefined
-  const fromEnv = /^([^/]+)\/(.+)$/.exec(process.env.AEG_REPO ?? '')
+  const fromEnv = /^([^/]+)\/(.+)$/.exec(process.env.AEG_REPO || process.env.GITHUB_REPOSITORY || '')
   if (fromEnv) [, owner, repo] = fromEnv
   else {
     try {
@@ -60,7 +67,8 @@ export function realRuntimeDir(): string {
       // no origin — the directory below is simply one that does not exist
     }
   }
-  return join(homedir(), '.vinaya', 'runtime', owner && repo ? `${owner}-${repo}` : 'unresolved')
+  resolvedRuntimeDir = join(homedir(), '.vinaya', 'runtime', owner && repo ? `${owner}-${repo}` : 'unresolved')
+  return resolvedRuntimeDir
 }
 
 export function exemptPrefixes(env: NodeJS.ProcessEnv): string[] {
