@@ -267,7 +267,10 @@ function locatedStrings(source: string, file: string, tree: Tree, units: Unit[])
     const text = match[2] ?? ''
     const span = { start: (match.index ?? 0) + 1, end: (match.index ?? 0) + 1 + text.length }
     quoted.add(span.start)
-    const target = isCountedImport(text) && !text.startsWith('.') ? text : resolvePath(text, file, tree)
+    const target =
+      (isCountedImport(text) || /^@attalabs\/[^/]+$/.test(text)) && !text.startsWith('.')
+        ? text
+        : resolvePath(text, file, tree)
     if (target === null) continue
     located.push({ target, contribution: units.filter((u) => within(u, span)).length })
   }
@@ -543,9 +546,30 @@ function renames(root: string, base: string): Renames {
 }
 
 /** The workspace folder a retired package scope names, so an import of the package reads as an import of that folder. */
-function packageFolder(target: string): string | null {
-  const match = /^@attalabs\/([^/]+)/.exec(target)
-  return match ? `packages/${match[1]}` : null
+function packageFolder(target: string, folders: ReadonlyMap<string, string> = new Map()): string | null {
+  const match = /^(@attalabs\/[^/]+)/.exec(target)
+  if (!match) return null
+  return folders.get(match[1] as string) ?? `packages/${(match[1] as string).slice('@attalabs/'.length)}`
+}
+
+/** Each workspace package under `packages/` at `rev`, by its declared name: a package's folder need not carry its name. */
+function packageFolders(root: string, rev: string): Map<string, string> {
+  const folders = new Map<string, string>()
+  let listing = ''
+  try {
+    listing = git(root, ['ls-tree', '-r', '--name-only', rev, '--', 'packages'])
+  } catch {
+    return folders
+  }
+  for (const file of listing.split('\n')) {
+    const match = /^(packages\/[^/]+)\/package\.json$/.exec(file)
+    if (!match) continue
+    try {
+      const name = (JSON.parse(gitShow(root, rev, file) ?? '{}') as { name?: string }).name
+      if (typeof name === 'string') folders.set(name, match[1] as string)
+    } catch {}
+  }
+  return folders
 }
 
 type Sources = { base(path: string): string | null; head(path: string): string | null }
@@ -565,17 +589,24 @@ const significantLines = (source: string): string[] =>
 function derivedFrom(
   headTarget: string,
   baseTarget: string,
-  env: { changes: Renames; baseTree: Tree; sources: Sources }
+  env: { changes: Renames; baseTree: Tree; sources: Sources; folders?: ReadonlyMap<string, string> }
 ): boolean {
   const { changes, baseTree, sources } = env
-  const folder = packageFolder(baseTarget)
+  const folder = packageFolder(baseTarget, env.folders)
+  // A base file that only forwarded to the head target (a forwarding module the change deleted): the head import
+  // reaches directly what the base import reached through it.
+  if (
+    baseTree.isFile(baseTarget) &&
+    forwardsTo(baseTarget, changes.from.get(headTarget) ?? headTarget, baseTree, sources)
+  )
+    return true
   const inside = (path: string): boolean =>
     path === baseTarget || path.startsWith(`${baseTarget}/`) || (folder !== null && path.startsWith(`${folder}/`))
   const origin = changes.from.get(headTarget)
   if (origin !== undefined) {
     if (inside(origin)) return true
     const packageEntry = (scope: string): string | null => {
-      const dir = packageFolder(scope)
+      const dir = packageFolder(scope, env.folders)
       if (dir === null) return null
       try {
         const manifest = JSON.parse(sources.base(`${dir}/package.json`) ?? '{}') as {
@@ -611,6 +642,22 @@ function derivedFrom(
   })
 }
 
+/** Whether the base file `file` is only forwarding statements that reach `target`, directly or through another such file. */
+function forwardsTo(file: string, target: string, tree: Tree, sources: Sources, seen = new Set<string>()): boolean {
+  if (seen.has(file)) return false
+  seen.add(file)
+  const code = withoutComments(sources.base(file) ?? '')
+  const statements = [...code.matchAll(FORWARDING)]
+  if (statements.length === 0) return false
+  let rest = code
+  for (const match of statements) rest = rest.replace(match[0], '')
+  if (rest.trim() !== '') return false
+  return statements.some((match) => {
+    const next = resolvePath(match[2] ?? '', file, tree, true)
+    return next !== null && (next === target || forwardsTo(next, target, tree, sources, seen))
+  })
+}
+
 /** A base-side target, carried through the renames to where it lives at the head. */
 function mapTarget(target: string, to: Map<string, string>): string {
   const renamed = to.get(target)
@@ -643,7 +690,7 @@ type RelocationInput = {
  */
 function relocatedUnits(
   input: RelocationInput,
-  env: { headTree: Tree; baseTree: Tree; changes: Renames; sources: Sources }
+  env: { headTree: Tree; baseTree: Tree; changes: Renames; sources: Sources; folders?: ReadonlyMap<string, string> }
 ): number {
   const { headTree, baseTree, changes } = env
   const pending = locatedStrings(input.baseSource, input.basePath, baseTree, input.baseUnits).map((l) => ({
@@ -700,6 +747,7 @@ export function compareBase(root: string, base: string): BaseComparison {
   const baseMapText = gitShow(root, base, OWNERSHIP_MAP_PATH)
   const baseMap = baseMapText === null ? {} : (JSON.parse(baseMapText) as OwnershipMap)
   const changes = renames(root, base)
+  const folders = packageFolders(root, base)
   const { from, to } = changes
   const readHead = (path: string): string | null =>
     existsSync(join(root, path)) ? readFileSync(join(root, path), 'utf8') : null
@@ -732,7 +780,7 @@ export function compareBase(root: string, base: string): BaseComparison {
       if (units.length > 0)
         effective += relocatedUnits(
           { source, path, baseSource, basePath, units, baseUnits },
-          { headTree, baseTree, changes, sources }
+          { headTree, baseTree, changes, sources, folders }
         )
     }
     headTotal += effective

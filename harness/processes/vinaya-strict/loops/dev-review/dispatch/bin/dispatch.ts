@@ -12,9 +12,19 @@
 import { isEntryPoint } from '../../../../../../kernel/gates/checks/entry-point.js'
 import { readFileSync } from 'node:fs'
 import { ROLE_VALUES, type Role } from '../../../../../../kernel/log/schema'
-import { AGENT_VENDOR_NAMES, dispatchRole, isAgentVendor, type AgentVendor } from '../dispatch.js'
+import {
+  AGENT_VENDOR_NAMES,
+  dispatchRole,
+  installVinayaLogSinkFactory,
+  installVinayaCheckRegistry,
+  isAgentVendor,
+  type AgentVendor
+} from '../dispatch.js'
 import { loadConfig } from '../../../../integration/config/compose.js'
 import { printJson } from '../../../../../../kernel/effects/envelope.js'
+
+// The process's Log sink factory, for the entry point to install before any command runs.
+export { installVinayaLogSinkFactory, installVinayaCheckRegistry }
 
 type ParsedArgs = {
   role: string | undefined

@@ -5,8 +5,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { printJson } from '../../../harness/kernel/effects/envelope.js'
-import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry.js'
-import { installVinayaLogSinkFactory } from '../../../harness/processes/vinaya-strict/integration/log/log-sink-factory.js'
+import {
+  installVinayaCheckRegistry,
+  installVinayaLogSinkFactory
+} from '../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/bin/dispatch.js'
 import { ensureGhOnPath } from '../../../harness/kernel/adapters/code-host/github/gh-path.js'
 import { recordCliOperationAtExit } from '../../../harness/kernel/log/client/cli-operation-log.js'
 import { logSync } from '../../../harness/kernel/log/log-sink.js'
