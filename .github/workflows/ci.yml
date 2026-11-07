@@ -318,7 +318,7 @@ jobs:
       - name: Check the test inventory and run the repository suite
         run: |
           bun scripts/test-suites/inventory-check.ts
-          bun test ./scripts/test-suites/bun-runtime.test.ts ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts ./scripts/test-suites/recorded-selection.test.ts ./scripts/test-suites/read-records.test.ts
+          bun test ./scripts/test-suites/bun-runtime.test.ts ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts ./scripts/test-suites/recorded-selection.test.ts ./scripts/test-suites/read-records.test.ts ./scripts/ci/ci-limits-diagnostic.test.ts ./scripts/ci/config-probe.test.ts ./scripts/ci/impact-plan.test.ts ./scripts/ci/job-oracle.test.ts ./scripts/release/release.test.ts ./scripts/test-suites/local-run.test.ts
 
       # The package-compatibility suite (`scripts/package-compat/`): each
       # published package is packed — the three aeg packages through the

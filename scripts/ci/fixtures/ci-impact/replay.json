@@ -7,25 +7,21 @@
       "id": "cli-source",
       "category": "build",
       "about": "A CLI module with its own test: the build job's mandatory duties stay, the CLI package is typechecked, the file is linted and its test runs.",
-      "changes": {
-        "harness/processes/vinaya-strict/integration/push-progress-observer.ts": {
-          "append": "// replay: a source edit"
-        }
-      },
+      "changes": { "apps/cli/src/lib/push-progress-observer.ts": { "append": "// replay: a source edit" } },
       "expect": {
         "scope": "selected",
         "jobs": { "build": true, "test-cli": true, "test-shared-packages": true, "test-cli-config-anchor": false },
         "typecheck": ["@attalabs/vinaya"],
-        "lint": ["harness/processes/vinaya-strict/integration/push-progress-observer.ts"],
-        "tests": ["harness/processes/vinaya-strict/integration/push-progress-observer.test.ts"],
+        "lint": ["apps/cli/src/lib/push-progress-observer.ts"],
+        "tests": ["apps/cli/tests/lib/push-progress-observer.test.ts"],
         "obligations": ["managed-files-match-generator", "architecture-ratchet", "inventory-gate", "required-check"]
       },
       "mutants": [
         "job:build",
         "job:test-cli",
         "typecheck:@attalabs/vinaya",
-        "lint:harness/processes/vinaya-strict/integration/push-progress-observer.ts",
-        "test:harness/processes/vinaya-strict/integration/push-progress-observer.test.ts",
+        "lint:apps/cli/src/lib/push-progress-observer.ts",
+        "test:apps/cli/tests/lib/push-progress-observer.test.ts",
         "obligation:managed-files-match-generator"
       ]
     },
@@ -79,18 +75,16 @@
       "category": "doc-data-reader",
       "about": "A Markdown fixture one sources test reads raw: that test runs while nothing is typechecked or linted. The selection also treats any non-source file of a package as an input of every test resolving through it, so it runs more than this reader; only the reader is the expectation.",
       "changes": {
-        "harness/processes/vinaya-strict/tools/sources/fixtures/golden-tranche-snapshot.md": {
-          "append": "replay: a fixture edit"
-        }
+        "packages/sources/tests/fixtures/golden-tranche-snapshot.md": { "append": "replay: a fixture edit" }
       },
       "expect": {
         "scope": "selected",
         "jobs": { "test-cli-config-anchor": false },
         "typecheck": "skip",
         "lint": "skip",
-        "tests": ["harness/processes/vinaya-strict/tools/sources/golden-forge-vs-file.test.ts"]
+        "tests": ["packages/sources/src/golden-forge-vs-file.test.ts"]
       },
-      "mutants": ["test:harness/processes/vinaya-strict/tools/sources/golden-forge-vs-file.test.ts"]
+      "mutants": ["test:packages/sources/src/golden-forge-vs-file.test.ts"]
     },
     {
       "id": "forge-state-source",
@@ -198,22 +192,19 @@
         "scope": "selected",
         "jobs": { "sandbox-conformance": true },
         "tests": [
-          "harness/processes/vinaya-strict/integration/push-progress-observer.test.ts",
-          "harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/sandbox-conformance.test.ts",
+          "apps/cli/tests/lib/push-progress-observer.test.ts",
+          "apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts",
           "packages/aeg-forge-state/src/labels.test.ts"
         ]
       },
-      "mutants": [
-        "job:sandbox-conformance",
-        "test:harness/processes/vinaya-strict/integration/push-progress-observer.test.ts"
-      ]
+      "mutants": ["job:sandbox-conformance", "test:apps/cli/tests/lib/push-progress-observer.test.ts"]
     },
     {
       "id": "test-relocation",
       "category": "relocation",
       "about": "A CLI test moved to a new name with its shard line: the moved test runs at its new path and the schedule stays whole.",
       "changes": {
-        "harness/processes/vinaya-strict/integration/push-progress-observer.test.ts": {
+        "apps/cli/tests/lib/push-progress-observer.test.ts": {
           "renameTo": "apps/cli/tests/lib/push-progress-observer-moved.test.ts"
         },
         "apps/cli/tests/ci-shards/shard-2.txt": {

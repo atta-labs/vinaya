@@ -214,8 +214,6 @@
       "harness/processes/vinaya-strict/integration/conformance/live-matrix/dev-proof.ts",
       "harness/processes/vinaya-strict/integration/conformance/live-matrix/result-proof.ts",
       "harness/processes/vinaya-strict/integration/conformance/live-matrix/review-result-proof.ts",
-      "harness/processes/vinaya-strict/integration/commands.ts",
-      "harness/processes/vinaya-strict/integration/config-reference.ts",
       "harness/processes/vinaya-strict/integration/pre-push-progress-dir.ts",
       "harness/processes/vinaya-strict/integration/push-progress-observer.ts",
       "harness/processes/vinaya-strict/tools/cli-entry.ts",
@@ -247,9 +245,7 @@
       "harness/processes/vinaya-strict/integration/bin/log-selftest.ts",
       "harness/processes/vinaya-strict/integration/bin/log-send.ts",
       "harness/processes/vinaya-strict/integration/bin/sync.ts",
-      "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts",
-      "apps/cli/tests/commands-router-coverage.test.ts",
-      "harness/processes/vinaya-strict/tools/sources"
+      "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts"
     ],
     "specPaths": [
       "harness/kernel/isolation/isolation.md",
@@ -517,7 +513,8 @@
         "harness/processes/vinaya-strict/tools/review-gate.ts",
         "harness/processes/vinaya-strict/tools/single-plan-pr.test.ts",
         "harness/processes/vinaya-strict/tools/single-plan-pr.ts",
-        "harness/processes/vinaya-strict/tools/task-contract/bin",
+        "harness/processes/vinaya-strict/tools/task-contract/bin/leftover-detection.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/bin/leftover-detection.test.ts",
         "harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.ts",
         "harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.test.ts",
         "harness/processes/vinaya-strict/tools/task-contract/brief-render.ts",

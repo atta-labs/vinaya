@@ -64,7 +64,7 @@ describe('vinaya task brief --supersede — argv parsing (task-run-v1 task 4, #4
   })
 })
 
-// task-run-v1 task 15, O1: `--issue <n>` is `task brief`'s tranche-less form
+// `--issue <n>` is `task brief`'s tranche-less form
 // — argv parsing only, mirroring the `<tranche> <n>` block above.
 describe('vinaya task brief --issue — argv parsing (task-run-v1 task 15, O1)', () => {
   it('refuses both --issue and a positional tranche/n together', () => {

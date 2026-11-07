@@ -144,7 +144,6 @@ describe('the base guard', () => {
       'scripts/ci/governance-obligations.ts',
       'harness/kernel/gates/ring0-hooks/pre-push/verification/README.md',
       'apps/cli/src/lib/verification/selector.ts',
-      'harness/processes/vinaya-strict/integration/config/compose.ts',
       'scripts/test-suites/inventory.json',
       'apps/cli/tests/ci-shards/shard-3.txt',
       '.github/workflows/ci.yml',
@@ -397,7 +396,7 @@ describe('the workflow the plan drives', () => {
     const sandbox = workflow.jobs['sandbox-conformance']?.steps?.find(
       (s) => s.name === 'Run the suite under both sandboxes'
     )
-    expect(sandbox?.run).toContain(SANDBOX_SUITE_TEST.replace('apps/cli/', ''))
+    expect(sandbox?.run).toContain(SANDBOX_SUITE_TEST.replace('harness/processes/vinaya-strict/', ''))
   })
 
   it('every plan output a job reads is one the plan step writes', () => {

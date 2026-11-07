@@ -40,7 +40,7 @@ import { describe, expect, it } from 'bun:test'
 
 const FIXTURE_PATH = fileURLToPath(new URL('./fixtures/golden-tranche-snapshot.md', import.meta.url))
 
-describe('golden comparison — aeg-forge-state-v1 (forge half dropped, see file doc comment)', () => {
+describe('golden comparison — the file source (forge half dropped, see file doc comment)', () => {
   it('parseTranche reads a real-shaped tranche file: topology, rationale blocks, backlog', () => {
     const fileContent = readFileSync(FIXTURE_PATH, 'utf-8')
     const tranche = parseTranche(fileContent)
