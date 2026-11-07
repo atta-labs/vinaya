@@ -85,8 +85,8 @@ function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex')
 }
 
-/** The one repository folder this source is scoped to — the directory half of `outboxPathFor`'s own layout, never re-derived (O5). */
-function repoDirFor(deps: FolderSourceDeps): string {
+/** The one repository folder this source is scoped to — the directory half of `outboxPathFor`'s own layout, never re-derived (O5). Exported so the folder follower (`log-follow.ts`) watches exactly the directory this source reads. */
+export function repoDirFor(deps: FolderSourceDeps): string {
   return dirname(outboxPathFor({ outboxRoot: () => deps.folderRoot }, deps.repo, null))
 }
 
