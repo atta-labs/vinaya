@@ -2348,7 +2348,13 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
           'the test has no valid record: it was added since, failed while recorded, or was not recorded'
         )
       } else if (entry.fallback) {
-        leaveToStatic(test, 'record-git-read', 'the test read under .git/, which a record cannot say what changes')
+        leaveToStatic(
+          test,
+          `record-${entry.fallback}`,
+          entry.fallback === 'git-read'
+            ? 'the test read under .git/, which a record cannot say what changes'
+            : 'the tracer cut a path short, so a read of the test went unrecorded'
+        )
       } else if (entry.branchesOnPlatform && records.platform !== 'linux') {
         leaveToStatic(
           test,

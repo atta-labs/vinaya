@@ -125,6 +125,19 @@ async function recordTest(
     repoRoot,
     roots
   )
+  let traceBytes = 0
+  try {
+    traceBytes = statSync(traceFile).size
+  } catch {}
+  if (traceBytes === 0) {
+    rmSync(traceFile, { force: true })
+    return {
+      test,
+      recorded: null,
+      reason: 'TRACER FAILURE: strace left no trace (ptrace denied or strace missing)',
+      ms
+    }
+  }
   if (!(status === 0 && outcome.trusted && outcome.confirmed.includes(test))) {
     rmSync(traceFile, { force: true })
     return { test, recorded: null, reason: 'the test did not pass while recorded', ms }
@@ -136,11 +149,11 @@ async function recordTest(
   })
   for await (const line of lines) reader.feed(line)
   rmSync(traceFile, { force: true })
-  const { reads, listed, git: touchedGit } = reader.result()
+  const { reads, listed, git: touchedGit, truncated } = reader.result()
   const recorded: RecordedTest = {
     reads: [...reads].sort(),
     listed: [...listed].sort(),
-    ...(touchedGit ? { fallback: 'git-read' as const } : {}),
+    ...(touchedGit ? { fallback: 'git-read' as const } : truncated ? { fallback: 'truncated-path' as const } : {}),
     ...(branchesOnPlatform(repoRoot, reads) ? { branchesOnPlatform: true } : {})
   }
   return { test, recorded, reason: 'recorded', ms }

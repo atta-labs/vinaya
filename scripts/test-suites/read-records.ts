@@ -47,10 +47,15 @@ export function ghRecordFetch(repoRoot: string): RecordFetch {
       })
     let runs: { databaseId: number }[]
     try {
+      const branch = (
+        JSON.parse(gh(['repo', 'view', '--json', 'defaultBranchRef'])) as { defaultBranchRef: { name: string } }
+      ).defaultBranchRef.name
       runs = JSON.parse(
         gh([
           'run',
           'list',
+          '--branch',
+          branch,
           '--workflow',
           RECORD_WORKFLOW,
           '--commit',

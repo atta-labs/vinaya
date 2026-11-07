@@ -15,7 +15,7 @@ import { posix } from 'node:path'
 export const READ_RECORD_SCHEMA = 'vinaya.read-record'
 
 /** Why a recorded test is decided by static selection instead of its record. */
-export type RecordFallback = 'git-read'
+export type RecordFallback = 'git-read' | 'truncated-path'
 
 /** One test file's recorded reads. */
 export type RecordedTest = {
@@ -111,6 +111,8 @@ export type TraceReads = {
   listed: Set<string>
   /** Whether anything under `.git/` was touched. */
   git: boolean
+  /** Whether a path argument was cut short by the tracer, so a read went unrecorded. */
+  truncated: boolean
 }
 
 export type TraceOptions = {
@@ -239,6 +241,7 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
   const reads = new Set<string>()
   const listed = new Set<string>()
   let git = false
+  let truncated = false
   const cwds = new Map<string, string>()
   const cwdOf = (pid: string) => cwds.get(pid) ?? options.startCwd
   const root = options.repoRoot
@@ -313,6 +316,7 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
       rest = d.rest
     }
     const str = leadingString(rest)
+    if (str?.truncated) truncated = true
     if (!str || str.truncated) return
     const target = absolute(str.value, dir, pid)
     if (target === null) return
@@ -324,5 +328,5 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     else record(target, false, 'read')
     if (name === 'chdir' && !failed && /\)\s*=\s*0\s*$/.test(body)) cwds.set(pid, options.realpath(target))
   }
-  return { feed, result: () => ({ reads, listed, git }) }
+  return { feed, result: () => ({ reads, listed, git, truncated }) }
 }

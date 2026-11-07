@@ -408,7 +408,7 @@ export function ciSelection(
 ): { plan: SelectionPlan; view: InventoryView; recordNote: string } {
   const resolved = resolveCommit(repoRoot, base)
   const reached = reach(repoRoot, resolved)
-  const input = repositorySelectionInput(repoRoot, { base, head, record: reached.record, platform: 'linux' })
+  const input = repositorySelectionInput(repoRoot, { base, head, record: reached.record })
   return { plan: selectTests(input), view: input.inventory.head, recordNote: reached.reason }
 }
 

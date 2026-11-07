@@ -378,7 +378,9 @@ describe('the workflow the plan drives', () => {
       ].sort()
     )
     // The read recorder runs on a push only and nothing, the required check included, waits for it.
-    expect(workflow.jobs['record-reads']?.if).toBe("github.event_name == 'push'")
+    expect(workflow.jobs['record-reads']?.if).toBe(
+      "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+    )
     for (const job of Object.values(workflow.jobs)) expect([job.needs ?? []].flat()).not.toContain('record-reads')
     expect(workflow.jobs.build?.name).toBe('Build, lint & typecheck')
     expect(workflow.jobs.build?.needs).toBeUndefined()
