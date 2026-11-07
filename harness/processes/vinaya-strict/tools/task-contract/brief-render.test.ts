@@ -564,7 +564,8 @@ describe('renderBrief', () => {
   })
 
   it('§9 emits each `[live]` item as an unboxed line after the `[principal]` boxes, and the Issue parser reads it back', () => {
-    const live = 'VINAYA_LIVE_CONFORMANCE=1 bun test apps/cli/tests/sandbox-conformance/claude.test.ts'
+    const live =
+      'VINAYA_LIVE_CONFORMANCE=1 bun test harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/claude.test.ts'
     const result = renderBrief(
       baseFacts({
         testPlan: {
@@ -735,7 +736,7 @@ describe('renderBrief', () => {
   })
 
   // Round 2 review, BLOCKER: the covering file can be a COLOCATED test
-  // (`packages/sources/src/foo.test.ts`, the layout `packages/sources` and
+  // (`packages/widgets/src/foo.test.ts`, the layout `packages/widgets` and
   // `packages/aeg-core` already use in this repo) with no `tests`/`specs`
   // ancestor to name — the prior fallback named the file's bare containing
   // directory, which neither of `checkConsumerTests`'s two accepted forms
@@ -745,11 +746,11 @@ describe('renderBrief', () => {
   it('a covered consumer with a COLOCATED covering test (no tests/specs ancestor) names the file itself, and the rendered §4 passes checkConsumerTests', () => {
     const result = renderBrief(
       baseFacts({
-        surface: { in: ['packages/aeg-core/src', 'packages/aeg-core/bin', 'packages/sources/src'], out: [] },
-        consumersOf: () => ['packages/sources'],
+        surface: { in: ['packages/aeg-core/src', 'packages/aeg-core/bin', 'packages/widgets/src'], out: [] },
+        consumersOf: () => ['packages/widgets'],
         surfaceFiles: [
           { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' },
-          { path: 'packages/sources/src/fixture.test.ts', sha256: 'b'.repeat(64), packageName: null }
+          { path: 'packages/widgets/src/fixture.test.ts', sha256: 'b'.repeat(64), packageName: null }
         ]
       }),
       ''
@@ -757,10 +758,10 @@ describe('renderBrief', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const section4 = /## 4\. Technical surface map[\s\S]*?(?=\n## 5\.)/.exec(result.brief)?.[0] ?? ''
-    expect(section4).toMatch(/consumer-tests: packages\/sources\/src\/fixture\.test\.ts \(covers @attalabs\/aeg-core\)/)
+    expect(section4).toMatch(/consumer-tests: packages\/widgets\/src\/fixture\.test\.ts \(covers @attalabs\/aeg-core\)/)
     expect(section4).not.toMatch(/consumer-tests: none —/)
 
-    const validated = checkConsumerTests(result.brief, (pkg) => (pkg === 'aeg-core' ? ['packages/sources'] : []))
+    const validated = checkConsumerTests(result.brief, (pkg) => (pkg === 'aeg-core' ? ['packages/widgets'] : []))
     expect(validated.status).toBe('pass')
   })
 
@@ -774,8 +775,8 @@ describe('renderBrief', () => {
   it('a shared package named only as a bare Surface `in:` directory still triggers consumer-tests, with a test file under only one of its two consumers', () => {
     const result = renderBrief(
       baseFacts({
-        surface: { in: ['packages/sources/src', 'apps/cli/tests'], out: [] },
-        consumersOf: (pkg) => (pkg === 'sources' ? ['apps/cli', 'apps/other'] : []),
+        surface: { in: ['packages/widgets/src', 'apps/cli/tests'], out: [] },
+        consumersOf: (pkg) => (pkg === 'widgets' ? ['apps/cli', 'apps/other'] : []),
         surfaceFiles: [{ path: 'apps/cli/tests/lib/fixture.test.ts', sha256: 'c'.repeat(64), packageName: null }]
       }),
       ''
@@ -783,13 +784,13 @@ describe('renderBrief', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const section4 = /## 4\. Technical surface map[\s\S]*?(?=\n## 5\.)/.exec(result.brief)?.[0] ?? ''
-    expect(section4).toContain('packages/sources/src')
-    expect(section4).toMatch(/consumer-tests: apps\/cli\/tests \(covers @attalabs\/sources\)/)
+    expect(section4).toContain('packages/widgets/src')
+    expect(section4).toMatch(/consumer-tests: apps\/cli\/tests \(covers @attalabs\/widgets\)/)
     expect(section4).toMatch(
-      /consumer-tests: none — no consumer test path named yet for @attalabs\/sources \(apps\/other\)/
+      /consumer-tests: none — no consumer test path named yet for @attalabs\/widgets \(apps\/other\)/
     )
 
-    const validated = checkConsumerTests(result.brief, (pkg) => (pkg === 'sources' ? ['apps/cli', 'apps/other'] : []))
+    const validated = checkConsumerTests(result.brief, (pkg) => (pkg === 'widgets' ? ['apps/cli', 'apps/other'] : []))
     expect(validated.status).toBe('pass')
   })
 

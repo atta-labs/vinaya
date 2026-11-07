@@ -538,8 +538,8 @@ function renderSection3(facts: BriefFacts): string {
 //
 // Falls back to the covering FILE's own path (never a bare containing
 // directory) when no ancestor segment is literally named `tests`/`specs` —
-// a colocated test file (`packages/sources/src/foo.test.ts`, a real layout
-// this repo's own `packages/sources` and `packages/aeg-core` already use,
+// a colocated test file (`harness/processes/vinaya-strict/tools/sources/file-adapter.test.ts`, a real layout
+// this repo's own `harness/processes/vinaya-strict/tools/sources` already uses,
 // with no `tests`/`specs` ancestor to name) has no directory form
 // `hasTestPathForConsumer`'s `testDirRe` accepts, but its own `.test.<ext>`
 // path already matches `filePathRe` — a prior version of this fallback

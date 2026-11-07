@@ -29,7 +29,7 @@ describe('the syscall trace reader', () => {
     const result = readsOfTrace(
       trace(
         `100 openat(AT_FDCWD</work/repo/apps/cli>, "/work/repo/apps/cli/tests/a.test.ts", O_RDONLY|O_CLOEXEC) = 3</work/repo/apps/cli/tests/a.test.ts>`,
-        `100 newfstatat(AT_FDCWD</work/repo/apps/cli>, "tests/fixtures/missing.json", 0x7ffd, 0) = -1 ENOENT (No such file or directory)`,
+        `100 newfstatat(AT_FDCWD</work/repo/apps/cli>, "tests/data/missing.json", 0x7ffd, 0) = -1 ENOENT (No such file or directory)`,
         `100 access("../../vinaya.config.json", R_OK) = 0`,
         `100 readlink("/work/repo/apps/cli/tests", 0x7ffd, 4096) = -1 EINVAL (Invalid argument)`,
         `100 openat(AT_FDCWD</work/repo/apps/cli>, "/etc/hosts", O_RDONLY) = 4</etc/hosts>`
@@ -39,7 +39,7 @@ describe('the syscall trace reader', () => {
     expect([...result.reads].sort()).toEqual([
       'apps/cli/tests',
       'apps/cli/tests/a.test.ts',
-      'apps/cli/tests/fixtures/missing.json',
+      'apps/cli/tests/data/missing.json',
       'vinaya.config.json'
     ])
     expect(result.git).toBe(false)

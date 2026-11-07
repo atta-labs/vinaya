@@ -1589,24 +1589,24 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
       it(`${agent} publishes a path beyond the Surface and records it, with its glob, in the body block`, async () => {
         const world = makeWorld({
           worktreeExists: true,
-          surface: { in: ['apps/cli/src'], out: ['packages/sources'] },
-          worktreeChangedPaths: ['apps/cli/src/lib/x.ts', 'packages/sources/y.ts', 'docs/z.md']
+          surface: { in: ['apps/cli/src'], out: ['packages/widgets'] },
+          worktreeChangedPaths: ['apps/cli/src/lib/x.ts', 'packages/widgets/y.ts', 'docs/z.md']
         })
         const seen = await publishAndOpen(world, '## Scope\n\nScope.\n\n**Tier:** 3\n')
         expect(seen.published).toBe(true)
-        expect(seen.beyondSurface).toEqual(['packages/sources/y.ts', 'docs/z.md'])
+        expect(seen.beyondSurface).toEqual(['packages/widgets/y.ts', 'docs/z.md'])
         expect(world.commits.length).toBeGreaterThanOrEqual(1)
         const opened = world.prOpens[0]?.body ?? ''
-        expect(opened).toContain('- `packages/sources/y.ts` crosses the `out:` glob `packages/sources`')
+        expect(opened).toContain('- `packages/widgets/y.ts` crosses the `out:` glob `packages/widgets`')
         expect(opened).toContain('- `docs/z.md` matches no `in:` glob')
-        expect(recordedBeyondSurfacePaths(opened)).toEqual(['packages/sources/y.ts', 'docs/z.md'])
+        expect(recordedBeyondSurfacePaths(opened)).toEqual(['packages/widgets/y.ts', 'docs/z.md'])
         expect(opened.indexOf('<!-- AEG:BEYOND-SURFACE:START -->')).toBeGreaterThan(opened.indexOf('## Scope'))
       })
 
       it(`${agent} writes an empty block when every changed path is inside the Surface`, async () => {
         const world = makeWorld({
           worktreeExists: true,
-          surface: { in: ['apps/cli/src'], out: ['packages/sources'] },
+          surface: { in: ['apps/cli/src'], out: ['packages/widgets'] },
           worktreeChangedPaths: ['apps/cli/src/lib/x.ts']
         })
         const seen = await publishAndOpen(world, '## Scope\n\nScope.\n\n**Tier:** 3\n')

@@ -657,7 +657,7 @@ describe('both vendors classify every row identically, and none carries an expec
 describe('each of these rows names this test as its Engine evidence', () => {
   const loaded = loadRegistry(
     join(REPO_ROOT, 'harness/processes/vinaya-strict/evals/suites/registry/modules.json'),
-    join(REPO_ROOT, 'apps/cli/tests/eval/registry/shards')
+    join(REPO_ROOT, 'harness/processes/vinaya-strict/evals/suites/registry/shards')
   )
   if (!loaded.ok) throw new Error(`registry refused: ${JSON.stringify(loaded.refusal)}`)
   const owed = (

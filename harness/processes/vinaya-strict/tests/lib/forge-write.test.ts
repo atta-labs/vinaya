@@ -1544,7 +1544,7 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     write('apps/cli/src/lib/mirror-comment.ts', '// see apps/cli/specs/mirror.md\nexport const x = 1\n')
     write('apps/cli/src/lib/mirror-other.ts', "const text = readFileSync(join(root, 'docs/specs/mirror.md'), 'utf8')\n")
     write('apps/cli/src/lib/mirror-prose.ts', "export const NOTE = 'Reads `apps/cli/specs/mirror.md` when present'\n")
-    write('apps/cli/tests/fixtures/mirror-fixture.ts', "export const f = 'apps/cli/specs/mirror.md'\n")
+    write('harness/processes/vinaya-strict/fixtures/mirror-fixture.ts', "export const f = 'apps/cli/specs/mirror.md'\n")
     execFileSync('git', ['add', '-A'], { cwd: fixture })
     execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
   })
@@ -1658,7 +1658,7 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     expect(tokenExistsInTree(fixture)('rename')).toBe(true)
     expect(result.status).toBe('fail')
     expect(result.errors[0]).toContain('`vinaya issue rename`')
-    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+    expect(result.errors[0]).toContain('Add `harness/processes/vinaya-strict/integration` to `in:`')
   })
 
   it('refuses a brand-new configuration key the tree has never carried, in any wording', () => {

@@ -175,12 +175,12 @@ describe('an evidence entry naming a test file', () => {
 
   it('is refused when the file does not exist, naming the row id and the file', () => {
     const row = rawGate(16)
-    row.backendEvidence = { engine: { test: 'apps/cli/tests/eval/no-such-proof.test.ts' } }
+    row.backendEvidence = { engine: { test: 'harness/processes/vinaya-strict/evals/suites/no-such-proof.test.ts' } }
     const refused = refusal(validate(row))
     expect(refused.code).toBe('evidence_file_missing')
     expect(refused.path).toBe('shards/cutover-gates.json#components[0].backendEvidence.engine.test')
     expect(refused.detail).toContain('cutover-gate:gate-16')
-    expect(refused.detail).toContain('apps/cli/tests/eval/no-such-proof.test.ts')
+    expect(refused.detail).toContain('harness/processes/vinaya-strict/evals/suites/no-such-proof.test.ts')
   })
 
   it('is refused when the file does not contain the row’s full id, naming the row id and the file', () => {

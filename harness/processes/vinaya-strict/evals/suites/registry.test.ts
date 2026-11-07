@@ -358,7 +358,10 @@ describe('component row validation', () => {
     refusedWith(validateComponentRow(row({ suite: ['run-control.l2@1'] }), catalog), 'unknown_suite', 'suite[0]')
     refusedWith(validateComponentRow(row({ suite: ['assessment.l1@2'] }), catalog), 'unknown_suite', 'suite[0]')
     refusedWith(
-      validateComponentRow(row({ suite: ['apps/cli/tests/eval/assessment.test.ts'] }), catalog),
+      validateComponentRow(
+        row({ suite: ['harness/processes/vinaya-strict/evals/suites/assessment.test.ts'] }),
+        catalog
+      ),
       'bad_suite_ref',
       'suite[0]'
     )

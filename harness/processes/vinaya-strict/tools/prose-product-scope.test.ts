@@ -12,12 +12,6 @@ import { PRODUCT_SLUG_SCOPE } from './reader-resolvable-prose'
  */
 describe('PRODUCT_SLUG_SCOPE', () => {
   it('is exactly the non-aeg-root prefixes the product-code slug sweep covers', () => {
-    expect(PRODUCT_SLUG_SCOPE).toEqual([
-      'apps/cli/src',
-      '.github/workflows',
-      '.vinaya',
-      'apps/cli/README.md',
-      'packages/sources/README.md'
-    ])
+    expect(PRODUCT_SLUG_SCOPE).toEqual(['apps/cli/src', '.github/workflows', '.vinaya', 'apps/cli/README.md'])
   })
 })

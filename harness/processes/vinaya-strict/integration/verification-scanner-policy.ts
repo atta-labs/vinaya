@@ -120,7 +120,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   {
     test: 'harness/processes/vinaya-strict/evals/suites/registry.test.ts',
     roots: [
-      'apps/cli/tests/eval/registry/',
+      'harness/processes/vinaya-strict/evals/suites/registry/',
       'harness/kernel/evals/dev-review-evaluation-program.md',
       'harness/kernel/evals/dev-review-evaluation-program.provenance.json'
     ],
@@ -129,7 +129,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   {
     test: 'harness/processes/vinaya-strict/evals/suites/registry-typed-sources.test.ts',
     roots: [
-      'apps/cli/tests/eval/registry/',
+      'harness/processes/vinaya-strict/evals/suites/registry/',
       'harness/kernel/loops/runtimes/atta-engine/fixtures/dev-review-engine-capability-matrix.json',
       'harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json',
       'harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md',

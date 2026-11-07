@@ -79,7 +79,7 @@ function runCli(args: string[], cwd: string): CliResult {
 const FIXED_GROUP_A = {
   head: 'a'.repeat(40),
   base: 'b'.repeat(40),
-  numstat: '2\t1\tapps/cli/src/commands/pr-report.ts'
+  numstat: '2\t1\tharness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts'
 }
 
 const PASSING_GATES: GateRunResult = {

@@ -31,7 +31,7 @@ import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../../../kernel
 const ZWSP = String.fromCharCode(0x200b)
 
 const HEAD = 'a'.repeat(40)
-const NUMSTAT = '2\t1\tapps/cli/src/commands/pr-report.ts\n1\t0\tapps/cli/src/index.ts'
+const NUMSTAT = '2\t1\tharness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts\n1\t0\tapps/cli/src/index.ts'
 
 /** A body carrying a well-formed, honest evidence block — the shape `pr report --write` emits. */
 function bodyWith(inner: string[], { anchorStart = '<!-- AEG:EVIDENCE:START -->' } = {}): string {

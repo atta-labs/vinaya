@@ -1094,8 +1094,8 @@ describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
 describe('checkFileCollisions', () => {
   const A = 'packages/aeg-core/src/issue-validation.ts'
   const B = 'apps/cli/src/lib/forge-write.ts'
-  const C = 'harness/processes/vinaya-strict/integration/config/compose.ts'
-  const D = 'harness/processes/vinaya-strict/integration/config-reference.ts'
+  const C = 'apps/cli/src/lib/settings.ts'
+  const D = 'packages/widgets/src/config-reference.ts'
 
   const peer = (ref: string, files: string[], conflictsWith: string[] = []): TaskFileFacts => ({
     ref,
@@ -1743,7 +1743,7 @@ describe('checkObjectivesRespectBoundary', () => {
 
   it('fails, quoting both lines, when a Part names a path the Boundary `Out:` clause excludes', () => {
     const body = [
-      '**Boundary** — In: `apps/cli/src/lib`. Out: `packages/sources`, never touched.',
+      '**Boundary** — In: `apps/cli/src/lib`. Out: `packages/widgets`, never touched.',
       '',
       '## Objectives',
       '',
@@ -1756,13 +1756,13 @@ describe('checkObjectivesRespectBoundary', () => {
       '',
       '## Parts',
       '',
-      'Part 1 (O1) — deliberately also edits `packages/sources/index.ts` here.'
+      'Part 1 (O1) — deliberately also edits `packages/widgets/index.ts` here.'
     ].join('\n')
     const r = checkObjectivesRespectBoundary(body)
     expect(r.status).toBe('fail')
     expect(r.errors[0]).toMatch(/Part 1/)
-    expect(r.errors[0]).toMatch(/packages\/sources\/index\.ts/)
-    expect(r.errors[0]).toMatch(/packages\/sources/)
+    expect(r.errors[0]).toMatch(/packages\/widgets\/index\.ts/)
+    expect(r.errors[0]).toMatch(/packages\/widgets/)
   })
 
   it('fails when a Test plan line names an excluded path', () => {
@@ -2117,7 +2117,7 @@ describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
   })
 
   it('passes when Boundary names a path to EXCLUDE it — covered by `out:`, not a gap', () => {
-    const body = `${surface}\n**Boundary** — Does NOT touch \`harness/processes/vinaya-strict/tools/task-contract/bin/task-brief.ts\`.\n`
+    const body = `${surface}\n**Boundary** — Does NOT touch \`apps/cli/src/commands/quickstart.ts\`.\n`
     expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
   })
 
@@ -2566,7 +2566,7 @@ describe('parseIssueTestPlan', () => {
       '```',
       '',
       '- [ ] **[principal]** Verify in a real browser.',
-      '- **[live]** `VINAYA_LIVE_CONFORMANCE=1 bun test apps/cli/tests/sandbox-conformance/claude.test.ts`',
+      '- **[live]** `VINAYA_LIVE_CONFORMANCE=1 bun test harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/claude.test.ts`',
       '- **[live]** echo codex',
       ''
     ].join('\n')
@@ -2574,7 +2574,7 @@ describe('parseIssueTestPlan', () => {
     expect(r.ok).toBe(true)
     if (!r.ok || r.value.kind !== 'commands') return
     expect(r.value.live).toEqual([
-      'VINAYA_LIVE_CONFORMANCE=1 bun test apps/cli/tests/sandbox-conformance/claude.test.ts',
+      'VINAYA_LIVE_CONFORMANCE=1 bun test harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/claude.test.ts',
       'echo codex'
     ])
     expect(r.value.principal).toEqual(['Verify in a real browser.'])
@@ -2940,7 +2940,7 @@ describe('checkMilestoneAttach', () => {
 const NOTHING_IN_TREE = () => false
 
 const FIXTURE_COMMAND_REFERENCE: CommandReferenceFacts = {
-  file: 'harness/processes/vinaya-strict/integration/commands.ts',
+  file: 'packages/widgets/src/commands.ts',
   binary: 'vinaya',
   commands: [
     { name: 'check', flags: ['--all', '--json'], needs: [] },
@@ -2951,10 +2951,7 @@ const FIXTURE_COMMAND_REFERENCE: CommandReferenceFacts = {
 }
 
 const FIXTURE_CONFIG_REFERENCE: ConfigReferenceFacts = {
-  files: [
-    'harness/processes/vinaya-strict/integration/config-reference.ts',
-    'harness/processes/vinaya-strict/integration/config/compose.ts'
-  ],
+  files: ['packages/widgets/src/config-reference.ts', 'apps/cli/src/lib/settings.ts'],
   keys: ['checks', 'checks.timeoutMs', 'reviewPolicy', 'reviewPolicy.maxRounds', 'logs'],
   text: 'A folder (`logs.folder`) or a server (`logs.url`), never both.'
 }
@@ -3010,7 +3007,7 @@ describe('checkIntroducedCommandsCovered', () => {
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toContain('`--template`')
     expect(result.errors[0]).toContain('`vinaya doctrine`')
-    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+    expect(result.errors[0]).toContain('Add `packages/widgets/src` to `in:`')
   })
 
   it('refuses an introduced subcommand under a documented namespace', () => {
@@ -3021,7 +3018,7 @@ describe('checkIntroducedCommandsCovered', () => {
     )
     expect(result.status).toBe('fail')
     expect(result.errors[0]).toContain('`vinaya issue archive`')
-    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+    expect(result.errors[0]).toContain('Add `packages/widgets/src` to `in:`')
   })
 
   it('refuses an introduced command however the binary is capitalised', () => {
@@ -3032,7 +3029,7 @@ describe('checkIntroducedCommandsCovered', () => {
         NOTHING_IN_TREE
       )
       expect(result.status).toBe('fail')
-      expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+      expect(result.errors[0]).toContain('Add `packages/widgets/src` to `in:`')
     }
   })
 
@@ -3071,7 +3068,7 @@ describe('checkIntroducedCommandsCovered', () => {
 
   it('passes the same body once an `in:` glob covers the command reference', () => {
     const result = checkIntroducedCommandsCovered(
-      body('`vinaya doctrine --template pr-report` prints the template.', 'apps/cli/src/lib, packages/sources/src'),
+      body('`vinaya doctrine --template pr-report` prints the template.', 'apps/cli/src/lib, packages/widgets/src'),
       FIXTURE_COMMAND_REFERENCE,
       NOTHING_IN_TREE
     )
@@ -3167,7 +3164,7 @@ describe('checkIntroducedConfigKeysCovered', () => {
     expect(result.status).toBe('fail')
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toContain('`reviewPolicy.maxTaskMinutes`')
-    expect(result.errors[0]).toContain('Add `packages/sources/src` and `apps/cli/src/lib` to `in:`')
+    expect(result.errors[0]).toContain('Add `packages/widgets/src` and `apps/cli/src/lib` to `in:`')
   })
 
   it('names only the glob still missing when the Surface already covers one of the two', () => {
@@ -3177,13 +3174,13 @@ describe('checkIntroducedConfigKeysCovered', () => {
       NOTHING_IN_TREE
     )
     expect(result.status).toBe('fail')
-    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+    expect(result.errors[0]).toContain('Add `packages/widgets/src` to `in:`')
     expect(result.errors[0]).not.toContain('apps/cli/src/lib` to')
   })
 
   it('passes once the Surface covers both the reference and the schema', () => {
     const result = checkIntroducedConfigKeysCovered(
-      body('`reviewPolicy.maxTaskMinutes` bounds the loop.', 'packages/sources/src, apps/cli/src/lib'),
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.', 'packages/widgets/src, apps/cli/src/lib'),
       FIXTURE_CONFIG_REFERENCE,
       NOTHING_IN_TREE
     )
@@ -3226,14 +3223,14 @@ describe('checkIntroducedConfigKeysCovered', () => {
       const result = checkIntroducedConfigKeysCovered(body(objective), FIXTURE_CONFIG_REFERENCE, NOTHING_IN_TREE)
       expect(result.status).toBe('fail')
       expect(result.errors[0]).toContain('`telemetry.endpoint`')
-      expect(result.errors[0]).toContain('Add `packages/sources/src` and `apps/cli/src/lib` to `in:`')
+      expect(result.errors[0]).toContain('Add `packages/widgets/src` and `apps/cli/src/lib` to `in:`')
     }
   })
 
   it('passes that same brand-new key once the Surface covers both files', () => {
     expect(
       checkIntroducedConfigKeysCovered(
-        body('Add a setting `telemetry.endpoint` for event routing.', 'packages/sources/src, apps/cli/src/lib'),
+        body('Add a setting `telemetry.endpoint` for event routing.', 'packages/widgets/src, apps/cli/src/lib'),
         FIXTURE_CONFIG_REFERENCE,
         NOTHING_IN_TREE
       ).status
@@ -3429,7 +3426,7 @@ describe('surfaceForcedSet', () => {
   it('reports the shard list for a new CLI test file and the loop map for a new loop file', () => {
     const result = surfaceForcedSet(
       body(
-        'packages/aeg-core/src, apps/cli/tests/lib, apps/cli/tests/fixtures',
+        'packages/aeg-core/src, apps/cli/tests/lib, harness/processes/vinaya-strict/fixtures',
         '`apps/cli/tests/lib/dev-review-loop-fresh.test.ts`'
       ),
       [],
@@ -3446,7 +3443,7 @@ describe('surfaceForcedSet', () => {
         { path: 'harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json', reached: true },
         { path: 'harness/processes/vinaya-strict/loops/dev-review/dev-review-invariants.md', reached: false }
       ],
-      fix: ['apps/cli/specs']
+      fix: ['harness/processes/vinaya-strict/loops/dev-review']
     })
   })
 
@@ -3752,22 +3749,27 @@ describe('checkNewLoopFilesCoverInvariantMap', () => {
   it('refuses a new loop test file whose Surface misses the fixture and spec, naming both globs', () => {
     const result = checkNewLoopFilesCoverInvariantMap(body('apps/cli/tests/lib'), tracked)
     expect(result.status).toBe('fail')
-    expect(result.errors[0]).toContain('`apps/cli/tests/fixtures` and `apps/cli/specs`')
+    expect(result.errors[0]).toContain(
+      '`harness/processes/vinaya-strict/fixtures` and `harness/processes/vinaya-strict/loops/dev-review`'
+    )
   })
 
   it('refuses a new loop module, and names only the glob still missing', () => {
     const result = checkNewLoopFilesCoverInvariantMap(
-      body('apps/cli/src/lib, apps/cli/tests/fixtures', 'apps/cli/src/lib/dev-review-loop/fresh.ts'),
+      body('apps/cli/src/lib, harness/processes/vinaya-strict/fixtures', 'apps/cli/src/lib/dev-review-loop/fresh.ts'),
       tracked
     )
     expect(result.status).toBe('fail')
-    expect(result.errors[0]).toContain('Add `apps/cli/specs` to `in:`')
+    expect(result.errors[0]).toContain('Add `harness/processes/vinaya-strict/loops/dev-review` to `in:`')
   })
 
   it('passes when both are reachable, for an existing loop file, and for a non-loop file', () => {
-    expect(checkNewLoopFilesCoverInvariantMap(body('apps/cli/tests/fixtures, apps/cli/specs'), tracked).status).toBe(
-      'pass'
-    )
+    expect(
+      checkNewLoopFilesCoverInvariantMap(
+        body('harness/processes/vinaya-strict/fixtures, harness/processes/vinaya-strict/loops/dev-review'),
+        tracked
+      ).status
+    ).toBe('pass')
     expect(
       checkNewLoopFilesCoverInvariantMap(
         body('apps/cli/src/lib', 'apps/cli/src/lib/dev-review-loop/gate-reading.ts'),
@@ -3900,7 +3902,7 @@ describe('checkTestPlanDeveloperRunnable — a Test plan line is one the dispatc
   const plan = (...lines: string[]): string => ['## Test plan', '', '```', ...lines, '```', ''].join('\n')
   const entry = (name: string, needs: string[]) => ({ name, flags: [], needs })
   const reference: CommandReferenceFacts = {
-    file: 'harness/processes/vinaya-strict/integration/commands.ts',
+    file: 'packages/widgets/src/commands.ts',
     binary: 'vinaya',
     text: '',
     commands: [

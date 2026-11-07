@@ -168,7 +168,7 @@ describe('normalisation must not create a false MATCH (security review, round tw
   // false-MATCH class this command refuses a dirty worktree to prevent,
   // reachable from pull-request text alone.
   test('two different in-repo paths do NOT collapse onto one line', () => {
-    const a = 'packages/sources/tests/a.spec.ts'
+    const a = 'packages/widgets/tests/a.spec.ts'
     const b = 'packages/aeg-core/tests/a.spec.ts'
     expect(normaliseLines(a, ROOT)).toEqual([a])
     expect(normaliseLines(b, ROOT)).toEqual([b])

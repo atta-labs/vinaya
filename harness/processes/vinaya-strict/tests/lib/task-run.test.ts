@@ -777,8 +777,11 @@ describe('runTask — --widen-surface continues a pre-pull-request widen-surface
       result: {
         schemaVersion: 1,
         status: 'needs_ruling',
-        summary: 'Needs `packages/sources/src` for the command row.',
-        rulingRequest: { question: 'May the Surface widen to `packages/sources/src`?', decisions },
+        summary: 'Needs `harness/processes/vinaya-strict/integration` for the command row.',
+        rulingRequest: {
+          question: 'May the Surface widen to `harness/processes/vinaya-strict/integration`?',
+          decisions
+        },
         sourceUses: null
       },
       failures: [],
@@ -797,7 +800,7 @@ describe('runTask — --widen-surface continues a pre-pull-request widen-surface
     tranche: 't-v1',
     n: 10,
     agent: 'claude' as const,
-    widenSurface: { globs: ['packages/sources/src'], reason: 'the command reference row' }
+    widenSurface: { globs: ['harness/processes/vinaya-strict/integration'], reason: 'the command reference row' }
   }
 
   /** Every widen step and the run's start append to one `calls` log, so the order is asserted, not inferred. */
@@ -817,7 +820,7 @@ describe('runTask — --widen-surface continues a pre-pull-request widen-surface
         expect(input).toEqual({
           tranche: 't-v1',
           n: 10,
-          supersede: { reason: 'the command reference row', surfaceIn: ['packages/sources/src'] }
+          supersede: { reason: 'the command reference row', surfaceIn: ['harness/processes/vinaya-strict/integration'] }
         })
         return { issue: 1245, brief: 'brief v2', commentUrl: 'https://example.test/c/2', version: 2 }
       },
@@ -910,7 +913,7 @@ describe('runTask — --widen-surface continues a pre-pull-request widen-surface
           gradeWidenedSurface: async (_issue, _globs, retry) => {
             calls.push('grade')
             expect(retry).toBe(
-              "vinaya task run t-v1 10 --widen-surface packages/sources/src --reason 'the command reference row'"
+              "vinaya task run t-v1 10 --widen-surface harness/processes/vinaya-strict/integration --reason 'the command reference row'"
             )
             throw new DispatchTaskError(finding)
           }
@@ -1010,8 +1013,12 @@ describe('widenSurfaceRequestOf / widenSurfaceCommandFor', () => {
       failures: [],
       recordedAt: 'x'
     })
-    expect(widenSurfaceRequestOf([record(['widen_surface'], 'Add `packages/sources/src` and `../etc`?')])).toEqual({
-      globs: ['packages/sources/src', 'apps/cli/specs']
+    expect(
+      widenSurfaceRequestOf([
+        record(['widen_surface'], 'Add `harness/processes/vinaya-strict/integration` and `../etc`?')
+      ])
+    ).toEqual({
+      globs: ['harness/processes/vinaya-strict/integration', 'apps/cli/specs']
     })
     expect(widenSurfaceRequestOf([record(['proceed_as_briefed'], 'x')])).toBeNull()
     expect(widenSurfaceRequestOf([])).toBeNull()

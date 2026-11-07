@@ -36,7 +36,7 @@ describe('which changed paths the selector can judge', () => {
       'apps/cli/src/lib/widget.ts',
       'apps/cli/tests/widget.test.ts',
       'packages/aeg-core/src/brief.ts',
-      'packages/sources/src/view.tsx'
+      'packages/widgets/src/view.tsx'
     ]) {
       expect(isSelectablePath(path), path).toBe(true)
     }
@@ -48,7 +48,7 @@ describe('which changed paths the selector can judge', () => {
       'aeg-root/enforcement.md',
       'apps/cli/specs/self-hosting.md',
       'apps/cli/package.json',
-      'apps/cli/tests/fixtures/repo/src/index.ts',
+      'harness/processes/vinaya-strict/fixtures/repo/src/index.ts',
       'packages/aeg-core/src/fixtures/brief.ts',
       'harness/processes/vinaya-strict/integration/test-preload.ts',
       'apps/cli/tests/ci-shards/shard-1.txt',
@@ -228,7 +228,7 @@ describe('eligibility follows the workspace members discovery finds', () => {
     ]
     const refused = [
       '.github/workflows/ci.yml',
-      'apps/cli/tests/fixtures/repo/src/index.ts',
+      'harness/processes/vinaya-strict/fixtures/repo/src/index.ts',
       'harness/processes/vinaya-strict/integration/test-preload.ts',
       'vinaya.config.json',
       'scripts/build.ts',

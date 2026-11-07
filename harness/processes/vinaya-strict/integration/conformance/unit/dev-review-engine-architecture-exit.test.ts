@@ -33,7 +33,7 @@ import engineFailureFixture from '../../../fixtures/dev-review-engine-expected-f
  */
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', '..')
-const CORPUS_PATH = join(REPO_ROOT, 'apps', 'cli', 'tests', 'fixtures', 'dev-review-engine-scenarios.json')
+const CORPUS_PATH = join(REPO_ROOT, 'harness/processes/vinaya-strict/fixtures/dev-review-engine-scenarios.json')
 
 type Expectation = {
   decision: string

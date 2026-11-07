@@ -43,7 +43,8 @@ import {
 
 afterEach(cleanupWorlds)
 
-const LIVE = 'VINAYA_LIVE_CONFORMANCE=1 bun test apps/cli/tests/sandbox-conformance/claude-live.test.ts'
+const LIVE =
+  'VINAYA_LIVE_CONFORMANCE=1 bun test harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/claude-live.test.ts'
 
 const BRIEF_BASE =
   '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\n\n## Planner rationale\n\nOut of scope for facts.\n'

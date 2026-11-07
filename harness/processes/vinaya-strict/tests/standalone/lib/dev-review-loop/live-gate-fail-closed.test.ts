@@ -23,7 +23,8 @@ import {
 
 afterEach(cleanupWorlds)
 
-const LIVE = 'VINAYA_LIVE_CONFORMANCE=1 bun test apps/cli/tests/sandbox-conformance/claude-live.test.ts'
+const LIVE =
+  'VINAYA_LIVE_CONFORMANCE=1 bun test harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/claude-live.test.ts'
 
 /** A frozen brief whose §9 carries a command line and, when given, `[live]` items. */
 function briefWith(live: string[]): string {

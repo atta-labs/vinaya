@@ -766,14 +766,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // The four product-code globs below mirror
       // `PRODUCT_SLUG_SCOPE` in `reader-resolvable-prose.ts` — the surface
       // whose tranche-slug citation is now this check's one blocking class.
-      include: [
-        ...DOCTRINE_REPO_PATHS,
-        'apps/cli/src/**',
-        '.github/workflows/**',
-        '.vinaya/**',
-        'apps/cli/README.md',
-        'packages/sources/README.md'
-      ]
+      include: [...DOCTRINE_REPO_PATHS, 'apps/cli/src/**', '.github/workflows/**', '.vinaya/**', 'apps/cli/README.md']
     },
     0
   ],

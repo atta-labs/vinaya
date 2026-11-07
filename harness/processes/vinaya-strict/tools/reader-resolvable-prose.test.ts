@@ -581,13 +581,7 @@ describe('the product class — a tranche-slug citation in product code is a blo
   })
 
   it('PRODUCT_SLUG_SCOPE is exactly the non-aeg-root scope list', () => {
-    expect(PRODUCT_SLUG_SCOPE).toEqual([
-      'apps/cli/src',
-      '.github/workflows',
-      '.vinaya',
-      'apps/cli/README.md',
-      'packages/sources/README.md'
-    ])
+    expect(PRODUCT_SLUG_SCOPE).toEqual(['apps/cli/src', '.github/workflows', '.vinaya', 'apps/cli/README.md'])
   })
 })
 

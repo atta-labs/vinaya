@@ -326,11 +326,11 @@ describe('a relocated dependency is unchanged, never growth', () => {
     const owner = 'harness/processes/vinaya-strict/integration/config/compose.ts'
     const { root, base } = plantedRepository({
       [owner]: `export function loadConfig() {}\n${BODY}\n`,
-      'apps/cli/src/lib/config.ts': `export { loadConfig } from '../../../../${owner.replace(/\.ts$/, '.js')}'\n`,
-      'apps/cli/src/commands/doctor.ts': `import { loadConfig } from '../lib/config.js'\n${BODY}\n`
+      'apps/cli/src/lib/settings.ts': `export { loadConfig } from '../../../../${owner.replace(/\.ts$/, '.js')}'\n`,
+      'apps/cli/src/commands/doctor.ts': `import { loadConfig } from '../lib/settings.js'\n${BODY}\n`
     })
     commitBaseline(root, {
-      'apps/cli/src/lib/config.ts': null,
+      'apps/cli/src/lib/settings.ts': null,
       'apps/cli/src/commands/doctor.ts': `import { loadConfig } from '../../../../${owner.replace(/\.ts$/, '.js')}'\n${BODY}\n`
     })
     expect(compareBase(root, base)).toMatchObject({ failures: [] })
@@ -345,15 +345,15 @@ describe('a relocated dependency is unchanged, never growth', () => {
 
   test('a workspace package import re-pointed to the module the package held keeps its count, whatever its folder is named', () => {
     const { root, base } = plantedRepository({
-      'packages/sources/package.json': '{ "name": "@attalabs/vinaya-sources" }',
-      'packages/sources/src/commands.ts': `export const COMMANDS = []\n${BODY}\n`,
-      'packages/sources/src/index.ts': "export { COMMANDS } from './commands'\n",
-      'apps/cli/src/lib/output.ts': `import { COMMANDS } from '@attalabs/vinaya-sources'\n${BODY}\n`
+      'packages/widgets/package.json': '{ "name": "@attalabs/widgets" }',
+      'packages/widgets/src/commands.ts': `export const COMMANDS = []\n${BODY}\n`,
+      'packages/widgets/src/index.ts': "export { COMMANDS } from './commands'\n",
+      'apps/cli/src/lib/output.ts': `import { COMMANDS } from '@attalabs/widgets'\n${BODY}\n`
     })
     commitBaseline(root, {
-      ...move(root, 'packages/sources/src/commands.ts', 'harness/processes/vinaya-strict/integration/commands.ts'),
-      'packages/sources/package.json': null,
-      'packages/sources/src/index.ts': null,
+      ...move(root, 'packages/widgets/src/commands.ts', 'harness/processes/vinaya-strict/integration/commands.ts'),
+      'packages/widgets/package.json': null,
+      'packages/widgets/src/index.ts': null,
       'apps/cli/src/lib/output.ts': `import { COMMANDS } from '../../../../harness/processes/vinaya-strict/integration/commands.js'\n${BODY}\n`
     })
     expect(compareBase(root, base)).toMatchObject({ failures: [] })

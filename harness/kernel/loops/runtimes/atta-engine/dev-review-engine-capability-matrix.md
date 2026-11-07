@@ -33,7 +33,7 @@ that commit with a line anchor, and concludes `fit` or a named gap.
 
 The repository's packed-consumer test exercises a separate artifact set: the
 engine, LangGraph adapter, agents and models tarballs vendored under
-`apps/cli/tests/fixtures/atta-engine/`, whose README records the Atta commit
+`harness/kernel/loops/runtimes/atta-engine/fixtures/`, whose README records the Atta commit
 they were packed from and the digest each copy must match. With those
 tarballs the packed graph builder accepts a caller-supplied executor, and the
 test verifies that seam with a steps-shaped Flow. Public start and resume

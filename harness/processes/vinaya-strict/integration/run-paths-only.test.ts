@@ -68,7 +68,7 @@ const SOURCE_ROOTS = [
   join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pr-report/tokens/sum-ledger.ts'),
   join(REPO_ROOT, 'harness/processes/vinaya-strict/checks/pr-report-density.ts'),
   join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-phase-history.ts'),
-  join(REPO_ROOT, 'packages', 'sources', 'src')
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/sources')
 ]
 
 /** The source that moved out of `apps/cli/src` and `packages/aeg-core/src` into the kernel, so these scans read it where it now lives. */

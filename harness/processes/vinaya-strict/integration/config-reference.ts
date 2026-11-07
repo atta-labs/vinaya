@@ -467,7 +467,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     semantics: [
       "Repo-relative directory (or file) roots swept recursively for `.ts` files — a prefix match, like `PRODUCT_SLUG_SCOPE`, never a shell glob pattern despite the field's name. Unset (the default) leaves the class dormant: no directory is swept."
     ],
-    example: `{ "globs": ["apps/cli/src", "packages/aeg-core/src", "packages/aeg-forge-state/src", "packages/sources/src"] }`
+    example: `{ "globs": ["apps/cli/src", "packages/aeg-core/src", "packages/aeg-forge-state/src"] }`
   },
   {
     key: 'proseGates.sourceComments.allowlist',

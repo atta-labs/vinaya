@@ -298,7 +298,7 @@ describe('discovery refuses what it must', () => {
   })
 
   test('fixture data a runner would collect fails; declared as a real test it passes; excluded, no runner may collect it', () => {
-    const fixture = 'apps/cli/tests/fixtures/repo/sample.test.ts'
+    const fixture = 'apps/cli/tests/lib/fixtures/repo/sample.test.ts'
     expect(codes(view(baseFiles({ [fixture]: '' })))).toContain(`unclassified ${fixture}`)
     const declared = withDeclarations(
       (d) => {

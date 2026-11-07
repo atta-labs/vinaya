@@ -16,7 +16,7 @@ import { join } from 'node:path'
  */
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', '..')
-const FIXTURE_PATH = join(REPO_ROOT, 'apps', 'cli', 'tests', 'fixtures', 'dev-review-architecture-invariants.json')
+const FIXTURE_PATH = join(REPO_ROOT, 'harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json')
 const INVARIANT_SPEC = 'harness/processes/vinaya-strict/loops/dev-review/dev-review-invariants.md'
 /** The specifications that name the normative design's revision beside the register. */
 const DESIGN_SPECS = [
