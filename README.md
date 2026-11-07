@@ -10,199 +10,165 @@
 
 <div align="center">
 
-# Vinaya — the development harness
+# The engineering harness for software teams
 
-### Agents write code. **Vinaya ships software.**
+### One governed loop for your agents to plan, build, review and improve.
 
-Every brief, every review, every merge runs as code, on your forge — whether the hand on the
-keyboard is yours or an agent's.
-
-![status](https://img.shields.io/badge/status-live-2E8B57?style=for-the-badge)
 [![npm](https://img.shields.io/npm/v/@attalabs/vinaya?style=for-the-badge&label=%40attalabs%2Fvinaya&color=CB3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/@attalabs/vinaya)
 
-![Bun](https://img.shields.io/badge/Bun-000000?style=flat-square&logo=bun&logoColor=white)
-![Turborepo](https://img.shields.io/badge/Turborepo-EF4444?style=flat-square&logo=turborepo&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white)
-![Biome](https://img.shields.io/badge/Biome-60A5FA?style=flat-square&logo=biome&logoColor=white)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-D97757?style=flat-square)
 ![Codex](https://img.shields.io/badge/Codex-000000?style=flat-square)
-![Gemini CLI](https://img.shields.io/badge/Gemini_CLI-8E75B2?style=flat-square)
 
-**[vinaya.attalabs.dev](https://vinaya.attalabs.dev)** · **[Docs](https://vinaya.attalabs.dev/docs/reference)** · **[CLI reference](https://vinaya.attalabs.dev/docs/cli)** · **[Config](https://vinaya.attalabs.dev/config)** · **[Studio](https://vinaya.attalabs.dev/the-studio)** · **[Roadmap](https://vinaya.attalabs.dev/roadmap)**
+**[vinaya.attalabs.dev](https://vinaya.attalabs.dev)** — docs, CLI reference and roadmap
 
 </div>
 
 ---
 
-## The claim
+> **An instruction is a probability. A gate is a guarantee.**
 
-Coding agents ship fast and leave a mess nobody can answer for. Vinaya doesn't slow the agent
-down — it makes the agent answer to the same process a person would: a brief before a line of
-code, a small reviewable pull request, a CI gate that means what it says, and a permanent record
-of what shipped and why. **The hook on your laptop and the required check in CI are the same
-code.** Nothing gets to main that didn't pass both.
+A team that ships with coding agents writes rules: in a prompt, a rules file, a role description.
+Rules are followed most of the time, which is what makes them dangerous.
 
-This isn't a rules file an agent can politely ignore on a bad day. It's deterministic checks that
-refuse the commit, refuse the push, refuse the merge — before the mess exists.
+Vinaya is the part that runs when the rules file is ignored. You hand it a planned task. It runs a
+coding agent, has fresh agents review the result, and refuses — by machine, before the fact —
+every step that would break a guarantee. A person merges.
 
-## What you get back
-
-- **Readable issues before any code.** Every task is scoped and arguable while changing the scope
-  is still cheap — not discovered after 800 lines of diff.
-- **Small PRs you can actually review.** One issue, one branch, one pull request. No 40-file
-  drive-by refactors riding along with the fix you asked for.
-- **Your CI, your checks, beside ours.** Vinaya generates its own workflows and never touches
-  yours. Add `acme/licence-header` next to `brief-shape` and `review-gate` — it's your YAML the
-  moment `init` writes it.
-- **Your GitHub, perfectly structured.** Milestone → Issues → branch → pull request → review → CI
-  → merged. One shape, every time, whether an agent or a person drove it.
-
-## Three rings. The first two run identical code.
-
-| Ring | Where | What it does |
-|------|-------|---------------|
-| **Ring 0** | Your machine | Git hooks refuse a commit that doesn't build, a push that lands on `main`, a PR that's missing what a reviewer needs — before any of it reaches GitHub. |
-| **Ring 1** | The forge | The exact same checks run again in CI. Clean, or it doesn't merge. Nobody skips ring 0 by pushing from a machine that never ran the hook. |
-| **Ring 2** | Audits | Scheduled sweeps catch drift the first two rings never watched — direct pushes to `main`, dead branches, documentation that fell behind the decisions it was meant to follow. |
-
-## The Vinaya Log
-
-Every dispatch, every gate result, every forge write, every token spent — one typed, append-only
-log, one schema, one sink. Not scattered `console.log` calls: a versioned envelope
-(`meta`/`subject`) on every line, and a closed set of event families —
-`dispatch`, `dev_review_loop`, `gate`, `operation`, `usage`, `role_attempt`, `handoff`, `effect` —
-so a reader can reconstruct exactly what an agent did, when, under whose authority, and how many
-tokens it burned doing it. No family invents its own shape; no event ships without knowing which
-task, which round, which role it belongs to.
-
-That's the difference between "the agent said it passed" and a record you can actually audit.
-
-## Bring your own agent
-
-Claude Code, Codex, Gemini CLI — keep the one you already use. Vinaya checks the merge,
-not the model.
-
-- **Claude Code** loads the doctrine pointer at session start from `CLAUDE.md`, whose one import
-  line pulls in `AGENTS.md`, and gets a native `/vinaya <role>` command, every role as a skill in
-  `.claude/skills/` (the only skill directory Claude Code reads), and a `Stop` hook that keeps a
-  session honest about what it actually did.
-- **Codex** loads the same pointer from `AGENTS.md`, and **Gemini CLI** from `AGENTS.md` too —
-  `.gemini/settings.json` names it as Gemini's context file — each with its own native command
-  surface. One source of truth, never a copy baked into a vendor-specific file.
-- Every role also ships as a portable [Agent Skill](https://vinaya.attalabs.dev/docs/reference),
-  discovered natively by anything that scans `.agents/skills/` — Codex, Gemini CLI, Antigravity,
-  Grok Build. Both skill files are the same three-line pointer to `vinaya doctrine`, never a copy.
-- `vinaya dispatch` runs any of them headless, attributed, timed, and logged — the same command
-  whether it's kicking off a Developer or a Reviewer.
-
-Vinaya doesn't care which model wrote the diff. It cares whether the diff earned its merge.
-
-## Zero lock-in
+## Quick start
 
 ```bash
-npx @attalabs/vinaya init      # in — hooks, CI workflow, starter config, nothing destructive
-vinaya eject                   # out — removes exactly what init installed, nothing else
+npx @attalabs/vinaya quickstart   # plug in: hooks, CI workflow, starter config, a demo break, push
+vinaya eject                      # unplug: removes exactly what quickstart installed, nothing else
 ```
 
-`init` prints the complete diff of everything it's about to do and waits for your confirmation.
-`vinaya.config.json` is the one file: your gates, your checks, your agents, your roles. Vinaya
-ships as the default — nothing you add or replace ever touches a second file.
+Prefer to go step by step? `vinaya init` prints the full diff of what it will install and waits for
+your confirmation. `vinaya --help` lists every command.
 
-## Layout
+## How it works
 
+1. **Install it.** One command puts the harness into your repository: git hooks, a CI workflow
+   and a starter `vinaya.config.json`.
+2. **Plan the work.** Product work becomes tasks, each with a frozen brief that says exactly what
+   to build.
+3. **Agents build and review.** A coding agent builds each task; fresh agents review it; every gate
+   runs on the exact change.
+4. **A person merges.** Nothing merges until the gates pass and a person merges it. Every governed
+   act lands in the Log.
+
+## What holds
+
+Checks run in three rings, always on.
+
+| Ring | Where | What it does |
+|------|-------|--------------|
+| **0** | Your machine | Git hooks run every check at commit and push, before anything reaches the forge. |
+| **1** | The forge | The identical checks run again on every pull request and Issue. Red blocks the merge. |
+| **2** | After merge | Scheduled audits surface drift: direct pushes to `main`, dead branches, docs that fell behind. |
+
+Inside those rings, every run holds the same guarantees, whatever process drives it:
+
+- A stated fact is recomputed, never trusted.
+- A change stays inside its declared scope.
+- A stopped run always says why, and who must act.
+- An agent can never rule, approve or merge.
+- Every governed act is kept in the Log.
+
+**The honest limit:** these are structural guarantees, not judgment guarantees. Vinaya proves a
+review happened and is current; it cannot prove anyone thought hard.
+
+## Five features, one harness
+
+| | Feature | What you get |
+|---|---------|--------------|
+| 01 | **Log** | Every check, review and decision written down as it happens, with who made it. Plug in your own log server. |
+| 02 | **Telemetry** | The same events, counted per milestone: time per task, what reviewers caught, how often the checks said no. |
+| 03 | **Studio** | A live dashboard of every task, check and review, plus the reports. |
+| 04 | **Self-improvement** | The Improver reads the reports and proposes changes to the process. A person approves. |
+| 05 | **Configuration** | One file, `vinaya.config.json`, turns the harness on: process, agents, forge, log and gates. |
+
+```jsonc
+// vinaya.config.json — your checks sit beside ours
+{
+  "checks": {
+    "acme/secret-scan": { "run": "./scripts/vinaya-checks/secret-scan.ts", "scope": "full" }
+  }
+}
 ```
-vinaya/
-├── apps/
-│   ├── cli/                  # Vinaya CLI (@attalabs/vinaya)
-│   └── vinaya-portal/        # The Vinaya portal site (@vinaya/portal)
-├── packages/
-│   ├── aeg-core/             # Pure gate evaluators
-│   ├── sources/              # State and doctrine sources
-│   └── typescript-config/    # Shared TypeScript configs
-├── harness/
-│   ├── kernel/               # The generic harness (@attalabs/harness); never imports processes/
-│   │   ├── adapters/         # Agent, code-host and tracker adapters
-│   │   ├── isolation/        # The capability policy and the sandbox probes
-│   │   ├── gates/checks/     # run-checks.ts and guarded-spawn.ts
-│   │   ├── dev-process-socket/
-│   │   │   ├── contract/     # process.schema.json — the contract every process.yaml meets
-│   │   │   └── loader/       # load-process.ts — validates a process folder and pins its digest
-│   │   ├── loops/runtimes/atta-engine/  # The Engine runtime and its checkpointer
-│   │   ├── log/client/       # The Log translator
-│   │   └── tests/            # The architecture checks and the counted ratchet
-│   └── processes/
-│       └── vinaya-strict/    # The Vinaya process (@attalabs/process-vinaya, id vinaya)
-│           └── process.yaml  # Process identity: id, version, Flow path, role folders
-└── aeg-root/                 # AEG doctrine
-```
 
-## Tooling
+## One harness, any process
 
-Bun + Turborepo, Biome for formatting and linting, TypeScript in strict mode.
+The harness is generic and never names a process. A process is a way of working: its roles, its
+unit of work, its review rules and its own checks. It plugs into the harness through one contract,
+giving the harness its roles (each with its doctrine, grants and tools), its loop, its checks, its
+policies and its section of the configuration file.
+
+The harness holds the loop to one promise: a task goes in, and out comes either a pull request
+ready to merge, or a stop that says why and who must act. Everything inside the loop — rounds,
+reviewers, retries — is the process's own business. The harness loads the process, runs its loop,
+runs the gates, enforces each role's grants and keeps the Log.
+
+The harness and the default process ship together in one package, `@attalabs/vinaya`.
+
+## The Vinaya process
+
+**The Vinaya process** is the default process, and it plugs in through the same contract anyone's
+would:
+
+1. **Thinking** — the Architect turns product work into one milestone.
+2. **Planning** — the Planner writes every task as an Issue.
+3. **Executing** — agents build and review in parallel; every gate runs.
+4. **Self-improvement** — a report shows where time went and proposes what to fix next.
+
+Three ways to plug in:
+
+- **Adopt the default.** Use the Vinaya process end to end. Replace any check, override any role.
+- **One task at a time.** Keep your own planning. Hand in one planned task; get back a reviewed
+  change ready for a human merge, or a recorded pause that says why.
+- **Write your own process.** Declare its loop, meet the harness's process contract, and it runs on the same harness.
+
+## Who it's for
+
+- **The engineer** — you define the milestone and ground it in tasks. Agents write and review. You control the merge.
+- **The tech lead** — your standards become checks every pull request must pass.
+- **The founder** — every feature lands through one process, so you can still answer why it shipped.
+
+## What it runs on
+
+- **A machine you choose** — laptop, workstation or server. No hosted service.
+- **A git forge** — required. GitHub first.
+- **Your agents** — Claude Code and Codex, under the subscription login already on the machine. Never an API key.
+- **Atta Engine** underneath — the generic workflow runtime: checkpoints, halt and resume, recovery. It holds no Vinaya policy.
+
+## What it is not
+
+Not a merge button — merging stays a person's act. Not a planner — planning belongs to the process.
+Not a workflow language — Atta Engine is the runtime. Not a judge of quality — it proves structure.
+
+## This repository
+
+Vinaya is built with Vinaya: every change here is an Issue run through its own loop and gates.
+The repository keeps the same split as the product: the harness on one side, the Vinaya process on
+the other, and the command line, the website and the Log server as apps.
 
 ```bash
 bun install
-bunx turbo typecheck
-bunx turbo build
+bunx turbo typecheck build
 bunx biome check .
 ```
 
-### Running a task on the Engine
-
-The standalone review loop (`bun apps/cli/src/index.ts task run`) stays the default. This repository
-can also run one task on the Engine, from a script that lives outside the published CLI:
-
-```bash
-bun harness/processes/vinaya-strict/bin/run-engine.ts --task <n> --agent <claude|codex>
-bun harness/processes/vinaya-strict/bin/run-engine.ts --task <n> --agent <claude|codex> --dry-run
-```
-
-The first line printed is the run's `loopId`, the id its Log events carry. A run writes its trace
-to `<runtimeDir>/engine-runs/<n>/trace.json`: every step in order with its exit code, what each
-agent reported while it ran, and both reviewer verdicts. `--dry-run` prints the process digest, the
-steps, the function each mechanical step adapts and each role's launch command, and launches
-nothing.
-
-The Developer's prompt carries the task's frozen brief and the context packet (with the required
-sources it prepared). It does not yet carry the doctrine block, the Issue-rulings block, the kept-work
-note or the later-round resume context; those are not sent. On a Linux host that sets
-`VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS=1` the generated Claude settings allow Unix sockets, as the
-loop does, and the variable is forwarded to
-the agent. The Developer's shell runs any command its `grants.yaml` does not deny.
-
-## Docs
-
-- **[vinaya.attalabs.dev](https://vinaya.attalabs.dev)** — the pitch, the lifecycle, why this
-  beats a rules file
-- **[Reference](https://vinaya.attalabs.dev/docs/reference)** — every role, contract, hook, and
-  check, read live from this repo's own doctrine
-- **[CLI](https://vinaya.attalabs.dev/docs/cli)** — the full command reference
-- **[Config](https://vinaya.attalabs.dev/config)** — `vinaya.config.json`, end to end
-- **[Studio](https://vinaya.attalabs.dev/the-studio)** — the dashboard over your tranches and tasks
-- **[Roadmap](https://vinaya.attalabs.dev/roadmap)**
+Working in this repo as an agent? Start at [`AGENTS.md`](AGENTS.md).
 
 ## License
 
-The five packages this repository publishes to npm — the Vinaya CLI
-([`@attalabs/vinaya`](apps/cli/LICENSE)) and the engine packages it ships,
-[`@attalabs/aeg-core`](packages/aeg-core/LICENSE),
-[`@attalabs/vinaya-sources`](packages/sources/LICENSE) — are source-available under the
-[Functional Source License, Version 1.1, with an Apache-2.0 future license](https://fsl.software)
-(`FSL-1.1-ALv2`), from version `0.35.0`. Versions `0.34.0` and earlier were released under
-Apache-2.0 and stay Apache-2.0.
+[`@attalabs/vinaya`](apps/cli/LICENSE) is source-available under [FSL-1.1-ALv2](https://fsl.software)
+from `0.35.0`; `0.34.0` and earlier stay Apache-2.0.
 
-What that means for you:
+- Use and modify Vinaya freely, including inside your own company.
+- Do not offer Vinaya, or something substantially similar built from it, as a commercial product or service.
+- Each release becomes Apache-2.0 two years after it ships.
 
-- You can use and modify Vinaya freely, including at work, inside your own company.
-- You may not offer Vinaya, or anything substantially similar built from it, to others as a commercial product or service. The exact terms are in [LICENSE](apps/cli/LICENSE); where this summary and the license differ, the license wins.
-- Each released version becomes `Apache-2.0` on the second anniversary of its release.
-
-The `@attalabs/vinaya` tarball also carries the `aeg-root/` doctrine and the `studio-standalone/`
-dashboard, and from version `0.35.0` both are distributed under the same terms as the CLI, except
-the bundled third-party dependencies, which keep their own licenses, as does the third-party code
-the CLI's `dist/` bundle includes. All other code and content in this repository, meaning what none
-of the five packages distributes, is copyright Daniel Estevez, all rights reserved. The
-[root `LICENSE`](LICENSE) lists which directories fall under which terms.
+The exact terms are in [LICENSE](apps/cli/LICENSE); where this summary and the license differ, the
+license wins. The [root `LICENSE`](LICENSE) lists which directories fall under which terms.
 
 <div align="center">
 
