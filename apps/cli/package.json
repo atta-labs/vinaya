@@ -1,6 +1,6 @@
 {
   "name": "@attalabs/vinaya",
-  "version": "0.41.0",
+  "version": "0.42.0",
   "description": "Vinaya \u2014 Agentic Engineering Harness. Deterministic checks every AI coding agent must satisfy before merge.",
   "type": "module",
   "license": "FSL-1.1-ALv2",
