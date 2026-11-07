@@ -10,7 +10,8 @@
  *
  * Diff-scoped: only the lines a branch ADDS (against its merge base with the
  * base ref, staged and unstaged edits included) in web-app files under
- * `apps/vinaya-*` are scanned. Violations already in the portal are never
+ * `apps/vinaya-*` and in the shared packages under `packages/ui` and
+ * `packages/cms` are scanned. Violations already in the portal are never
  * reported, so they cannot block an unrelated pull request.
  *
  * Findings:
@@ -20,7 +21,7 @@
  *   4. Colour literals in a style           color: '#fff', fill="rgb(...)", a CSS hex
  *   5. CSS variable declarations            --x: 1px, '--x': v, setProperty('--x', v)
  *   6. Icon packages beyond lucide-react    react-icons, @heroicons/*, ...
- *   7. Raw interactive HTML elements        <button>, <a>, <input>, ... outside src/ui
+ *   7. Raw interactive HTML elements        <button>, <a>, <input>, ... outside the component library
  *
  * `var(--x)` is a use, never a declaration, and is not flagged.
  */
@@ -154,21 +155,28 @@ const UI_FILE_RE = /\.(tsx|jsx|ts|js|mts|cts|mjs|cjs|css)$/
 const JSX_FILE_RE = /\.(tsx|jsx)$/
 const WEB_APP_RE = /^apps\/vinaya-[^/]+\//
 
-// The component library, where Ariakit components are built from raw elements.
-const COMPONENT_LIBRARY_RE = /^apps\/vinaya-[^/]+\/src\/ui\//
+// The packages every web app shares: the UI library and the CMS client with its
+// theme renderer. Their added lines are scanned like a web app's.
+const SHARED_PACKAGE_DIRS = ['packages/ui/', 'packages/cms/']
+const SHARED_PACKAGE_RE = /^packages\/(?:ui|cms)\//
+
+// The component library, where Ariakit components are built from raw elements:
+// a web app's `src/ui` folder, and the shared UI package.
+const COMPONENT_LIBRARY_RES = [/^apps\/vinaya-[^/]+\/src\/ui\//, /^packages\/ui\//]
 
 // Files allowed to hold colour literals and variable declarations, and files
 // no rule applies to.
 const EXEMPT_RES = [
   // The global stylesheet: its `@theme` block maps the CMS theme's variables.
   /^apps\/vinaya-[^/]+\/src\/ui\/styles\//,
-  // The CMS theme renderer.
-  /^apps\/vinaya-[^/]+\/src\/cms\//,
   // The preview-theme helper, which writes the theme's variables at runtime.
   /^apps\/vinaya-[^/]+\/src\/ui\/lib\/preview-theme-utils\.[cm]?[jt]sx?$/,
   // Verbatim upstream pastes and vendored three.js files root Biome ignores.
   /^apps\/vinaya-[^/]+\/src\/ui\/components\/table\/installed\.tsx$/,
   /^apps\/vinaya-[^/]+\/src\/ui\/libraries\/[^/]+\/installed\//,
+  // The same verbatim pastes inside the shared UI package.
+  /^packages\/ui\/(?:.*\/)?components\/table\/installed\.tsx$/,
+  /^packages\/ui\/(?:.*\/)?libraries\/[^/]+\/installed\//,
   /^apps\/vinaya-[^/]+\/src\/process\/lifecycle\/lifecycle-scene\.js$/,
   /^apps\/vinaya-[^/]+\/src\/process\/flows\/.*\.js$/,
   /^apps\/vinaya-[^/]+\/src\/app\/.*\/hero-canvas\/[^/]+\.js$/,
@@ -178,7 +186,11 @@ const EXEMPT_RES = [
 ]
 
 export function isScanned(file: string): boolean {
-  return WEB_APP_RE.test(file) && UI_FILE_RE.test(file) && !EXEMPT_RES.some((re) => re.test(file))
+  return (
+    (WEB_APP_RE.test(file) || SHARED_PACKAGE_RE.test(file)) &&
+    UI_FILE_RE.test(file) &&
+    !EXEMPT_RES.some((re) => re.test(file))
+  )
 }
 
 function isCommentLine(trimmed: string): boolean {
@@ -229,7 +241,7 @@ export function scanLine(file: string, line: number, text: string): Finding[] {
     }
   }
 
-  if (JSX_FILE_RE.test(file) && !COMPONENT_LIBRARY_RE.test(file)) {
+  if (JSX_FILE_RE.test(file) && !COMPONENT_LIBRARY_RES.some((re) => re.test(file))) {
     collect(
       out,
       file,
@@ -319,7 +331,7 @@ function main(): void {
     process.exit(1)
   }
 
-  const diff = git(['diff', '--unified=0', '--no-color', base, '--', 'apps/'])
+  const diff = git(['diff', '--unified=0', '--no-color', base, '--', 'apps/', ...SHARED_PACKAGE_DIRS])
   if (diff === null) {
     emitCheckError({
       schema: 1,

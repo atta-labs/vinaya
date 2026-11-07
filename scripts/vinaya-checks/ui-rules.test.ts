@@ -92,7 +92,6 @@ describe('allowed', () => {
   test('exempt files hold colour literals and variable declarations', () => {
     for (const file of [
       'apps/vinaya-portal/src/ui/styles/globals.css',
-      'apps/vinaya-portal/src/cms/utils/theme.ts',
       'apps/vinaya-portal/src/ui/lib/preview-theme-utils.ts',
       'apps/vinaya-portal/src/process/lifecycle/lifecycle-scene.js'
     ]) {
@@ -103,9 +102,46 @@ describe('allowed', () => {
   test('files outside the web apps and non-code files are not scanned', () => {
     expect(isScanned('apps/cli/src/index.ts')).toBe(false)
     expect(isScanned('apps/vinaya-portal/README.md')).toBe(false)
-    expect(isScanned('apps/vinaya-portal/src/cms/utils/theme-corpus.fixture.json')).toBe(false)
+    expect(isScanned('packages/cms/src/utils/theme-corpus.fixture.json')).toBe(false)
+    expect(isScanned('packages/sources/src/index.ts')).toBe(false)
     expect(isScanned(PAGE)).toBe(true)
     expect(isScanned('apps/vinaya-other/src/x.ts')).toBe(true)
+  })
+})
+
+describe('the shared packages', () => {
+  const UI_PACKAGE_FILE = 'packages/ui/src/components/card.tsx'
+  const CMS_PACKAGE_FILE = 'packages/cms/src/utils/theme.ts'
+
+  test('both shared package folders are scanned', () => {
+    expect(isScanned(UI_PACKAGE_FILE)).toBe(true)
+    expect(isScanned('packages/ui/src/styles/extra.css')).toBe(true)
+    expect(isScanned(CMS_PACKAGE_FILE)).toBe(true)
+  })
+
+  test('a theme violation is reported in either package', () => {
+    expect(rules('<p className="text-white">', UI_PACKAGE_FILE)).toContain('absolute colour class')
+    expect(rules("<p style={{ color: '#fff' }}>", UI_PACKAGE_FILE)).toContain('colour literal in a style')
+    expect(rules('const c = "bg-zinc-900"', CMS_PACKAGE_FILE)).toContain('Tailwind palette colour class')
+    expect(rules("el.style.setProperty('--brand', v)", CMS_PACKAGE_FILE)).toContain('CSS variable declaration')
+  })
+
+  test('raw interactive elements are the library’s inside the UI package, not the CMS package', () => {
+    expect(rules('<button type="button">', UI_PACKAGE_FILE)).toEqual([])
+    expect(rules('<a href="/x">', UI_PACKAGE_FILE)).toEqual([])
+    expect(rules('<button type="button">', 'packages/cms/src/preview.tsx')).toContain(
+      'raw interactive HTML element outside the component library'
+    )
+  })
+
+  test('the installed verbatim pastes inside the UI package are exempt', () => {
+    for (const file of [
+      'packages/ui/src/components/table/installed.tsx',
+      'packages/ui/src/libraries/retro/installed/button.tsx'
+    ]) {
+      expect(isScanned(file)).toBe(false)
+    }
+    expect(isScanned('packages/ui/src/libraries/retro/button.tsx')).toBe(true)
   })
 })
 
@@ -195,5 +231,24 @@ describe('the check run against a git branch', () => {
       severity: 'error'
     })
     expect(findings[0].message).toContain('Tailwind palette colour class')
+  })
+
+  test('reports added violations in both shared package folders', () => {
+    const uiFile = 'packages/ui/src/components/card.tsx'
+    const cmsFile = 'packages/cms/src/utils/theme.ts'
+    git('checkout', '-q', '-b', 'shared-packages', 'main')
+    write(uiFile, 'export const a = <p className="text-white">bad</p>\n')
+    write(cmsFile, "export const b = 'bg-zinc-900'\n")
+    git('add', '.')
+    git('commit', '-qm', 'shared package change')
+    const bad = run()
+    expect(bad.exitCode).toBe(1)
+    const files = bad.stderr
+      .toString()
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l).file)
+      .sort()
+    expect(files).toEqual([cmsFile, uiFile])
   })
 })

@@ -1,4 +1,4 @@
-import { generateThemeCSSForScheme } from '@/cms'
+import { generateThemeCSSForScheme } from '@vinaya/cms'
 import { getFaviconMarkup } from '@/lib/brand-logo'
 import { getPortalCms } from '@/lib/portal-cms'
 

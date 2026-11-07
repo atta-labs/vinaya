@@ -1,4 +1,4 @@
-import type { RoadmapMilestone } from '@/cms'
+import type { RoadmapMilestone } from '@/lib/roadmap-milestones'
 import { compareVersions } from './derive-status'
 
 // The ladder's render order, computed here rather than taken from the CMS.

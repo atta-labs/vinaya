@@ -6,8 +6,7 @@
  * Adapted from Summon's portal theme utils.
  */
 
-import { loadThemeFonts } from '@/cms'
-import { cssColorToOklch } from '@/cms/utils/oklch'
+import { cssColorToOklch, loadThemeFonts } from '@vinaya/cms'
 
 export interface ThemeData {
   dark?: Record<string, unknown>

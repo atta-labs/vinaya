@@ -1,4 +1,4 @@
-import { createProductClient, type ProductKey } from '../client'
+import { createProductClient, type ProductKey } from '@vinaya/cms'
 
 export interface RoadmapMilestone {
   _id: string

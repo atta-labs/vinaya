@@ -28,6 +28,14 @@
       "preload": null
     },
     {
+      "id": "cms",
+      "owner": "@vinaya/cms",
+      "kind": "workspace",
+      "dir": "packages/cms",
+      "runner": "bun",
+      "preload": null
+    },
+    {
       "id": "sources",
       "owner": "@attalabs/vinaya-sources",
       "kind": "workspace",
@@ -121,6 +129,7 @@
             "cli",
             "log-server",
             "portal",
+            "cms",
             "sources",
             "kernel",
             "process-vinaya",

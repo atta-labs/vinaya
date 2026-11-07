@@ -1,6 +1,6 @@
 # 0011. Portal UI on Ariakit and CMS theme variables
 
-**Status:** Accepted
+**Status:** Accepted; its placement of the component library inside the portal is superseded by [0015](0015-vinaya-web-apps-share-one-ui-package-and-one-cms-package.md)
 
 **Date:** 2026-10-20
 
@@ -36,4 +36,4 @@ A component the portal needs and lacks costs a library change before the page ch
 
 ## Where it is applied
 
-The rules are `.claude/rules/ui-components.md`, `.claude/rules/ui-theme-tokens.md` and `.claude/rules/ui-cms-theme.md`. The component workflow is the `ui-new-component` skill, `.agents/skills/ui-new-component/SKILL.md`, which `.claude/skills/ui-new-component/SKILL.md` loads for Claude Code. `apps/vinaya-portal/AGENTS.md` points Codex at the rules, and `apps/vinaya-portal/CLAUDE.md` imports it. The component library is `apps/vinaya-portal/src/ui`; the theme's renderer is `apps/vinaya-portal/src/cms/utils/theme.ts`, and its Tailwind mappings are the `@theme inline` block of `apps/vinaya-portal/src/ui/styles/globals.css`.
+The rules are `.claude/rules/ui-components.md`, `.claude/rules/ui-theme-tokens.md` and `.claude/rules/ui-cms-theme.md`. The component workflow is the `ui-new-component` skill, `.agents/skills/ui-new-component/SKILL.md`, which `.claude/skills/ui-new-component/SKILL.md` loads for Claude Code. `apps/vinaya-portal/AGENTS.md` points Codex at the rules, and `apps/vinaya-portal/CLAUDE.md` imports it. The component library is `apps/vinaya-portal/src/ui`; the theme's renderer is `packages/cms/src/utils/theme.ts`, and its Tailwind mappings are the `@theme inline` block of `apps/vinaya-portal/src/ui/styles/globals.css`.

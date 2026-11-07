@@ -1,4 +1,4 @@
-import type { RoadmapMilestone } from '@/cms'
+import type { RoadmapMilestone } from '@/lib/roadmap-milestones'
 import type { PublishedVersion } from '@/lib/published-version'
 
 // `x.y.z`-only — every version this compares (a milestone's own `version`

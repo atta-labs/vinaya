@@ -2,7 +2,7 @@
 
 import { Moon, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { generateThemeCSSForScheme } from '@/cms'
+import { generateThemeCSSForScheme } from '@vinaya/cms'
 import { Toggle } from '@/ui/components/toggle'
 import { COLOR_SCHEME_ATTRIBUTE, COLOR_SCHEME_COOKIE_MAX_AGE, type ColorScheme, DEFAULT_SCHEME } from './color-scheme'
 import { useCookieName } from './cookie-name-context'
