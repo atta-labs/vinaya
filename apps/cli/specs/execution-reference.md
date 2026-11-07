@@ -25,7 +25,7 @@ planning (the Planner's own brief authoring) and nothing after merge
 as a bounded, read-mostly client — it starts, reads status on, and requests
 authenticated continuation or cancellation of a run; it plans nothing,
 edits no code, changes no Objectives, posts no ruling, approves nothing,
-and merges nothing (`aeg-root/roles/operator.md`; `harness/kernel/tools/catalog/task-tools.ts`'s
+and merges nothing (`harness/processes/vinaya-strict/executing/operator/doctrine.md`; `harness/kernel/tools/catalog/task-tools.ts`'s
 `OPERATOR_TOOL_GRANT`). Studio reporting, multi-task batch scheduling,
 automatic merge, and a whole-repository rewrite of this path into a
 standalone product are explicitly outside this boundary — classified in

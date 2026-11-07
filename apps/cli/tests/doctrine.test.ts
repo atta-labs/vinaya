@@ -1,13 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import matter from 'gray-matter'
-import { doctrineCommand, ENTRY_SEGMENTS, resolveDoctrineRoot } from '../src/commands/doctrine.js'
+import { doctrineCommand } from '../src/commands/doctrine.js'
+import {
+  ENTRY_SEGMENTS,
+  resolveDoctrineRoot
+} from '../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
+import {
+  doctrineSource,
+  ROLE_KEY_ENTRIES
+} from '../../../harness/processes/vinaya-strict/tools/doctrine/doctrine-map.js'
+
+/** Every role id the doctrine map lists under the logical `roles/` folder, sorted. */
+const MAP_ROLE_NAMES = ROLE_KEY_ENTRIES.map((entry) => entry.key.slice('roles/'.length, -'.md'.length)).sort()
 
 const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')
 
-// NOT in the same file as doctrine-pointer.test.ts, deliberately: that file
+// NOT in the same file as harness/processes/vinaya-strict/integration/doctrine-pointer.test.ts, deliberately: that file
 // mock.module()s package-root.js, and this command needs the real resolver.
 
 /**
@@ -36,7 +47,9 @@ describe('vinaya doctrine', () => {
   it('prints an absolute front-door path that exists on this machine', async () => {
     const printed = (await captureStdout(() => doctrineCommand([]))).trim()
     expect(isAbsolute(printed)).toBe(true)
-    expect(printed.endsWith(join('aeg-root', 'skills', 'aeg', 'SKILL.md'))).toBe(true)
+    expect(
+      printed.endsWith(join('harness', 'processes', 'vinaya-strict', 'doctrine', 'skills', 'vinaya', 'SKILL.md'))
+    ).toBe(true)
     expect(existsSync(printed)).toBe(true)
   })
 
@@ -44,22 +57,19 @@ describe('vinaya doctrine', () => {
     const out = await captureStdout(() => doctrineCommand(['--json']))
     const parsed = JSON.parse(out)
     expect(parsed.schema).toBe(1)
-    expect(parsed.data.entry).toBe(join(parsed.data.root, 'skills', 'aeg', 'SKILL.md'))
+    expect(parsed.data.entry).toBe(join(parsed.data.root, 'doctrine', 'skills', 'vinaya', 'SKILL.md'))
     expect(existsSync(parsed.data.entry)).toBe(true)
   })
 
   it('--role <name> resolves straight to roles/<name>.md under the same root', async () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --role')
-    const [firstRole] = readdirSync(join(root, 'roles'))
-      .filter((f) => f.endsWith('.md'))
-      .map((f) => f.slice(0, -3))
-      .sort()
-    if (firstRole === undefined) throw new Error('no role files found under aeg-root/roles')
+    const [firstRole] = MAP_ROLE_NAMES.filter((name) => existsSync(join(root, doctrineSource(`roles/${name}.md`))))
+    if (firstRole === undefined) throw new Error('no role files found under harness/processes/vinaya-strict')
 
     const printed = (await captureStdout(() => doctrineCommand(['--role', firstRole]))).trim()
     expect(isAbsolute(printed)).toBe(true)
-    expect(printed).toBe(join(root, 'roles', `${firstRole}.md`))
+    expect(printed).toBe(join(root, doctrineSource(`roles/${firstRole}.md`)))
     expect(existsSync(printed)).toBe(true)
   })
 
@@ -68,7 +78,7 @@ describe('vinaya doctrine', () => {
     if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --template')
 
     const printed = (await captureStdout(() => doctrineCommand(['--template', 'pr-report']))).trim()
-    expect(printed).toBe(join(root, 'templates', 'pr-report-template.md'))
+    expect(printed).toBe(join(root, 'artifacts', 'templates', 'pr-report-template.md'))
     expect(existsSync(printed)).toBe(true)
   })
 
@@ -85,16 +95,13 @@ describe('vinaya doctrine', () => {
   it('--role <name> --json emits the envelope with a coherent root/entry pair', async () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --role')
-    const [firstRole] = readdirSync(join(root, 'roles'))
-      .filter((f) => f.endsWith('.md'))
-      .map((f) => f.slice(0, -3))
-      .sort()
-    if (firstRole === undefined) throw new Error('no role files found under aeg-root/roles')
+    const [firstRole] = MAP_ROLE_NAMES.filter((name) => existsSync(join(root, doctrineSource(`roles/${name}.md`))))
+    if (firstRole === undefined) throw new Error('no role files found under harness/processes/vinaya-strict')
 
     const out = await captureStdout(() => doctrineCommand(['--role', firstRole, '--json']))
     const parsed = JSON.parse(out)
     expect(parsed.schema).toBe(1)
-    expect(parsed.data.entry).toBe(join(parsed.data.root, 'roles', `${firstRole}.md`))
+    expect(parsed.data.entry).toBe(join(parsed.data.root, doctrineSource(`roles/${firstRole}.md`)))
     expect(existsSync(parsed.data.entry)).toBe(true)
   })
 
@@ -129,8 +136,8 @@ describe('vinaya doctrine', () => {
   it('a templates/ file that is not *-template.md is never enumerated as a name (round 2, F3)', async () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --template')
-    const stray = join(root, 'templates', 'round-2-stray.md')
-    const strayDir = join(root, 'templates', 'round-2-stray-template.md')
+    const stray = join(root, 'artifacts', 'templates', 'round-2-stray.md')
+    const strayDir = join(root, 'artifacts', 'templates', 'round-2-stray-template.md')
     writeFileSync(stray, '# not a template\n')
     mkdirSync(strayDir, { recursive: true })
     try {
@@ -238,7 +245,7 @@ describe('vinaya doctrine', () => {
     // Re-running the exact same call is the byte-identical proof: nothing
     // about resolving `--print`'s presence/absence touches this branch.
     expect(await captureStdout(() => doctrineCommand(['--role', 'developer']))).toBe(withoutFlag)
-    expect(withoutFlag.trim().endsWith(join('roles', 'developer.md'))).toBe(true)
+    expect(withoutFlag.trim().endsWith(join('executing', 'developer', 'doctrine.md'))).toBe(true)
   })
 
   it("bare (no --role) --print emits the front door's body, not its path", async () => {
@@ -250,16 +257,15 @@ describe('vinaya doctrine', () => {
   it("--print --role <name> emits every agent role's ack-token as its own first line (O2)", async () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine')
-    const roleNames = readdirSync(join(root, 'roles'))
-      .filter((f) => f.endsWith('.md'))
-      .map((f) => f.slice(0, -3))
-      .filter((name) => {
-        const { data } = matter(readFileSync(join(root, 'roles', `${name}.md`), 'utf8'))
-        return data.actor !== 'human'
-      })
+    const roleNames = MAP_ROLE_NAMES.filter((name) =>
+      existsSync(join(root, doctrineSource(`roles/${name}.md`)))
+    ).filter((name) => {
+      const { data } = matter(readFileSync(join(root, doctrineSource(`roles/${name}.md`)), 'utf8'))
+      return data.actor !== 'human'
+    })
     expect(roleNames.length).toBeGreaterThan(0)
     for (const role of roleNames) {
-      const { data } = matter(readFileSync(join(root, 'roles', `${role}.md`), 'utf8'))
+      const { data } = matter(readFileSync(join(root, doctrineSource(`roles/${role}.md`)), 'utf8'))
       const ackToken = data['ack-token']
       expect(typeof ackToken, `${role}.md carries no ack-token frontmatter`).toBe('string')
       const printed = await captureStdout(() => doctrineCommand(['--role', role, '--print']))
@@ -293,14 +299,14 @@ describe('vinaya doctrine', () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine')
     for (const role of ['developer', 'planner']) {
-      const lineCount = readFileSync(join(root, 'roles', `${role}.md`), 'utf8').split('\n').length
+      const lineCount = readFileSync(join(root, doctrineSource(`roles/${role}.md`)), 'utf8').split('\n').length
       expect(lineCount, `${role}.md is ${lineCount} lines, over the 120-line seat budget`).toBeLessThanOrEqual(120)
     }
-    const roleNames = readdirSync(join(root, 'roles')).filter((f) => f.endsWith('.md'))
+    const roleNames = MAP_ROLE_NAMES.map((name) => `${name}.md`)
     expect(roleNames).not.toContain('developer')
     expect(roleNames).not.toContain('planner')
-    expect(existsSync(join(root, 'roles', 'developer', 'reference.md'))).toBe(true)
-    expect(existsSync(join(root, 'roles', 'planner', 'reference.md'))).toBe(true)
+    expect(existsSync(join(root, doctrineSource('roles/developer/reference.md')))).toBe(true)
+    expect(existsSync(join(root, doctrineSource('roles/planner/reference.md')))).toBe(true)
   })
 
   it('actor: agent and actor: either roles both still resolve — the exclusion is actor-specific, not a blanket narrowing', async () => {
@@ -311,7 +317,7 @@ describe('vinaya doctrine', () => {
     // single actor value.
     for (const role of ['developer', 'archivist']) {
       const printed = (await captureStdout(() => doctrineCommand(['--role', role]))).trim()
-      expect(printed).toBe(join(root, 'roles', `${role}.md`))
+      expect(printed).toBe(join(root, doctrineSource(`roles/${role}.md`)))
       expect(existsSync(printed)).toBe(true)
     }
   })
@@ -319,12 +325,12 @@ describe('vinaya doctrine', () => {
 
 // Synthetic-fixture coverage of every resolution shape — the live tests above
 // can only ever exercise whichever shape this workspace happens to be in
-// (here: the vendored `../../aeg-root` fallback).
+// (here: the vendored `../../harness/processes/vinaya-strict` fallback).
 describe('resolveDoctrineRoot', () => {
   let base: string
 
   const seedDoctrine = (root: string) => {
-    const entryDir = join(root, 'skills', 'aeg')
+    const entryDir = join(root, 'doctrine', 'skills', 'vinaya')
     mkdirSync(entryDir, { recursive: true })
     writeFileSync(join(entryDir, 'SKILL.md'), '# fixture front door\n')
   }
@@ -344,17 +350,17 @@ describe('resolveDoctrineRoot', () => {
   // resolution these fixtures actually exercise, rather than silently
   // picking up whatever real repo the test runner's own cwd happens to sit
   // inside.
-  it('resolves the published-tarball shape: the package root’s own bundled aeg-root', () => {
+  it('resolves the published-tarball shape: the package root’s own bundled vinaya-strict', () => {
     const pkg = join(base, 'node_modules', '@attalabs', 'vinaya')
-    seedDoctrine(join(pkg, 'aeg-root'))
-    expect(resolveDoctrineRoot(pkg, base)).toBe(join(pkg, 'aeg-root'))
+    seedDoctrine(join(pkg, 'vinaya-strict'))
+    expect(resolveDoctrineRoot(pkg, base)).toBe(join(pkg, 'vinaya-strict'))
   })
 
-  it('resolves the vendored dev shape: the monorepo root’s aeg-root two levels up', () => {
+  it('resolves the vendored dev shape: the monorepo root’s harness/processes/vinaya-strict two levels up', () => {
     const pkg = join(base, 'apps', 'cli')
     mkdirSync(pkg, { recursive: true })
-    seedDoctrine(join(base, 'aeg-root'))
-    expect(resolveDoctrineRoot(pkg, base)).toBe(join(base, 'aeg-root'))
+    seedDoctrine(join(base, 'harness', 'processes', 'vinaya-strict'))
+    expect(resolveDoctrineRoot(pkg, base)).toBe(join(base, 'harness', 'processes', 'vinaya-strict'))
   })
 
   it('returns null when no doctrine exists at either candidate', () => {
@@ -363,17 +369,17 @@ describe('resolveDoctrineRoot', () => {
     expect(resolveDoctrineRoot(pkg, base)).toBeNull()
   })
 
-  it('never walks out of a node_modules install: a squatting sibling aeg-root package is not doctrine', () => {
-    // A broken tarball (no bundled aeg-root) next to a dependency that
-    // happens to be named `aeg-root` and ships the front-door file — the
+  it('never walks out of a node_modules install: a squatting sibling vinaya-strict package is not doctrine', () => {
+    // A broken tarball (no bundled vinaya-strict) next to a dependency that
+    // happens to be named `vinaya-strict` and ships the front-door file — the
     // prompt-injection shape the fallback restriction exists to close.
     const pkg = join(base, 'node_modules', '@attalabs', 'vinaya')
     mkdirSync(pkg, { recursive: true })
-    seedDoctrine(join(base, 'node_modules', 'aeg-root'))
+    seedDoctrine(join(base, 'node_modules', 'vinaya-strict'))
     expect(resolveDoctrineRoot(pkg, base)).toBeNull()
   })
 
   it('front-door constant matches what every resolver probe and the generated pointer name', () => {
-    expect(join(...ENTRY_SEGMENTS)).toBe(join('skills', 'aeg', 'SKILL.md'))
+    expect(join(...ENTRY_SEGMENTS)).toBe(join('doctrine', 'skills', 'vinaya', 'SKILL.md'))
   })
 })

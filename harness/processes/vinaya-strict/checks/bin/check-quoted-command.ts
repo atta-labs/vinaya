@@ -49,7 +49,8 @@ import {
   isValidCitedFilePath,
   type QuotedCommandSourceFile
 } from '../../tools/quoted-command'
-import { resolveDoctrineRoot } from '../../../../../apps/cli/src/commands/doctrine.js'
+import { resolveDoctrineRoot } from '../../tools/doctrine/resolve-doctrine'
+import { DOCTRINE_MAP, DOCTRINE_TREE } from '../../tools/doctrine/doctrine-map'
 import { loadConfig } from '../../../../../apps/cli/src/lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { repoRoot } from '../../../../../harness/kernel/connectors/git/diff-evidence'
@@ -58,8 +59,9 @@ const CHECK_NAME = 'quoted-command'
 
 const proseGates = loadConfig()?.proseGates
 
-/** Same default as `check-reader-resolvable-prose.ts`: the package's own bundled doctrine copy, falling back to the historical `aeg-root` literal. */
-const DOCTRINE_ROOT = proseGates?.doctrineRoot ?? resolveDoctrineRoot() ?? 'aeg-root'
+/** Same default as `check-reader-resolvable-prose.ts`: the resolved doctrine root (the repository's process folder, or the package's bundled copy), falling back to the doctrine map's tree. Unconfigured, only the doctrine map's source paths under it are swept. */
+const CONFIGURED_ROOT = proseGates?.doctrineRoot
+const DOCTRINE_ROOT = CONFIGURED_ROOT ?? resolveDoctrineRoot() ?? DOCTRINE_TREE
 
 const READER_FACING_PREFIX = proseGates?.readerFacingPrefix ?? null
 const READER_FACING_SUFFIX = proseGates?.readerFacingSuffix ?? null
@@ -119,7 +121,10 @@ function main(): void {
 
   const docRootAbs = resolve(root, DOCTRINE_ROOT)
   const shipsPrefix = `${toPosix(relative(root, docRootAbs))}/`
-  const shipsPaths = collect(docRootAbs).filter((p) => p.endsWith('.md'))
+  const shipsPaths =
+    CONFIGURED_ROOT !== undefined
+      ? collect(docRootAbs).filter((p) => p.endsWith('.md'))
+      : DOCTRINE_MAP.map((entry) => join(docRootAbs, entry.source)).filter((p) => existsSync(p))
 
   const readerFacingRootAbs =
     READER_FACING_ACTIVE && READER_FACING_PREFIX !== null ? resolve(root, READER_FACING_PREFIX) : null

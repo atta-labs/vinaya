@@ -39,7 +39,7 @@ function metaV2(repo: string, seq: number, eventId: string, ts = '2026-09-14T00:
     seq,
     repo,
     vinaya: '0.32.0',
-    doctrine: 'aeg-root@deadbeef',
+    doctrine: 'doctrine@deadbeef',
     host: 'cli',
     machine: 'cafebabe',
     event_id: eventId,

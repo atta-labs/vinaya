@@ -5,7 +5,6 @@ tests/commands/check-flip.test.ts
 tests/commands/issue-objectives.test.ts
 tests/config.test.ts
 tests/demo.test.ts
-tests/doctrine-pointer.test.ts
 tests/doctrine.test.ts
 tests/import-boundary.test.ts
 tests/lib/no-log-forge-writes.test.ts

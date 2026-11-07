@@ -12,7 +12,7 @@ these seams allowed file/forge reads. Implements `StateSource` and
   `src/forge-adapter.ts`'s docstring.
 - **`createFileSource`** (`src/file-adapter.ts`) — transitional. Wraps
   `@attalabs/aeg-core`'s `parseTranche` over a configurable governance root
-  (`FileSourceConfig.root`, default `aeg-root`). Deliberate throwaway,
+  (`FileSourceConfig.root`; unset, it reads the retired `aeg-root/tranches` state). Deliberate throwaway,
   deleted once every consumer of `StateSource` is forge-backed.
 
 `selectSource` (`src/select-source.ts`) picks between the two from a
@@ -27,7 +27,7 @@ zod-validated config object.
   (`DoctrineFileSourceConfig.root`, default `DEFAULT_GOVERNANCE_ROOT`), never a
   hardcoded literal — same rule as `createFileSource`. This keeps `aeg-core`'s
   derivation pure: doctrine arrives as already-read `DoctrineContent`, so the
-  library can be packaged for adopters whose repos have no `aeg-root/`.
+  library can be packaged for adopters whose repos have no `harness/processes/vinaya-strict/` doctrine tree.
 
 ## Open question — publish-time packaging (LAUNCH-tranche, not resolved here)
 

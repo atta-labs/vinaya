@@ -4,7 +4,7 @@
  * declares zero I/O, so it never resolves a cited path against a
  * filesystem — and if it tried, it would resolve against the authoring
  * repo, the one environment where every author-repo-internal path in
- * `aeg-root/**` happens to exist.
+ * process folder's doctrine happens to exist.
  *
  * The reframe that makes this decidable with no I/O at all: the rule is not
  * "this path does not resolve in the adopter" (which needs a filesystem to
@@ -41,6 +41,13 @@
  */
 
 import { maskCode } from '../../../kernel/adapters/code-host/github/strip-code'
+import {
+  BUNDLED_DOCTRINE_DIR,
+  DOCTRINE_MAP,
+  DOCTRINE_TREE,
+  doctrineEntry,
+  keyForSource
+} from '../tools/doctrine/doctrine-map'
 
 export type PortabilitySourceFile = { path: string; content: string }
 
@@ -53,17 +60,37 @@ export type PortabilityFinding = {
   kind: 'path' | 'vendor-name'
 }
 
-/** `aeg-root/**` by default — what this repo's own package ships and every adopter installs read-only. */
-const DEFAULT_SHIPS_PREFIX = 'aeg-root/'
+/** The doctrine map's tree by default — what this repo's own package ships and every adopter installs read-only. */
+const DEFAULT_SHIPS_PREFIX = `${DOCTRINE_TREE}/`
+
+/**
+ * Whether `cited` names a doctrine file the doctrine map ships, or a folder
+ * holding one: a map source path, repository-relative
+ * (`harness/processes/vinaya-strict/doctrine/enforcement.md`), process-relative
+ * (`doctrine/enforcement.md`) or under the bundled folder
+ * (`vinaya-strict/doctrine/enforcement.md`), or a logical key
+ * (`roles/developer.md`). Each resolves at the same relative place in the
+ * source tree and in an installed package.
+ */
+function isDoctrineCitation(cited: string): boolean {
+  const path = cited.split('#')[0] ?? cited
+  const relative = path.startsWith(DEFAULT_SHIPS_PREFIX)
+    ? path.slice(DEFAULT_SHIPS_PREFIX.length)
+    : path.startsWith(`${BUNDLED_DOCTRINE_DIR}/`)
+      ? path.slice(BUNDLED_DOCTRINE_DIR.length + 1)
+      : path
+  if (keyForSource(relative) !== undefined || doctrineEntry(relative) !== undefined) return true
+  return relative.endsWith('/') && DOCTRINE_MAP.some((entry) => entry.source.startsWith(relative))
+}
 
 /**
  * Doctrine-relative (`roles/`, `contracts/`, `skills/`) and adopter-owned
  * (`.github/`, `.vinaya/`, `.claude/`) top segments — the two portable
- * classes measured in the task-234 corpus scan. `aeg-root/` itself is
- * deliberately NOT a static entry here: it is always the CALLER-supplied
- * `shipsPrefix`, checked dynamically in `isPortable` below, so an adopter
+ * classes measured in the task-234 corpus scan. The doctrine tree itself is
+ * deliberately NOT a static entry here: it is always the `shipsPrefix`,
+ * checked dynamically in `isPortable` below, so an adopter
  * who configures a non-default `doctrineRoot` gets that root treated as
- * portable too — a static `'aeg-root/'` entry would falsely flag every one
+ * portable too — a static doctrine-tree entry would falsely flag every one
  * of that adopter's own self-citations as non-portable. A citation whose
  * top segment falls outside this list (and isn't the ships prefix) is
  * never assumed portable, however plausible it looks; it is a finding, and
@@ -153,7 +180,7 @@ export const NON_PATH_TOP_SEGMENTS: ReadonlySet<string> = new Set(['origin', 're
  * false-positive risk for a general-purpose tool, accepted here on the
  * same "reasonable hardcoded list for this repo's own corpus" basis as the
  * rest of this list (verified against the live corpus: no non-vendor use
- * of either word exists in `aeg-root/**` today).
+ * of either word exists in the doctrine today).
  */
 const VENDOR_NAME_SOURCE =
   '\\bclaude code\\b|\\bclaude\\b|\\banthropic\\b|\\bchatgpt\\b|\\bopenai\\b|\\bgpt\\b|\\bgemini\\b|\\bcodex\\b|\\bgrok\\b|\\bdeepseek\\b|\\bopus\\b|\\bsonnet\\b|\\bhaiku\\b'
@@ -249,12 +276,13 @@ function lineAtIndex(content: string, index: number): number {
 }
 
 /**
- * True iff `cited`'s top segment is portable: the caller-supplied
- * `shipsPrefix` itself (doctrine citing its own tree, wherever that tree
- * actually lives for this caller), or one of the static portable prefixes.
+ * True iff `cited` is portable: by default a doctrine file or folder the
+ * doctrine map ships; with a caller-supplied `shipsPrefix`, anything under
+ * that prefix (doctrine citing its own tree, wherever that tree actually
+ * lives for this caller); or one of the static portable prefixes.
  */
 function isPortable(cited: string, shipsPrefix: string): boolean {
-  if (cited.startsWith(shipsPrefix)) return true
+  if (shipsPrefix === DEFAULT_SHIPS_PREFIX ? isDoctrineCitation(cited) : cited.startsWith(shipsPrefix)) return true
   return STATIC_PORTABLE_PREFIXES.some((prefix) => cited.startsWith(prefix))
 }
 

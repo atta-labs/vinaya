@@ -21,12 +21,14 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { checkDoctrineNoProcedures, type DoctrineFile } from '../doctrine-no-procedures'
 import { loadConfig } from '../../../../../apps/cli/src/lib/config'
+import { doctrineRootLabel, doctrineSweepPaths } from '../../tools/doctrine/doctrine-sweep'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'doctrine-no-procedures'
 
-/** Same config key and same default as `doctrine-portability`/`reader-resolvable-prose`. */
-const DOCTRINE_ROOT = loadConfig()?.proseGates?.doctrineRoot ?? 'aeg-root'
+/** Same config key and same default as `doctrine-portability`/`reader-resolvable-prose`: unset, the doctrine map's source paths are swept. */
+const CONFIGURED_ROOT = loadConfig()?.proseGates?.doctrineRoot
+const DOCTRINE_ROOT = doctrineRootLabel(CONFIGURED_ROOT)
 
 /** Recursively collects repo-relative `.md` paths under `dir`. Missing/unreadable `dir` degrades to `[]`, never throws — an adopter with no `<doctrineRoot>` at all has nothing to sweep, not an error. */
 function collectMarkdown(dir: string, out: string[] = []): string[] {
@@ -59,7 +61,7 @@ function readFiles(paths: string[]): DoctrineFile[] {
 }
 
 function main(): void {
-  const files = readFiles(collectMarkdown(DOCTRINE_ROOT))
+  const files = readFiles(doctrineSweepPaths(CONFIGURED_ROOT, (dir) => collectMarkdown(dir)))
   const findings = checkDoctrineNoProcedures(files)
 
   // stdout only — this check's stderr is the CheckError JSON channel

@@ -21,16 +21,16 @@ describe('createFileSource', () => {
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'vinaya-sources-file-adapter-'))
-    mkdirSync(join(tmpRoot, 'aeg-root', 'tranches'), { recursive: true })
-    writeFileSync(join(tmpRoot, 'aeg-root', 'tranches', 'synthetic-fixture.md'), FIXTURE_MD, 'utf-8')
+    mkdirSync(join(tmpRoot, 'governance-root', 'tranches'), { recursive: true })
+    writeFileSync(join(tmpRoot, 'governance-root', 'tranches', 'synthetic-fixture.md'), FIXTURE_MD, 'utf-8')
   })
 
   afterEach(() => {
     rmSync(tmpRoot, { recursive: true, force: true })
   })
 
-  it('reads from the configured root, not the default aeg-root/ constant', async () => {
-    const source = createFileSource({ root: join(tmpRoot, 'aeg-root') })
+  it('reads from the configured root, not the default governance-root constant', async () => {
+    const source = createFileSource({ root: join(tmpRoot, 'governance-root') })
     const tranche = await source.getTranche('synthetic-fixture')
 
     expect(tranche.name).toBe('synthetic-fixture')
@@ -41,7 +41,7 @@ describe('createFileSource', () => {
   })
 
   it('throws when the slug does not exist under the configured root', async () => {
-    const source = createFileSource({ root: join(tmpRoot, 'aeg-root') })
+    const source = createFileSource({ root: join(tmpRoot, 'governance-root') })
     await expect(source.getTranche('does-not-exist')).rejects.toThrow()
   })
 })

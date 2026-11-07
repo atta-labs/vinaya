@@ -26,7 +26,7 @@ const { refuseUngrantedTool } = createTaskToolRouter(vinayaRouterPolicies())
  */
 
 // apps/cli/tests/lib -> repo root is four levels up.
-const REAL_DOCTRINE_ROOT = join(import.meta.dir, '..', '..', '..', '..', 'aeg-root')
+const REAL_DOCTRINE_ROOT = join(import.meta.dir, '..', '..', '..', '..', 'harness/processes/vinaya-strict')
 
 // Tools an Operator must NEVER be able to reach — the seat's whole point is
 // that holding the run button is not holding content or ratification

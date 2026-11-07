@@ -15,7 +15,7 @@ describe('claude-command-emitter', () => {
   describe('renderClaudeCommand', () => {
     it('matches the exact frontmatter + double-quoted $ARGUMENTS body specification', () => {
       const expected = `---
-description: Act as an AEG role for this repo.
+description: Act as a Vinaya role for this repo.
 allowed-tools: Bash(vinaya doctrine *)
 ---
 !\`vinaya doctrine --role "$ARGUMENTS" --print\`
@@ -60,7 +60,7 @@ allowed-tools: Bash(vinaya doctrine *)
   describe('renderClaudeCommand — selfHost (atta-labs/vinaya#408)', () => {
     it('invokes the source CLI and matches allowed-tools to the same prefix, when selfHost is set', () => {
       const expected = `---
-description: Act as an AEG role for this repo.
+description: Act as a Vinaya role for this repo.
 allowed-tools: Bash(bun apps/cli/src/index.ts doctrine *)
 ---
 !\`bun apps/cli/src/index.ts doctrine --role "$ARGUMENTS" --print\`

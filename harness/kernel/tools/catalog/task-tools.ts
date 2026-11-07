@@ -717,7 +717,7 @@ export function taskToolByName(name: TaskToolName): TaskToolDefinition {
 /**
  * The complete, closed set of tools the task Operator is granted — exactly the
  * catalog's tool names, and nothing else. This is the machine-readable twin of
- * `aeg-root/roles/operator.md`'s `allowed-tools` frontmatter and of the
+ * the process's Operator role doctrine's `allowed-tools` frontmatter and of the
  * generated skill's `allowed-tools`, and it is the list the task-tools server
  * serves; a test binds all four so no representation drifts from another. The
  * router refuses every tool outside this set: a registered tool is a

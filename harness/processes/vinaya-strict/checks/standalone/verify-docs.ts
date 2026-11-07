@@ -47,7 +47,7 @@
  *   (full)            Repo-wide structural checks. Catches unstatused specs, manifest
  *                     validity, the completeness scoreboard,
  *                     and the surfaced-doc manifest coherence check (C6 — state-machine.md
- *                     Section 15c): every surfaced doc under `aeg-root/` must be reachable
+ *                     Section 15c): every surfaced doc under `harness/processes/vinaya-strict/` must be reachable
  *                     in the doc-nav tree, with no orphans and no dangling cross-references.
  *
  * Runs in AUDIT mode (state-machine.md Section 4): it asks "is what shipped consistent
@@ -80,6 +80,14 @@ import { parseDocFrontmatter } from '../docs/parse-doc'
 import { deriveTierFromDiff, overrideActive, readTierFromPrBody } from '../../tools/task-contract/pr-tier'
 import { isWaiverLabelActorVerified, WAIVER_LABEL } from '../../tools/task-contract/waiver-label'
 import type { DoctrineContent } from '../../tools/doctrine-source'
+import {
+  CONTRACT_ENTRIES,
+  DOCTRINE_MAP,
+  DOCTRINE_REPO_PATHS,
+  doctrineRepoPath,
+  isDoctrineRepoPath,
+  ROLE_KEY_ENTRIES
+} from '../../tools/doctrine/doctrine-map'
 import { deriveDiagramModel } from '../../tools/diagram-model'
 import { checkDocClaims } from '../../tools/doc-claim'
 import { checkManifestValidity, type NoDocRule } from '../manifest-validity'
@@ -278,7 +286,7 @@ function runPrMode(): void {
   // C7 — published prose, scoped to the doctrine files this PR actually
   // changed. Blocking here (this is the gate CI runs); the repo-wide sweep is
   // full mode's job.
-  runC7(new Set(changed.filter((p) => p.startsWith(AEG_ROOT_PREFIX) && p.endsWith('.md'))))
+  runC7(new Set(changed.filter((p) => isDoctrineRepoPath(p))))
 
   // C8 — doc-claim bindings, scoped to the corpus files this diff touched.
   runC8(new Set(changed))
@@ -326,7 +334,22 @@ function runPushMode(): void {
 
 // ---- full mode -------------------------------------------------------------
 
-const AEG_ROOT_PREFIX = 'aeg-root/'
+/**
+ * Every doctrine file the doctrine map names that git tracks, as its
+ * repository-relative path plus its logical key — the key is the path the
+ * documentation checks report and key their output on.
+ */
+function trackedDoctrine(): { filePath: string; relPath: string }[] {
+  const tracked = new Set(
+    shFile('git', ['ls-files', '--', ...DOCTRINE_REPO_PATHS])
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  )
+  return DOCTRINE_MAP.map((entry) => ({ filePath: doctrineRepoPath(entry.key), relPath: entry.key }))
+    .filter((file) => tracked.has(file.filePath))
+    .sort((a, b) => a.relPath.localeCompare(b.relPath))
+}
 
 /**
  * The doctrine the `DiagramModel` derives from — raw `enforcement.md` + the
@@ -337,29 +360,26 @@ const AEG_ROOT_PREFIX = 'aeg-root/'
  */
 function loadDoctrine(): DoctrineContent {
   const read = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '')
-  const list = (glob: string): string[] =>
-    sh(`git ls-files '${glob}'`)
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean)
+  const doctrine = trackedDoctrine()
+  const among = (entries: readonly { key: string }[]): { path: string; content: string }[] => {
+    const keys = new Set(entries.map((entry) => entry.key))
+    return doctrine
+      .filter((file) => keys.has(file.relPath))
+      .map((file) => ({ path: file.filePath, content: read(file.filePath) }))
+  }
   return {
-    enforcement: read('aeg-root/enforcement.md'),
-    roles: list('aeg-root/roles/*.md').map((path) => ({ path, content: read(path) })),
-    contracts: list('aeg-root/contracts/*.md').map((path) => ({ path, content: read(path) }))
+    enforcement: read(doctrineRepoPath('enforcement.md')),
+    roles: among(ROLE_KEY_ENTRIES),
+    contracts: among(CONTRACT_ENTRIES)
   }
 }
 
 function runC6(): void {
-  const files = sh("git ls-files 'aeg-root/*.md'")
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
-
-  const entries: DocsCoherenceEntry[] = files.map((filePath) => {
+  const entries: DocsCoherenceEntry[] = trackedDoctrine().map(({ filePath, relPath }) => {
     const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : ''
     const parsed = parseDocFrontmatter(raw)
     return {
-      relPath: filePath.slice(AEG_ROOT_PREFIX.length),
+      relPath,
       frontmatter: parsed.frontmatter,
       body: parsed.body,
       firstH1: parsed.firstH1
@@ -407,25 +427,21 @@ function configuredDecisionRecordsPath(): string | undefined {
 }
 
 /**
- * C7 — published-prose. The doctrine files under `aeg-root/` whose paths are
+ * C7 — published-prose. The doctrine files under `harness/processes/vinaya-strict/` whose paths are
  * in `only` (PR mode: this diff's own changed files; full mode: every one) are
  * parsed and handed to the pure check together with the same model-backed
  * allowlist C6 uses, so the gate governs exactly what `/docs` publishes.
  */
 function runC7(only?: ReadonlySet<string>): void {
-  const files = sh("git ls-files 'aeg-root/*.md' 'aeg-root/roles/*.md' 'aeg-root/contracts/*.md'")
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .filter((filePath) => (only ? only.has(filePath) : true))
+  const files = trackedDoctrine().filter(({ filePath }) => (only ? only.has(filePath) : true))
 
   if (files.length === 0) return
 
-  const entries: PublishedProseEntry[] = files.map((filePath) => {
+  const entries: PublishedProseEntry[] = files.map(({ filePath, relPath }) => {
     const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : ''
     const parsed = parseDocFrontmatter(raw)
     return {
-      relPath: filePath.slice(AEG_ROOT_PREFIX.length),
+      relPath,
       frontmatter: parsed.frontmatter,
       body: parsed.body
     }
@@ -440,7 +456,7 @@ function runC7(only?: ReadonlySet<string>): void {
 }
 
 /**
- * The corpus C8 sweeps: every doctrine page under `aeg-root/`, and every
+ * The corpus C8 sweeps: every doctrine page under `harness/processes/vinaya-strict/`, and every
  * tracked `.ts`/`.md` file under `apps/` and `packages/`.
  *
  * Widened from a four-entry allowlist after review round 1 (Issue #434,
@@ -460,7 +476,7 @@ function runC7(only?: ReadonlySet<string>): void {
  * re-open the gap above. Two lists, because there are two questions.
  */
 const C8_PATHSPECS = [
-  'aeg-root/*.md',
+  ...DOCTRINE_REPO_PATHS,
   'apps/*.ts',
   'apps/*.md',
   'harness/*.ts',

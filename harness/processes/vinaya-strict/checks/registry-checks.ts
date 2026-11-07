@@ -1,6 +1,6 @@
 /**
  * registry-checks.ts — G1–G7, the deterministic coherence checks that make
- * `aeg-root/enforcement.md`'s three ring tables (parsed by
+ * `harness/processes/vinaya-strict/doctrine/enforcement.md`'s three ring tables (parsed by
  * `registry-parse.ts`) load-bearing instead of decorative.
  *
  * Pure — no `fs`, no `git`/`gh` I/O, no `fetch`. All forge/filesystem facts

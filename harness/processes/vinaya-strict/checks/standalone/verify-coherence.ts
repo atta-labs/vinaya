@@ -24,7 +24,7 @@
  * chdir's there immediately below, since
  * this script is also spawned as a subprocess (apps/vinaya/web's
  * /api/coherence route) without an explicit cwd — every relative path in this
- * file (DOC_OWNERS_PATH, aeg-root/, etc.) must resolve correctly regardless of
+ * file (DOC_OWNERS_PATH, harness/processes/vinaya-strict/, etc.) must resolve correctly regardless of
  * the invoking process's own working directory.
  */
 
@@ -240,8 +240,8 @@ function gitFetchMainQuiet(): void {
  *
  *     $ git ls-tree --name-only origin/main:aeg-root/tranches   # expected miss
  *     fatal: Not a valid object name origin/main:aeg-root/tranches
- *     $ git ls-tree --name-only deadbeef…:aeg-root               # unreachable ref
- *     fatal: Not a valid object name deadbeef…:aeg-root
+ *     $ git ls-tree --name-only deadbeef…:harness/processes/vinaya-strict               # unreachable ref
+ *     fatal: Not a valid object name deadbeef…:harness/processes/vinaya-strict
  *
  * So the discriminator is not the message, it is whether the REF resolves. A
  * miss under a ref that resolves is the expected answer; a miss under a ref

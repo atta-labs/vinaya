@@ -855,7 +855,10 @@ describe('checkRationaleNamesDocs (D)', () => {
   // end-of-LINE, so a heading-style field sliced to its own label with no
   // content and D failed Issues that name their docs on the next line.
   it('reads a heading-style rationale, not just the bold-inline one (#219 shape)', () => {
-    const body = HEADING_STYLE.replace('planner.md.', '`aeg-root/roles/planner.md` — the §7 derivation rule.')
+    const body = HEADING_STYLE.replace(
+      'planner.md.',
+      '`harness/processes/vinaya-strict/thinking/planner/doctrine.md` — the §7 derivation rule.'
+    )
     expect(checkRationaleNamesDocs(body).status).toBe('pass')
   })
 
@@ -2023,19 +2026,20 @@ describe('checkPartsCoverageAndSequence', () => {
 })
 
 describe('checkDocsWithinSurface (O6)', () => {
-  const surface = '## Surface\n\nin: aeg-root/skills/**\nout: aeg-root/tranches/**\n'
+  const surface =
+    '## Surface\n\nin: harness/processes/vinaya-strict/doctrine/skills/**\nout: harness/processes/vinaya-strict/thinking/**\n'
 
   it('passes when the docs pointer falls inside an `in:` glob', () => {
-    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/skills/foo/SKILL.md\`.\n`
+    const body = `${surface}\n**Docs to keep coherent** — Update \`harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md\`.\n`
     expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
   })
 
   it('fails, naming the pointer and the glob, when the pointer falls inside an `out:` glob', () => {
-    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/tranches/example-tranche.md\`.\n`
+    const body = `${surface}\n**Docs to keep coherent** — Update \`harness/processes/vinaya-strict/thinking/reviewer-prompt.md\`.\n`
     const r = checkDocsWithinSurface(body, 500)
     expect(r.status).toBe('fail')
-    expect(r.errors[0]).toMatch(/aeg-root\/tranches\/example-tranche\.md/)
-    expect(r.errors[0]).toMatch(/aeg-root\/tranches\/\*\*/)
+    expect(r.errors[0]).toMatch(/harness\/processes\/vinaya-strict\/thinking\/reviewer-prompt\.md/)
+    expect(r.errors[0]).toMatch(/harness\/processes\/vinaya-strict\/thinking\/\*\*/)
   })
 
   it('passes when the pointer falls outside every `in:` glob but inside no `out:` glob either', () => {
@@ -2062,14 +2066,14 @@ describe('checkDocsWithinSurface (O6)', () => {
     // Config-less repo: `## Surface` is required from Issue 1, so this
     // Surface-consistency gate must run from Issue 1 too — an `out:`-excluded
     // pointer is a real refusal, never grandfathered away.
-    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/tranches/example-tranche.md\`.\n`
+    const body = `${surface}\n**Docs to keep coherent** — Update \`harness/processes/vinaya-strict/thinking/reviewer-prompt.md\`.\n`
     const r = checkDocsWithinSurface(body, 1, null)
     expect(r.status).toBe('fail')
-    expect(r.errors[0]).toMatch(/aeg-root\/tranches\/example-tranche\.md/)
+    expect(r.errors[0]).toMatch(/harness\/processes\/vinaya-strict\/thinking\/reviewer-prompt\.md/)
   })
 
   it('grandfathers Issue 1 below a configured cutover — O2 unchanged', () => {
-    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/tranches/example-tranche.md\`.\n`
+    const body = `${surface}\n**Docs to keep coherent** — Update \`harness/processes/vinaya-strict/thinking/reviewer-prompt.md\`.\n`
     expect(checkDocsWithinSurface(body, 1, 426).status).toBe('pass')
   })
 })
@@ -2235,10 +2239,15 @@ describe('globCoversPath — the root glob `*` (#826, O1/O2/O3)', () => {
 
 describe('checkSurfaceScope — a protected administrative path needs an in: glob that names it', () => {
   it('fails an uncovered protected path even when the record lists it', () => {
-    const result = checkSurfaceScope(['aeg-root/enforcement.md'], { in: ['apps/cli/src'], out: [] }, [
-      'aeg-root/enforcement.md'
-    ])
-    expect(result).toEqual({ ok: false, violation: { path: 'aeg-root/enforcement.md', reason: 'protected' } })
+    const result = checkSurfaceScope(
+      ['harness/processes/vinaya-strict/doctrine/enforcement.md'],
+      { in: ['apps/cli/src'], out: [] },
+      ['harness/processes/vinaya-strict/doctrine/enforcement.md']
+    )
+    expect(result).toEqual({
+      ok: false,
+      violation: { path: 'harness/processes/vinaya-strict/doctrine/enforcement.md', reason: 'protected' }
+    })
   })
 
   it('an empty in: covers no protected path', () => {
@@ -2247,7 +2256,13 @@ describe('checkSurfaceScope — a protected administrative path needs an in: glo
   })
 
   it('passes a protected path an in: glob covers', () => {
-    expect(checkSurfaceScope(['aeg-root/enforcement.md'], { in: ['aeg-root'], out: [] }, []).ok).toBe(true)
+    expect(
+      checkSurfaceScope(
+        ['harness/processes/vinaya-strict/doctrine/enforcement.md'],
+        { in: ['harness/processes/vinaya-strict/doctrine'], out: [] },
+        []
+      ).ok
+    ).toBe(true)
   })
 
   it('an out: glob does not decide a protected path', () => {
@@ -2258,13 +2273,15 @@ describe('checkSurfaceScope — a protected administrative path needs an in: glo
     ).toBe(true)
   })
 
-  it.each(['./.github/x', '/aeg-root/x', 'foo/../.github/x', '../../aeg-root/x'])(
-    'recognizes the disguised %s',
-    (path) => {
-      const result = checkSurfaceScope([path], { in: ['apps'], out: [] }, [path])
-      expect(result).toEqual({ ok: false, violation: { path, reason: 'protected' } })
-    }
-  )
+  it.each([
+    './.github/x',
+    '/harness/processes/vinaya-strict/doctrine/enforcement.md',
+    'foo/../.github/x',
+    '../../harness/processes/vinaya-strict/doctrine/enforcement.md'
+  ])('recognizes the disguised %s', (path) => {
+    const result = checkSurfaceScope([path], { in: ['apps'], out: [] }, [path])
+    expect(result).toEqual({ ok: false, violation: { path, reason: 'protected' } })
+  })
 })
 
 describe('checkSurfaceScope — a beyond-Surface path passes only when the body records it', () => {

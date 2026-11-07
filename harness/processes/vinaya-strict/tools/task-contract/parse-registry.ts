@@ -1,7 +1,7 @@
 import type { Project, Registry } from './types'
 
 /**
- * Parse `aeg-root/projects.md` and return its `## Registry` table as a typed
+ * Parse a project registry (`.vinaya/projects.md`) and return its `## Registry` table as a typed
  * `Registry`. Surrounding prose is ignored.
  *
  * Tolerates a prose last-cell (e.g. "(state tracked globally for now)") by

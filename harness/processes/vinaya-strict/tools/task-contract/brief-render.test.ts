@@ -24,7 +24,7 @@ import {
 
 const FIXTURE_REVISION = 'a'.repeat(40)
 
-const TEMPLATE = readFileSync(join(import.meta.dirname, '../../../../../aeg-root/templates/brief-template.md'), 'utf8')
+const TEMPLATE = readFileSync(join(import.meta.dirname, '../../artifacts/templates/brief-template.md'), 'utf8')
 
 const ISSUE_BODY = `
 [review-convergence-v1] 42 — a fixture task for the renderer
@@ -311,8 +311,14 @@ describe('renderBrief', () => {
     it('raises a declared tier to the derived floor when the floor is higher', () => {
       const facts = baseFacts({
         rationale: { ...parseRationaleFields(ISSUE_BODY), declaredTier: 0 },
-        surface: { in: ['aeg-root'], out: [] },
-        surfaceFiles: [{ path: 'aeg-root/roles/developer.md', sha256: 'a'.repeat(64), packageName: null }]
+        surface: { in: ['harness/processes/vinaya-strict'], out: [] },
+        surfaceFiles: [
+          {
+            path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md',
+            sha256: 'a'.repeat(64),
+            packageName: null
+          }
+        ]
       })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(true)
@@ -331,8 +337,14 @@ describe('renderBrief', () => {
     it('falls back to the derived floor alone when the Issue declares no Tier field', () => {
       const facts = baseFacts({
         rationale: { ...parseRationaleFields(ISSUE_BODY), declaredTier: null },
-        surface: { in: ['aeg-root'], out: [] },
-        surfaceFiles: [{ path: 'aeg-root/roles/developer.md', sha256: 'a'.repeat(64), packageName: null }]
+        surface: { in: ['harness/processes/vinaya-strict'], out: [] },
+        surfaceFiles: [
+          {
+            path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md',
+            sha256: 'a'.repeat(64),
+            packageName: null
+          }
+        ]
       })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(true)
@@ -1128,7 +1140,7 @@ describe('renderBrief — the `## Premises` section', () => {
 // none of them can carry a retired instruction back alone.
 describe('the render and both templates carry no retired instruction', () => {
   const PR_REPORT_TEMPLATE = readFileSync(
-    join(import.meta.dirname, '../../../../../aeg-root/templates/pr-report-template.md'),
+    join(import.meta.dirname, '../../artifacts/templates/pr-report-template.md'),
     'utf8'
   )
 

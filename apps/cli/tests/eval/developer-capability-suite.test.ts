@@ -354,7 +354,7 @@ describe('the developer capability grader', () => {
     for (const path of [
       '.github/workflows/ci.yml',
       'vinaya.config.json',
-      'aeg-root/roles/developer.md',
+      'harness/processes/vinaya-strict/executing/developer/doctrine.md',
       '.claude/settings.json'
     ]) {
       const o = referenceObservation(planted)

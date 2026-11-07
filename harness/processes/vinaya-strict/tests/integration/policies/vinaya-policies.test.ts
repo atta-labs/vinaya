@@ -48,7 +48,11 @@ describe('the protected-path policy — the one list the surface-scope check als
   })
   it('protects a disguised path once the broker has normalized it', () => {
     expect(VINAYA_PROTECTED_PATHS.isProtected(normalizeTouchedPath('../.github/workflows/ci.yml'))).toBe(true)
-    expect(VINAYA_PROTECTED_PATHS.isProtected(normalizeTouchedPath('foo/../aeg-root/x'))).toBe(true)
+    expect(
+      VINAYA_PROTECTED_PATHS.isProtected(
+        normalizeTouchedPath('foo/../harness/processes/vinaya-strict/doctrine/enforcement.md')
+      )
+    ).toBe(true)
   })
 })
 

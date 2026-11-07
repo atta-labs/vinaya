@@ -1387,6 +1387,16 @@
     }
   },
   {
+    "decisionRecords": {
+      "path": "harness/processes/vinaya-strict/adr"
+    }
+  },
+  {
+    "decisionRecords": {
+      "path": "harness/processes/vinaya-strict"
+    }
+  },
+  {
     "proseGates": {
       "doctrineRoot": "doctrine"
     },

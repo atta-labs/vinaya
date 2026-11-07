@@ -34,8 +34,11 @@
 // same bytes.
 
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
-import { dirname, join, sep } from 'node:path'
-import { resolveDoctrineRootInfo } from '../commands/doctrine.js'
+import { join, sep } from 'node:path'
+import {
+  gitToplevel,
+  resolveDoctrineRootInfo
+} from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
 
 /** The published name whose presence in the workspace is what breaks `npx`. */
 export const VINAYA_PACKAGE_NAME = '@attalabs/vinaya'
@@ -279,12 +282,12 @@ export function detectVendoredVinaya(repoRoot: string): VendoredVinaya | null {
  *
  * When `ownPackageRoot` (this CLI's own resolved `packageRoot`) sits inside a
  * `node_modules` tree — i.e. this is an installed copy, not a checkout
- * running from its own source — AND `cwd`'s git toplevel carries its own
- * `aeg-root/roles/` (the same tree `resolveDoctrineRootInfo` resolves, so
+ * running from its own source — AND `cwd`'s git toplevel carries the
+ * doctrine's front door under `harness/processes/vinaya-strict/` (the same tree `resolveDoctrineRootInfo` resolves, so
  * doctrine and CLI agree on what the author repo is) — AND that toplevel's
  * `apps/cli/package.json` declares the name `detectVendoredVinaya` above
  * already treats as this CLI's own identity, so a directory shape alone
- * (any repo that merely happens to carry an `aeg-root/roles/` and an
+ * (any repo that merely happens to carry a front door under `harness/processes/vinaya-strict/` and an
  * `apps/cli/src/index.ts`, e.g. a shared sample/tutorial/fork) cannot make
  * an installed `vinaya` re-exec arbitrary code (a security-review finding)
  * — returns that toplevel's own `apps/cli/src/index.ts`. Returns `null`
@@ -299,7 +302,8 @@ export function resolveAuthorRepoSourceEntry(ownPackageRoot: string, cwd: string
   const info = resolveDoctrineRootInfo(undefined, cwd)
   if (info?.source !== 'tree') return null
 
-  const toplevel = dirname(info.root)
+  const toplevel = gitToplevel(cwd)
+  if (toplevel === null) return null
   const cliPkg = readPackageJson(join(toplevel, 'apps', 'cli', 'package.json'))
   if (cliPkg?.name !== VINAYA_PACKAGE_NAME) return null
 

@@ -1,0 +1,355 @@
+---
+sidebar_title: The Tranche Model
+section: Overview
+---
+# Tranches — the middle altitude of Vinaya
+
+**Status:** ratified
+**Ratified on:** 2026-06-04
+**Ratified by:** Principal
+**Ratifies via:** the `needs:principal-input` label
+**Amended:** the Milestone layer (`0.19.0`) added a real altitude above the tranche — this file no longer claims to be the top of Vinaya. See `milestone-model.md`. The task altitude below the tranche now has its own file too — see `task-model.md`.
+
+This design was reviewed in three rounds by an external panel of independently-hosted models, each from a different provider than the one that authored it, and unanimously endorsed after the corrections below.
+
+The **tranche** is the middle altitude in Agentic Execution Governance — a **Milestone** may sit above it (`milestone-model.md`, most tranches have none and need none), and a **task** always sits below it (`task-model.md`). Vinaya's execution model is these three altitudes; nothing sits above the Milestone and nothing sits below the task.
+
+Vinaya is the **execution** layer — it governs how a human's intent becomes reviewed, merged, coherent code, run by humans wielding agents. It is **not** a roadmap-planning tool.
+
+> **Vinaya is forge-native, orchestrator-independent.** It depends on a Git forge (GitHub/GitLab) the way it depends on git — the forge is infrastructure every team already has, and it is Vinaya's source of truth for execution state. Vinaya does **not** depend on any orchestration tool: a human, or a thin dispatch script, invokes roles; there is no Vinaya server, scheduler, or database. Knowledge flows one way — a tool may know Vinaya; Vinaya does not know the tool. (Earlier drafts claimed "tool-neutral." That was abandoned as a false goal: real teams have a forge; pretending otherwise produced a fragile mutable-file state model. Forge-native is the honest boundary.)
+
+---
+
+## 1. The four truth domains (this is the whole architecture)
+
+Every fact in Vinaya lives in exactly **one** place. Nothing is duplicated; no artifact tries to be two things. This separation is what the review panel identified as the difference between a coherent design and the original broken one.
+
+| Domain | Holds | Mutable by |
+|--------|-------|-----------|
+| **The forge Issue** | Task identity + metadata (project label, ticket link, its own `Depends-on` / `Conflicts-with` edges) | Planner (at plan time) |
+| **The tranche's label and Milestone** | Planning *grouping* only — which Issues form the tranche, and the goal they serve | Planner (at plan time) |
+| **The Git forge** (branch / PR / review / merge state) | All live execution *status* — derived, never stored | the act of working (opening a branch, a PR, a review, a merge) |
+| **The task Issue's `aeg:brief:v1` comment** | The just-in-time brief — the task's full execution context | The Planner's dispatch act, once, when work starts (mechanically rendered, never hand-typed) |
+
+The cardinal rule, stated once and enforced everywhere below: **the forge's live facts hold what is happening; the Issue and its Milestone hold the plan. Never copy "what is happening" into the Issue or the Milestone.**
+
+---
+
+## 2. Vinaya owns tranches, not roadmaps
+
+The roadmap — what to build, why, in what priority — belongs to the company and lives in the company's tool (Jira, Linear, a doc they own). **Vinaya never holds it.** The moment Vinaya stores a roadmap it competes with Jira, loses, and creates a second rotting source of truth.
+
+What Vinaya holds is the **tranche**: the bounded set of tasks currently being turned into merged code. The link from roadmap → tranche is a **human** — the Planner translating tickets into agent-shaped tasks. There is no file for that link, because the link is a person's judgment.
+
+```
+Company roadmap / Jira / project backlog   ← NOT in Vinaya. Reference only. The human reads it.
+        │  (human translation — Planner, plan act)
+        ▼
+Tranche  =  a Milestone  +  the forge Issues carrying its tranche label
+   ├─ Task (Issue) ── brief rendered mechanically at dispatch → posted as the Issue's frozen comment
+   ├─ Task (Issue)
+   └─ …          edges (depends-on / conflicts-with) declared on each Issue's body
+        │
+        ▼
+Per task: branch → PR → Reviewer + Security → merge → close-out
+```
+
+**`roadmap.md` is retired.** Its executable slice became the first tranche; its held/vision content moved to per-unit backlogs (`<unit>/specs/<unit>-backlog.md`) and the repo-level `specs/<repo>-backlog.md`, all out of the flow.
+
+**The backlog is the seam with your planning tool — and Vinaya is indifferent to it.** The backlog can be these markdown files, or it can be Jira, Linear, a spreadsheet, or a conversation in someone's head. Vinaya does not care which, because **Vinaya never reads the backlog as part of the flow** — it only requires that *a well-formed brief exists* when a task is dispatched. The Planner *may* read the backlog to compose a tranche (a useful input), but it does **not depend** on one: hand the Planner intent directly ("build the dashboard") and it produces a tranche with no backlog at all. So the backlog is an *optional upstream input*, never a flow dependency. This is exactly what lets Vinaya drop into a team that already lives in Jira without fighting it — Jira stays the plan; Vinaya picks up at the tranche. The seam is the only point the two ever touch, and only a human (the Planner) stands on it.
+
+---
+
+## 3. A task is a forge Issue; status is derived, never stored
+
+**Full model, including the operational flow stages a task moves through: `task-model.md`.** What follows here is the status-derivation rule set as it bears on tranche-level state (§11 derives a tranche's own lifecycle from these task statuses) — kept here because the rest of this file depends on it, not duplicated there.
+
+A task **is** a forge Issue. Its status is not a field anyone writes — it is **computed by asking the forge** what is true right now. This is the change that removed the original fatal flaw (a hand-edited status column that raced, drifted, and lied under parallelism).
+
+**Which fact produces which status is not written here.** The full machine — every forge fact and the GitHub object it is read from, every label and the one orthogonal fact it carries, every derivable status, and the ordered rule chain that gets from the first to the last — lives at **[`/docs/state-machine`](https://vinaya.attalabs.dev/docs/state-machine)**, rendered from the model the deriver itself executes (`@attalabs/aeg-core`'s state-machine model, `@attalabs/aeg-forge-state`'s label module). A table here would be a second copy of that model, maintained by hand, free to drift from the code that actually decides — which is the failure this whole section describes. So this section keeps the *rules* the machine obeys, and the page carries the machine.
+
+`backlog` is a **project-level concept only** — ideas/maybe-tasks in markdown that live outside the tranche flow (`specs/<unit>-backlog.md`, Jira, etc.). Once a task is placed in a launched tranche it is committed work and derives `todo` at minimum, never `backlog`..
+
+**A closed-without-merge Issue never resolves to `todo`**. `todo` implies not-started; a closed Issue is terminal. The derivation reads GitHub's native `stateReason`: `NOT_PLANNED` → `dropped`; anything else (`COMPLETED`, or no reason) → `incoherent`. The one law: a task-Issue reaches *done* only via a merged PR that names it (`Closes #N`); a `COMPLETED` close without that merge is incoherent, not done.
+
+**One task number, several Issues.** A re-cut task leaves its closed `NOT_PLANNED` Issue (a `dropped` task) in the tranche beside the open replacement. Readers that need one Issue per task number — the dispatch-readiness check — resolve an open Issue over a closed one, and refuse when two open Issues claim the same number; forge facts are read and keyed by Issue number, then mapped back to the task.
+
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.ts contains:export function resolveDuplicateTasks -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/forge/fetch-forge-facts.ts contains:export async function fetchForgeFactsByIssue -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/checks/bin/check-dispatch-readiness.ts contains:resolveDuplicateTasks( -->
+
+So: there is **no status column anywhere.** The Developer does not "flip to in-review" — *opening the PR is the in-review signal*. The close-out does not "flip to merged" — *the merge is that signal*. The branch-name convention `task/<tranche>/<n>` is what links a task number to its branch and PR, so any role finds a task's live status with one forge query and writes nothing. `blocked` is the one state with no native forge fact, so it is a label (cheap, native, doesn't race).
+
+**Retry is free:** a Reviewer's REQUEST CHANGES makes the PR's `reviewDecision` = `CHANGES_REQUESTED` → derived status `changes-requested`. The Developer pushes fixes → the PR returns to open review → `in-review`. No status reset, because nothing was stored.
+
+**Orphaned task** (branch exists, no PR, gone stale) has an explicit owner: a close-out/sweep step flags it and a human deletes the branch (returning the task to `todo`). Named, not silent.
+
+---
+
+## 4. The thin tranche file — retired, and what survives it
+
+**A plan is a Milestone plus labeled Issues. There is no topology file, and `aeg-root/tranches/` holds nothing but the archive.** This section is kept because the *rules* the file encoded still bind — they simply bind the forge objects now. Read it as the reasoning behind the shape, not as a file to create.
+
+> **A tranche's identity is its `vinaya/tranche:<slug>` label, not a Milestone.** Full model — the Milestone/Architect relationship, `adopt`, the `Release:` field, the `Tranche intents` grammar, the closed-legacy-Milestone trap — moved to `milestone-model.md`, one altitude up. What's kept here is only the one fact this file's own reasoning depends on: a tranche's goal is derived, never stored, the same discipline this section applies to everything else a tranche might otherwise hoard.
+
+The file held **only** what the forge models poorly: the task→Issue mapping and the dependency/conflict graph. It contains **no status, no PR numbers, no merge dates, no timestamps — nothing the forge already knows. It contains no task prose, no boundary descriptions, no rationale — nothing that belongs on the Issue.** Its task topology was edited only by the Planner, at plan time, so it could not race and could not drift on status (it stored none). The same rule now binds the Milestone and its Issues: the Planner cuts them, and nothing downstream writes status back. The one exception was the tranche's own **lifecycle marker** (active/complete), a single header line the Archivist set at close-out — the tranche's lifecycle, not per-task execution status; a closed Milestone carries that fact now (§11).
+
+**`#TBD` is still forbidden, wherever a task is recorded.** Every task must carry a real forge Issue number. A tranche that contains `#TBD` is an incomplete plan — the Planner has not cut the Issues, which is the canonical plan act. **The Planner's rationale (Boundary, Sizing, Project(s)+blast radius, Dependency rationale, Traps to avoid, Suggested agent-class, Stop-and-escalate) lives on the Issue body.** Nothing outside the Issue repeats the rationale. The dispatch act's render reads it from the Issue, which is now its only home.
+
+`dependsOn`/`conflictsWith` for every active tranche is now genuinely forge-derived, no file fallback anywhere. `completed/*.md` files are never deleted, by design (§11) — the birth rule never applied to them.
+
+**What the archive still holds, and what a pre-cutover tranche still needs.** A tranche planned before the cutover that still carries its topology file is archived the old way, in addition to closing its Milestone: the Tranche Archivist adds `Lifecycle: complete` after the file's heading and moves it from `aeg-root/tranches/<name>.md` to `aeg-root/tranches/completed/<name>.md`, its `<name>.tokens.md` ledger beside it; for such a tranche the Planner's readiness gate also confirms the moved file exists. A forge-native tranche carries no file to move or check.
+
+**The per-project state directory went with it.** `aeg-project/` once held each unit's living state — `state.md` (the active-work pointer), `lessons.md` and `retrospectives/` (close-out observations), and committed `briefs/`. Each has a forge home now: active work is derived from Issues, branches and pull requests; a retrospective is a comment on the pinned lessons Issue; a brief is the task Issue's frozen `aeg:brief:v1` comment; and anything genuinely non-derivable is an ordinary open Issue, closed when resolved.
+
+Template:
+
+```
+# Tranche: <short name> — <timeframe>
+Lifecycle: active            ← active | complete. Set to complete by the Archivist when every task was merged.
+
+Goal (execution, not roadmap-why): <what ships, end to end>
+Repo: <repo>   ·   Planner: <name>
+
+## Tasks (topology)
+| # | Task                          | Issue | Project(s)      | Depends-on | Conflicts-with |
+|---|-------------------------------|-------|-----------------|------------|----------------|
+| 1 | Generalize core + migrate     | #N1   | core,service-a  | —          | 3              |
+| 2 | Schema migration              | #N2   | service-a       | —          | —              |
+| 3 | service-b tweak (touches core)| #N3   | service-b       | —          | 1              |
+
+## Backlog (this tranche, not yet ready to dispatch)
+- Rate-limit middleware (issue #N4, service-a) — promote once task 1 lands.
+```
+
+To see **live status**, you do not read this file — you ask the forge: `gh pr list`, the forge's Issues view, or a project board. The file is the *plan*; the forge is the *board*. (Note task 3: a `service-b` task conflicts with task 1 even though they're different projects — both touch the shared `core` package. Conflicts are package-level, §5.)
+
+### Naming a tranche
+
+The tranche slug (`<slug>` in its `tranche:<slug>` label and in every task branch `task/<slug>/<n>`) should name the tranche's **center of gravity — the durable, highest-leverage work — not its narrowest downstream feature.** The test: *what is the lasting, reusable thing this tranche produces?* Name that.
+
+- When a tranche **onboards a project onto shared infrastructure** (or grows that infra), name the **onboarding / infra**, not the feature that happens to ride on it. The infra work outlives and outscopes the feature, and other projects inherit it. Example: a tranche that migrates a product onto a shared billing engine and adds multi-vendor payment support to that shared engine — with "refund UI" as the proximate feature on that product — is named **`billing-onto-engine`**, *not* `billing-refund-ui`. The engine maturing is the center of gravity; the refund UI is one feature on top.
+- When a tranche is genuinely **one project's self-contained feature** (no shared-infra change, no cross-project blast radius), `<project>-<feature>` is fine (e.g. `<project>-reviewers-benchmark`).
+- A name should not imply a narrower scope than the `Project(s)` column reveals. If tasks span several projects, a slug naming only one of them misleads a reader scanning the tranche labels. When in doubt, name the broadest/most-shared layer the tranche touches.
+
+Each Issue's `Project(s)` field remains the authoritative blast-radius record per task; the slug is a human-readable handle, chosen to not mislead about scope.
+
+---
+
+## 5. Conflicts — declared, package-level, static
+
+Two tasks conflict if they touch the same **collision domain** and therefore must not run in parallel. The rules, after the panel's correction:
+
+- **Conflicts are declared by the Planner** as `conflicts-with` edges on the task Issues. Declared, not inferred.
+- **Collision domains are packages**, live-derived from the repo's own workspace declaration's `packages/*` members (`package.json`'s `workspaces` array, or `pnpm-workspace.yaml`'s `packages:` list on a pnpm repo) — no file to author or keep in sync. Known cross-cutting collision paths that are detectable by convention — **whichever lockfile exists, monorepo config (`tsconfig.json`/`biome.json`/`turbo.json`), `.github/workflows`, `.husky`** — ship as a built-in default set for the same reason. Paths that couple tasks across package boundaries but have no universal convention — **`migrations/`, codegen outputs (protobuf/GraphQL/OpenAPI)** — are declared as their own collision domains via `vinaya.config.json`'s `blastRadius.extraDomains`. The legacy static `.aeg/packages` file is retired — no longer read, zero backward compatibility.
+- **The conflict gate is forge-answerable with zero stored state:** "is a `conflicts-with` sibling's PR currently open?" If yes, don't start. That's it.
+- **There is no dynamic path-overlap check.** (The panel's decisive correction.) Computing "which files is each in-flight task touching right now" would require a live task→changed-files map — exactly the mutable execution state the design eliminates. So it is forbidden (§10).
+
+**Conflicts hold across tranches, not just within one.** A `conflicts-with` edge is declared on one tranche's Issues, but the collision domain it protects is global — a package is a package no matter which tranche touches it. So when two tranches run concurrently (§11), the conflict rule still binds **across** them: if a task in tranche A and a task in tranche B touch the same collision domain, they conflict, even though neither tranche's Issues name the other's. The Planner of the *second* concurrent tranche is responsible for checking the first's `Project(s)` / collision domains and either keeping the tranches disjoint or declaring the cross-tranche serialization (§12). The gate itself is unchanged and still forge-answerable — "is a PR touching this collision domain currently open?" does not care which tranche it belongs to.
+
+**Acknowledged limitation, stated openly:** Vinaya catches *declared* and *package-level* collisions. It does **not** automatically catch novel, undeclared, file-level coupling between tasks in *different* packages (e.g. one task changes a shared type/config another package embeds). No tool catches that reliably without becoming unreliable, expensive, or stateful. Vinaya places its trust boundary at **planning**: when unsure whether two tasks collide, the Planner **declares the conflict and serializes them** — erring toward serialization is cheap; erring toward "run parallel and hope" is the failure mode. Safe parallelism assumes real package ownership boundaries (explicit APIs, no shared types leaking across packages); most monorepos earn this only with discipline.
+
+---
+
+## 6. The Planner
+
+The **Planner** has two acts, same intelligence, two altitudes (`roles/planner.md`). Dispatch act: one task's Issue → a rendered, gate-checked brief. Plan act: intent + a slice of tickets → a whole tranche (a Milestone's set of labeled Issues, edges declared on each).
+
+The Planner's job — the reason the tranche exists — is the relationships a brief-in-isolation can't see: decompose the ticket slice into agent-sized tasks (Issues), declare `depends-on` and `conflicts-with` edges, and decide **split vs. combine** by the **verification-coupling** test:
+
+- **Independently verifiable → split** into single-project tasks with a `depends-on` edge.
+- **Verification-coupled → combine** into one task, one branch, one PR, multiple projects (e.g. generalize a shared `core` package *and* migrate the first consumer onto it — the only proof the refactor is correct is the consumer working). Cross-project PRs touching two, three, four projects are normal, not exceptions.
+
+The Planner writes no briefs (those are just-in-time, §7), writes no status (that's the forge), and creates no Milestone (that's the Architect's, `milestone-model.md`) — a tranche it plans need carry no Milestone at all, and most don't. It owns the `backlog`/`todo` distinction (assigning an Issue is the `todo` promotion). Its upstream input — a ticket slice, a backlog, or just the Principal's stated intent — is optional and lives outside Vinaya (§2); the Planner is where the company's plan and Vinaya's execution meet. It also enforces the **plan-integrity gates** in `roles/planner/reference.md` — the recognized failure modes turned into live refusals and calibrated warnings (see §10), and the **readiness gate** (verify all inputs are present and reachable before planning a single task). The seat's short version and entry gate are in `roles/planner.md`; the full procedure, including refusal language, is in `roles/planner/reference.md`.
+
+---
+
+## 7. Where briefs live
+
+The brief is the task's full execution context. It has one home, and it is not the PR:
+
+- **Before dispatch — nowhere persistent.** It does not exist yet. The task Issue carries the Planner's rationale (durable conclusions, written at plan time), never the brief itself — a brief in the Issue's own body would age, attract edits, and become stale planning documentation.
+- **At dispatch — the task Issue's `aeg:brief:v1` comment, posted once, frozen.** The Planner's dispatch act runs `vinaya task dispatch`, which mechanically renders the brief from the Issue's rationale and judgment sections (consuming the `planner-developer` contract) and posts it as a comment on that same Issue, before the Developer's worktree exists. That comment is the brief's permanent, durable home, attached to exactly the work it governs, and what the Developer, Reviewer, and Archivist all read. It is never carried in the PR body, which holds only the Developer's report; a reference copy may ride along inside a collapsed `<details>` block there, but the frozen comment is the source of truth.
+
+Retry reads the same frozen comment; no re-render, no rewrite.
+
+For who reads and who writes documentation at each seam of this flow (the Planner's whole-tranche read at plan time, its task-scoped re-read + §7 at dispatch time, Developer's execution, Reviewer's dual check, Archivist's confirmation), see `documentation-coherence.md`.
+
+---
+
+## 8. The multi-developer safety mechanism
+
+Two gates make parallel developers safe — both **forge-answerable, zero stored state**:
+
+- **depends-on gate** — don't start a task until its dependency's **PR is merged**. (Query the dependency Issue's linked PR.)
+- **conflicts-with gate** — don't start a task while a `conflicts-with` sibling's **PR is open** (`in-review`/`changes-requested`) or it's `in-flight`. (§5.) This gate binds **across concurrent tranches**, not only within one (§5, §12).
+
+With a single principal these rules live in one head; with a team they must be a **lock**, not a whiteboard. In manual mode they are preconditions each Developer checks against the forge before beginning. A dispatch tool can enforce them in code. Either way the conflict is declared at planning time and enforced at dispatch time — never discovered at merge time, which is too late.
+
+**v1 honesty:** before Step 0, checking these gates is still *trusted, not enforced* — the Developer reads and complies, but nothing mechanically stops starting anyway. By the first push, though, they are mechanically enforced: the `.vinaya/hooks/pre-push` `first-push-dispatch` check runs the same `checkDispatchReadiness` derivation the `dispatch-readiness` check uses, on a task branch's first push, and refuses it outright if the dependency's PR isn't merged or the conflicting sibling's PR is open (it fails open only when the forge itself is unreachable). It reads the same prior-tranche-archival predicate the `dispatch-readiness` check does, and treats a failed archival read as an unreachable forge. What remains trusted discipline is catching it earlier, before any work is done, with the unabridged derivation — the hook is the backstop, not the first line.
+
+---
+
+## 9. Anti-regression rules (do not undo the design)
+
+The review panel predicted, unanimously, two of the ways teams will accidentally rebuild the original flaw (rules 1–2 below); rule 3 and rule 4 were added later as further incidents surfaced the same underlying pattern. All four are **forbidden** and the Planner agent flags them (§ `roles/planner.md`):
+
+1. **No execution metadata on the Issue or the Milestone.** Never add `status`, `PR #`, `merged date`, `current state`, `assignee history`, or generated collision data to a task Issue's body or a Milestone's description. The reason is always reasonable ("just to glance without querying") and it is always wrong — the forge already holds these, and copying them in recreates the racing, drifting, lying status store. **Issue = plan. Forge facts = state.** The line is bright; keep it bright. (Closing the Milestone at close-out is **not** an exception to this: it is the tranche's own lifecycle, set once, not per-task execution status.)
+2. **No dynamic conflict scanner.** Do not build a script that checks out in-flight branches and diffs them to "catch conflicts the Planner missed." It cannot work without a live task→changed-files map — the mutable state we removed. When unsure two tasks collide, **declare the conflict and serialize** (§5). Conservative declaration is the sanctioned answer; a scanner is not.
+3. **No planning metadata on Issues.** No priority, estimates, points, or roadmap fields. Enforced mechanically: a required Issue template (deps, conflicts, project label, ticket link — and nothing else) + a CI check that rejects forbidden fields/labels. Discipline alone will not hold this; the *place to put planning info is removed*, not just discouraged.
+4. **No committed report/scratch files.** Never commit a new repo file whose sole purpose is a one-off report, audit finding, coverage summary, or working brief. The reason is always reasonable ("it's a big deliverable, it deserves its own file," "there's no prior convention, I'll set one") and it is always wrong — that content belongs in the PR body (task-scoped findings) or an Issue/PR comment (findings with no task PR of their own), exactly like a brief's permanent home is a frozen Issue comment, never the Issue body or a repo file (§7). A committed scratch file recreates the racing, drifting problem the other three rules already forbid, one layer up: it is a fifth truth domain nobody asked for, competing with the forge for where "what happened" lives. This is not hypothetical — it has already happened twice: a 120-row audit deliverable committed beside the tranche plans broke Vinaya Studio's tranche loader, which read every markdown file there as a tranche, and a full task brief was committed as a permanent repo file, contradicting §7's own rule that a brief is posted, not committed. **Issue = plan. Forge facts = state. PR body / Issue comment = findings and briefs.** Sanctioned exceptions: durable reference artifacts (specs, skills, role docs, contracts) — separately-governed, durable-by-design; a one-off report is neither.
+
+---
+
+## 10. What Vinaya adds over raw GitHub
+
+A fair challenge from the panel: a 2-dev forge team already has Issues, Projects, PRs, reviews. What does Vinaya add? Exactly four things the forge does not give you, and they are the product:
+
+1. **Dependency gates** — the forge won't stop you starting a task whose dependency isn't merged. Vinaya does.
+2. **Conflict edges + collision domains** — the forge won't stop two colliding tasks running in parallel. Vinaya does.
+3. **Role self-location** — Developer/Reviewer/Security/Archivist each validate their own preconditions from forge state and refuse when it isn't their turn. The forge just sends a notification.
+4. **Just-in-time brief discipline** — full context authored at execution and living in the PR, not rotting in a ticket.
+
+Raw forge tooling is a dashboard. Vinaya is a thin, forge-native discipline layer on top of it. That layer — not any one mechanism — is the value.
+
+---
+
+## 11. Tranche lifecycle and concurrency
+
+The earlier sections describe a single tranche's *internals*. This section covers a tranche's *life* — when it begins, when it ends, what remains of it, and how many can run at once.
+
+### The lifecycle: planned → active → complete → archived
+
+- **planned** — the Issues are cut and labeled, but no work has started. Every task is `todo` (open, unassigned — committed tranche work, minimum `todo`). The tranche is a plan ready to execute.
+- **active** — at least one task has an open branch (`in-flight`) or is further along. The tranche is in flight.
+- **complete** — **every task's PR is merged** (every task derives to `merged` from the forge). The work is done, and the per-task provenance blocks sit on the merged PRs. "Complete" is **derived** from the forge (all linked PRs merged); nobody writes it.
+- **archived** — the Tranche Archivist **closes the Milestone**; that closed Milestone is the signal a new tranche's readiness gate reads (`contracts/tranche-archivist-planner.md`). A tranche planned before the forge-native cutover is archived as §4 records.
+
+### Flow stages — what actually happens, in order
+
+The lifecycle above is the derived-status vocabulary — what Studio reads off the forge to display a tranche's progress. This is the operational sequence: what actually happens, and who does it. Today each stage is a human or a thin dispatch script deciding to start the next one; nothing about the sequence changes once the Atta Engine can run it as a compiled flow — same stages, same order, same role per stage; only the transition mechanism moves from a human dispatching the next turn to the engine calling the next node.
+
+1. **Plan** — the Planner turns an intent plus a slice of tickets into the tranche's tasks (Issues) and their `depends-on`/`conflicts-with` edges (§6). No Milestone required.
+2. **Dispatch** — each task runs its own Task flow (`task-model.md` §3: Brief → Code → Review → Verify → Merge → Archive), independently, in parallel wherever `depends-on` allows and the conflict rule (§5) doesn't force a serialization. Deciding *when* each task actually starts is a real act, not an implicit one: today the Principal or a thin dispatch script — this file's own opening note names that actor for every altitude — tomorrow the Atta Engine's scheduler.
+3. **Archive** — once every task has merged, the Tranche Archivist closes out: closes the Milestone, flags (does not perform) orphaned branches and worktree removal.
+
+### Tranches are never deleted — they are durable history
+
+A completed tranche is **closed, never deleted.** The **Issues** carry the Planner's rationale for each task — the durable architectural reasoning that decided each boundary, blast radius, and trap — and their own dependency/conflict edges. The closed **Milestone** carries the grouping and the goal. Neither is deleted: both remain on the forge as frozen artifacts. Paired with the provenance blocks on the merged PRs, they are the **forensic record of why the work was shaped the way it was**: what was split from what, which traps were foreseen, what the blast radius was.
+
+(The Archivist also flags merged-but-undeleted **worktrees** and orphaned branches at this point — those *are* ephemeral and get cleaned up, §3. The closed Milestone and its Issues are not ephemeral; the worktrees are. Don't confuse the two.)
+
+### How many tranches can run at once — no hard cap, governed by two real limits
+
+There is **no fixed maximum.** Multiple tranches may be `active` simultaneously. What actually bounds concurrency is two things, neither of them a number:
+
+1. **The conflict rule binds across tranches (§5).** Two concurrent tranches are safe to run fully in parallel **only if their tasks do not share a collision domain.** If tranche A and tranche B both touch `@atta/ui`, their colliding tasks must serialize across the tranche boundary exactly as if they were siblings — the gate doesn't care which tranche a PR's task belongs to. **The cleanest concurrency is between disjoint tranches** (different projects, no shared package), where nothing can collide by construction. Example: `billing-onto-engine` (billing + engine) and a `vinaya-pages` tranche (the `apps/vinaya/web` app) share no collision domain, so they run fully parallel with zero cross-checks needed.
+2. **Principal attention.** Every active tranche is a live front the Principal is reviewing, ratifying, and merging. Concurrency is bounded by how many fronts one Principal can hold well — a human limit, not a model limit. The model permits many; judgment sets the real number.
+
+**The second-tranche planning obligation:** when planning a tranche while another is already active, the Planner's readiness gate (`roles/planner.md`) must additionally **read the active tranche(s)' `Project(s)` / collision domains** and confirm disjointness — or, where they overlap, declare the cross-tranche serialization explicitly. This is the cross-tranche case of "when unsure, declare and serialize." Disjoint tranches need only the confirmation; overlapping ones need the serialization plan before either dispatches into the shared domain.
+
+### What "current" means
+
+There is no single "current tranche." Every tranche whose Milestone is open, or whose labeled Issues are still open, is active; a closed Milestone is the archive. "What's active right now" is, like everything else, **answered from the forge** (which labeled Issues are open or assigned), not from a pointer the model maintains.
+
+---
+
+## 12. The per-tranche token/cost ledger — append-only, derived total
+
+Every role that runs in a tranche reports its **token spend and cost**; the per-task **Archivist** is the sole writer of the per-tranche ledger, appending one row per role-turn at task close-out. The ledger is the cost-legibility counterpart to derived task status: the forge tells you *what happened*, the ledger tells you *what it cost*. Per-phase agent spend is something neither raw GitHub nor most "agentic" tools surface; Vinaya does, by giving it the same shape as everything else here — append-only, immutable rows, no stored aggregate.
+
+### Where it lives
+
+**Historically**, one sibling ledger file per tranche, beside the tranche's plan file. Both went with the forge-native cutover (§4 records where the survivors sit); they are read, never written.
+
+The sibling form was chosen over an inline `## Token ledger` section for a reason worth keeping: two roles appending rows to one file at the same time is exactly the merge-collision a "Planner-only at plan time" rule exists to avoid. A ledger in its own append-only file meant a Planner editing the plan and a Developer reporting a turn-end never touched the same bytes. `@attalabs/aeg-core`'s `parseLedger` still reads both forms, which is what keeps the archived ledgers legible.
+
+### Format
+
+A single markdown table; columns are fixed. Cell conventions match the rest of the model (em-dash for unknown).
+
+```markdown
+# Token ledger — <tranche-name>
+
+Append-only. Each row records one role's turn at a phase. Re-entry appends a **new** row. The tranche total is `sum(rows)`, derived at read time, never stored.
+
+| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |
+|-------|------|-------------|-----------|------------|------|------|
+| planning       | Planner      | claude-opus-4-7 (chat) |    —   |    —  |    —    | 2026-06-13 |
+| 9: dispatch    | Planner      | claude-opus-4-7 (chat) |    —   |    —  |    —    | 2026-06-15 |
+| 9: develop     | Developer    | claude-opus-4-7 (CC)   | 184327 | 12502 | $3.4781 | 2026-06-15 |
+| 9: review      | Reviewer     | claude-opus-4-7 (chat) |    —   |    —  |    —    | 2026-06-15 |
+```
+
+- **Phase** — free-text. Convention: `<task-id>: <phase>` for per-task work (e.g. `9: develop`, `9: review`), or a bare phase for tranche-wide work (e.g. `planning`). Phase is opaque to the parser; the convention exists so a future view can pivot by task.
+- **Role** — the Vinaya role doing the work (`Planner`, `Developer`, `Reviewer`, `Security`, `Archivist`).
+- **Agent/Model** — free text: the role's agent + model, with a short tag for the host surface in parentheses (`claude-opus-4-7 (CC)` for a coding-agent session, `claude-opus-4-7 (chat)` for a conversational one — the tags the archived ledgers already use). Nothing parses the tag; it is there because the surface is what tells a reader which collection capability applied (below), and therefore whether a `—` cell was sanctioned.
+- **Tokens in / Tokens out** — integers from the meter, or `—` for "not yet known."
+- **Cost** — USD as `$X.XXXX`, or `—`. *(V1 honesty: no maintained $/token pricing table for current models ships in this package, so `formatTokensLine` renders this cell as `—` on every row it emits. Historical rows may carry a `$X.XXXX` value supplied by hand or by an earlier table. Tokens are still exact; pricing is a known backlog dependency, not a ledger bug.)*
+- **Date** — `YYYY-MM-DD`.
+
+### The append rule (read this exactly the way you read derived status)
+
+- **No role appends its own row on a task branch.** Two live-fire incidents forced this: read-only roles (Reviewer, Security, Planner) structurally cannot append — they hold no task branch, and some never touch the repo's filesystem at all; and parallel Developer sessions on different tasks collided appending to the same shared `tokens.md` file. Instead, a dispatched role's spend is recorded where the dispatch already writes: the Vinaya log's own `usage` event, one per attempt, collected from the agent host with no step of the role's own in between. A role whose turn is not dispatched still **reports** its spend in the artifact that turn already produces — the verdict comment for a reviewing role, the plan PR or planning report for the Planner (either act) — and the per-task **Archivist appends every row at task close-out**, one row per role-turn, including its own. A pull-request body is no longer one of those artifacts: the "Token report" section a task PR used to carry is retired, and a body that still shows one, opened before this changed, keeps it untouched.
+- **Never edit** an existing row. If you discover a mistake, append a new row that supersedes it in prose (or fix the source file in a separate, declared edit — same exception that `state-machine.md` §13 carves for forward-reference fields).
+- **Re-entry appends.** A Developer dispatched for `9: develop`, asked for changes, and re-running for `9: develop` again produces a **second** `9: develop` report, which the Archivist appends as a **second** row — never a sum, never an overwrite. The two rows both count.
+- The **tranche total is `sum(rows)`**, derived at read time, never stored. This is the same philosophy as forge-derived status (don't store the aggregate; sum the immutable entries). A stored total reintroduces the merge-collision + stale-aggregate problem.
+
+### Three layers — two portable, one host-specific
+
+Token reporting is three separable things, and only one of them depends on the agent host a role happens to run in. Keeping them apart is what lets this model be adopted on a harness Vinaya has never seen.
+
+1. **The obligation — portable.** Every role reports its own turn's usage at turn-end. This does not weaken, is not best-effort, and is not conditional on the host making it convenient. It exists because the figure is otherwise unrecoverable after the fact (see the retraction below).
+2. **Collection — host-specific.** *How* a role obtains true figures for its own turn. This is the only layer an adapter belongs in, and the only layer that may name a host, a transcript format, or a script path.
+3. **The destination and the grammar — portable.** For a dispatched role, the Vinaya log's own `usage` event, written by the dispatch path: the role reports nothing itself, and its pull-request body carries no token table. For every other role, the `Tokens: …` line in the artifact that turn already produced — the verdict comment for a reviewing role, the plan PR or planning report for the Planner. The ledger stays append-only, and the Archivist transcribes what each role reported rather than re-deriving it.
+
+The destination was never the coupled part — no role writes a shared ledger file on a task branch, so layer 3 is satisfied through the forge for every task-branch role. One source remains the known open gap recorded in `roles/archivist.md`: the Planner's tranche-wide report — the Archivist's own row is not part of it (see the "Known gap" paragraph below). **An adopter implements layer 2 for their own harness and inherits layers 1 and 3 unchanged.** A doctrine sentence that names a tool belongs in layer 2 or nowhere.
+
+### Two collection capabilities (the design constraint, not a bug)
+
+Token reporting is asymmetric — and any honest design has to encode that, because the asymmetry is a property of the **host's capability**, not of Vinaya and not of the role. The asymmetry lives in *what a role can collect*, not in *who writes the ledger file*: the Archivist writes every row, but the precision of the numbers it copies depends on whether the reporting role's host exposes usage to the agent at all.
+
+The split is **operator vs. agent, not terminal vs. chat** — a figure a human reads off an interactive prompt or a usage dashboard is not reachable from an unattended agent session (dispatched, automated, no human at the keyboard), whatever kind of surface it runs on. (2026-08-08: retracted — an earlier revision of this section claimed a terminal role reports exact numbers "from `/cost`", an operator-typed slash command in one particular host; no agent session ever could, in that host or any other.)
+
+- **Self-metering** — a role whose host exposes the running session's own usage to the agent itself, so the role can collect real figures with no operator step. Typically the Developer, and the Archivist when it runs as automation. The role collects through its host's layer-2 mechanism and reports the exact numbers in its PR body; the Archivist copies them verbatim into the row it appends at close-out. **A self-metering role may not report `—` in the `Tokens in` or `Tokens out` cells** — real figures, or the collection step is broken and *that* is what to report. The `Cost` cell is outside this rule: it reads `—` on every row the shipped renderer emits, for the pricing-table reason given above.
+- **Operator-metered** — a role whose host exposes no usage to the agent, leaving a human the only source of the figure. Typically the Planner (either act), Reviewer and Security, which run in conversational surfaces with no session record the agent can read and no meter it can query. The role **still reports at turn-end** — phase, role, model, date, in its verdict comment or planning report — and leaves the numeric cells as `—` when no figure reached it. The blank is licensed by the **absence of a figure**, not by the role's label: where an operator hands the role real numbers at report time (a route layer 2 explicitly allows), those numbers go in the cells and `—` is not correct. The Archivist copies the report as-is; the **Principal** may later supply the real figures from whatever usage view the host does offer a human, filling a previously-`—` cell (the one narrow forward-reference exception `state-machine.md` §13 allows).
+
+**Per-cell optionality is conditioned on host capability, never on convenience.** `—` in a **token** cell is sanctioned in exactly one situation: the host cannot expose the figure to the agent. (The **Cost** cell is separate and is always `—` while this package carries no maintained $/token table — see the Cost bullet above.) It is never a shortcut for a role that could have collected the number, and no role ever estimates a figure or fills in another role's cell — an invented number in an append-only ledger is worse than an honest unknown, because nothing downstream can tell the two apart.
+
+Which capability applies is a fact about the **host**, not a fixed property of the role: the same role is self-metering on a harness that exposes usage and operator-metered on one that does not. Read the role names above as today's common case, not as an allocation.
+
+Self-metering capture is real, not estimated: the adapter sums the session's own usage records, so a Developer or automated Archivist turn's numbers are exact rather than approximated. Whether it also runs with *no* operator step depends on the host's wiring — where a Stop hook writes a transcript pointer — configured in the repo or in the operator's own host settings — the adapter finds it unaided; with no pointer written, the caller names the transcript with `--transcript <path>`. Either way the figures are read, never guessed. The remaining manual seam is operator-metered roles only — closing it depends on the host giving a session a way to read its own usage, which conversational surfaces generally do not today. **Known gap — now partly closed:** tranche-wide operator-metered turns with no task PR to report into no longer lack a destination across the board. A Planner plan-act session outside a plan PR now reports into a comment on the pinned lessons Issue — the existing forge object, never a new one (`roles/planner.md` "Turn-end: report your tokens, don't append them"). A Planner dispatch-act session already has a destination when a plan PR exists — the same plan PR the plan act reports into — unchanged by this fix. The Archivist's own `<task-id>: archive` row was never actually homeless either: `vinaya archive` folds the Archivist's `Tokens: …` line into the same provenance comment it posts on the merged task PR (`roles/archivist.md` "The provenance block") — a different fact from the narrower Studio live-read caveat that same file still carries, which is about re-deriving ledger totals from a PR's own body/comments, not about where the row is written. What remains genuinely open: a dispatch-act session that ends with no PR of any kind yet to write into — mid-dispatch, before a plan PR exists — still has nowhere durable to report; it falls back to an ephemeral report to the Principal, and that fallback is not fixed here.
+
+### The collection adapter Vinaya ships (one layer-2 instance, not the requirement)
+
+This is doctrine's one fenced, concrete instance of a layer-2 adapter — named here, by product, so a first-time adopter has something real to look at; nowhere else in this doctrine tree names this or any other host by product name. Everywhere else, the concept stays generic: "the agent's own host," "whatever your harness offers."
+
+<!-- AEG:VENDOR-EXAMPLE:START -->
+Vinaya ships exactly one collection adapter, for today's shipped reference host, Claude Code, exposed as `vinaya tokens`. It reads that host's session transcript — a JSONL file carrying a `usage` object per assistant message — sums it, and emits a layer-3 `Tokens: …` line. Every doctrine citation of it is an **example of one way to satisfy layer 2**, never the requirement; a role on another host satisfies the same obligation by other means and is equally compliant.
+
+**The seam is the summary shape, not the file tree.** An adapter's whole job is to produce a `TranscriptSummary` — four integers (fresh input, cache creation, cache read, output) plus a model id. Everything downstream of that shape is portable and already shipped: `formatTokensLine` renders the grammar, `parse-token-report.ts` reads it back. Two things sit adapter-side because both know host-specific facts: `summarizeTranscript` (`@attalabs/aeg-core`'s Claude Code transcript module), which knows Claude Code's transcript JSONL and its `usage` field names, and the bin itself, which knows how that host points a session at its own transcript. The `bin/` vs `src/` split does **not** mark this seam and never did.
+<!-- AEG:VENDOR-EXAMPLE:END -->
+
+**To satisfy layer 2 on another harness:** obtain your turn's usage figures by whatever means your host offers — its own transcript or log, an API usage response, a meter the harness exposes, or an operator reading them off a dashboard and handing them over — and write the layer-3 line yourself. Reusing this adapter is not required, and neither is writing any code: the requirement is the reported figures, in the grammar, in the right artifact. If your host exposes nothing to the agent, you are operator-metered and the `—` rule above applies — that is the sanctioned outcome, not a failure to comply.
+
+### Live reads (Studio) — a second, narrower read path
+
+Vinaya Studio's tranche page no longer reads `<name>.tokens.md` off disk to render token totals — it re-derives the same row shape live off the forge: every MERGED PR on a task's own branch (`task/<tranche>/<id>`), parsing the Reviewer's/Security's `Tokens: …` lines from that PR's comments, and a "Token report" entry from the PR body wherever a body opened before that section was retired still carries one (`@attalabs/aeg-core`'s token-report parser, `aggregateTaskTokenRows`, fetched by Studio's own forge-reading layer in the repo that hosts it). Same row shape, same `sumLedger` totals math (`parse-ledger.ts`) — different source. **A dispatched role's own spend is no longer on this path at all:** it is written to the Vinaya log as a `usage` event, which is the record to read for it.
+
+This is deliberately **narrower** than what the Archivist collects into the file: it cannot recover the Planner's `Tokens: planning …` report (no reliable way to attribute a plan PR to one task from the forge alone without false-positive cross-task matches, confirmed live during 4b's build — a task Issue's cross-reference timeline picks up ANY PR that merely mentions its number in passing prose, not just its own plan PR). The Archivist's own `<task-id>: archive` row is not part of that gap: `vinaya archive` posts it inside the same provenance comment it posts on the merged task PR, so this mechanism recovers it exactly as it recovers every other role's row on that PR. The Planner's report remains recoverable only from `.tokens.md`, which is why the file is not deleted here. A report that's missing or malformed (e.g. a "Token report" heading with no table and no parseable text after it, on a body old enough to carry one) yields no row for that report, never a fabricated one — same discipline as the Archivist's own DANGLING convention.
+
+### Anti-regression
+
+The ledger is a Section-13 append-only artifact. The familiar forbidden moves apply:
+
+- **No stored total.** Do not add a "current total" row, header field, or anything that has to be edited when a row appends. Derive it.
+- **No edits to past rows** (except the forward-reference exception in §13: the Principal filling a previously `—` numeric cell from whatever usage view the host offers a human is permitted — it does not change history, only completes it).
+- **No "current spend"** field anywhere — including a Milestone's description. The forge's live facts hold execution state; the ledger holds the cost history; the Issues hold the plan. Three artifacts, three concerns.
+
+---
+
+## 13. One-line pitch
+
+> Vinaya does not plan your project. It governs how your project gets executed by agents — safely, coherently, and coordinated across a team.
+
+For the altitude above this one, see `milestone-model.md`. For the altitude below, see `task-model.md`. For the manual run mechanics and per-role entry gates, see `manual-flow.md`. For the Planner's plan-integrity gates and readiness gate, see `roles/planner.md`. For the authority model, tiers, and label vocabulary, see `state-machine.md`. For the project registry, see `projects.md`. For role-seam contracts, see `contracts/`.

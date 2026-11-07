@@ -16,6 +16,8 @@ import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../apps/cli/tests/l
 
 const REPO_ROOT = join(import.meta.dir, '../../../..')
 const SINGLE_PLAN_BIN = join(REPO_ROOT, 'harness/processes/vinaya-strict/checks/bin/check-single-plan-pr.ts')
+/** The retired tranche-file state the single-plan guard still recognizes. */
+const LEGACY_TRANCHES = 'aeg-root/tranches'
 const DISPATCH_BIN = join(REPO_ROOT, 'harness/processes/vinaya-strict/checks/bin/check-dispatch-readiness.ts')
 
 const GRAPHQL_RATE_LIMIT = 'GraphQL: API rate limit exceeded for user ID 1234567.'
@@ -120,8 +122,8 @@ function planDiffRepo(): { dir: string; base: string } {
   git('add', '.')
   git('commit', '-q', '-m', 'base')
   const base = git('rev-parse', 'HEAD')
-  mkdirSync(join(dir, 'aeg-root', 'tranches'), { recursive: true })
-  writeFileSync(join(dir, 'aeg-root', 'tranches', 'fixture-tranche.md'), '# fixture tranche\n')
+  mkdirSync(join(dir, LEGACY_TRANCHES), { recursive: true })
+  writeFileSync(join(dir, LEGACY_TRANCHES, 'fixture-tranche.md'), '# fixture tranche\n')
   git('add', '.')
   git('commit', '-q', '-m', 'plan')
   return { dir, base }

@@ -32,7 +32,7 @@ This lab is becoming the new Vinaya portal. The attalabs portal (`apps/vinaya-po
   - Only what a person runs is documented. Commands the Operator and the agents call (task run, pr create, review post and the rest) are not listed. The circles map, the state machine page, the reference dump and the doctrine pages are retired; their old URLs redirect (`next.config.ts`). The top bar's Docs menu has two items, one per half.
 - **Start, Compare, Roadmap**: the portal's pages, unchanged. `/life-cycle` is retired and redirects to `/vinaya-process`.
 
-The repo root for the docs loaders is wherever the installed doctrine sits (`node_modules/@attalabs/vinaya/aeg-root`); the lab has no `vinaya.config.json`. `jsdom` is pinned to 26 for the roadmap's sanitizer.
+The repo root for the docs loaders is wherever the installed doctrine sits (`node_modules/@attalabs/vinaya/vinaya-strict`); the lab has no `vinaya.config.json`. `jsdom` is pinned to 26 for the roadmap's sanitizer.
 
 ---
 

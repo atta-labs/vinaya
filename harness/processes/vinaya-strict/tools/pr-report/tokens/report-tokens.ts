@@ -11,7 +11,7 @@ export type TokensLineInput = {
    * usage to the agent at all — which produces the all-`—` numbers segment
    * the parser already tolerates. Never a convenience escape for a
    * self-metering role whose collection step merely failed: that case is an
-   * error to report, not a blank to emit (`aeg-root/tranche-model.md` §12).
+   * error to report, not a blank to emit (`harness/processes/vinaya-strict/doctrine/tranche-model.md` §12).
    */
   summary: TranscriptSummary | null
   /** Overrides the model the adapter derived, if given. */
@@ -174,7 +174,7 @@ export type TokenReportRowInput = TokensLineInput & {
 /**
  * The same cells `formatTokensLine` reports, rendered as one `| Phase | Role
  * | Agent/Model | Tokens in | Tokens out | Cost | Date |` markdown-table row
- * — the shape `aeg-root/roles/developer.md`'s "Token report" heading and
+ * — the shape `harness/processes/vinaya-strict/executing/developer/doctrine.md`'s "Token report" heading and
  * `parse-token-report.ts`'s `parseTokenReportEntries` (table form) both
  * already expect. `Cost` is always `—`, same reasoning as `formatTokensLine`'s
  * own Cost cell: no maintained per-model pricing table exists in this package.

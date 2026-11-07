@@ -106,7 +106,7 @@ export function evaluateTestPlanGate(body: string, branch: string, live?: LiveGa
       verdict: 'pass',
       messages: [
         'No Test Plan section in PR body.',
-        'PASS (advisory) — see aeg-root/roles/developer.md (Verification) and aeg-root/skills/brief-authoring/SKILL.md §9.',
+        'PASS (advisory) — see harness/processes/vinaya-strict/executing/developer/doctrine.md (Verification).',
         'Non-task branch (or BRANCH unset) — a brief that touches a runtime surface and has no Test Plan is malformed on a task branch; Brief Validation catches that case pre-dispatch.'
       ]
     }
@@ -153,7 +153,7 @@ export function evaluateTestPlanGate(body: string, branch: string, live?: LiveGa
     for (const line of unchecked) messages.push(`  ${line}`)
     messages.push(
       '',
-      'Per aeg-root/roles/developer.md (Verification), a PR is not mergeable while any [principal] Test Plan box is unticked.',
+      'Per harness/processes/vinaya-strict/executing/developer/doctrine.md (Verification), a PR is not mergeable while any [principal] Test Plan box is unticked.',
       'The Principal runs the item in a real signed-in browser and ticks the box.',
       ...(liveUnticked
         ? [

@@ -12,7 +12,7 @@
  * `vinaya.config.json`'s `proseGates` key, read via `loadConfig()` — the
  * cwd-walking resolver every other repo-local, non-trust config value uses.
  * Absent config falls back to this repo's own historical shape
- * (`doctrineRoot: 'aeg-root'`, dormant reader-facing sweep — no public web
+ * (`doctrineRoot: 'harness/processes/vinaya-strict'`, dormant reader-facing sweep — no public web
  * app in this repo — `legacySlugDir` derived from `doctrineRoot`), so an install
  * with no `proseGates` set behaves exactly as it did before this key
  * existed.
@@ -34,7 +34,7 @@
  *
  * **Report-only, except one blocking class.** The `ships` and
  * `reader-facing` classes stay the original rollout precedent
- * (`aeg-root/enforcement.md`'s G1/G2 report-only period): findings print as
+ * (`harness/processes/vinaya-strict/doctrine/enforcement.md`'s G1/G2 report-only period): findings print as
  * `warning` severity and never fail the exit code — a blocking check on day
  * one would fail every open PR that already carries some of this backlog,
  * and the report-only period is what lets that backlog surface and get
@@ -57,7 +57,7 @@
  * meant every PR reprinted this package's entire shipped-doctrine backlog
  * regardless of what it touched (found live on a real PR
  * that changed one `packages/aeg-core` test file and nothing under
- * `aeg-root/`). A real new coined-term/unresolvable-reference finding in a
+ * `harness/processes/vinaya-strict/`). A real new coined-term/unresolvable-reference finding in a
  * file the PR actually changed still surfaces.
  */
 
@@ -75,7 +75,8 @@ import {
   specGrandfatherPaths
 } from '../../tools/reader-resolvable-prose'
 import { DECISION_RECORD_CITATION_ID, resolveProseRules, rulesOfGroup } from '../../tools/prose-rules'
-import { hasDoctrineEntry, resolveDoctrineRoot } from '../../../../../apps/cli/src/commands/doctrine.js'
+import { hasDoctrineEntry, resolveDoctrineRoot } from '../../tools/doctrine/resolve-doctrine'
+import { DOCTRINE_MAP, DOCTRINE_TREE } from '../../tools/doctrine/doctrine-map'
 import { loadConfigChecked } from '../../../../../apps/cli/src/lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { findingsInThisDiff, repoRoot } from '../../../../../harness/kernel/connectors/git/diff-evidence'
@@ -101,7 +102,7 @@ const proseGates = CONFIG.ok ? CONFIG.config?.proseGates : undefined
  * repo's checkout happens to sit under an ancestor directory literally named
  * `node_modules` (a nested/linked checkout, a worktree under a differently-
  * shaped path) flips `resolveDoctrineRoot`'s internal fallback-candidate gate
- * with no relation to whether this repo's own `aeg-root/` exists
+ * with no relation to whether this repo's own `harness/processes/vinaya-strict/` exists
  * (reproduced live: the same commit, checked out one directory deeper
  * under a `node_modules`-named ancestor, silently swept zero files instead
  * of its real backlog).
@@ -110,13 +111,13 @@ const proseGates = CONFIG.ok ? CONFIG.config?.proseGates : undefined
  * --show-toplevel`) — deterministic regardless of checkout shape, and
  * already the anchor `resolveChangedFiles()` below uses for the same reason.
  * Only when THAT doesn't resolve to a real doctrine root (a `vinaya init`
- * adopter with no repo-local `aeg-root/` of their own — settled
+ * adopter with no repo-local `harness/processes/vinaya-strict/` of their own — settled
  * by experiment) does this fall back to `resolveDoctrineRoot()`'s package-
  * relative "my own shipped copy" resolution, which is genuinely the right
  * target for that case: the doctrine prose this check sweeps is the same
  * shipped text for every install. `null` when NEITHER resolves — a
  * genuinely unresolvable root, reported by `main()` as its own distinct
- * outcome, never silently as a clean zero-finding pass (the bare `'aeg-root'`
+ * outcome, never silently as a clean zero-finding pass (the bare `'harness/processes/vinaya-strict'`
  * literal this constant previously fell back to was itself the bug: a
  * cwd-relative guess that only ever worked by coincidence).
  */
@@ -124,7 +125,7 @@ function resolveCheckDoctrineRoot(): string | null {
   if (proseGates?.doctrineRoot !== undefined) return proseGates.doctrineRoot
   const root = repoRoot()
   if (root !== null) {
-    const candidate = join(root, 'aeg-root')
+    const candidate = join(root, DOCTRINE_TREE)
     if (hasDoctrineEntry(candidate)) return candidate
   }
   return resolveDoctrineRoot()
@@ -465,8 +466,8 @@ function main(): void {
     process.exit(2)
   }
 
-  // Genuinely unresolvable — no `aeg-root` found relative to the repo under
-  // check (`repoRoot()/aeg-root`), and no bundled copy found relative to this
+  // Genuinely unresolvable — no `harness/processes/vinaya-strict` found relative to the repo under
+  // check (`repoRoot()/harness/processes/vinaya-strict`), and no bundled copy found relative to this
   // package's own install either. Report this as its OWN distinct outcome:
   // `severity: 'error'` (never `'warning'`, which the reportable-findings
   // loop below uses) and a non-{0,1} exit code, so the runner's own generic
@@ -483,17 +484,20 @@ function main(): void {
       check: CHECK_NAME,
       severity: 'error',
       message:
-        'doctrine root unresolvable: no aeg-root found at the repo root under check, and no bundled copy found ' +
+        'doctrine root unresolvable: no doctrine map source paths found under harness/processes/vinaya-strict at the repo root under check, and no bundled vinaya-strict/ copy found ' +
         "relative to this package's own install.",
       agent_recovery_prompt:
         'Set proseGates.doctrineRoot in vinaya.config.json to the doctrine tree this repo actually uses, or ' +
-        "confirm aeg-root/ exists at the repo root (or that this package's own bundled aeg-root/ is present)."
+        "confirm the doctrine map's source paths exist under harness/processes/vinaya-strict/ at the repo root (or that this package's own bundled vinaya-strict/ is present)."
     })
     process.exit(2)
   }
 
   const shipsPrefix = `${DOCTRINE_ROOT}/`
-  const shipsPaths = collect(DOCTRINE_ROOT).filter((p) => p.endsWith('.md'))
+  const shipsPaths =
+    proseGates?.doctrineRoot !== undefined
+      ? collect(DOCTRINE_ROOT).filter((p) => p.endsWith('.md'))
+      : DOCTRINE_MAP.map((entry) => join(DOCTRINE_ROOT, entry.source)).filter((p) => existsSync(p))
   const readerFacingPaths =
     READER_FACING_ACTIVE && READER_FACING_SUFFIX !== null
       ? collect(READER_FACING_PREFIX as string).filter((p) => p.endsWith(READER_FACING_SUFFIX))
@@ -675,7 +679,7 @@ function main(): void {
 
   // Report-only for `ships`/`reader-facing` findings — that backlog surfaces
   // and gets cleaned up before the gate turns strict (mirrors the G1/G2
-  // rollout in `aeg-root/enforcement.md`). The `product` class is always
+  // rollout in `harness/processes/vinaya-strict/doctrine/enforcement.md`). The `product` class is always
   // blocking; the source-comment class is blocking only once
   // `proseGates.sourceComments.severity` is set to `'error'`.
   process.exit(hasBlocking ? 1 : 0)

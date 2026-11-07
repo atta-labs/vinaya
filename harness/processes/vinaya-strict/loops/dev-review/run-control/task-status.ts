@@ -1106,7 +1106,7 @@ function renderStateText(state: TaskLoopState, disposition: PauseDisposition | n
 
 /**
  * Every run state, mapped to what the Principal does about it next — the SAME
- * mapping `aeg-root/roles/operator.md`'s own state-to-action table gives, one
+ * mapping `harness/processes/vinaya-strict/executing/operator/doctrine.md`'s own state-to-action table gives, one
  * row per state, read off that table's `Next` column by a test rather than
  * kept in step by hand. It is a `Record` over the state kinds deliberately: a
  * state added to `TaskLoopState` without a next action beside it is a

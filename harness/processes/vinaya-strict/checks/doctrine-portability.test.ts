@@ -13,21 +13,24 @@ describe('checkDoctrinePortability', () => {
 
   it('flags a citation whose top segment is author-repo internal', () => {
     const findings = checkDoctrinePortability([
-      file('aeg-root/enforcement.md', 'Run `packages/aeg-core/bin/verify-docs.ts` before opening.')
+      file(
+        'harness/processes/vinaya-strict/doctrine/enforcement.md',
+        'Run `packages/aeg-core/bin/verify-docs.ts` before opening.'
+      )
     ])
     expect(findings).toHaveLength(1)
     expect(findings[0]).toMatchObject({
-      file: 'aeg-root/enforcement.md',
+      file: 'harness/processes/vinaya-strict/doctrine/enforcement.md',
       line: 1,
       cited: 'packages/aeg-core/bin/verify-docs.ts'
     })
   })
 
-  it('is silent on a doctrine-relative citation (roles/contracts/skills/aeg-root)', () => {
+  it('is silent on a doctrine-relative citation (roles/contracts/skills/doctrine tree)', () => {
     const findings = checkDoctrinePortability([
       file(
-        'aeg-root/enforcement.md',
-        'See `roles/developer.md`, `contracts/brief-developer.md`, `skills/brief-authoring/SKILL.md`, and `aeg-root/glossary.md`.'
+        'harness/processes/vinaya-strict/doctrine/enforcement.md',
+        'See `roles/developer.md`, `contracts/brief-developer.md`, `skills/brief-authoring/SKILL.md`, and `harness/processes/vinaya-strict/doctrine/glossary.md`.'
       )
     ])
     expect(findings).toEqual([])
@@ -36,7 +39,7 @@ describe('checkDoctrinePortability', () => {
   it('is silent on an adopter-owned citation (.github/.vinaya/.claude)', () => {
     const findings = checkDoctrinePortability([
       file(
-        'aeg-root/enforcement.md',
+        'harness/processes/vinaya-strict/doctrine/enforcement.md',
         'Reads `.github/workflows/ci.yml`, `.vinaya/doc-owners`, and `.claude/settings.json`.'
       )
     ])
@@ -46,7 +49,7 @@ describe('checkDoctrinePortability', () => {
   it('exempts the three illustrative placeholders by literal', () => {
     const findings = checkDoctrinePortability([
       file(
-        'aeg-root/templates/brief-template.md',
+        'harness/processes/vinaya-strict/artifacts/templates/brief-template.md',
         '- [path/inside/the/shipped/diff.ts] contains: [x]\n' +
           '- [path/inside/the/surface.ts] contains: [y]\n' +
           'See `apps/x/specs/...` for the shape.'
@@ -57,7 +60,10 @@ describe('checkDoctrinePortability', () => {
 
   it('does not treat apps/cli/dist/index.js (build output) as different from apps/cli/src/index.ts (source)', () => {
     const findings = checkDoctrinePortability([
-      file('aeg-root/enforcement.md', 'Entry point is `apps/cli/dist/index.js`, built from `apps/cli/src/index.ts`.')
+      file(
+        'harness/processes/vinaya-strict/doctrine/enforcement.md',
+        'Entry point is `apps/cli/dist/index.js`, built from `apps/cli/src/index.ts`.'
+      )
     ])
     expect(findings).toHaveLength(2)
     expect(findings.map((f) => f.cited)).toEqual(['apps/cli/dist/index.js', 'apps/cli/src/index.ts'])
@@ -65,27 +71,35 @@ describe('checkDoctrinePortability', () => {
 
   it('flags a bare bin/ or src/ citation as author-repo internal', () => {
     const findings = checkDoctrinePortability([
-      file('aeg-root/enforcement.md', 'See `bin/open-pr.ts` and `src/baseline-capture.ts`.')
+      file(
+        'harness/processes/vinaya-strict/doctrine/enforcement.md',
+        'See `bin/open-pr.ts` and `src/baseline-capture.ts`.'
+      )
     ])
     expect(findings).toHaveLength(2)
   })
 
   it('flags an unclassified top-level prefix rather than passing it — no deny-list means no free pass', () => {
-    const findings = checkDoctrinePortability([file('aeg-root/enforcement.md', 'Fires `tools/whatever.ts` on push.')])
+    const findings = checkDoctrinePortability([
+      file('harness/processes/vinaya-strict/doctrine/enforcement.md', 'Fires `tools/whatever.ts` on push.')
+    ])
     expect(findings).toHaveLength(1)
     expect(findings[0]?.cited).toBe('tools/whatever.ts')
   })
 
   it('does not treat a leading-slash web route as a cited repo path', () => {
     const findings = checkDoctrinePortability([
-      file('aeg-root/tranche-model.md', 'Rendered live at `/docs/state-machine`, not a repo path at all.')
+      file(
+        'harness/processes/vinaya-strict/doctrine/tranche-model.md',
+        'Rendered live at `/docs/state-machine`, not a repo path at all.'
+      )
     ])
     expect(findings).toEqual([])
   })
 
   it('reports the correct line number for a citation past the first line', () => {
     const findings = checkDoctrinePortability([
-      file('aeg-root/enforcement.md', 'line one\nline two\nsee `packages/x/y.ts` here')
+      file('harness/processes/vinaya-strict/doctrine/enforcement.md', 'line one\nline two\nsee `packages/x/y.ts` here')
     ])
     expect(findings[0]?.line).toBe(3)
   })
@@ -102,7 +116,9 @@ describe('the gate can see what it flags — non-vacuity self-test', () => {
 
   for (const [label, cited] of Object.entries(NON_PORTABLE_SAMPLES)) {
     it(`fires on a real instance of ${label}`, () => {
-      const findings = checkDoctrinePortability([file('aeg-root/sample.md', `See \`${cited}\`.`)])
+      const findings = checkDoctrinePortability([
+        file('harness/processes/vinaya-strict/sample.md', `See \`${cited}\`.`)
+      ])
       expect(findings, `pattern never fires on its own sample: ${cited}`).toHaveLength(1)
     })
   }
@@ -111,7 +127,7 @@ describe('the gate can see what it flags — non-vacuity self-test', () => {
     'roles/developer.md',
     'contracts/brief-developer.md',
     'skills/brief-authoring/SKILL.md',
-    'aeg-root/glossary.md',
+    'harness/processes/vinaya-strict/doctrine/glossary.md',
     '.github/workflows/ci.yml',
     '.vinaya/doc-owners',
     '.claude/settings.json'
@@ -119,7 +135,9 @@ describe('the gate can see what it flags — non-vacuity self-test', () => {
 
   for (const cited of PORTABLE_SAMPLES) {
     it(`stays silent on a real instance of ${cited}`, () => {
-      const findings = checkDoctrinePortability([file('aeg-root/sample.md', `See \`${cited}\`.`)])
+      const findings = checkDoctrinePortability([
+        file('harness/processes/vinaya-strict/sample.md', `See \`${cited}\`.`)
+      ])
       expect(findings, `portable citation wrongly flagged: ${cited}`).toEqual([])
     })
   }
@@ -155,14 +173,19 @@ describe('a non-default shipsPrefix is portable too, not just the hardcoded defa
 describe('vendor-name finding (Issue #298)', () => {
   it('flags a bare vendor mention in prose', () => {
     const findings = checkDoctrinePortability([
-      file('aeg-root/roles/developer.md', 'Any capable coding agent, Claude Code included, can take a role.')
+      file(
+        'harness/processes/vinaya-strict/executing/developer/doctrine.md',
+        'Any capable coding agent, Claude Code included, can take a role.'
+      )
     ])
     expect(findings).toHaveLength(1)
     expect(findings[0]).toMatchObject({ kind: 'vendor-name', cited: 'Claude Code' })
   })
 
   it('reports the fuller two-word mention whole, not a truncated single-word match', () => {
-    const findings = checkDoctrinePortability([file('aeg-root/sample.md', 'Works on Claude Code today.')])
+    const findings = checkDoctrinePortability([
+      file('harness/processes/vinaya-strict/sample.md', 'Works on Claude Code today.')
+    ])
     expect(findings.map((f) => f.cited)).toEqual(['Claude Code'])
   })
 
@@ -182,7 +205,9 @@ describe('vendor-name finding (Issue #298)', () => {
       'Haiku'
     ]
     for (const name of names) {
-      const findings = checkDoctrinePortability([file('aeg-root/sample.md', `See ${name} for an example.`)])
+      const findings = checkDoctrinePortability([
+        file('harness/processes/vinaya-strict/sample.md', `See ${name} for an example.`)
+      ])
       expect(findings, `vendor word never fires on its own sample: ${name}`).toHaveLength(1)
       expect(findings[0]?.kind).toBe('vendor-name')
     }
@@ -191,7 +216,7 @@ describe('vendor-name finding (Issue #298)', () => {
   it('is silent on a vendor word inside the fenced AEG:VENDOR-EXAMPLE home', () => {
     const findings = checkDoctrinePortability([
       file(
-        'aeg-root/tranche-model.md',
+        'harness/processes/vinaya-strict/doctrine/tranche-model.md',
         [
           'Prose before.',
           '<!-- AEG:VENDOR-EXAMPLE:START -->',
@@ -207,7 +232,7 @@ describe('vendor-name finding (Issue #298)', () => {
   it('still flags a vendor mention OUTSIDE the fenced home in the same file', () => {
     const findings = checkDoctrinePortability([
       file(
-        'aeg-root/tranche-model.md',
+        'harness/processes/vinaya-strict/doctrine/tranche-model.md',
         [
           'Named again right here: Claude Code.',
           '<!-- AEG:VENDOR-EXAMPLE:START -->',
@@ -224,7 +249,7 @@ describe('vendor-name finding (Issue #298)', () => {
   it('is silent on a vendor word that only appears inside an already-portable path citation', () => {
     const findings = checkDoctrinePortability([
       file(
-        'aeg-root/sample.md',
+        'harness/processes/vinaya-strict/sample.md',
         'Denied by the tool-layer hook (`.claude/hooks/check-forge-gates.sh`, wired in `.claude/settings.json`); ' +
           'a doc path may look like `` `apps/x/CLAUDE.md` ``.'
       )
@@ -234,14 +259,20 @@ describe('vendor-name finding (Issue #298)', () => {
 
   it('is silent on a vendor word inside a fenced code block (e.g. an example ledger row)', () => {
     const findings = checkDoctrinePortability([
-      file('aeg-root/tranche-model.md', ['```markdown', '| claude-opus-4-7 (CC) |', '```'].join('\n'))
+      file(
+        'harness/processes/vinaya-strict/doctrine/tranche-model.md',
+        ['```markdown', '| claude-opus-4-7 (CC) |', '```'].join('\n')
+      )
     ])
     expect(findings.filter((f) => f.kind === 'vendor-name')).toEqual([])
   })
 
   it('a malformed half-pair (START with no END) is not a fence at all — still flags the mention', () => {
     const findings = checkDoctrinePortability([
-      file('aeg-root/sample.md', ['<!-- AEG:VENDOR-EXAMPLE:START -->', 'Claude Code, unterminated fence.'].join('\n'))
+      file(
+        'harness/processes/vinaya-strict/sample.md',
+        ['<!-- AEG:VENDOR-EXAMPLE:START -->', 'Claude Code, unterminated fence.'].join('\n')
+      )
     ])
     expect(findings.filter((f) => f.kind === 'vendor-name')).toHaveLength(1)
   })
@@ -251,7 +282,10 @@ describe('vendor-name finding (Issue #298)', () => {
     // a MODEL-TIER name ("Sonnet") is the identical vendor-coupling class — the
     // real `brief-authoring/SKILL.md` gap a code-review pass caught.
     const findings = checkDoctrinePortability([
-      file('aeg-root/sample.md', '**For:** [model + environment, e.g., "Sonnet (a coding-agent CLI)"]')
+      file(
+        'harness/processes/vinaya-strict/sample.md',
+        '**For:** [model + environment, e.g., "Sonnet (a coding-agent CLI)"]'
+      )
     ])
     expect(findings.filter((f) => f.kind === 'vendor-name')).toHaveLength(1)
     expect(findings.find((f) => f.kind === 'vendor-name')?.cited).toBe('Sonnet')
@@ -264,7 +298,7 @@ describe('vendor-name finding (Issue #298)', () => {
     // text a unit test should duplicate).
     const findings = checkDoctrinePortability([
       file(
-        'aeg-root/roles/developer.md',
+        'harness/processes/vinaya-strict/executing/developer/doctrine.md',
         '**Audience:** the coding agent (whatever CLI/IDE agent the team uses), executing a dispatched brief.'
       )
     ])
@@ -281,13 +315,17 @@ describe('NON_PATH_TOP_SEGMENTS is a closed, tested set — never silently grown
 
   for (const cited of EXCLUDED_SAMPLES) {
     it(`excludes "${cited}" from citation consideration entirely (git-ref/label shape, not a path)`, () => {
-      const findings = checkDoctrinePortability([file('aeg-root/sample.md', `See \`${cited}\`.`)])
+      const findings = checkDoctrinePortability([
+        file('harness/processes/vinaya-strict/sample.md', `See \`${cited}\`.`)
+      ])
       expect(findings).toEqual([])
     })
   }
 
   it('a top segment NOT on the excluded list is still a real, flaggable citation — the set never fails open beyond its own five entries', () => {
-    const findings = checkDoctrinePortability([file('aeg-root/sample.md', 'See `notexcluded/whatever.ts`.')])
+    const findings = checkDoctrinePortability([
+      file('harness/processes/vinaya-strict/sample.md', 'See `notexcluded/whatever.ts`.')
+    ])
     expect(findings).toHaveLength(1)
     expect(findings[0]?.cited).toBe('notexcluded/whatever.ts')
   })

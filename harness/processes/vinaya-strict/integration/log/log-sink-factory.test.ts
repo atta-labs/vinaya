@@ -220,6 +220,7 @@ const SITES: Record<string, number> = {
   'apps/cli/tests/lib/log-sink.test.ts createLogSink code': 50,
   'apps/cli/tests/lib/log-sink.test.ts createLogSink embedded': 2,
   'harness/kernel/log/client/log-sync-folder-source.test.ts createLogSink code': 2,
+  'harness/kernel/log/log-sink-doctrine-identity.test.ts createLogSink code': 1,
   // Run for the Log client's own sink and the Engine runner's, each taken as a loop value and called once per case.
   'apps/cli/tests/lib/log-sink-off.test.ts createLogSink reference': 1,
   // Samples the destination-isolation analyzer reads as text; nothing runs them.

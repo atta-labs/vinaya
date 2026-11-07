@@ -2,7 +2,7 @@
  * `vinaya brief render <tranche> <n> --surfaces <glob,...>`
  * — argv parsing around `../lib/brief-assembly.js`'s `assembleAndRenderBrief`,
  * the forge/tree shim over `@attalabs/aeg-core`'s pure `renderBrief`. Never
- * writes under `aeg-root/` or to the Issue: stdout, or `--out <path>`, only —
+ * writes under `harness/processes/vinaya-strict/` or to the Issue: stdout, or `--out <path>`, only —
  * a brief is pasted to the Developer, never committed.
  *
  * The assembly itself was extracted out of this file so `dispatchTask`

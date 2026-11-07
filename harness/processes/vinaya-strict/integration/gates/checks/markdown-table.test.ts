@@ -4,7 +4,7 @@ import { describe, expect, it } from 'bun:test'
 import { findHeadingLine, findTable, rowToRecord } from '../../../../../kernel/gates/checks/markdown-table'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../../../..')
-const ENFORCEMENT_PATH = join(REPO_ROOT, 'aeg-root/enforcement.md')
+const ENFORCEMENT_PATH = join(REPO_ROOT, 'harness/processes/vinaya-strict/doctrine/enforcement.md')
 
 /**
  * Round-trip proof that `enforcement.md`'s Ring 0/1/2 gate tables still

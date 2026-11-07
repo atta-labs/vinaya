@@ -1,5 +1,4 @@
 tests/new-noop-check.test.ts
-tests/no-brief-author.test.ts
 tests/platform-independence.test.ts
 tests/quickstart.test.ts
 tests/studio.test.ts

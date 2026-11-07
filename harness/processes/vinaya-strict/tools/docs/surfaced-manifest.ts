@@ -1,5 +1,5 @@
 /**
- * The canonical "surfaced doc" manifest for `aeg-root/`. Defines, as
+ * The canonical "surfaced doc" manifest for `harness/processes/vinaya-strict/`. Defines, as
  * data, which docs a public AEG page shows. The rule is **model-backed**: a
  * doc is surfaced if and only if a `DiagramModel` node points at it.
  * The same `DiagramModel` that `/docs/harness` renders is the allowlist for
@@ -9,7 +9,7 @@
  * The node→doc mapping (`modelBackedDocPaths`) is the same one `read-more.ts`
  * uses to resolve a node's "Read more" target: gate/check nodes back
  * `enforcement.md`; a role node backs `roles/<id>.md`; a contract node backs
- * `contracts/<id>.md`. `action`/`ring` nodes back no `aeg-root/**` document
+ * `contracts/<id>.md`. `action`/`ring` nodes back no `harness/processes/vinaya-strict/**` document
  * (an action's source is `harness/processes/vinaya-strict/tools/actions.ts`, a ring is a
  * summary label), so they add nothing to the set. Today that is 16 files —
  * `enforcement.md` + the 9 `roles/*.md` + the 6 `contracts/*.md`.
@@ -27,7 +27,7 @@
  * model derived) by the caller, which passes the derived path set in; aeg-core
  * stays zero-I/O.
  *
- * Paths are relative to `aeg-root/` (e.g. `roles/developer.md`), matching
+ * Paths are relative to `harness/processes/vinaya-strict/` (e.g. `roles/developer.md`), matching
  * `DocFrontmatter`'s existing convention.
  */
 
@@ -35,7 +35,7 @@ import type { DiagramModel } from '../diagram-model'
 import type { DocFrontmatter } from './types'
 
 /**
- * The set of `aeg-root/`-relative doc paths a `DiagramModel` points at — the
+ * The set of `harness/processes/vinaya-strict/`-relative doc paths a `DiagramModel` points at — the
  * allowlist. Mirrors `read-more.ts`'s `docRoute` resolution exactly, so
  * `/docs/reference`'s surfaced set and `/docs/harness`'s "Read more" targets can never
  * name different files: gate/check → `enforcement.md`, role → `roles/<id>.md`,
@@ -57,7 +57,7 @@ export function modelBackedDocPaths(model: DiagramModel): Set<string> {
 const NO_MODEL_BACKED_PATHS: ReadonlySet<string> = new Set()
 
 /**
- * Whether `relPath` (relative to `aeg-root/`) is a surfaced doc. A boolean
+ * Whether `relPath` (relative to `harness/processes/vinaya-strict/`) is a surfaced doc. A boolean
  * `surfaced` frontmatter field always wins over the model — the escape hatch
  * in both directions. Otherwise the doc is surfaced iff it is in
  * `surfacedPaths` (the model-backed allowlist from `modelBackedDocPaths`).

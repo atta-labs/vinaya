@@ -1098,7 +1098,7 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
     '',
     '## Surface',
     '',
-    'in: aeg-root',
+    'in: harness/processes/vinaya-strict',
     'out: —',
     '',
     '## Parts',
@@ -1122,10 +1122,10 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
     execFileSync('git', ['init', '-q'], { cwd })
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
-    mkdirSync(join(cwd, 'aeg-root', 'templates'), { recursive: true })
+    mkdirSync(join(cwd, 'harness/processes/vinaya-strict/artifacts/templates'), { recursive: true })
     cpSync(
-      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
-      join(cwd, 'aeg-root', 'templates', 'brief-template.md')
+      join(REPO_ROOT, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md'),
+      join(cwd, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md')
     )
     execFileSync('git', ['add', '.'], { cwd })
     execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })

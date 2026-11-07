@@ -15,7 +15,6 @@ import {
   appendFileSync,
   closeSync,
   constants as fsConstants,
-  existsSync,
   fstatSync,
   mkdirSync,
   lstatSync,
@@ -178,6 +177,14 @@ export type LogSinkDeps = {
    * name their task never calls it at all.
    */
   resolveBranchIssue: (repo: string | null) => Promise<number | null>
+  /**
+   * The doctrine version `meta.doctrine` records, given the sink's `cwd` and
+   * the package version. The process that builds the sink owns the rule (its
+   * sink factory supplies it); called once per sink, under the same deadline
+   * as the sink's other context lookups. Absent, `meta.doctrine` is the
+   * package version.
+   */
+  doctrineIdentity?: (cwd: string, packageVersion: string) => Promise<string>
   /**
    * Whether `resolveBranchIssue` answers a process-wide fact — what branch is
    * checked out in the sink's `cwd` — so its answer is shared by every sink
@@ -771,33 +778,6 @@ export function recordFolderFallback(
   }
 }
 
-function isEnoent(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as NodeJS.ErrnoException).code === 'ENOENT'
-}
-
-const execFileAsync = promisify(execFile)
-
-/** `git -C <root> rev-parse HEAD:aeg-root` for a tree checkout; the CLI's own package version for a bundle; `'unknown'` when `git` itself is unreachable. Called once per sink instance, never per line, and only ever as an async child (see `createLogSink`'s context). */
-async function resolveDoctrine(cwd: string, vinayaVersion: string): Promise<string> {
-  let toplevel: string
-  try {
-    toplevel = (
-      await execFileAsync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' })
-    ).stdout.trim()
-  } catch (err) {
-    return isEnoent(err) ? 'unknown' : vinayaVersion
-  }
-  if (!existsSync(join(toplevel, 'aeg-root', 'roles'))) return vinayaVersion
-  try {
-    const sha = (
-      await execFileAsync('git', ['-C', toplevel, 'rev-parse', 'HEAD:aeg-root'], { encoding: 'utf8' })
-    ).stdout.trim()
-    return `aeg-root@${sha}`
-  } catch {
-    return vinayaVersion
-  }
-}
-
 // `owner`/`repo` reach here from `AEG_REPO` or a parsed git remote URL —
 // neither is re-validated upstream (`@attalabs/aeg-forge-state`'s parser
 // permits `/` and `..`) before landing in a path this sink joins straight
@@ -1091,6 +1071,8 @@ function headShaRead(key: string, read: () => Promise<string | null>, shared: bo
   return reading
 }
 
+const execFileAsync = promisify(execFile)
+
 /** `git -C <cwd> rev-parse HEAD` — the full 40-character commit id, or `null` when `git` fails or answers anything else (never a branch name or a guess). An async child, like every other read behind the sink. */
 export async function resolveHeadSha(cwd: string): Promise<string | null> {
   try {
@@ -1325,7 +1307,9 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
   const doctrine = (): Promise<string> => {
     if (doctrineCache === undefined) {
       doctrineCache = withDeadline(
-        resolveDoctrine(deps.cwd(), deps.vinayaVersion()),
+        deps.doctrineIdentity === undefined
+          ? Promise.resolve(deps.vinayaVersion())
+          : deps.doctrineIdentity(deps.cwd(), deps.vinayaVersion()),
         LOG_CONTEXT_LOOKUP_DEADLINE_MS,
         deps.vinayaVersion()
       )

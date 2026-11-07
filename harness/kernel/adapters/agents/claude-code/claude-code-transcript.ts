@@ -1,6 +1,6 @@
 /**
  * claude-code-transcript — the Claude Code **collection adapter** for the
- * token-report obligation (`aeg-root/tranche-model.md` §12, layer 2).
+ * token-report obligation (the process doctrine's tranche model, §12, layer 2).
  *
  * This file is host-coupled on purpose: it is the only `src/` module whose
  * LOGIC parses a host's own data format. Others name host paths as

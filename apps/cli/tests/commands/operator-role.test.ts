@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
-import { doctrineCommand, resolveDoctrineRoot } from '../../src/commands/doctrine.js'
+import { doctrineCommand } from '../../src/commands/doctrine.js'
+import { resolveDoctrineRoot } from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
 
 /**
  * O2 — role discovery exposes the Operator: `doctrine --role operator`
@@ -38,7 +39,7 @@ describe('vinaya doctrine --role operator', () => {
 
     const printed = (await captureStdout(() => doctrineCommand(['--role', 'operator']))).trim()
     expect(isAbsolute(printed)).toBe(true)
-    expect(printed).toBe(join(root, 'roles', 'operator.md'))
+    expect(printed).toBe(join(root, 'executing', 'operator', 'doctrine.md'))
     expect(existsSync(printed)).toBe(true)
   })
 
@@ -46,6 +47,6 @@ describe('vinaya doctrine --role operator', () => {
     const out = await captureStdout(() => doctrineCommand(['--role', 'operator', '--json']))
     const parsed = JSON.parse(out)
     expect(parsed.schema).toBe(1)
-    expect(parsed.data.entry).toBe(join(parsed.data.root, 'roles', 'operator.md'))
+    expect(parsed.data.entry).toBe(join(parsed.data.root, 'executing', 'operator', 'doctrine.md'))
   })
 })

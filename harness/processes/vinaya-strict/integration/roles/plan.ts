@@ -8,14 +8,15 @@
  * Doctrine is read through `@attalabs/vinaya-sources`'s
  * `createFileDoctrineSource`, rooted at `resolveDoctrineRoot()` — the same
  * install-aware resolution `vinaya doctrine` uses (bundled-package shape
- * first, vendored-monorepo fallback second) — never a bare `"aeg-root"`
+ * first, vendored-monorepo fallback second) — never a bare process folder path
  * relative to cwd, which is only correct inside this monorepo itself.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { extractShortVersionAndChecklist } from '../../tools/docs/published-prose'
 import { createFileDoctrineSource } from '@attalabs/vinaya-sources'
-import { resolveDoctrineRoot } from '../../../../../apps/cli/src/commands/doctrine'
+import { resolveDoctrineRoot } from '../../tools/doctrine/resolve-doctrine'
+import { roleEntry } from '../../tools/doctrine/doctrine-map'
 import { configPath, loadConfigChecked } from '../../../../../apps/cli/src/lib/config'
 import type { RoleEntry } from '../../../../../apps/cli/src/lib/config'
 import { type RoleContract, validateRoleContract } from '../../../../kernel/config/loader/roles/contract'
@@ -166,11 +167,12 @@ export async function resolveRoleFile(renderId: string): Promise<RoleFileResolut
   const match = servable.find((entry) => entry.renderId === renderId)
   if (match === undefined) return { available: true, found: false, validNames }
 
-  // A `default` role's file is the core `<root>/roles/<role_id>.md` — the exact
-  // path the command computed before this resolver existed (core doctrine
-  // guarantees the filename equals the `role_id`).
+  // A `default` role's file is the core role doctrine the doctrine map names
+  // for that `role_id`, under the resolved root.
   if (match.source === 'core') {
-    return { available: true, found: true, path: join(root, 'roles', `${match.renderId}.md`), validNames }
+    const core = roleEntry(match.renderId)
+    if (core === undefined) return { available: true, found: false, validNames }
+    return { available: true, found: true, path: join(root, core.source), validNames }
   }
 
   // An `overridden`/`additive` role is served from its config contract,

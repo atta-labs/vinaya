@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   agentSkillPath,
   buildAgentsSkillsOps,
@@ -12,6 +12,14 @@ import {
   roleDeniedTools,
   staleAgentSkillPaths
 } from '../integration/agents-skills-emitter.js'
+import { DOCTRINE_TREE, roleEntry } from '../tools/doctrine/doctrine-map.js'
+
+/** Writes a role doctrine file under `root`, at the source path the doctrine map names for the role id (a name the map does not carry lands at `<name>.md`). */
+function plantRole(root: string, name: string, content: string): void {
+  const path = join(root, roleEntry(name)?.source ?? `${name}.md`)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, content)
+}
 
 describe('agents-skills-emitter', () => {
   let tempDir: string
@@ -38,9 +46,9 @@ describe('agents-skills-emitter', () => {
     it('returns sorted role names from roles/*.md fixture', () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
-      writeFileSync(join(rolesDir, 'reviewer.md'), '# Reviewer\n')
-      writeFileSync(join(rolesDir, 'archivist.md'), '# Archivist\n')
+      plantRole(tempDir, 'developer', '# Developer\n')
+      plantRole(tempDir, 'reviewer', '# Reviewer\n')
+      plantRole(tempDir, 'archivist', '# Archivist\n')
       writeFileSync(join(rolesDir, 'ignored.txt'), 'ignore me\n')
 
       const roles = discoverRoleNames(tempDir)
@@ -54,9 +62,9 @@ describe('agents-skills-emitter', () => {
     it('excludes actor: human roles (principal), includes agent and either', () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(join(rolesDir, 'developer.md'), '---\nactor: agent\n---\n# Developer\n')
-      writeFileSync(join(rolesDir, 'principal.md'), '---\nactor: human\n---\n# Principal\n')
-      writeFileSync(join(rolesDir, 'archivist.md'), '---\nactor: either\n---\n# Archivist\n')
+      plantRole(tempDir, 'developer', '---\nactor: agent\n---\n# Developer\n')
+      plantRole(tempDir, 'principal', '---\nactor: human\n---\n# Principal\n')
+      plantRole(tempDir, 'archivist', '---\nactor: either\n---\n# Archivist\n')
 
       const roles = discoverRoleNames(tempDir)
       expect(roles).toEqual(['archivist', 'developer'])
@@ -64,7 +72,7 @@ describe('agents-skills-emitter', () => {
     })
 
     it('excludes principal against the real bundled doctrine', () => {
-      const realRoot = join(import.meta.dir, '..', '..', '..', '..', 'aeg-root')
+      const realRoot = join(import.meta.dir, '..')
       const roles = discoverRoleNames(realRoot)
       expect(roles).not.toContain('principal')
       expect(roles).toContain('developer')
@@ -75,7 +83,7 @@ describe('agents-skills-emitter', () => {
     it('matches exact 3-line pointer specification for developer', () => {
       const expected = `---
 name: vinaya-developer
-description: Act as the AEG Developer for this repo.
+description: Act as the Vinaya Developer for this repo.
 ---
 Run \`vinaya doctrine --role developer --print\` and follow its output as your operating instructions for this session.
 `
@@ -90,7 +98,7 @@ Run \`vinaya doctrine --role developer --print\` and follow its output as your o
     it('matches exact 3-line pointer specification for brief-author', () => {
       const expected = `---
 name: vinaya-brief-author
-description: Act as the AEG Brief Author for this repo.
+description: Act as the Vinaya Brief Author for this repo.
 ---
 Run \`vinaya doctrine --role brief-author --print\` and follow its output as your operating instructions for this session.
 `
@@ -103,7 +111,7 @@ Run \`vinaya doctrine --role brief-author --print\` and follow its output as you
     it('invokes the source CLI when selfHost is set', () => {
       const expected = `---
 name: vinaya-developer
-description: Act as the AEG Developer for this repo.
+description: Act as the Vinaya Developer for this repo.
 ---
 Run \`bun apps/cli/src/index.ts doctrine --role developer --print\` and follow its output as your operating instructions for this session.
 `
@@ -128,13 +136,13 @@ Run \`bun apps/cli/src/index.ts doctrine --role developer --print\` and follow i
       const claude = renderAgentSkill('operator', null, OPERATOR_GRANT, [], 'claude')
       expect(agents).toBe(`---
 name: vinaya-operator
-description: Act as the AEG Operator for this repo.
+description: Act as the Vinaya Operator for this repo.
 ---
 Run \`vinaya doctrine --role operator --print\` and follow its output as your operating instructions for this session.
 `)
       expect(claude).toBe(`---
 name: vinaya-operator
-description: Act as the AEG Operator for this repo.
+description: Act as the Vinaya Operator for this repo.
 allowed-tools: task_start, task_status
 ---
 Run \`vinaya doctrine --role operator --print\` and follow its output as your operating instructions for this session.
@@ -148,7 +156,7 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     })
 
     it('buildAgentsSkillsOps writes one file per role per target, against the real bundled doctrine', () => {
-      const realRoot = join(import.meta.dir, '..', '..', '..', '..', 'aeg-root')
+      const realRoot = join(import.meta.dir, '..')
       const roles = discoverRoleNames(realRoot)
       const agentsOps = buildAgentsSkillsOps(realRoot, null, 'agents')
       const claudeOps = buildAgentsSkillsOps(realRoot, null, 'claude')
@@ -170,7 +178,7 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
       const repoRoot = join(import.meta.dir, '..', '..', '..', '..')
       const selfHost = { dir: 'apps/cli', bin: 'apps/cli/dist/index.js' }
       for (const target of ['agents', 'claude'] as const) {
-        for (const op of buildAgentsSkillsOps(join(repoRoot, 'aeg-root'), selfHost, target)) {
+        for (const op of buildAgentsSkillsOps(join(repoRoot, DOCTRINE_TREE), selfHost, target)) {
           expect(readFileSync(join(repoRoot, op.path), 'utf8'), op.path).toBe(op.content)
         }
       }
@@ -181,8 +189,9 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     it('reads a YAML list from denied-tools frontmatter', () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(
-        join(rolesDir, 'developer.md'),
+      plantRole(
+        tempDir,
+        'developer',
         '---\nactor: agent\ndenied-tools:\n  - merge\n  - write-status\n---\n# Developer\n'
       )
       expect(roleDeniedTools(tempDir, 'developer')).toEqual(['merge', 'write-status'])
@@ -191,7 +200,7 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     it('returns [] for a role with no denied-tools frontmatter (the Operator)', () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(join(rolesDir, 'operator.md'), '---\nactor: agent\n---\n# Operator\n')
+      plantRole(tempDir, 'operator', '---\nactor: agent\n---\n# Operator\n')
       expect(roleDeniedTools(tempDir, 'operator')).toEqual([])
     })
 
@@ -206,7 +215,7 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     })
 
     it('every real agent role but the Operator declares denied-tools against the real bundled doctrine (O3)', () => {
-      const realRoot = join(import.meta.dir, '..', '..', '..', '..', 'aeg-root')
+      const realRoot = join(import.meta.dir, '..')
       const roles = discoverRoleNames(realRoot)
       expect(roles).toContain('developer')
       for (const role of roles) {
@@ -220,7 +229,7 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     })
 
     it('buildAgentsSkillsOps carries denied-tools into the generated skill for a non-Operator role', () => {
-      const realRoot = join(import.meta.dir, '..', '..', '..', '..', 'aeg-root')
+      const realRoot = join(import.meta.dir, '..')
       const ops = buildAgentsSkillsOps(realRoot)
       const developerOp = ops.find((op) => op.path === '.agents/skills/vinaya-developer/SKILL.md')
       expect(developerOp?.content).toContain('Denied —')
@@ -233,7 +242,7 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     it('flags a manifest-recorded skill whose role no longer resolves under roles/', () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+      plantRole(tempDir, 'developer', '# Developer\n')
 
       const manifestFiles = [
         '.agents/skills/vinaya-developer/SKILL.md',
@@ -252,8 +261,8 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     it("flags a retired role's skill even while its role file is still present", () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
-      writeFileSync(join(rolesDir, 'brief-author.md'), '# Brief Author\n')
+      plantRole(tempDir, 'developer', '# Developer\n')
+      plantRole(tempDir, 'brief-author', '# Brief Author\n')
 
       expect(discoverRoleNames(tempDir)).not.toContain('brief-author')
       expect(discoverRoleNames(tempDir)).toContain('developer')
@@ -271,8 +280,8 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     it('never generates an agent skill for a retired role whose file still exists', () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
-      writeFileSync(join(rolesDir, 'brief-author.md'), '# Brief Author\n')
+      plantRole(tempDir, 'developer', '# Developer\n')
+      plantRole(tempDir, 'brief-author', '# Brief Author\n')
 
       const paths = buildAgentsSkillsOps(tempDir).map((op) => op.path)
       expect(paths).not.toContain('.agents/skills/vinaya-brief-author/SKILL.md')
@@ -282,7 +291,7 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     it('returns empty when every recorded skill still resolves a live role', () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+      plantRole(tempDir, 'developer', '# Developer\n')
 
       expect(staleAgentSkillPaths(tempDir, ['.agents/skills/vinaya-developer/SKILL.md'])).toEqual([])
     })
@@ -290,7 +299,7 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     it("flags a retired role's skill in both .agents/skills/ and .claude/skills/", () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+      plantRole(tempDir, 'developer', '# Developer\n')
 
       expect(
         staleAgentSkillPaths(tempDir, [
@@ -305,7 +314,7 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     it('never matches a hand-authored skill beside the generated ones, even when recorded', () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+      plantRole(tempDir, 'developer', '# Developer\n')
 
       const handAuthored = ['.agents/skills/dispatch-vps/SKILL.md', '.claude/skills/dispatch-vps/SKILL.md']
       expect(staleAgentSkillPaths(tempDir, handAuthored)).toEqual([])
@@ -317,7 +326,7 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     it('ignores paths outside the .agents/skills/vinaya-<role>/SKILL.md shape', () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+      plantRole(tempDir, 'developer', '# Developer\n')
 
       expect(staleAgentSkillPaths(tempDir, ['.claude/commands/vinaya.md', 'AGENTS.md'])).toEqual([])
     })
@@ -327,8 +336,8 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
     it('produces create-file ops and guarantees byte-for-byte idempotence', () => {
       const rolesDir = join(tempDir, 'roles')
       mkdirSync(rolesDir, { recursive: true })
-      writeFileSync(join(rolesDir, 'planner.md'), '# Planner\n')
-      writeFileSync(join(rolesDir, 'reviewer.md'), '# Reviewer\n')
+      plantRole(tempDir, 'planner', '# Planner\n')
+      plantRole(tempDir, 'reviewer', '# Reviewer\n')
 
       const ops1 = buildAgentsSkillsOps(tempDir)
       const ops2 = buildAgentsSkillsOps(tempDir)

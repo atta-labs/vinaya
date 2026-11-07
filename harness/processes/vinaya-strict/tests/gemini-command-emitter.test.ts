@@ -9,7 +9,7 @@ import {
 describe('gemini-command-emitter', () => {
   describe('renderGeminiCommand', () => {
     it('matches the exact parameterized TOML specification', () => {
-      const expected = `description = "Act as an AEG role for this repo."
+      const expected = `description = "Act as a Vinaya role for this repo."
 prompt = "!{vinaya doctrine --role {{args}} --print}"
 `
       expect(renderGeminiCommand()).toBe(expected)
@@ -32,7 +32,7 @@ prompt = "!{vinaya doctrine --role {{args}} --print}"
 
   describe('renderGeminiCommand — selfHost (atta-labs/vinaya#408)', () => {
     it('invokes the source CLI when selfHost is set', () => {
-      const expected = `description = "Act as an AEG role for this repo."
+      const expected = `description = "Act as a Vinaya role for this repo."
 prompt = "!{bun apps/cli/src/index.ts doctrine --role {{args}} --print}"
 `
       expect(renderGeminiCommand({ dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })).toBe(expected)

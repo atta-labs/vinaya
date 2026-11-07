@@ -36,9 +36,9 @@ export const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
 
 /** Repo-relative paths of the hand-written texts the command list is read from. */
 export const DOCTRINE_SOURCES = [
-  'aeg-root/roles/developer.md',
-  'aeg-root/roles/developer/reference.md',
-  'aeg-root/templates/brief-template.md'
+  'harness/processes/vinaya-strict/executing/developer/doctrine.md',
+  'harness/processes/vinaya-strict/executing/developer/reference.md',
+  'harness/processes/vinaya-strict/artifacts/templates/brief-template.md'
 ] as const
 
 /**
@@ -105,7 +105,8 @@ export function isSuiteInput(path: string): boolean {
 }
 
 /** The label the rendered brief's commands are reported under. */
-export const RENDERED_BRIEF_SOURCE = 'rendered brief (renderBrief over aeg-root/templates/brief-template.md)'
+export const RENDERED_BRIEF_SOURCE =
+  'rendered brief (renderBrief over harness/processes/vinaya-strict/artifacts/templates/brief-template.md)'
 
 const COMMAND_HEAD = /^(git|gh|bun|bunx|vinaya)\s/
 const VENDORED_CLI = /^bun apps\/cli\/src\/index\.ts(?=\s|$)/
@@ -192,7 +193,10 @@ function fixtureFacts(): BriefFacts {
 
 /** One brief rendered by the real renderer from the real template. Throws when the fixture no longer renders — the suite must never silently read an empty brief. */
 export function renderFixtureBrief(): string {
-  const template = readFileSync(join(REPO_ROOT, 'aeg-root/templates/brief-template.md'), 'utf8')
+  const template = readFileSync(
+    join(REPO_ROOT, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md'),
+    'utf8'
+  )
   const result = renderBrief(fixtureFacts(), template)
   if (!result.ok) throw new Error(`fixture brief no longer renders — missing: ${result.missing.join(', ')}`)
   return result.brief

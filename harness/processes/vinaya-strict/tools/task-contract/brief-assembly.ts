@@ -60,16 +60,18 @@ import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../..
 import { briefCliInvocation } from '../../../../../apps/cli/src/lib/own-version.js'
 import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
 import { detectVendoredVinaya } from '../../../../../apps/cli/src/lib/self-host.js'
+import { BUNDLED_DOCTRINE_DIR, DOCTRINE_TREE, doctrineSource } from '../doctrine/doctrine-map'
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 /** The workspace member that owns the unabridged gate derivations a brief may name, and the name it must declare for this repository to be the one that owns them. */
 const AEG_CORE_DIR = 'harness/processes/vinaya-strict'
 const AEG_CORE_PACKAGE_NAME = '@attalabs/process-vinaya'
 const PACKAGE_ROOT = cliPackageRoot()
-const PACKAGED_TEMPLATE_PATH = join(PACKAGE_ROOT, 'aeg-root', 'templates', 'brief-template.md')
+const BRIEF_TEMPLATE_SOURCE = doctrineSource('templates/brief-template.md')
+const PACKAGED_TEMPLATE_PATH = join(PACKAGE_ROOT, BUNDLED_DOCTRINE_DIR, BRIEF_TEMPLATE_SOURCE)
 const TEMPLATE_PATH = existsSync(PACKAGED_TEMPLATE_PATH)
   ? PACKAGED_TEMPLATE_PATH
-  : join(PACKAGE_ROOT, '..', '..', 'aeg-root', 'templates', 'brief-template.md')
+  : join(PACKAGE_ROOT, '..', '..', DOCTRINE_TREE, BRIEF_TEMPLATE_SOURCE)
 
 /**
  * The two command facts every rendered brief needs about the repository it is
@@ -157,7 +159,7 @@ function resolveRepo(): { owner: string; repo: string } | null {
  *     workspace fallback), never the workspace-only copy only Vinaya's own
  *     repository carries. Checking the workspace copy was the O1 bug: an
  *     adopter that installs Vinaya from the registry has the packaged template
- *     dispatch renders from but no `aeg-root/` of its own, so this gate
+ *     dispatch renders from but no `harness/processes/vinaya-strict/` of its own, so this gate
  *     switched itself off and printed a pass for an Issue `task run` then
  *     refused at brief render.
  *  2. **The owner/repo resolves** (`AEG_REPO`, or a GitHub `origin` remote) —
@@ -466,7 +468,7 @@ export function checkDirtyPinnedFiles(pinnedPaths: string[], cwd?: string): stri
  * against `allTrackedFiles` (a `git ls-files` snapshot, injected rather than
  * read here so this stays testable without a real repo) — an exact match, or
  * a UNIQUE suffix match for a bare filename elided from a shared directory
- * prefix in the Boundary prose (e.g. a real brief's own "aeg-root/
+ * prefix in the Boundary prose (e.g. a real brief's own "harness/processes/vinaya-strict/
  * aeg-manual-flow.md, process.md, roles/developer.md"). A token matching
  * zero or more-than-one tracked file is dropped, never guessed.
  */

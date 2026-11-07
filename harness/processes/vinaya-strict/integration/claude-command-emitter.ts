@@ -5,7 +5,7 @@
 // — "Available string substitutions") to shell out to `vinaya doctrine --role`
 // at read time. Unlike `.agents/skills/`'s emitter, this is a single static
 // file, not one per role: the role is supplied at invocation via `$ARGUMENTS`,
-// so there is nothing to discover from `aeg-root/roles/*.md` here.
+// so there is nothing to discover from the role doctrine here.
 //
 // Security note: `$ARGUMENTS` substitutes into the shell command as a raw,
 // PRE-SHELL text splice (a documented Claude Code issue) —
@@ -37,7 +37,7 @@
 //
 // `vinaya doctrine --role`'s own handling (`doctrine.ts`) validates the
 // argument it actually receives against the exact set of role names
-// discovered from `aeg-root/roles/*.md` and refuses anything else — that
+// discovered from the doctrine map's role doctrine and refuses anything else — that
 // check is real and airtight for ITS OWN scope, but an injected `$(...)` or
 // quote-breakout command never reaches it as an argument at all; it runs at
 // the shell level first. The actual remaining backstop is Claude Code's own
@@ -81,7 +81,7 @@ function doctrineInvocation(selfHost: VendoredVinaya | null): string {
 export function renderClaudeCommand(selfHost: VendoredVinaya | null = null): string {
   const invocation = doctrineInvocation(selfHost)
   return `---
-description: Act as an AEG role for this repo.
+description: Act as a Vinaya role for this repo.
 allowed-tools: Bash(${invocation} *)
 ---
 !\`${invocation} --role "$ARGUMENTS" --print\`

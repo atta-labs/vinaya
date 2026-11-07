@@ -23,7 +23,7 @@
  *   - premise         — `parsePremiseBlock` + `checkPremises`, re-asserted
  *                       against the PR's merge-commit tree (the shipped diff
  *                       a fresh `Premise:` block asserts facts about, per
- *                       `aeg-root/templates/pr-report-template.md` — not the
+ *                       `harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md` — not the
  *                       brief's original pre-fix pins), when the PR body
  *                       carries a `Premise:` block.
  * A gate that has nothing to check for a given PR (no linked Issue resolved,

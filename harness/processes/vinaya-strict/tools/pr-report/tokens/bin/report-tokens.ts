@@ -2,7 +2,7 @@
 
 /**
  * report-tokens — **the Claude Code collection adapter** for AEG's
- * token-report obligation, and only that. `aeg-root/tranche-model.md` §12
+ * token-report obligation, and only that. `harness/processes/vinaya-strict/doctrine/tranche-model.md` §12
  * splits the obligation into three layers: every role reports its own turn's
  * usage (layer 1, portable), by whatever means its host offers (layer 2,
  * host-specific), into the `Tokens: …` grammar in the artifact its turn
@@ -110,13 +110,13 @@ export type ResolveDeps = {
  *
  * Throws rather than falling back to a `—` line. A `—` is sanctioned only for
  * an operator-metered role — one whose host exposes no usage to the agent at
- * all (`aeg-root/tranche-model.md` §12) — and such a role never invokes this
+ * all (`harness/processes/vinaya-strict/doctrine/tranche-model.md` §12) — and such a role never invokes this
  * adapter. Reaching this code means the host *does* expose usage, so an
  * unresolvable transcript is a wiring problem to report, never a blank to
  * emit.
  *
  * A worktree reused across sessions (e.g. a Developer re-entry after
- * `CHANGES_REQUESTED`, `aeg-root/roles/developer.md`) can hold a pointer
+ * `CHANGES_REQUESTED`, `harness/processes/vinaya-strict/executing/developer/doctrine.md`) can hold a pointer
  * file written by a *previous* session that hasn't been overwritten yet —
  * the new session's own Stop hook only fires after its first turn
  * completes. Reading that stale pointer silently would reproduce, one

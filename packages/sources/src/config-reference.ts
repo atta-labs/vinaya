@@ -416,7 +416,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'proseGates.doctrineRoot',
     type: 'string (optional, min 1)',
     semantics: [
-      'The doctrine directory both checks sweep in full — every `.md` under it counts as "ships" prose. Defaults to `"aeg-root"`, this repo\'s own doctrine root. An adopter who names their installed doctrine tree differently sets this once; both checks read the same value, and so do `quoted-command` and `doc-claims`, which sweeps the tracked pages under it for claim markers (a root outside the repository leaves that half of its sweep empty).'
+      'The doctrine directory both checks sweep in full — every `.md` under it counts as "ships" prose. Unset, the checks sweep the doctrine map\'s source paths under `harness/processes/vinaya-strict`, this repo\'s own doctrine tree. An adopter who names their installed doctrine tree differently sets this once; both checks read the same value, and so do `quoted-command` and `doc-claims`, which sweeps the tracked pages under it for claim markers (a root outside the repository leaves that half of its sweep empty).'
     ],
     example: `{ "doctrineRoot": "governance-docs" }`
   },
@@ -604,7 +604,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'decisionRecords.path',
     type: 'string (optional)',
     semantics: [
-      'The folder, relative to the repository root, that holds the decision records. Refused at load, naming this key, when it leaves the repository (absolute, or climbing through `..`), names the repository root itself, or sits inside the doctrine tree (`proseGates.doctrineRoot`, or `aeg-root` when that is unset).',
+      "The folder, relative to the repository root, that holds the decision records. Refused at load, naming this key, when it leaves the repository (absolute, or climbing through `..`), names the repository root itself, or sits inside the doctrine tree (`proseGates.doctrineRoot`, or the doctrine map's tree `harness/processes/vinaya-strict` when that is unset).",
       "Set, it does three things. `vinaya new adr <title>` writes the next numbered record into the folder and indexes it. The folder joins the writing rules' `spec` scope, each file read once even when the folder is also the default `docs/adr`. And the `decision-record-citation` rule runs: it blocks `ADR` followed by a number, and any path to a numbered file in the folder, in the doctrine pages, the specs, product code, source comments and the published pass. The folder itself is exempt, so a record may name the record it supersedes.",
       'The rule exists only while this key is set, so `proseGates.rules.defaults` does not address it, and a custom rule may not take its id.'
     ],

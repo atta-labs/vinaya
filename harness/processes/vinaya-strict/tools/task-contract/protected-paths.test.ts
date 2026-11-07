@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { normalizeTouchedPath } from '@attalabs/harness/tools/host/touched-path'
 import { isProtectedAdminPath, PROTECTED_ADMIN_PATHS } from './protected-paths'
+import { DOCTRINE_REPO_PATHS } from '../doctrine/doctrine-map'
 
 describe('normalizeTouchedPath', () => {
   test.each([
@@ -17,26 +18,33 @@ describe('normalizeTouchedPath', () => {
 
 describe('isProtectedAdminPath', () => {
   test('lists the four protected prefixes', () => {
-    expect([...PROTECTED_ADMIN_PATHS]).toEqual(['vinaya.config.json', '.vinaya/doc-owners', '.github/', 'aeg-root/'])
+    expect([...PROTECTED_ADMIN_PATHS]).toEqual([
+      'vinaya.config.json',
+      '.vinaya/doc-owners',
+      '.github/',
+      ...DOCTRINE_REPO_PATHS
+    ])
   })
 
   test.each([
     'vinaya.config.json',
     '.vinaya/doc-owners',
     '.github/workflows/ci.yml',
-    'aeg-root/enforcement.md',
+    'harness/processes/vinaya-strict/doctrine/enforcement.md',
     './.github/x',
-    '/aeg-root/x',
+    '/harness/processes/vinaya-strict/doctrine/enforcement.md',
     'foo/../.github/x',
-    '../../aeg-root/x'
+    '../../harness/processes/vinaya-strict/doctrine/enforcement.md'
   ])('%s is protected', (path) => {
     expect(isProtectedAdminPath(path)).toBe(true)
   })
 
-  test.each(['apps/cli/src/index.ts', 'docs/.github/x', 'foo/aeg-root/x', 'README.md'])(
-    '%s is not protected',
-    (path) => {
-      expect(isProtectedAdminPath(path)).toBe(false)
-    }
-  )
+  test.each([
+    'apps/cli/src/index.ts',
+    'docs/.github/x',
+    'foo/harness/processes/vinaya-strict/doctrine/enforcement.md',
+    'README.md'
+  ])('%s is not protected', (path) => {
+    expect(isProtectedAdminPath(path)).toBe(false)
+  })
 })

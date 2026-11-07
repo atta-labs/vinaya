@@ -1021,7 +1021,7 @@ export function checkObjectivesCopy(prBody: string, issueObjectives: Objective[]
     return {
       status: 'fail',
       errors: [
-        "brief-validation objectives copy: the brief's `## Objectives` section does not match the Issue's — copy the Issue's `## Objectives` section (aeg-root/roles/developer.md)."
+        "brief-validation objectives copy: the brief's `## Objectives` section does not match the Issue's — copy the Issue's `## Objectives` section (harness/processes/vinaya-strict/executing/developer/doctrine.md)."
       ]
     }
   }

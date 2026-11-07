@@ -1,9 +1,15 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { deriveDiagramModel } from '../../tools/diagram-model'
 import type { DiagramNode } from '../../tools/diagram-model'
 import type { DoctrineContent } from '../../tools/doctrine-source'
+import {
+  CONTRACT_ENTRIES,
+  type DoctrineMapEntry,
+  doctrineSource,
+  ROLE_KEY_ENTRIES
+} from '../../tools/doctrine/doctrine-map'
 import { nodeDocHref, nodeDocRoute } from './node-route'
 
 function node(kind: DiagramNode['kind'], id: string, extra: Partial<DiagramNode> = {}): DiagramNode {
@@ -92,16 +98,15 @@ describe('nodeDocHref: route + #slug', () => {
 const REPO_ROOT = join(import.meta.dirname, '../../../../..')
 
 function loadRealDoctrine(): DoctrineContent {
-  const root = join(REPO_ROOT, 'aeg-root')
-  const readDir = (dir: string) =>
-    readdirSync(join(root, dir))
-      .filter((f) => f.endsWith('.md'))
-      .sort()
-      .map((file) => ({ path: join(dir, file), content: readFileSync(join(root, dir, file), 'utf8') }))
+  const root = join(REPO_ROOT, 'harness/processes/vinaya-strict')
+  const readDir = (entries: readonly DoctrineMapEntry[]) =>
+    [...entries]
+      .sort((a, b) => a.key.localeCompare(b.key))
+      .map((entry) => ({ path: entry.key, content: readFileSync(join(root, entry.source), 'utf8') }))
   return {
-    enforcement: readFileSync(join(root, 'enforcement.md'), 'utf8'),
-    roles: readDir('roles'),
-    contracts: readDir('contracts')
+    enforcement: readFileSync(join(root, doctrineSource('enforcement.md')), 'utf8'),
+    roles: readDir(ROLE_KEY_ENTRIES),
+    contracts: readDir(CONTRACT_ENTRIES)
   }
 }
 

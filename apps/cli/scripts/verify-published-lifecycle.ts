@@ -917,12 +917,22 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
 
   doctrine: ({ bin, fixtureDir }) => {
     // The published-tarball resolution shape, for real: the scratch install's
-    // own bundled `aeg-root/` (in the `files` array) is what must resolve —
+    // own bundled doctrine folder (in the `files` array) is what must resolve —
     // exactly the path the committed AGENTS.md pointer hands every reader.
+    // The probe runs against the version already published, so it accepts
+    // either layout: the published `aeg-root/skills/aeg/SKILL.md`, or the
+    // `vinaya-strict/doctrine/skills/vinaya/SKILL.md` the process folder ships.
+    const layouts = [
+      { root: 'aeg-root', entry: ['skills', 'aeg', 'SKILL.md'] },
+      { root: 'vinaya-strict', entry: ['doctrine', 'skills', 'vinaya', 'SKILL.md'] }
+    ] as const
     const plain = run(bin, ['doctrine'], fixtureDir)
     const printed = plain.stdout.trim()
-    const entrySuffix = join('aeg-root', 'skills', 'aeg', 'SKILL.md')
-    const plainOk = plain.status === 0 && isAbsolute(printed) && printed.endsWith(entrySuffix) && existsSync(printed)
+    const plainOk =
+      plain.status === 0 &&
+      isAbsolute(printed) &&
+      layouts.some((layout) => printed.endsWith(join(layout.root, ...layout.entry))) &&
+      existsSync(printed)
     const json = run(bin, ['doctrine', '--json'], fixtureDir)
     let jsonOk = false
     try {
@@ -930,7 +940,8 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
       jsonOk =
         parsed.schema === 1 &&
         typeof parsed.data?.root === 'string' &&
-        parsed.data?.entry === join(parsed.data.root, 'skills', 'aeg', 'SKILL.md') &&
+        typeof parsed.data.entry === 'string' &&
+        layouts.some((layout) => parsed.data?.entry === join(parsed.data?.root ?? '', ...layout.entry)) &&
         existsSync(parsed.data.entry)
     } catch {
       jsonOk = false
@@ -1469,7 +1480,7 @@ async function main(): Promise<void> {
     // working tree. The TARBALL lands in the scratch root, never in the repo —
     // but the pack OPERATION is not repo-free: npm runs `prepack` with `cwd`
     // at the package, so build + bundle-doctrine write `apps/cli/dist/` and
-    // `apps/cli/aeg-root/` into the working tree. Both are gitignored, so this
+    // `apps/cli/vinaya-strict/` into the working tree. Both are gitignored, so this
     // leaves no dirtiness; it does mean two concurrent `--local-pack` runs
     // race on those shared build outputs, while the scratch root itself is
     // per-run unique. Running `prepack` is the point: the tarball is then the

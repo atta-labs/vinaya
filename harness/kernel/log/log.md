@@ -158,7 +158,7 @@ meta: {
   seq: number          // per-process counter from 0; a reader sorts by this, never by file position
   repo: string | null  // 'owner/name' from the origin remote; null when it cannot be resolved
   vinaya: string       // the CLI version that wrote the line
-  doctrine: string     // 'aeg-root@<sha>' for a tree checkout, the package version for a bundle, 'unknown' when git is unreachable
+  doctrine: string     // what the sink's doctrineIdentity dependency returns ('doctrine@<id>' for a tree checkout under the process's rule, 'unknown' when git is unreachable); the package version when none is given
   host: 'hook' | 'ci' | 'cli' | 'loop'
   machine: string      // sha256 of the hostname; never the name itself
 }

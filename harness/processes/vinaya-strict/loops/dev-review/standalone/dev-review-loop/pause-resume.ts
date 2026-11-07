@@ -947,7 +947,7 @@ export function printDriverLockLine(message: string): void {
  * `readEscalationPacket` reads for its own live reconstruction of the same
  * facts (moved here, not duplicated, since an escalation record persisted
  * by THIS file is now the durable home for exactly this judgment call —
- * `aeg-root/roles/*.md`'s own routing for each reason, recorded once).
+ * the doctrine map's role doctrine under `harness/processes/vinaya-strict/`'s own routing for each reason, recorded once).
  */
 export const PAUSE_REASON_PROFILE: Record<
   PauseReason,

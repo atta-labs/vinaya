@@ -8,7 +8,8 @@ import {
   SHORT_VERSION_MAX_WORDS,
   SHORT_VERSION_MIN_WORDS
 } from '../../tools/docs/published-prose'
-import { resolveDoctrineRoot } from '../../../../../apps/cli/src/commands/doctrine'
+import { resolveDoctrineRoot } from '../../tools/doctrine/resolve-doctrine'
+import { doctrineSource } from '../../tools/doctrine/doctrine-map'
 import {
   assembleDeveloperDoctrine,
   DEVELOPER_CHECKLIST_HEADINGS,
@@ -31,8 +32,8 @@ function doctrineFile(...segments: string[]): string {
   return readFileSync(join(root, ...segments), 'utf8')
 }
 
-const roleFile = doctrineFile('roles', 'developer.md')
-const reference = doctrineFile('roles', 'developer', 'reference.md')
+const roleFile = doctrineFile(doctrineSource('roles/developer.md'))
+const reference = doctrineFile(doctrineSource('roles/developer/reference.md'))
 
 describe('the developer role file short version', () => {
   const short = extractShortVersion(roleFile) ?? ''

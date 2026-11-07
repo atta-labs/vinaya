@@ -5,7 +5,7 @@
  * constraints** (what the seat may and may not do) and the **version-pinned
  * evidence index** (every fact the round was judged against, each pinned to
  * the version it was true at). The doctrine and worked examples live in
- * `aeg-root/skills/aeg-context-packets/`; this module is the parser, the
+ * `harness/processes/vinaya-strict/doctrine/skills/context-packets/`; this module is the parser, the
  * validator, and the two transforms (compaction, continuation) that the
  * fixtures exercise.
  *

@@ -1875,10 +1875,10 @@ describe('decisionRecords.path', () => {
   })
 
   it('refuses a path inside the doctrine tree, the default one or a configured one', () => {
-    expect(refusals({ decisionRecords: { path: 'aeg-root/adr' } })[0]).toContain(
-      'decisionRecords.path: must be outside the doctrine tree "aeg-root"'
+    expect(refusals({ decisionRecords: { path: 'harness/processes/vinaya-strict/adr' } })[0]).toContain(
+      'decisionRecords.path: must be outside the doctrine tree "harness/processes/vinaya-strict"'
     )
-    expect(refusals({ decisionRecords: { path: 'aeg-root' } })).toHaveLength(1)
+    expect(refusals({ decisionRecords: { path: 'harness/processes/vinaya-strict' } })).toHaveLength(1)
     expect(
       refusals({ proseGates: { doctrineRoot: 'doctrine' }, decisionRecords: { path: 'doctrine/records' } })[0]
     ).toContain('must be outside the doctrine tree "doctrine"')

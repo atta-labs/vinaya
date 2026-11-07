@@ -28,7 +28,7 @@
  * reason..
  *
  * The only valid `performedBy` values are the 9 `role_id`s under
- * `aeg-root/roles/*.md` — asserted by the real-file test.
+ * the doctrine map's role doctrine under `harness/processes/vinaya-strict/` — asserted by the real-file test.
  */
 
 export type ActionCrossing = 'into-github' | 'none'
