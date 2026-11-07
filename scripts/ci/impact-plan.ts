@@ -5,15 +5,15 @@
  * the `Vinaya CI` aggregate must see succeed.
  *
  * The tests come from the shared selection library through this
- * repository's adapter (`scripts/test-suites/repository-selection.ts`, its
- * `ci` consumer): the same immutable `selectTests` a local push uses, over the
- * same canonical inventory, so for the same commits, inventory and policy the
- * two require the same tests. This plan adds only CI's own policy, each
- * addition stated with its reason:
+ * repository's adapter (`scripts/test-suites/repository-selection.ts`): the
+ * same immutable `selectTests` a local push uses, over the same canonical
+ * inventory, so for the same commits, inventory, policy and record the two
+ * require the same tests. This plan adds only CI's own policy, each addition
+ * stated with its reason:
  *
- * - the inventory's always-run list (`prePush.alwaysRun`) as a CI obligation,
- *   because its inputs are not modeled — kept until they are declared in the
- *   inventory and a paired local/CI regression proves the narrower answer;
+ * - the record of the base commit's reads (`scripts/ci/record-reads.ts`, taken
+ *   on every default-branch push), which decides each test it holds a valid
+ *   record for; the plan names every test left to static selection and why;
  * - the mandatory duties of `governance-obligations.ts`;
  * - the task prerequisites of the build job's own steps: which packages to
  *   typecheck, from the manifests' workspace dependencies and every relative
@@ -48,7 +48,6 @@ import type { CiDecision } from '../../harness/processes/vinaya-strict/integrati
 import {
   DEFAULT_CONFIGURATION,
   type NativeProblem,
-  type SelectionObligation,
   type SelectionPlan,
   selectTests,
   stableHash
@@ -59,11 +58,15 @@ import {
   revisionReader,
   type TreeReader
 } from '../test-suites/inventory-check.ts'
-import { alwaysRunObligations, repositorySelectionInput, resolveCommit } from '../test-suites/repository-selection.ts'
+import { type ReachedRecord, reachableRecord } from '../test-suites/read-records.ts'
+import { repositorySelectionInput, resolveCommit } from '../test-suites/repository-selection.ts'
 import { buildTestSchedule, checkSchedule, ciScheduleInput } from '../test-suites/schedule.ts'
 import { ADVISORY_JOBS, type CiJob, GOVERNANCE_OBLIGATIONS } from './governance-obligations.ts'
 
 export type CiEvent = 'pull_request' | 'push'
+
+/** Reaches the read record of a commit, or says why none can be reached. */
+export type RecordReach = (repoRoot: string, commit: string) => ReachedRecord
 
 /** The base guard's answer, as `base-guard.ts` prints it. */
 export type GuardInput = { verdict: 'plan' | 'full'; reason: string; guarded: string[] }
@@ -114,6 +117,13 @@ export type CiPlan = {
     required: number
     fallbacks: { id: string; reason: string; tests: number }[]
     policies: { id: string; kind: string; duty: string }[]
+    /** What the base commit's read record decided, and every test left to static selection, with its reason. */
+    records: {
+      commit: string | null
+      note: string
+      recorded: number
+      fallbacks: { id: string; reason: string; tests: number }[]
+    }
   } | null
   changed: string[]
   /** Every planned test, with why. Empty when everything runs. */
@@ -144,6 +154,8 @@ export type CiPlanInput = {
   shadow?: boolean
   /** Fetches a commit the checkout lacks; the default asks `origin`, and a failure leaves it missing. */
   fetch?: (sha: string) => void
+  /** Reaches the base commit's read record; the default fetches the commit's workflow artifact. */
+  reachRecord?: RecordReach
 }
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
@@ -384,26 +396,20 @@ export function scheduleCheck(
 
 // ── The plan ───────────────────────────────────────────────────────────────
 
-/** The always-run list as CI keeps it: an obligation whose reason is that its inputs are not modeled. */
-function legacyObligations(repoRoot: string, head: string, view: InventoryView): SelectionObligation[] {
-  return alwaysRunObligations(repoRoot, head, view).map((obligation) => ({
-    ...obligation,
-    reason: `unmodeled input: ${obligation.reason}; CI keeps this list until its tests' real inputs are declared in the inventory and a paired local and CI regression proves the narrower answer`
-  }))
-}
-
-/** The CI consumer's selection, with the always-run list added as its own stated obligation. */
+/**
+ * The selection CI plans by: the same one a local push calls, with the same inputs. The record of the base commit is
+ * fetched when one can be reached; a test without a valid one is decided by static selection, and the plan names why.
+ */
 export function ciSelection(
   repoRoot: string,
   base: string,
-  head: string
-): { plan: SelectionPlan; view: InventoryView } {
-  const input = repositorySelectionInput(repoRoot, { base, head, consumer: 'ci' })
-  const policy = {
-    ...input.policy,
-    obligations: [...(input.policy.obligations ?? []), ...legacyObligations(repoRoot, input.head, input.inventory.head)]
-  }
-  return { plan: selectTests({ ...input, policy }), view: input.inventory.head }
+  head: string,
+  reach: RecordReach = reachableRecord
+): { plan: SelectionPlan; view: InventoryView; recordNote: string } {
+  const resolved = resolveCommit(repoRoot, base)
+  const reached = reach(repoRoot, resolved)
+  const input = repositorySelectionInput(repoRoot, { base, head, record: reached.record })
+  return { plan: selectTests(input), view: input.inventory.head, recordNote: reached.reason }
 }
 
 function plannedRuns(selection: SelectionPlan): PlannedRun[] {
@@ -501,8 +507,8 @@ function suiteRunners(view: InventoryView): string {
 }
 
 /** The narrowed part of a plan: the selection, its tests and what it decides. */
-function narrowed(repoRoot: string, event: CiEvent, base: string, tested: string) {
-  const { plan: selection, view } = ciSelection(repoRoot, base, tested)
+function narrowed(repoRoot: string, event: CiEvent, base: string, tested: string, reach?: RecordReach) {
+  const { plan: selection, view, recordNote } = ciSelection(repoRoot, base, tested, reach)
   const tests = plannedRuns(selection)
   const byId = new Map(view.tests.map((t) => [t.id, t]))
   const unknown = tests.filter((t) => !byId.has(t.test)).map((t) => t.test)
@@ -511,10 +517,12 @@ function narrowed(repoRoot: string, event: CiEvent, base: string, tested: string
     scope: 'selected',
     selected: tests.filter((t) => byId.get(t.test)?.runner !== 'vitest').map((t) => t.test),
     native: tests.filter((t) => byId.get(t.test)?.runner === 'vitest').map((t) => t.test),
-    changed
+    changed,
+    recorded: selection.records.recorded
   }
   return {
     selection,
+    recordNote,
     view,
     tests,
     unknown,
@@ -568,7 +576,7 @@ export function buildCiPlan(input: CiPlanInput): CiPlan {
   let narrow: ReturnType<typeof narrowed> | null = null
   if (!fullReason) {
     try {
-      narrow = narrowed(repoRoot, event, base, testedTree)
+      narrow = narrowed(repoRoot, event, base, testedTree, input.reachRecord)
       if (narrow.unknown.length > 0) {
         fullReason = `the selection names ${narrow.unknown[0]}, which the inventory does not hold`
         narrow = null
@@ -636,7 +644,17 @@ export function buildCiPlan(input: CiPlanInput): CiPlan {
           identity: narrow.selection.identity,
           required: narrow.selection.required.length,
           fallbacks: narrow.selection.fallbacks.map((f) => ({ id: f.id, reason: f.reason, tests: f.tests.length })),
-          policies: narrow.selection.policies.map((p) => ({ id: p.id, kind: p.kind, duty: p.duty }))
+          policies: narrow.selection.policies.map((p) => ({ id: p.id, kind: p.kind, duty: p.duty })),
+          records: {
+            commit: narrow.selection.records.commit,
+            note: narrow.recordNote,
+            recorded: narrow.selection.records.recorded.length,
+            fallbacks: narrow.selection.records.fallbacks.map((f) => ({
+              id: f.id,
+              reason: f.reason,
+              tests: f.tests.length
+            }))
+          }
         }
       : null,
     changed,
@@ -713,6 +731,13 @@ export function planSummary(plan: CiPlan): string {
       }.`
     )
     for (const f of plan.selection?.fallbacks ?? []) lines.push(`- fallback ${f.id}: ${f.tests} test(s) — ${f.reason}`)
+    if (plan.selection)
+      lines.push(
+        `Recorded reads: ${plan.selection.records.recorded} test(s) decided by the record of ${plan.selection.records.commit?.slice(0, 12) ?? 'no commit'} (${plan.selection.records.note}).`,
+        ...plan.selection.records.fallbacks.map(
+          (f) => `- static selection decides ${f.tests} test(s) (${f.id}): ${f.reason}`
+        )
+      )
     for (const u of plan.unselected) lines.push(`- not run: ${u.suite}, ${u.tests} test(s) — ${u.reason}`)
   }
   if (plan.shadow)

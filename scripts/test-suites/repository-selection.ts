@@ -14,30 +14,34 @@
  * - the folder-scanning tests' declarations, read from the syntax of the
  *   module the inventory names as their provider;
  * - the program the CLI tests start (`bun apps/cli/src/index.ts`);
- * - the obligations each consumer adds on top of what the change requires.
+ * - the obligations every caller adds on top of what the change requires;
+ * - the record of what each test read when it last ran on the default branch
+ *   (`read-records.ts`), when the caller reached one.
  *
- * The two consumers share every input that decides the dependency-required
- * set — the comparison, the inventory and the policy — so for the same
- * commits and depth they require the same tests. Their obligations are
- * stated additions: a local push adds the inventory's always-run policies
- * (the `prePush.alwaysRun` list); CI adds the inventory gate's repository
- * suite. The Linux sandbox conformance suite is no obligation: it runs when
- * the change reaches it — through its imports or the paths its
- * `SUITE_INPUTS` provider names — like any other test.
+ * There is one answer per change: a local push and CI call this with the same
+ * inputs and get the same selected set. A test with a valid record is decided
+ * by its record; every other test by the static selection, which walks the
+ * full transitive import closure for every caller. The obligations are stated
+ * additions, the same for every caller: the inventory's always-run policies
+ * (the `prePush.alwaysRun` list) and the inventory gate's build-gate suites.
+ * The Linux sandbox conformance suite is no obligation: it runs when the
+ * change reaches it like any other test.
  *
  * The CI workflow consumes this adapter through its own plan
- * (`scripts/ci/impact-plan.ts`), which also keeps the always-run list as a
- * CI obligation until its inputs are modeled. The pre-push hook consumes it
- * through the native local-run adapter (`local-run.ts`), which hands it the
- * base the push chose and keeps the push's failed-test obligations outside it.
+ * (`scripts/ci/impact-plan.ts`). The pre-push hook consumes it through the
+ * native local-run adapter (`local-run.ts`), which hands it the base the push
+ * chose and keeps the push's failed-test obligations outside it.
  *
- *   bun scripts/test-suites/repository-selection.ts --base <rev> --head <rev> [--consumer local|ci] [--depth one|transitive]
+ *   bun scripts/test-suites/repository-selection.ts --base <rev> --head <rev> [--record <file>]
  */
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { CLI_SPAWN_BINARY } from '../../harness/kernel/gates/ring0-hooks/pre-push/cli-spawn-tests.js'
 import { DEFAULT_CLI_ENTRYPOINT } from '../../harness/processes/vinaya-strict/integration/repository-verification.js'
 import {
   gitRepository,
+  isReadRecord,
+  type ReadRecord,
   type ScannerDeclaration,
   type ScannerTrigger,
   type SelectionObligation,
@@ -56,14 +60,13 @@ import {
   revisionReader
 } from './inventory-check.js'
 
-export type SelectionConsumer = 'local' | 'ci'
-
 export type RepositorySelectionOptions = {
   base: string
   head: string
-  consumer: SelectionConsumer
-  /** The local push walks depth one and CI the transitive closure, unless a caller names one. */
-  depth?: SelectionPolicy['depth']
+  /** The record of the comparison's commit, when the caller reached one; absent, static selection decides every test. */
+  record?: ReadRecord | null
+  /** The platform the caller runs on; defaults to this process's. */
+  platform?: string
 }
 
 /** The root suites the build job runs on every pull request, each under the policy that states the duty. */
@@ -125,53 +128,42 @@ export function alwaysRunObligations(repoRoot: string, head: string, view: Inven
     }))
 }
 
-/** What each consumer adds on top of what the change requires. */
-function obligationsOf(
-  repoRoot: string,
-  head: string,
-  view: InventoryView,
-  consumer: SelectionConsumer
-): SelectionObligation[] {
-  if (consumer === 'local') return alwaysRunObligations(repoRoot, head, view)
-  return BUILD_GATES.flatMap(({ policy: id, suite }) => {
+/** What every caller adds on top of what the change requires: the always-run policies and the build-gate suites. */
+function obligationsOf(repoRoot: string, head: string, view: InventoryView): SelectionObligation[] {
+  const gates = BUILD_GATES.flatMap(({ policy: id, suite }) => {
     const gate = view.policies.find((policy) => policy.id === id)
     return gate ? [{ id: gate.id, kind: 'policy' as const, reason: gate.duty, suites: [suite] }] : []
   })
+  return [...alwaysRunObligations(repoRoot, head, view), ...gates]
 }
 
-/** This repository's selection policy for one consumer, read from the head commit. */
-export function repositoryPolicy(
-  repoRoot: string,
-  head: string,
-  view: InventoryView,
-  consumer: SelectionConsumer,
-  depth: SelectionPolicy['depth']
-): SelectionPolicy {
+/** This repository's selection policy, read from the head commit. */
+export function repositoryPolicy(repoRoot: string, head: string, view: InventoryView): SelectionPolicy {
   return {
-    depth,
+    depth: 'transitive',
     scanners: scannerDeclarations(repoRoot, head),
     spawnPrograms: [{ binary: CLI_SPAWN_BINARY, entrypoint: DEFAULT_CLI_ENTRYPOINT }],
-    obligations: obligationsOf(repoRoot, head, view, consumer),
+    obligations: obligationsOf(repoRoot, head, view),
     parsers: { toml: (text) => Bun.TOML.parse(text), 'bun-lock': bunLockParser }
   }
 }
 
-/** The selection's whole input for `consumer`: both commits resolved, both inventory views, the policy. */
+/** The selection's whole input: both commits resolved, both inventory views, the policy and the record. */
 export function repositorySelectionInput(repoRoot: string, options: RepositorySelectionOptions): SelectTestsInput {
   const base = resolveCommit(repoRoot, options.base)
   const head = resolveCommit(repoRoot, options.head)
   const inventory = readTestInventory(repoRoot, { base, head })
-  const depth = options.depth ?? (options.consumer === 'local' ? 'one' : 'transitive')
   return {
     repo: gitRepository(repoRoot),
     base,
     head,
     inventory: { head: inventory.head, base: inventory.base },
-    policy: repositoryPolicy(repoRoot, head, inventory.head, options.consumer, depth)
+    policy: repositoryPolicy(repoRoot, head, inventory.head),
+    records: options.record ? { record: options.record, platform: options.platform ?? process.platform } : null
   }
 }
 
-/** The plan of the tests the change from `base` to `head` requires, for `consumer`. */
+/** The plan of the tests the change from `base` to `head` requires. */
 export function repositorySelection(repoRoot: string, options: RepositorySelectionOptions): SelectionPlan {
   return selectTests(repositorySelectionInput(repoRoot, options))
 }
@@ -185,16 +177,15 @@ if (import.meta.main) {
   const argv = process.argv.slice(2)
   const base = argValue(argv, '--base')
   const head = argValue(argv, '--head') ?? 'HEAD'
-  const consumer = (argValue(argv, '--consumer') ?? 'ci') as SelectionConsumer
-  const depth = argValue(argv, '--depth') as SelectionPolicy['depth'] | undefined
-  if (!base || (consumer !== 'local' && consumer !== 'ci')) {
-    process.stderr.write(
-      'usage: repository-selection.ts --base <rev> [--head <rev>] [--consumer local|ci] [--depth one|transitive]\n'
-    )
+  const recordFile = argValue(argv, '--record')
+  if (!base) {
+    process.stderr.write('usage: repository-selection.ts --base <rev> [--head <rev>] [--record <file>]\n')
     process.exitCode = 2
   } else {
     const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
-    const plan = repositorySelection(repoRoot, { base, head, consumer, ...(depth ? { depth } : {}) })
+    const parsed = recordFile ? (JSON.parse(readFileSync(recordFile, 'utf8')) as unknown) : null
+    const record = isReadRecord(parsed) ? parsed : null
+    const plan = repositorySelection(repoRoot, { base, head, record })
     process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`)
   }
 }

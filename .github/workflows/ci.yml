@@ -97,6 +97,8 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
+      # The plan fetches the base commit's read record with `gh run download`.
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -181,6 +183,7 @@ jobs:
       - name: Build this pull request's CI plan
         id: plan
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -315,7 +318,7 @@ jobs:
       - name: Check the test inventory and run the repository suite
         run: |
           bun scripts/test-suites/inventory-check.ts
-          bun test ./scripts/test-suites/bun-runtime.test.ts ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts
+          bun test ./scripts/test-suites/bun-runtime.test.ts ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts ./scripts/test-suites/recorded-selection.test.ts
 
       # The package-compatibility suite (`scripts/package-compat/`): each
       # published package is packed — the three aeg packages through the
@@ -737,6 +740,70 @@ jobs:
           rest=$(probe rest gh api -i "repos/$GITHUB_REPOSITORY") || true
           echo "vinaya-limits: $gql | $rest"
           exit 0
+
+  # The read recorder (`scripts/ci/record-reads.ts`): on a push to the default
+  # branch only, runs every scheduled test file as its own process under
+  # `strace -f -yy -e trace=%file,getdents64` — child processes included — and
+  # stores the paths each file opened or probed and the folders it listed as a
+  # workflow artifact named for this exact commit, kept 60 days. A later change
+  # is selected from that record (`scripts/test-suites/read-records.ts` fetches
+  # it with `gh run download`, which needs `actions: read`); a test file that
+  # fails while recorded gets no record and keeps its static selection.
+  #
+  # It sits outside `aggregate`: nothing needs it, so a failure here never
+  # blocks a merge, and `continue-on-error` keeps the run's own conclusion
+  # about the tests. Its wall time is in the step summary.
+  record-reads:
+    name: Record test reads (Linux)
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      # The tracer is the distribution's own `strace` package, installed from the runner image's signed apt
+      # sources; the job is read-only, holds no token and sits outside the required check.
+      - name: Install the tracer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y strace
+      # The proof that the tracer attributes a child process's reads to the
+      # test file: a test that starts the CLI as a subprocess must record the
+      # CLI's entrypoint. A record that misses child-process reads would drop
+      # real breaks silently, so nothing is recorded when this fails.
+      - name: Prove the tracer sees a child process's reads
+        run: bun scripts/ci/record-reads.ts --out "$RUNNER_TEMP/read-record-proof" --only apps/cli/tests/package-root.test.ts --expect apps/cli/tests/package-root.test.ts=apps/cli/src/index.ts
+      - name: Record every test file's reads
+        run: bun scripts/ci/record-reads.ts --out "$RUNNER_TEMP/read-record" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Store the record for this commit
+        uses: actions/upload-artifact@v4
+        with:
+          name: read-record-${{ github.sha }}
+          path: ${{ runner.temp }}/read-record/read-record.json
+          retention-days: 60
+          if-no-files-found: error
+      # The token reaches only this failure-only step, never the tests the recorder runs.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   # The one job branch protection should require. Depends on every job
   # above and reports under the historical "Vinaya CI" name (`run-name`
