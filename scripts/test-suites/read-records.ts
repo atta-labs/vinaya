@@ -142,3 +142,53 @@ export function reachableRecord(
   }
   return { record, reason: 'the record fetched from the commit run' }
 }
+
+/** How many first-parent commits, from the comparison commit back, a caller looks through for a record. */
+export const RECORD_ANCESTOR_LIMIT = 10
+
+/**
+ * The record of the nearest commit at or before `commit` on its first-parent line that has one, looking through at
+ * most `limit` commits. A record of an earlier commit is still a record: the selection compares its commit with the
+ * base and leaves every test whose recorded paths changed in between to the static selection. A new default-branch
+ * commit has no record until its recording run finishes, so the exact commit alone is rarely reachable.
+ */
+export function nearestReachableRecord(
+  repoRoot: string,
+  commit: string,
+  fetch: RecordFetch = ghRecordFetch(repoRoot),
+  limit: number = RECORD_ANCESTOR_LIMIT,
+  ancestors: (commit: string, limit: number) => string[] = (c, n) => firstParentLine(repoRoot, c, n)
+): ReachedRecord {
+  if (process.env.VINAYA_READ_RECORD === 'off')
+    return { record: null, reason: 'record use is switched off (VINAYA_READ_RECORD=off)' }
+  const line = ancestors(commit, limit)
+  const reasons: string[] = []
+  for (const candidate of line.length > 0 ? line : [commit]) {
+    const reached = reachableRecord(repoRoot, candidate, fetch)
+    if (reached.record)
+      return {
+        record: reached.record,
+        reason:
+          candidate === commit
+            ? reached.reason
+            : `${reached.reason}, of ${candidate}, the nearest earlier commit that has one`
+      }
+    reasons.push(reached.reason)
+  }
+  return { record: null, reason: reasons[0] ?? `no record is reachable for ${commit}` }
+}
+
+function firstParentLine(repoRoot: string, commit: string, limit: number): string[] {
+  try {
+    return execFileSync('git', ['rev-list', '--first-parent', `--max-count=${limit}`, commit], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: cleanEnv(),
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+      .split('\n')
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}

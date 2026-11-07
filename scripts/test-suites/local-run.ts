@@ -96,7 +96,7 @@ import {
   type WholeSuiteRequest
 } from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
 import { readTestInventory } from './inventory-check.js'
-import { reachableRecord } from './read-records.js'
+import { nearestReachableRecord } from './read-records.js'
 import { repositorySelectionInput } from './repository-selection.js'
 import { type GroupOutcome, type RunResult, runGroups, WHOLE_ON_CHANGE_OWNERS, WHOLE_SUITE_OWNERS } from './schedule.js'
 
@@ -320,9 +320,15 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
   const obligations = choice.obligations.map(relative)
   // The record is the merge base's; the comparison base may be a later proven head, and the selection checks the
   // record's own paths did not change between the two.
-  const reached = reachableRecord(repoRoot, mergeBase)
+  const reached = nearestReachableRecord(repoRoot, mergeBase)
   const planFrom = (base: string) => {
-    const input = repositorySelectionInput(repoRoot, { base, head, record: reached.record, depth: 'one' })
+    const input = repositorySelectionInput(repoRoot, {
+      base,
+      head,
+      record: reached.record,
+      depth: 'one',
+      buildGates: false
+    })
     return { plan: selectTests(input), view: input.inventory.head }
   }
   const { plan, view } = planFrom(choice.base)

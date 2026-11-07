@@ -362,6 +362,10 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
     ].join('\n'),
     'pkg/bun/tests/freeze.test.ts':
       "import { test } from 'bun:test'\nimport { spawnSync } from 'node:child_process'\ntest('always freezes', () => { spawnSync('sleep', ['600']) })\n",
+    // An error thrown outside every test as the file loads: Bun reports "an unhandled error between tests", leaves the
+    // file out of its report and exits non-zero.
+    'pkg/bun/tests/load-reject.test.ts':
+      "import { expect, test } from 'bun:test'\nPromise.reject(new Error('load reject'))\ntest('runs', () => expect(1).toBe(1))\n",
     'pkg/bun/tests/kill.test.ts':
       "import { test } from 'bun:test'\ntest('killed', () => { process.kill(process.pid, 'SIGTERM'); return new Promise((r) => setTimeout(r, 5000)) })\n",
     // A test that changes directory, as several CLI tests do: Bun then names its file a second time, from the new folder.
@@ -416,6 +420,7 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
       bun('pkg/bun/tests/a.test.ts'),
       bun('pkg/bun/moved/tests/a.test.ts'),
       bun('pkg/bun/tests/kill.test.ts'),
+      bun('pkg/bun/tests/load-reject.test.ts'),
       bun('pkg/bun/tests/freeze-once.test.ts'),
       bun('pkg/bun/tests/freeze.test.ts'),
       bun('pkg/bun/tests/chdir.test.ts'),
@@ -515,6 +520,23 @@ describe('real runners execute exactly their group', () => {
     expect(lines.filter((line) => line.includes('running it once more'))).toHaveLength(1)
     expect(result.failedRunners).toEqual(['bun@default'])
     expect(result.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['interrupted bun@default'])
+  }, 60_000)
+
+  test('an isolated group keeps the passes it reported when one file errors outside its tests', () => {
+    const [group] = groupsFor(['pkg/bun/tests/a.test.ts', 'pkg/bun/tests/load-reject.test.ts']) as [NativeGroup]
+    const isolated = { ...group, environment: { ...group.environment, isolate: true } }
+    const kept = runGroups(root, [isolated], quiet).outcomes[0]
+    expect([kept?.trusted, kept?.confirmed, kept?.obligations]).toEqual([
+      true,
+      ['pkg/bun/tests/a.test.ts'],
+      ['pkg/bun/tests/load-reject.test.ts']
+    ])
+    // Without isolation the error may come from any file, so every file stays an obligation.
+    const shared = runGroups(root, [group], quiet).outcomes[0]
+    expect([shared?.trusted, shared?.obligations]).toEqual([
+      false,
+      ['pkg/bun/tests/a.test.ts', 'pkg/bun/tests/load-reject.test.ts']
+    ])
   }, 60_000)
 
   test('a test that changes directory is still one execution of its own file', () => {

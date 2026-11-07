@@ -930,6 +930,15 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
         env: env(),
         encoding: 'utf8'
       }).trim()
+    // The clone's pushes need no always-run list: it would run in every one of them and leave the scenario's own test
+    // a small part of each run. Emptied in the base commit, so the comparison never sees the configuration change.
+    const configPath = join(dir, 'vinaya.config.json')
+    const config = JSON.parse(readFileSync(configPath, 'utf8')) as { prePush?: { alwaysRun?: string[] } }
+    if (config.prePush?.alwaysRun?.length) {
+      config.prePush.alwaysRun = []
+      writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
+      git('commit', '-qam', 'fixture: no always-run tests')
+    }
     git('update-ref', 'refs/remotes/origin/main', 'HEAD')
     git('checkout', '-q', '-b', 'task/x/1')
     // The clone shares this checkout's installed dependencies.
