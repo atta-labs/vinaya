@@ -11,8 +11,8 @@
  * leaked path — a failing run's summary lists titles, not assertion output.
  */
 import { describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 import {
@@ -292,6 +292,35 @@ describe('real runtime directory guard', () => {
         encoding: 'utf8'
       })
       expect(`${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]).toContain(expected)
+    }
+  })
+
+  it('takes the repository from GITHUB_REPOSITORY without running git, once per process', () => {
+    const bin = mkdtempSync(join(tmpdir(), 'real-runtime-guard-git-'))
+    try {
+      const marker = join(bin, 'git-called')
+      writeFileSync(join(bin, 'git'), `#!/bin/sh\necho called >> "${marker}"\nexit 1\n`, { mode: 0o755 })
+      const core = join(import.meta.dir, 'real-runtime-guard-core.ts')
+      const env: NodeJS.ProcessEnv = { ...stripVinayaEnv(), PATH: `${bin}:${process.env.PATH ?? ''}` }
+      delete env.AEG_REPO
+      const out = spawnSyncBudgeted(
+        'bun',
+        ['-e', `const m = await import(${JSON.stringify(core)}); console.log('RUNTIME=' + m.realRuntimeDir())`],
+        { cwd: bin, encoding: 'utf8', env: { ...env, GITHUB_REPOSITORY: 'owner/name' } }
+      )
+      expect(`${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]).toBe(
+        join(homedir(), '.vinaya', 'runtime', 'owner-name')
+      )
+      expect(existsSync(marker)).toBe(false)
+      // With no repository in the environment, origin is asked once, however many times the directory is read.
+      spawnSyncBudgeted(
+        'bun',
+        ['-e', `const m = await import(${JSON.stringify(core)}); m.realRuntimeDir(); m.realRuntimeDir()`],
+        { cwd: bin, encoding: 'utf8', env: { ...env, GITHUB_REPOSITORY: '' } }
+      )
+      expect(readFileSync(marker, 'utf8').trim().split('\n')).toEqual(['called'])
+    } finally {
+      rmSync(bin, { recursive: true, force: true })
     }
   })
 })

@@ -19,3 +19,4 @@ tests/lib/broker/policy-required.test.ts
 tests/lib/role-policy-parity.test.ts
 tests/lib/task-tools/policy-required.test.ts
 tests/lib/worker-boundary-policy.test.ts
+tests/lib/command-loading.test.ts
