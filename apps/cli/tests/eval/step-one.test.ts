@@ -1483,12 +1483,19 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
       // A working tree that is a git repository with its own older doctrine, as a case's `/app` is.
       const tree = tempDir('step-one-doctrine-stale-app-')
       git(tree, ['init', '--quiet'])
-      for (const file of ['roles/developer.md', 'roles/reviewer.md', 'roles/developer/reference.md']) {
-        mkdirSync(dirname(join(tree, 'aeg-root', file)), { recursive: true })
-        writeFileSync(join(tree, 'aeg-root', file), '## Short version\n\nSTALE-TREE-DOCTRINE\n')
+      for (const file of [
+        'harness/processes/vinaya-strict/executing/developer/doctrine.md',
+        'harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md',
+        'harness/processes/vinaya-strict/executing/developer/reference.md'
+      ]) {
+        mkdirSync(dirname(join(tree, file)), { recursive: true })
+        writeFileSync(join(tree, file), '## Short version\n\nSTALE-TREE-DOCTRINE\n')
       }
-      mkdirSync(join(tree, 'aeg-root/skills/aeg'), { recursive: true })
-      writeFileSync(join(tree, 'aeg-root/skills/aeg/SKILL.md'), 'STALE-TREE-DOCTRINE\n')
+      mkdirSync(join(tree, 'harness/processes/vinaya-strict/doctrine/skills/vinaya'), { recursive: true })
+      writeFileSync(
+        join(tree, 'harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md'),
+        'STALE-TREE-DOCTRINE\n'
+      )
       commitAll(tree, 'stale doctrine')
       const production = PRODUCTION_VINAYA_PROCESS_STEPS.resolveRoleDoctrine
       for (const [suite, kind, role] of [

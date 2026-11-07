@@ -331,7 +331,7 @@ export function scopeT2ToPlanPr(result: CheckResult, isPlanPr: boolean): CheckRe
     status: 'info',
     note:
       result.note ??
-      'T2 findings are non-blocking outside plan PRs (point-of-power principle) — see aeg-root/enforcement.md.'
+      'T2 findings are non-blocking outside plan PRs (point-of-power principle) — see harness/processes/vinaya-strict/doctrine/enforcement.md.'
   }
 }
 
@@ -492,7 +492,7 @@ export type { ForgeIssue }
 
 /**
  * R1: Every active-tranche task Issue's body carries the full eight-field
- * Planner's rationale (`aeg-root/contracts/planner-brief.md`), and every
+ * Planner's rationale (`harness/processes/vinaya-strict/doctrine/contracts/planner-brief.md`), and every
  * project its `Project:` field names has a `.vinaya/projects.md` row.
  * Fail class: `missing-rationale-field`
  *

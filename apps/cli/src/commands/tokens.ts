@@ -27,7 +27,7 @@ import type { TokensCollectTrustEntry, VinayaConfig } from '../lib/config.js'
 
 /**
  * `vinaya tokens` — the portable front door over the token-report
- * collection adapter (`aeg-root/tranche-model.md` §12 layer 2). Fixes the
+ * collection adapter (`harness/processes/vinaya-strict/doctrine/tranche-model.md` §12 layer 2). Fixes the
  * gap `harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.ts` cannot: that script is
  * invoked by a repo-relative path (`bun harness/processes/vinaya-strict/tools/pr-report/tokens/bin/report-tokens.ts`)
  * that exists only inside this monorepo checkout, never in an adopter that

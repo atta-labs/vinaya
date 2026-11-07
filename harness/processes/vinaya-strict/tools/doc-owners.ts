@@ -77,7 +77,7 @@ export type DocNeutral = { surface: string; note: string }
 // Separator between <pointer> and <note>. Tolerates em-dash (—),
 // en-dash (–), or a plain ASCII hyphen-minus (-) with REQUIRED surrounding
 // whitespace. Required whitespace around `-` disambiguates the separator
-// from hyphens that legitimately appear inside pointers (e.g. `aeg-root`,
+// from hyphens that legitimately appear inside pointers (e.g. `harness/processes/vinaya-strict`,
 // `.claude/skills/ui-components/SKILL.md`). Non-greedy `(.+?)` for the
 // pointer plus this anchored separator means the pointer naturally stops
 // at the first valid separator without literally excluding `-` from

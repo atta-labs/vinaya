@@ -366,10 +366,10 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     git(remoteDir, ['init', '-q', '-b', 'main'])
     git(remoteDir, ['config', 'user.email', 'a@example.com'])
     git(remoteDir, ['config', 'user.name', 'A'])
-    mkdirSync(join(remoteDir, 'aeg-root', 'templates'), { recursive: true })
+    mkdirSync(join(remoteDir, 'harness/processes/vinaya-strict/artifacts/templates'), { recursive: true })
     cpSync(
-      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
-      join(remoteDir, 'aeg-root', 'templates', 'brief-template.md')
+      join(REPO_ROOT, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md'),
+      join(remoteDir, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md')
     )
     mkdirSync(join(remoteDir, 'src'), { recursive: true })
     writeFileSync(join(remoteDir, 'src', 'fixture.ts'), 'export const fixture = true\n')
@@ -406,7 +406,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
   // switch-off was the bug that printed a plan-time pass for an Issue `task
   // run` then refused at brief render.
   it('stays renderable when the adopter has no aeg-root directory (dispatch resolves the packaged template)', () => {
-    rmSync(join(localDir, 'aeg-root'), { recursive: true, force: true })
+    rmSync(join(localDir, 'harness/processes/vinaya-strict'), { recursive: true, force: true })
     expect(canRenderBriefFromHere().ok).toBe(true)
   })
 
@@ -449,7 +449,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
   ].join('\n')
 
   it('renders from the SUPPLIED override body, never fetching the (nonexistent) live Issue', () => {
-    rmSync(join(localDir, 'aeg-root'), { recursive: true, force: true })
+    rmSync(join(localDir, 'harness/processes/vinaya-strict'), { recursive: true, force: true })
     const body = [
       '**Project:** cli',
       '',
@@ -545,7 +545,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
       '',
       '## Surface',
       '',
-      'in: aeg-root',
+      'in: harness/processes/vinaya-strict',
       'out: —',
       '',
       '## Parts',
@@ -580,7 +580,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
       '',
       '## Surface',
       '',
-      'in: aeg-root',
+      'in: harness/processes/vinaya-strict',
       'out: —',
       '',
       '## Parts',

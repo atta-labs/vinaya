@@ -732,7 +732,7 @@ describe('devReviewLoop — reviewers read the round’s pinned sources and see 
 describe('the developer doctrine names only blocker kinds a turn result can carry', () => {
   it('every `blocked` kind the developer reference tells the agent to return is in BLOCKER_KINDS', () => {
     const reference = readFileSync(
-      join(import.meta.dir, '../../../../../../aeg-root/roles/developer/reference.md'),
+      join(import.meta.dir, '../../../../../../harness/processes/vinaya-strict/executing/developer/reference.md'),
       'utf8'
     )
     const named = [...reference.matchAll(/`blocked` turn result with kind `([a-z_]+)`/g)].map((m) => m[1] ?? '')

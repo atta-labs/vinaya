@@ -441,7 +441,7 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
     '',
     '## Surface',
     '',
-    'in: aeg-root',
+    'in: harness/processes/vinaya-strict',
     'out: —',
     '',
     '## Parts',
@@ -463,10 +463,10 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
     execFileSync('git', ['init', '-q'], { cwd })
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
-    mkdirSync(join(cwd, 'aeg-root', 'templates'), { recursive: true })
+    mkdirSync(join(cwd, 'harness/processes/vinaya-strict/artifacts/templates'), { recursive: true })
     cpSync(
-      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
-      join(cwd, 'aeg-root', 'templates', 'brief-template.md')
+      join(REPO_ROOT, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md'),
+      join(cwd, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md')
     )
     execFileSync('git', ['add', '.'], { cwd })
     execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
@@ -700,10 +700,10 @@ describe('an unmerged Depends-on folds into the write gate as informational, nev
     // issue-657, O3 — the render now refuses when the Surface resolves to a
     // tracked file but the Boundary names none of them; this fixture's own
     // `## Surface` `in: aeg-root` resolves to the fixture's own committed
-    // `aeg-root/templates/brief-template.md`, so the Boundary must name a
+    // `harness/processes/vinaya-strict/artifacts/templates/brief-template.md`, so the Boundary must name a
     // real file to keep this fixture isolating the ONE dependency-not-merged
     // blocker, not a premise-pins one.
-    "**Boundary** — In: `aeg-root/templates/brief-template.md`, the fixture's own committed doctrine file. Out: nothing.",
+    "**Boundary** — In: `harness/processes/vinaya-strict/artifacts/templates/brief-template.md`, the fixture's own committed doctrine file. Out: nothing.",
     '',
     // Every check whose scope covers the pinned doctrine file carries a decision.
     ...[
@@ -748,7 +748,7 @@ describe('an unmerged Depends-on folds into the write gate as informational, nev
     '',
     '## Surface',
     '',
-    'in: aeg-root',
+    'in: harness/processes/vinaya-strict',
     'out: —',
     '',
     '## Parts',
@@ -780,10 +780,10 @@ describe('an unmerged Depends-on folds into the write gate as informational, nev
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: remoteDir })
     execFileSync('git', ['config', 'user.email', 'a@example.com'], { cwd: remoteDir })
     execFileSync('git', ['config', 'user.name', 'A'], { cwd: remoteDir })
-    mkdirSync(join(remoteDir, 'aeg-root', 'templates'), { recursive: true })
+    mkdirSync(join(remoteDir, 'harness/processes/vinaya-strict/artifacts/templates'), { recursive: true })
     cpSync(
-      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
-      join(remoteDir, 'aeg-root', 'templates', 'brief-template.md')
+      join(REPO_ROOT, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md'),
+      join(remoteDir, 'harness/processes/vinaya-strict/artifacts/templates/brief-template.md')
     )
     writeFileSync(
       join(remoteDir, 'vinaya.config.json'),
@@ -870,7 +870,7 @@ exit 1
     [
       '## Premises',
       '',
-      'after #999: `aeg-root/templates/brief-template.md` contains `a literal the template does not carry`',
+      'after #999: `harness/processes/vinaya-strict/artifacts/templates/brief-template.md` contains `a literal the template does not carry`',
       '',
       RATIONALE_WITH_OPEN_DEPENDENCY
     ].join('\n')

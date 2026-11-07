@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process'
  * `checkIssueRationale` before any task Issue can reach the forge.
  *
  * A task Issue's body must carry every producer field of the
- * `aeg-root/contracts/planner-brief.md` contract — the eight Planner's
+ * `harness/processes/vinaya-strict/doctrine/contracts/planner-brief.md` contract — the eight Planner's
  * rationale fields. makes cutting the Issue with its rationale the
  * canonical plan act; an Issue without the full rationale forces the Brief
  * Author to re-derive the Planner's dig cold, the exact loss the contract
@@ -31,6 +31,7 @@ import { checkTestPlan, extractFencedBlocks } from './brief-validation'
 import { type ClaimBinding, type ClaimVoice, evaluateClaimBindings } from '../doc-claim'
 import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from '../doc-owners'
 import { globsOverlap } from './derive-section7'
+import { DOCTRINE_PATH_PATTERN_SOURCE } from '../doctrine/doctrine-map'
 import { objectivesOf, objectivesVersion } from './objectives'
 import {
   DOCUMENTATION_SOURCE_SCHEME_RE,
@@ -129,8 +130,8 @@ export function checkIssueRationale(body: string, options: IssueRationaleOptions
       if (singleFix && SINGLE_FIX_OPTIONAL_FIELDS.has(f.name)) continue
       errors.push(
         singleFix
-          ? `issue-validation ${f.name}: rationale field not found in the Issue body — a single-fix Issue carries every Planner's-rationale field except Sizing, Project(s) + blast radius and Dependency rationale (aeg-root/templates/issue-rationale-template.md).`
-          : `issue-validation ${f.name}: rationale field not found in the Issue body — every task Issue carries the full Planner's rationale (aeg-root/contracts/planner-brief.md).`
+          ? `issue-validation ${f.name}: rationale field not found in the Issue body — a single-fix Issue carries every Planner's-rationale field except Sizing, Project(s) + blast radius and Dependency rationale (harness/processes/vinaya-strict/artifacts/templates/issue-rationale-template.md).`
+          : `issue-validation ${f.name}: rationale field not found in the Issue body — every task Issue carries the full Planner's rationale.`
       )
       continue
     }
@@ -1843,7 +1844,7 @@ export function checkNoBriefContent(body: string): IssueSectionResult {
   const text = stripCode(body)
   const errors = BRIEF_MARKERS.filter((m) => m.pattern.test(text)).map(
     (m) =>
-      `issue-validation brief content: the Issue body carries a brief-shaped "${m.name}" section. Brief-time content (surface pointers, skills-to-read, premise, test plan) belongs in the brief, not the Issue — it goes stale before work starts (aeg-root/skills/brief-authoring/SKILL.md). Move it to the brief.`
+      `issue-validation brief content: the Issue body carries a brief-shaped "${m.name}" section. Brief-time content (surface pointers, skills-to-read, premise, test plan) belongs in the brief, not the Issue — it goes stale before work starts (harness/processes/vinaya-strict/doctrine/skills/brief-authoring/SKILL.md). Move it to the brief.`
   )
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
@@ -1878,7 +1879,7 @@ function rationaleFieldText(text: string, labelPattern: string): string {
  * a paraphrase of it.
  *
  * Deliberately generous about *shape*, strict about *concreteness*. A first,
- * narrower version (only `aeg-root/…`, `.claude/skills/…`, `apps/<x>/CLAUDE.md`,
+ * narrower version (only the doctrine tree's `…`, `.claude/skills/…`, `apps/<x>/CLAUDE.md`,
  * `apps/<x>/specs/…`) failed 66 of 166 historical task Issues, and the samples
  * were not agents skipping the read — they were real docs written in shapes the
  * pattern did not enumerate: `.claude/rules/ui-patterns.md` (rules, not
@@ -1888,8 +1889,10 @@ function rationaleFieldText(text: string, labelPattern: string): string {
  * repo-level documents. What it still refuses is the actual failure — a field
  * that names no document at all.
  */
-const DOC_PATH_RE =
-  /(?:(?:aeg-root|apps|packages|specs|docs|tools|\.claude|\.github)\/[\w./@-]*\.(?:md|mdx)|\.claude\/(?:skills|rules)\/[\w./-]+|\b(?:docs-index|decisions|projects|state-machine|enforcement|process|README|CLAUDE)\.md\b|\b[\w-]+-(?:spec|decisions|backlog)\.md\b)/i
+const DOC_PATH_RE = new RegExp(
+  `(?:${DOCTRINE_PATH_PATTERN_SOURCE}|(?:apps|packages|specs|docs|tools|\\.claude|\\.github)\\/[\\w./@-]*\\.(?:md|mdx)|\\.claude\\/(?:skills|rules)\\/[\\w./-]+|\\b(?:docs-index|decisions|projects|state-machine|enforcement|process|README|CLAUDE)\\.md\\b|\\b[\\w-]+-(?:spec|decisions|backlog)\\.md\\b)`,
+  'i'
+)
 
 /** `DOC_PATH_RE`, globally — same grammar, used to enumerate every doc pointer in a field rather than only testing presence of one. */
 const DOC_PATH_RE_GLOBAL = new RegExp(DOC_PATH_RE.source, 'gi')
@@ -1923,7 +1926,7 @@ export function checkRationaleNamesDocs(body: string): IssueSectionResult {
   return {
     status: 'fail',
     errors: [
-      'issue-validation docs read: neither "Docs to keep coherent" nor "Traps to avoid" names a concrete doc path (aeg-root/…, .claude/skills/…, apps/*/CLAUDE.md, apps/*/specs/…). Naming one is the artifact of having read the surface being planned — no other check observes what you read before the forge write, so this field is the only read-obligation signal. For a genuinely doc-less surface, write the explicit `no-doc-surface` sentinel.'
+      'issue-validation docs read: neither "Docs to keep coherent" nor "Traps to avoid" names a concrete doc path (harness/processes/vinaya-strict/…, .claude/skills/…, apps/*/CLAUDE.md, apps/*/specs/…). Naming one is the artifact of having read the surface being planned — no other check observes what you read before the forge write, so this field is the only read-obligation signal. For a genuinely doc-less surface, write the explicit `no-doc-surface` sentinel.'
     ]
   }
 }
@@ -2190,7 +2193,7 @@ export function checkConflictCompleteness(
     if (shared.length === 0) continue
     if (edgesNameEachOther(subject, sibling)) continue
     warnings.push(
-      `issue-validation conflict completeness: this Issue and ${sibling.ref} both name ${shared.join(', ')} but neither declares the other in Conflicts-with. If they can run in parallel, say so; otherwise declare the edge (aeg-root/tranche-model.md §5).`
+      `issue-validation conflict completeness: this Issue and ${sibling.ref} both name ${shared.join(', ')} but neither declares the other in Conflicts-with. If they can run in parallel, say so; otherwise declare the edge (harness/processes/vinaya-strict/doctrine/tranche-model.md §5).`
     )
   }
   return warnings

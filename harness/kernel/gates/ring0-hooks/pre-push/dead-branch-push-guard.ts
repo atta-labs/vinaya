@@ -14,7 +14,7 @@
  * to `allow`, the same as `NONE` (no PR exists yet — a brand-new branch
  * legitimately has none). This is a deliberate fail-open choice: a guard
  * that can block *all* pushes on a transient forge-reachability issue is
- * worse than the bug it fixes. See `aeg-root/enforcement.md`.
+ * worse than the bug it fixes. See the process doctrine's enforcement page.
  */
 
 export type PrStateFact = 'MERGED' | 'CLOSED' | 'OPEN' | 'NONE' | 'UNKNOWN'

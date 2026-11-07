@@ -1,3 +1,5 @@
+import { DOCTRINE_PATH_PATTERN_SOURCE } from './doctrine/doctrine-map'
+
 export type ProseRuleSeverity = 'error' | 'warning'
 
 export type DefaultProseRule = {
@@ -95,7 +97,11 @@ const published = [
     'forge label vocabulary',
     /(?:vinaya\/)?\b(?:tranche|iteration|tier|needs|waiver|project|aeg):(?![/\s]|$)/
   ],
-  ['internal-path', 'a repo-internal path', /\b(?:packages|apps|aeg-root|tools|scripts)\//],
+  [
+    'internal-path',
+    'a repo-internal path',
+    new RegExp(`\\b(?:packages|apps|tools|scripts)\\/|${DOCTRINE_PATH_PATTERN_SOURCE}`)
+  ],
   ['internal-path', 'a repo-internal path', /\.(?:claude|husky|github)\//],
   [
     'internal-path',

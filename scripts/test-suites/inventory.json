@@ -256,7 +256,45 @@
         "harness/processes/vinaya-strict/artifacts/docs/node-route.ts",
         "harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts",
         "packages/sources/",
-        "aeg-root/"
+        "harness/processes/vinaya-strict/doctrine/manual-flow.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/architect-planner.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/archivist-tranche-archivist.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/developer-reviewer.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/planner-developer.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/planner-operator.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/principal-operator.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/reviewer-archivist.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/security-archivist.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/tranche-archivist-planner.md",
+        "harness/processes/vinaya-strict/doctrine/documentation-coherence.md",
+        "harness/processes/vinaya-strict/doctrine/enforcement.md",
+        "harness/processes/vinaya-strict/doctrine/glossary.md",
+        "harness/processes/vinaya-strict/doctrine/milestone-model.md",
+        "harness/processes/vinaya-strict/doctrine/process.md",
+        "harness/processes/vinaya-strict/thinking/reviewer-prompt.md",
+        "harness/processes/vinaya-strict/thinking/architect/doctrine.md",
+        "harness/processes/vinaya-strict/retrospecting/archivist/doctrine.md",
+        "harness/processes/vinaya-strict/executing/developer/doctrine.md",
+        "harness/processes/vinaya-strict/executing/developer/reference.md",
+        "harness/processes/vinaya-strict/executing/operator/doctrine.md",
+        "harness/processes/vinaya-strict/thinking/planner/doctrine.md",
+        "harness/processes/vinaya-strict/thinking/planner/reference.md",
+        "harness/processes/vinaya-strict/doctrine/roles/principal.md",
+        "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
+        "harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md",
+        "harness/processes/vinaya-strict/retrospecting/tranche-archivist/doctrine.md",
+        "harness/processes/vinaya-strict/doctrine/skills/context-packets/SKILL.md",
+        "harness/processes/vinaya-strict/doctrine/skills/context-packets/examples/operator-start.md",
+        "harness/processes/vinaya-strict/doctrine/skills/roles/SKILL.md",
+        "harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md",
+        "harness/processes/vinaya-strict/doctrine/state-machine.md",
+        "harness/processes/vinaya-strict/doctrine/task-model.md",
+        "harness/processes/vinaya-strict/artifacts/templates/brief-template.md",
+        "harness/processes/vinaya-strict/artifacts/templates/decision-record-template.md",
+        "harness/processes/vinaya-strict/artifacts/templates/issue-rationale-template.md",
+        "harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md",
+        "harness/processes/vinaya-strict/doctrine/tranche-model.md",
+        "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts"
       ],
       "readers": [
         {
@@ -842,7 +880,47 @@
     {
       "id": "doc-navigation-doctrine",
       "kind": "fixture",
-      "paths": ["aeg-root/"],
+      "paths": [
+        "harness/processes/vinaya-strict/doctrine/manual-flow.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/architect-planner.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/archivist-tranche-archivist.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/developer-reviewer.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/planner-developer.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/planner-operator.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/principal-operator.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/reviewer-archivist.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/security-archivist.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/tranche-archivist-planner.md",
+        "harness/processes/vinaya-strict/doctrine/documentation-coherence.md",
+        "harness/processes/vinaya-strict/doctrine/enforcement.md",
+        "harness/processes/vinaya-strict/doctrine/glossary.md",
+        "harness/processes/vinaya-strict/doctrine/milestone-model.md",
+        "harness/processes/vinaya-strict/doctrine/process.md",
+        "harness/processes/vinaya-strict/thinking/reviewer-prompt.md",
+        "harness/processes/vinaya-strict/thinking/architect/doctrine.md",
+        "harness/processes/vinaya-strict/retrospecting/archivist/doctrine.md",
+        "harness/processes/vinaya-strict/executing/developer/doctrine.md",
+        "harness/processes/vinaya-strict/executing/developer/reference.md",
+        "harness/processes/vinaya-strict/executing/operator/doctrine.md",
+        "harness/processes/vinaya-strict/thinking/planner/doctrine.md",
+        "harness/processes/vinaya-strict/thinking/planner/reference.md",
+        "harness/processes/vinaya-strict/doctrine/roles/principal.md",
+        "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
+        "harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md",
+        "harness/processes/vinaya-strict/retrospecting/tranche-archivist/doctrine.md",
+        "harness/processes/vinaya-strict/doctrine/skills/context-packets/SKILL.md",
+        "harness/processes/vinaya-strict/doctrine/skills/context-packets/examples/operator-start.md",
+        "harness/processes/vinaya-strict/doctrine/skills/roles/SKILL.md",
+        "harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md",
+        "harness/processes/vinaya-strict/doctrine/state-machine.md",
+        "harness/processes/vinaya-strict/doctrine/task-model.md",
+        "harness/processes/vinaya-strict/artifacts/templates/brief-template.md",
+        "harness/processes/vinaya-strict/artifacts/templates/decision-record-template.md",
+        "harness/processes/vinaya-strict/artifacts/templates/issue-rationale-template.md",
+        "harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md",
+        "harness/processes/vinaya-strict/doctrine/tranche-model.md",
+        "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts"
+      ],
       "readers": [
         {
           "kind": "raw-bytes",
@@ -854,7 +932,10 @@
     {
       "id": "developer-doctrine-pages",
       "kind": "fixture",
-      "paths": ["aeg-root/roles/developer.md", "aeg-root/roles/developer/reference.md"],
+      "paths": [
+        "harness/processes/vinaya-strict/executing/developer/doctrine.md",
+        "harness/processes/vinaya-strict/executing/developer/reference.md"
+      ],
       "readers": [
         {
           "kind": "raw-bytes",
@@ -957,7 +1038,155 @@
   ],
   "unknowns": [
     {
-      "scope": "aeg-root/",
+      "scope": "harness/processes/vinaya-strict/doctrine/manual-flow.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/contracts/architect-planner.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/contracts/archivist-tranche-archivist.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/contracts/developer-reviewer.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/contracts/planner-developer.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/contracts/planner-operator.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/contracts/principal-operator.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/contracts/reviewer-archivist.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/contracts/security-archivist.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/contracts/tranche-archivist-planner.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/documentation-coherence.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/enforcement.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/glossary.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/milestone-model.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/process.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/thinking/reviewer-prompt.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/thinking/architect/doctrine.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/retrospecting/archivist/doctrine.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/executing/developer/doctrine.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/executing/developer/reference.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/executing/operator/doctrine.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/thinking/planner/doctrine.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/thinking/planner/reference.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/roles/principal.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/retrospecting/tranche-archivist/doctrine.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/skills/context-packets/SKILL.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/skills/context-packets/examples/operator-start.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/skills/roles/SKILL.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/state-machine.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/task-model.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/artifacts/templates/brief-template.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/artifacts/templates/decision-record-template.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/artifacts/templates/issue-rationale-template.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md",
+      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
+    },
+    {
+      "scope": "harness/processes/vinaya-strict/doctrine/tranche-model.md",
       "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
     }
   ]

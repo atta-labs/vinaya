@@ -28,7 +28,7 @@
  * earlier edit) — computed here in the I/O layer rather than added to the
  * zero-I/O module's contract.
  *
- * Report-only (same `aeg-root/enforcement.md` G1/G2 rollout precedent as
+ * Report-only (same `harness/processes/vinaya-strict/doctrine/enforcement.md` G1/G2 rollout precedent as
  * `reader-resolvable-prose`/`retired-vocabulary`): findings print as
  * `warning` severity, exit code always 0. A blocking check on day one would
  * fail every adopter's install before the corpus this run surfaces has ever
@@ -45,14 +45,19 @@ import { join } from 'node:path'
 import { captureBaseline, compareToBaseline } from '../baseline-capture'
 import { checkDoctrinePortability, type PortabilityFinding, type PortabilitySourceFile } from '../doctrine-portability'
 import { loadConfig } from '../../../../../apps/cli/src/lib/config'
+import { DOCTRINE_REPO_PATHS } from '../../tools/doctrine/doctrine-map'
+import { doctrineRootLabel, doctrineShipsPrefix, doctrineSweepPaths } from '../../tools/doctrine/doctrine-sweep'
 import { findingsInThisDiff } from '../../../../../harness/kernel/connectors/git/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'doctrine-portability'
 
-/** Same config key and same default as `reader-resolvable-prose`/`retired-vocabulary`. */
-const DOCTRINE_ROOT = loadConfig()?.proseGates?.doctrineRoot ?? 'aeg-root'
-const SHIPS_PREFIX = `${DOCTRINE_ROOT}/`
+/** Same config key and same default as `reader-resolvable-prose`/`retired-vocabulary`: unset, the doctrine map's source paths are swept. */
+const CONFIGURED_ROOT = loadConfig()?.proseGates?.doctrineRoot
+const DOCTRINE_ROOT = doctrineRootLabel(CONFIGURED_ROOT)
+const SHIPS_PREFIX = doctrineShipsPrefix(CONFIGURED_ROOT)
+/** The pathspecs the base ref is read through: the configured folder, or the doctrine map's source paths. */
+const AT_REF_PATHSPECS: readonly string[] = CONFIGURED_ROOT === undefined ? DOCTRINE_REPO_PATHS : [CONFIGURED_ROOT]
 
 function git(args: string[]): string {
   try {
@@ -93,8 +98,8 @@ function readWorkingTree(paths: string[]): PortabilitySourceFile[] {
 }
 
 /** Same `.md` corpus as `collectWorkingTree`/`readWorkingTree`, read from `ref` via `git ls-tree`/`git show` instead of the filesystem. A `ref` with no `<doctrineRoot>` at all (an adopter's own base branch never carried it) degrades to `[]`, same as the working-tree collector. */
-function collectAtRef(ref: string, dir: string): PortabilitySourceFile[] {
-  const listing = git(['ls-tree', '-r', '--name-only', ref, '--', dir])
+function collectAtRef(ref: string, pathspecs: readonly string[]): PortabilitySourceFile[] {
+  const listing = git(['ls-tree', '-r', '--name-only', ref, '--', ...pathspecs])
   const paths = listing
     .split('\n')
     .map((p) => p.trim())
@@ -152,10 +157,10 @@ function newSince(
 function main(): void {
   const base = process.env.BASE_SHA || 'origin/main'
 
-  const currentFiles = readWorkingTree(collectWorkingTree(DOCTRINE_ROOT))
+  const currentFiles = readWorkingTree(doctrineSweepPaths(CONFIGURED_ROOT, (dir) => collectWorkingTree(dir)))
   const currentFindings = checkDoctrinePortability(currentFiles, SHIPS_PREFIX)
 
-  const baselineFiles = collectAtRef(base, DOCTRINE_ROOT)
+  const baselineFiles = collectAtRef(base, AT_REF_PATHSPECS)
   const baselineFindings = checkDoctrinePortability(baselineFiles, SHIPS_PREFIX)
 
   const newFindings = findingsInThisDiff(newSince(baselineFindings, currentFindings))
@@ -184,7 +189,7 @@ function main(): void {
   const PATH_RECOVERY_PROMPT =
     'This doctrine page cites a path that only resolves in the authoring repository, not in an adopter’s ' +
     'install — an adopter cannot follow it. Rewrite the citation to a doctrine-relative path (`roles/...`, ' +
-    '`contracts/...`, `skills/...`, `aeg-root/...`) or an adopter-owned one (`.github/...`, `.vinaya/...`, ' +
+    '`contracts/...`, `skills/...`, `harness/processes/vinaya-strict/...`) or an adopter-owned one (`.github/...`, `.vinaya/...`, ' +
     '`.claude/...`), or state the fact without pointing at the file at all.'
 
   const VENDOR_NAME_RECOVERY_PROMPT =

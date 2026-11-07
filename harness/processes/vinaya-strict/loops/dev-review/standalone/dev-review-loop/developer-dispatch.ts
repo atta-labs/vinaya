@@ -33,7 +33,8 @@ import type { ReviewPolicy } from '../../../../tools/task-contract/review-policy
 import { extractShortVersion } from '../../../../tools/docs/published-prose'
 import { hasLabel } from '../../../../tools/task-contract/forge/labels'
 import { type GateStep, resolveGateStep } from '../../../../checks/registry.js'
-import { resolveDoctrineRoot } from '../../../../../../../apps/cli/src/commands/doctrine.js'
+import { resolveDoctrineRoot } from '../../../../tools/doctrine/resolve-doctrine.js'
+import { doctrineSource } from '../../../../tools/doctrine/doctrine-map.js'
 import { buildRolePlan } from '../../../../integration/roles/plan.js'
 import {
   configPath,
@@ -219,7 +220,7 @@ const DEVELOPER_STOP_MARKER = /^<!-- aeg:developer:stop -->$/
 /**
  * O9: a developer that refuses to start (entry
  * gate) or hits a stop condition before ever pushing has nowhere to post
- * but the task Issue — no PR exists yet. `aeg-root/roles/developer.md`
+ * but the task Issue — no PR exists yet. `harness/processes/vinaya-strict/executing/developer/doctrine.md`
  * names this exact marker for that one case. Same trust boundary as
  * `filterPrincipalRulings` (that same security-review HIGH finding): a non-
  * principal Issue commenter could otherwise post a fake stop marker and
@@ -1081,12 +1082,12 @@ export function assembleDeveloperDoctrine(shortVersion: string | null, checklist
   return sections.length === 0 ? short : `${short}\n\n${sections.join('\n\n')}`
 }
 
-/** The developer role's reference document (`roles/developer/reference.md`) under the resolved doctrine root, or `null` when no bundled doctrine can be found or the file is unreadable — the same install-aware root `resolveDeveloperDoctrineText`'s own `buildRolePlan` resolves the short version through. */
+/** The developer role's reference document (logical key `roles/developer/reference.md`, at the source path the doctrine map names) under the resolved doctrine root, or `null` when no bundled doctrine can be found or the file is unreadable — the same install-aware root `resolveDeveloperDoctrineText`'s own `buildRolePlan` resolves the short version through. */
 function readDeveloperReferenceDoc(): string | null {
   const root = resolveDoctrineRoot()
   if (root === null) return null
   try {
-    return readFileSync(join(root, 'roles', 'developer', 'reference.md'), 'utf8')
+    return readFileSync(join(root, doctrineSource('roles/developer/reference.md')), 'utf8')
   } catch {
     return null
   }

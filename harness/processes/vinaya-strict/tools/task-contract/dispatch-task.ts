@@ -364,7 +364,7 @@ async function widenSurface(issue: number, addedGlobs: string[], retryCommand: s
 /**
  * Pulls the leading `high`/`mid`/`fast` word out of the Issue's own
  * "Suggested agent-class" rationale field (`**Suggested agent-class** —
- * mid — <reason>`, `aeg-root/roles/planner.md`) — `parseRationaleFields`
+ * mid — <reason>`, `harness/processes/vinaya-strict/thinking/planner/doctrine.md`) — `parseRationaleFields`
  * (`@attalabs/aeg-core`) returns the whole labeled field, label included, so
  * this strips the label and keeps only the class word. `null` when the
  * field is absent, unparseable, or names a word outside the three-value

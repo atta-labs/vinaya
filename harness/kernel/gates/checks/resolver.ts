@@ -10,7 +10,7 @@
  *
  * Reference for the resolution rules: the `checks` rows of
  * `packages/sources/src/config-reference.ts` (the adopter-facing field
- * reference) and `aeg-root/enforcement.md`'s `vinaya check` row. The former
+ * reference) and the process doctrine's enforcement page's `vinaya check` row. The former
  * pointer here — a Configuration architecture chapter in
  * `apps/vinaya/specs/vinaya-spec.md` — named a path that exists in no
  * checkout of this repo (a review finding).

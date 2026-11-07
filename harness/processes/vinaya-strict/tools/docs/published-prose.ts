@@ -83,7 +83,7 @@ export const CONTRACT_BLOCKS = [
 export const ALLOWED_MECHANICS: readonly string[] = rulesForGroup('published-prose')[0]?.exemptions ?? []
 
 export type PublishedProseEntry = {
-  /** Path relative to `aeg-root/`, e.g. `roles/developer.md`. */
+  /** Path relative to `harness/processes/vinaya-strict/`, e.g. `roles/developer.md`. */
   relPath: string
   frontmatter: Pick<DocFrontmatter, 'surfaced' | 'title' | 'description'>
   body: string
@@ -313,7 +313,7 @@ function checkStructure(relPath: string, body: string, blocks: readonly string[]
 
 /**
  * Runs both checks over the published set only. `entries` may hold every doc
- * under `aeg-root/`; `surfacedPaths` (the model-backed allowlist) is what
+ * under `harness/processes/vinaya-strict/`; `surfacedPaths` (the model-backed allowlist) is what
  * narrows it, so this check can never publish-check a doc the site does not
  * publish, nor miss one it does. `allow` is `proseGates.published.allow`
  * when a repository configures it.

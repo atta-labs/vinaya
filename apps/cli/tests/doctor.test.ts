@@ -1346,18 +1346,18 @@ describe('vinaya doctor — doctrine root/source line (PR #410 review)', () => {
 
   it('a repo carrying its own aeg-root/roles/ prints "(tree)", rooted at that repo\'s own aeg-root', async () => {
     git(root, ['init', '-q'])
-    mkdirSync(join(root, 'aeg-root', 'roles'), { recursive: true })
-    writeFileSync(join(root, 'aeg-root', 'roles', 'developer.md'), '# Developer\n')
+    mkdirSync(join(root, 'harness/processes/vinaya-strict/doctrine/skills/vinaya'), { recursive: true })
+    writeFileSync(join(root, 'harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md'), '# Front door\n')
     await runInit(['--yes'], initDeps())
 
     const out = await captureStdout(async () => {
       await runDoctor([], doctorDeps())
     })
     const realRoot = realpathSync(root)
-    expect(out).toContain(`doctrine: ${join(realRoot, 'aeg-root')} (tree)`)
+    expect(out).toContain(`doctrine: ${join(realRoot, 'harness/processes/vinaya-strict')} (tree)`)
 
     const report = await runDoctorJsonFull()
-    expect(report.doctrineInfo).toEqual({ root: join(realRoot, 'aeg-root'), source: 'tree' })
+    expect(report.doctrineInfo).toEqual({ root: join(realRoot, 'harness/processes/vinaya-strict'), source: 'tree' })
   })
 
   it('a repo with no aeg-root/roles/ of its own prints "(bundle)"', async () => {

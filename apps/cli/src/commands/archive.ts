@@ -90,7 +90,7 @@ function realDeps(): ArchiveDeps {
  * one real message, an edge case the probe itself doesn't classify as
  * incapable. Treated as its own failure rather than silently formatting as
  * `0/0/—`: a capable host's blank is not the `—` case §12 sanctions
- * (`aeg-root/roles/developer.md`) — that placeholder means "the host has no
+ * (`harness/processes/vinaya-strict/executing/developer/doctrine.md`) — that placeholder means "the host has no
  * usage API," never "the host reported nothing usable this turn."
  */
 function isEmptySummary(summary: TranscriptSummary): boolean {

@@ -1,6 +1,6 @@
 /**
  * Task-brief renderer. Pure — no `fs`,
- * no `gh`/`git`, no `process.env`. Reads `aeg-root/templates/brief-template.md`
+ * no `gh`/`git`, no `process.env`. Reads `harness/processes/vinaya-strict/artifacts/templates/brief-template.md`
  * (passed in as `template`, read at run time by the CLI shim
  * `apps/cli/src/commands/brief.ts`) and every derivable fact (`BriefFacts`,
  * assembled by that same shim from the forge and the tree) and emits the
@@ -193,7 +193,7 @@ export function parseRationaleFields(body: string): ParsedRationale {
  * HEAD`) or `*` (excludes glob examples like `apps/cli/**`), and ends in a
  * short alphanumeric extension. Resolving a token to a real repo path (exact
  * match, or a unique `git ls-files` suffix match for a bare filename elided
- * from a shared directory prefix in the Boundary prose, e.g. "aeg-root/
+ * from a shared directory prefix in the Boundary prose, e.g. "harness/processes/vinaya-strict/
  * aeg-manual-flow.md, process.md, roles/developer.md") is the caller's job —
  * this function is pure text extraction, no `fs`/`git`.
  */
@@ -211,7 +211,7 @@ export function extractBoundaryFilePaths(boundaryText: string): string[] {
   return out
 }
 
-/** One §4 surface-map file: its path, a whole-file `sha256` premise pin, and the workspace package that owns it (`null` for a file outside every workspace member, e.g. a doctrine file under `aeg-root/`). */
+/** One §4 surface-map file: its path, a whole-file `sha256` premise pin, and the workspace package that owns it (`null` for a file outside every workspace member, e.g. a doctrine file under `harness/processes/vinaya-strict/`). */
 export type SurfaceFileFact = {
   path: string
   /** `null` for a file that does not exist yet on disk (a "Create" entry) — a not-yet-created file has no current sha256 to pin. */
@@ -961,7 +961,7 @@ function renderSection12(facts: BriefFacts): string {
 
 /**
  * Emits the twelve-section brief skeleton from `facts`, reading `template`
- * (the raw content of `aeg-root/templates/brief-template.md`) only for the
+ * (the raw content of `harness/processes/vinaya-strict/artifacts/templates/brief-template.md`) only for the
  * one fixed sentence (`renderHeader`'s intro line) and the standing autonomy
  * clause (`renderSection11`) — every other byte is generated from `facts`,
  * never copied from a hardcoded template string in this module.

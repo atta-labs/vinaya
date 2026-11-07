@@ -42,8 +42,8 @@ const FIXTURE_DIR = join(import.meta.dir, 'fixtures', 'doctrine-move-proof')
 const RECORDING_PATH = join(FIXTURE_DIR, 'output-recording.json')
 const TABLE_PATH = join(FIXTURE_DIR, 'rewrite-table.json')
 
-/** Text a term row must never match: environment variables, file and forge markers, and the old root path. */
-const PROTECTED_SAMPLES = ['AEG_REPO', 'AEG:CLAIM', '<!-- AEG:', 'aeg:', 'aeg-root'] as const
+/** Text a term row must never match: environment variables and file and forge markers — and the old root path, which the table's root row names. */
+const PROTECTED_MARKERS = ['AEG_REPO', 'AEG:CLAIM', '<!-- AEG:', 'aeg:'] as const
 
 type MoveRow = { from: string; to: string }
 type LinkRow = { file: string; from: string; to: string }
@@ -55,8 +55,8 @@ type RewriteTable = {
   paths: MoveRow[]
   /** Literal relative Markdown links, scoped to the old file that carries them. */
   links: LinkRow[]
-  /** The old root segment, a regular expression applied after the path rows. */
-  root: RegexRow
+  /** The old root segment (`from`) and its replacement (`to`), applied as the regular expression `pattern` after the path rows. */
+  root: RegexRow & { from: string; to: string }
   /** Word-bounded term rewrites, applied last. */
   terms: RegexRow[]
 }
@@ -84,7 +84,7 @@ function readTable(): RewriteTable {
   // keeps as it is.
   for (const row of table.terms) {
     const re = new RegExp(row.pattern)
-    for (const sample of PROTECTED_SAMPLES) {
+    for (const sample of [...PROTECTED_MARKERS, table.root.from]) {
       if (re.test(sample)) fail(`term row /${row.pattern}/ matches protected text "${sample}" — refusing the table`)
     }
   }
@@ -157,6 +157,7 @@ function collectOutputs(
   version: string,
   oldLayout: boolean
 ): Record<string, RecordedEntry> {
+  const oldRoot = readTable().root.from
   const entries: Record<string, RecordedEntry> = {}
   const json = JSON.parse(run(['doctrine', '--json'], doctrineCwd)) as {
     schema: number
@@ -165,7 +166,7 @@ function collectOutputs(
   const root = json.data.root
   const frontDoor = run(['doctrine'], doctrineCwd).trim()
   const frontDoorRelative = relative(root, frontDoor)
-  const frontDoorFile = oldLayout ? `aeg-root/${frontDoorRelative}` : undefined
+  const frontDoorFile = oldLayout ? `${oldRoot}/${frontDoorRelative}` : undefined
   entries['front-door:content'] = { text: readFileSync(frontDoor, 'utf8'), file: frontDoorFile }
   entries['front-door:root-segment'] = { text: basename(root) }
   entries['front-door:entry'] = { text: frontDoorRelative }
@@ -176,13 +177,13 @@ function collectOutputs(
   for (const role of listNames(doctrineCwd, '--role')) {
     entries[`role:${role}`] = {
       text: run(['doctrine', '--role', role, '--print'], doctrineCwd),
-      file: oldLayout ? `aeg-root/roles/${role}.md` : undefined
+      file: oldLayout ? `${oldRoot}/roles/${role}.md` : undefined
     }
   }
   for (const template of listNames(doctrineCwd, '--template')) {
     entries[`template:${template}`] = {
       text: run(['doctrine', '--template', template, '--print'], doctrineCwd),
-      file: oldLayout ? `aeg-root/templates/${template}-template.md` : undefined
+      file: oldLayout ? `${oldRoot}/templates/${template}-template.md` : undefined
     }
   }
 
@@ -223,7 +224,7 @@ function makeRefusalRunner(command: string, entry: string): (flag: string, cwd: 
 function record(at: string | undefined): void {
   if (at === undefined) {
     const base = git(['rev-parse', 'HEAD']).trim()
-    if (git(['status', '--porcelain', '--', 'aeg-root']).trim() !== '')
+    if (git(['status', '--porcelain', '--', readTable().root.from]).trim() !== '')
       fail('the doctrine has uncommitted changes — record from a clean tree')
     const entry = join(CLI_ROOT, 'src', 'index.ts')
     refusalRunner = makeRefusalRunner(process.execPath, entry)
@@ -267,7 +268,7 @@ function expected(table: RewriteTable, name: string, entry: RecordedEntry): stri
   if (name.endsWith(':root-segment')) return applyTable(table, entry.text)
   if (name === 'front-door:entry' || name === 'json:entry') {
     // An old root-relative path becomes the new process-relative path.
-    return applyTable(table, `aeg-root/${entry.text}`)
+    return applyTable(table, `${table.root.from}/${entry.text}`)
   }
   return applyTable(table, entry.text, entry.file)
 }
@@ -294,7 +295,7 @@ function checkTable(): void {
   const table = readTable()
   const { base } = readRecording()
   const mergeBase = git(['merge-base', 'origin/main', 'HEAD']).trim()
-  const changed = git(['diff', '--name-only', base, mergeBase, '--', 'aeg-root']).trim()
+  const changed = git(['diff', '--name-only', base, mergeBase, '--', table.root.from]).trim()
   if (changed !== '') {
     fail(
       `the doctrine changed on the default branch after the recording's base ${base}; re-record with --record --at "$(git merge-base origin/main HEAD)". Changed:\n  ${changed.split('\n').join('\n  ')}`

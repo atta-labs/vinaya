@@ -243,7 +243,7 @@ export async function runInit(args: string[], deps: InitDeps): Promise<number> {
 // ---------------------------------------------------------------------------
 // vinaya init product <name>
 // ---------------------------------------------------------------------------
-/** `--path <value>` — the product's home folder, declared not derived (matches `aeg-root/projects.md`'s own doctrine). Defaults to repo root. */
+/** `--path <value>` — the product's home folder, declared not derived (matches `harness/processes/vinaya-strict/projects.md`'s own doctrine). Defaults to repo root. */
 function pathFlag(args: string[]): string {
   const i = args.indexOf('--path')
   return i !== -1 && args[i + 1] ? (args[i + 1] as string) : '.'

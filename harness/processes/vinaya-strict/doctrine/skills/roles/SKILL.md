@@ -1,0 +1,61 @@
+---
+name: roles
+sidebar_title: Router (roles)
+description: The role router for Vinaya. Load right after the vinaya skill to determine which Vinaya role you are from your invocation environment and open the one role doc that governs you. Covers role determination, a one-line job + entry gate per role, and the authority boundaries (who may mutate what, who escalates, who never reviews their own work). This is a ROUTER — it points to roles/*.md for the full spec of each role and never reproduces them. Load when you need to know "which role am I and which doc do I open."
+---
+
+<!-- CANONICAL SOURCE. This file is the canonical home of the `roles` skill, inside the Vinaya unit (doctrine/skills/). provides for an agent-specific GENERATED VIEW under `.claude/skills/` (or another agent's equivalent), rebuilt from this file rather than authored by hand — but no such generator exists yet, and this repo has no generated view of this skill: agents are pointed at vinaya-strict/ directly (this repo's root agent-context file). Edit THIS file; if a generator is ever built, regenerate rather than hand-editing its output. -->
+
+# Vinaya roles — the router
+
+Load this right after the **vinaya** skill. Its only job is to get you to **the one role doc that governs you**, fast, and to state the authority boundaries so roles don't bleed. **It does not reproduce the role docs** — each role's full spec (entry gate, checklist, verdict format, stop conditions) lives in `roles/<role>.md`, and that file is authoritative. When this router and a role doc disagree, the role doc wins.
+
+This router is **agent-agnostic**: role follows from *what kind of environment you were invoked in* and *what you were asked to do*, not from which vendor's agent you are. Any capable agent can take any role.
+
+## 1. Determine your role from your invocation environment
+
+Role is determined by **how you were invoked** — the *kind* of surface and the *kind* of task — not by self-assessment or by which agent you are:
+
+| You are invoked in / asked to… | Your role | Load |
+|---|---|---|
+| A **coding-agent surface** (CLI / IDE), executing a dispatched brief | **Developer** | `roles/developer.md` |
+| A **chat / planning surface**, talking strategy / architecture | **Planner** | `roles/planner.md` |
+| A **chat / planning surface**, turning intent + a backlog slice into a tranche | **Planner — plan act** | `roles/planner.md` |
+| A **chat / planning surface**, dispatching one task's rendered brief | **Planner — dispatch act** | `roles/planner/reference.md` § The dispatch act |
+| Invoked specifically to **review an open PR** (fresh context) | **Reviewer — code** | `roles/reviewer.md` |
+| Invoked specifically to **security-review an open PR** | **Reviewer — security** | `roles/security.md` |
+| Executing an **open PR's runtime Test Plan before merge** (the `[agent]` half is your Developer session; the Principal runs the `[principal]` half) | **Developer — Verification phase** (not a separate role) | `roles/developer/reference.md` § Verification |
+| Running **one already-planned task** through the controller with the task tools (start, status, red pull request, escalation, resume, cancel) | **Operator** | `roles/operator.md` |
+| **Closing out a merged PR** (per-task close-out pass, by hand or automation) | **Archivist** | `roles/archivist.md` |
+| **Closing out a finished tranche** (the Principal has declared it done) | **Tranche Archivist** | `roles/tranche-archivist.md` |
+| The human directing the work | **Principal** | `roles/principal.md` |
+
+*(The "coding-agent surface" is whatever CLI/IDE agent the team uses. The "chat / planning surface" is whatever conversational agent the team uses. The role is the same regardless; the surface kind is the signal.)*
+
+Always also skim `roles/principal.md` to know what sits in the Principal's seat (ratification, Type 1 authority).
+
+## 2. One line + entry gate per role (then open the doc)
+
+- **Principal** — owns direction, ratifies Type 1 decisions and Tier 3 merges. The only role that ratifies irreversible decisions.
+- **Planner (plan act)** — intent + backlog slice → a thin tranche of sibling-aware tasks (a Milestone and labeled Issues; writes no briefs, no status). Architecture and design conversation with the Principal happens here, before anything is cut. May make Type 2 decisions ACTIVE immediately; Type 1 → PENDING.
+- **Planner (dispatch act)** — checks one task's dispatch gates (Issue exists, dependencies merged, no open conflicting sibling, render complete), then runs `vinaya task dispatch` (see `roles/planner/reference.md` § The dispatch act) — there is no separate brief to hand-write, the render is mechanical. **Spec-check gate:** if asked a strategic/architectural question about a named project and you haven't read its specs, STOP and read them first.
+- **Developer** — executes ONE dispatched brief. **Entry gate:** read the brief fully; confirm dispatch gates against the forge (`depends-on` merged, no `conflicts-with` sibling PR open); **Step 0 = create the worktree** (`task/<tranche>/<n>`); then pre-flight. Opens the PR and stops — does not merge, does not review itself, never writes status.
+- **Reviewer (code)** — invoked fresh on an open PR. **Entry gate:** an open PR whose task Issue carries the frozen `aeg:brief:v1` comment, else refuse. Reads the diff + the brief (from that comment) + (advisory) the project spec; emits a VERDICT; read + review-comment authority only; does not edit code, does not merge.
+- **Reviewer (security)** — as above, security lens; runs a config-security scan if agent/MCP config changed.
+- **Operator** — runs one already-planned task through the controller with the task tools the server grants it: starts it, reads its grounded status, reads why its pull request is red, presents the persisted escalation, and requests resume or cancel. Process authority only — never plans, codes, rules, approves, or merges.
+- **Archivist** — **entry gate:** the PR is merged, else refuse. Works the close-out checklist (Issue closed, docs coherent with what merged, any non-derivable fact recorded as an ordinary open Issue, provenance block posted, orphan branch/worktree flagged). Writes **no** task status and keeps no state document — the merge *is* the status.
+- **Verification** — a **phase**, not a role: nobody is dispatched as a Verifier. It runs on an open PR after the code-review and security passes and before merge. **Entry gate:** an open PR whose brief carries a tagged Test Plan; refuse if there is no open PR, no brief, no Test Plan section, or the plan is declared `unit-tests-only` while the diff touches a runtime surface. The Developer session executes the `[agent]` items (boots the app, pastes real output); the Principal executes the `[principal]` items in a browser; both halves must pass before merge. Writes no status. Documented in `roles/developer/reference.md` § Verification, because the Developer is the actor that runs its agent half.
+- **Tranche Archivist** — closes out a finished tranche (Phase 13), on explicit Principal declaration only. **Entry gate:** every task terminal (merged / dropped / moved out), the Principal has declared the tranche done, and the Milestone is still open (not already archived), else refuse. Assembles the retrospective, closes the Milestone, surfaces pending Type 1 ratifications, posts the tranche provenance block. Forge-read only; ratifies nothing; writes no status. Distinct from the per-task Archivist (`roles/archivist.md`).
+
+## 3. Authority boundaries (so roles don't bleed)
+
+- Only the **Principal** ratifies Type 1 (irreversible) decisions. The **Planner** (either act) may ratify Type 2 (reversible) — ACTIVE immediately.
+- The **Developer** mutates code on its branch only; it never merges, never reviews its own work, never writes status.
+- **Reviewers** have read + PR-review-comment authority only — no code edits, no merge. Review is always a **separate, fresh-context** invocation from the Developer.
+- The **Archivist** posts the provenance block and records non-derivable facts as ordinary Issues at close-out, but writes no task status, keeps no state document, and authors no code.
+- The **Operator** decides when a planned task runs, pauses, resumes, or stops — never what it contains; it calls only the task tools in its grant.
+- **Escalation severity** routes the ask: `execution` and `strategy` → Planner (how to run the task vs which design path to take), `product` → Principal. Labels `needs:execution-input` / `needs:strategy-input` / `needs:principal-input`.
+
+## 4. Reminder
+
+This router gets you to the right doc; it is not a substitute for it. Open your `roles/<role>.md` and operate from there. For the model itself (truth domains, gates, anti-regression rules) you should already have loaded the **vinaya** skill; if not, load it first.

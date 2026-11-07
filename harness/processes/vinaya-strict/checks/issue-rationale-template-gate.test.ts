@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { boundaryPinnedFiles, DEFAULT_COLLISION_THRESHOLD } from '../tools/task-contract/issue-validation'
 import { NO_GATE_CUTOVERS } from '../tools/task-contract/gate-cutovers'
 import type { CheckError } from '../../../kernel/gates/checks/contract'
-import { resolveDoctrineRoot } from '../../../../apps/cli/src/commands/doctrine'
+import { resolveDoctrineRoot } from '../tools/doctrine/resolve-doctrine'
 import type { BriefSection } from '../../../../apps/cli/src/lib/config'
 import { validateForgeWrite, validateIssueContent } from '../tools/task-contract/forge/forge-write'
 

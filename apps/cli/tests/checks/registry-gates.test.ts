@@ -47,7 +47,7 @@ describe('registry-gates — task vinaya-adopter-portability-v1 2 (Issue #232)',
       expect(stderr).toContain('"check":"registry-gates.dormant"')
       expect(stderr).toContain('"severity":"warning"')
       expect(stderr).toContain('dormant')
-      expect(stderr).toContain('no aeg-root/enforcement.md in this repository')
+      expect(stderr).toContain('no harness/processes/vinaya-strict/doctrine/enforcement.md in this repository')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -78,7 +78,7 @@ describe('registry-gates — task vinaya-adopter-portability-v1 2 (Issue #232)',
     expect(source).not.toContain("existsSync('packages/aeg-core/bin')")
   })
 
-  it("this repository's own run still exercises the real corpus — no dormancy finding when aeg-root/enforcement.md exists", () => {
+  it("this repository's own run still exercises the real corpus — no dormancy finding when harness/processes/vinaya-strict/doctrine/enforcement.md exists", () => {
     const repoRoot = join(import.meta.dir, '..', '..', '..', '..')
     const result = Bun.spawnSync(['bun', BIN_PATH], { cwd: repoRoot, env: { ...process.env } })
     const stderr = result.stderr.toString()
@@ -92,7 +92,18 @@ describe('registry-gates — brief-author retirement (plan-brief-v1 4, Issue #42
   // them. Task 4 has landed: `roles/brief-author.md` is gone, and no
   // contract names `brief-author` as producer or consumer any more.
   it('no contract names brief-author as producer or consumer', () => {
-    const contractsDir = join(import.meta.dir, '..', '..', '..', '..', 'aeg-root', 'contracts')
+    const contractsDir = join(
+      import.meta.dir,
+      '..',
+      '..',
+      '..',
+      '..',
+      'harness',
+      'processes',
+      'vinaya-strict',
+      'doctrine',
+      'contracts'
+    )
     const offenders: string[] = []
     for (const file of readdirSync(contractsDir)) {
       if (!file.endsWith('.md')) continue
@@ -107,10 +118,13 @@ describe('registry-gates G1 — hook scripts the doctrine names must be shipped'
   it('fails on a doctrine hook path that is neither tracked nor emitted by init, and passes on an emitted one', () => {
     const root = initFixture('registry-gates-hook-refs')
     try {
-      mkdirSync(join(root, 'aeg-root'), { recursive: true })
-      writeFileSync(join(root, 'aeg-root', 'enforcement.md'), '# Enforcement\n')
+      mkdirSync(join(root, 'harness', 'processes', 'vinaya-strict', 'doctrine'), { recursive: true })
       writeFileSync(
-        join(root, 'aeg-root', 'note.md'),
+        join(root, 'harness', 'processes', 'vinaya-strict', 'doctrine', 'enforcement.md'),
+        '# Enforcement\n'
+      )
+      writeFileSync(
+        join(root, 'harness', 'processes', 'vinaya-strict', 'doctrine', 'glossary.md'),
         'Emitted: `.husky/pre-push`. Unshipped: `.claude/hooks/check-gone.sh` and `check-gone.sh`.\n'
       )
       const result = Bun.spawnSync(['bun', BIN_PATH], { cwd: root, env: { ...process.env } })
@@ -148,9 +162,9 @@ describe('initHookPaths — parity with buildInitOps', () => {
 describe('registry-gates G7 — anything that can block or write to the forge reaches a log producer', () => {
   const repoRoot = join(import.meta.dir, '..', '..', '..', '..')
   const ring0Rows = () =>
-    parseEnforcementRegistry(readFileSync(join(repoRoot, 'aeg-root', 'enforcement.md'), 'utf8')).filter(
-      (r) => r.ring === 'ring0'
-    )
+    parseEnforcementRegistry(
+      readFileSync(join(repoRoot, 'harness', 'processes', 'vinaya-strict', 'doctrine', 'enforcement.md'), 'utf8')
+    ).filter((r) => r.ring === 'ring0')
 
   it("today's tree passes: the counts are stated and every file reaches a producer or carries a reason", () => {
     const previous = process.cwd()

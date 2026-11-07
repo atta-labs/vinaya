@@ -824,8 +824,8 @@ export function readIfExists(path: string): string | null {
  * separate use of the same predicate, over an objective's `evidence` field
  * instead) — is reclassified `MET`, evidence annotated `(prose note)`,
  * before either the rendered verdict comment or `assessRound`'s own
- * `objectives` observation ever sees it. `aeg-root/roles/reviewer.md` and
- * `aeg-root/roles/security.md` tell the reviewer why: `NOT MET` requires a
+ * `objectives` observation ever sees it. `harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md` and
+ * `harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md` tell the reviewer why: `NOT MET` requires a
  * code or test location now. A `NOT MET` naming a real source or test file
  * is untouched (`isProseLocation`'s own `FILE_SHAPED_LOCATION` gate) — this
  * never downgrades a real objective failure, only a prose-only citation of

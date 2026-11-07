@@ -25,7 +25,7 @@ A row carries, as columns:
 | `runId`, `seq` | `meta.run_id`, `meta.seq` | every schema |
 | `workRef` | `meta.work.ref` | schema 3 and 4 |
 | `actor` | `meta.actor_id` | schema 2, 3 and 4 |
-| `cliVersion`, `doctrine`, `host`, `repo` | `meta.vinaya`, `meta.doctrine`, `meta.host`, `meta.repo` | every schema |
+| `cliVersion`, `doctrine`, `host`, `repo` | `meta.vinaya`, `meta.doctrine`, `meta.host`, `meta.repo` (`doctrine` as the sender's sink recorded it — `doctrine@<id>` from a source checkout under the process's rule, the package version otherwise) | every schema |
 | `flowId`, `flowVersion` | `meta.flow.id`, `meta.flow.version` | schema 3 and 4 |
 | `provenance` | `meta.provenance` | schema 2, 3 and 4 |
 | `trust` | see "The low-trust rule" | — |

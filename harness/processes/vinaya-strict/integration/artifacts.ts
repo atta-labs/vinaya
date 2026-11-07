@@ -24,7 +24,7 @@ import { LABELS, type LabelKey } from '../tools/task-contract/forge/labels'
 import { VERDICT_MARKER_SOURCE } from '../tools/task-contract/verdict-extraction'
 import { WAIVER_LABEL_REVIEW } from '../tools/task-contract/waiver-label'
 import { DOC_OWNERS_PATH } from '../tools/doc-owners'
-import { resolveDoctrineRoot } from '../../../../apps/cli/src/commands/doctrine.js'
+import { resolveDoctrineRoot } from '../tools/doctrine/resolve-doctrine'
 import type { AgentVendor } from '../../../kernel/adapters/agents/agent-vendors.js'
 import { buildAgentsSkillsOps, discoverRoleNames } from './agents-skills-emitter.js'
 import { claudeMcpJsonFile } from './adapters.js'
@@ -86,7 +86,7 @@ export type InitContext = {
   agents: Set<AgentVendor>
 }
 
-// --- neutral scaffold paths (never aeg-root / aeg-project) ------------------
+// --- neutral scaffold paths (never the doctrine tree / aeg-project) ---------
 export const CONFIG_PATH = 'vinaya.config.json'
 // Root AGENTS.md — the doctrine pointer. Root placement and the name are the
 // whole point: each agent vendor auto-loads one project file at session
@@ -1879,9 +1879,9 @@ export function doctrinePointer(selfHost: VendoredVinaya | null, roles: readonly
     ? `   It prints the front door's absolute path on this machine (build the
    CLI first if that file is missing:
    \`bun install --frozen-lockfile && bun run --cwd ${selfHost.dir} build\`);
-   the \`aeg-root/\` directory above it is the full doctrine.`
+   the \`vinaya-strict/\` directory above it is the full doctrine.`
     : `   It prints the front door's absolute path on this machine, installing
-   the package first if it has to; the \`aeg-root/\` directory above it is
+   the package first if it has to; the \`vinaya-strict/\` directory above it is
    the full doctrine.`
   return `<!-- ${MANAGED_NOTE} -->
 # Vinaya doctrine — read this first
@@ -1979,7 +1979,7 @@ in-repo copy to drift. This pointer names that package, never a filesystem
 path: where a package sits is a property of one machine, and this file is
 committed for every clone.
 
-The doctrine's own front door is \`aeg-root/skills/aeg/SKILL.md\` inside that
+The doctrine's own front door is \`doctrine/skills/vinaya/SKILL.md\` inside that
 package — read first every session regardless of role. Resolve it on this
 machine with:
 

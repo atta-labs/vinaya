@@ -3,6 +3,8 @@
  * Pure string predicates — no I/O.
  */
 
+import { isDoctrineRepoPath } from './doctrine/doctrine-map'
+
 /**
  * Decision archives: frozen records of what was decided, not documentation.
  * Touching one must never satisfy C3's code-requires-docs pairing, carry a
@@ -27,7 +29,7 @@ export function isFrozenArchive(p: string): boolean {
 
 export function isDocFile(p: string): boolean {
   return (
-    (p.startsWith('aeg-root/') && p.endsWith('.md')) ||
+    isDoctrineRepoPath(p) ||
     (p.startsWith('aeg-project/') && p.endsWith('.md')) ||
     (p.includes('/aeg-project/') && p.endsWith('.md')) ||
     (p.startsWith('.vinaya/') && p.endsWith('.md')) ||

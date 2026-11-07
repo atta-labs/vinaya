@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { coreCheckRegistry } from '../../../checks/registry'
+import { DOCTRINE_REPO_PATHS } from '../../../tools/doctrine/doctrine-map'
 
 /**
  * Pins task 12's (#387) cost-savings claim: every `scope: 'full'` registry
@@ -61,21 +62,21 @@ describe('sweeps declare include (task 12, #387)', () => {
     // `reader-resolvable-prose` alone widened its `include` (Issue #435): its
     // one blocking class, `product`, sweeps `PRODUCT_SLUG_SCOPE` alongside
     // the doctrine tree, so its declared globs grew past the bare
-    // `aeg-root/**/*.md` every other row here still declares.
+    // doctrine map source paths every other row here still declares.
     const expectedInclude: Record<string, string[]> = {
       'reader-resolvable-prose': [
-        'aeg-root/**/*.md',
+        ...DOCTRINE_REPO_PATHS,
         'apps/cli/src/**',
         '.github/workflows/**',
         '.vinaya/**',
         'apps/cli/README.md',
         'packages/sources/README.md'
       ],
-      'retired-vocabulary': ['aeg-root/**/*.md'],
-      'doctrine-portability': ['aeg-root/**/*.md'],
-      'doctrine-no-procedures': ['aeg-root/**/*.md'],
-      'quoted-command': ['aeg-root/**/*.md'],
-      'workspace-escape': ['aeg-root/**/*.md']
+      'retired-vocabulary': [...DOCTRINE_REPO_PATHS],
+      'doctrine-portability': [...DOCTRINE_REPO_PATHS],
+      'doctrine-no-procedures': [...DOCTRINE_REPO_PATHS],
+      'quoted-command': [...DOCTRINE_REPO_PATHS],
+      'workspace-escape': [...DOCTRINE_REPO_PATHS]
     }
     for (const [name, include] of Object.entries(expectedInclude)) {
       const spec = specs.find((s) => s.name === name)

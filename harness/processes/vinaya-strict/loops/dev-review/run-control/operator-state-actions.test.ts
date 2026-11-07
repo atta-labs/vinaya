@@ -69,7 +69,10 @@ const CALLER: CallerContext = { caller: { id: 'operator-1' } }
  * record.
  */
 const TASK = 99000772
-const DOCTRINE = join(import.meta.dir, '../../../../../../aeg-root/roles/operator.md')
+const DOCTRINE = join(
+  import.meta.dir,
+  '../../../../../../harness/processes/vinaya-strict/executing/operator/doctrine.md'
+)
 
 const tempDirs: string[] = []
 afterAll(() => {
@@ -325,7 +328,7 @@ function realStateFor(kind: TaskLoopState['kind']): { root: string; state: TaskL
 type DoctrineRow = { state: string; action: string; next: string }
 
 /**
- * Reads the state-to-action table out of `aeg-root/roles/operator.md` — the
+ * Reads the state-to-action table out of `harness/processes/vinaya-strict/executing/operator/doctrine.md` — the
  * file `vinaya doctrine --role operator` actually serves, never a copy of it
  * kept here, which is exactly the duplication that would let the two drift.
  */

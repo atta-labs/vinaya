@@ -67,7 +67,7 @@ import { parseChangedLineRanges } from '../../../../harness/kernel/connectors/gi
  * direction), and runs the survivors through the exact gate-side extractors.
  * A single fetch-and-check, deliberately with no retry loop — a retry here
  * would risk masking a genuine GitHub comment-propagation race as a
- * transient hiccup (`aeg-root/roles/developer.md`'s stop-condition
+ * transient hiccup (`harness/processes/vinaya-strict/executing/developer/doctrine.md`'s stop-condition
  * discipline: report a real race precisely, never paper over it). Measured
  * during this task's own end-to-end run: an immediate re-fetch reliably saw
  * the just-posted comment, so no such race was ever observed here.

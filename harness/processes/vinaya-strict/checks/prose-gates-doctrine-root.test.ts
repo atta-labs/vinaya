@@ -321,8 +321,8 @@ for (const check of [
 // shape.
 describe('doctrine-root checkout-location independence (Issue #314)', () => {
   function fixtureWithOwnDoctrine(root: string, checkName: 'reader-resolvable-prose' | 'retired-vocabulary'): void {
-    mkdirSync(join(root, 'aeg-root', 'skills', 'aeg'), { recursive: true })
-    writeFileSync(join(root, 'aeg-root', 'skills', 'aeg', 'SKILL.md'), '# entry\n')
+    mkdirSync(join(root, 'harness/processes/vinaya-strict/doctrine/skills/vinaya'), { recursive: true })
+    writeFileSync(join(root, 'harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md'), '# entry\n')
     // A real, deterministic finding for each check — same patterns the rest
     // of this suite uses (a live `FORGE_NUMBER_PATTERN`/retired-decision-id
     // hit), not a guessed heuristic.
@@ -330,7 +330,7 @@ describe('doctrine-root checkout-location independence (Issue #314)', () => {
       checkName === 'retired-vocabulary'
         ? `See D-${100 + 23} for the historical rationale.\n`
         : 'See #123 for the historical rationale.\n'
-    writeFileSync(join(root, 'aeg-root', 'note.md'), mention)
+    writeFileSync(join(root, 'harness/processes/vinaya-strict/doctrine/glossary.md'), mention)
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root })
@@ -560,9 +560,12 @@ describe('explicit proseGates.doctrineRoot still wins — retired-vocabulary (Is
       // discriminates "configured wins" from "repoRoot() candidate would
       // have won anyway" — the two must differ for the assertion to mean
       // anything.
-      mkdirSync(join(root, 'aeg-root', 'skills', 'aeg'), { recursive: true })
-      writeFileSync(join(root, 'aeg-root', 'skills', 'aeg', 'SKILL.md'), '# entry\n')
-      writeFileSync(join(root, 'aeg-root', 'note.md'), `See D-${100 + 23} for the historical rationale.\n`)
+      mkdirSync(join(root, 'harness/processes/vinaya-strict/doctrine/skills/vinaya'), { recursive: true })
+      writeFileSync(join(root, 'harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md'), '# entry\n')
+      writeFileSync(
+        join(root, 'harness/processes/vinaya-strict/doctrine/glossary.md'),
+        `See D-${100 + 23} for the historical rationale.\n`
+      )
 
       mkdirSync(join(root, 'configured-doctrine'), { recursive: true })
       writeFileSync(join(root, 'configured-doctrine', 'note.md'), '# nothing retired here\n')

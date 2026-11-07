@@ -200,9 +200,17 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         env: { ...process.env, PR_BODY: undefined }
       })
       expect(result.status, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0)
-      // Real doctrine content, swept from THIS repo's own aeg-root — proof
-      // the sweep is no longer permanently vacuous by construction.
-      expect(result.stderr).toContain('aeg-root/')
+      // Real doctrine content, swept from THIS repo's own harness/processes/vinaya-strict — proof
+      // the sweep is no longer permanently vacuous by construction. The moved
+      // doctrine carries no finding of this check's classes any more, so the
+      // proof reads the bin's own summary of the root it swept.
+      const bin = join(import.meta.dir, '../../../checks/bin/check-reader-resolvable-prose.ts')
+      const swept = spawnSync('bun', [bin], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, PR_BODY: undefined }
+      })
+      expect(swept.stdout).toContain('harness/processes/vinaya-strict"')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

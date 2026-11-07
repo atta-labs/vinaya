@@ -1,6 +1,6 @@
 /**
  * C6 — the docs-coherence check (state-machine.md Section 15c). Pure: given
- * every parsed doc entry from `aeg-root/` and the model-backed surfaced-path
+ * every parsed doctrine entry the doctrine map names and the model-backed surfaced-path
  * allowlist (`modelBackedDocPaths`, passed in because deriving
  * it requires reading doctrine, which this pure module never does), asserts:
  *   (a) every surfaced doc is reachable in the doc-nav tree the docs engine
@@ -23,9 +23,10 @@
 import { deriveTitle, type ParsedDoc } from './parse-doc'
 import { isSurfacedDoc } from '../../tools/docs/surfaced-manifest'
 import type { Doc, DocFrontmatter } from '../../tools/docs/types'
+import { doctrineEntry, doctrineRepoPath, keyForSource } from '../../tools/doctrine/doctrine-map'
 
 export type DocsCoherenceEntry = {
-  /** Path relative to `aeg-root/`, e.g. `roles/developer.md`. */
+  /** The doctrine file's logical key in the doctrine map, e.g. `roles/developer.md`. */
   relPath: string
   frontmatter: DocFrontmatter
   body: string
@@ -58,7 +59,7 @@ function toDoc(entry: DocsCoherenceEntry): Doc {
     section: entry.frontmatter.section ?? defaultSectionFor(entry.relPath),
     order: entry.frontmatter.order ?? 0,
     href: `/docs/${slug}`,
-    filePath: `aeg-root/${entry.relPath}`,
+    filePath: doctrineEntry(entry.relPath) === undefined ? entry.relPath : doctrineRepoPath(entry.relPath),
     parentSlug: entry.frontmatter.parent
   }
 }
@@ -74,8 +75,20 @@ function isReachable(doc: Doc, bySlug: Map<string, Doc>, seen: Set<string> = new
 
 const MD_LINK_PATTERN = /\]\(([^)]+)\)/g
 
-/** Resolves `target` relative to the directory of `fromRelPath`. Returns null if it escapes `aeg-root/`. */
+/**
+ * Resolves `target` relative to the directory of `fromRelPath`'s file, and
+ * returns the logical key of the file it lands on. The link is resolved where
+ * the file actually lives — the source path the doctrine map names for the
+ * key — so a link written for the process folder's layout resolves; a target
+ * that is no doctrine file keeps its resolved path. Returns null if it escapes
+ * the doctrine tree.
+ */
 function resolveRelativeMdLink(fromRelPath: string, target: string): string | null {
+  const resolved = resolveRelativePath(doctrineEntry(fromRelPath)?.source ?? fromRelPath, target)
+  return resolved === null ? null : (keyForSource(resolved) ?? resolved)
+}
+
+function resolveRelativePath(fromRelPath: string, target: string): string | null {
   const fromDir = fromRelPath.includes('/') ? fromRelPath.slice(0, fromRelPath.lastIndexOf('/')) : ''
   const combined = target.startsWith('/') ? target.slice(1) : fromDir ? `${fromDir}/${target}` : target
 
@@ -124,7 +137,7 @@ export function evaluateDocsCoherence(
       if (!target.endsWith('.md')) continue
 
       const resolved = resolveRelativeMdLink(entry.relPath, target)
-      if (resolved === null) continue // escapes aeg-root/ — out of scope for this check
+      if (resolved === null) continue // escapes the doctrine tree — out of scope for this check
 
       if (!surfacedRelPaths.has(resolved)) {
         errors.push(`C6: link "${target}" in "${entry.relPath}" resolves to no surfaced doc`)

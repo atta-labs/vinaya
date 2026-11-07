@@ -1,0 +1,74 @@
+---
+sidebar_title: "Template: PR report"
+---
+# Template — Developer's PR report (the PR body)
+
+**Every `vinaya <args>` below is the CLI, however this repository reaches it.** This file is static text, so it spells the commands the short way. Your own brief names the invocation that works here — `npx --yes @attalabs/vinaya@<version> <args>` where the CLI is installed from the registry, `bun <dir>/src/index.ts <args>` where the repository vendors it as a workspace member — and every command below takes that same prefix. A bare `vinaya` runs only where the package is installed globally, which no generated hook or workflow assumes.
+
+**Copy the block below the divider into the PR body you pass to the controller's `open_pull_request` tool (working manually, the file you pass to `vinaya pr create --body-file`) and replace every `[…]` placeholder with real content.** This packages the canonical PR-body form defined by the Developer doctrine (`vinaya doctrine --role developer --print`) § "PR body — canonical form" — that section remains the contract for what each field requires (exact `Tier:` syntax, tagging rules, the optional `Conforms-to:`/`Doc-ack:`/`Doc-waiver:` fields); this file is the container.
+
+**The anchor comments are load-bearing.** Each gate-read field — `Closes #N`, `Project:`, `Tier:`, the Test Plan section, the Premise block, the Evidence block — sits inside a Vinaya anchor pair (an HTML comment pair, invisible on the rendered PR). When an anchor pair for a field is present, every gate reads that field **exclusively from inside the pair**, ignoring identical-looking text anywhere else in the body — a pasted reference brief, a quoted example, a duplicate section can no longer be mistaken for the real field. Bodies without anchors remain fully recognized (prose recognition is the compatibility fallback) for every field **except Evidence**, which has no prose fallback — it is never hand-typed. Use at most one anchor pair per field. Keep the anchors when you fill this in.
+
+**The `AEG:PREMISE` anchor is not optional when the brief carried a `Premise:` block.** Without it, `pr-premise-reassert` — the controller's own premise re-assertion, run at every gate read and listed among the pull-request checks — scans the *whole* body for anything premise-shaped and re-asserts those against the code you just changed. A premise pinning the *pre-fix* state will correctly fail once your fix lands, because the pin describes what you just changed away from. Put an assertion inside `<!-- AEG:PREMISE:START -->` / `<!-- AEG:PREMISE:END -->` that was already true on the default branch and is still true after your diff — never the brief's pre-fix pin, which your change falsifies, and never a string only your own diff adds, which `pr-premise-own-additions` refuses at open because a premise pins a pre-existing fact. This holds even though the brief's own original pins no longer live in this body at all: the brief lives on the task Issue, as the frozen `aeg:brief:v1` comment `vinaya task dispatch` posts, and this PR body never carries a copy of it.
+
+**No bare digit outside a fenced block.** `body-bare-digits` (CI) refuses a countable claim — a test count, a file count, a timing figure, "N passed" — written loose in a sentence anywhere in this body. A digit is exempt for exactly one reason: it sits inside an inline code span or a fenced/indented code block (`` `N` `` or a fenced block), or inside `Closes #N`/`Project:` (this header block) / `Tier:` (under `## Scope`) / `Evidence` (under `## Evidence`), correctly placed under its own documented section. **Nowhere else** — including inside `Premise`/`Test plan` (both scanned exactly like ordinary prose, no anchor exemption at all — evidence there, byte counts, exit codes all need their own backticks too), an Issue/PR reference, a date, a version, a file path, or a section number: any of those now needs its own backticks (`` `#N` ``, `` `2026-08-18` ``, `` `0.12.0` ``) the same as any other digit. Write the number inside a fenced block or backticks, or don't write it bare at all.
+
+---
+
+<!-- AEG:CLOSES:START -->
+Closes #[N]
+<!-- AEG:CLOSES:END -->
+
+**For:** [model + environment that executed the task, matching the brief's `For:` line]
+<!-- AEG:PROJECT:START -->
+**Project:** [project(s), comma-separated, matching the brief]
+<!-- AEG:PROJECT:END -->
+
+## Decisions
+
+[one line per choice the brief left open, e.g. `- <choice>: <what you picked and why>` — the alternatives you considered and why you picked yours, so the Principal can reverse a wrong call. Never restate what the diff does; that's the diff's job, not this section's. No verification claims here (no "typecheck passes", no diff stats, no test counts) — those go in the emitted Evidence block below, never typed by hand.]
+
+## Test plan
+
+<!-- AEG:TEST-PLAN:START -->
+[the `[agent]` half is a fenced list of commands carried from the brief's §9 — one command per line, each with its expected observable after a literal `→`. The controller's `refresh_evidence` tool runs every line from the PR head and writes the command plus its actual output into the AEG:EVIDENCE block below; there is no `[agent]` checkbox to tick (an agent never ticks a box or edits a PR body). A pure-logic brief with no runtime surface uses the `Test Plan: unit-tests-only` sentinel instead of a fenced list.]
+
+```
+[<scriptable / non-auth / no-vendor-key command from the brief's §9> → <expected observable>]
+```
+
+- [ ] **[principal]** [an auth-gated / vendor-key-dependent / visual / browser check carried from the brief's §9 — the Principal ticks after verifying in a real browser/session. If the brief names no such check, OMIT this line entirely rather than writing "None": an unticked placeholder blocks the merge gate forever.]
+<!-- AEG:TEST-PLAN:END -->
+
+## Premise
+
+<!-- AEG:PREMISE:START -->
+**Premise:**
+- [path/the/premise/rests/on.ts] contains: [a literal substring true on the default branch AND after your change — never the brief's original pre-fix pin, never text only your diff adds]
+<!-- AEG:PREMISE:END -->
+
+[Omit this whole section — anchors and all — only when §4 of the brief had no real code surface (a Tier 0 doc-only or planning-only change). Any brief with a `Premise:` block gets a fresh one here; do not rely on the brief's original block as a substitute — that block lives on the Issue's `aeg:brief:v1` comment, never in this body, and the re-check reads this anchored section, not that comment.]
+
+## Evidence
+
+Call the controller's `refresh_evidence` tool to generate this block for the current head — it is generated, never hand-typed. `check-evidence-fresh` refuses a body whose block doesn't match the head it's attached to.
+
+The block opens with `Head:` and a `Summary:` line — a file and line count derived from the same `--numstat` printed two lines below it, so the body never needs a hand-written "four files changed" sentence that a later commit silently falsifies. Its value is emitted inside backticks, which is what makes it legal under the bare-digit rule below — no exemption, just the same inline code span any other digit needs. Do not type or edit the line: `check-evidence-fresh` byte-compares it, backticks included, against a fresh recompute, and a hand-written count fails there.
+
+**Keep the anchor pair out of the `<details>` block.** `body-bare-digits` blanks every digit inside a collapsed block, so an evidence block hidden in one is exempt from the digit scan and unverifiable — `check-evidence-fresh` refuses rather than passing silently. Both checks resolve this region from one shared, normalised context, so a zero-width character or an HTML entity in a marker no longer makes one of them see a block the other cannot.
+
+<!-- AEG:EVIDENCE:START -->
+[run `vinaya pr report --write` to populate — do not type this block by hand]
+<!-- AEG:EVIDENCE:END -->
+
+## Scope
+
+[SCOPE — one paragraph: blast radius, projects touched, packages edited, shared-package consumers affected, non-goals. Ends with the Tier field:]
+
+<!-- AEG:TIER:START -->
+**Tier:** [0 | 1 | 3]
+<!-- AEG:TIER:END -->
+
+---
+
+**After open, this body changes only through the controller's body tools.** `update_pull_request_body` replaces it whole, through the same body gate `open_pull_request` ran; `refresh_evidence` regenerates the `AEG:EVIDENCE` block for the current head. The body carries no token table: a dispatched turn's token use is recorded as the Vinaya log's own `usage` event, never in this body. The Principal's `[principal]` ticks are the Principal's writes and must survive every body update. A round's response and any disclosure the brief didn't anticipate are PR comments, never edits to this body. The brief itself never lives here — it is posted once, frozen, as the `aeg:brief:v1` comment on the task Issue (`vinaya task dispatch`); `pr create` refuses a body carrying either legacy `<!-- aeg:brief:start -->`/`<!-- aeg:brief:end -->` marker outright.

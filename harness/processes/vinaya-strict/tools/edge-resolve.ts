@@ -201,7 +201,7 @@ export function clearEdgeCache(): void {
  * `openOrInFlight`, and a conflict only matters while a PR is genuinely open —
  * `verify-dispatch.ts` returns `false` here for that stated reason. Deriving it
  * from Issue state instead would block a cross-tranche conflict from Issue
- * creation through merge, which contradicts `aeg-root/tranche-model.md`'s
+ * creation through merge, which contradicts `harness/processes/vinaya-strict/doctrine/tranche-model.md`'s
  * definition of the conflicts predicate.
  *
  * `closedByActor` stays `null`: the closing actor is not in this response, so

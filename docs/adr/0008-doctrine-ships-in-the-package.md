@@ -1,6 +1,6 @@
 # 0008. Doctrine ships in the package
 
-**Status:** Accepted
+**Status:** Superseded by [0015](0015-doctrine-lives-in-the-process-and-ships-in-the-package.md)
 
 **Date:** 2026-07-26
 

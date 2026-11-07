@@ -114,8 +114,8 @@ const STEPS: {
       {
         kind: 'list',
         items: [
-          '`aeg` — the operating model itself: truth domains, dispatch gates, the tranche topology',
-          '`aeg-roles` — the accountable roles and which role doc an agent loads next',
+          '`vinaya` — the operating model itself: truth domains, dispatch gates, the tranche topology',
+          '`roles` — the accountable roles and which role doc an agent loads next',
           '`brief-authoring` — how task briefs for Developer agents are written'
         ]
       },

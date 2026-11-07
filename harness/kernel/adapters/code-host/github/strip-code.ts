@@ -61,7 +61,7 @@ const DETAILS_CLOSE = /<\/details\s*>/gi
 /**
  * Blanks (same-length-masks, index-preserving — this function has only one
  * mode; every caller needs positions, not shortened text) `<details>…</details>`
- * blocks — this repo's standing convention (`aeg-root/templates/pr-report-template.md`)
+ * blocks — this repo's standing convention (the process's pull-request report template)
  * for wrapping the frozen, verbatim reference-brief copy below a PR's live
  * report, "the gates read the anchored fields above, never this block." No
  * gate needed to make that literally true until now — `body-bare-digits`

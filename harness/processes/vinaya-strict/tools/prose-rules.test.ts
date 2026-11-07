@@ -64,7 +64,7 @@ const digest = (): string =>
 
 describe('default prose rules content', () => {
   it('pins every pattern text, flag, message, severity and exemption', () => {
-    expect(digest()).toBe('dd7e0d9bdad6a8f4f25257e178dbb992e71e8cb7a0a513037d103c2dea879d03')
+    expect(digest()).toBe('7aa2735f9dd374e67416b2a7eb4e29cac87bacd0fffd3213f7f752cd00e9c023')
   })
 })
 

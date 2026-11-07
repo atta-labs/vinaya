@@ -111,8 +111,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Whether a diff touches only `**/*.md`, `.changeset/**`, and
-      # `aeg-root/**` doc files — reported in this job's summary. What lint
+      # Whether a diff touches only `**/*.md` (the doctrine under
+      # `harness/processes/vinaya-strict/` included) and `.changeset/**` doc files — reported in this job's summary. What lint
       # and typecheck run is the CI plan's, below. Reports a real "true" on
       # this job's own check run rather than a `skipped` job — this job's
       # `if:` is never false.
@@ -130,7 +130,7 @@ jobs:
             exit 0
           fi
           CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD)
-          NON_DOCS=$(echo "$CHANGED" | grep -vE '\.md$|^\.changeset/|^aeg-root/' || true)
+          NON_DOCS=$(echo "$CHANGED" | grep -vE '\.md$|^\.changeset/' || true)
           if [ -n "$CHANGED" ] && [ -z "$NON_DOCS" ]; then
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           else
@@ -286,7 +286,7 @@ jobs:
 
       - name: Docs-only skip report
         if: steps.docs-only.outputs.docs_only == 'true'
-        run: echo "Docs-only diff (**/*.md, .changeset/**, aeg-root/**) — lint/typecheck/test skipped." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Docs-only diff (**/*.md, .changeset/**) — lint/typecheck/test skipped." >> "$GITHUB_STEP_SUMMARY"
 
       # The counted architecture ratchet: the head tree's process and role
       # names in non-process code must equal the committed baseline, and that

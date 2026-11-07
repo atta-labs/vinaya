@@ -8,7 +8,7 @@ import {
   SHORT_VERSION_MAX_WORDS,
   SHORT_VERSION_MIN_WORDS
 } from '../../tools/docs/published-prose'
-import { resolveDoctrineRoot } from '../../../../../apps/cli/src/commands/doctrine'
+import { resolveDoctrineRoot } from '../../tools/doctrine/resolve-doctrine'
 import {
   assembleDeveloperDoctrine,
   DEVELOPER_CHECKLIST_HEADINGS,

@@ -209,7 +209,9 @@ describe('buildVerdictFromReview — objective-id coverage, the same rule `revie
 
   it('a NOT MET citing a role file (aeg-root/roles/…) is reclassified MET (prose note) too', () => {
     const result = build(
-      completedReview('reviewer', { objectiveResults: [notMet('O1', 'aeg-root/roles/developer.md'), met('O2')] })
+      completedReview('reviewer', {
+        objectiveResults: [notMet('O1', 'harness/processes/vinaya-strict/executing/developer/doctrine.md'), met('O2')]
+      })
     )
     expect(result.observation.objectives).toEqual([
       { id: 'O1', met: true },
@@ -497,10 +499,20 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
   })
 
   it('keeps policy thresholds and unattended-loop procedures out of reviewer doctrine', () => {
-    const doctrineRoot = join(import.meta.dir, '..', '..', '..', '..', '..', '..', '..', 'aeg-root')
-    const reviewer = readFileSync(join(doctrineRoot, 'roles', 'reviewer.md'), 'utf8')
-    const security = readFileSync(join(doctrineRoot, 'roles', 'security.md'), 'utf8')
-    const contract = readFileSync(join(doctrineRoot, 'contracts', 'developer-reviewer.md'), 'utf8')
+    const doctrineRoot = join(
+      import.meta.dir,
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      'harness/processes/vinaya-strict'
+    )
+    const reviewer = readFileSync(join(doctrineRoot, 'executing/code-reviewer/doctrine.md'), 'utf8')
+    const security = readFileSync(join(doctrineRoot, 'executing/security-reviewer/doctrine.md'), 'utf8')
+    const contract = readFileSync(join(doctrineRoot, 'doctrine/contracts/developer-reviewer.md'), 'utf8')
 
     expect(reviewer).not.toContain('**BLOCKER** — blocks merge')
     expect(reviewer).not.toContain('git diff origin/main...HEAD --stat')

@@ -1,14 +1,15 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import matter from 'gray-matter'
 import { describe, expect, it } from 'bun:test'
 import { type Action, ACTIONS, CROSSING_KEYWORDS } from './actions'
 import { readabilityErrors } from './docs/published-prose'
 import { type GateRow, parseEnforcementRegistry } from './registry-parse'
+import { doctrineRepoPath, ROLE_KEY_ENTRIES } from './doctrine/doctrine-map'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../..')
-const ENFORCEMENT_PATH = join(REPO_ROOT, 'aeg-root/enforcement.md')
-const ROLES_DIR = join(REPO_ROOT, 'aeg-root/roles')
+const ENFORCEMENT_PATH = join(REPO_ROOT, 'harness/processes/vinaya-strict/doctrine/enforcement.md')
+const ROLE_FILES = ROLE_KEY_ENTRIES.map((entry) => join(REPO_ROOT, doctrineRepoPath(entry.key)))
 
 describe('ACTIONS — shape', () => {
   it('has exactly 11 entries (6 crossings + 5 seam-only — no duplicate id for a seam already covered by a crossing)', () => {
@@ -80,8 +81,8 @@ describe('ACTIONS — real-file cross-check', () => {
 
   it('every performedBy role_id exists in aeg-root/roles/*.md frontmatter', () => {
     const roleIds = new Set<string>()
-    for (const file of readdirSync(ROLES_DIR).filter((f) => f.endsWith('.md'))) {
-      const { data } = matter(readFileSync(join(ROLES_DIR, file), 'utf8'))
+    for (const file of ROLE_FILES) {
+      const { data } = matter(readFileSync(file, 'utf8'))
       if (typeof data.role_id === 'string') roleIds.add(data.role_id)
     }
     expect(roleIds.size).toBe(9)

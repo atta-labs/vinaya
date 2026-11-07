@@ -72,7 +72,10 @@ describe('Developer invocation packets', () => {
 
 // apps/cli/tests/lib -> repo root is four levels up.
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..')
-const EXAMPLE = join(REPO_ROOT, 'aeg-root', 'skills', 'aeg-context-packets', 'examples', 'operator-start.md')
+const EXAMPLE = join(
+  REPO_ROOT,
+  'harness/processes/vinaya-strict/doctrine/skills/context-packets/examples/operator-start.md'
+)
 
 function loadExample(): ContextPacket {
   return parseContextPacket(readFileSync(EXAMPLE, 'utf8'))

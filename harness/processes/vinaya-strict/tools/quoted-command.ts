@@ -6,7 +6,7 @@
  * runs today: `X`". When a diff changes the thing being quoted, the
  * quotation goes stale and nothing notices: the doc changed nothing, the
  * code is correct, every existing gate passes. Measured, live: a CI
- * invocation was pinned to a version in one PR; `aeg-root/enforcement.md`
+ * invocation was pinned to a version in one PR; `harness/processes/vinaya-strict/doctrine/enforcement.md`
  * quoted the pre-pin form verbatim as "what runs today"; all 17 registered
  * checks passed, `doctor` reported healthy, security passed. A code-review
  * agent found it after roughly half an hour of independent re-derivation.
@@ -69,6 +69,7 @@
 
 import { maskCode } from '../../../kernel/adapters/code-host/github/strip-code'
 import { classifyProseFile, type ProseFileClass } from './reader-resolvable-prose'
+import { DOCTRINE_TREE } from './doctrine/doctrine-map'
 
 // `maskCode` (index-preserving) is imported directly from the `./strip-code`
 // subpath — the same narrow front door `anchored-region.ts` uses, per that
@@ -100,8 +101,8 @@ export type QuotedCommandFinding = {
   message: string
 }
 
-/** `aeg-root/**` by default — same default `reader-resolvable-prose.ts` uses, so a caller that doesn't override either stays consistent. */
-const QUOTED_COMMAND_SHIPS_PREFIX = 'aeg-root/'
+/** The doctrine map's tree, `harness/processes/vinaya-strict/`, by default — same default `reader-resolvable-prose.ts` uses, so a caller that doesn't override either stays consistent. */
+const QUOTED_COMMAND_SHIPS_PREFIX = `${DOCTRINE_TREE}/`
 
 /** The two classes this check sweeps for markers — `internal` never is, matching `reader-resolvable-prose.ts`'s own (identically-valued, differently-named to avoid `symbol-collisions.test.ts`) `SWEPT_CLASSES`. */
 const QUOTED_COMMAND_SWEPT_CLASSES: ReadonlySet<ProseFileClass> = new Set(['ships', 'reader-facing'])

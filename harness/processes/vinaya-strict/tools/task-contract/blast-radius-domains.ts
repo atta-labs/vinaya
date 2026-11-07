@@ -167,7 +167,7 @@ export function parsePnpmWorkspaceYaml(content: string): string[] {
 /**
  * The built-in cross-cutting candidates, in the fixed order every derived
  * list reports them — the same order the doctrine names them
- * (`aeg-root/tranche-model.md` §5) and the order attalabs' own static
+ * (`harness/processes/vinaya-strict/doctrine/tranche-model.md` §5) and the order attalabs' own static
  * `.aeg/packages` already lists them in, so a diff against that file reads
  * as a true empty diff rather than a reordering.
  *

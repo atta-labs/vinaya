@@ -154,7 +154,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
   // before the gate run below, so Group B's own `evidence-fresh` check
   // actually compares against this PR's real state instead of silently
   // skipping for want of `PR_NUMBER` (the gap the manual sequence this
-  // command replaces left open — see `aeg-root/roles/developer.md`).
+  // command replaces left open — see `harness/processes/vinaya-strict/executing/developer/doctrine.md`).
   let preEditBody: string | undefined
   if (pushPr) {
     try {
@@ -224,7 +224,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
     throw err
   }
 
-  // `aeg-root/roles/developer.md` makes this command's exit code the
+  // `harness/processes/vinaya-strict/executing/developer/doctrine.md` makes this command's exit code the
   // Developer's pre-open verification run, and states that a red gate still
   // writes the block and exits non-zero — the failure is reported, never
   // papered over by withholding evidence.

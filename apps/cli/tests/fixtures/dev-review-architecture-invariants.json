@@ -3216,7 +3216,7 @@
       "scenarios": ["invalid-reviews"],
       "sources": [
         {
-          "path": "aeg-root/roles/reviewer.md",
+          "path": "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
           "symbol": "What you check"
         }
       ],
@@ -3517,7 +3517,7 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "aeg-root/roles/developer.md"
+          "path": "harness/processes/vinaya-strict/executing/developer/doctrine.md"
         },
         {
           "path": "harness/processes/vinaya-strict/checks/registry.ts"
@@ -4082,7 +4082,7 @@
         "locator": "renderReviewerDispatchPrompt"
       },
       "spec": {
-        "path": "aeg-root/roles/reviewer.md",
+        "path": "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
         "locator": "The short version"
       },
       "status": "open",
@@ -4097,7 +4097,7 @@
         "locator": "runC8"
       },
       "spec": {
-        "path": "aeg-root/enforcement.md",
+        "path": "harness/processes/vinaya-strict/doctrine/enforcement.md",
         "locator": "Ring 1 \u2014 Branch Rules (what turns the forge red)"
       },
       "status": "open",
@@ -4108,11 +4108,11 @@
       "id": "DEF-37",
       "summary": "The reviewer instructions make a documentation sentence without a binding marker a blocking MAJOR finding although no check verifies bindings; a reviewer severity rests on a check that runs.",
       "code": {
-        "path": "aeg-root/roles/reviewer.md",
+        "path": "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
         "locator": "What you check"
       },
       "spec": {
-        "path": "aeg-root/documentation-coherence.md",
+        "path": "harness/processes/vinaya-strict/doctrine/documentation-coherence.md",
         "locator": "Reader-facing readability \u2014 no unresolvable symbols"
       },
       "status": "open",
@@ -4127,7 +4127,7 @@
         "locator": "validateIssueContent"
       },
       "spec": {
-        "path": "aeg-root/roles/planner.md",
+        "path": "harness/processes/vinaya-strict/thinking/planner/doctrine.md",
         "locator": "Entry gate (self-locating)"
       },
       "status": "open",
@@ -4142,7 +4142,7 @@
         "locator": "validateIssueContent"
       },
       "spec": {
-        "path": "aeg-root/roles/planner/reference.md",
+        "path": "harness/processes/vinaya-strict/thinking/planner/reference.md",
         "locator": "Rationale grammar"
       },
       "status": "open",
@@ -4157,7 +4157,7 @@
         "locator": "checkDocumentationReadable"
       },
       "spec": {
-        "path": "aeg-root/roles/developer.md",
+        "path": "harness/processes/vinaya-strict/executing/developer/doctrine.md",
         "locator": "Entry gate (self-locating)"
       },
       "status": "open",
@@ -4172,7 +4172,7 @@
         "locator": "validateIssueContent"
       },
       "spec": {
-        "path": "aeg-root/roles/planner/reference.md",
+        "path": "harness/processes/vinaya-strict/thinking/planner/reference.md",
         "locator": "Rationale grammar"
       },
       "status": "open",
@@ -4187,7 +4187,7 @@
         "locator": "checkPublicationPreconditions"
       },
       "spec": {
-        "path": "aeg-root/roles/developer/reference.md",
+        "path": "harness/processes/vinaya-strict/executing/developer/reference.md",
         "locator": "What the Developer owns"
       },
       "status": "open",
@@ -4198,7 +4198,7 @@
       "id": "DEF-43",
       "summary": "The rendered brief contradicts itself and the tools: paste the brief into the pull-request body; include a token report; confirm readiness at Step 0 while later saying run neither script; publish after each part while saying one push; an agent checkbox the report rules reject. A rendered brief carries no instruction a tool refuses.",
       "code": {
-        "path": "aeg-root/templates/brief-template.md",
+        "path": "harness/processes/vinaya-strict/artifacts/templates/brief-template.md",
         "locator": "12. Deliverable"
       },
       "spec": {
@@ -4262,7 +4262,7 @@
         "locator": "checkIssueRationale"
       },
       "spec": {
-        "path": "aeg-root/roles/planner/reference.md",
+        "path": "harness/processes/vinaya-strict/thinking/planner/reference.md",
         "locator": "The Planner's rationale (mandatory, one block per task)"
       },
       "status": "open",
@@ -4273,11 +4273,11 @@
       "id": "DEF-48",
       "summary": "Single-fix Issues skip the planner's readiness step because doctrine places them outside the Planner role; every Issue the loop runs passed a read-the-code-first step.",
       "code": {
-        "path": "aeg-root/roles/planner.md",
+        "path": "harness/processes/vinaya-strict/thinking/planner/doctrine.md",
         "locator": "Reference"
       },
       "spec": {
-        "path": "aeg-root/roles/planner/reference.md",
+        "path": "harness/processes/vinaya-strict/thinking/planner/reference.md",
         "locator": "Readiness gate \u2014 verify ALL inputs are present and reachable BEFORE planning a single task"
       },
       "status": "open",
@@ -4288,11 +4288,11 @@
       "id": "DEF-49",
       "summary": "Security instructions call a leaked key a BLOCKER, a severity outside the security scale; every named severity is on its role's scale.",
       "code": {
-        "path": "aeg-root/roles/security.md",
+        "path": "harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md",
         "locator": "What you do NOT do"
       },
       "spec": {
-        "path": "aeg-root/roles/security.md",
+        "path": "harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md",
         "locator": "Output format"
       },
       "status": "open",
@@ -4307,7 +4307,7 @@
         "locator": "renderReviewerDispatchPrompt"
       },
       "spec": {
-        "path": "aeg-root/roles/reviewer.md",
+        "path": "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
         "locator": "What you do NOT do"
       },
       "status": "open",
@@ -4321,7 +4321,7 @@
         "path": "apps/cli/src/commands/issue.ts"
       },
       "spec": {
-        "path": "aeg-root/roles/planner/reference.md",
+        "path": "harness/processes/vinaya-strict/thinking/planner/reference.md",
         "locator": "Rationale grammar"
       },
       "status": "open",

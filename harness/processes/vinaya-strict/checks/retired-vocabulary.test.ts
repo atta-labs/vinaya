@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
 import { PLAN_ON_DISK_PATTERNS, rulesForGroup } from '../tools/prose-rules'
 import { FORGE_NUMBER_PATTERN as FORGE_NUMBER_REGEXP } from '../tools/reader-resolvable-prose'
+import { DOCTRINE_REPO_PATHS, doctrineRepoPath } from '../tools/doctrine/doctrine-map'
 
 /**
  * The doctrine sweep, as a check instead of a habit.
@@ -139,7 +140,7 @@ const RETIRED_IN_PRODUCT = [
  * where that pattern and its wider surface live now.
  */
 const PATTERN_SCOPE: Record<string, string[]> = {
-  [FORGE_NUMBER_PATTERN]: ['aeg-root'],
+  [FORGE_NUMBER_PATTERN]: [...DOCTRINE_REPO_PATHS],
   // This repo's layout (task 2's graft): `apps/vinaya/cli` -> `apps/cli`,
   // `apps/vinaya/sources` -> `packages/sources`. The old product-umbrella
   // paths (a root `CLAUDE.md`, `apps/vinaya/CLAUDE.md`/`README.md`,
@@ -162,7 +163,7 @@ const PATTERN_SCOPE: Record<string, string[]> = {
   // aeg-root/tranches/completed/*.md) — citing a closed tranche is the safe
   // case (same durability class as a closed PR), not the live-citation
   // problem the (now-removed) widening existed to catch.
-  ...(LEGACY_SLUG_PATTERN ? { [LEGACY_SLUG_PATTERN]: ['aeg-root'] } : {})
+  ...(LEGACY_SLUG_PATTERN ? { [LEGACY_SLUG_PATTERN]: [...DOCTRINE_REPO_PATHS] } : {})
 }
 
 /**
@@ -230,8 +231,8 @@ const PATTERN_EXEMPT: Record<string, string[]> = {
  * claim anywhere else in it.
  */
 const RETIRED_IN_DOCTRINE = [...PLAN_ON_DISK_PATTERNS]
-const DOCTRINE_SCOPE = ['aeg-root']
-const TRANCHE_MODEL = 'aeg-root/tranche-model.md'
+const DOCTRINE_SCOPE = [...DOCTRINE_REPO_PATHS]
+const TRANCHE_MODEL = doctrineRepoPath('tranche-model.md')
 const RETIREMENT_SECTION_HEADING = '## 4. The thin tranche file — retired, and what survives it'
 
 /**
@@ -410,11 +411,11 @@ describe('the JavaScript matcher distinguishes no matches from an invalid patter
   // clean repo. Pinned directly against `grep()`, not just observed as a
   // side effect of the pattern suites above passing.
   it('returns [] for a pattern with zero matches (exit 1) — the legitimate case', () => {
-    expect(grep('ZZZ_NO_SUCH_STRING_EVER_MATCHES_ANYTHING_ZZZ', ['aeg-root'])).toEqual([])
+    expect(grep('ZZZ_NO_SUCH_STRING_EVER_MATCHES_ANYTHING_ZZZ', [...DOCTRINE_REPO_PATHS])).toEqual([])
   })
 
   it('rethrows for a malformed pattern (grep exits 2) — a real failure, not "no matches"', () => {
-    expect(() => grep('[', ['aeg-root'])).toThrow()
+    expect(() => grep('[', [...DOCTRINE_REPO_PATHS])).toThrow()
   })
 })
 

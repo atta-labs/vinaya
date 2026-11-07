@@ -1,5 +1,5 @@
 /**
- * registry-parse.ts — pure, no-I/O parser for `aeg-root/enforcement.md`'s
+ * registry-parse.ts — pure, no-I/O parser for `harness/processes/vinaya-strict/doctrine/enforcement.md`'s
  * three ring markdown tables (Ring 0/1/2). enforcement.md's tables ARE the
  * gate registry (no live file duplicates forge state); this
  * parses them rather than maintaining a second copy.

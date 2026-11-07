@@ -1,13 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseTranche } from '../../../harness/processes/vinaya-strict/tools/task-contract/parse-tranche'
+import { DOCTRINE_TREE } from '../../../harness/processes/vinaya-strict/tools/doctrine/doctrine-map'
 import type { StateSource } from './contract'
 
-/** Default governance root when no config value is supplied. Never read
+/** Default governance root when no config value is supplied — the doctrine
+ * map's doctrine tree, `harness/processes/vinaya-strict`. Never read
  * directly by adapter logic below — always through `config.root`, so a
- * relocation of this repo's governance data (`vinaya-finding-aeg-root-into-
- * aeg-core`) is a config flip, not a rewrite (2026-07-05 Planner amendment). */
-export const DEFAULT_GOVERNANCE_ROOT = 'aeg-root'
+ * relocation of this repo's governance data is a config flip, not a rewrite. */
+export const DEFAULT_GOVERNANCE_ROOT = DOCTRINE_TREE
 
 export type FileSourceConfig = {
   /** Governance root to read from. Defaults to `DEFAULT_GOVERNANCE_ROOT`. */

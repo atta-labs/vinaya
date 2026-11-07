@@ -138,13 +138,13 @@ describe('isProseLocation (#543 O5)', () => {
     expect(isProseLocation('pr body')).toBe(true)
     expect(isProseLocation('a PR comment')).toBe(true)
     expect(isProseLocation('review comment')).toBe(true)
-    expect(isProseLocation('aeg-root/roles/developer.md:12')).toBe(true)
+    expect(isProseLocation('harness/processes/vinaya-strict/executing/developer/doctrine.md:12')).toBe(true)
   })
 
   test('never matches a source or test file', () => {
     expect(isProseLocation('src/foo.ts:12')).toBe(false)
     expect(isProseLocation('apps/cli/tests/foo.test.ts:1')).toBe(false)
-    expect(isProseLocation('aeg-root/contracts/planner-developer.md:5')).toBe(false)
+    expect(isProseLocation('harness/processes/vinaya-strict/doctrine/contracts/planner-developer.md:5')).toBe(false)
   })
 
   test('a test file whose NAME contains the word "comment" is never prose-capped (round 2 review, BLOCKER)', () => {
@@ -183,7 +183,7 @@ describe('evaluateReviewFindings — prose cap (#543 O5)', () => {
 
   test('a CRITICAL security finding located in a role file never blocks — MINOR is not on the security scale at all', () => {
     const result = evaluateReviewFindings(
-      [{ severity: 'CRITICAL', location: 'aeg-root/roles/security.md:3' }],
+      [{ severity: 'CRITICAL', location: 'harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md:3' }],
       SECURITY_SEVERITY_ORDER,
       'CRITICAL'
     )
@@ -191,7 +191,7 @@ describe('evaluateReviewFindings — prose cap (#543 O5)', () => {
   })
 
   // REGRESSION — a policy mismatch surfaced when this task shipped
-  // `aeg-root/roles/operator.md`, NOT resolved here. The file is prose by
+  // `harness/processes/vinaya-strict/executing/operator/doctrine.md`, NOT resolved here. The file is prose by
   // path, so the path-based role-file prose cap treats it exactly like `security.md` above: a
   // CRITICAL finding located in it is capped to MINOR and never blocks. But this role file's own
   // content IS a security boundary — it declares the Operator's authority grant
@@ -205,14 +205,14 @@ describe('evaluateReviewFindings — prose cap (#543 O5)', () => {
   // that decision lands, in the same PR that changes `isProseLocation`.
   test('KNOWN GAP: a CRITICAL flaw in the Operator’s own authority text is capped, so it cannot block — awaits a security ruling', () => {
     const result = evaluateReviewFindings(
-      [{ severity: 'CRITICAL', location: 'aeg-root/roles/operator.md:38' }],
+      [{ severity: 'CRITICAL', location: 'harness/processes/vinaya-strict/executing/operator/doctrine.md:38' }],
       SECURITY_SEVERITY_ORDER,
       'CRITICAL'
     )
     // Current behavior: capped to MINOR (off the security scale) → does not block.
     // This is the mismatch, deliberately asserted so it cannot regress unnoticed.
     expect(result.outcome).toBe('clean')
-    expect(isProseLocation('aeg-root/roles/operator.md:38')).toBe(true)
+    expect(isProseLocation('harness/processes/vinaya-strict/executing/operator/doctrine.md:38')).toBe(true)
   })
 
   test('a round with clean code/test/security findings stays green regardless of a body finding (O5 sizing story)', () => {
@@ -400,7 +400,12 @@ describe('classifyFinding — the one blocking decision (O1, O2, O3, O5)', () =>
     }
     // a role file is prose yet still a real file: both rules still apply to it
     expect(
-      classifyFinding({ severity: 'BLOCKER', location: 'aeg-root/roles/developer.md:3' }, CODE, 'MINOR', ctx)
+      classifyFinding(
+        { severity: 'BLOCKER', location: 'harness/processes/vinaya-strict/executing/developer/doctrine.md:3' },
+        CODE,
+        'MINOR',
+        ctx
+      )
     ).toEqual({ outcome: 'deferred', deferralReason: 'outside-surface' })
     // and a real file whose name contains "pr-body" is still deferred outside the Surface
     expect(classifyFinding({ severity: 'MAJOR', location: 'fixtures/pr-body-473.md:1' }, CODE, 'MAJOR', ctx)).toEqual({

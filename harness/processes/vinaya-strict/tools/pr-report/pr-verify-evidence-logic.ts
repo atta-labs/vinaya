@@ -111,7 +111,10 @@ export function normaliseLines(region: string, repoRoot: string): string[] {
     // interior. A relative path is never rewritten.
     const localStripped = root ? raw.split(`${root}/`).join('').split(root).join('') : raw
     const stripped = localStripped.replace(
-      /(^|\s)\/\S*?\/(?=(?:apps|packages|aeg-root|scripts|\.changeset|\.vinaya|\.github)\/)/g,
+      new RegExp(
+        `(^|\\s)\\/\\S*?\\/(?=(?:apps|packages|scripts|\\.changeset|\\.vinaya|\\.github)\\/|${DOCTRINE_PATH_PATTERN_SOURCE})`,
+        'g'
+      ),
       '$1'
     )
     // C0 controls and DEL are removed before anything is echoed. These lines
@@ -227,6 +230,7 @@ export function renderVerdict(verdict: EvidenceVerdict): string {
 }
 
 import type { SurfaceExemption } from '../../../../../apps/cli/src/lib/surface-exemption'
+import { DOCTRINE_PATH_PATTERN_SOURCE } from '../doctrine/doctrine-map'
 
 // Not a command — colocated lib code (see apps/cli/tests/surface-index.test.ts's
 // orphan-file check). Retires by moving to apps/cli/src/lib/ in the next task

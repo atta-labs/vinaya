@@ -163,7 +163,7 @@ function legacyBriefMarkerErrors(body: string, retryCommand: string): CheckError
     makeCheckError(
       'pr-brief-comment',
       `body carries the retired brief-split marker(s) (${found.join(', ')}) — the brief lives on the Issue's \`aeg:brief:v1\` comment now, never split out of the PR body.`,
-      `Remove the \`## Reference\` section and its markers from the body (see \`aeg-root/templates/pr-report-template.md\`), then re-run \`${retryCommand}\`.`
+      `Remove the \`## Reference\` section and its markers from the body (see \`harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md\`), then re-run \`${retryCommand}\`.`
     )
   ]
 }

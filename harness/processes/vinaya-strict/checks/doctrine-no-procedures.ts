@@ -56,7 +56,7 @@ function procedureLineNumberAt(content: string, index: number): number {
   return content.slice(0, index).split('\n').length
 }
 
-/** `aeg-root/templates/**` (or any adopter's `<doctrineRoot>/templates/**`) — worked-example templates that show the vendor-facing PR-report shape and legitimately carry a full command block. */
+/** `harness/processes/vinaya-strict/artifacts/templates/**` (or any adopter's `<doctrineRoot>/templates/**`) — worked-example templates that show the vendor-facing PR-report shape and legitimately carry a full command block. */
 function isTemplatePath(path: string): boolean {
   return /(^|\/)templates\//.test(path)
 }

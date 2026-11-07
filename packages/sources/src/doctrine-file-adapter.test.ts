@@ -12,15 +12,16 @@ describe('createFileDoctrineSource — configured root', () => {
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'vinaya-sources-doctrine-'))
-    root = join(tmpRoot, 'aeg-root')
-    mkdirSync(join(root, 'roles'), { recursive: true })
-    mkdirSync(join(root, 'contracts'), { recursive: true })
-    writeFileSync(join(root, 'enforcement.md'), '## Ring 0 — Prevention\n', 'utf-8')
-    writeFileSync(join(root, 'roles', 'b-role.md'), '---\nrole_id: b\n---\n', 'utf-8')
-    writeFileSync(join(root, 'roles', 'a-role.md'), '---\nrole_id: a\n---\n', 'utf-8')
-    writeFileSync(join(root, 'contracts', 'c1.md'), '---\ncontract_id: c1\n---\n', 'utf-8')
-    // A non-.md file must be ignored.
-    writeFileSync(join(root, 'roles', 'README.txt'), 'ignore me', 'utf-8')
+    root = join(tmpRoot, 'harness/processes/vinaya-strict')
+    for (const dir of ['doctrine/contracts', 'thinking/architect', 'retrospecting/archivist']) {
+      mkdirSync(join(root, dir), { recursive: true })
+    }
+    writeFileSync(join(root, 'doctrine/enforcement.md'), '## Ring 0 — Prevention\n', 'utf-8')
+    writeFileSync(join(root, 'retrospecting/archivist/doctrine.md'), '---\nrole_id: b\n---\n', 'utf-8')
+    writeFileSync(join(root, 'thinking/architect/doctrine.md'), '---\nrole_id: a\n---\n', 'utf-8')
+    writeFileSync(join(root, 'doctrine/contracts/architect-planner.md'), '---\ncontract_id: c1\n---\n', 'utf-8')
+    // A file the doctrine map does not name must be ignored.
+    writeFileSync(join(root, 'thinking/architect/README.md'), 'ignore me', 'utf-8')
   })
 
   afterEach(() => {
@@ -35,15 +36,17 @@ describe('createFileDoctrineSource — configured root', () => {
     expect(doctrine.contracts[0]?.content).toContain('contract_id: c1')
   })
 
-  it('lists markdown files sorted by filename, ignoring non-.md files', async () => {
+  it('lists the role doctrine sorted by logical key, ignoring files the doctrine map does not name', async () => {
     const doctrine = await createFileDoctrineSource({ root }).getDoctrine()
-    expect(doctrine.roles.map((r) => r.path)).toEqual([join('roles', 'a-role.md'), join('roles', 'b-role.md')])
+    expect(doctrine.roles.map((r) => r.path)).toEqual([join('roles', 'architect.md'), join('roles', 'archivist.md')])
   })
 })
 
-describe('createFileDoctrineSource — real aeg-root/', () => {
+describe('createFileDoctrineSource — real doctrine tree', () => {
   it('reads this repo real doctrine files', async () => {
-    const doctrine = await createFileDoctrineSource({ root: join(REPO_ROOT, 'aeg-root') }).getDoctrine()
+    const doctrine = await createFileDoctrineSource({
+      root: join(REPO_ROOT, 'harness/processes/vinaya-strict')
+    }).getDoctrine()
     expect(doctrine.enforcement).toContain('Ring 0')
     // 9 role files, per aeg-core actions.test.ts's own invariant.
     expect(doctrine.roles).toHaveLength(9)

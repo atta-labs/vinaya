@@ -85,7 +85,7 @@ function dirOf(path: string): string {
   return idx === -1 ? '' : path.slice(0, idx)
 }
 
-/** The workspace package a repo-relative path belongs to — its first two segments when it sits under one of `workspaceDirs` (`apps/<name>`, `packages/<name>`); `null` for a repo-root file, `aeg-root/**`, or anything that normalizes above the repo root entirely. */
+/** The workspace package a repo-relative path belongs to — its first two segments when it sits under one of `workspaceDirs` (`apps/<name>`, `packages/<name>`); `null` for a repo-root file, the doctrine tree, or anything that normalizes above the repo root entirely. */
 function workspacePackageOf(path: string, workspaceDirs: readonly string[]): string | null {
   const [first, second] = path.split('/')
   if (first === undefined || second === undefined || !workspaceDirs.includes(first)) return null

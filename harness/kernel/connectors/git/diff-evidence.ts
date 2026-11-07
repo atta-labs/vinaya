@@ -70,7 +70,7 @@ function revParse(ref: string): string | null {
  * Exported (a MINOR review finding): a caller that ALSO builds
  * cwd-relative paths of its own — `check-reader-resolvable-prose.ts`/
  * `check-retired-vocabulary.ts` do, when `DOCTRINE_ROOT` is a relative
- * `proseGates.doctrineRoot` config value or the bare `'aeg-root'` fallback —
+ * `proseGates.doctrineRoot` config value or the doctrine tree's relative fallback —
  * needs the SAME anchor `resolveChangedFiles()` uses to resolve its own
  * paths against, not a second, independent assumption that `process.cwd()`
  * happens to equal it. Anchoring both sides to this one function is what

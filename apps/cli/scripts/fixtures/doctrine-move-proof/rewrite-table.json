@@ -1,0 +1,407 @@
+{
+  "moves": [
+    {
+      "from": "aeg-root/aeg-manual-flow.md",
+      "to": "harness/processes/vinaya-strict/doctrine/manual-flow.md"
+    },
+    {
+      "from": "aeg-root/contracts/architect-planner.md",
+      "to": "harness/processes/vinaya-strict/doctrine/contracts/architect-planner.md"
+    },
+    {
+      "from": "aeg-root/contracts/archivist-tranche-archivist.md",
+      "to": "harness/processes/vinaya-strict/doctrine/contracts/archivist-tranche-archivist.md"
+    },
+    {
+      "from": "aeg-root/contracts/developer-reviewer.md",
+      "to": "harness/processes/vinaya-strict/doctrine/contracts/developer-reviewer.md"
+    },
+    {
+      "from": "aeg-root/contracts/planner-developer.md",
+      "to": "harness/processes/vinaya-strict/doctrine/contracts/planner-developer.md"
+    },
+    {
+      "from": "aeg-root/contracts/planner-operator.md",
+      "to": "harness/processes/vinaya-strict/doctrine/contracts/planner-operator.md"
+    },
+    {
+      "from": "aeg-root/contracts/principal-operator.md",
+      "to": "harness/processes/vinaya-strict/doctrine/contracts/principal-operator.md"
+    },
+    {
+      "from": "aeg-root/contracts/reviewer-archivist.md",
+      "to": "harness/processes/vinaya-strict/doctrine/contracts/reviewer-archivist.md"
+    },
+    {
+      "from": "aeg-root/contracts/security-archivist.md",
+      "to": "harness/processes/vinaya-strict/doctrine/contracts/security-archivist.md"
+    },
+    {
+      "from": "aeg-root/contracts/tranche-archivist-planner.md",
+      "to": "harness/processes/vinaya-strict/doctrine/contracts/tranche-archivist-planner.md"
+    },
+    {
+      "from": "aeg-root/documentation-coherence.md",
+      "to": "harness/processes/vinaya-strict/doctrine/documentation-coherence.md"
+    },
+    {
+      "from": "aeg-root/enforcement.md",
+      "to": "harness/processes/vinaya-strict/doctrine/enforcement.md"
+    },
+    {
+      "from": "aeg-root/glossary.md",
+      "to": "harness/processes/vinaya-strict/doctrine/glossary.md"
+    },
+    {
+      "from": "aeg-root/milestone-model.md",
+      "to": "harness/processes/vinaya-strict/doctrine/milestone-model.md"
+    },
+    {
+      "from": "aeg-root/process.md",
+      "to": "harness/processes/vinaya-strict/doctrine/process.md"
+    },
+    {
+      "from": "aeg-root/reviewer-prompt.md",
+      "to": "harness/processes/vinaya-strict/thinking/reviewer-prompt.md"
+    },
+    {
+      "from": "aeg-root/roles/architect.md",
+      "to": "harness/processes/vinaya-strict/thinking/architect/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/archivist.md",
+      "to": "harness/processes/vinaya-strict/retrospecting/archivist/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/developer.md",
+      "to": "harness/processes/vinaya-strict/executing/developer/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/developer/reference.md",
+      "to": "harness/processes/vinaya-strict/executing/developer/reference.md"
+    },
+    {
+      "from": "aeg-root/roles/operator.md",
+      "to": "harness/processes/vinaya-strict/executing/operator/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/planner.md",
+      "to": "harness/processes/vinaya-strict/thinking/planner/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/planner/reference.md",
+      "to": "harness/processes/vinaya-strict/thinking/planner/reference.md"
+    },
+    {
+      "from": "aeg-root/roles/principal.md",
+      "to": "harness/processes/vinaya-strict/doctrine/roles/principal.md"
+    },
+    {
+      "from": "aeg-root/roles/reviewer.md",
+      "to": "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/security.md",
+      "to": "harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/tranche-archivist.md",
+      "to": "harness/processes/vinaya-strict/retrospecting/tranche-archivist/doctrine.md"
+    },
+    {
+      "from": "aeg-root/skills/aeg-context-packets/SKILL.md",
+      "to": "harness/processes/vinaya-strict/doctrine/skills/context-packets/SKILL.md"
+    },
+    {
+      "from": "aeg-root/skills/aeg-context-packets/examples/operator-start.md",
+      "to": "harness/processes/vinaya-strict/doctrine/skills/context-packets/examples/operator-start.md"
+    },
+    {
+      "from": "aeg-root/skills/aeg-roles/SKILL.md",
+      "to": "harness/processes/vinaya-strict/doctrine/skills/roles/SKILL.md"
+    },
+    {
+      "from": "aeg-root/skills/aeg/SKILL.md",
+      "to": "harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md"
+    },
+    {
+      "from": "aeg-root/state-machine.md",
+      "to": "harness/processes/vinaya-strict/doctrine/state-machine.md"
+    },
+    {
+      "from": "aeg-root/task-model.md",
+      "to": "harness/processes/vinaya-strict/doctrine/task-model.md"
+    },
+    {
+      "from": "aeg-root/templates/brief-template.md",
+      "to": "harness/processes/vinaya-strict/artifacts/templates/brief-template.md"
+    },
+    {
+      "from": "aeg-root/templates/decision-record-template.md",
+      "to": "harness/processes/vinaya-strict/artifacts/templates/decision-record-template.md"
+    },
+    {
+      "from": "aeg-root/templates/issue-rationale-template.md",
+      "to": "harness/processes/vinaya-strict/artifacts/templates/issue-rationale-template.md"
+    },
+    {
+      "from": "aeg-root/templates/pr-report-template.md",
+      "to": "harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md"
+    },
+    {
+      "from": "aeg-root/tranche-model.md",
+      "to": "harness/processes/vinaya-strict/doctrine/tranche-model.md"
+    }
+  ],
+  "paths": [
+    {
+      "from": "aeg-root/skills/aeg-context-packets/examples/operator-start.md",
+      "to": "doctrine/skills/context-packets/examples/operator-start.md"
+    },
+    {
+      "from": "aeg-root/contracts/archivist-tranche-archivist.md",
+      "to": "doctrine/contracts/archivist-tranche-archivist.md"
+    },
+    {
+      "from": "aeg-root/contracts/tranche-archivist-planner.md",
+      "to": "doctrine/contracts/tranche-archivist-planner.md"
+    },
+    {
+      "from": "aeg-root/templates/decision-record-template.md",
+      "to": "artifacts/templates/decision-record-template.md"
+    },
+    {
+      "from": "aeg-root/templates/issue-rationale-template.md",
+      "to": "artifacts/templates/issue-rationale-template.md"
+    },
+    {
+      "from": "aeg-root/skills/aeg-context-packets/SKILL.md",
+      "to": "doctrine/skills/context-packets/SKILL.md"
+    },
+    {
+      "from": "aeg-root/contracts/developer-reviewer.md",
+      "to": "doctrine/contracts/developer-reviewer.md"
+    },
+    {
+      "from": "aeg-root/contracts/principal-operator.md",
+      "to": "doctrine/contracts/principal-operator.md"
+    },
+    {
+      "from": "aeg-root/contracts/reviewer-archivist.md",
+      "to": "doctrine/contracts/reviewer-archivist.md"
+    },
+    {
+      "from": "aeg-root/contracts/security-archivist.md",
+      "to": "doctrine/contracts/security-archivist.md"
+    },
+    {
+      "from": "aeg-root/templates/pr-report-template.md",
+      "to": "artifacts/templates/pr-report-template.md"
+    },
+    {
+      "from": "aeg-root/contracts/architect-planner.md",
+      "to": "doctrine/contracts/architect-planner.md"
+    },
+    {
+      "from": "aeg-root/contracts/planner-developer.md",
+      "to": "doctrine/contracts/planner-developer.md"
+    },
+    {
+      "from": "aeg-root/contracts/planner-operator.md",
+      "to": "doctrine/contracts/planner-operator.md"
+    },
+    {
+      "from": "aeg-root/roles/developer/reference.md",
+      "to": "executing/developer/reference.md"
+    },
+    {
+      "from": "aeg-root/templates/brief-template.md",
+      "to": "artifacts/templates/brief-template.md"
+    },
+    {
+      "from": "aeg-root/documentation-coherence.md",
+      "to": "doctrine/documentation-coherence.md"
+    },
+    {
+      "from": "aeg-root/roles/planner/reference.md",
+      "to": "thinking/planner/reference.md"
+    },
+    {
+      "from": "aeg-root/roles/tranche-archivist.md",
+      "to": "retrospecting/tranche-archivist/doctrine.md"
+    },
+    {
+      "from": "aeg-root/skills/aeg-roles/SKILL.md",
+      "to": "doctrine/skills/roles/SKILL.md"
+    },
+    {
+      "from": "aeg-root/skills/aeg/SKILL.md",
+      "to": "doctrine/skills/vinaya/SKILL.md"
+    },
+    {
+      "from": "aeg-root/aeg-manual-flow.md",
+      "to": "doctrine/manual-flow.md"
+    },
+    {
+      "from": "aeg-root/milestone-model.md",
+      "to": "doctrine/milestone-model.md"
+    },
+    {
+      "from": "aeg-root/reviewer-prompt.md",
+      "to": "thinking/reviewer-prompt.md"
+    },
+    {
+      "from": "aeg-root/roles/architect.md",
+      "to": "thinking/architect/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/archivist.md",
+      "to": "retrospecting/archivist/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/developer.md",
+      "to": "executing/developer/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/principal.md",
+      "to": "doctrine/roles/principal.md"
+    },
+    {
+      "from": "aeg-root/roles/operator.md",
+      "to": "executing/operator/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/reviewer.md",
+      "to": "executing/code-reviewer/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/security.md",
+      "to": "executing/security-reviewer/doctrine.md"
+    },
+    {
+      "from": "aeg-root/roles/planner.md",
+      "to": "thinking/planner/doctrine.md"
+    },
+    {
+      "from": "aeg-root/state-machine.md",
+      "to": "doctrine/state-machine.md"
+    },
+    {
+      "from": "aeg-root/tranche-model.md",
+      "to": "doctrine/tranche-model.md"
+    },
+    {
+      "from": "aeg-root/enforcement.md",
+      "to": "doctrine/enforcement.md"
+    },
+    {
+      "from": "aeg-root/task-model.md",
+      "to": "doctrine/task-model.md"
+    },
+    {
+      "from": "aeg-root/glossary.md",
+      "to": "doctrine/glossary.md"
+    },
+    {
+      "from": "aeg-root/process.md",
+      "to": "doctrine/process.md"
+    },
+    {
+      "from": "aeg-root/contracts/",
+      "to": "doctrine/contracts/"
+    },
+    {
+      "from": "aeg-root/skills/",
+      "to": "doctrine/skills/"
+    },
+    {
+      "from": "aeg-root/templates/",
+      "to": "artifacts/templates/"
+    },
+    {
+      "from": "aeg-root/roles/",
+      "to": "roles/"
+    },
+    {
+      "from": "skills/aeg-context-packets/",
+      "to": "skills/context-packets/"
+    },
+    {
+      "from": "skills/aeg-roles/",
+      "to": "skills/roles/"
+    },
+    {
+      "from": "skills/aeg/",
+      "to": "skills/vinaya/"
+    },
+    {
+      "from": "aeg-manual-flow.md",
+      "to": "manual-flow.md"
+    }
+  ],
+  "links": [
+    {
+      "file": "aeg-root/roles/developer.md",
+      "from": "](developer/reference.md",
+      "to": "](reference.md"
+    },
+    {
+      "file": "aeg-root/roles/operator.md",
+      "from": "](../glossary.md",
+      "to": "](../../doctrine/glossary.md"
+    },
+    {
+      "file": "aeg-root/roles/planner.md",
+      "from": "](../glossary.md",
+      "to": "](../../doctrine/glossary.md"
+    },
+    {
+      "file": "aeg-root/roles/planner.md",
+      "from": "](planner/reference.md",
+      "to": "](reference.md"
+    },
+    {
+      "file": "aeg-root/roles/planner/reference.md",
+      "from": "](../../glossary.md",
+      "to": "](../../doctrine/glossary.md"
+    },
+    {
+      "file": "aeg-root/state-machine.md",
+      "from": "](roles/developer/reference.md",
+      "to": "](../executing/developer/reference.md"
+    },
+    {
+      "file": "aeg-root/templates/issue-rationale-template.md",
+      "from": "](../glossary.md",
+      "to": "](../../doctrine/glossary.md"
+    }
+  ],
+  "root": {
+    "from": "aeg-root",
+    "to": "vinaya-strict",
+    "pattern": "aeg-root(?!\\/tranches)",
+    "replacement": "vinaya-strict"
+  },
+  "terms": [
+    {
+      "pattern": "\\ban AEG\\b(?!:| provenance|\\.\\*provenance)",
+      "replacement": "a Vinaya"
+    },
+    {
+      "pattern": "\\bAEG\\b(?!:| provenance|\\.\\*provenance)",
+      "replacement": "Vinaya"
+    },
+    {
+      "pattern": "(?<![\\w/.@:-])aeg-roles(?![\\w/.-])",
+      "replacement": "roles"
+    },
+    {
+      "pattern": "(?<![\\w/.@:-])aeg-context-packets(?![\\w/.-])",
+      "replacement": "context-packets"
+    },
+    {
+      "pattern": "(?<![\\w/.@:-])aeg(?![\\w:/.-])",
+      "replacement": "vinaya"
+    }
+  ]
+}

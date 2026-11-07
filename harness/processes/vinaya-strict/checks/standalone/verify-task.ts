@@ -25,7 +25,7 @@
  *
  * Scoped to `@attalabs/aeg-core`: `turbo typecheck`/`turbo test`/`turbo build`
  * run with `--filter=@attalabs/aeg-core` — a full monorepo application build is
- * the deployment pipeline's job, not this gate's (`aeg-root/enforcement.md`
+ * the deployment pipeline's job, not this gate's (`harness/processes/vinaya-strict/doctrine/enforcement.md`
  * Ring 1: "application builds are verified by the deployment pipeline").
  * `aeg-core` itself has no bundler build step (source-only package), so the
  * `build` step is a real, if usually no-op, invocation — not a rubber stamp.

@@ -14,6 +14,7 @@
  * repository adapter hands it to the library as policy.
  */
 import type { ScannerDeclaration } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index.js'
+import { doctrineRepoPath, ROLE_ENTRIES } from '../tools/doctrine/doctrine-map.js'
 
 export {
   type RepoScannerTest,
@@ -98,7 +99,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: [
       'apps/cli/src/',
       'harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts',
-      'aeg-root/enforcement.md',
+      doctrineRepoPath('enforcement.md'),
       '.claude/hooks/'
     ],
     trigger: 'content'
@@ -186,7 +187,11 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: ['apps/vinaya-portal/src/'],
     trigger: 'content'
   },
-  { test: 'harness/processes/vinaya-strict/tools/actions.test.ts', roots: ['aeg-root/roles/'], trigger: 'content' },
+  {
+    test: 'harness/processes/vinaya-strict/tools/actions.test.ts',
+    roots: ROLE_ENTRIES.map((entry) => doctrineRepoPath(entry.key)),
+    trigger: 'content'
+  },
   { test: 'harness/processes/vinaya-strict/tools/diagram-model.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'harness/processes/vinaya-strict/checks/docs/docs-coherence.test.ts',

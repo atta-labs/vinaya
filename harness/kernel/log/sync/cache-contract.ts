@@ -39,7 +39,7 @@ function line(eventId: string, ts: string, result = 'ok', origin: RowOrigin | nu
       seq: 0,
       repo: 'owner/repo',
       vinaya: '0.36.0',
-      doctrine: 'aeg-root@contract',
+      doctrine: 'doctrine@contract',
       host: 'cli',
       machine: 'contract-machine',
       event_id: eventId,

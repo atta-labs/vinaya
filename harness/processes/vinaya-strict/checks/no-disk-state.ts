@@ -39,7 +39,7 @@ const TOKENS_FILE = /\.tokens\.md$/
 export function isNewDiskStateFile(path: string, status: DiskStateFileStatus): boolean {
   // The tranche model doc used to live at `aeg-root/tranches/README.md`
   // and needed an explicit carve-out here so editing it never read as new disk
-  // state. It is now `aeg-root/tranche-model.md`, outside the directory this
+  // state. It is now `harness/processes/vinaya-strict/doctrine/tranche-model.md`, outside the directory this
   // guard watches, so the carve-out is gone rather than left as a line that
   // can never fire.
   if (TOP_LEVEL_TOPOLOGY_FILE.test(path)) return true

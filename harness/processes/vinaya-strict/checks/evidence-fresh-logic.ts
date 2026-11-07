@@ -6,7 +6,7 @@
  * `check-evidence-fresh.ts` bin is the thin wiring that gathers those facts
  * via `gh`/`git` and calls this.
  *
- * Scope, deliberately narrow (see `aeg-root/roles/developer.md`'s brief for
+ * Scope, deliberately narrow (see `harness/processes/vinaya-strict/executing/developer/doctrine.md`'s brief for
  * fix/pr-report-emitter, §6 Part 2): this closes fabrication for Group A (the
  * recomputed diff stat) by exact-comparing recomputed text against the
  * block's stored text. For Group B (the attested `vinaya check --all
@@ -42,7 +42,7 @@ const HEAD_LINE = /^Head:\s*([0-9a-f]{7,40})\s*$/m
 const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
 
 /**
- * The `## Evidence` placeholder text `aeg-root/templates/pr-report-template.md`
+ * The `## Evidence` placeholder text `harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md`
  * ships between the `AEG:EVIDENCE` anchors — verbatim, so a freshly opened
  * PR whose driver-path report has not run yet carries this
  * exact line, never a `Head:`/fence pair. Must stay byte-identical to the

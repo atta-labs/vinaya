@@ -36,7 +36,7 @@ function legacySlugs(): string[] {
     .filter((slug) => !/-v[0-9]+$/.test(slug))
 }
 
-const REAL_GLOSSARY = readFileSync(join(REPO_ROOT, 'aeg-root/glossary.md'), 'utf8')
+const REAL_GLOSSARY = readFileSync(join(REPO_ROOT, 'harness/processes/vinaya-strict/doctrine/glossary.md'), 'utf8')
 
 /** This test's own consumer-supplied reader-facing shape — mirrors the real bin script's literal. */
 const READER_FACING_PREFIX = 'apps/vinaya/web/src/app/(site)/'
@@ -44,13 +44,29 @@ const READER_FACING_SUFFIX = '/page.tsx'
 
 describe('classifyProseFile — the three-class map', () => {
   it('classifies aeg-root/** as ships', () => {
-    expect(classifyProseFile('aeg-root/enforcement.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('ships')
-    expect(classifyProseFile('aeg-root/roles/developer.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('ships')
+    expect(
+      classifyProseFile(
+        'harness/processes/vinaya-strict/doctrine/enforcement.md',
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX
+      )
+    ).toBe('ships')
+    expect(
+      classifyProseFile(
+        'harness/processes/vinaya-strict/executing/developer/doctrine.md',
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX
+      )
+    ).toBe('ships')
   })
 
   it('classifies the archived-tranche history under aeg-root as internal, not ships', () => {
     expect(
-      classifyProseFile('aeg-root/tranches/completed/aeg-ui-v1.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)
+      classifyProseFile(
+        'harness/processes/vinaya-strict/tranches/completed/aeg-ui-v1.md',
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX
+      )
     ).toBe('internal')
   })
 
@@ -151,7 +167,7 @@ describe('classifyProseFile — the three-class map', () => {
 describe('class 1 — unresolvable references — the gate can see what it bans', () => {
   it('fires on a bare forge number, drawn from the ships class', () => {
     const findings = checkUnresolvableReferences(
-      [{ path: 'aeg-root/enforcement.md', content: 'fixed the gap (task 3, #365)' }],
+      [{ path: 'harness/processes/vinaya-strict/doctrine/enforcement.md', content: 'fixed the gap (task 3, #365)' }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
@@ -170,7 +186,12 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
 
   it('fires on a bare -vN tranche slug, drawn from the ships class', () => {
     const findings = checkUnresolvableReferences(
-      [{ path: 'aeg-root/roles/developer.md', content: 'landed in aeg-coherence-v1 task 3' }],
+      [
+        {
+          path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md',
+          content: 'landed in aeg-coherence-v1 task 3'
+        }
+      ],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
@@ -182,7 +203,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
     const slugs = legacySlugs()
     expect(slugs.length, 'no legacy slugs on disk to prove coverage against').toBeGreaterThan(0)
     const findings = checkUnresolvableReferences(
-      [{ path: 'aeg-root/enforcement.md', content: `shipped during ${slugs[0]}` }],
+      [{ path: 'harness/processes/vinaya-strict/doctrine/enforcement.md', content: `shipped during ${slugs[0]}` }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX,
       slugs
@@ -203,7 +224,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
   it('the legacy-slug pattern reports only the slug itself, not the boundary characters around it', () => {
     const slugs = legacySlugs()
     const findings = checkUnresolvableReferences(
-      [{ path: 'aeg-root/enforcement.md', content: `(shipped during ${slugs[0]}.)` }],
+      [{ path: 'harness/processes/vinaya-strict/doctrine/enforcement.md', content: `(shipped during ${slugs[0]}.)` }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX,
       slugs
@@ -215,7 +236,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
   it('does NOT fire inside a markdown code fence — a quoted example is not prose', () => {
     const content = ['See the grammar:', '```', 'Closes #365', '```', 'in every PR.'].join('\n')
     const findings = checkUnresolvableReferences(
-      [{ path: 'aeg-root/enforcement.md', content }],
+      [{ path: 'harness/processes/vinaya-strict/doctrine/enforcement.md', content }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
@@ -335,7 +356,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
     const findings = checkUnresolvableReferences(
       [
         {
-          path: 'aeg-root/roles/developer.md',
+          path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md',
           content: 'an opening line\n(#365) opened this line\naeg-coherence-v1 this one\n'
         }
       ],
@@ -362,7 +383,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
   it('leaves a doctrine page and product code untouched by the task-number rule', () => {
     const findings = checkUnresolvableReferences(
       [
-        { path: 'aeg-root/roles/developer.md', content: 'Delivered by task 4.' },
+        { path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md', content: 'Delivered by task 4.' },
         { path: 'apps/cli/src/commands/dispatch.ts', content: '// delivered by task 4' }
       ],
       READER_FACING_PREFIX,
@@ -463,14 +484,24 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
 
   it('red before green — a seeded violation fails, then the fix passes', () => {
     const violating = checkUnresolvableReferences(
-      [{ path: 'aeg-root/roles/developer.md', content: 'This closed the gap (#365).' }],
+      [
+        {
+          path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md',
+          content: 'This closed the gap (#365).'
+        }
+      ],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
     expect(violating.length, 'expected the seeded violation to be caught').toBeGreaterThan(0)
 
     const fixed = checkUnresolvableReferences(
-      [{ path: 'aeg-root/roles/developer.md', content: 'This closed the gap in a prior task.' }],
+      [
+        {
+          path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md',
+          content: 'This closed the gap in a prior task.'
+        }
+      ],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
@@ -510,7 +541,12 @@ describe('the product class — a tranche-slug citation in product code is a blo
 
   it('every other (non-product) finding still carries blocking: false', () => {
     const findings = checkUnresolvableReferences(
-      [{ path: 'aeg-root/roles/developer.md', content: 'landed in aeg-coherence-v1 task 3' }],
+      [
+        {
+          path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md',
+          content: 'landed in aeg-coherence-v1 task 3'
+        }
+      ],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
@@ -588,7 +624,12 @@ describe('class 2 — undefined coined vocabulary — the gate can see what it b
 
   it('fires on a coined term used bare, drawn from the ships class', () => {
     const findings = checkUndefinedVocabulary(
-      [{ path: 'aeg-root/roles/planner.md', content: 'The planner reads the tranche next.' }],
+      [
+        {
+          path: 'harness/processes/vinaya-strict/thinking/planner/doctrine.md',
+          content: 'The planner reads the tranche next.'
+        }
+      ],
       glossaryTerms,
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
@@ -628,7 +669,12 @@ describe('class 2 — undefined coined vocabulary — the gate can see what it b
 
   it('does NOT match an ordinary-English word that merely contains a coined term ("briefly" is not "Brief")', () => {
     const findings = checkUndefinedVocabulary(
-      [{ path: 'aeg-root/roles/planner.md', content: 'The planner briefly summarizes the sizing.' }],
+      [
+        {
+          path: 'harness/processes/vinaya-strict/thinking/planner/doctrine.md',
+          content: 'The planner briefly summarizes the sizing.'
+        }
+      ],
       glossaryTerms,
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
@@ -715,7 +761,9 @@ describe('checkSourceComments — the source-comment class (Issue #575)', () => 
   })
 
   it('does NOT fire on a non-.ts file', () => {
-    const findings = checkSourceComments([{ path: 'aeg-root/roles/developer.md', content: '// review-convergence-v1' }])
+    const findings = checkSourceComments([
+      { path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md', content: '// review-convergence-v1' }
+    ])
     expect(findings).toEqual([])
   })
 
@@ -770,7 +818,10 @@ describe('extractComments', () => {
   })
 
   it('returns an all-blank string for a non-.ts/.tsx file', () => {
-    const extracted = extractComments('aeg-root/roles/developer.md', 'review-convergence-v1\n#4213')
+    const extracted = extractComments(
+      'harness/processes/vinaya-strict/executing/developer/doctrine.md',
+      'review-convergence-v1\n#4213'
+    )
     expect(extracted.replace(/\n/g, '')).toBe('')
   })
 })
@@ -845,7 +896,12 @@ describe('shipsPrefix — an adopter\'s doctrine root need not be "aeg-root/" (t
     ).toBe('internal')
     // The default "aeg-root/" is no longer special once a custom root is given.
     expect(
-      classifyProseFile('aeg-root/enforcement.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, CUSTOM_ROOT)
+      classifyProseFile(
+        'harness/processes/vinaya-strict/doctrine/enforcement.md',
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX,
+        CUSTOM_ROOT
+      )
     ).toBeNull()
   })
 
@@ -864,7 +920,12 @@ describe('shipsPrefix — an adopter\'s doctrine root need not be "aeg-root/" (t
     // custom root is in effect — proof this is a real switch, not an
     // additive scan.
     const outOfScope = checkReaderResolvableProse(
-      [{ path: 'aeg-root/roles/reviewer.md', content: 'Closed the gap (#365) in this tranche.' }],
+      [
+        {
+          path: 'harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md',
+          content: 'Closed the gap (#365) in this tranche.'
+        }
+      ],
       ['Tranche'],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX,
@@ -878,7 +939,12 @@ describe('shipsPrefix — an adopter\'s doctrine root need not be "aeg-root/" (t
 describe('checkReaderResolvableProse — runs both classes together', () => {
   it('reports both a reference finding and a vocabulary finding for one file', () => {
     const findings = checkReaderResolvableProse(
-      [{ path: 'aeg-root/roles/reviewer.md', content: 'Closed the gap (#365) in this tranche.' }],
+      [
+        {
+          path: 'harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md',
+          content: 'Closed the gap (#365) in this tranche.'
+        }
+      ],
       ['Tranche'],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX

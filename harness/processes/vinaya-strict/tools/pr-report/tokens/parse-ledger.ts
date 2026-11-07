@@ -3,7 +3,7 @@ import type { LedgerRow } from '../../task-contract/types'
 
 /**
  * Parse the append-only token/cost ledger for a tranche. See
- * `aeg-root/tranche-model.md` §12 for the canonical format.
+ * `harness/processes/vinaya-strict/doctrine/tranche-model.md` §12 for the canonical format.
  *
  * The ledger lives in a sibling file `aeg-root/tranches/<name>.tokens.md`
  * (the recommended home, since two roles appending rows do not collide with

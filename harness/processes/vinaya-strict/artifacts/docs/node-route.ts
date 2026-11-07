@@ -9,7 +9,7 @@
  * `surfaced-manifest.ts` holds for the file allowlist).
  *
  * Granularity follows content size. A role or contract is a whole
- * `aeg-root/**.md` file, so it keeps its own page and needs no anchor. A gate
+ * `harness/processes/vinaya-strict/**.md` file, so it keeps its own page and needs no anchor. A gate
  * or check is one row of `enforcement.md`, and an action is one entry of
  * `ACTIONS`, so each is an `#`-anchored section inside a grouping page
  * (`/docs/rings/ring-<n>` or `/docs/actions`).
