@@ -208,3 +208,11 @@ describe('process registry', () => {
     expect(existsSync(join(dir, 'r'))).toBe(false)
   })
 })
+
+test('names no platform, so the read recorder keeps the records of the tests that load it', () => {
+  const source = readFileSync(
+    join(import.meta.dir, '../../../../harness/kernel/conformance/unit/process-registry.ts'),
+    'utf8'
+  )
+  expect(/process\.platform/.test(source)).toBe(false)
+})
