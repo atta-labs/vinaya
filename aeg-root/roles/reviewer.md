@@ -152,7 +152,7 @@ Repository policy derives the verdict from the findings after applying prose cap
 Repository policy decides whether a finding is actionable in this round from its location, the task surface and the round-to-round change. Assign the severity that describes the defect; do not encode actionability by weakening it.
 
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/review-policy.ts contains:export const DEFAULT_MAX_ROUNDS = 3 -->
-<!-- AEG:CLAIM: packages/aeg-core/src/dev-review-loop/assess-round.ts contains:if (obs.round >= state.config.maxRounds) { -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts contains:if (obs.round >= state.config.maxRounds) { -->
 A re-review verifies the current state of every prior finding and reassesses the changed artifact rather than trusting a fix claim. For documentation correctness, repeat the repository-wide search and read every match.
 
 ## Escalation

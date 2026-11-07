@@ -98,13 +98,6 @@ function globCandidateFiles(): string[] {
     }
   }
 
-  const binDir = join(REPO_ROOT, 'packages/aeg-core/bin')
-  for (const name of readdirSync(binDir)) {
-    if (name.endsWith('.ts') && !name.endsWith('.test.ts')) {
-      out.push(`packages/aeg-core/bin/${name}`)
-    }
-  }
-
   out.push(
     'harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts',
     'harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts',

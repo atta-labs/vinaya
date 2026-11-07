@@ -9,7 +9,7 @@ const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
 const FORGE_FIXTURES = join(CLI_ROOT, 'tests', 'fixtures', 'forge')
-const AEG_CORE_FIXTURES = join(REPO_ROOT, 'packages', 'aeg-core', 'tests', 'fixtures')
+const AEG_CORE_FIXTURES = join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pull-request/bin/fixtures')
 
 const FULL_PR_CONFIG = {
   briefSchema: {

@@ -2282,7 +2282,7 @@ describe('renderTaskStatusTable (O3)', () => {
  *
  * The binding to the Operator doctrine's own table — that this mapping IS the
  * one the doctrine gives, rather than a second opinion beside it — is asserted
- * in `apps/cli/tests/lib/task-tools/operator-state-actions.test.ts`, against
+ * in `harness/processes/vinaya-strict/loops/dev-review/run-control/operator-state-actions.test.ts`, against
  * the doctrine file itself.
  */
 describe('the Next column (O3)', () => {

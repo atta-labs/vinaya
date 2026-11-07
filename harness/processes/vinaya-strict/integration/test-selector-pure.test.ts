@@ -140,7 +140,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     '.changeset/task-files-v1-1-one-runtime-directory.md',
     'harness/kernel/isolation/isolation.md',
     'harness/kernel/log/log.md',
-    'apps/cli/specs/loop.md',
+    'harness/processes/vinaya-strict/loops/dev-review/loop.md',
     'apps/cli/src/lib/config.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts',

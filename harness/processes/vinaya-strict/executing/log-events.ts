@@ -1,4 +1,4 @@
-import type { DevReviewLoopEventInput, LoopConfig } from '@attalabs/aeg-core'
+import type { DevReviewLoopEventInput, LoopConfig } from '../tools/dev-review-policy/types'
 import type {
   LogEventInput,
   LogProducers,

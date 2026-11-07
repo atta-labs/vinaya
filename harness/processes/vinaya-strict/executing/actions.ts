@@ -1,18 +1,18 @@
+import { assessRound, recordDeveloperAttempt } from '../tools/dev-review-policy/assess-round'
+import type {
+  Confidence,
+  DevReviewLoopEventInput,
+  LoopState,
+  Observations,
+  PauseReason,
+  RoundStats,
+  TaskClock,
+  VerdictObservation
+} from '../tools/dev-review-policy/types'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  assessRound,
-  recordDeveloperAttempt,
-  type Confidence,
-  type DevReviewLoopEventInput,
-  type LoopState,
-  type Observations,
-  type PauseReason,
-  type RoundStats,
-  type TaskClock,
-  type VerdictObservation
-} from '@attalabs/aeg-core'
+
 import { parseLiveTestPlanItems } from '../tools/task-contract/issue-validation'
 import { readLiveRecord, withLiveRecord } from '../tools/task-contract/live-record'
 import type { ReviewInputManifest } from '../tools/task-contract/review-input-manifest'

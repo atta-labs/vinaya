@@ -24,7 +24,7 @@
 # repository suite as stated obligations. The same plan decides which
 # packages to typecheck, which files to lint, and whether the root-config
 # probe and the Linux sandbox suite run; each place runs the planned files it
-# holds, plus `@attalabs/aeg-core` whole and the portal whole when the change
+# holds, plus the portal whole when the change
 # touches it. The base commit's own guard (`scripts/ci/base-guard.ts`) runs
 # everything when the change touches the planner, the inventory, the
 # selection library, the schedule, a runner configuration or this workflow.
@@ -329,7 +329,7 @@ jobs:
         run: bun test ./scripts/package-compat/package-compat.test.ts
 
       # When this job failed, print its own token budgets on one line for
-      # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
+      # the review loop (`harness/processes/vinaya-strict/loops/dev-review/loop.md`). Reading them spends none.
       # The same step ends every job in this file; the limits step after it
       # follows it in the build and Linux sandbox jobs, and in the advisory
       # macOS workflow (`sandbox-conformance-macos.yml`).
@@ -423,15 +423,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
       # The test schedule's `shared` place (`scripts/test-suites/schedule.ts`):
-      # every Vitest suite (`@attalabs/aeg-core`, `@attalabs/aeg-forge-state`,
-      # the log server) and every Bun suite the shards do not run (the sources
+      # every Vitest suite (the log server) and every Bun suite the shards do not run (the sources
       # package, the portal), each started under its own runner from its own
       # package folder, one after another — the ordering `--concurrency=1`
       # gave this job before, since running suites at once starved
       # subprocess-spawning tests. On a pull request, only the files the
-      # build job's CI plan requires, plus `@attalabs/aeg-core` whole, since
-      # its tests read files across the whole repository and the selection
-      # does not model them, and the portal whole when the diff changes any
+      # build job's CI plan requires, and the portal whole when the diff changes any
       # path under it. A plan that runs everything says why. A job given no
       # plan, or a plan for another tree, refuses. A push to `main` skips this
       # step and runs everything in the next one. Each runner's own report
@@ -626,7 +623,7 @@ jobs:
           gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   # The sandbox conformance suite (`apps/cli/tests/sandbox-conformance/`,
-  # `apps/cli/specs/isolation.md`): every command the Developer doctrine and
+  # `harness/kernel/isolation/isolation.md`): every command the Developer doctrine and
   # the rendered brief name, run inside Claude Code's sandbox (the sandbox
   # runtime, via `bunx`) and inside Codex's (`codex sandbox`), each set up as
   # the driver sets up a confined dispatch. A command either exits 0 under

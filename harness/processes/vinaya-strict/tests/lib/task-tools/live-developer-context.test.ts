@@ -25,7 +25,7 @@ import {
   OWN,
   WORKFLOW,
   type World
-} from '../../../../../../apps/cli/tests/lib/task-tools/live-developer-context-world'
+} from '../../live-developer-context-world'
 
 const HEADER = 'Fix(cli): Share live context'
 

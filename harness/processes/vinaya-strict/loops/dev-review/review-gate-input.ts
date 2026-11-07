@@ -34,6 +34,7 @@
  * workflow; the driver's host has no `GITHUB_ACTIONS`, so its reads stay live.
  */
 
+import type { ReviewGateFact } from '../../tools/dev-review-policy/journal-reconstruction'
 import { execFileSync } from 'node:child_process'
 import {
   briefHash,
@@ -55,7 +56,7 @@ import {
 } from '../../tools/task-contract/ruling-ordinal'
 import { parseDeveloperRoundMarker } from '../../tools/task-contract/review-status'
 import { resolveNewestFrozenBrief } from '../../tools/task-contract/brief-validation'
-import type { ReviewGateFact } from '@attalabs/aeg-core'
+
 import {
   checkReviewGate,
   newestVerdictBodies,

@@ -586,7 +586,7 @@ function main(): void {
         file: path,
         agent_recovery_prompt:
           'Replace the array in proseGates.specGrandfather with an object mapping each listed path to the most ' +
-          'spec-class findings that file may carry, e.g. { "apps/cli/specs/loop.md": 12 }, so the file can no ' +
+          'spec-class findings that file may carry, e.g. { "harness/processes/vinaya-strict/loops/dev-review/loop.md": 12 }, so the file can no ' +
           'longer gain a citation and its number only goes down.'
       })
     }

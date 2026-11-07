@@ -1,3 +1,4 @@
+import type { DevReviewLoopEventInput } from '../../../tools/dev-review-policy/types'
 import { spawn, spawnSync } from 'node:child_process'
 import {
   accessSync,
@@ -13,7 +14,7 @@ import {
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
-import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
+
 import { type DevToolContext, devToolError } from '../../../../../kernel/tools/dev-tools-server'
 import { storagePushEvent } from '../flow-v2-events'
 import {

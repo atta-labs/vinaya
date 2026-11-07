@@ -42,7 +42,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
       'apps/cli/src/commands/dev-review-loop.ts',
       'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
       'harness/processes/',
-      'packages/aeg-core/src/dev-review-loop/'
+      'harness/processes/vinaya-strict/tools/dev-review-policy/'
     ],
     trigger: 'listed-files'
   },
@@ -67,7 +67,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
       'apps/cli/src/commands/dev-review-loop.ts',
       'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
       'harness/processes/',
-      'packages/aeg-core/src/dev-review-loop/',
+      'harness/processes/vinaya-strict/tools/dev-review-policy/',
       'apps/cli/tests/commands/dev-review-loop.test.ts',
       'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop',
       'harness/processes/vinaya-strict/tests/lib/dev-review-loop'
@@ -97,7 +97,6 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     test: 'apps/cli/tests/checks/registry-gates.test.ts',
     roots: [
       'apps/cli/src/',
-      'packages/aeg-core/bin/',
       'harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts',
       'aeg-root/enforcement.md',
       '.claude/hooks/'
@@ -128,7 +127,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
       'apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json',
       'apps/cli/tests/fixtures/dev-review-architecture-invariants.json',
       'harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md',
-      'apps/cli/specs/dev-review-engine-state-machine.md',
+      'harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md',
       'apps/cli/specs/dev-review-invariants.md'
     ],
     trigger: 'listed-files'
@@ -194,10 +193,10 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: ['harness/processes/vinaya-strict/checks/docs/fixtures/docs-coherence/'],
     trigger: 'content'
   },
-  { test: 'packages/aeg-core/src/docs/node-route.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'harness/processes/vinaya-strict/checks/gate-audience.test.ts',
-    roots: ['packages/aeg-core/bin/', 'harness/processes/vinaya-strict/checks/standalone/'],
+    roots: ['harness/processes/vinaya-strict/checks/standalone/'],
     trigger: 'content'
   },
   { test: 'harness/processes/vinaya-strict/checks/no-binary-sources.test.ts', roots: ['.'], trigger: 'content' },

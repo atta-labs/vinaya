@@ -10,6 +10,7 @@
  * `~/.vinaya/control-store/`, the same isolation `effects/executor.test.ts`
  * already uses for the identical reason.
  */
+import type { PauseReason } from '../../../../tools/dev-review-policy/types'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
@@ -22,7 +23,7 @@ import {
   writeEffect
 } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
 import { newestPrincipalRulingOrdinal, principalRulingMarker } from '../../../../tools/task-contract/ruling-ordinal'
-import type { PauseReason } from '@attalabs/aeg-core'
+
 import {
   type DriverWatchDeps,
   type LoopDeps,

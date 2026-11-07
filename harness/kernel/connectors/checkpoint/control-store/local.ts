@@ -12,7 +12,7 @@
  * a reader never observes a partial file, and a crash before the publish
  * step simply leaves the prior state (or none) untouched. This is the
  * "atomic files" half of the traps-to-avoid decision, recorded in
- * `apps/cli/specs/loop.md` — a transactional database was rejected because
+ * the review-loop specification — a transactional database was rejected because
  * this store's own concurrency need (one exclusive owner at a time, on one
  * machine) is fully met by a filesystem's own `link(2)`/`rename(2)`
  * guarantees, and pulling in a DB engine would be the "distributed

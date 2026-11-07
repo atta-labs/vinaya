@@ -1,3 +1,5 @@
+import { assessRound } from '../../../tools/dev-review-policy/assess-round'
+import type { DevReviewLoopEventInput, PauseReason } from '../../../tools/dev-review-policy/types'
 import type { ActionContext } from '../../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { runCli } from '../../../../../../harness/kernel/gates/checks/run-checks'
 import { ciResultReadEvent, failedTestsRerunEvent, prOpenedEvent, readyPushEvent } from '../flow-v2-events'
@@ -40,7 +42,7 @@ import {
 import { readUnpushedWorkDetail } from '../standalone/dev-review-loop/unpushed-work'
 import { spawnSync } from 'node:child_process'
 import { relative, resolve, sep } from 'node:path'
-import { assessRound, type DevReviewLoopEventInput, type PauseReason } from '@attalabs/aeg-core'
+
 import {
   DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
   DEFAULT_REVIEW_POLICY,

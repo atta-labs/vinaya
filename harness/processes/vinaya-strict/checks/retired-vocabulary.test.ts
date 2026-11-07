@@ -90,7 +90,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..')
  * excluded — no point banning the same string with two patterns.
  */
 function legacySlugs(): string[] {
-  return readFileSync(join(__dirname, '../../../../packages/aeg-core/tests/fixtures/legacy-tranche-slugs.txt'), 'utf8')
+  return readFileSync(join(__dirname, '../tests/fixtures/legacy-tranche-slugs.txt'), 'utf8')
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)

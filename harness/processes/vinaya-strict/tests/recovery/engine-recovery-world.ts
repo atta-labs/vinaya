@@ -1,3 +1,4 @@
+import { initialLoopState } from '../../tools/dev-review-policy/types'
 import { afterAll, expect } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
@@ -9,7 +10,7 @@ import {
   readExecutionRoundMirror
 } from '../../../../kernel/connectors/checkpoint/control-store/index'
 import { DEFAULT_REVIEW_POLICY } from '../../tools/task-contract/review-policy'
-import { initialLoopState } from '@attalabs/aeg-core'
+
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { createBroker, scopeTarget } from '../../../../kernel/tools/host/broker'
 import { vinayaBrokerPolicies } from '../../integration/policies/vinaya-policies'

@@ -1,9 +1,10 @@
+import { initialLoopState } from '../../tools/dev-review-policy/types'
 import { afterAll, describe, expect, test } from 'bun:test'
 import net from 'node:net'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { initialLoopState } from '@attalabs/aeg-core'
+
 import type { SpawnedProcessLike, StepNodeResult } from '@atta/executor-agent-spawn'
 import type {
   ActionContext,

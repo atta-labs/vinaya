@@ -3,20 +3,20 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { anchoredRegion } from '../../../../../kernel/gates/checks/anchored-region'
-import { buildProvenanceBlock, type MergedPrFacts } from '../../../../../../packages/aeg-core/src/archive-task'
+import { buildProvenanceBlock, type MergedPrFacts } from '../../../tools/archive-task'
 import { extractIssue } from '../../../../../kernel/adapters/code-host/github/extract-issue'
 import {
   checkClosesNPresence as checkClosesNField,
   checkProjectField
 } from '../../../tools/task-contract/brief-validation'
 import { checkClosesNTopology, extractClosesReferences, type TrancheFile } from '../../../checks/coherence-checks'
-import { fenceShapes } from '../../../../../../packages/aeg-core/tests/fixtures/fence-shapes'
+import { fenceShapes } from '../../../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from '../../../tools/task-contract/pr-tier'
 import { parsePremiseBlock } from '../../../tools/task-contract/premise-check'
 import { locateTestPlanSection } from '../../../tools/task-contract/test-plan-section'
 import type { Task } from '../../../tools/task-contract/types'
 
-const FIXTURES = join(__dirname, '../../../../../../packages/aeg-core/tests/fixtures')
+const FIXTURES = join(__dirname, './fixtures')
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
 

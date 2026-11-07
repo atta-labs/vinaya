@@ -18,7 +18,6 @@ is derived from the folder tree.
 |---------|------|-------|---------------------|
 | cli | `apps/cli` | `apps/cli/specs/` | (state tracked globally for now) |
 | log-server | `apps/log-server` | `apps/log-server/specs/` | (state tracked globally for now) |
-| aeg-core | `packages/aeg-core` | `packages/aeg-core/specs/` | (state tracked globally for now) |
 | sources | `packages/sources` | `packages/sources/specs/` | (state tracked globally for now) |
 | vinaya | `.` | `specs/` | (state tracked globally) |
 | vinaya-portal | `apps/vinaya-portal` | `apps/vinaya-portal/specs/` | (state tracked globally) |

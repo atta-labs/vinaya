@@ -140,7 +140,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     '.changeset/task-files-v1-1-one-runtime-directory.md',
     'harness/kernel/isolation/isolation.md',
     'harness/kernel/log/log.md',
-    'apps/cli/specs/loop.md',
+    'harness/processes/vinaya-strict/loops/dev-review/loop.md',
     'apps/cli/src/lib/config.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts',
@@ -726,7 +726,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // file, so a change to `config.ts` now selects that one extra suite, never two.
 // Same rule.
 //
-// Raised 34 → 35: `apps/cli/tests/runner-repo-default.test.ts` imports
+// Raised 34 → 35: `harness/processes/vinaya-strict/loops/dev-review/run-control/runner-repo-default.test.ts` imports
 // `config.ts` directly (`loadConfigChecked`/`resolveTaskRunner`, to resolve
 // this repository's own configured runner) — one new file, so a change to
 // `config.ts` now selects that one extra suite, never two. Same rule.

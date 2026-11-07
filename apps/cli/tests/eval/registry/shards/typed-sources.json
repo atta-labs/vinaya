@@ -215,7 +215,7 @@
       "kind": "node",
       "module": "6.1",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -254,7 +254,7 @@
       "kind": "node",
       "module": "6.1",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -293,7 +293,7 @@
       "kind": "node",
       "module": "6.2",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -332,7 +332,7 @@
       "kind": "node",
       "module": "6.3",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -371,7 +371,7 @@
       "kind": "node",
       "module": "6.3",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -410,7 +410,7 @@
       "kind": "node",
       "module": "6.4",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -449,7 +449,7 @@
       "kind": "node",
       "module": "6.7",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -488,7 +488,7 @@
       "kind": "node",
       "module": "6.7",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -527,7 +527,7 @@
       "kind": "node",
       "module": "6.8",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -566,7 +566,7 @@
       "kind": "node",
       "module": "6.8",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -605,7 +605,7 @@
       "kind": "node",
       "module": "6.11",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -644,7 +644,7 @@
       "kind": "node",
       "module": "6.11",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -683,7 +683,7 @@
       "kind": "node",
       "module": "6.14",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -722,7 +722,7 @@
       "kind": "node",
       "module": "6.12",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -761,7 +761,7 @@
       "kind": "node",
       "module": "6.14",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The node contracts (O2)"
       },
@@ -800,7 +800,7 @@
       "kind": "transition",
       "module": "6.1",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -839,7 +839,7 @@
       "kind": "transition",
       "module": "6.1",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -878,7 +878,7 @@
       "kind": "transition",
       "module": "6.1",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -917,7 +917,7 @@
       "kind": "transition",
       "module": "6.2",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -956,7 +956,7 @@
       "kind": "transition",
       "module": "6.2",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -995,7 +995,7 @@
       "kind": "transition",
       "module": "6.3",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1034,7 +1034,7 @@
       "kind": "transition",
       "module": "6.3",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1073,7 +1073,7 @@
       "kind": "transition",
       "module": "6.3",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1112,7 +1112,7 @@
       "kind": "transition",
       "module": "6.3",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1151,7 +1151,7 @@
       "kind": "transition",
       "module": "6.4",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1190,7 +1190,7 @@
       "kind": "transition",
       "module": "6.4",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1229,7 +1229,7 @@
       "kind": "transition",
       "module": "6.7",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1268,7 +1268,7 @@
       "kind": "transition",
       "module": "6.7",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1307,7 +1307,7 @@
       "kind": "transition",
       "module": "6.7",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1346,7 +1346,7 @@
       "kind": "transition",
       "module": "6.7",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1385,7 +1385,7 @@
       "kind": "transition",
       "module": "6.7",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1424,7 +1424,7 @@
       "kind": "transition",
       "module": "6.8",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1463,7 +1463,7 @@
       "kind": "transition",
       "module": "6.8",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1502,7 +1502,7 @@
       "kind": "transition",
       "module": "6.8",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1541,7 +1541,7 @@
       "kind": "transition",
       "module": "6.8",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1580,7 +1580,7 @@
       "kind": "transition",
       "module": "6.8",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1619,7 +1619,7 @@
       "kind": "transition",
       "module": "6.11",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1658,7 +1658,7 @@
       "kind": "transition",
       "module": "6.11",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1697,7 +1697,7 @@
       "kind": "transition",
       "module": "6.11",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1736,7 +1736,7 @@
       "kind": "transition",
       "module": "6.11",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1775,7 +1775,7 @@
       "kind": "transition",
       "module": "6.11",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1814,7 +1814,7 @@
       "kind": "transition",
       "module": "6.11",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1853,7 +1853,7 @@
       "kind": "transition",
       "module": "6.12",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1892,7 +1892,7 @@
       "kind": "transition",
       "module": "6.12",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1931,7 +1931,7 @@
       "kind": "transition",
       "module": "6.14",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -1970,7 +1970,7 @@
       "kind": "transition",
       "module": "6.14",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -2009,7 +2009,7 @@
       "kind": "transition",
       "module": "6.14",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },
@@ -2048,7 +2048,7 @@
       "kind": "transition",
       "module": "6.14",
       "source": {
-        "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
         "revision": 17,
         "section": "The transitions (O1)"
       },

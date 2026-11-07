@@ -22,14 +22,14 @@ its `prove-conflict-repair` step proves the Developer's merge (a published
 head containing the fetched default-branch tip, no unresolved index
 entry, a clean merge with the default branch fetched again, a `MERGEABLE`
 pull request) before any local check or reviewer judges it
-(`apps/cli/specs/loop.md`, "Version 2: a conflict re-entry starts with the
+(`harness/processes/vinaya-strict/loops/dev-review/loop.md`, "Version 2: a conflict re-entry starts with the
 Developer"). The proof then decides what the approvals the conflict was
 recorded with cover: when the pull request's own patch (zero-context, from
 each head's own merge base with the fetched tip) is unchanged and no other
 review input moved, `classify-approval-carry` routes straight to the ready push
 on the repaired head, with no review, scan or live check and the review round
 unchanged; when only the own patch changed, both reviewers judge the interdiff
-against the approvals (`apps/cli/specs/loop.md`, "Version 2: approvals across a
+against the approvals (`harness/processes/vinaya-strict/loops/dev-review/loop.md`, "Version 2: approvals across a
 proven repair").
 
 A pull request that changes how the process works must raise `version` in

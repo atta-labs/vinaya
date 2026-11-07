@@ -34,7 +34,7 @@ import {
   SOURCE_READS_FILE,
   STALE_HEAD,
   type EngineScenarioRun
-} from './dev-review-engine-loop-adapter.js'
+} from '../../../../harness/processes/vinaya-strict/tests/dev-review-engine-loop-adapter.js'
 import corpus from '../fixtures/dev-review-engine-scenarios.json'
 import engineFailures from '../fixtures/dev-review-engine-expected-failures.json'
 

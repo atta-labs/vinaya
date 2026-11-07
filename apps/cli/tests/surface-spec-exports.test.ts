@@ -8,7 +8,7 @@ import type { SurfaceExemption } from '../src/lib/surface-exemption'
 /**
  * O2 — the export inventory is enforced from the real export set, with no
  * hand-written count anywhere in the repository. A markdown mirror of every
- * `@attalabs/aeg-core` and `apps/cli/src/lib/**` export used to live in
+ * `apps/cli/src/lib/**` export used to live in
  * `apps/cli/specs/surface.md`, requiring a doc edit on every export added,
  * removed, or renamed under either directory — the two busiest in the repo.
  * That mirror provided no behavioral guarantee of its own: the layering
@@ -101,12 +101,6 @@ describe("apps/cli/src/lib/**'s real exports are internally sane (O2)", () => {
 
   it('has at least one real export to check (sanity)', () => {
     expect(real.length).toBeGreaterThan(0)
-  })
-
-  it("has at least one real export to check for @attalabs/aeg-core's barrel (sanity)", () => {
-    const aegCoreProgram = programFor(join(REPO_ROOT, 'packages', 'aeg-core', 'src', 'index.ts'))
-    const aegCoreReal = moduleExports(aegCoreProgram, join(REPO_ROOT, 'packages', 'aeg-core', 'src', 'index.ts'))
-    expect(aegCoreReal.length).toBeGreaterThan(0)
   })
 
   it('every retiresVia target that already names a real lib export names a function', async () => {

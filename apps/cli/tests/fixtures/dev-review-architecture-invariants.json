@@ -27,7 +27,7 @@
       "16.18"
     ]
   },
-  "loopSpec": "apps/cli/specs/loop.md",
+  "loopSpec": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
   "baseline": {
     "revision": "d01194ea93f4c89c5df53b12386ede0fe3f3b56e",
     "implementationModules": [
@@ -41,11 +41,10 @@
       "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts",
       "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.ts",
       "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.ts",
-      "packages/aeg-core/src/dev-review-loop/assess-round.ts",
-      "packages/aeg-core/src/dev-review-loop/index.ts",
-      "packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts",
-      "packages/aeg-core/src/dev-review-loop/render-summary.ts",
-      "packages/aeg-core/src/dev-review-loop/types.ts"
+      "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
+      "harness/processes/vinaya-strict/tools/dev-review-policy/journal-reconstruction.ts",
+      "harness/processes/vinaya-strict/tools/dev-review-policy/render-summary.ts",
+      "harness/processes/vinaya-strict/tools/dev-review-policy/types.ts"
     ],
     "testFiles": [
       "apps/cli/tests/commands/dev-review-loop.test.ts",
@@ -71,9 +70,9 @@
       "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/reviewer-isolation.test.ts",
       "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/round-assess.test.ts",
       "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/takeover-phase.test.ts",
-      "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
-      "packages/aeg-core/src/dev-review-loop/journal-reconstruction.test.ts",
-      "packages/aeg-core/src/dev-review-loop/render-summary.test.ts"
+      "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts",
+      "harness/processes/vinaya-strict/tools/dev-review-policy/journal-reconstruction.test.ts",
+      "harness/processes/vinaya-strict/tools/dev-review-policy/render-summary.test.ts"
     ],
     "addedSinceBaseline": [
       {
@@ -119,7 +118,7 @@
       {
         "path": "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.test.ts",
         "kind": "test",
-        "reason": "Landed with apps/cli/specs/dev-review-engine-state-machine.md (Task 2 of developer-review-architecture-v1): the target provider-neutral Atta-Engine state model's own contract test, over the fixture data in dev-review-engine-state-contract.fixture.ts."
+        "reason": "Landed with harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md (Task 2 of developer-review-architecture-v1): the target provider-neutral Atta-Engine state model's own contract test, over the fixture data in dev-review-engine-state-contract.fixture.ts."
       },
       {
         "path": "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/refresh-evidence-args.test.ts",
@@ -220,11 +219,6 @@
       "reason": "Packaging guard, not a loop behaviour: it proves the built distribution carries the readiness gate's steps and finds them outside this checkout, which no loop invariant describes."
     },
     {
-      "path": "packages/aeg-core/src/dev-review-loop/index.ts",
-      "kind": "implementation",
-      "reason": "Pure barrel: re-exports assessRound, the budget renderers, the published-marker render/parse, initialLoopState, the types and the journal-reconstruction helpers; it contains no statement that decides, reads or writes anything."
-    },
-    {
       "path": "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop-real-process-debt.test.ts",
       "kind": "test",
       "reason": "A ratchet over the source text of the driver's split test files and their shared fixtures (real-process helper call sites minus reasoned ones must stay under a fixed count); it never runs the loop and asserts no loop behavior."
@@ -237,7 +231,7 @@
   ],
   "supportFiles": [
     {
-      "path": "packages/aeg-core/src/dev-review-loop/fakes.ts",
+      "path": "harness/processes/vinaya-strict/tools/dev-review-policy/fakes.ts",
       "reason": "Test fakes (fake gate/verdict observations and a runScenario helper that threads state through assessRound); imported only by tests and not re-exported from index.ts, so it is neither an implementation module nor a test file."
     },
     {
@@ -263,12 +257,12 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessVerdicts"
         }
       ],
       "tests": [
-        "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/policy-integration.test.ts"
       ],
@@ -285,12 +279,12 @@
       "scenarios": ["operator-intervention"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessVerdicts"
         }
       ],
       "tests": [
-        "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-3.test.ts"
       ],
       "loopSpec": ["The exits"],
@@ -306,11 +300,11 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessVerdicts"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
       "loopSpec": ["Rounds"],
       "reason": "Rounds states any NOT MET objective is changes_requested regardless of findings.",
       "scope": "product"
@@ -325,7 +319,7 @@
       "scenarios": ["invalid-reviews"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessVerdicts"
         }
       ],
@@ -343,12 +337,12 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessVerdicts"
         }
       ],
       "tests": [
-        "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-11.test.ts"
       ],
       "loopSpec": ["The exits"],
@@ -365,7 +359,7 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessVerdicts"
         }
       ],
@@ -384,11 +378,11 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "computeFindingsCompared"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
       "loopSpec": ["The exits"],
       "reason": "The spec says a fingerprint resolved earlier reappears; the code narrows it to the reproduced state.",
       "scope": "product"
@@ -402,11 +396,11 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "blockingOpenKeys"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
       "loopSpec": ["The exits"],
       "reason": "All three narrowings in the spec are implemented and tested.",
       "scope": "product"
@@ -420,11 +414,11 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessRound"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
       "loopSpec": ["The exits"],
       "reason": "The spec records the removal and tests pin its absence.",
       "scope": "product"
@@ -438,12 +432,12 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "normalizeFailureSignature"
         }
       ],
       "tests": [
-        "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-4.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/stall-current-head.test.ts"
       ],
@@ -460,11 +454,11 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessGate"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
       "loopSpec": ["The confidence rule"],
       "reason": "Matches the confidence rule section exactly.",
       "scope": "product"
@@ -479,7 +473,7 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/types.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/types.ts",
           "symbol": "initialLoopState"
         },
         {
@@ -528,11 +522,11 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessGate"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
       "loopSpec": ["The confidence rule", "Rounds"],
       "reason": "The spec says round_started fires only on a round's first gate call.",
       "scope": "product"
@@ -547,11 +541,11 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "journalFinalizedEvent"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
       "loopSpec": ["Attempt and finding telemetry"],
       "reason": "The spec acknowledges append-only records but never says what the rounds figure counts.",
       "scope": "product"
@@ -565,11 +559,11 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "buildUnreviewedRecord"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
       "loopSpec": ["The exits"],
       "reason": "Promised by the not-reviewed rendering rule.",
       "scope": "product"
@@ -584,7 +578,7 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessGate"
         }
       ],
@@ -602,7 +596,7 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "buildRoundRecord"
         },
         {
@@ -611,7 +605,7 @@
         }
       ],
       "tests": [
-        "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/reviewer-dispatch.test.ts"
       ],
       "loopSpec": [
@@ -630,11 +624,11 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "verdictsReadEvent"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
       "loopSpec": ["Attempt and finding telemetry", "The confidence rule"],
       "reason": "Telemetry shape is promised; it is fail-open and never read back for a decision.",
       "scope": "product"
@@ -648,11 +642,11 @@
       "scenarios": ["context-pressure"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "taskBudgetExceeded"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
       "loopSpec": ["The exits"],
       "reason": "Revision 17 section 16.14: exhaustion is a typed non-success terminal or pause reason; spec and tests match. The time_budget pause is section 16.4's durable nonterminal interrupt, never success.",
       "scope": "product"
@@ -684,11 +678,11 @@
       "scenarios": ["happy-path", "restart"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/render-summary.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/render-summary.ts",
           "symbol": "renderPublishedMarker"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/render-summary.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/render-summary.test.ts"],
       "loopSpec": ["Publication"],
       "reason": "A deterministic forge-text contract that recovery reads.",
       "scope": "product"
@@ -2180,14 +2174,14 @@
           "symbol": "fetchLoopHistory"
         },
         {
-          "path": "packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/journal-reconstruction.ts",
           "symbol": "reconstructRounds"
         }
       ],
       "tests": [
         "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/journal-history.test.ts",
-        "packages/aeg-core/src/dev-review-loop/journal-reconstruction.test.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/journal-reconstruction.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-5.test.ts",
         "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-8.test.ts"
       ],
@@ -2266,7 +2260,7 @@
           "symbol": "devReviewLoop"
         },
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessRound"
         }
       ],
@@ -3100,11 +3094,11 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+          "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessVerdicts"
         }
       ],
-      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
       "loopSpec": [],
       "reason": "Shipped fix. Evidence: different findings at one index in successive rounds counted as a reappearance. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
@@ -3590,11 +3584,11 @@
       "id": "DEF-01",
       "summary": "assessRound publishes on an empty or partial verdict set and on no objectives.",
       "code": {
-        "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+        "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
         "locator": "assessVerdicts"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "The exits"
       },
       "status": "open",
@@ -3609,7 +3603,7 @@
         "locator": "LoopStateSnapshot.repeatMemory"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "The confidence rule"
       },
       "status": "open",
@@ -3620,11 +3614,11 @@
       "id": "DEF-03",
       "summary": "round_started/round_ended repeat for a reused round number after a red gate or below-50 turn.",
       "code": {
-        "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+        "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
         "locator": "assessGate"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "The confidence rule"
       },
       "status": "open",
@@ -3635,11 +3629,11 @@
       "id": "DEF-04",
       "summary": "Confidence-collapse pauses record zero-seeded counts with no not-reviewed reason.",
       "code": {
-        "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+        "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
         "locator": "assessGate"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "The exits"
       },
       "status": "open",
@@ -3654,7 +3648,7 @@
         "locator": "publicationExpectedBase"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
       },
       "status": "fixed",
@@ -3669,7 +3663,7 @@
         "locator": "renderConflictPrompt"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
       },
       "status": "fixed",
@@ -3684,7 +3678,7 @@
         "locator": "postPrCommentOnce"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Publication"
       },
       "status": "open",
@@ -3699,7 +3693,7 @@
         "locator": "Promise.all over dispatchReviewer; cleanupReviewerIsolationForRound in finally"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Reviewer isolation \u2014 one immutable candidate, isolated scratch space"
       },
       "status": "open",
@@ -3714,7 +3708,7 @@
         "locator": "buildVerdictFromReview"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Infrastructure failures and driver-decided pauses"
       },
       "status": "fixed",
@@ -3729,7 +3723,7 @@
         "locator": "buildVerdictFromReview (id: F<n>)"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Finding identities are the controller's"
       },
       "status": "open",
@@ -3744,7 +3738,7 @@
         "locator": "dispatchReviewer"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Finding identities are the controller's"
       },
       "status": "fixed",
@@ -3759,7 +3753,7 @@
         "locator": "chmodTree"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Reviewer isolation \u2014 one immutable candidate, isolated scratch space"
       },
       "status": "open",
@@ -3774,7 +3768,7 @@
         "locator": "fetchMechanicalCheckRuns"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Rounds"
       },
       "status": "open",
@@ -3789,7 +3783,7 @@
         "locator": "dispatch_reviewers branch: resolveHead then fetchCiConclusion"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Rounds"
       },
       "status": "open",
@@ -3804,7 +3798,7 @@
         "locator": "writePauseState / readPauseState"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "The control store \u2014 built; the manifest record now adopted"
       },
       "status": "open",
@@ -3819,7 +3813,7 @@
         "locator": "devReviewLoop resume block (rulings.length === 0)"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Escalation, resolution, and `--cancel`"
       },
       "status": "open",
@@ -3834,7 +3828,7 @@
         "locator": "resolveEscalation call precedes readDriverLock"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Escalation, resolution, and `--cancel`"
       },
       "status": "open",
@@ -3849,7 +3843,7 @@
         "locator": "resumeFrom?.infrastructureRetries ?? 0"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "The loop's own recovery record"
       },
       "status": "open",
@@ -3864,7 +3858,7 @@
         "locator": "watchPauseThenResume"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "The driver never ends on a pause"
       },
       "status": "open",
@@ -3879,7 +3873,7 @@
         "locator": "parseArgs (agent = args[++i])"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "The command"
       },
       "status": "open",
@@ -3894,7 +3888,7 @@
         "locator": "sweepDone started before the lock check; checkStaleDriver exitProcess"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "The sweep, at the start of every run (non-blocking and narrated as it runs)"
       },
       "status": "open",
@@ -3909,7 +3903,7 @@
         "locator": "outer catch: await logEvents(driverCrashEvents(...))"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "No round-end flush"
       },
       "status": "open",
@@ -3924,7 +3918,7 @@
         "locator": "waitForOwnLoopLine"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "No round-end flush"
       },
       "status": "open",
@@ -3939,7 +3933,7 @@
         "locator": "checkStaleDriver comment"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "A stale driver re-execs in place, and pauses only if that fails"
       },
       "status": "open",
@@ -3953,7 +3947,7 @@
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-publication.ts"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md"
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       },
       "status": "fixed",
       "classification": "named-defect",
@@ -3967,7 +3961,7 @@
         "locator": "refreshStagedCodexLogin"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md"
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       },
       "status": "fixed",
       "classification": "named-defect",
@@ -3980,7 +3974,7 @@
         "path": "harness/kernel/tools/fetch-documentation.ts"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md"
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       },
       "status": "fixed",
       "classification": "named-defect",
@@ -3994,7 +3988,7 @@
         "locator": "SCANNER_DECLARATIONS"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md"
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       },
       "status": "fixed",
       "classification": "named-defect",
@@ -4007,7 +4001,7 @@
         "path": "harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.ts"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md"
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       },
       "status": "fixed",
       "classification": "named-defect",
@@ -4020,7 +4014,7 @@
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md"
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       },
       "status": "fixed",
       "classification": "named-defect",
@@ -4033,7 +4027,7 @@
         "path": "harness/processes/vinaya-strict/checks/registry.ts"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md"
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       },
       "status": "fixed",
       "classification": "named-defect",
@@ -4046,7 +4040,7 @@
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.ts"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md"
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       },
       "status": "fixed",
       "classification": "named-defect",
@@ -4056,11 +4050,11 @@
       "id": "DEF-33",
       "summary": "A repeated finding was identified by its position in the list, so a new finding at the same position paused the loop as a repeat; a finding's identity is its role, file and description.",
       "code": {
-        "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+        "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
         "locator": "assessVerdicts"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md"
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       },
       "status": "fixed",
       "classification": "named-defect",
@@ -4074,7 +4068,7 @@
         "locator": "ReplayedResolutionError"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md"
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       },
       "status": "fixed",
       "classification": "named-defect",
@@ -4208,7 +4202,7 @@
         "locator": "12. Deliverable"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
       },
       "status": "open",
@@ -4238,7 +4232,7 @@
         "locator": "devReviewLoop"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
       },
       "status": "open",
@@ -4253,7 +4247,7 @@
         "locator": "reportsTestFailure"
       },
       "spec": {
-        "path": "apps/cli/specs/loop.md",
+        "path": "harness/processes/vinaya-strict/loops/dev-review/loop.md",
         "locator": "The Developer's turn result"
       },
       "status": "open",
@@ -4354,7 +4348,10 @@
     {
       "id": "AMB-01",
       "question": "When several exits apply to one round, which pause reason wins?",
-      "citations": ["packages/aeg-core/src/dev-review-loop/assess-round.ts", "apps/cli/specs/loop.md"],
+      "citations": [
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
+        "harness/processes/vinaya-strict/loops/dev-review/loop.md"
+      ],
       "rulingStatus": "ruled",
       "ruling": "Several exits in one round: the most severe wins \u2014 escalation, then principal item, then repeat, then max rounds, then infrastructure. Every applicable reason is recorded; the top one is shown."
     },
@@ -4362,8 +4359,8 @@
       "id": "AMB-02",
       "question": "Does a resolved finding re-reported as open or with no state count as reappearance, or only one reported as reproduced?",
       "citations": [
-        "packages/aeg-core/src/dev-review-loop/assess-round.ts",
-        "packages/aeg-core/src/dev-review-loop/types.ts"
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
+        "harness/processes/vinaya-strict/tools/dev-review-policy/types.ts"
       ],
       "rulingStatus": "ruled",
       "ruling": "Yes. A resolved finding re-reported as open, or with no state, counts as a reappearance; silence never hides a regression."
@@ -4371,7 +4368,10 @@
     {
       "id": "AMB-03",
       "question": "Should journal_finalized.rounds count attempts or distinct reviewed rounds?",
-      "citations": ["packages/aeg-core/src/dev-review-loop/assess-round.ts", "apps/cli/specs/loop.md"],
+      "citations": [
+        "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
+        "harness/processes/vinaya-strict/loops/dev-review/loop.md"
+      ],
       "rulingStatus": "ruled",
       "ruling": "Distinct reviewed rounds. Attempts are recorded in their own field."
     },
@@ -4380,7 +4380,7 @@
       "question": "May a resume run under a different developer model than the paused run?",
       "citations": [
         "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "apps/cli/specs/loop.md"
+        "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       ],
       "rulingStatus": "ruled",
       "ruling": "Yes. A resume may run under a different developer model; the resume event records it."
@@ -4390,7 +4390,7 @@
       "question": "Is a commit-hook refusal of the driver's commit a send-back to the developer or an infrastructure pause?",
       "citations": [
         "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "apps/cli/specs/loop.md"
+        "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       ],
       "rulingStatus": "ruled",
       "ruling": "A send-back to the developer, at once, with the refusing hook output \u2014 never an infrastructure pause."
@@ -4410,7 +4410,7 @@
       "question": "May a republish after a restart shrink an existing deferred-findings Issue?",
       "citations": [
         "harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts",
-        "apps/cli/specs/loop.md"
+        "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       ],
       "rulingStatus": "ruled",
       "ruling": "No. A republish only appends to a deferred-findings Issue, and each entry carries the finding text, not only its location."
@@ -4420,7 +4420,7 @@
       "question": "May the bootstrap task-branch push bypass the Broker and the repository's hooks?",
       "citations": [
         "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.ts",
-        "apps/cli/specs/loop.md"
+        "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       ],
       "rulingStatus": "ruled",
       "ruling": "The ref-only bootstrap push of the default branch may skip the repository hooks; it never bypasses the Broker."
@@ -4430,7 +4430,7 @@
       "question": "Should a reviewer without a verified candidate pause the round instead of running unisolated without staged evidence?",
       "citations": [
         "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts",
-        "apps/cli/specs/loop.md"
+        "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       ],
       "rulingStatus": "ruled",
       "ruling": "Re-stage the candidate and retry the reviewer. Only after a bound does it become an infrastructure retry, which resumes by itself. A reviewer never runs unisolated."
@@ -4450,7 +4450,7 @@
       "question": "Does a stale_driver pause resume unattended without a ruling, like infrastructure?",
       "citations": [
         "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "apps/cli/specs/loop.md"
+        "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       ],
       "rulingStatus": "ruled",
       "ruling": "Yes. A stale_driver pause resumes unattended, like infrastructure, within a retry bound."
@@ -4470,7 +4470,7 @@
       "question": "Must the stale-driver check fetch the remote, and how does it behave when the default branch is not main?",
       "citations": [
         "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "apps/cli/specs/loop.md"
+        "harness/processes/vinaya-strict/loops/dev-review/loop.md"
       ],
       "rulingStatus": "ruled",
       "ruling": "Yes, it fetches the remote, and it compares against the actual default branch of the repository, never a hard-coded main."

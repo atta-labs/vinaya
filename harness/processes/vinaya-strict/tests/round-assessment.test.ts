@@ -1,9 +1,11 @@
+import { assessRound } from '../tools/dev-review-policy/assess-round'
+import { initialLoopState, type LoopState, type VerdictObservation } from '../tools/dev-review-policy/types'
 import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { assessRound, initialLoopState, type LoopState, type VerdictObservation } from '@attalabs/aeg-core'
+
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { SqliteCheckpointer } from '../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import {

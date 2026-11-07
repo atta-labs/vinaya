@@ -1,4 +1,4 @@
-import type { DevReviewLoopEventInput, PauseReason } from '@attalabs/aeg-core'
+import type { DevReviewLoopEventInput, PauseReason } from '../tools/dev-review-policy/types'
 import type { EscalationRecord } from '../../../kernel/connectors/checkpoint/control-store/index'
 import {
   bindPauseToPullRequest,

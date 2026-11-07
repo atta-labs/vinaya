@@ -51,7 +51,7 @@ import {
   type InFlightKind,
   PUBLICATION_EFFECT_KEY,
   runInFlightEngineRun
-} from './dev-review-engine-loop-adapter.js'
+} from '../../../../harness/processes/vinaya-strict/tests/dev-review-engine-loop-adapter.js'
 import type { Observation } from './dev-review-current-loop-adapter.js'
 
 afterAll(() => cleanupWorlds())

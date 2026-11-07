@@ -10,7 +10,6 @@ Copyright (C) 2026 Daniel Estevez.
    file inside each package's directory:
 
    - @attalabs/vinaya            apps/cli/LICENSE
-   - @attalabs/aeg-core          packages/aeg-core/LICENSE
    - @attalabs/vinaya-sources    packages/sources/LICENSE
 
    The @attalabs/vinaya tarball also carries the aeg-root/ doctrine and the

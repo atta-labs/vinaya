@@ -213,23 +213,6 @@ describe('task contract placement', () => {
     }
   })
 
-  test('the core index never re-exports a moved module', () => {
-    const index = readFileSync(join(root, 'packages/aeg-core/src/index.ts'), 'utf8')
-    const specifiers = [...index.matchAll(/\bfrom\s*['"]([^'"]+)['"]/g)].map((match) => match[1])
-    const movedModules = Object.keys(moves)
-      .filter((path) => path.startsWith('packages/aeg-core/src/') && !path.endsWith('.test.ts'))
-      .map((path) => './' + path.slice('packages/aeg-core/src/'.length).replace(/\.ts$/, ''))
-    for (const specifier of specifiers) {
-      expect(movedModules, specifier).not.toContain(specifier?.replace(/\.(?:ts|js)$/, ''))
-      expect(specifier).not.toMatch(/^@attalabs\/aeg-(?:types|forge-state)(?:\/|$)/)
-      for (const destination of Object.values(moves)) {
-        expect(join(root, 'packages/aeg-core/src', specifier ?? '').replace(/\.(?:ts|js)$/, '')).not.toBe(
-          join(root, destination).replace(/\.ts$/, '')
-        )
-      }
-    }
-  })
-
   test('the source-comment sweep preserves the per-file set', () => {
     const config = JSON.parse(readFileSync(join(root, 'vinaya.config.json'), 'utf8'))
     const roots = config.proseGates.sourceComments.globs as string[]

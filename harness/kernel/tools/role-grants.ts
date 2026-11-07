@@ -1,5 +1,5 @@
 /**
- * The capability grants (`apps/cli/specs/dev-review-capabilities-contracts.md`
+ * The capability grants (the review-loop specification
  * §3): the one table naming, per dispatched role, the agent-facing tools it
  * may call. The driver-run tool server (`dev-tools-server.ts`) reads it twice
  * for every dispatch — to list only the tools the dispatched role is granted,

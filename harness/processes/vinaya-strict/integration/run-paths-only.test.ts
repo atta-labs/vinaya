@@ -30,7 +30,9 @@ import { join, relative } from 'node:path'
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
 const SOURCE_ROOTS = [
   join(REPO_ROOT, 'apps', 'cli', 'src'),
-  join(REPO_ROOT, 'packages', 'aeg-core', 'src'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/dev-review-policy'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/artifacts/docs'),
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/archive-task.ts'),
   join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains.ts'),
   join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/brief-render.ts'),
   join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts'),
