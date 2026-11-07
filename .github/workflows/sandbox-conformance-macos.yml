@@ -57,8 +57,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VINAYA_SANDBOX_CONFORMANCE: '1'
-        working-directory: apps/cli
-        run: bun test --timeout=900000 tests/sandbox-conformance/sandbox-conformance.test.ts
+        working-directory: harness/processes/vinaya-strict
+        run: bun test --timeout=900000 integration/isolation/sandbox-conformance/sandbox-conformance.test.ts
       - name: Record the advisory suite result
         if: ${{ !cancelled() }}
         env:

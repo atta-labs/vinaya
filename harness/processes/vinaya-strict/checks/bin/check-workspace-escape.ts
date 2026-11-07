@@ -24,7 +24,7 @@
  * **Report-only, same G1/G2 rollout precedent as `reader-resolvable-prose`/
  * `retired-vocabulary`/`doctrine-portability`:** findings print as `warning`
  * severity, exit code always 0. This repo's own corpus carries one real
- * pre-existing finding (`packages/sources/src/commands-router-coverage.test.ts`
+ * pre-existing finding (`apps/cli/tests/commands-router-coverage.test.ts`
  * reaching into `apps/cli/src/index.ts` via a constructed relative path,
  * structurally the same incident this check exists to catch) — a blocking
  * check on day one would fail this repo's own CI on that finding before
@@ -43,7 +43,7 @@
  * exactly that reason (lines `11`, `51`, `102`, `125` — each one a fixture
  * `content:` string, never executing code). Excluding test files at the
  * source rather than teaching the scanner to parse strings-vs-code also
- * silences `packages/sources/src/commands-router-coverage.test.ts`'s real,
+ * silences `apps/cli/tests/commands-router-coverage.test.ts`'s real,
  * intentional cross-package `readFileSync` — this bin's own prior comment
  * called that one a genuine finding worth keeping, "structurally the same
  * incident this check exists to catch." Both are now report-only-silenced

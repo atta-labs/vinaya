@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
- * `apps/cli/specs/dev-review-invariants.md`'s own test — the standalone
+ * `harness/processes/vinaya-strict/loops/dev-review/dev-review-invariants.md`'s own test — the standalone
  * developer-review loop's invariant map, frozen as the migration oracle.
  *
  * It enumerates the loop's surface from the filesystem (never from a source
@@ -17,7 +17,7 @@ import { join } from 'node:path'
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', '..')
 const FIXTURE_PATH = join(REPO_ROOT, 'apps', 'cli', 'tests', 'fixtures', 'dev-review-architecture-invariants.json')
-const INVARIANT_SPEC = 'apps/cli/specs/dev-review-invariants.md'
+const INVARIANT_SPEC = 'harness/processes/vinaya-strict/loops/dev-review/dev-review-invariants.md'
 /** The specifications that name the normative design's revision beside the register. */
 const DESIGN_SPECS = [
   INVARIANT_SPEC,
@@ -153,13 +153,13 @@ const isTestFile = (p: string) => p.endsWith('.test.ts')
 /** Every `.ts` file that belongs to the standalone loop, by location. */
 function discoverLoopSurface(): { implementation: string[]; tests: string[]; other: string[] } {
   const sourceSide = [
-    ...existing('apps/cli/src/commands/dev-review-loop.ts'),
+    ...existing('harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.ts'),
     ...existing('harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts'),
     ...tsFilesIn('harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop'),
     ...tsFilesIn('harness/processes/vinaya-strict/tools/dev-review-policy')
   ]
   const testSide = [
-    ...existing('apps/cli/tests/commands/dev-review-loop.test.ts'),
+    ...existing('harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.test.ts'),
     ...tsFilesIn('harness/processes/vinaya-strict/tests/standalone/lib').filter((p) =>
       p.slice('harness/processes/vinaya-strict/tests/standalone/lib/'.length).startsWith('dev-review-loop')
     ),

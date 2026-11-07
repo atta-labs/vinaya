@@ -7,7 +7,7 @@ const TEMPLATE_PATH = join(packageRoot(import.meta.url), 'templates', 'noop-chec
 const CHECKS_DIR = join('vinaya', 'checks')
 
 const USAGE =
-  'Usage: vinaya new noop-check <core-check-id>  (the exact id of a core check — run `vinaya check --plan` to list them)'
+  'Usage: vinaya new noop-check <core-check-id>  (the exact id of a core check — run `vinaya-check --plan` to list them)'
 
 /**
  * `vinaya new noop-check <core-check-id>` — the only sanctioned way to

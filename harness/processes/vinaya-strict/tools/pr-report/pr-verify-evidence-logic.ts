@@ -197,12 +197,12 @@ export function renderVerdict(verdict: EvidenceVerdict): string {
     return 'pr verify-evidence: MATCH — every line of the published AEG:EVIDENCE region is reproduced by a fresh run at this head, and vice versa (compared as a multiset of repo-relative, control-stripped lines: order and whitespace are not compared).'
   }
   if (verdict.status === 'no-block') {
-    return 'pr verify-evidence: NO BLOCK — this pull request body carries no AEG:EVIDENCE anchors. Run `vinaya pr report --write <body-file>` to generate one.'
+    return 'pr verify-evidence: NO BLOCK — this pull request body carries no AEG:EVIDENCE anchors. Run `vinaya-pr-report --write <body-file>` to generate one.'
   }
   if (verdict.status === 'hidden') {
     return [
       'pr verify-evidence: HIDDEN — the AEG:EVIDENCE pair sits inside a collapsed `<details>` block.',
-      '`body-bare-digits` blanks every digit in there, so nothing can verify what it claims. Move the block out of `<details>` and regenerate it with `vinaya pr report --write <body-file>`.'
+      '`body-bare-digits` blanks every digit in there, so nothing can verify what it claims. Move the block out of `<details>` and regenerate it with `vinaya-pr-report --write <body-file>`.'
     ].join('\n')
   }
   const lines = ['pr verify-evidence: DIFFERS — the published AEG:EVIDENCE region does not reproduce at this head.']
@@ -217,7 +217,7 @@ export function renderVerdict(verdict: EvidenceVerdict): string {
       'No merge-base difference was detected — either the base is unchanged, or one side carries no readable Group A command line to compare. Drift therefore does not account for this difference.'
     )
   }
-  lines.push('', 'Regenerate with `vinaya pr report --write <body-file>` and push.')
+  lines.push('', 'Regenerate with `vinaya-pr-report --write <body-file>` and push.')
   if (verdict.missing.length > 0) {
     lines.push('', `Present in a fresh run, absent from the published block (${verdict.missing.length}):`)
     for (const line of verdict.missing) lines.push(`  + ${line}`)
@@ -229,7 +229,7 @@ export function renderVerdict(verdict: EvidenceVerdict): string {
   return lines.join('\n')
 }
 
-import type { SurfaceExemption } from '../../../../../apps/cli/src/lib/surface-exemption'
+import type { SurfaceExemption } from './surface-exemption'
 import { DOCTRINE_PATH_PATTERN_SOURCE } from '../doctrine/doctrine-map'
 
 // Not a command — colocated lib code (see apps/cli/tests/surface-index.test.ts's

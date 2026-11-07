@@ -62,7 +62,7 @@ import {
   recordedBeyondSurfacePaths
 } from '../../tools/task-contract/issue-validation'
 import { parseTaskBranchIdentity } from '../../tools/task-contract/task-branch-identity'
-import { createForgeSource } from '@attalabs/vinaya-sources'
+import { createForgeSource } from '../../tools/sources/forge-adapter.js'
 import {
   exitOnIncompleteForgeSnapshot,
   snapshotIssue
@@ -179,7 +179,7 @@ async function main(): Promise<void> {
   if (!repo) {
     refuse(
       `branch \`${branch}\` names a task, but this repository's owner/repo could not be resolved from \`AEG_REPO\` or \`git remote get-url origin\` — cannot look up which Issue's Surface bounds this PR.`,
-      'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya check surface-scope`.'
+      'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya-check surface-scope`.'
     )
   }
 
@@ -192,13 +192,13 @@ async function main(): Promise<void> {
   } catch (err) {
     refuse(
       `could not reach the forge to resolve tranche \`${fields.tranche}\`'s topology: ${(err as Error).message}`,
-      'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check surface-scope`.'
+      'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya-check surface-scope`.'
     )
   }
   if (issue === null) {
     refuse(
       `no Issue number is recorded for task \`${fields.taskId}\` in tranche \`${fields.tranche}\`'s forge topology — cannot look up which Issue's Surface bounds this PR.`,
-      'Confirm this task has a real forge Issue and that the topology row carries its number, then re-run `vinaya check surface-scope`.'
+      'Confirm this task has a real forge Issue and that the topology row carries its number, then re-run `vinaya-check surface-scope`.'
     )
   }
 
@@ -211,7 +211,7 @@ async function checkAgainstIssue(issue: number): Promise<void> {
   if (body === null) {
     refuse(
       `could not fetch Issue #${issue}'s body via \`gh issue view\` — cannot read its \`## Surface\` section.`,
-      'Confirm `gh auth status` passes and that the Issue exists, then re-run `vinaya check surface-scope`.'
+      'Confirm `gh auth status` passes and that the Issue exists, then re-run `vinaya-check surface-scope`.'
     )
   }
 
@@ -219,13 +219,13 @@ async function checkAgainstIssue(issue: number): Promise<void> {
   if (!surface.ok) {
     refuse(
       `Issue #${issue} carries no well-formed \`## Surface\` section (${surface.errors.join('; ')}) — this task's boundary cannot be determined, so its scope cannot be enforced.`,
-      `Add a well-formed \`## Surface\` section (an \`in:\` glob list and an \`out:\` glob list) to Issue #${issue} via \`vinaya issue edit\`, which re-validates it, then re-run \`vinaya check surface-scope\`.`
+      `Add a well-formed \`## Surface\` section (an \`in:\` glob list and an \`out:\` glob list) to Issue #${issue} via \`vinaya issue edit\`, which re-validates it, then re-run \`vinaya-check surface-scope\`.`
     )
   }
   if (surface.value.out.length === 0) {
     refuse(
       `Issue #${issue}'s \`## Surface\` \`out:\` line resolves to zero globs — an empty boundary is not an enforceable one.`,
-      `Add at least one real \`out:\` glob to Issue #${issue}'s \`## Surface\` via \`vinaya issue edit\`, then re-run \`vinaya check surface-scope\`.`
+      `Add at least one real \`out:\` glob to Issue #${issue}'s \`## Surface\` via \`vinaya issue edit\`, then re-run \`vinaya-check surface-scope\`.`
     )
   }
 
@@ -249,7 +249,7 @@ async function checkAgainstIssue(issue: number): Promise<void> {
         severity: 'error',
         message: `surface-scope: \`${v.path}\` is a protected administrative path and no \`in:\` glob of Issue #${issue}'s \`## Surface\` covers it — the task's Surface must name it; the pull request body's \`AEG:BEYOND-SURFACE\` record does not excuse it.`,
         agent_recovery_prompt:
-          "Drop the change to that protected path from this PR, or have the Planner add the path to the task's `## Surface` `in:` list via `vinaya issue edit` — then re-run `vinaya check surface-scope`.",
+          "Drop the change to that protected path from this PR, or have the Planner add the path to the task's `## Surface` `in:` list via `vinaya issue edit` — then re-run `vinaya-check surface-scope`.",
         file: v.path
       })
       process.exit(1)
@@ -264,7 +264,7 @@ async function checkAgainstIssue(issue: number): Promise<void> {
       severity: 'error',
       message: `surface-scope: \`${v.path}\` ${beyond}, and the pull request body's \`AEG:BEYOND-SURFACE\` block does not record it.`,
       agent_recovery_prompt:
-        "Under the review loop the driver rewrites that block on every body write — call `refresh_evidence` or `update_pull_request_body` so it records the branch's current changes. Otherwise drop the change from this PR, or fix the Issue's own `## Surface` via `vinaya issue edit` — then re-run `vinaya check surface-scope`.",
+        "Under the review loop the driver rewrites that block on every body write — call `refresh_evidence` or `update_pull_request_body` so it records the branch's current changes. Otherwise drop the change from this PR, or fix the Issue's own `## Surface` via `vinaya issue edit` — then re-run `vinaya-check surface-scope`.",
       file: v.path
     })
     process.exit(1)

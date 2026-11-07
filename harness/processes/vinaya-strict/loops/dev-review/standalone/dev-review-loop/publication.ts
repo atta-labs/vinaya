@@ -33,7 +33,7 @@ import {
 } from '../../../../tools/task-contract/verdict-extraction'
 
 import { defaultControlStoreDeps } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import { principalBodies } from '../../../../../../../apps/cli/src/commands/review-post.js'
+import { principalBodies } from '../../bin/review-post.js'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../../../../../../kernel/effects/effects.js'
 import { type DeferredFindingsIssueRef, reconcileGhComment } from '../../../../tools/task-contract/forge/forge-write.js'
 import { sh } from './gate-reading.js'

@@ -43,7 +43,7 @@ import {
   type AgentClass
 } from '../../loops/dev-review/dispatch/dispatch.js'
 import { assembleAndRenderBrief, assembleAndRenderBriefForIssue } from './brief-assembly.js'
-import { resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config.js'
+import { resolveTrustedPrincipals } from '../../integration/config/compose.js'
 import { collectTaskIssueErrors, currentGhLogin, postMarkedComment } from './forge/forge-write.js'
 import { isForgeReadOversize, readIssueComments } from '../../../../kernel/adapters/code-host/github/forge-read.js'
 import { emitCheckError } from '../../../../kernel/gates/checks/contract'
@@ -665,7 +665,7 @@ export async function prepareTask(
   // the live bug: dispatching task 3 posted its brief on Issue #3, an
   // unrelated merged Issue, because this code used to read `n` here.
   const issue = result.issue
-  const retryCommand = `vinaya task brief ${tranche} ${n}`
+  const retryCommand = `vinaya-task-brief ${tranche} ${n}`
 
   // O2 — the SAME Issue write gate `issue create`/`issue edit` already
   // enforce, run over this Issue's live body before any brief freezes from
@@ -690,7 +690,7 @@ export async function prepareTask(
   if (supersede) {
     if (!existing) {
       throw new DispatchTaskError(
-        `Task ${n} in tranche \`${tranche}\` has no frozen brief yet — nothing to supersede. Run \`vinaya task brief ${tranche} ${n}\` without --supersede first.`
+        `Task ${n} in tranche \`${tranche}\` has no frozen brief yet — nothing to supersede. Run \`vinaya-task-brief ${tranche} ${n}\` without --supersede first.`
       )
     }
     // O3 — widening `## Surface` changes what the brief's own Technical
@@ -791,7 +791,7 @@ export async function prepareIssueTask(
     )
   }
   const issue = result.issue
-  const retryCommand = `vinaya task brief --issue ${n}`
+  const retryCommand = `vinaya-task-brief --issue ${n}`
 
   // A supersede that widens `## Surface` skips this pre-widen run: the widen
   // exists for a live body the gate refuses only for a Surface too narrow, and
@@ -811,7 +811,7 @@ export async function prepareIssueTask(
   if (supersede) {
     if (!existing) {
       throw new DispatchTaskError(
-        `Issue #${n} has no frozen brief yet — nothing to supersede. Run \`vinaya task brief --issue ${n}\` without --supersede first.`
+        `Issue #${n} has no frozen brief yet — nothing to supersede. Run \`vinaya-task-brief --issue ${n}\` without --supersede first.`
       )
     }
     if (supersede.surfaceIn && supersede.surfaceIn.length > 0) {

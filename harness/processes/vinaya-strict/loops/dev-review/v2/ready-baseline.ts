@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CORPUS_REL, REFRESH_COMMAND } from '../../../../../../apps/cli/scripts/refresh-loop-baseline'
+import { CORPUS_REL, REFRESH_COMMAND } from '../../../integration/conformance/unit/refresh-loop-baseline'
 
 // The read-only loop-baseline guard an opted-in ready or repair publication passes before any expensive work: the
 // explicit Test Plan commands and the hook. It judges one contract only — every file the scenario corpus records

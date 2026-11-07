@@ -221,7 +221,7 @@ function emitResult(result: RegistryCheckResult, blocking: boolean): void {
       check: `${CHECK_NAME}.${result.check}`,
       severity: blocking ? 'error' : 'warning',
       message: `${result.check}: ${f.reason}`,
-      agent_recovery_prompt: `Read the ${result.check} finding above (enforcement.md row / candidate file / role-contract frontmatter) and fix the drift it names, then re-run \`vinaya check registry-gates\`.`,
+      agent_recovery_prompt: `Read the ${result.check} finding above (enforcement.md row / candidate file / role-contract frontmatter) and fix the drift it names, then re-run \`vinaya-check registry-gates\`.`,
       ...(f.path ? { file: f.path } : {})
     })
   }

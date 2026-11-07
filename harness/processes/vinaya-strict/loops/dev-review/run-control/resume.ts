@@ -103,6 +103,7 @@ import { log } from '../../../../../kernel/log/log-sink.js'
 import type { TaskToolCallResult } from './handlers.js'
 import { resolveIssueForRef } from './handlers.js'
 import { readEscalationPacket } from './read.js'
+import { programInvocation } from '../../../tools/programs.js'
 import type { CallerContext } from '../../../integration/server.js'
 
 function ok<T>(result: T): TaskToolCallResult<T> {
@@ -225,22 +226,21 @@ export type { LaunchResult }
 
 /**
  * The continuation a resume launches, chosen by the runner the task's run recorded: an Engine run continues on the
- * Engine runner, through its pull request or else its checkpoint; a standalone run through `dev-review-loop
- * --resume`, or `task run` for a pause with no pull request.
+ * Engine runner, through its pull request or else its checkpoint; a standalone run through the `dev-review-loop`
+ * program's `--resume`, or `task run` for a pause with no pull request. `launcher`, when set, starts the
+ * `dev-review-loop` program in place of this runtime, with the same argv.
  */
 export function resumeContinuation(
   target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string },
   runner: 'standalone' | 'atta-engine',
-  program: string
+  program: string,
+  launcher?: string
 ): { command: string; argv: string[] } {
   if (runner === 'atta-engine') return { command: 'bun', argv: engineContinuationArgv(target) }
-  return {
-    command: program,
-    argv:
-      target.pr === null
-        ? noPushResumeArgv(target.issue, target.branch, target.agent, target.model)
-        : ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent]
-  }
+  if (target.pr === null)
+    return { command: program, argv: noPushResumeArgv(target.issue, target.branch, target.agent, target.model) }
+  const invocation = programInvocation('dev-review-loop', ['--resume', String(target.pr), '--agent', target.agent])
+  return { command: launcher ?? invocation.command, argv: invocation.argv }
 }
 
 /**
@@ -256,7 +256,8 @@ export function defaultResumeLaunch(
   root: string = runtimeDir(),
   timeoutMs: number = RESUME_CONFIRM_TIMEOUT_MS
 ): Promise<LaunchResult> {
-  const program = process.env[RESUME_COMMAND_ENV]?.trim() || 'vinaya'
+  const launcher = process.env[RESUME_COMMAND_ENV]?.trim() || undefined
+  const program = launcher ?? 'vinaya'
   const stderrPath = runPath(root, target.issue, {
     area: 'output',
     file: `task-resume-${meta.escalationId}.stderr.log`
@@ -274,7 +275,7 @@ export function defaultResumeLaunch(
   // tranche task is addressed `task run <tranche> <n>`, read off this pause's
   // own branch. Both forms are commands the CLI already exposes, and the
   // agent AND model the paused run was dispatched under both travel with it.
-  const { command, argv } = resumeContinuation(target, readTaskRunner(target.issue, root), program)
+  const { command, argv } = resumeContinuation(target, readTaskRunner(target.issue, root), program, launcher)
   let child: ChildProcess
   try {
     child = launchDetached(command, argv, ['ignore', 'ignore', stderrFd])

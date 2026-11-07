@@ -13,7 +13,7 @@
  */
 import { globToRegex } from '../../../kernel/gates/glob-to-regex'
 import { existsSync } from 'node:fs'
-import { loadConfig } from '../../../../apps/cli/src/lib/config.js'
+import { loadConfig } from './config/compose.js'
 import {
   changedBetween,
   computeVerificationContext,

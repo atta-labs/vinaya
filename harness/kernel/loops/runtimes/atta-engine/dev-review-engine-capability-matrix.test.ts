@@ -5,7 +5,7 @@ import { join } from 'node:path'
 /**
  * `harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md`'s own test — the
  * capability and ownership matrix for the Atta-backed developer-review
- * workflow, held in `tests/fixtures/dev-review-engine-capability-matrix.json`.
+ * workflow, held in `fixtures/dev-review-engine-capability-matrix.json`.
  *
  * It never re-derives WHETHER a capability fits; that is the matrix's own
  * audited, cited content. It checks that every row is mechanically complete
@@ -17,7 +17,16 @@ import { join } from 'node:path'
  */
 
 const REPO_ROOT = join(import.meta.dir, '../../../../..')
-const FIXTURE_PATH = join(REPO_ROOT, 'apps', 'cli', 'tests', 'fixtures', 'dev-review-engine-capability-matrix.json')
+const FIXTURE_PATH = join(
+  REPO_ROOT,
+  'harness',
+  'kernel',
+  'loops',
+  'runtimes',
+  'atta-engine',
+  'fixtures',
+  'dev-review-engine-capability-matrix.json'
+)
 
 /** The earliest Atta main-branch commit carrying the halt-and-resume delivery this matrix judges. */
 const ATTA_COMMIT_FLOOR = '249d8fc11e525bd015daf9b35cfbd9cfac66f44d'

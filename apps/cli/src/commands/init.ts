@@ -21,8 +21,12 @@ import {
   type InitContext,
   TRACKED_HOOK_DIR
 } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { detectVendoredVinaya } from '../lib/self-host.js'
-import { type ManagedManifest, readRepoCiSetup, VinayaConfigSchema } from '../lib/config.js'
+import { detectVendoredVinaya } from '../../../../harness/processes/vinaya-strict/tools/self-host.js'
+import {
+  type ManagedManifest,
+  readRepoCiSetup,
+  VinayaConfigSchema
+} from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
 import {
   checkGhAuth,
   customHooksPath,
@@ -38,7 +42,7 @@ import {
   planInstall,
   renderInstallDiff
 } from '../../../../harness/kernel/gates/ops.js'
-import { closeStdin, promptYesNo } from '../lib/prompt.js'
+import { closeStdin, promptYesNo } from '../../../../harness/kernel/effects/prompt.js'
 import {
   applyConfigProjectEntry,
   applyRegistryRow,
@@ -236,7 +240,7 @@ export async function runInit(args: string[], deps: InitDeps): Promise<number> {
     await deps.setHooksPath(repo.repoRoot, TRACKED_HOOK_DIR)
   }
 
-  process.stdout.write('\nVinaya installed. Next: run `vinaya demo break` to see a refusal-then-fix in action.\n')
+  process.stdout.write('\nVinaya installed.\n')
   return 0
 }
 
@@ -367,7 +371,7 @@ export async function initProductCommand(args: string[]): Promise<void> {
   process.exit(await runInitProduct(args, realDeps()))
 }
 
-import type { SurfaceExemption } from '../lib/surface-exemption'
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   init: { date: '2026-09-05', callsToday: 9, retiresVia: 'sharedCommandShell' },

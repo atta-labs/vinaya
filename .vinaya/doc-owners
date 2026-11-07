@@ -50,4 +50,5 @@ harness/kernel/log/log-sink.ts  harness/kernel/log/log.md
 harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts  harness/processes/vinaya-strict/loops/dev-review/loop.md
 apps/log-server/src/**  apps/log-server/specs/server.md
 harness/kernel/log/sync/**  harness/kernel/log/log-sync.md
-apps/cli/src/lib/dev-review-eval/**  apps/cli/specs/evals.md
+harness/kernel/evals/**  harness/kernel/evals/evals.md
+harness/processes/vinaya-strict/evals/**  harness/kernel/evals/evals.md

@@ -61,8 +61,8 @@ export function buildTestPlanCheckErrors(result: TestPlanGateResult): CheckError
       severity: 'error',
       message,
       agent_recovery_prompt: principalPending
-        ? 'Nothing for the Developer to fix here — wait for the Principal to verify in a real signed-in browser and tick each `[principal]` Test Plan box, then re-run `vinaya check test-plan`.'
-        : 'Add a `## Test Plan` section to the PR body (or the `Test Plan: unit-tests-only` sentinel for a pure-logic brief with no runtime surface), then re-run `vinaya check test-plan`.',
+        ? 'Nothing for the Developer to fix here — wait for the Principal to verify in a real signed-in browser and tick each `[principal]` Test Plan box, then re-run `vinaya-check test-plan`.'
+        : 'Add a `## Test Plan` section to the PR body (or the `Test Plan: unit-tests-only` sentinel for a pure-logic brief with no runtime surface), then re-run `vinaya-check test-plan`.',
       ...(principalPending ? { pending: true as const } : {})
     })
   }
@@ -87,7 +87,7 @@ export function runTestPlanCheck(inputs: LiveCheckInputs, deps: LiveCheckDeps = 
         severity: 'error',
         message: `test-plan: ${resolved.message} The \`[live]\` lines this pull request must have passed are unknown, so the check fails closed.`,
         agent_recovery_prompt:
-          'Check `gh auth status` and network, and that the task Issue carries its frozen `aeg:brief:v<k>` comment, then re-run `vinaya check test-plan`.'
+          'Check `gh auth status` and network, and that the task Issue carries its frozen `aeg:brief:v<k>` comment, then re-run `vinaya-check test-plan`.'
       }
     ]
   }

@@ -121,7 +121,7 @@ const STEPS: {
       },
       {
         kind: 'prose',
-        text: "Point whatever agentic coding tool you use — Claude Code, Codex, Antigravity, or another — at the front door and it works inside the model. Vinaya doesn't care which tool; it cares that `vinaya check --all` passes before anything merges."
+        text: "Point whatever agentic coding tool you use — Claude Code, Codex, Antigravity, or another — at the front door and it works inside the model. Vinaya doesn't care which tool; it cares that `vinaya-check --all` passes before anything merges."
       }
     ],
     render: () => <CommandLine command='cat "$(vinaya doctrine)"' />,

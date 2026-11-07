@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -325,7 +325,7 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
     forge,
     repository: 'attalabs/round-decisions'
   })
-  task.cliEntry = gateCli
+  task.checkProgram = gateCli
   task.bound = {
     ...task.bound,
     localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),

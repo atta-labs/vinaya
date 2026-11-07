@@ -4,6 +4,7 @@
  * module holds no state that outlives one test.
  */
 
+import { programCommandLine } from '../../../../tools/programs.js'
 import { it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -831,7 +832,7 @@ export function runDevReviewLoopArgs(
   // surfaces piped stderr via the thrown error, so a passing run's own
   // stderr (task 7, #498: the stale-takeover line prints there even on a
   // clean publish) would otherwise be silently discarded.
-  const r = spawnSync('bun', [INDEX, 'dev-review-loop', ...args], {
+  const r = spawnSync('bun', programCommandLine(['dev-review-loop', ...args]) as string[], {
     encoding: 'utf8',
     cwd,
     env: fixtureChildEnv(home, path, extraEnv),
@@ -1833,7 +1834,7 @@ export const FAST_POLL_ENV = {
  * Same as `writeFakeGh`, except the mechanical check-runs answer models a
  * real principal-owed scenario (review-validity-v1 11, O1/O2/O3): the
  * bundled `vinaya check --all --diff-only` job reads `success` — exactly
- * what `isRunFailed` (apps/cli/src/commands/check.ts) produces when the
+ * what `isRunFailed` (harness/processes/vinaya-strict/checks/check.ts) produces when the
  * only red is `test-plan`'s `principalOwed` failure and every error it
  * reported is `pending: true` — while a SEPARATE `vinaya review gate` run
  * reads `failure`, modeling O2's merge-time enforcement of the same unticked
@@ -1915,7 +1916,7 @@ if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
   exit 0 # no workflow runs: the CI reading rests on the check-runs alone
 fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
-  printf '%s\\n' '{"id":1,"name":"vinaya check --all --diff-only","status":"completed","conclusion":"success"}'
+  printf '%s\\n' '{"id":1,"name":"vinaya-check --all --diff-only","status":"completed","conclusion":"success"}'
   printf '%s\\n' '{"id":2,"name":"vinaya review gate","status":"completed","conclusion":"failure"}'
   exit 0
 fi

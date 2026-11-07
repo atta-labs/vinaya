@@ -370,7 +370,7 @@ if (import.meta.main) {
   for (const result of results) printResult(result)
 
   console.log(
-    'ℹ G6: skipped here — needs coreCheckRegistry(), only importable from apps/cli. Run `vinaya check registry-gates` (or harness/processes/vinaya-strict/checks/bin/check-registry-gates.ts) for the full gate set including G6.'
+    'ℹ G6: skipped here — needs coreCheckRegistry(), only importable from apps/cli. Run `vinaya-check registry-gates` (or harness/processes/vinaya-strict/checks/bin/check-registry-gates.ts) for the full gate set including G6.'
   )
 
   const blocking = results.filter(

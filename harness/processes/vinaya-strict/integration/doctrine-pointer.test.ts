@@ -7,7 +7,7 @@ import { doctrinePointer, pointerRoleNames } from './artifacts.js'
 // that silently failed to resolve would make the byte-identity test pass
 // vacuously even against the machine-local implementation it exists to kill.
 import { packageRoot } from '../../../../apps/cli/src/lib/package-root.js'
-import type { VendoredVinaya } from '../../../../apps/cli/src/lib/self-host.js'
+import type { VendoredVinaya } from '../tools/self-host.js'
 
 // Captured BEFORE any mock.module call rewires the live binding — module
 // mocks persist across test files in the same bun process, so afterAll puts

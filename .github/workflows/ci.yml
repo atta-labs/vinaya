@@ -1,6 +1,6 @@
 # This repo's own ring-1 lint/typecheck/test gate — hand-written, not
 # vinaya-generated, not vinaya-managed, invisible to `doctor` by design.
-# The four vinaya-*.yml workflows in this directory run `vinaya check` /
+# The four vinaya-*.yml workflows in this directory run `vinaya-check` /
 # `archive` / `audit`; none of them ever ran a test or a typecheck (#933).
 #
 # Every test the inventory (`scripts/test-suites/inventory.json`) records runs
@@ -625,7 +625,7 @@ jobs:
         run: |
           gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
-  # The sandbox conformance suite (`apps/cli/tests/sandbox-conformance/`,
+  # The sandbox conformance suite (`harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/`,
   # `harness/kernel/isolation/isolation.md`): every command the Developer doctrine and
   # the rendered brief name, run inside Claude Code's sandbox (the sandbox
   # runtime, via `bunx`) and inside Codex's (`codex sandbox`), each set up as
@@ -685,8 +685,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VINAYA_SANDBOX_CONFORMANCE: '1'
-        working-directory: apps/cli
-        run: bun test --timeout=900000 tests/sandbox-conformance/sandbox-conformance.test.ts
+        working-directory: harness/processes/vinaya-strict
+        run: bun test --timeout=900000 integration/isolation/sandbox-conformance/sandbox-conformance.test.ts
       - name: Report this job's GitHub token budget
         if: failure()
         env:

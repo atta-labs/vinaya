@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_COLLISION_THRESHOLD } from '../tools/task-contract/issue-validation'
-import type { BriefSection } from '../../../../apps/cli/src/lib/config'
+import type { BriefSection } from '../integration/config/compose'
 import { resetTrustAnchorConfigMemo } from '../../../kernel/log/log-sink.js'
 import {
   ForgeArgError,
@@ -20,9 +20,12 @@ import {
   validateIssueContent
 } from '../tools/task-contract/forge/forge-write'
 
+/** Pull-request body fixtures, beside the process's other forge fixtures. */
+const PR_FORGE_FIXTURES = join(import.meta.dir, '..', 'fixtures', 'forge')
+/** Issue body fixtures, still beside the command line's Issue command tests. */
 const FORGE_FIXTURES = join(import.meta.dir, '..', '..', '..', '..', 'apps', 'cli', 'tests', 'fixtures', 'forge')
-const validPr = readFileSync(join(FORGE_FIXTURES, 'pr-valid.md'), 'utf8')
-const noTierPr = readFileSync(join(FORGE_FIXTURES, 'pr-no-tier.md'), 'utf8')
+const validPr = readFileSync(join(PR_FORGE_FIXTURES, 'pr-valid.md'), 'utf8')
+const noTierPr = readFileSync(join(PR_FORGE_FIXTURES, 'pr-no-tier.md'), 'utf8')
 const noRationaleIssue = readFileSync(join(FORGE_FIXTURES, 'issue-no-rationale.md'), 'utf8')
 const validIssue = readFileSync(join(FORGE_FIXTURES, 'issue-valid.md'), 'utf8')
 const blastRadiusViolationIssue = readFileSync(join(FORGE_FIXTURES, 'issue-blast-radius-violation.md'), 'utf8')

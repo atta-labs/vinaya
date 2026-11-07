@@ -20,7 +20,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { checkDoctrineNoProcedures, type DoctrineFile } from '../doctrine-no-procedures'
-import { loadConfig } from '../../../../../apps/cli/src/lib/config'
+import { loadConfig } from '../../integration/config/compose'
 import { doctrineRootLabel, doctrineSweepPaths } from '../../tools/doctrine/doctrine-sweep'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 

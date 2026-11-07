@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fixture'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -9,12 +9,12 @@ import {
   LAST_PUSH_RESULT,
   SELECTION_NOTE
 } from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
-import { PROGRESS_MARKER } from '../../../../../../apps/cli/src/lib/push-progress'
+import { PROGRESS_MARKER } from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
 import {
   DEFERRAL_MARKER_TTL_MS,
   parseDeferralMarker,
   READY_DEFERRAL_MARKER
-} from '../../../../../../apps/cli/src/lib/pre-push-ready-policy'
+} from '../../../tools/pre-push-ready-policy'
 import { lookupGreenRun, type TestRunCache, type TestRunCacheRecord } from '../../../tools/pr-report/pr-report-engine'
 import {
   beginReadyDeferral,
@@ -968,20 +968,7 @@ describe('the explicit Test Plan commands the driver runs at the publication bou
 })
 
 describe('live progress of the ready push and the explicit-command run', () => {
-  const HELPER = join(
-    import.meta.dir,
-    '..',
-    '..',
-    '..',
-    '..',
-    '..',
-    '..',
-    'apps',
-    'cli',
-    'src',
-    'lib',
-    'pre-push-progress-dir.ts'
-  )
+  const HELPER = join(import.meta.dir, '..', '..', '..', 'integration', 'pre-push-progress-dir.ts')
   const headOf = (dir: string) => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
   /** A run directory under its own runtime directory, as the Engine lays it out, and the task's driver log. */
   const context = () => {

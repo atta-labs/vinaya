@@ -6,7 +6,7 @@ import { generateCodexConfig } from '../../../../../harness/kernel/adapters/agen
 import { loadRoleGrants, ROLE_NAMES } from '../../../../../harness/kernel/adapters/agents/manifest'
 import { readEffects } from '../../../../kernel/connectors/checkpoint/control-store/index'
 import { createTestTempRun, makeFixtureDir, sweepAbandoned } from '../../../../kernel/conformance/unit/test-temp'
-import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
 import { checkpointFile, createWorld, expectCleanRun, leg, TASK, threadOf } from './engine-recovery-world'
 import {
   readEffectiveResumedState,

@@ -187,10 +187,7 @@ describe('unknown events (O3)', () => {
 })
 
 describe('a recorded developer stream (O4)', () => {
-  const lines = readFileSync(
-    join(import.meta.dir, '../../../../../apps/cli/tests/fixtures/loop-narration/codex-developer-stream.jsonl'),
-    'utf8'
-  )
+  const lines = readFileSync(join(import.meta.dir, '../fixtures/loop-narration/codex-developer-stream.jsonl'), 'utf8')
     .trim()
     .split('\n')
 

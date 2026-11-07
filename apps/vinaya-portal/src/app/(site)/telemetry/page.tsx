@@ -10,9 +10,9 @@ export default function TelemetryPage() {
       n={2}
       name='Telemetry'
       lead='What the Log adds up to: how long each task took, what the reviewers caught, how often the checks said no.'
-      tags={['vinaya sync', 'Local cache', 'Ten questions, plus a confidence comparison', 'Unknown, never zero']}
+      tags={['vinaya-sync', 'Local cache', 'Ten questions, plus a confidence comparison', 'Unknown, never zero']}
       docsHref='/docs/features/telemetry'
-      command='vinaya sync'
+      command='vinaya-sync'
       liveLabel='A milestone report'
       live={<TelemetryLive />}
       shows={{
@@ -64,7 +64,7 @@ export default function TelemetryPage() {
       use={{
         title: 'Sync and ask',
         line: 'Reads what the Log stored into a local cache. Stop any time; it resumes.',
-        code: ['$ vinaya sync', '$ vinaya sync --json']
+        code: ['$ vinaya-sync', '$ vinaya-sync --json']
       }}
       prev={{ n: 1, name: 'Log', href: '/log' }}
       next={{ n: 3, name: 'Studio', href: '/studio' }}

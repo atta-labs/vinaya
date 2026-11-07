@@ -30,10 +30,7 @@ import {
   scopeTarget,
   UngrantedOperationError
 } from '../../../../../../kernel/tools/host/broker'
-import {
-  authenticateWorkerInvocation,
-  requestEffect
-} from '../../../../../../../apps/cli/tests/lib/broker/vinaya-broker'
+import { authenticateWorkerInvocation, requestEffect } from './vinaya-broker'
 
 let dir: string
 let deps: ControlStoreDeps

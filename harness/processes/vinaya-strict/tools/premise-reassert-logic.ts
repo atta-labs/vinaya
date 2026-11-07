@@ -57,7 +57,7 @@ export function reassertPremiseFile(
           check: checkName,
           severity: 'error',
           message: `dispatch-gate premise: PREMISE_FILE "${premiseFilePath}" does not exist or is unreadable.`,
-          agent_recovery_prompt: `Confirm the path passed via PREMISE_FILE is correct and readable, then re-run \`vinaya check ${checkName}\`.`
+          agent_recovery_prompt: `Confirm the path passed via PREMISE_FILE is correct and readable, then re-run \`vinaya-check ${checkName}\`.`
         }
       ]
     }
@@ -73,7 +73,7 @@ export function reassertPremiseFile(
           check: checkName,
           severity: 'error',
           message: `dispatch-gate premise: PREMISE_FILE "${premiseFilePath}" carries no \`Premise:\` assertions — a premise file with no pins is a mistake, not a pass.`,
-          agent_recovery_prompt: `Add a \`Premise:\` block with at least one \`contains\`/\`absent\`/\`sha256\` pin to the brief file, then re-run \`vinaya check ${checkName}\`.`
+          agent_recovery_prompt: `Add a \`Premise:\` block with at least one \`contains\`/\`absent\`/\`sha256\` pin to the brief file, then re-run \`vinaya-check ${checkName}\`.`
         }
       ]
     }
@@ -88,7 +88,7 @@ export function reassertPremiseFile(
         check: checkName,
         severity: 'error' as const,
         message: `dispatch-gate premise: ${failure}`,
-        agent_recovery_prompt: `The surface moved since this brief was authored — re-dig the affected pin, correct the brief, and re-run \`vinaya check ${checkName}\` before continuing.`
+        agent_recovery_prompt: `The surface moved since this brief was authored — re-dig the affected pin, correct the brief, and re-run \`vinaya-check ${checkName}\` before continuing.`
       }))
     }
   }

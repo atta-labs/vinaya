@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "@ariakit/react": "0.4.40",
-    "@attalabs/vinaya-sources": "workspace:*",
     "@sanity/client": "^7.20.0",
     "@tailwindcss/postcss": "^4.0.0",
     "@vercel/analytics": "^2.0.1",

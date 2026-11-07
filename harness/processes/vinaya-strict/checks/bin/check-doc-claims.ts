@@ -33,7 +33,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { checkDocClaims } from '../../tools/doc-claim'
 import { DOCTRINE_REPO_PATHS } from '../../tools/doctrine/doctrine-map'
-import { loadConfig } from '../../../../../apps/cli/src/lib/config'
+import { loadConfig } from '../../integration/config/compose'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'doc-claims'

@@ -25,7 +25,7 @@ cancel or set aside each run it names, then run it again.
 ## The sandbox repository and trial isolation
 
 - **Repository:** `atta-labs/vinaya-whole-loop-sandbox`, the disposable private sandbox the evaluation freeze record
-  names (`wholeLoopSandboxRepository`, `apps/cli/tests/eval/freeze-record.json`).
+  names (`wholeLoopSandboxRepository`, `harness/processes/vinaya-strict/evals/suites/freeze-record.json`).
 - **Each agent's trial starts clean** (evaluation program, per-trial isolation): a fresh clone of the sandbox, a fresh
   vendor home signed in by subscription, a fresh runtime directory, and its own proof task Issue. No file, branch or
   checkpoint from the other agent's trial is reused.
@@ -78,7 +78,7 @@ adding the missing file alone does not clear the pause. Only rulings posted afte
 2. **Supersede the frozen brief**, which records the new revision:
 
    ```
-   $VINAYA task brief --issue <n> --supersede --reason "docs/proof-source.md added on the default branch"
+   bun <this checkout>/harness/processes/vinaya-strict/tools/task-contract/bin/task-brief.ts --issue <n> --supersede --reason "docs/proof-source.md added on the default branch"
    ```
 
 3. **Post the ruling** on the task Issue, after that brief: a comment whose first line is the ruling marker line the

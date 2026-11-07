@@ -48,7 +48,7 @@ import {
   setCoreHooksPath
 } from '../../../../harness/kernel/connectors/git/detect.js'
 import { packageRoot } from '../lib/package-root.js'
-import { closeStdin, prompt as promptAsk, promptYesNo } from '../lib/prompt.js'
+import { closeStdin, prompt as promptAsk, promptYesNo } from '../../../../harness/kernel/effects/prompt.js'
 
 export type QuickstartDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -414,7 +414,7 @@ export async function runQuickstart(args: string[], deps: QuickstartDeps): Promi
     )
     if (ranDemoBreak) {
       const rc = await runDemoBreak(repo.repoRoot, [])
-      if (rc !== 0) console.error(red(`\`vinaya demo break\` exited with code ${rc}.`))
+      if (rc !== 0) console.error(red(`The refusal-then-fix proof exited with code ${rc}.`))
     }
 
     process.stdout.write(
@@ -442,8 +442,7 @@ export async function runQuickstart(args: string[], deps: QuickstartDeps): Promi
     }
 
     process.stdout.write(`\n${bold('Next steps:')}\n`)
-    if (!ranDemoBreak) process.stdout.write('  vinaya demo break\n')
-    process.stdout.write('  vinaya check --all\n')
+    process.stdout.write('  vinaya-check --all\n')
     if (!pushSatisfied) process.stdout.write('  git push\n')
 
     return 0
@@ -456,7 +455,7 @@ export async function quickstartCommand(args: string[]): Promise<void> {
   process.exit(await runQuickstart(args, realDeps()))
 }
 
-import type { SurfaceExemption } from '../lib/surface-exemption'
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   quickstart: { date: '2026-09-05', callsToday: 9, retiresVia: 'sharedCommandShell' }

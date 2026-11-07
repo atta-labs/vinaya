@@ -4,7 +4,7 @@ import type { LogEventInput } from '../../../log/log-sink'
 import type { CheckSpec } from '../contract'
 import { runChecks } from '../runner'
 
-const FIXTURES = join(import.meta.dir, '../../../../../apps/cli/tests/fixtures/checks')
+const FIXTURES = join(import.meta.dir, '../fixtures')
 const PASSING = join(FIXTURES, 'passing-check.ts')
 const FAILING = join(FIXTURES, 'failing-check.ts')
 
@@ -66,7 +66,7 @@ describe('runChecks — an explicitly missing observation is a real absence, nev
     // `attempted-check` mirrors a real attempt: it reaches `runChecks` and
     // is counted. `never-dispatched` mirrors a check the CALLER refused
     // BEFORE `runChecks` — e.g. `check.ts`'s FAIL_CLOSED config-refusal path
-    // (`apps/cli/src/commands/check.ts`), which returns without ever
+    // (`harness/processes/vinaya-strict/checks/check.ts`), which returns without ever
     // building a `CheckSpec` for a rejected `checks` entry. `runChecks`
     // itself is never handed that spec, so it is never in this array.
     await runChecks([fullScope({ name: 'attempted-check', run: PASSING })], { ...BASE_OPTS, log })

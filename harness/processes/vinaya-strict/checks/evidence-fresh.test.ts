@@ -6,7 +6,7 @@ import { anchoredRegion } from '../../../kernel/gates/checks/anchored-region'
 import { describe, expect, it } from 'bun:test'
 import { EVIDENCE_PLACEHOLDER_TEXT, compareEvidenceBlock } from './evidence-fresh-logic'
 import { type ResolvedRegion, ScanContext, resolveAnchoredRegion } from '../../../kernel/gates/checks/scan-context'
-import { type GroupCCommandResult, renderGroupC } from '../../../../apps/cli/src/commands/pr-report'
+import { type GroupCCommandResult, renderGroupC } from '../tools/pr-report/bin/pr-report'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../kernel/connectors/git/numstat'
 
 const HEAD = 'a'.repeat(40)

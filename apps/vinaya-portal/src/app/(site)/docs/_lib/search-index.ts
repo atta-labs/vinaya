@@ -1,5 +1,5 @@
-import { COMMANDS } from '@attalabs/vinaya-sources/commands'
-import { CONFIG_REFERENCE } from '@attalabs/vinaya-sources/config-reference'
+import { COMMANDS } from '@attalabs/process-vinaya/commands'
+import { CONFIG_REFERENCE } from '@attalabs/process-vinaya/config-reference'
 import { commandSlug } from '../(standalone)/cli/_components/command-slug'
 import { configFieldSlug } from '../(standalone)/config/_components/config-navigation'
 import { DOCS_PAGES, HARNESS_COMMANDS, HARNESS_KEYS, PROCESS_KEYS, topKey } from './portal-docs'

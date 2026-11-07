@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { checkBareDigits } from '../tools/body-bare-digits-logic'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../apps/cli/tests/lib/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
 
 function violationLines(body: string): number[] {
   return checkBareDigits(body).violations.map((v) => v.line)
@@ -864,7 +864,7 @@ describe('body-bare-digits — check bin file mode', () => {
     // directly would be exactly the leak the brief's stop condition warns
     // against. A subprocess's umask is its own; the parent's is never
     // touched, so there is nothing to restore. Spawned via the shared
-    // `apps/cli/tests/lib/process-fixture.ts` helper (Issue #660, O3): this
+    // `harness/kernel/conformance/unit/process-fixture.ts` helper (Issue #660, O3): this
     // process's own `VINAYA_*` env is stripped before the child inherits
     // anything, and the child is bounded by an explicit kill-on-timeout
     // budget rather than a bare framework timeout with no diagnostic.

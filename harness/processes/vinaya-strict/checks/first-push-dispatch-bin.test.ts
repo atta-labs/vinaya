@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { type CheckError, CHECK_SCHEMA_VERSION } from '../../../kernel/gates/checks/contract'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../apps/cli/tests/lib/process-fixture'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
 
 /**
  * `check-first-push-dispatch.ts` spawned with a fake `gh` first on `PATH`. The

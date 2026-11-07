@@ -120,7 +120,7 @@ function main(): void {
     message:
       "main-branch-refusal: could not determine this repo's default branch (no `origin/HEAD`, no remote-tracking `origin/main` or `origin/master`, as in a repository with no remote) — skipping the refusal check rather than risk a false block.",
     agent_recovery_prompt:
-      'Run `git remote set-head origin -a` (requires network) so `origin/HEAD` resolves locally, then re-run `vinaya check main-branch-refusal`.'
+      'Run `git remote set-head origin -a` (requires network) so `origin/HEAD` resolves locally, then re-run `vinaya-check main-branch-refusal`.'
   })
   process.exit(0)
 }

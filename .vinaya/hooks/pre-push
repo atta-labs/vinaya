@@ -6,7 +6,7 @@
 # driver's mark, no symlinked component). It prints nothing else and every
 # progress step below discards its own output, so with no driver this hook
 # prints and exits exactly as it would without it.
-VINAYA_PROGRESS="$(bun apps/cli/src/lib/pre-push-progress-dir.ts dir 2>/dev/null)" || VINAYA_PROGRESS=""
+VINAYA_PROGRESS="$(bun harness/processes/vinaya-strict/integration/pre-push-progress-dir.ts dir 2>/dev/null)" || VINAYA_PROGRESS=""
 # Ring 0 (O5): Biome over the files changed since the remote base —
 # literally the hook's first step, before the doctrine gate and everything
 # else that follows costs real time. The trailing "--" stops flag parsing
@@ -16,7 +16,7 @@ VINAYA_CHANGED_FILES="$(bun harness/kernel/gates/ring0-hooks/pre-push/pre-push-c
 if [ -n "$VINAYA_CHANGED_FILES" ]; then
   VINAYA_STEP_STARTED=$(date +%s)
   if echo "$VINAYA_CHANGED_FILES" | xargs bunx biome check --no-errors-on-unmatched --; then VINAYA_STEP=pass; else VINAYA_STEP=fail; fi
-  [ -z "$VINAYA_PROGRESS" ] || bun apps/cli/src/lib/pre-push-progress-dir.ts check lint "$VINAYA_STEP" "$VINAYA_STEP_STARTED" >/dev/null 2>&1 || true
+  [ -z "$VINAYA_PROGRESS" ] || bun harness/processes/vinaya-strict/integration/pre-push-progress-dir.ts check lint "$VINAYA_STEP" "$VINAYA_STEP_STARTED" >/dev/null 2>&1 || true
   [ "$VINAYA_STEP" = pass ] || exit 1
 fi
 # The push mode: storage (a task-branch push while no pull request is open —
@@ -31,13 +31,7 @@ export VINAYA_PUSH_MODE
 # tell a tag-only push apart from one that also carries a branch ref.
 VINAYA_PUSH_REFS="$(cat)"
 export VINAYA_PUSH_REFS
-# This repo vendors the CLI, so `npx @attalabs/vinaya` resolves to its own
-# unbuilt workspace member. Run the built file instead.
-if [ ! -f apps/cli/dist/index.js ]; then
-  echo "vinaya: apps/cli/dist/index.js is missing — run \`bun run --cwd apps/cli build\`" >&2
-  exit 1
-fi
-VINAYA_HOST=hook node apps/cli/dist/index.js check --all --local || exit 1
+VINAYA_HOST=hook bun harness/processes/vinaya-strict/checks/check.ts --all --local || exit 1
 if [ "$VINAYA_PUSH_MODE" = "storage" ]; then
   echo "vinaya pre-push: storage push — cheap checks only, no tests (no pull request is open)"
   exit 0
@@ -46,14 +40,14 @@ fi
 # says the changed files could affect.
 VINAYA_STEP_STARTED=$(date +%s)
 if bunx turbo typecheck --affected; then VINAYA_STEP=pass; else VINAYA_STEP=fail; fi
-[ -z "$VINAYA_PROGRESS" ] || bun apps/cli/src/lib/pre-push-progress-dir.ts check typecheck "$VINAYA_STEP" "$VINAYA_STEP_STARTED" >/dev/null 2>&1 || true
+[ -z "$VINAYA_PROGRESS" ] || bun harness/processes/vinaya-strict/integration/pre-push-progress-dir.ts check typecheck "$VINAYA_STEP" "$VINAYA_STEP_STARTED" >/dev/null 2>&1 || true
 [ "$VINAYA_STEP" = pass ] || exit 1
 # A version-2 run's ready push, or its driver-owned repair push on its own
 # open pull request, defers the selected tests to required current-head CI
 # when the default branch opts in (prePush.readyTests) and the run's live
 # driver marked this push. Every check above has already run; the selector,
 # the test run and the test cache below do not. Anything else is "local".
-VINAYA_READY_TESTS="$(bun apps/cli/src/lib/pre-push-ready-policy.ts)" || exit 1
+VINAYA_READY_TESTS="$(bun harness/processes/vinaya-strict/tools/pre-push-ready-policy.ts)" || exit 1
 if [ "$VINAYA_READY_TESTS" = "deferred" ]; then
   echo "vinaya pre-push: tests deferred to required CI — local checks passed; the selected tests run in the required CI check on this head"
   exit 0
@@ -77,7 +71,7 @@ if [ -f scripts/test-suites/local-run.ts ]; then
   VINAYA_PROGRESS_COPIER=""
   if [ -n "$VINAYA_PROGRESS" ] && [ -n "$VINAYA_SELECTED_TESTS" ]; then
     VINAYA_PROGRESS_TOTAL=$(printf '%s\n' "$VINAYA_SELECTED_TESTS" | grep -c .)
-    bun apps/cli/src/lib/pre-push-progress-dir.ts follow "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 &
+    bun harness/processes/vinaya-strict/integration/pre-push-progress-dir.ts follow "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 &
     VINAYA_PROGRESS_COPIER=$!
   fi
   bun scripts/test-suites/local-run.ts run --log "$VINAYA_TEST_LOG" > "$VINAYA_TEST_LOG" 2>&1
@@ -85,7 +79,7 @@ if [ -f scripts/test-suites/local-run.ts ]; then
   if [ -n "$VINAYA_PROGRESS_COPIER" ]; then
     kill "$VINAYA_PROGRESS_COPIER" 2>/dev/null
     wait "$VINAYA_PROGRESS_COPIER" 2>/dev/null
-    bun apps/cli/src/lib/pre-push-progress-dir.ts finish "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 || true
+    bun harness/processes/vinaya-strict/integration/pre-push-progress-dir.ts finish "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 || true
   fi
   cat "$VINAYA_TEST_LOG"
   rm -f "$VINAYA_TEST_LOG"
@@ -158,7 +152,7 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   VINAYA_PROGRESS_COPIER=""
   if [ -n "$VINAYA_PROGRESS" ]; then
     VINAYA_PROGRESS_TOTAL=$(printf '%s\n' "$VINAYA_SELECTED_TESTS" | grep -c .)
-    bun apps/cli/src/lib/pre-push-progress-dir.ts follow "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 &
+    bun harness/processes/vinaya-strict/integration/pre-push-progress-dir.ts follow "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 &
     VINAYA_PROGRESS_COPIER=$!
   fi
   echo "$VINAYA_SELECTED_TESTS" | xargs bun harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts run > "$VINAYA_TEST_LOG" 2>&1
@@ -168,7 +162,7 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
     # before anything reads, caches or removes the capture.
     kill "$VINAYA_PROGRESS_COPIER" 2>/dev/null
     wait "$VINAYA_PROGRESS_COPIER" 2>/dev/null
-    bun apps/cli/src/lib/pre-push-progress-dir.ts finish "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 || true
+    bun harness/processes/vinaya-strict/integration/pre-push-progress-dir.ts finish "$VINAYA_TEST_LOG" "tests-$$" "$VINAYA_PROGRESS_TOTAL" </dev/null >/dev/null 2>&1 || true
   fi
   cat "$VINAYA_TEST_LOG"
   VINAYA_TEST_ELAPSED=$(( $(date +%s) - VINAYA_TEST_STARTED ))

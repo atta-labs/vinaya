@@ -7,7 +7,7 @@ import { createVinayaLogSink } from '../../../log/log-sink-factory'
 import type { CheckSpec } from '../../../../../../kernel/gates/checks/contract'
 import { runChecks } from '../../../../../../kernel/gates/checks/runner'
 
-const FIXTURES = join(import.meta.dir, '../../../../../../../apps/cli/tests/fixtures/checks')
+const FIXTURES = join(import.meta.dir, '../../../../../../kernel/gates/checks/fixtures')
 const PASSING = join(FIXTURES, 'passing-check.ts')
 
 function fullScope(overrides: Partial<CheckSpec> & Pick<CheckSpec, 'name' | 'run'>): CheckSpec {

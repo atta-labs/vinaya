@@ -1,5 +1,6 @@
 import { prReportRefreshArgs } from '../loops/dev-review/standalone/dev-review-loop'
 import type { CliRun } from '../../../../harness/kernel/gates/checks/run-checks'
+import { programFile, programForWords } from '../tools/programs'
 
 /**
  * The line `pr report --push <pr>` prints once the live pull request body was
@@ -10,17 +11,16 @@ export const pushedEvidenceMarker = (prNumber: number): string => `Pushed AEG:EV
 
 /** What refreshing the Evidence block needs; every forge, git and CLI reach is injected. */
 export interface RefreshEvidenceDeps {
-  cliEntry: string
   worktreePath: string
   /** The open pull request's number; throws when there is none. */
   prNumber: () => number
   readHead: (worktreePath: string) => string | null
-  runCli: (cliEntry: string, cwd: string, args: readonly string[]) => CliRun
+  runCli: (program: string, cwd: string, args: readonly string[]) => CliRun
 }
 
 /**
  * Regenerates the pull request body's Evidence block for the worktree's head and
- * writes it back, as `pr report --push <pr>` in the worktree, the way the
+ * writes it back, as the `pr report` program's `--push <pr>` in the worktree, the way the
  * standalone loop's `refresh_evidence` does. A non-zero exit alone is not a
  * failure (`pr report` exits non-zero on a red gate after pushing); it throws
  * only when the push marker is missing, so nothing reached the forge.
@@ -31,7 +31,9 @@ export function refreshPrEvidence(deps: RefreshEvidenceDeps): {
   evidence: string
 } {
   const prNumber = deps.prNumber()
-  const res = deps.runCli(deps.cliEntry, deps.worktreePath, prReportRefreshArgs(prNumber))
+  const program = programForWords(prReportRefreshArgs(prNumber))
+  if (program === null) throw new Error('no program runs `pr report`')
+  const res = deps.runCli(programFile(program.name), deps.worktreePath, program.args)
   const output = `${res.stdout}${res.stderr}`
   let head = ''
   try {

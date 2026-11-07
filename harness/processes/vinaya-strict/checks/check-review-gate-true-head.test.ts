@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import { policyDigest } from '../tools/task-contract/review-input-manifest'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../apps/cli/tests/lib/process-fixture'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
 
 const BIN = join(import.meta.dir, 'bin/check-review-gate.ts')
 

@@ -251,7 +251,7 @@ export function main(argv: string[], deps: ResolveDeps): void {
  * inlined below) so a test can call the exact same production wiring
  * rather than reconstructing an equivalent object that happens to look
  * right — a hand-rebuilt deps object in a test survives a regression at
- * this line undetected. Mirrors `apps/cli/src/commands/tokens.ts`'s own
+ * this line undetected. Mirrors `harness/processes/vinaya-strict/tools/pr-report/tokens/bin/tokens.ts`'s own
  * `realDeps()` export for the same reason.
  */
 export function realDeps(): ResolveDeps {

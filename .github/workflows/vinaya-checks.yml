@@ -1,6 +1,6 @@
 # Managed by Vinaya — created by `vinaya init`. `vinaya upgrade` regenerates it; `vinaya eject` removes it.
 #
-# The deterministic gate suite. Runs every registered vinaya check over the
+# The deterministic gate suite. Runs every registered vinaya-check over the
 # pull request's diff. This is the guarantee: a PR cannot merge red.
 name: Vinaya Checks
 
@@ -166,7 +166,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          node apps/cli/dist/index.js pr snapshot --dir "$RUNNER_TEMP/vinaya-forge-snapshot"
+          bun harness/processes/vinaya-strict/tools/pull-request/bin/pr-snapshot.ts --dir "$RUNNER_TEMP/vinaya-forge-snapshot"
           DELIM="PR_BODY_$(openssl rand -hex 16)"
           {
             echo "PR_BODY<<$DELIM"
@@ -228,8 +228,8 @@ jobs:
         # check runner's exit code and report a red suite green.
         run: |
           set -o pipefail
-          node apps/cli/dist/index.js check --all --diff-only | tee vinaya-check-output.txt
-      # The job's one check name ("vinaya check --all --diff-only: failing")
+          bun harness/processes/vinaya-strict/checks/check.ts --all --diff-only | tee vinaya-check-output.txt
+      # The job's one check name ("vinaya-check --all --diff-only: failing")
       # names no check. This step puts the runner's per-check lines — which
       # check failed, and its finding messages — on the run's Summary page,
       # readable without opening the log. `!cancelled()` rather than
@@ -240,7 +240,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           {
-            echo '### vinaya check --all --diff-only'
+            echo '### vinaya-check --all --diff-only'
             echo '~~~'
             cat vinaya-check-output.txt 2>/dev/null || echo 'no check output captured (runner did not start)'
             echo '~~~'

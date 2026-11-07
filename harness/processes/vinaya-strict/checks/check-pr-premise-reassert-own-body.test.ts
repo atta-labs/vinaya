@@ -41,7 +41,7 @@ import { reassertPrBodyPremise } from '../tools/premise-reassert-logic'
  */
 describe("reassertPrBodyPremise — a real PR's own body (round 1 review, PR #473)", () => {
   const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
-  const LIVE = readFileSync(join(import.meta.dir, '../../../../apps/cli/tests/fixtures/pr-body-473.md'), 'utf8')
+  const LIVE = readFileSync(join(import.meta.dir, '../fixtures/pr-body-473.md'), 'utf8')
 
   // The pin in the captured body names the module at its former home.
   const AEG_CORE_SRC = 'packages/aeg-core/src'

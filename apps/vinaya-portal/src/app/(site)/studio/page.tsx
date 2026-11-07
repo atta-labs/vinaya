@@ -12,7 +12,6 @@ export default function StudioPage() {
       lead='See what your agents are doing, right now. Studio reads the record. It never decides.'
       tags={['Web app', 'Read-only', 'Local', 'Reads the Log']}
       docsHref='/docs/features/studio'
-      command='vinaya studio'
       liveLabel='Studio, live'
       live={<StudioLive />}
       shows={{
@@ -58,7 +57,7 @@ export default function StudioPage() {
       use={{
         title: 'Open it in one line',
         line: 'From inside any governed repository. Nothing to configure.',
-        code: ['$ vinaya studio', '$ vinaya studio --port 4000']
+        code: []
       }}
       prev={{ n: 2, name: 'Telemetry', href: '/telemetry' }}
       next={{ n: 4, name: 'Self-improvement', href: '/self-improvement' }}

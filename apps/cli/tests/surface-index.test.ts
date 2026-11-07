@@ -3,8 +3,8 @@ import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ts from 'typescript'
-import { COMMANDS } from '@attalabs/vinaya-sources'
-import type { SurfaceExemption } from '../src/lib/surface-exemption'
+import { COMMANDS } from '../../../harness/processes/vinaya-strict/integration/commands.js'
+import type { SurfaceExemption } from '../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 /**
  * Enforces the layering rule against the real source tree — no hand-maintained
@@ -16,7 +16,7 @@ import type { SurfaceExemption } from '../src/lib/surface-exemption'
  * apps/cli/src/commands/*.ts file. Calls into @attalabs/aeg-core (policy)
  * are unrestricted. The resulting set must be exactly the command's one
  * lib call, or the command's own file must export a `SURFACE_EXEMPTIONS` entry
- * (`apps/cli/src/lib/surface-exemption.ts`) naming the chokepoint that retires
+ * (`harness/processes/vinaya-strict/tools/pr-report/surface-exemption.ts`) naming the chokepoint that retires
  * it — a source-visible marker living in the file the exemption is about,
  * never a shared spec every unrelated task also has to edit. No regex over
  * source text is used to resolve calls — only the TypeScript compiler's type

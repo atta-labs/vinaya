@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -295,7 +295,7 @@ async function run(
     forge: engineForge,
     repository: 'attalabs/forge-gates'
   })
-  task.cliEntry = gateCli
+  task.checkProgram = gateCli
   task.gatePoll = {
     gatePollMaxAttempts: 4,
     gatePollIntervalMs: 0,

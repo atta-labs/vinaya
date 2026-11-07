@@ -14,8 +14,8 @@ import {
   type LineRange,
   parseHunkRanges
 } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index'
-import { loadConfig } from '../../../../apps/cli/src/lib/config'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../apps/cli/tests/lib/process-fixture'
+import { loadConfig } from './config/compose'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
 import {
   discoverWorkspaceDirs,
   discoverWorkspacePackages,
@@ -30,7 +30,7 @@ import { cliSpawnEdgeOf } from '../../../kernel/gates/ring0-hooks/pre-push/cli-s
 import { spawnEdgeOf, startedScriptsOf } from '../../../kernel/gates/ring0-hooks/pre-push/verification/spawn-inputs'
 import { scannedRootsOf } from './verification-scanner-policy'
 import { loadTypeScript } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index'
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 
 function fixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'vinaya-selector-'))
@@ -141,7 +141,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/kernel/isolation/isolation.md',
     'harness/kernel/log/log.md',
     'harness/processes/vinaya-strict/loops/dev-review/loop.md',
-    'apps/cli/src/lib/config.ts',
+    'harness/processes/vinaya-strict/integration/config/compose.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts',
@@ -167,10 +167,10 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-helpers.test.ts',
     'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-child-process.test.ts',
     'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-vinaya-policy.test.ts',
-    'harness/kernel/adapters/agents/dispatch/launch-intent.test.ts',
-    'apps/cli/tests/lib/dispatch/worker-boundary.test.ts',
+    'harness/processes/vinaya-strict/integration/adapters/agents/dispatch/launch-intent.test.ts',
+    'harness/processes/vinaya-strict/integration/isolation/worker-boundary.test.ts',
     'harness/kernel/effects/executor.test.ts',
-    'apps/cli/tests/lib/loop-log.test.ts',
+    'harness/processes/vinaya-strict/integration/log/client/loop-log.test.ts',
     'harness/processes/vinaya-strict/integration/run-paths.test.ts',
     'harness/processes/vinaya-strict/tests/lib/task-status.test.ts',
     'harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts',
@@ -179,7 +179,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/processes/vinaya-strict/integration/run-paths-only.test.ts',
     'harness/kernel/connectors/checkpoint/control-store/local.test.ts',
     'harness/kernel/connectors/checkpoint/control-store/local.ts',
-    'packages/sources/src/config-reference.ts'
+    'harness/processes/vinaya-strict/integration/config-reference.ts'
   ]
 }
 
@@ -1530,7 +1530,10 @@ describe('tests that read the repository tree are selected from what they scan (
   // and failed CI on the test that audits every real-process call site, which
   // reads the whole test tree from disk and so had no edge to what changed.
   it('adding a bare subprocess call to a test file selects the test that audits real-process call sites', () => {
-    const auditor = join(REPO_ROOT, 'apps/cli/tests/process-fixture-coverage.test.ts')
+    const auditor = join(
+      REPO_ROOT,
+      'harness/processes/vinaya-strict/integration/conformance/unit/process-fixture-coverage.test.ts'
+    )
     const changedTest = join(REPO_ROOT, 'apps/cli/tests/demo.test.ts')
     expect(selectAffectedTestFiles(REPO_ROOT, [changedTest]).selected).toContain(auditor)
     // And it is reachability through the scan rule that does it, not an import

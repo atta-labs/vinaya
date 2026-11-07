@@ -9,7 +9,7 @@
       "kind": "workspace",
       "dir": "apps/cli",
       "runner": "bun",
-      "preload": "apps/cli/tests/lib/test-env-preload.ts"
+      "preload": "harness/processes/vinaya-strict/integration/test-preload.ts"
     },
     {
       "id": "log-server",
@@ -28,20 +28,12 @@
       "preload": null
     },
     {
-      "id": "sources",
-      "owner": "@attalabs/vinaya-sources",
-      "kind": "workspace",
-      "dir": "packages/sources",
-      "runner": "bun",
-      "preload": null
-    },
-    {
       "id": "kernel",
       "owner": "@attalabs/harness",
       "kind": "workspace",
       "dir": "harness/kernel",
       "runner": "bun",
-      "preload": "apps/cli/tests/lib/test-env-preload.ts",
+      "preload": "harness/kernel/conformance/unit/test-env-preload.ts",
       "fixtureExecutables": ["harness/kernel/log/fixtures/executions.test.ts"]
     },
     {
@@ -50,7 +42,7 @@
       "kind": "workspace",
       "dir": "harness/processes/vinaya-strict",
       "runner": "bun",
-      "preload": "apps/cli/tests/lib/test-env-preload.ts"
+      "preload": "harness/processes/vinaya-strict/integration/test-preload.ts"
     },
     {
       "id": "repository",
@@ -58,7 +50,7 @@
       "kind": "repository",
       "dir": ".",
       "runner": "bun",
-      "preload": "apps/cli/tests/lib/test-env-preload.ts",
+      "preload": "harness/processes/vinaya-strict/integration/test-preload.ts",
       "tests": [
         "scripts/vinaya-checks/ui-rules.test.ts",
         "scripts/vinaya-checks/process-version-bump.test.ts",
@@ -68,7 +60,14 @@
         "scripts/test-suites/schedule.test.ts",
         "scripts/test-suites/staged-driver-move.test.ts",
         "scripts/test-suites/recorded-selection.test.ts",
-        "scripts/test-suites/read-records.test.ts"
+        "scripts/test-suites/read-records.test.ts",
+        "scripts/ci/ci-limits-diagnostic.test.ts",
+        "scripts/ci/config-probe.test.ts",
+        "scripts/ci/impact-plan.test.ts",
+        "scripts/ci/job-oracle.test.ts",
+        "scripts/test-suites/local-run.test.ts",
+        "scripts/test-suites/turbo-test-task-uncached.test.ts",
+        "scripts/release/release.test.ts"
       ]
     },
     {
@@ -77,7 +76,7 @@
       "kind": "compatibility",
       "dir": ".",
       "runner": "bun",
-      "preload": "apps/cli/tests/lib/test-env-preload.ts",
+      "preload": "harness/processes/vinaya-strict/integration/test-preload.ts",
       "tests": ["scripts/package-compat/package-compat.test.ts"]
     }
   ],
@@ -118,16 +117,7 @@
       "readers": [
         {
           "kind": "semantic",
-          "suites": [
-            "cli",
-            "log-server",
-            "portal",
-            "sources",
-            "kernel",
-            "process-vinaya",
-            "repository",
-            "package-compat"
-          ]
+          "suites": ["cli", "log-server", "portal", "kernel", "process-vinaya", "repository", "package-compat"]
         }
       ],
       "reason": "The lockfile decides every installed dependency every suite runs against; it is read as its dependency identity, so a workspace folder or local path move alone changes no installed dependency."
@@ -139,7 +129,7 @@
       "readers": [
         {
           "kind": "code",
-          "tests": ["apps/cli/tests/lib/ci-config-probe.test.ts"]
+          "tests": ["scripts/ci/config-probe.test.ts"]
         }
       ],
       "reason": "The test starts the probe as its own process, outside any import."
@@ -160,11 +150,11 @@
     {
       "id": "golden-tranche-fixture",
       "kind": "fixture",
-      "paths": ["packages/sources/tests/fixtures/golden-tranche-snapshot.md"],
+      "paths": ["harness/processes/vinaya-strict/tools/sources/fixtures/golden-tranche-snapshot.md"],
       "readers": [
         {
           "kind": "raw-bytes",
-          "tests": ["packages/sources/src/golden-forge-vs-file.test.ts"]
+          "tests": ["harness/processes/vinaya-strict/tools/sources/golden-forge-vs-file.test.ts"]
         }
       ],
       "reason": "The golden comparison reads the snapshot's bytes from disk."
@@ -188,7 +178,7 @@
       "readers": [
         {
           "kind": "raw-bytes",
-          "tests": ["apps/cli/tests/commands/pr.test.ts"]
+          "tests": ["harness/processes/vinaya-strict/tools/pull-request/bin/pr.test.ts"]
         }
       ],
       "reason": "The pr command test reads this pull-request body fixture from disk, outside any import."
@@ -201,11 +191,11 @@
         {
           "kind": "raw-bytes",
           "tests": [
-            "apps/cli/tests/ci-limits-diagnostic.test.ts",
+            "scripts/ci/ci-limits-diagnostic.test.ts",
             "apps/cli/tests/ci-shards.test.ts",
-            "apps/cli/tests/lib/ci-impact-plan.test.ts",
+            "scripts/ci/impact-plan.test.ts",
             "harness/processes/vinaya-strict/integration/log/client/log-entry-paths.test.ts",
-            "apps/cli/tests/lib/ready-ci-workflow.test.ts",
+            "harness/processes/vinaya-strict/integration/ready-ci-workflow.test.ts",
             "harness/kernel/tests/architecture.test.ts",
             "scripts/package-compat/package-compat.test.ts",
             "scripts/test-suites/inventory-check.test.ts",
@@ -257,7 +247,6 @@
         "harness/processes/vinaya-strict/artifacts/docs/nav-helpers.test.ts",
         "harness/processes/vinaya-strict/artifacts/docs/node-route.ts",
         "harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts",
-        "packages/sources/",
         "harness/processes/vinaya-strict/doctrine/manual-flow.md",
         "harness/processes/vinaya-strict/doctrine/contracts/architect-planner.md",
         "harness/processes/vinaya-strict/doctrine/contracts/archivist-tranche-archivist.md",
@@ -296,7 +285,69 @@
         "harness/processes/vinaya-strict/artifacts/templates/issue-rationale-template.md",
         "harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md",
         "harness/processes/vinaya-strict/doctrine/tranche-model.md",
-        "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts"
+        "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts",
+        "harness/processes/vinaya-strict/evals/freeze-record.ts",
+        "harness/processes/vinaya-strict/evals/harbor-grade.ts",
+        "harness/processes/vinaya-strict/evals/harbor-results.ts",
+        "harness/processes/vinaya-strict/evals/harbor-tasks.ts",
+        "harness/processes/vinaya-strict/evals/harbor-trial.ts",
+        "harness/processes/vinaya-strict/evals/step-one.ts",
+        "harness/processes/vinaya-strict/evals/vinaya-renderer.ts",
+        "harness/processes/vinaya-strict/evals/whole-loop.ts",
+        "harness/processes/vinaya-strict/evals/engine-role-step.ts",
+        "harness/kernel/evals/banned-terms.ts",
+        "harness/kernel/evals/contamination.ts",
+        "harness/kernel/evals/contracts.ts",
+        "harness/kernel/evals/estimators.ts",
+        "harness/kernel/evals/exit-check.ts",
+        "harness/kernel/evals/generic-graders.ts",
+        "harness/kernel/evals/neutral-case.ts",
+        "harness/kernel/evals/neutral-outcomes.ts",
+        "harness/kernel/evals/registry.ts",
+        "harness/kernel/evals/staging.ts",
+        "harness/processes/vinaya-strict/integration/conformance/live-matrix/dev-proof.ts",
+        "harness/processes/vinaya-strict/integration/conformance/live-matrix/result-proof.ts",
+        "harness/processes/vinaya-strict/integration/conformance/live-matrix/review-result-proof.ts",
+        "harness/processes/vinaya-strict/integration/conformance/unit/refresh-loop-baseline.ts",
+        "harness/processes/vinaya-strict/integration/push-progress-observer.ts",
+        "harness/processes/vinaya-strict/integration/pre-push-progress-dir.ts",
+        "harness/processes/vinaya-strict/tools/pre-push-ready-policy.ts",
+        "harness/processes/vinaya-strict/tools/self-host.ts",
+        "harness/processes/vinaya-strict/tools/follow-view.ts",
+        "harness/processes/vinaya-strict/tools/own-version.ts",
+        "harness/processes/vinaya-strict/tools/cli-entry.ts",
+        "harness/kernel/effects/prompt.ts",
+        "harness/kernel/gates/ring0-hooks/pre-push/push-progress.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/surface-exemption.ts",
+        "harness/processes/vinaya-strict/checks/check.ts",
+        "harness/processes/vinaya-strict/gates/bin/commit-msg.ts",
+        "harness/processes/vinaya-strict/gates/bin/waiver.ts",
+        "harness/processes/vinaya-strict/retrospecting/bin/archive.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/bin/pr-verify-evidence.ts",
+        "harness/processes/vinaya-strict/tools/pr-report/tokens/bin/tokens.ts",
+        "harness/processes/vinaya-strict/tools/pull-request/bin/pr.ts",
+        "harness/processes/vinaya-strict/tools/task-contract/bin/task-brief.ts",
+        "harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts",
+        "harness/processes/vinaya-strict/loops/dev-review/bin/review-status.ts",
+        "harness/processes/vinaya-strict/loops/dev-review/dispatch/bin/dispatch.ts",
+        "harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.ts",
+        "harness/processes/vinaya-strict/loops/dev-review/run-control/bin/task-sweep.ts",
+        "harness/processes/vinaya-strict/integration/bin/log-send.ts",
+        "harness/processes/vinaya-strict/integration/bin/log-emit.ts",
+        "harness/processes/vinaya-strict/integration/bin/log-selftest.ts",
+        "harness/processes/vinaya-strict/integration/bin/sync.ts",
+        "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts",
+        "harness/processes/vinaya-strict/tools/pull-request/bin/pr-snapshot.ts",
+        "harness/processes/vinaya-strict/integration/commands.ts",
+        "harness/processes/vinaya-strict/integration/config-reference.ts",
+        "harness/processes/vinaya-strict/tools/sources/contract.ts",
+        "harness/processes/vinaya-strict/tools/sources/forge-adapter.ts",
+        "harness/processes/vinaya-strict/tools/sources/file-adapter.ts",
+        "harness/processes/vinaya-strict/tools/sources/doctrine-file-adapter.ts",
+        "harness/processes/vinaya-strict/tools/sources/select-source.ts",
+        "harness/processes/vinaya-strict/tools/programs.ts",
+        "harness/processes/vinaya-strict/tools/program-entry.ts"
       ],
       "readers": [
         {
@@ -339,9 +390,9 @@
         {
           "kind": "raw-bytes",
           "tests": [
-            "apps/cli/tests/ci-limits-diagnostic.test.ts",
+            "scripts/ci/ci-limits-diagnostic.test.ts",
             "harness/processes/vinaya-strict/integration/log/client/log-entry-paths.test.ts",
-            "apps/cli/tests/lib/ready-ci-workflow.test.ts"
+            "harness/processes/vinaya-strict/integration/ready-ci-workflow.test.ts"
           ]
         }
       ],
@@ -350,11 +401,11 @@
     {
       "id": "ci-impact-replay",
       "kind": "fixture",
-      "paths": ["apps/cli/tests/fixtures/ci-impact/"],
+      "paths": ["scripts/ci/fixtures/ci-impact/"],
       "readers": [
         {
           "kind": "raw-bytes",
-          "tests": ["apps/cli/tests/lib/ci-impact-plan.test.ts", "apps/cli/tests/lib/ci-job-oracle.test.ts"]
+          "tests": ["scripts/ci/impact-plan.test.ts", "scripts/ci/job-oracle.test.ts"]
         }
       ],
       "reason": "The CI plan's hand-written replay table and its pinned base commit, read from disk by the job oracle and the plan's own test."
@@ -374,7 +425,7 @@
       "readers": [
         {
           "kind": "code",
-          "tests": ["apps/cli/tests/lib/ci-impact-plan.test.ts", "apps/cli/tests/lib/ci-job-oracle.test.ts"]
+          "tests": ["scripts/ci/impact-plan.test.ts", "scripts/ci/job-oracle.test.ts"]
         }
       ],
       "reason": "Both tests load the CI plan's scripts by path at run time, outside the CLI's type program, so no import edge reaches them."
@@ -386,7 +437,7 @@
       "readers": [
         {
           "kind": "raw-bytes",
-          "tests": ["apps/cli/tests/lib/ci-job-oracle.test.ts"]
+          "tests": ["scripts/ci/job-oracle.test.ts"]
         }
       ],
       "reason": "The job oracle derives each package's typecheck prerequisites from turbo's own dry-run task graph."
@@ -415,7 +466,7 @@
       "readers": [
         {
           "kind": "raw-bytes",
-          "tests": ["apps/cli/tests/lib/local-test-runner.test.ts"]
+          "tests": ["scripts/test-suites/local-run.test.ts"]
         }
       ],
       "reason": "The native local runner's test reads the committed hook and asserts where it hands a push's tests to the adapter."
@@ -458,7 +509,7 @@
           "kind": "raw-bytes",
           "tests": [
             "harness/kernel/gates/ring0-hooks/pre-push/verification/tests/selection.test.ts",
-            "apps/cli/tests/lib/verification-library.test.ts"
+            "harness/kernel/gates/ring0-hooks/pre-push/verification-portability.test.ts"
           ]
         }
       ],
@@ -467,7 +518,7 @@
     {
       "id": "process-forge-fixtures",
       "kind": "fixture",
-      "paths": ["apps/cli/tests/fixtures/forge/"],
+      "paths": ["harness/processes/vinaya-strict/fixtures/forge/", "apps/cli/tests/fixtures/forge/"],
       "readers": [
         {
           "kind": "raw-bytes",
@@ -505,13 +556,13 @@
           "kind": "code",
           "tests": [
             "harness/processes/vinaya-strict/integration/log/log-sink-factory.test.ts",
-            "apps/cli/tests/lib/log-sink-no-sync-spawn.test.ts",
-            "apps/cli/tests/lib/log-sink.test.ts",
+            "harness/processes/vinaya-strict/integration/log/log-sink-no-sync-spawn.test.ts",
+            "harness/processes/vinaya-strict/integration/log/log-sink.test.ts",
             "harness/processes/vinaya-strict/integration/log/log-destination.test.ts",
             "harness/processes/vinaya-strict/tests/integration/log/branch-issue.test.ts",
             "harness/processes/vinaya-strict/tests/integration/log/log-sink-factory.test.ts",
             "harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts",
-            "apps/cli/tests/checks/runner/cancelled.test.ts"
+            "harness/processes/vinaya-strict/integration/gates/checks/runner/cancelled.test.ts"
           ]
         }
       ],
@@ -520,7 +571,7 @@
     {
       "id": "process-dispatch-narration-fixture",
       "kind": "fixture",
-      "paths": ["apps/cli/tests/fixtures/loop-narration/codex-developer-stream.jsonl"],
+      "paths": ["harness/kernel/adapters/agents/fixtures/loop-narration/codex-developer-stream.jsonl"],
       "readers": [
         {
           "kind": "raw-bytes",
@@ -532,7 +583,10 @@
     {
       "id": "process-dispatch-credential-shaped-sources",
       "kind": "fixture",
-      "paths": ["apps/cli/tests/lib/dispatch/worker-boundary.test.ts", "harness/kernel/log/redact.test.ts"],
+      "paths": [
+        "harness/processes/vinaya-strict/integration/isolation/worker-boundary.test.ts",
+        "harness/kernel/log/redact.test.ts"
+      ],
       "readers": [
         {
           "kind": "raw-bytes",
@@ -545,14 +599,14 @@
       "id": "config-golden-corpus",
       "kind": "fixture",
       "paths": [
-        "apps/cli/tests/fixtures/config-golden/corpus.json",
-        "apps/cli/tests/fixtures/config-golden/snapshot.json"
+        "harness/processes/vinaya-strict/integration/config/fixtures/config-golden/corpus.json",
+        "harness/processes/vinaya-strict/integration/config/fixtures/config-golden/snapshot.json"
       ],
       "format": "json",
       "readers": [
         {
           "kind": "semantic",
-          "tests": ["apps/cli/tests/config-golden.test.ts"]
+          "tests": ["harness/processes/vinaya-strict/integration/config/config-golden.test.ts"]
         }
       ],
       "reason": "The configuration golden parses its corpus and its recorded snapshot from disk and compares the composed schema's answers against them, outside any import."
@@ -562,15 +616,15 @@
       "kind": "fixture",
       "paths": [
         "vinaya.config.json",
-        "apps/cli/tests/fixtures/checks/vinaya.config.json",
-        "apps/cli/tests/fixtures/checks/vinaya.config.invalid.json",
-        "apps/cli/tests/fixtures/forge/vinaya.config.custom.json"
+        "harness/processes/vinaya-strict/integration/config/fixtures/checks/vinaya.config.json",
+        "harness/processes/vinaya-strict/integration/config/fixtures/checks/vinaya.config.invalid.json",
+        "harness/processes/vinaya-strict/fixtures/forge/vinaya.config.custom.json"
       ],
       "format": "json",
       "readers": [
         {
           "kind": "semantic",
-          "tests": ["apps/cli/tests/config-golden.test.ts"]
+          "tests": ["harness/processes/vinaya-strict/integration/config/config-golden.test.ts"]
         }
       ],
       "reason": "The configuration golden lists every tracked vinaya.config*.json with git ls-files and parses each from disk. These are the files that scan finds today. The `git ls-files` call also makes the selector read the test as a whole-tree scanner, the conservative fallback that selects it on any change: a newly tracked configuration file anywhere fails the golden until its snapshot is rewritten."
@@ -1026,13 +1080,15 @@
     {
       "id": "sandbox-suite-inputs",
       "kind": "provider",
-      "file": "apps/cli/tests/sandbox-conformance/command-sources.ts",
+      "file": "harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/command-sources.ts",
       "export": "SUITE_INPUTS",
       "shape": "path-list",
       "readers": [
         {
           "kind": "raw-bytes",
-          "tests": ["apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts"]
+          "tests": [
+            "harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/sandbox-conformance.test.ts"
+          ]
         }
       ],
       "reason": "The sandbox suite skips itself unless a pull request changes one of these paths, so each is an input of that suite."

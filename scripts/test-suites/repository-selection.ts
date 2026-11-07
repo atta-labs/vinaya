@@ -38,6 +38,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { CLI_SPAWN_BINARY } from '../../harness/kernel/gates/ring0-hooks/pre-push/cli-spawn-tests.js'
 import { DEFAULT_CLI_ENTRYPOINT } from '../../harness/processes/vinaya-strict/integration/repository-verification.js'
+import { PROGRAMS } from '../../harness/processes/vinaya-strict/tools/programs.js'
 import {
   gitRepository,
   isReadRecord,
@@ -160,7 +161,11 @@ export function repositoryPolicy(
   return {
     depth,
     scanners: scannerDeclarations(repoRoot, head),
-    spawnPrograms: [{ binary: CLI_SPAWN_BINARY, entrypoint: DEFAULT_CLI_ENTRYPOINT }],
+    spawnPrograms: [
+      { binary: CLI_SPAWN_BINARY, entrypoint: DEFAULT_CLI_ENTRYPOINT },
+      // Each program a test may spawn as `bun <source file>`, as the command line once was.
+      ...[...PROGRAMS.values()].map((program) => ({ binary: 'bun', entrypoint: program.source }))
+    ],
     obligations: obligationsOf(repoRoot, head, view, buildGates),
     parsers: { toml: (text) => Bun.TOML.parse(text), 'bun-lock': bunLockParser }
   }

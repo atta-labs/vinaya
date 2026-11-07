@@ -51,7 +51,7 @@ import {
 } from '../../tools/quoted-command'
 import { resolveDoctrineRoot } from '../../tools/doctrine/resolve-doctrine'
 import { DOCTRINE_MAP, DOCTRINE_TREE } from '../../tools/doctrine/doctrine-map'
-import { loadConfig } from '../../../../../apps/cli/src/lib/config'
+import { loadConfig } from '../../integration/config/compose'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { repoRoot } from '../../../../../harness/kernel/connectors/git/diff-evidence'
 

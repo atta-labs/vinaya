@@ -16,7 +16,10 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { type ManagedManifest, VinayaConfigSchema } from '../lib/config.js'
+import {
+  type ManagedManifest,
+  VinayaConfigSchema
+} from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
 import {
   detectGitRepo,
   readCoreHooksPath,
@@ -24,7 +27,7 @@ import {
   unsetCoreHooksPath
 } from '../../../../harness/kernel/connectors/git/detect.js'
 import { applyEject, planEject, renderEjectDiff } from '../../../../harness/kernel/gates/ops.js'
-import { closeStdin, promptYesNo } from '../lib/prompt.js'
+import { closeStdin, promptYesNo } from '../../../../harness/kernel/effects/prompt.js'
 
 export type EjectDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -169,7 +172,7 @@ export async function ejectCommand(args: string[]): Promise<void> {
   process.exit(code)
 }
 
-import type { SurfaceExemption } from '../lib/surface-exemption'
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   eject: { date: '2026-09-05', callsToday: 5, retiresVia: 'sharedCommandShell' }

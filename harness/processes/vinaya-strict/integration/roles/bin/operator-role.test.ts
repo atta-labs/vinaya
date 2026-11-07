@@ -1,0 +1,52 @@
+import { describe, expect, it } from 'bun:test'
+import { existsSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
+import { doctrineCommand } from '../../../../../../apps/cli/src/commands/doctrine.js'
+import { resolveDoctrineRoot } from '../../../tools/doctrine/resolve-doctrine.js'
+
+/**
+ * O2 — role discovery exposes the Operator: `doctrine --role operator`
+ * resolves straight to the role doc, exactly as `/vinaya operator` (which
+ * shells to the same command) and the generated skill do. Nothing hardcodes
+ * the role name; adding `roles/operator.md` with `actor: agent` is what makes
+ * it discoverable.
+ */
+
+/**
+ * Capture process.stdout.write output during `fn`, returning the output.
+ * `fn` may be async: `doctrineCommand`'s `--role` branch awaits the shared
+ * role plan now, so the capture must await it before restoring stdout.
+ */
+async function captureStdout(fn: () => void | Promise<void>): Promise<string> {
+  const original = process.stdout.write.bind(process.stdout)
+  let buf = ''
+  process.stdout.write = ((chunk: string) => {
+    buf += chunk
+    return true
+  }) as typeof process.stdout.write
+  try {
+    await fn()
+  } finally {
+    process.stdout.write = original
+  }
+  return buf
+}
+
+describe('vinaya doctrine --role operator', () => {
+  it('resolves to roles/operator.md under the doctrine root', async () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --role operator')
+
+    const printed = (await captureStdout(() => doctrineCommand(['--role', 'operator']))).trim()
+    expect(isAbsolute(printed)).toBe(true)
+    expect(printed).toBe(join(root, 'executing', 'operator', 'doctrine.md'))
+    expect(existsSync(printed)).toBe(true)
+  })
+
+  it('--role operator --json emits a coherent root/entry pair', async () => {
+    const out = await captureStdout(() => doctrineCommand(['--role', 'operator', '--json']))
+    const parsed = JSON.parse(out)
+    expect(parsed.schema).toBe(1)
+    expect(parsed.data.entry).toBe(join(parsed.data.root, 'executing', 'operator', 'doctrine.md'))
+  })
+})

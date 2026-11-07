@@ -1,0 +1,112 @@
+{
+  "description": "Every tracked file of the command line, by what it is. The command line holds only the commands people type and the Planner's and Architect's commands; every plumbing step is a program of the process (harness/processes/vinaya-strict/tools/programs.ts). Paths are relative to apps/cli; an entry ending in / names every file under it. tests/cli-allowlist.test.ts fails on a file no entry classifies, a file two entries classify, a route no command class lists, and a manifest bin the program table does not name.",
+  "routes": {
+    "human-command": [
+      "help",
+      "version",
+      "quickstart",
+      "init",
+      "init product",
+      "upgrade",
+      "doctor",
+      "eject",
+      "doctrine",
+      "task run",
+      "task status",
+      "task switch",
+      "pr rule",
+      "new check",
+      "new noop-check",
+      "new role"
+    ],
+    "planner-or-architect-command": [
+      "issue create",
+      "issue edit",
+      "issue surface",
+      "issue objectives edit",
+      "brief render",
+      "milestone create",
+      "milestone edit",
+      "milestone status",
+      "milestone adopt",
+      "milestone close"
+    ]
+  },
+  "files": {
+    "human-command": [
+      "src/commands/demo.ts",
+      "src/commands/doctor.ts",
+      "src/commands/doctrine.ts",
+      "src/commands/eject.ts",
+      "src/commands/init.ts",
+      "src/commands/new-check.ts",
+      "src/commands/new-noop-check.ts",
+      "src/commands/new-role.ts",
+      "src/commands/pr-rule.ts",
+      "src/commands/quickstart.ts",
+      "src/commands/task-run.ts",
+      "src/commands/task-status.ts",
+      "src/commands/task-switch.ts",
+      "src/commands/upgrade.ts"
+    ],
+    "planner-or-architect-command": [
+      "src/commands/brief.ts",
+      "src/commands/issue-objectives.ts",
+      "src/commands/issue.ts",
+      "src/commands/milestone.ts"
+    ],
+    "command-line": [
+      "src/index.ts",
+      "src/lib/output.ts",
+      "src/lib/package-root.ts",
+      "scripts/build.ts",
+      "scripts/bundle-doctrine.ts",
+      "scripts/verify-published-lifecycle.ts",
+      "templates/"
+    ],
+    "package-metadata": [
+      "package.json",
+      "ownership.json",
+      "tsconfig.json",
+      "bunfig.toml",
+      "README.md",
+      "CHANGELOG.md",
+      "LICENSE"
+    ],
+    "specs": ["specs/"],
+    "ci-shard-lists": ["tests/ci-shards/"],
+    "tests-and-fixtures": [
+      "scripts/bundle-doctrine.test.ts",
+      "src/commands/doctor-metering-io.test.ts",
+      "src/commands/quickstart-metering-io.test.ts",
+      "tests/ci-shards.test.ts",
+      "tests/cli-allowlist.test.ts",
+      "tests/commands-router-coverage.test.ts",
+      "tests/commands/",
+      "tests/conformance/packed-push-progress.test.ts",
+      "tests/demo.test.ts",
+      "tests/doctor.test.ts",
+      "tests/doctrine.test.ts",
+      "tests/fixture-env.ts",
+      "tests/fixtures/forge/",
+      "tests/import-boundary.test.ts",
+      "tests/init.test.ts",
+      "tests/lib/command-loading.test.ts",
+      "tests/milestone.test.ts",
+      "tests/new-check.test.ts",
+      "tests/new-noop-check.test.ts",
+      "tests/new-role.test.ts",
+      "tests/package-root.test.ts",
+      "tests/placement.test.ts",
+      "tests/platform-independence.test.ts",
+      "tests/quickstart.test.ts",
+      "tests/serial-lock.test.ts",
+      "tests/serial-lock.ts",
+      "tests/surface-index.test.ts",
+      "tests/surface-spec-exports.test.ts",
+      "tests/tracked-hooks.test.ts",
+      "tests/upgrade.test.ts",
+      "tests/verify-published-lifecycle-coverage.test.ts"
+    ]
+  }
+}

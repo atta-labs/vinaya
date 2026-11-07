@@ -1,9 +1,10 @@
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { recordedHandoff } from './handoff-fakes'
 import { keepLogLocal, QUIET_FORGE_GATES, useRuntimeDir } from './round-fakes'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync, writeSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { programSourceIn } from '../tools/programs'
 import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import { defaultControlStoreDeps } from '../../../kernel/connectors/checkpoint/control-store/index'
 import type { RunControl, SpawnedProcessLike } from '@atta/executor-agent-spawn'
@@ -178,7 +179,7 @@ export function agent(
 export const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', ['-c', 'user.name=r', '-c', 'user.email=r@r', ...args], { cwd, encoding: 'utf8' }).trim()
 
-// The stand-in CLI at `<repo>/apps/cli/src/index.ts`: records each call's argv, cwd and PR environment, and
+// The stand-in checks program at its source path under `<repo>`: records each call's argv, cwd and PR environment, and
 // exits with the next code in `gate-codes.json` (the last repeats).
 const FAKE_CLI = `
 const { appendFileSync, readFileSync, writeFileSync } = require('node:fs')
@@ -248,9 +249,10 @@ function updateLedger(runtimeDir: string, change: (ledger: ForgeLedger) => void)
 export function createWorld(gates: number[] = [0]): World {
   const root = realpathSync(fixtureDir('replay-repo-'))
   const runtimeDir = realpathSync(fixtureDir('replay-runtime-'))
-  const cliDir = join(root, 'apps', 'cli', 'src')
+  const checkProgram = programSourceIn(root, 'check')
+  const cliDir = dirname(checkProgram)
   mkdirSync(cliDir, { recursive: true })
-  writeFileSync(join(cliDir, 'index.ts'), FAKE_CLI.replace('__DIR__', runtimeDir))
+  writeFileSync(checkProgram, FAKE_CLI.replace('__DIR__', runtimeDir))
   writeFileSync(join(runtimeDir, 'gate-codes.json'), JSON.stringify(gates))
   writeFileSync(join(root, 'docs.md'), 'old paragraph\n')
   git(root, 'init', '-q', '-b', 'main')

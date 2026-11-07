@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkPinnedFileImportersCovered } from '../issue-validation'
 import { readPinnedFileImporters, readSurfaceForcedSet, renderSurfaceForcedSet } from './forge-write'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../apps/cli/tests/lib/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
 
 const CLI_ENTRY = join(import.meta.dir, '../../../../../../apps/cli/src/index.ts')
 

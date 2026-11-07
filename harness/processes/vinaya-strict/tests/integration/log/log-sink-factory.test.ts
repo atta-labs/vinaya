@@ -9,7 +9,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../apps/cli/tests/lib/process-fixture.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
 import { createVinayaLogSink, resolveVinayaLogAppendPath } from '../../../integration/log/log-sink-factory.js'
 
 const DISPATCHED = {
@@ -80,7 +80,7 @@ describe('the process Log sink factory', () => {
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
-      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\n` +
+      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'harness', 'processes', 'vinaya-strict', 'integration', 'config', 'compose.ts'))})).installVinayaConfigProvider()\n` +
         `import { installVinayaLogSinkFactory } from ${JSON.stringify(factory)}\n` +
         `import { drainLogSink, log } from ${JSON.stringify(logSink)}\n` +
         'installVinayaLogSinkFactory()\n' +

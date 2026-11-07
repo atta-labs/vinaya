@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -48,9 +48,9 @@ for (const vendor of ['claude', 'codex'] as const)
       expect(run.published).toEqual([
         { round: 1, prNumber: PR, expectedHead: git(run.worktree, 'rev-parse', 'HEAD'), heldFound: true }
       ])
-      // The checks run the repository's CLI entry (never this process's argv[1]), in the worktree, with the PR env.
+      // The checks run the repository's checks program (never this process's argv[1]), in the worktree, with the PR env.
       expect(run.cliCalls).toEqual([
-        { args: ['check', '--all'], cwd: run.worktree, pr: String(PR), branch: `task/issue-${TASK}` }
+        { args: ['--all'], cwd: run.worktree, pr: String(PR), branch: `task/issue-${TASK}` }
       ])
       // Grant placeholders are resolved in the generated settings.
       const developerSettings =

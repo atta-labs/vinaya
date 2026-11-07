@@ -97,7 +97,7 @@ import {
   type TurnWriteAttribution
 } from '../../../kernel/isolation/worker-boundary'
 import { vinayaToolGrantPolicy, vinayaWorkerBoundaryPolicies } from '../integration/policies/vinaya-policies'
-import { configPath } from '../../../../apps/cli/src/lib/config'
+import { configPath } from '../integration/config/compose'
 import {
   appendSourceDeliveryReceipt,
   injectedDeliveryReceipts,
@@ -172,7 +172,7 @@ import {
   readPauseState
 } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { formatAgentLine } from '../../../kernel/adapters/agents/agent-line'
-import { formatStageLine, type Stage, type StageChange } from '../../../../apps/cli/src/lib/follow-view'
+import { formatStageLine, type Stage, type StageChange } from '../tools/follow-view'
 import {
   appendLoopLogLine,
   appendRoleLine,
@@ -181,7 +181,8 @@ import {
   narrateDriverEvent
 } from '../../../kernel/log/client/loop-log'
 import { type AgentStreamRenderer, createAgentStreamRenderer } from '../../../kernel/adapters/agents/agent-stream'
-import { CLI_ENTRY_ENV } from '../../../../apps/cli/src/lib/cli-entry'
+import { CLI_ENTRY_ENV } from '../tools/cli-entry'
+import { programSourceIn } from '../tools/programs'
 import { pollMergeableState } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import { developerTurnResultJsonSchema } from '../executing/developer/developer-turn-result'
 import {
@@ -197,7 +198,7 @@ import {
   type DispatchUsageReading,
   type UsageLimit
 } from '../loops/dev-review/dispatch/dispatch'
-import { loadConfig } from '../../../../apps/cli/src/lib/config'
+import { loadConfig } from '../integration/config/compose'
 import { installVinayaConfigProvider } from '../integration/config/compose'
 import { crossRunnerRefusal, recordTaskRunner } from '../loops/dev-review/run-control/task-run-engine'
 import {
@@ -292,10 +293,7 @@ import {
 import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../loops/dev-review/v2/v2-actions'
 import { runCli } from '../../../../harness/kernel/gates/checks/run-checks'
 import { checkReadyBaseline } from '../loops/dev-review/v2/ready-baseline'
-import {
-  readTrustedReadyTestsPolicy,
-  readTrustedRequiredCiPolicy
-} from '../../../../apps/cli/src/lib/pre-push-ready-policy'
+import { readTrustedReadyTestsPolicy, readTrustedRequiredCiPolicy } from '../tools/pre-push-ready-policy'
 import {
   endReadyDeferral,
   endStoragePushes,
@@ -2502,8 +2500,7 @@ export function engineLiveDevToolsContext(input: {
 export const cliEntryOf = (repoRoot: string): string => join(repoRoot, 'apps', 'cli', 'src', 'index.ts')
 
 /** The dev-tools bridge program under `repoRoot`: the shim runs it directly. */
-export const devBridgeProgramOf = (repoRoot: string): string =>
-  join(repoRoot, 'harness', 'kernel', 'tools', 'host', 'dev-tools-bridge.ts')
+export const devBridgeProgramOf = (repoRoot: string): string => programSourceIn(repoRoot, 'dev-bridge')
 
 /** The forge (and forge-backed git) reads and writes the live wiring makes; a replay replaces them. */
 export interface EngineForge {
@@ -2739,7 +2736,7 @@ export async function liveTaskInput(
     frozenBrief: () => forge.fetchFrozenBrief(args.task),
     stageReviewInput: (n) => reviewInput.stage(n),
     runtimeDir,
-    cliEntry: cliEntryOf(lookups.cliRoot ?? repoRoot),
+    checkProgram: programSourceIn(lookups.cliRoot ?? repoRoot, 'check'),
     branch,
     issueNumber: args.task,
     worktreePath,
@@ -3145,7 +3142,7 @@ async function runLive(
         sink.log(storagePushLogEvent(loopId, taskInput.reviewRound(), taskInput.branch, head) as never),
       // The round's own local checks: what `run_checks` runs while no pull request is open.
       runLocalChecks: (env) => {
-        const res = runCli(taskInput.cliEntry, taskInput.worktreePath, ['check', '--all', '--local'], env)
+        const res = runCli(taskInput.checkProgram, taskInput.worktreePath, ['--all', '--local'], env)
         return { passed: res.status === 0, output: `${res.stdout}${res.stderr}` }
       },
       branch: taskInput.branch,

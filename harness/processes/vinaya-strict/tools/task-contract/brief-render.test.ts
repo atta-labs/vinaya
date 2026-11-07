@@ -769,7 +769,7 @@ describe('renderBrief', () => {
   // consumer-tests rule. Before this fix the trigger read `facts.surfaceFiles`'
   // per-file `packageName` alone, which stays empty here, so the renderer
   // emitted no consumer-tests line at all: exactly this Issue's own live
-  // write, before its Boundary named `packages/sources/src/file-adapter.test.ts`
+  // write, before its Boundary named `harness/processes/vinaya-strict/tools/sources/file-adapter.test.ts`
   // by path. Reproduced with that path removed.
   it('a shared package named only as a bare Surface `in:` directory still triggers consumer-tests, with a test file under only one of its two consumers', () => {
     const result = renderBrief(

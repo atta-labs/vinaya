@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { COMMANDS } from '@attalabs/vinaya-sources'
+import { COMMANDS } from '../../commands.js'
 import {
   CLI_OPERATION,
   cliOperationEvent,
@@ -12,7 +12,7 @@ import {
   recordCliOperationAtExit,
   UNKNOWN_CLI_TARGET
 } from '../../../../../kernel/log/client/cli-operation-log.js'
-import { isolatedConfigFixture, spawnSyncBudgeted } from '../../../../../../apps/cli/tests/lib/process-fixture.js'
+import { isolatedConfigFixture, spawnSyncBudgeted } from '../../../../../kernel/conformance/unit/process-fixture.js'
 
 type LogEventInput = NonNullable<ReturnType<typeof cliOperationEvent>>
 

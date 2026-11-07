@@ -53,7 +53,7 @@ import { resolveProseRules, rulesOfGroup } from '../../tools/prose-rules'
 import { scanRetiredVocabulary, type VocabSourceFile } from '../retired-vocabulary'
 import { hasDoctrineEntry, resolveDoctrineRoot } from '../../tools/doctrine/resolve-doctrine'
 import { DOCTRINE_MAP, DOCTRINE_TREE } from '../../tools/doctrine/doctrine-map'
-import { loadConfigChecked } from '../../../../../apps/cli/src/lib/config'
+import { loadConfigChecked } from '../../integration/config/compose'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { findingsInThisDiff, repoRoot } from '../../../../../harness/kernel/connectors/git/diff-evidence'
 

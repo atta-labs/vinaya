@@ -14,8 +14,8 @@ import {
   type LineRange,
   parseHunkRanges
 } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index'
-import { loadConfig } from '../../../../apps/cli/src/lib/config'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../apps/cli/tests/lib/process-fixture'
+import { loadConfig } from './config/compose'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
 import {
   discoverWorkspaceDirs,
   discoverWorkspacePackages,
@@ -30,7 +30,7 @@ import { cliSpawnEdgeOf } from '../../../kernel/gates/ring0-hooks/pre-push/cli-s
 import { spawnEdgeOf, startedScriptsOf } from '../../../kernel/gates/ring0-hooks/pre-push/verification/spawn-inputs'
 import { scannedRootsOf } from './verification-scanner-policy'
 import { loadTypeScript } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index'
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 
 function fixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'vinaya-selector-'))
@@ -141,7 +141,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/kernel/isolation/isolation.md',
     'harness/kernel/log/log.md',
     'harness/processes/vinaya-strict/loops/dev-review/loop.md',
-    'apps/cli/src/lib/config.ts',
+    'harness/processes/vinaya-strict/integration/config/compose.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts',
     'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts',
@@ -167,10 +167,10 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-helpers.test.ts',
     'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-child-process.test.ts',
     'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-vinaya-policy.test.ts',
-    'harness/kernel/adapters/agents/dispatch/launch-intent.test.ts',
-    'apps/cli/tests/lib/dispatch/worker-boundary.test.ts',
+    'harness/processes/vinaya-strict/integration/adapters/agents/dispatch/launch-intent.test.ts',
+    'harness/processes/vinaya-strict/integration/isolation/worker-boundary.test.ts',
     'harness/kernel/effects/executor.test.ts',
-    'apps/cli/tests/lib/loop-log.test.ts',
+    'harness/processes/vinaya-strict/integration/log/client/loop-log.test.ts',
     'harness/processes/vinaya-strict/integration/run-paths.test.ts',
     'harness/processes/vinaya-strict/tests/lib/task-status.test.ts',
     'harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts',
@@ -179,7 +179,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/processes/vinaya-strict/integration/run-paths-only.test.ts',
     'harness/kernel/connectors/checkpoint/control-store/local.test.ts',
     'harness/kernel/connectors/checkpoint/control-store/local.ts',
-    'packages/sources/src/config-reference.ts'
+    'harness/processes/vinaya-strict/integration/config-reference.ts'
   ]
 }
 
@@ -407,7 +407,7 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
     // specifier — the exact class of edge that was missing outright.
     const sample = [
       'apps/cli/src/commands/demo.ts',
-      'apps/cli/src/lib/config.ts',
+      'harness/processes/vinaya-strict/integration/config/compose.ts',
       'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts',
       'harness/processes/vinaya-strict/integration/repository-verification.ts',
       'harness/kernel/connectors/git/remote-base.ts',
@@ -534,7 +534,7 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
 
 describe('Issue #702, O2 — the exact regression: a log-sink.ts-only change now selects check.test.ts', () => {
   const LOG_SINK = join(REPO_ROOT, 'harness/kernel/log/log-sink.ts')
-  const CHECK_TEST = join(REPO_ROOT, 'apps/cli/tests/commands/check.test.ts')
+  const CHECK_TEST = join(REPO_ROOT, 'harness/processes/vinaya-strict/checks/check.test.ts')
 
   it('check.test.ts imports neither log-sink.ts nor anything that does, and spawns the built CLI directly', () => {
     const source = readFileSync(CHECK_TEST, 'utf8')
@@ -672,7 +672,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // suite therefore belongs in a log-sink change's selection. A ceiling raised
 // with no such importer to point at is the regression this describes.
 //
-// Raised 21 → 22: `apps/cli/tests/lib/gate-cutovers.test.ts` newly imports
+// Raised 21 → 22: `harness/processes/vinaya-strict/integration/gate-cutovers.test.ts` newly imports
 // `config.ts` directly (to cover `resolveGateCutovers`), so a `config.ts`
 // change now selects that one extra suite. The rule working, not a regression.
 //
@@ -691,7 +691,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // custom event through a real sink) directly, so a change to either now
 // selects that one extra suite. Same rule.
 //
-// Raised 25 → 26 (`log-portable-v1` 3): `apps/cli/tests/commands/log-emit.test.ts`
+// Raised 25 → 26 (`log-portable-v1` 3): `harness/processes/vinaya-strict/integration/bin/log-emit.test.ts`
 // imports `log-sink.ts` directly (`createLogSink`, to prove `vinaya log emit`
 // attributes a process outside Vinaya's own `VINAYA_WORK_REF`/`VINAYA_FLOW`
 // against a real, isolated sink), so a `log-sink.ts` change now selects that
@@ -716,7 +716,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // directly — one new file, so a change to either now selects that one extra
 // suite, never two. Same rule.
 //
-// Raised 29 → 30: `apps/cli/tests/archive.test.ts` newly imports `config.ts`
+// Raised 29 → 30: `harness/processes/vinaya-strict/retrospecting/bin/archive.test.ts` newly imports `config.ts`
 // directly (`PrincipalsUnresolvedError`, to build the refusal its injected
 // Principal list throws) — one new file, so a change to `config.ts` now
 // selects that one extra suite, never two. Same rule.
@@ -731,11 +731,11 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // this repository's own configured runner) — one new file, so a change to
 // `config.ts` now selects that one extra suite, never two. Same rule.
 //
-// Raised 35 → 36: `apps/cli/tests/lib/config-local-override.test.ts` tests the local
+// Raised 35 → 36: `harness/processes/vinaya-strict/integration/config/config-local-override.test.ts` tests the local
 // pacing override resolver in `config.ts` — one new file, so a change to
 // `config.ts` now selects that one extra suite, never two. Same rule.
 //
-// Raised 36 → 37: `apps/cli/tests/config-golden.test.ts` imports `config.ts`
+// Raised 36 → 37: `harness/processes/vinaya-strict/integration/config/config-golden.test.ts` imports `config.ts`
 // directly to compare every exported resolver against its recorded snapshot —
 // one new file, so a change to `config.ts` now selects that one extra suite,
 // never two. Same rule.
@@ -750,7 +750,7 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
   it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 39 files', () => {
     const changed = [
       join(REPO_ROOT, 'harness/kernel/log/log-sink.ts'),
-      join(REPO_ROOT, 'apps/cli/src/lib/config.ts'),
+      join(REPO_ROOT, 'harness/processes/vinaya-strict/integration/config/compose.ts'),
       join(REPO_ROOT, 'harness/kernel/run-paths.ts')
     ]
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })

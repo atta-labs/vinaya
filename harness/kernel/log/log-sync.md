@@ -166,9 +166,9 @@ A source answers "what is stored after this cursor?" once. A **follower** (`LogF
 
 **The summary.** `SyncSummary` reports the run's pages read, rows stored, duplicates seen, edits, deletions, gaps and quarantined lines, whether the run completed (reached the source's end without a failure) and whether more is available, and the failure when one ended it early. Because the cache keeps no deletion record, the summary is where a deletion is reported.
 
-## `vinaya sync`
+## `vinaya-sync`
 
-The one command a person types to fill, resume and rebuild the local cache. Its whole flow is one library function, `runLogSync` (`harness/kernel/log/client/log-sync.ts`) — the command file (`apps/cli/src/commands/sync.ts`) only parses `--rebuild`/`--json` and calls it (`surface.md`: a command calls exactly one effects-layer function).
+The one command a person types to fill, resume and rebuild the local cache. Its whole flow is one library function, `runLogSync` (`harness/kernel/log/client/log-sync.ts`) — the command file (`harness/processes/vinaya-strict/integration/bin/sync.ts`) only parses `--rebuild`/`--json` and calls it (`surface.md`: a command calls exactly one effects-layer function).
 
 **Flow.** Resolves this repository's log destination exactly as the sink itself does (`resolveLogDestinationFrom`, attended for a human at a terminal, trust-anchor-gated for an unattended caller — never forced either way, unlike `log selftest`'s forced-unattended proof run). A folder destination is read through the folder source; a server destination is read through the server source, with `logs.readHeaders` (never the ingest `logs.headers`) substituted from the environment. Opens the durable cache under this repository's runtime directory, runs `syncSource` within its bounds, and prints the run's summary: pages read, rows stored, duplicates, edits, deletions, gaps, quarantined lines, and — for a server destination only — the server's own lost-event diagnostic (`rejected()`). `--json` prints the whole result as one enveloped JSON object; otherwise it prints as text on standard output, with a configuration problem or a stopped-early failure on standard error.
 
@@ -182,7 +182,7 @@ The one command a person types to fill, resume and rebuild the local cache. Its 
 
 <!-- AEG:CLAIM: harness/kernel/log/client/log-sync.ts contains:export async function runLogSync(opts: SyncRunOptions, deps: LogSyncDeps = realLogSyncDeps()): Promise<number> { -->
 <!-- AEG:CLAIM: harness/kernel/log/client/log-sync.ts contains:export const LOGS_CACHE_DIR_NAME = 'logs-cache' -->
-<!-- AEG:CLAIM: apps/cli/src/commands/sync.ts contains:export async function syncCommand(args: string[]): Promise<number> { -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/integration/bin/sync.ts contains:export async function syncCommand(args: string[]): Promise<number> { -->
 
 ## The questions
 
@@ -283,11 +283,11 @@ A category with no complete interval is unknown, with the reason — nothing rec
 
 A person checks the ten questions and the confidence comparison the way `harness/kernel/log/client/log-readers-integration.test.ts` does, with nothing faked except — when the check is automated — the network:
 
-1. Fill a cache: `vinaya sync` against a real folder or server destination, into `<runtime directory>/logs-cache/cache.sqlite` ("`vinaya sync`", above).
+1. Fill a cache: `vinaya-sync` against a real folder or server destination, into `<runtime directory>/logs-cache/cache.sqlite` ("`vinaya-sync`", above).
 2. Open that same file as a `LogCache` (`createSqliteCache` from a directory holding `cache.sqlite`) and read its `dataset()`. Every entry in `QUESTIONS` (`harness/kernel/telemetry/questions/index.ts`) is a `(dataset) => Answer` function keyed `q1` through `q10` plus `confidence`; running all eleven over that one dataset is the whole check — no other setup, and no separate code path for a real cache versus the in-memory one a question's own test already proves it against.
 3. Read each answer's own `coverage` first — `rowsRead`, `lowTrustLeftOut`, `gaps`, `quarantined`, and each `unknowns` entry's reason — before trusting any figure beside it: a figure with no matching coverage caveat is exactly as complete as the dataset it was read from, and one the dataset could not state reads unknown, with the reason, never a zero or a guess.
 
-Rebuilding (`vinaya sync --rebuild`) deletes `cache.sqlite` and its `-wal` and `-shm` side files and syncs again from the beginning of what the destination still retains. A line the destination no longer holds — rotated out of a folder's single backup slot, or dropped by a server's own retention — cannot come back: the rebuilt dataset is simply smaller by that line, every answer it fed states the smaller, honest count, and the first post-rebuild sync reports the loss as a gap when the source itself can tell a rotation from an ordinary read ("`--rebuild`", above). Deleting the cache and re-syncing an **unmodified** destination, by contrast, must reproduce every answer exactly — that invariant, and the rebuilt-and-shrunk case beside it, are both proven alongside O1 and O2 below.
+Rebuilding (`vinaya-sync --rebuild`) deletes `cache.sqlite` and its `-wal` and `-shm` side files and syncs again from the beginning of what the destination still retains. A line the destination no longer holds — rotated out of a folder's single backup slot, or dropped by a server's own retention — cannot come back: the rebuilt dataset is simply smaller by that line, every answer it fed states the smaller, honest count, and the first post-rebuild sync reports the loss as a gap when the source itself can tell a rotation from an ordinary read ("`--rebuild`", above). Deleting the cache and re-syncing an **unmodified** destination, by contrast, must reproduce every answer exactly — that invariant, and the rebuilt-and-shrunk case beside it, are both proven alongside O1 and O2 below.
 
 The one proof that the folder source, the server source, the durable cache and every entry in `QUESTIONS` agree with each other and with the in-memory fixtures is `harness/kernel/log/client/log-readers-integration.test.ts` (`log-readers-v1` 12, O1–O5): it writes the fixture executions (`harness/kernel/log/fixtures`) to a real log folder and serves the same lines from a fake server implementing the log server's own wire contract (`apps/log-server/specs/server.md` § 5), syncs each into a real SQLite cache with `runLogSync`, and asserts every `QUESTIONS` entry answers identically across the fixtures and both real caches — then deletes a cache file and syncs again, with and without a source line removed first. The fake server is what lets this run with no network, on CI, every time; reading a real, deployed log server this same way — this repository's own — is the Principal's own step (that task's test plan), never an automated one, since a test is never pointed at a live server it does not control.
 

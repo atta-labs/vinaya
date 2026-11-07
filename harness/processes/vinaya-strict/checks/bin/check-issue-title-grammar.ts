@@ -32,7 +32,7 @@ function main(): void {
       severity: 'error',
       message,
       agent_recovery_prompt:
-        'Rewrite the Issue title to match the forge-title grammar (`Type: description` / `Type(scope): description`, or `[tranche] id — description`), then re-run `vinaya check issue-title-grammar`.'
+        'Rewrite the Issue title to match the forge-title grammar (`Type: description` / `Type(scope): description`, or `[tranche] id — description`), then re-run `vinaya-check issue-title-grammar`.'
     })
   }
   process.exit(1)

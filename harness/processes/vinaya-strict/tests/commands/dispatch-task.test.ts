@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSyncBudgeted } from '../../../../../apps/cli/tests/lib/process-fixture'
+import { spawnSyncBudgeted } from '../../../../kernel/conformance/unit/process-fixture'
 import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
 
 /**
@@ -64,7 +64,7 @@ None — no externally-normative source governs this task.
 
 ## Planner's rationale
 
-**Boundary** — In: \`apps/cli/src/lib/prompt.ts\`, a stand-in real file (issue-657, O3: the render now refuses when the Surface resolves to a tracked file but the Boundary names none of them). Out: everything else, including every importer of it outside \`apps/cli/src/lib\`, named as \`apps/cli/src/commands\` and \`apps/cli/tests\`, and the Engine runner callers under \`harness/processes/vinaya-strict/bin\` and \`harness/processes/vinaya-strict/tests\` and the standalone driver under \`harness/processes/vinaya-strict/loops/dev-review/standalone\` (all three are in the Surface).
+**Boundary** — In: \`harness/kernel/effects/prompt.ts\`, a stand-in real file (issue-657, O3: the render now refuses when the Surface resolves to a tracked file but the Boundary names none of them). Out: everything else, including every importer of it outside \`apps/cli/src/lib\`, named as \`apps/cli/src/commands\` and \`apps/cli/tests\`, and the Engine runner callers under \`harness/processes/vinaya-strict/bin\` and \`harness/processes/vinaya-strict/tests\` and the standalone driver under \`harness/processes/vinaya-strict/loops/dev-review/standalone\` (all three are in the Surface).
 
 - \`reader-resolvable-prose\`: the fixture edits no source comments, so it satisfies this check.
 - \`doc-claims\`: the fixture adds no documented claim, so it satisfies this check.

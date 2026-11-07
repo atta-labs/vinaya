@@ -145,7 +145,7 @@ const PROCESS_LOOPS_FOLDER = 'processes/vinaya-strict/loops/'
 const VINAYA_HOME_ALLOWED: ReadonlyArray<{ file: string; why: string }> = [
   { file: PATH_FUNCTION, why: 'the path function itself — it resolves the default runtime directory under the home' },
   {
-    file: 'apps/cli/src/lib/config.ts',
+    file: 'harness/processes/vinaya-strict/integration/config/compose.ts',
     why: 'defines the home, and the global config and trust-cache files that are not run files'
   },
   {

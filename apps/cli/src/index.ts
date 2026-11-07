@@ -5,14 +5,15 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { printJson } from '../../../harness/kernel/effects/envelope.js'
-import { installVinayaCheckRegistry, installVinayaLogSinkFactory } from './commands/dispatch.js'
+import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry.js'
+import { installVinayaLogSinkFactory } from '../../../harness/processes/vinaya-strict/integration/log/log-sink-factory.js'
 import { ensureGhOnPath } from '../../../harness/kernel/adapters/code-host/github/gh-path.js'
 import { recordCliOperationAtExit } from '../../../harness/kernel/log/client/cli-operation-log.js'
 import { logSync } from '../../../harness/kernel/log/log-sink.js'
 import { printHelp } from './lib/output.js'
 import { packageRoot } from './lib/package-root.js'
-import { resolveAuthorRepoSourceEntry } from './lib/self-host.js'
-import { installVinayaConfigProvider } from './lib/config.js'
+import { resolveAuthorRepoSourceEntry } from '../../../harness/processes/vinaya-strict/tools/self-host.js'
+import { installVinayaConfigProvider } from '../../../harness/processes/vinaya-strict/integration/config/compose.js'
 
 // Each command's module loads only when that command runs, so a run, and a test that runs one command, reads
 // no other command's code.
@@ -107,11 +108,6 @@ try {
       }
       break
     }
-    case 'studio': {
-      const code = await (await import('./commands/studio.js')).runStudio(process.cwd(), args)
-      process.exit(code)
-      break
-    }
     case 'init': {
       const [subcommand, ...rest] = args
       if (subcommand === 'product') {
@@ -137,25 +133,6 @@ try {
       await (await import('./commands/upgrade.js')).upgradeCommand(args)
       break
     }
-    case 'check': {
-      await (await import('./commands/check.js')).checkCommand(args)
-      break
-    }
-    case 'commit-msg': {
-      ;(await import('./commands/commit-msg.js')).commitMsgCommand(args)
-      break
-    }
-    case 'archive': {
-      const [subcommand, ...rest] = args
-      if (subcommand === 'tranche') {
-        await (await import('./commands/archive.js')).archiveTrancheCommand(rest)
-      } else if (subcommand === 'tranches') {
-        await (await import('./commands/archive.js')).archiveTranchesCommand(rest)
-      } else {
-        await (await import('./commands/archive.js')).archiveCommand(args)
-      }
-      break
-    }
     case 'new': {
       const [subcommand, ...rest] = args
       if (subcommand === 'check') {
@@ -164,12 +141,8 @@ try {
         ;(await import('./commands/new-noop-check.js')).newNoopCheckCommand(rest)
       } else if (subcommand === 'role') {
         ;(await import('./commands/new-role.js')).newRoleCommand(rest)
-      } else if (subcommand === 'adr') {
-        ;(await import('./commands/new-adr.js')).newAdrCommand(rest)
       } else {
-        console.error(
-          `Unknown 'new' subcommand: ${subcommand ?? '(none)'} (expected 'check', 'noop-check', 'role', or 'adr')`
-        )
+        console.error(`Unknown 'new' subcommand: ${subcommand ?? '(none)'} (expected 'check', 'noop-check', or 'role')`)
         process.exit(2)
       }
       break
@@ -186,22 +159,10 @@ try {
     }
     case 'pr': {
       const [subcommand, ...rest] = args
-      if (subcommand === 'create') {
-        await (await import('./commands/pr.js')).prCreateCommand(rest)
-      } else if (subcommand === 'edit') {
-        await (await import('./commands/pr.js')).prEditCommand(rest)
-      } else if (subcommand === 'report') {
-        await (await import('./commands/pr-report.js')).prReportCommand(rest)
-      } else if (subcommand === 'verify-evidence') {
-        await (await import('./commands/pr-verify-evidence.js')).prVerifyEvidenceCommand(rest)
-      } else if (subcommand === 'rule') {
+      if (subcommand === 'rule') {
         ;(await import('./commands/pr-rule.js')).prRuleCommand(rest)
-      } else if (subcommand === 'snapshot') {
-        ;(await import('./commands/pr-snapshot.js')).prSnapshotCommand(rest)
       } else {
-        console.error(
-          `Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create', 'edit', 'report', 'verify-evidence', 'rule', or 'snapshot')`
-        )
+        console.error(`Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'rule')`)
         process.exit(2)
       }
       break
@@ -212,7 +173,7 @@ try {
       // level: the router folds the second argv token into one literal so
       // `issue objectives edit` reads as a single `subcommand === '<value>'`
       // branch, the same shape every other multi-word command already uses
-      // (`new noop-check`, `pr verify-evidence`) — never a second switch.
+      // (`new noop-check`, `task switch`) — never a second switch.
       const subcommand = rawSubcommand === 'objectives' && rest[0] === 'edit' ? 'objectives edit' : rawSubcommand
       const passthrough = subcommand === 'objectives edit' ? rest.slice(1) : rest
       if (subcommand === 'create') {
@@ -233,40 +194,14 @@ try {
     }
     case 'task': {
       const [subcommand, ...rest] = args
-      if (subcommand === 'dispatch') {
-        await (await import('./commands/task.js')).taskDispatchCommand(rest)
-      } else if (subcommand === 'brief') {
-        await (await import('./commands/task.js')).taskBriefCommand(rest)
-      } else if (subcommand === 'run') {
+      if (subcommand === 'run') {
         await (await import('./commands/task-run.js')).taskRunCommand(rest)
       } else if (subcommand === 'switch') {
         await (await import('./commands/task-switch.js')).taskSwitchCommand(rest)
       } else if (subcommand === 'status') {
         await (await import('./commands/task-status.js')).taskStatusCommand(rest)
-      } else if (subcommand === 'sweep') {
-        await (await import('./commands/task-sweep.js')).taskSweepCommand(rest)
       } else {
-        console.error(
-          `Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'dispatch', 'brief', 'run', 'switch', 'status', or 'sweep')`
-        )
-        process.exit(2)
-      }
-      break
-    }
-    case 'task-tools': {
-      const [subcommand, ...rest] = args
-      if (subcommand === 'serve') {
-        await (await import('./commands/task-tools.js')).taskToolsServeCommand(rest)
-      } else if (subcommand === 'dev-proof') {
-        await (await import('./commands/task-tools.js')).taskToolsDevProofCommand(rest)
-      } else if (subcommand === 'result-proof') {
-        await (await import('./commands/task-tools.js')).taskToolsResultProofCommand(rest)
-      } else if (subcommand === 'review-result-proof') {
-        await (await import('./commands/task-tools.js')).taskToolsReviewResultProofCommand(rest)
-      } else {
-        console.error(
-          `Unknown 'task-tools' subcommand: ${subcommand ?? '(none)'} (expected 'serve', 'dev-proof', 'result-proof' or 'review-result-proof')`
-        )
+        console.error(`Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'run', 'switch', or 'status')`)
         process.exit(2)
       }
       break
@@ -291,68 +226,8 @@ try {
       }
       break
     }
-    case 'review': {
-      const [subcommand, ...rest] = args
-      if (subcommand === 'post') {
-        await (await import('./commands/review-post.js')).reviewPostCommand(rest)
-      } else if (subcommand === 'status') {
-        await (await import('./commands/review-status.js')).reviewStatusCommand(rest)
-      } else {
-        console.error(`Unknown 'review' subcommand: ${subcommand ?? '(none)'} (expected post/status)`)
-        process.exit(2)
-      }
-      break
-    }
-    case 'demo': {
-      const [subcommand, ...rest] = args
-      if (subcommand === 'break') {
-        await (await import('./commands/demo.js')).demoBreakCommand(rest)
-      } else {
-        console.error(`Unknown 'demo' subcommand: ${subcommand ?? '(none)'} (expected 'break')`)
-        process.exit(2)
-      }
-      break
-    }
-    case 'waiver': {
-      await (await import('./commands/waiver.js')).waiverCommand(args)
-      break
-    }
-    case 'release': {
-      await (await import('./commands/release.js')).releaseCommand(args)
-      break
-    }
     case 'quickstart': {
       await (await import('./commands/quickstart.js')).quickstartCommand(args)
-      break
-    }
-    case 'tokens': {
-      ;(await import('./commands/tokens.js')).tokensCommand(args)
-      break
-    }
-    case 'dispatch': {
-      await (await import('./commands/dispatch.js')).dispatchCommand(args)
-      break
-    }
-    case 'dev-review-loop': {
-      await (await import('./commands/dev-review-loop.js')).devReviewLoopCommand(args)
-      break
-    }
-    case 'sync': {
-      process.exit(await (await import('./commands/sync.js')).syncCommand(args))
-      break
-    }
-    case 'log': {
-      const [subcommand, ...rest] = args
-      if (subcommand === 'send') {
-        await (await import('./commands/log-send.js')).logSendCommand(rest)
-      } else if (subcommand === 'selftest') {
-        process.exit(await (await import('./commands/log-selftest.js')).logSelftestCommand(rest))
-      } else if (subcommand === 'emit') {
-        process.exit(await (await import('./commands/log-emit.js')).logEmitCommand(rest))
-      } else {
-        console.error(`Unknown 'log' subcommand: ${subcommand ?? '(none)'} (expected 'selftest', 'send' or 'emit')`)
-        process.exit(2)
-      }
       break
     }
     default:

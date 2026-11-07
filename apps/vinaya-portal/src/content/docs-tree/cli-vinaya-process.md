@@ -20,12 +20,12 @@ Three commands start the agent roles. Run them inside Claude Code or Codex.
 
 See [Working with it](/docs/process/working-with-it) for when to run each.
 
-`vinaya studio` and `vinaya pr rule` are harness commands; see [Harness commands](/docs/start/cli).
+`vinaya pr rule` is a harness command; see [Harness commands](/docs/start/cli).
 
 ## What's next
 
 ```cards
 - [Working with it](/docs/process/working-with-it) How you use these day to day
 - [Pauses and rulings](/docs/process/executing/pauses-and-rulings) When `vinaya pr rule` is needed
-- [Studio](/docs/features/studio) What `vinaya studio` shows
+- [Studio](/docs/features/studio) What Studio shows
 ```

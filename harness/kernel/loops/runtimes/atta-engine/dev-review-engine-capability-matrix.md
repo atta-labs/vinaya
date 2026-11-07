@@ -10,11 +10,11 @@ provider-specific core, changes no production behavior, and designs no fix
 for a gap it names. The governing contract is the Linear "Tech spec —
 Developer-review on Atta Engine", revision 17. The workflow it judges is
 the review-loop specification; the behaviors it traces
-to are `apps/cli/specs/dev-review-invariants.md`'s register; the
+to are `harness/processes/vinaya-strict/loops/dev-review/dev-review-invariants.md`'s register; the
 confinement facts come from `harness/kernel/isolation/isolation.md`.
 
 The data lives in
-`apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json`. Its
+`harness/kernel/loops/runtimes/atta-engine/fixtures/dev-review-engine-capability-matrix.json`. Its
 conformance test,
 `harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.test.ts`,
 keeps the data mechanically complete. The structured matrix and that test
@@ -23,7 +23,7 @@ do not hold.
 
 ## The decision
 
-<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json contains:"id": "packed-public-runtime+injected-executor", -->
+<!-- AEG:CLAIM: harness/kernel/loops/runtimes/atta-engine/fixtures/dev-review-engine-capability-matrix.json contains:"id": "packed-public-runtime+injected-executor", -->
 Vinaya consumes Atta's packed public runtime through its injected-executor
 seam: the `@atta/agents`, `@atta/engine` and `@atta/executor-agent-spawn`
 artifacts as built and packed at Atta commit
@@ -154,14 +154,14 @@ guarantees and named defects it bears on, or says why it has none.
 
 ## Declared differences in the adapter conformance suite
 
-<!-- AEG:CLAIM: apps/cli/tests/conformance/adapter-contract.ts contains:export const ADAPTER_CONTRACT_CASES: readonly AdapterContractCase[] = [ -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.ts contains:export const ADAPTER_CONTRACT_CASES: readonly AdapterContractCase[] = [ -->
 The shared adapter-conformance suite,
-`apps/cli/tests/conformance/adapter-contract.ts`, runs one case list on
+`harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.ts`, runs one case list on
 Claude Code and on Codex. Where the two adapters meet a case differently,
 the difference is declared here, one row per case and adapter, citing the
 matrix row that records it. **Supported** reads `no` for a difference the
 adapter does not cover: the case still runs against it, and the row's named
-gap stays open. `apps/cli/tests/conformance/adapter-contract.test.ts` keeps
+gap stays open. `harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.test.ts` keeps
 this table equal to the suite's own declarations, and the live run's report
 lists the rows for the adapter it ran.
 

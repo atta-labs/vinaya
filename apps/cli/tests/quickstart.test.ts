@@ -322,7 +322,6 @@ describe('vinaya quickstart', () => {
     // in the next-step hints.
     expect(out).not.toContain('✗ Commit refused')
     expect(git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/vinaya/demo-break-*'])).toBe('')
-    expect(out).toContain('vinaya demo break')
 
     // push never ran, and its own hint survives.
     expect(out).not.toContain('git push failed')

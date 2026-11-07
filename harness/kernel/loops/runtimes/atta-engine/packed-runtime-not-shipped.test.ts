@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
 const CLI = join(import.meta.dir, '../../../../../apps/cli')
-const FIXTURES = 'tests/fixtures/atta-engine'
+const FIXTURES = '../../harness/kernel/loops/runtimes/atta-engine/fixtures'
 const SOURCE = /\.(?:ts|tsx|js|jsx|mjs|cjs|mts|cts)$/
 const TRANSPILERS = {
   ts: new Bun.Transpiler({ loader: 'ts' }),

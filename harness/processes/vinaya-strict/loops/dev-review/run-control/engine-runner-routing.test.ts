@@ -30,6 +30,7 @@ import {
 import { createTaskCancelHandler } from './cancel'
 import { readEscalationPacket } from './read'
 import { createTaskResumeHandler, resumeContinuation } from './resume'
+import { programInvocation } from '../../../tools/programs'
 import { claimResume, liveResumeDeps } from '../../../bin/run-lifecycle'
 import { parseResumeArgs, refuseAnotherRunnersPause } from '../../../bin/run-engine'
 import { runEngineScenario, type EngineScenarioRun } from '../../../tests/dev-review-engine-loop-adapter.js'
@@ -41,7 +42,7 @@ import {
   type LoopWorld,
   type RoleOutcome
 } from '../../../tests/standalone/lib/dev-review-loop-harness'
-import { stripVinayaEnv } from '../../../../../../apps/cli/tests/lib/process-fixture'
+import { stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
 
 const roots: string[] = []
 const children: number[] = []
@@ -282,10 +283,9 @@ describe('task_escalation_read', () => {
 describe('task_resume', () => {
   it('continues each runner’s halted run on that runner, through its pull request or else its task', () => {
     const target = { issue: 9, branch: 'task/x/9', agent: 'codex' as const, model: 'm1' }
-    expect(resumeContinuation({ ...target, pr: 70 }, 'standalone', 'vinaya')).toEqual({
-      command: 'vinaya',
-      argv: ['dev-review-loop', '--resume', '70', '--agent', 'codex']
-    })
+    expect(resumeContinuation({ ...target, pr: 70 }, 'standalone', 'vinaya')).toEqual(
+      programInvocation('dev-review-loop', ['--resume', '70', '--agent', 'codex'])
+    )
     expect(resumeContinuation({ ...target, pr: null }, 'standalone', 'vinaya').argv.slice(0, 2)).toEqual([
       'task',
       'run'
@@ -347,7 +347,7 @@ describe('task_resume', () => {
     const standalone = await pausedWorld()
     const { launched } = await resumeThroughOperator(standalone.runtimeDir, standalone.task)
     expect(launched).toEqual([
-      { command: 'vinaya', argv: ['dev-review-loop', '--resume', String(standalone.prNumber), '--agent', 'claude'] }
+      programInvocation('dev-review-loop', ['--resume', String(standalone.prNumber), '--agent', 'claude'])
     ])
   }, 120_000)
 

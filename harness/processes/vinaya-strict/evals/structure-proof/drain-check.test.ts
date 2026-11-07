@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'

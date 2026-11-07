@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { programCommandLine } from '../../tools/programs.js'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -44,7 +45,7 @@ function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 function runCli(args: string[], env: Record<string, string | undefined>): CliResult {
   try {
-    const stdout = execFileSync('bun', [INDEX, ...args], {
+    const stdout = execFileSync('bun', programCommandLine(args) ?? [INDEX, ...args], {
       cwd: CLI_ROOT,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],

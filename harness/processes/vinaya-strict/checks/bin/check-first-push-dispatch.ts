@@ -40,9 +40,9 @@ import {
 import { checkFirstPushDispatchGate, parseTaskBranch, type DispatchReadinessFact } from '../first-push-dispatch-gate'
 import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
 import { resolvePriorTrancheArchival } from '../../tools/prior-tranche-archival'
-import { createForgeSource } from '@attalabs/vinaya-sources'
+import { createForgeSource } from '../../tools/sources/forge-adapter.js'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
-import { resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'
+import { resolveTrustedPrincipals } from '../../integration/config/compose'
 import { resolveEdge } from '../../tools/edge-resolve'
 import { warnOnUnreadPrincipals } from '../principals-refusal'
 
@@ -222,14 +222,14 @@ async function main(): Promise<void> {
       readiness = 'UNKNOWN'
       warn(
         `the forge could not say whether \`${branch}\` already has a pull request (the \`gh pr list\` read failed), so dispatch readiness was not checked and the push is allowed.`,
-        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check first-push-dispatch`.'
+        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya-check first-push-dispatch`.'
       )
     } else {
       readiness = await classifyReadiness(parsed.tranche, parsed.taskId)
       if (readiness === 'UNKNOWN' && !principalWarned) {
         warn(
           `dispatch readiness for \`${branch}\` is unknown (the forge could not be read or the repository could not be resolved), so the push is allowed unchecked.`,
-          'Confirm `gh auth status` passes, the forge is reachable and `origin` names the GitHub repository, then re-run `vinaya check first-push-dispatch`.'
+          'Confirm `gh auth status` passes, the forge is reachable and `origin` names the GitHub repository, then re-run `vinaya-check first-push-dispatch`.'
         )
       }
     }
@@ -244,7 +244,7 @@ async function main(): Promise<void> {
       severity: 'error',
       message: result.reason,
       agent_recovery_prompt:
-        "Resolve the named dispatch blocker before this task branch's first push, then re-run `vinaya check first-push-dispatch`."
+        "Resolve the named dispatch blocker before this task branch's first push, then re-run `vinaya-check first-push-dispatch`."
     })
     process.exit(1)
   }

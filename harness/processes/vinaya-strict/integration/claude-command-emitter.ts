@@ -49,7 +49,7 @@
 // behavior is confirmed.
 
 import type { CreateFileOp } from '../../../kernel/gates/ops.js'
-import type { VendoredVinaya } from '../../../../apps/cli/src/lib/self-host.js'
+import type { VendoredVinaya } from '../tools/self-host.js'
 
 export const CLAUDE_COMMAND_GROUP = 'Claude Code command (.claude/commands/)'
 

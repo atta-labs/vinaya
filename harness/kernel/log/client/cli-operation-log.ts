@@ -19,7 +19,7 @@ export const UNKNOWN_CLI_TARGET = 'unknown'
 
 /**
  * Every command's first word, as the published command catalog
- * (`packages/sources/src/commands.ts`) names them. `help` also answers a bare
+ * (`harness/processes/vinaya-strict/integration/commands.ts`) names them. `help` also answers a bare
  * `vinaya`, `--help` and `-h`. The test over the catalog fails when a command is
  * added there and not here.
  */

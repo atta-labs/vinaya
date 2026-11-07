@@ -268,7 +268,7 @@ export const LOG_LINES: readonly TerminalLine[] = [
   { time: '11:07', mark: '›', text: 'PR #893 opened' },
   { time: '11:08', mark: '›', text: 'code review + security dispatched' },
   { time: '11:09', mark: '✓', text: 'review approved · security pass' },
-  { time: '11:10', mark: '›', text: 'vinaya check running' },
+  { time: '11:10', mark: '›', text: 'vinaya-check running' },
   { time: '11:11', mark: '✓', text: 'vi passed · every rule green' },
   { time: '11:12', mark: '✓', text: 'PR #893 merged' },
   { time: '11:13', mark: '☞', text: 'checkout-v2 landed on main' }

@@ -21,7 +21,7 @@
 // silent or automatic.
 
 import type { CreateFileOp } from '../../../kernel/gates/ops.js'
-import type { VendoredVinaya } from '../../../../apps/cli/src/lib/self-host.js'
+import type { VendoredVinaya } from '../tools/self-host.js'
 
 export const GEMINI_COMMAND_GROUP = 'Gemini CLI command (.gemini/commands/)'
 

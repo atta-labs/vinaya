@@ -183,7 +183,7 @@ export type SelectionOptions = {
    * file that reads the repository-root `vinaya.config.json`. Under
    * `depth: 'one'` a change to that root file selects only the CLI tests whose
    * own direct edges reach this module, never the CLI's whole suite. Defaults
-   * to this repository's real loader, `apps/cli/src/lib/config.ts`;
+   * to this repository's real loader, `harness/processes/vinaya-strict/integration/config/compose.ts`;
    * overridable so a test can point it at a throwaway fixture's own loader,
    * the same way `cliEntrypoint` is.
    */
@@ -219,7 +219,7 @@ export type SelectionOptions = {
 export const DEFAULT_CLI_ENTRYPOINT = 'apps/cli/src/index.ts'
 
 /** This repository's real CLI configuration loader, repo-root-relative — {@link SelectionOptions.configLoader}'s default. */
-export const DEFAULT_CONFIG_LOADER = 'apps/cli/src/lib/config.ts'
+export const DEFAULT_CONFIG_LOADER = 'harness/processes/vinaya-strict/integration/config/compose.ts'
 
 /**
  * The repository-root configuration file whose change selects the CLI's

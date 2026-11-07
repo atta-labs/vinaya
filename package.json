@@ -17,7 +17,6 @@
     "test": "turbo test",
     "verify-docs": "bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts",
     "clean": "turbo clean",
-    "dev:vinaya-studio": "bun apps/cli/src/index.ts studio --port 3208",
     "changeset": "changeset",
     "changeset:version": "changeset version",
     "changeset:publish": "changeset publish",
@@ -31,8 +30,8 @@
     "typescript": "^5.7.0"
   },
   "overrides": {
-    "@atta/agents": "file:apps/cli/tests/fixtures/atta-engine/atta-agents-0.1.0.tgz",
-    "@atta/engine": "file:apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
-    "@atta/models": "file:apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz"
+    "@atta/agents": "file:harness/kernel/loops/runtimes/atta-engine/fixtures/atta-agents-0.1.0.tgz",
+    "@atta/engine": "file:harness/kernel/loops/runtimes/atta-engine/fixtures/atta-engine-0.0.1.tgz",
+    "@atta/models": "file:harness/kernel/loops/runtimes/atta-engine/fixtures/atta-models-0.1.0.tgz"
   }
 }

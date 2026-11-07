@@ -34,12 +34,12 @@ export { underDeclaredRoot } from '../../../kernel/gates/ring0-hooks/pre-push/ve
  */
 export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   {
-    test: 'apps/cli/tests/conformance/dev-review-engine-architecture-exit.test.ts',
+    test: 'harness/processes/vinaya-strict/integration/conformance/unit/dev-review-engine-architecture-exit.test.ts',
     roots: [
-      'apps/cli/tests/fixtures/dev-review-engine-scenarios.json',
-      'apps/cli/tests/fixtures/dev-review-architecture-invariants.json',
-      'apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json',
-      'apps/cli/src/commands/dev-review-loop.ts',
+      'harness/processes/vinaya-strict/fixtures/dev-review-engine-scenarios.json',
+      'harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json',
+      'harness/kernel/loops/runtimes/atta-engine/fixtures/dev-review-engine-capability-matrix.json',
+      'harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.ts',
       'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
       'harness/processes/',
       'harness/processes/vinaya-strict/tools/dev-review-policy/'
@@ -47,11 +47,11 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'listed-files'
   },
   {
-    test: 'apps/cli/tests/conformance/adapter-contract.test.ts',
+    test: 'harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.test.ts',
     roots: [
       'harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md',
-      'apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json',
-      'apps/cli/tests/eval/registry/modules.json',
+      'harness/kernel/loops/runtimes/atta-engine/fixtures/dev-review-engine-capability-matrix.json',
+      'harness/processes/vinaya-strict/evals/suites/registry/modules.json',
       'AGENTS.md',
       'CLAUDE.md'
     ],
@@ -60,15 +60,19 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   { test: 'apps/cli/tests/ci-shards.test.ts', roots: ['apps/cli/'], trigger: 'tree-shape' },
   // Lists every tracked `vinaya.config*.json` with `git ls-files`: a configuration file added or removed anywhere
   // changes its corpus. The files' contents are its declared inventory inputs.
-  { test: 'apps/cli/tests/config-golden.test.ts', roots: ['.'], trigger: 'tree-shape' },
+  {
+    test: 'harness/processes/vinaya-strict/integration/config/config-golden.test.ts',
+    roots: ['.'],
+    trigger: 'tree-shape'
+  },
   {
     test: 'harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts',
     roots: [
-      'apps/cli/src/commands/dev-review-loop.ts',
+      'harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.ts',
       'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
       'harness/processes/',
       'harness/processes/vinaya-strict/tools/dev-review-policy/',
-      'apps/cli/tests/commands/dev-review-loop.test.ts',
+      'harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.test.ts',
       'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop',
       'harness/processes/vinaya-strict/tests/lib/dev-review-loop'
     ],
@@ -81,7 +85,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   },
   { test: 'apps/cli/tests/platform-independence.test.ts', roots: ['apps/cli/tests/'], trigger: 'content' },
   {
-    test: 'apps/cli/tests/process-fixture-coverage.test.ts',
+    test: 'harness/processes/vinaya-strict/integration/conformance/unit/process-fixture-coverage.test.ts',
     roots: ['apps/cli/tests/', 'harness/processes/'],
     trigger: 'process-start'
   },
@@ -93,7 +97,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   },
   { test: 'harness/processes/vinaya-strict/checks/bin-permissions.test.ts', roots: ['.'], trigger: 'content' },
   {
-    test: 'apps/cli/tests/checks/registry-gates.test.ts',
+    test: 'harness/processes/vinaya-strict/checks/registry-gates.test.ts',
     roots: [
       'apps/cli/src/',
       'harness/processes/vinaya-strict/tools/task-contract/brief-validation.ts',
@@ -107,26 +111,30 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: ['harness/processes/vinaya-strict/checks/bin/'],
     trigger: 'content'
   },
-  { test: 'apps/cli/tests/commands/sync.test.ts', roots: ['apps/cli/src/commands/sync.ts'], trigger: 'content' },
-  { test: 'apps/cli/tests/eval/not-shipped.test.ts', roots: ['.'], trigger: 'content' },
   {
-    test: 'apps/cli/tests/eval/registry.test.ts',
+    test: 'harness/processes/vinaya-strict/integration/bin/sync.test.ts',
+    roots: ['harness/processes/vinaya-strict/integration/bin/sync.ts'],
+    trigger: 'content'
+  },
+  { test: 'harness/processes/vinaya-strict/evals/suites/not-shipped.test.ts', roots: ['.'], trigger: 'content' },
+  {
+    test: 'harness/processes/vinaya-strict/evals/suites/registry.test.ts',
     roots: [
       'apps/cli/tests/eval/registry/',
-      'apps/cli/specs/dev-review-evaluation-program.md',
-      'apps/cli/specs/dev-review-evaluation-program.provenance.json'
+      'harness/kernel/evals/dev-review-evaluation-program.md',
+      'harness/kernel/evals/dev-review-evaluation-program.provenance.json'
     ],
     trigger: 'listed-files'
   },
   {
-    test: 'apps/cli/tests/eval/registry-typed-sources.test.ts',
+    test: 'harness/processes/vinaya-strict/evals/suites/registry-typed-sources.test.ts',
     roots: [
       'apps/cli/tests/eval/registry/',
-      'apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json',
-      'apps/cli/tests/fixtures/dev-review-architecture-invariants.json',
+      'harness/kernel/loops/runtimes/atta-engine/fixtures/dev-review-engine-capability-matrix.json',
+      'harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json',
       'harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md',
       'harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md',
-      'apps/cli/specs/dev-review-invariants.md'
+      'harness/processes/vinaya-strict/loops/dev-review/dev-review-invariants.md'
     ],
     trigger: 'listed-files'
   },
@@ -147,13 +155,17 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'content'
   },
   {
-    test: 'apps/cli/tests/lib/log-sink-no-sync-spawn.test.ts',
+    test: 'harness/processes/vinaya-strict/integration/log/log-sink-no-sync-spawn.test.ts',
     roots: ['harness/kernel/log/log-sink.ts'],
     trigger: 'content'
   },
-  { test: 'apps/cli/tests/lib/no-log-forge-writes.test.ts', roots: ['.'], trigger: 'content' },
   {
-    test: 'apps/cli/tests/lib/verification-library.test.ts',
+    test: 'harness/processes/vinaya-strict/integration/log/client/no-log-forge-writes.test.ts',
+    roots: ['.'],
+    trigger: 'content'
+  },
+  {
+    test: 'harness/kernel/gates/ring0-hooks/pre-push/verification-portability.test.ts',
     roots: [
       'harness/kernel/gates/ring0-hooks/pre-push/verification/',
       'apps/cli/LICENSE',
@@ -164,7 +176,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'listed-files'
   },
   {
-    test: 'apps/cli/tests/log-destination-isolation.test.ts',
+    test: 'harness/processes/vinaya-strict/integration/log/client/log-destination-isolation.test.ts',
     roots: ['apps/cli/src/', 'apps/cli/tests/'],
     trigger: 'content'
   },

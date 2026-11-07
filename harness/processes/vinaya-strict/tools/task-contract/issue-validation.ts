@@ -181,7 +181,7 @@ export function checkEdgeIdsWholeNumbers(body: string): IssueSectionResult {
  * **This is now the DEFAULT parameter value of `checkIssueObjectives`, not the
  * value the gate reads.** The cutover is an optional `vinaya.config.json` key
  * (`gateCutovers.objectivesSinceIssue`, resolved by `resolveGateCutovers` in
- * `apps/cli/src/lib/config.ts`) passed into this gate as `sinceIssue`; an
+ * `harness/processes/vinaya-strict/integration/config/compose.ts`) passed into this gate as `sinceIssue`; an
  * absent key resolves to `null` (NO cutover — the gate applies from Issue 1,
  * O1), never to this constant. This repository restates this number as its own
  * `gateCutovers.objectivesSinceIssue` so its behaviour is unchanged (O2). The
@@ -759,7 +759,7 @@ export function parseIssueTestPlan(body: string): ParsedIssueSection<IssueTestPl
       ok: false,
       errors: wholeSuiteLines.map(
         (line) =>
-          `\`${line}\` runs a test runner with no test-file argument — a \`## Test plan\` line must name one or more \`*.test.*\`/\`*.spec.*\` files (e.g. \`bun test apps/cli/tests/lib/dev-review-loop.test.ts\`) or a \`vinaya check\` command; a bare \`bun test\`, \`bun test\` on a directory, any \`bunx turbo test\` form, or \`vitest run\` on a package can run the whole suite, which the pre-push hook already covers on its own.`
+          `\`${line}\` runs a test runner with no test-file argument — a \`## Test plan\` line must name one or more \`*.test.*\`/\`*.spec.*\` files (e.g. \`bun test apps/cli/tests/lib/dev-review-loop.test.ts\`) or a \`vinaya-check\` command; a bare \`bun test\`, \`bun test\` on a directory, any \`bunx turbo test\` form, or \`vitest run\` on a package can run the whole suite, which the pre-push hook already covers on its own.`
       )
     }
   }
@@ -3353,8 +3353,8 @@ const CI_SHARD_DIR = 'apps/cli/tests/ci-shards'
 const CI_SHARD_PROBE = `${CI_SHARD_DIR}/shard-1.txt`
 
 /** The loop invariant map's fixture and spec, which the map's own architecture test requires every loop module and test file to be mapped in. */
-const LOOP_INVARIANT_FIXTURE = 'apps/cli/tests/fixtures/dev-review-architecture-invariants.json'
-const LOOP_INVARIANT_SPEC = 'apps/cli/specs/dev-review-invariants.md'
+const LOOP_INVARIANT_FIXTURE = 'harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json'
+const LOOP_INVARIANT_SPEC = 'harness/processes/vinaya-strict/loops/dev-review/dev-review-invariants.md'
 
 /** A CLI test file — a `*.test.ts` under `apps/cli`, never under `node_modules` or `dist` (`isCliTestFile`'s own rule). */
 function isCliTestPath(path: string): boolean {
@@ -3366,8 +3366,12 @@ function isCliTestPath(path: string): boolean {
 /** A standalone review-loop module or loop test file, located the way the invariant map's own test discovers them (by directory listing). */
 function isLoopSurfacePath(path: string): boolean {
   if (!path.endsWith('.ts')) return false
-  if (path === 'apps/cli/src/commands/dev-review-loop.ts' || path === 'apps/cli/src/lib/dev-review-loop.ts') return true
-  if (path === 'apps/cli/tests/commands/dev-review-loop.test.ts') return true
+  if (
+    path === 'harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.ts' ||
+    path === 'apps/cli/src/lib/dev-review-loop.ts'
+  )
+    return true
+  if (path === 'harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.test.ts') return true
   const direct = (dir: string): boolean => path.startsWith(`${dir}/`) && !path.slice(dir.length + 1).includes('/')
   if (direct('apps/cli/src/lib/dev-review-loop') || direct('harness/processes/vinaya-strict/tools/dev-review-policy'))
     return true

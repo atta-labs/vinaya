@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pushedEvidenceMarker, refreshPrEvidence, type RefreshEvidenceDeps } from '../executing/refresh-evidence'
+import { programFile } from '../tools/programs'
 
 const deps = (stdout: string, status: number, calls: unknown[] = []): RefreshEvidenceDeps => ({
-  cliEntry: '/repo/apps/cli/src/index.ts',
   worktreePath: '/wt',
   prNumber: () => 42,
   readHead: () => 'abc123',
@@ -15,10 +15,10 @@ const deps = (stdout: string, status: number, calls: unknown[] = []): RefreshEvi
 })
 
 describe('refreshPrEvidence', () => {
-  test('runs pr report --push <pr> from the named CLI entry in the worktree', () => {
+  test('runs the pr report program with --push <pr> in the worktree', () => {
     const calls: unknown[] = []
     const result = refreshPrEvidence(deps('Pushed AEG:EVIDENCE block to PR 42\n', 0, calls))
-    expect(calls).toEqual([['/repo/apps/cli/src/index.ts', '/wt', ['pr', 'report', '--push', '42']]])
+    expect(calls).toEqual([[programFile('pr-report'), '/wt', ['--push', '42']]])
     expect(result).toEqual({ head: 'abc123', checksPassed: true, evidence: 'Pushed AEG:EVIDENCE block to PR 42\nerr' })
   })
 
@@ -35,7 +35,7 @@ describe('refreshPrEvidence', () => {
 
 describe('the push marker', () => {
   test("is the line the CLI's pr report source prints after a push", () => {
-    const source = readFileSync(resolve(import.meta.dir, '../../../../apps/cli/src/commands/pr-report.ts'), 'utf8')
+    const source = readFileSync(resolve(import.meta.dir, '../tools/pr-report/bin/pr-report.ts'), 'utf8')
     const printed = [...source.matchAll(/process\.stdout\.write\(`(Pushed AEG:EVIDENCE[^`]*?)\$\{(\w+)\}\\n`\)/g)]
     expect(printed.length).toBe(1)
     const [, prefix] = printed[0] as RegExpMatchArray

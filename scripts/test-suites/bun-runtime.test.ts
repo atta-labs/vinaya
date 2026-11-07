@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { join } from 'node:path'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../apps/cli/tests/lib/process-fixture'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../../harness/kernel/conformance/unit/process-fixture'
 
 test('a synchronous child is reaped after GC finalizes earlier piped streams', async () => {
   // Run out of process and asynchronously: a broken Bun cannot freeze this test's own event loop.

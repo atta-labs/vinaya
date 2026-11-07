@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
 import { prReportRefreshArgs } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../../apps/cli/tests/lib/process-fixture.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture.js'
 
 const INDEX = join(
   dirname(fileURLToPath(import.meta.url)),

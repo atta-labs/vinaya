@@ -26,7 +26,7 @@
 #
 # `synchronize` is what runs `evidence-fresh` on every push, so a push
 # with no following body edit turns its check-run red instead of producing
-# no run at all; `edited` re-runs it on the body edit `vinaya pr report
+# no run at all; `edited` re-runs it on the body edit `vinaya-pr-report
 # --push` makes after that push, so a body naming the pushed head turns the
 # same check-run green with no manual rerun.
 #
@@ -55,7 +55,7 @@ on:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
 
 # One run per pull request COMMIT, always. Several `types:` above can fire in the
-# same instant — `vinaya pr create` opens the PR and applies its tranche
+# same instant — `vinaya-pr create` opens the PR and applies its tranche
 # label immediately after, so `opened` and `labeled` arrive together and
 # GitHub starts TWO runs of this workflow. Both then report under the same
 # check name, and the merge box counts both: one can go green while its twin
@@ -215,7 +215,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          node apps/cli/dist/index.js pr snapshot --dir "$RUNNER_TEMP/vinaya-forge-snapshot"
+          bun harness/processes/vinaya-strict/tools/pull-request/bin/pr-snapshot.ts --dir "$RUNNER_TEMP/vinaya-forge-snapshot"
       - name: Review gate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -228,7 +228,7 @@ jobs:
           # forge for them again. Set on this step only.
           VINAYA_FORGE_SNAPSHOT_DIR: ${{ runner.temp }}/vinaya-forge-snapshot
           PR_BODY_FILE: ${{ runner.temp }}/vinaya-forge-snapshot/body.md
-        run: node apps/cli/dist/index.js check review-gate
+        run: bun harness/processes/vinaya-strict/checks/check.ts review-gate
       - name: Record the GraphQL budget at job end
         if: ${{ !cancelled() }}
         env:
@@ -347,7 +347,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          node apps/cli/dist/index.js pr snapshot --dir "$RUNNER_TEMP/vinaya-forge-snapshot"
+          bun harness/processes/vinaya-strict/tools/pull-request/bin/pr-snapshot.ts --dir "$RUNNER_TEMP/vinaya-forge-snapshot"
           DELIM="PR_BODY_$(openssl rand -hex 16)"
           {
             echo "PR_BODY<<$DELIM"
@@ -386,7 +386,7 @@ jobs:
           # forge for them again. Set on this step only.
           VINAYA_FORGE_SNAPSHOT_DIR: ${{ runner.temp }}/vinaya-forge-snapshot
           PR_BODY_FILE: ${{ runner.temp }}/vinaya-forge-snapshot/body.md
-        run: node apps/cli/dist/index.js check evidence-fresh
+        run: bun harness/processes/vinaya-strict/checks/check.ts evidence-fresh
       - name: Record the GraphQL budget at job end
         if: ${{ !cancelled() }}
         env:

@@ -27,7 +27,7 @@ import { execFileSync } from 'node:child_process'
 import { fetchTaskIssueRefs } from '../forge/fetch-task-issue-refs'
 import { parseTaskBranchIdentity } from '../../tools/task-contract/task-branch-identity'
 import { checkClosesNTopology, extractClosesReferences, type TrancheFile } from '../coherence-checks'
-import { createForgeSource } from '@attalabs/vinaya-sources'
+import { createForgeSource } from '../../tools/sources/forge-adapter.js'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 // No chdir — see check-doc-coverage.ts's rationale; the runner's spawn
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
       severity: 'error',
       message: result.message ?? 'closes-n check failed',
       agent_recovery_prompt:
-        'Fix the branch name or the `Closes #N` reference in the PR body so they name the same task, then re-run `vinaya check closes-n`.'
+        'Fix the branch name or the `Closes #N` reference in the PR body so they name the same task, then re-run `vinaya-check closes-n`.'
     })
     process.exit(1)
   }

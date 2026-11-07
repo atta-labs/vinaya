@@ -12,8 +12,9 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { beginProgressSession, progressObserverEntry } from '../../src/lib/push-progress'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
+import { beginProgressSession } from '../../../../harness/kernel/gates/ring0-hooks/pre-push/push-progress'
+import { progressObserverEntry } from '../../../../harness/processes/vinaya-strict/tools/programs'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../harness/kernel/conformance/unit/process-fixture'
 
 // The hook's progress helper and the driver's progress observer, run from a packed install: the tarball `bun pm
 // pack` makes from the built package (its `files` allowlist ships `dist`, never `src`), unpacked as an installed

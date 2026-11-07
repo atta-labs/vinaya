@@ -734,7 +734,7 @@ export const DRIVER_OWNED_PATHS = [
   'harness/kernel/connectors/git/changed-line-ranges.ts',
   'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
   'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/',
-  'apps/cli/src/commands/review-post.ts',
+  'harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts',
   'harness/kernel/log/client/narration.test.ts',
   'harness/kernel/log/client/narration.ts',
   'harness/kernel/log/client/schema-digest.test.ts',

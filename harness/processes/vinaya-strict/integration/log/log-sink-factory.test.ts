@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ts from 'typescript'
-import { spawnSyncBudgeted } from '../../../../../apps/cli/tests/lib/process-fixture.js'
+import { spawnSyncBudgeted } from '../../../../kernel/conformance/unit/process-fixture.js'
 
 const RECORDING = join(import.meta.dir, 'fixtures', 'recorded-headers.json')
 const REPOSITORY_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..')
@@ -76,7 +76,7 @@ const SINK_OVERRIDES = `{
 // The sink the product builds, with every read but the branch and the forge
 // pinned; the branch read is the real one, run in the child's own checkout.
 const PROBE = `import { createVinayaLogSink } from ${JSON.stringify(LOG_SINK_FACTORY)}
-await (await import(${JSON.stringify(join(REPOSITORY_ROOT, 'apps', 'cli', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()
+await (await import(${JSON.stringify(join(REPOSITORY_ROOT, 'harness', 'processes', 'vinaya-strict', 'integration', 'config', 'compose.ts'))})).installVinayaConfigProvider()
 const outbox = process.argv[2]
 const sink = createVinayaLogSink(${SINK_OVERRIDES})
 sink.log({
@@ -177,8 +177,10 @@ const ENTRY_POINTS = [
   'harness/processes/vinaya-strict/bin/run-engine.ts',
   // The evaluation programs, each run on its own.
   ...['harbor-grade', 'harbor-results', 'harbor-tasks', 'harbor-trial', 'step-one', 'whole-loop'].map(
-    (name) => `apps/cli/src/lib/dev-review-eval/${name}.ts`
-  )
+    (name) => `harness/processes/vinaya-strict/evals/${name}.ts`
+  ),
+  // The shared entry every plumbing program starts through.
+  'harness/processes/vinaya-strict/tools/program-entry.ts'
 ]
 
 /**
@@ -198,33 +200,35 @@ const SITES: Record<string, number> = {
   'harness/processes/vinaya-strict/bin/run-engine.ts installVinayaLogSinkFactory code': 1,
   ...Object.fromEntries(
     ['harbor-grade', 'harbor-results', 'harbor-tasks', 'harbor-trial', 'step-one', 'whole-loop'].map((name) => [
-      `apps/cli/src/lib/dev-review-eval/${name}.ts installVinayaLogSinkFactory code`,
+      `harness/processes/vinaya-strict/evals/${name}.ts installVinayaLogSinkFactory code`,
       1
     ])
   ),
+  // The shared program entry: every plumbing program installs the factory through it.
+  'harness/processes/vinaya-strict/tools/program-entry.ts installVinayaLogSinkFactory code': 1,
   // The test processes' composition root.
-  'apps/cli/tests/lib/test-env-preload.ts installVinayaLogSinkFactory code': 1,
+  'harness/processes/vinaya-strict/integration/test-preload.ts installVinayaLogSinkFactory code': 1,
   // Child processes a test starts with the bare default sink, installing the process factory as an entry point does.
   'harness/processes/vinaya-strict/integration/log/log-destination.test.ts installVinayaLogSinkFactory embedded': 1,
-  'apps/cli/tests/lib/log-sink-no-sync-spawn.test.ts installVinayaLogSinkFactory embedded': 1,
-  'apps/cli/tests/lib/log-sink.test.ts installVinayaLogSinkFactory embedded': 1,
+  'harness/processes/vinaya-strict/integration/log/log-sink-no-sync-spawn.test.ts installVinayaLogSinkFactory embedded': 1,
+  'harness/processes/vinaya-strict/integration/log/log-sink.test.ts installVinayaLogSinkFactory embedded': 1,
   'harness/processes/vinaya-strict/tests/integration/log/log-sink-factory.test.ts installVinayaLogSinkFactory embedded': 1,
   'harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts installVinayaLogSinkFactory embedded': 2,
-  'apps/cli/tests/fixtures/checks/run-and-hang.ts installVinayaLogSinkFactory code': 1,
+  'harness/processes/vinaya-strict/integration/gates/checks/fixtures/run-and-hang.ts installVinayaLogSinkFactory code': 1,
   // Kernel contract tests: each builds the Log client's own sink with a branch reader it gives itself.
   'harness/processes/vinaya-strict/integration/gates/checks/runner-launch.test.ts createLogSink code': 1,
-  'apps/cli/tests/commands/log-emit.test.ts createLogSink code': 1,
+  'harness/processes/vinaya-strict/integration/bin/log-emit.test.ts createLogSink code': 1,
   'harness/processes/vinaya-strict/integration/log/client/log-custom.test.ts createLogSink code': 1,
   'harness/processes/vinaya-strict/integration/log/log-destination.test.ts createLogSink code': 4,
   'harness/processes/vinaya-strict/integration/log/log-destination.test.ts createLogSink embedded': 1,
-  'apps/cli/tests/lib/log-sink.test.ts createLogSink code': 50,
-  'apps/cli/tests/lib/log-sink.test.ts createLogSink embedded': 2,
+  'harness/processes/vinaya-strict/integration/log/log-sink.test.ts createLogSink code': 50,
+  'harness/processes/vinaya-strict/integration/log/log-sink.test.ts createLogSink embedded': 2,
   'harness/kernel/log/client/log-sync-folder-source.test.ts createLogSink code': 2,
   'harness/kernel/log/log-sink-doctrine-identity.test.ts createLogSink code': 1,
   // Run for the Log client's own sink and the Engine runner's, each taken as a loop value and called once per case.
-  'apps/cli/tests/lib/log-sink-off.test.ts createLogSink reference': 1,
+  'harness/processes/vinaya-strict/integration/log/client/log-sink-off.test.ts createLogSink reference': 1,
   // Samples the destination-isolation analyzer reads as text; nothing runs them.
-  'apps/cli/tests/log-destination-isolation.test.ts createLogSink embedded': 2
+  'harness/processes/vinaya-strict/integration/log/client/log-destination-isolation.test.ts createLogSink embedded': 2
 }
 
 const CENSUS_FILE = 'harness/processes/vinaya-strict/integration/log/log-sink-factory.test.ts'
@@ -397,10 +401,10 @@ describe('every Log sink is built through the process factory', () => {
       .map((name) => `harness/processes/vinaya-strict/bin/${name}`)
     for (const runner of runners) expect(ENTRY_POINTS).toContain(runner)
     // So is every evaluation program.
-    const evalDir = join(REPOSITORY_ROOT, 'apps', 'cli', 'src', 'lib', 'dev-review-eval')
+    const evalDir = join(REPOSITORY_ROOT, 'harness', 'processes', 'vinaya-strict', 'evals')
     const evalPrograms = readdirSync(evalDir)
       .filter((name) => name.endsWith('.ts') && readFileSync(join(evalDir, name), 'utf8').includes('import.meta.main'))
-      .map((name) => `apps/cli/src/lib/dev-review-eval/${name}`)
+      .map((name) => `harness/processes/vinaya-strict/evals/${name}`)
     for (const program of evalPrograms) expect(ENTRY_POINTS).toContain(program)
   })
 

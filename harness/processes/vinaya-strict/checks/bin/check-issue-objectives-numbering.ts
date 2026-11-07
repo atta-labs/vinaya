@@ -16,7 +16,7 @@
 
 import { checkIssueObjectives } from '../../tools/task-contract/issue-validation'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
-import { loadConfig, resolveGateCutovers } from '../../../../../apps/cli/src/lib/config'
+import { loadConfig, resolveGateCutovers } from '../../integration/config/compose'
 import { readIssueCheckEnv } from '../issue-check-env'
 
 const CHECK_NAME = 'issue-objectives-numbering'
@@ -38,7 +38,7 @@ function main(): void {
       severity: 'error',
       message,
       agent_recovery_prompt:
-        'Fix the `## Objectives` section named above — numbered `O<n>. <sentence>` lines, one observable outcome each, no gaps — then re-run `vinaya check issue-objectives-numbering`.'
+        'Fix the `## Objectives` section named above — numbered `O<n>. <sentence>` lines, one observable outcome each, no gaps — then re-run `vinaya-check issue-objectives-numbering`.'
     })
   }
   process.exit(1)

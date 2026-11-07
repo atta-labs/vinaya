@@ -402,7 +402,7 @@ function missingEnvErrors(spec: CheckSpec, callerEnv: NodeJS.ProcessEnv): { erro
           check: spec.name,
           severity: 'error',
           message: `Could not run check "${spec.name}": required environment variable \`${key}\` is not set.`,
-          agent_recovery_prompt: `Set \`${key}\` in the environment before re-running \`vinaya check ${spec.name}\`, or relax its declaration to \`{ optional: true }\` in its \`env\` registration if the check can tolerate absence.`
+          agent_recovery_prompt: `Set \`${key}\` in the environment before re-running \`vinaya-check ${spec.name}\`, or relax its declaration to \`{ optional: true }\` in its \`env\` registration if the check can tolerate absence.`
         })
       }
     } else if (typeof decl === 'object' && decl !== null && 'anyOf' in decl) {
@@ -414,7 +414,7 @@ function missingEnvErrors(spec: CheckSpec, callerEnv: NodeJS.ProcessEnv): { erro
           check: spec.name,
           severity: 'error',
           message: `Could not run check "${spec.name}": none of its required environment variables (${decl.anyOf.join(', ')}) are set.`,
-          agent_recovery_prompt: `Set one of ${decl.anyOf.join(', ')} in the environment before re-running \`vinaya check ${spec.name}\`.`
+          agent_recovery_prompt: `Set one of ${decl.anyOf.join(', ')} in the environment before re-running \`vinaya-check ${spec.name}\`.`
         })
       }
     }

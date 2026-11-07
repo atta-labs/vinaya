@@ -167,7 +167,7 @@ function main(): void {
       message:
         'changeset-coverage: could not determine this diff against origin/main or main (a shallow clone, no merge base, or an orphan/single-commit history) — shipped-path coverage could not be evaluated for this diff.',
       agent_recovery_prompt:
-        'Fetch enough history to establish a real merge base against origin/main (e.g. remove a shallow --depth from the checkout, or run `git fetch --unshallow`), then re-run `vinaya check changeset-coverage`.'
+        'Fetch enough history to establish a real merge base against origin/main (e.g. remove a shallow --depth from the checkout, or run `git fetch --unshallow`), then re-run `vinaya-check changeset-coverage`.'
     })
     process.exit(0)
   }

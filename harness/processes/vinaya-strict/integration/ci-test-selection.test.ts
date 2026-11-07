@@ -10,8 +10,8 @@ import {
   readLayoutFile,
   shardFilesToRun
 } from './ci-test-selection'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../apps/cli/tests/lib/process-fixture'
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 
 const ROOT = '/repo'
 const REPO_ROOT = join(import.meta.dir, '../../../..')
@@ -50,7 +50,7 @@ describe('which changed paths the selector can judge', () => {
       'apps/cli/package.json',
       'apps/cli/tests/fixtures/repo/src/index.ts',
       'packages/aeg-core/src/fixtures/brief.ts',
-      'apps/cli/tests/lib/test-env-preload.ts',
+      'harness/processes/vinaya-strict/integration/test-preload.ts',
       'apps/cli/tests/ci-shards/shard-1.txt',
       'bunfig.toml',
       'tsconfig.json',
@@ -159,7 +159,7 @@ describe('eligibility follows the workspace members discovery finds', () => {
       writeFileSync(join(root, path), text)
     }
     write('package.json', JSON.stringify({ workspaces: ['apps/*', 'harness/kernel', 'harness/processes/*'] }))
-    write('bunfig.toml', '[test]\npreload = "./apps/cli/tests/lib/test-env-preload.ts"\n')
+    write('bunfig.toml', '[test]\npreload = "./harness/processes/vinaya-strict/integration/test-preload.ts"\n')
     write('apps/cli/package.json', JSON.stringify({ name: '@fx/cli' }))
     write('harness/kernel/package.json', JSON.stringify({ name: '@fx/kernel' }))
     write(
@@ -175,9 +175,9 @@ describe('eligibility follows the workspace members discovery finds', () => {
     const layout = discoveredLayout(layoutsRepo())
     expect(layout.packageDirs).toEqual(['apps/cli', 'harness/kernel', 'harness/processes/strict'])
     expect(layout.preloads).toEqual([
-      'apps/cli/tests/lib/test-env-preload.ts',
       'harness/kernel/tests/env.ts',
-      'harness/kernel/tests/setup.ts'
+      'harness/kernel/tests/setup.ts',
+      'harness/processes/vinaya-strict/integration/test-preload.ts'
     ])
   })
 
@@ -223,13 +223,13 @@ describe('eligibility follows the workspace members discovery finds', () => {
       '.changeset/quiet-fox.md',
       'apps/cli/src/lib/widget.ts',
       'apps/cli/tests/widget.test.ts',
-      'packages/sources/src/brief.ts',
-      'packages/sources/src/view.tsx'
+      'packages/typescript-config/src/brief.ts',
+      'packages/typescript-config/src/view.tsx'
     ]
     const refused = [
       '.github/workflows/ci.yml',
       'apps/cli/tests/fixtures/repo/src/index.ts',
-      'apps/cli/tests/lib/test-env-preload.ts',
+      'harness/processes/vinaya-strict/integration/test-preload.ts',
       'vinaya.config.json',
       'scripts/build.ts',
       'apps/cli/scripts/bundle-doctrine.ts',

@@ -26,7 +26,7 @@
 import { StringDecoder } from 'node:string_decoder'
 import { resolveRepo } from '../../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import { printJson } from '../../../../harness/kernel/effects/envelope.js'
-import { followTaskLog } from '../lib/follow-view.js'
+import { followTaskLog } from '../../../../harness/processes/vinaya-strict/tools/follow-view.js'
 import {
   gatherSingleTaskStatus,
   gatherTaskStatusList
@@ -163,7 +163,7 @@ export async function taskStatusCommand(args: string[]): Promise<void> {
   runSingle(tranche, id, json)
 }
 
-import type { SurfaceExemption } from '../lib/surface-exemption'
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   'task status': { date: '2026-09-12', callsToday: 3, retiresVia: 'taskStatus' }

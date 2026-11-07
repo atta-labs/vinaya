@@ -29,13 +29,13 @@ import type { CheckSpec } from '../../../../../../kernel/gates/checks/contract'
 import { coreCheckRegistry } from '../../../../checks/registry'
 import { runChecks } from '../../../../../../kernel/gates/checks/runner'
 import { FORGE_SNAPSHOT_DIR_ENV } from '../../../../../../kernel/adapters/code-host/github/forge-snapshot'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../../apps/cli/tests/lib/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture'
 
 const REPO_ROOT = join(import.meta.dir, '../../../../../../..')
 const WORKFLOWS = join(REPO_ROOT, '.github', 'workflows')
 const FIXTURE_PATH = join(
   import.meta.dir,
-  '../../../../../../../apps/cli/tests/fixtures/forge-snapshot/gh-vs-rest.json'
+  '../../../../../../kernel/adapters/code-host/github/fixtures/forge-snapshot/gh-vs-rest.json'
 )
 const CASE = (JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')) as { cases: Array<Record<string, any>> }).cases[0] as {
   rest: Record<string, any>

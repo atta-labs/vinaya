@@ -38,11 +38,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
  * EXEMPT with a reason, which is a deliberate act rather than a silent one.
  */
 const EXEMPT: Readonly<Record<string, string>> = {
-  'apps/cli/tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz': 'packed test-only runtime tarball',
-  'apps/cli/tests/fixtures/atta-engine/atta-agents-0.1.0.tgz': 'packed test-only runtime tarball',
-  'apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz': 'packed test-only runtime tarball',
-  'apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz': 'packed test-only runtime tarball',
-  'apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz': 'packed test-only runtime tarball',
+  'harness/kernel/loops/runtimes/atta-engine/fixtures/atta-adapter-langgraph-0.0.1.tgz':
+    'packed test-only runtime tarball',
+  'harness/kernel/loops/runtimes/atta-engine/fixtures/atta-agents-0.1.0.tgz': 'packed test-only runtime tarball',
+  'harness/kernel/loops/runtimes/atta-engine/fixtures/atta-engine-0.0.1.tgz': 'packed test-only runtime tarball',
+  'harness/kernel/loops/runtimes/atta-engine/fixtures/atta-executor-agent-spawn-0.1.1.tgz':
+    'packed test-only runtime tarball',
+  'harness/kernel/loops/runtimes/atta-engine/fixtures/atta-models-0.1.0.tgz': 'packed test-only runtime tarball',
   'apps/vinaya-portal/public/studio/backlog-light.png': 'portal Studio screenshot',
   'apps/vinaya-portal/public/studio/backlog.png': 'portal Studio screenshot',
   'apps/vinaya-portal/public/studio/dashboard-light.png': 'portal Studio screenshot',

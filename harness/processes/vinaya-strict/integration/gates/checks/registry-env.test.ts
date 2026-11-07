@@ -3,7 +3,7 @@ import { basename, join, relative } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import type { CheckSpec } from '../../../../../kernel/gates/checks/contract'
 import { coreCheckRegistry } from '../../../checks/registry'
-import { VinayaConfigSchema } from '../../../../../../apps/cli/src/lib/config'
+import { VinayaConfigSchema } from '../../config/compose'
 import {
   FORGE_SNAPSHOT_DIR_ENV,
   forgeSnapshotDir

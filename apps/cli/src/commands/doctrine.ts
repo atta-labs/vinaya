@@ -126,7 +126,7 @@ export async function doctrineCommand(args: string[]): Promise<void> {
   process.stdout.write(`${entry}\n`)
 }
 
-import type { SurfaceExemption } from '../lib/surface-exemption'
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   doctrine: { date: '2026-09-05', callsToday: 4, retiresVia: 'sharedCommandShell' }

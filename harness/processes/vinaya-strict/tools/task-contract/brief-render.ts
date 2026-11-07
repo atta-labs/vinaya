@@ -289,7 +289,7 @@ export type BriefFacts = {
    */
   premises: IssuePremise[]
   /**
-   * The resolved gate cutovers (`resolveGateCutovers`, `apps/cli/src/lib/config.ts`).
+   * The resolved gate cutovers (`resolveGateCutovers`, `harness/processes/vinaya-strict/integration/config/compose.ts`).
    * The renderer's missing-fact refusal for a missing `## Objectives`/
    * `## Documentation` section grandfathers exactly the same class the Issue
    * gate itself does — an Issue below the cutover legitimately has no such

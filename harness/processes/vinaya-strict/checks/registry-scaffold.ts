@@ -115,7 +115,7 @@ function classify(path: string): { ring: GateRing; checkName?: string } | null {
 }
 
 function gateCell(path: string, checkName: string | undefined): string {
-  if (checkName) return `\`${checkName}\` check (\`vinaya check ${checkName}\`)`
+  if (checkName) return `\`${checkName}\` check (\`vinaya-check ${checkName}\`)`
   return `managed hook script (\`${path}\`)`
 }
 

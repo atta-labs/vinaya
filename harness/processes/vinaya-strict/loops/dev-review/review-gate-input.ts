@@ -71,7 +71,7 @@ import {
   resolveGateCutovers,
   resolveReviewPolicy,
   resolveTrustedPrincipals
-} from '../../../../../apps/cli/src/lib/config.js'
+} from '../../integration/config/compose.js'
 import {
   incompleteForgeSnapshot,
   snapshotComments,
@@ -187,7 +187,7 @@ export function resolveFrozenPauseBoundRuling(
   if (recorded === undefined) {
     return failure(
       `review-gate severity:infra — PR #${prNumber}'s round ${newestRound} comment does not record one frozen \`Pause-bound ruling:\` binding, so the verdicts' ruling binding cannot be checked against it.`,
-      'Let the review loop run a fresh review round on this pull request (its round comment records the binding), then re-run `vinaya check review-gate`.'
+      'Let the review loop run a fresh review round on this pull request (its round comment records the binding), then re-run `vinaya-check review-gate`.'
     )
   }
   if (recorded === null) return { ok: true, value: null }
@@ -195,7 +195,7 @@ export function resolveFrozenPauseBoundRuling(
   if (identity === null) {
     return failure(
       `review-gate severity:infra — PR #${prNumber}'s round ${newestRound} comment binds ruling \`${recorded.rulingId}\`, which names no ruling marker.`,
-      'Let the review loop run a fresh review round on this pull request, then re-run `vinaya check review-gate`.'
+      'Let the review loop run a fresh review round on this pull request, then re-run `vinaya-check review-gate`.'
     )
   }
   let rulingComments: readonly { body: string; author: string | null }[] = comments
@@ -205,7 +205,7 @@ export function resolveFrozenPauseBoundRuling(
     } catch (err) {
       return failure(
         `review-gate severity:infra — could not fetch Issue #${identity.ref}'s comments to prove ruling \`${recorded.rulingId}\`: ${(err as Error).message}`,
-        'Confirm `gh auth status` passes and the Issue exists, then re-run `vinaya check review-gate`.'
+        'Confirm `gh auth status` passes and the Issue exists, then re-run `vinaya-check review-gate`.'
       )
     }
   }
@@ -213,7 +213,7 @@ export function resolveFrozenPauseBoundRuling(
   if (text === null || pauseBoundRulingDigest(text) !== recorded.contentDigest) {
     return failure(
       `review-gate severity:infra — PR #${prNumber}'s round ${newestRound} comment binds ruling \`${recorded.rulingId}\`, but ${text === null ? 'no single principal ruling comment carries that ruling identity' : "that ruling's text does not hash to the recorded content digest"}.`,
-      'A Principal ruling comment must never be edited or deleted once a round binds it; restore it, or let the review loop run a fresh round, then re-run `vinaya check review-gate`.'
+      'A Principal ruling comment must never be edited or deleted once a round binds it; restore it, or let the review loop run a fresh round, then re-run `vinaya-check review-gate`.'
     )
   }
   return { ok: true, value: recorded }
@@ -248,12 +248,12 @@ function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): Re
     if (isIssueNotFoundError(err)) {
       return failure(
         `review-gate severity:infra — Issue #${issue} does not resolve via \`gh issue view\` — cannot verify the brief-hash binding for a PR whose linked Issue no longer exists.`,
-        `Restore Issue #${issue}, fix \`Closes #N\` to name a real Issue, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
+        `Restore Issue #${issue}, fix \`Closes #N\` to name a real Issue, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya-check review-gate\`.`
       )
     }
     return failure(
       `review-gate severity:infra — could not fetch Issue #${issue}'s comments via \`gh issue view\` to resolve its frozen-brief hash: ${(err as Error).message}`,
-      'Confirm `gh auth status` passes and the Issue number is correct, then re-run `vinaya check review-gate`.'
+      'Confirm `gh auth status` passes and the Issue number is correct, then re-run `vinaya-check review-gate`.'
     )
   }
   const frozen = resolveNewestFrozenBrief(comments, principalAllowlist as string[])
@@ -312,19 +312,19 @@ function resolveObjectivesVersion(pr: PrView, objectivesSinceIssue: number | nul
       if (isIssueNotFoundError(err)) {
         return failure(
           `review-gate severity:infra — Issue #${source.issue} does not resolve via \`gh issue view\` — cannot verify the objectives-version binding for a PR whose linked Issue is at/above the objectives cutover.`,
-          `Restore Issue #${source.issue}, fix \`Closes #N\` to name a real Issue, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
+          `Restore Issue #${source.issue}, fix \`Closes #N\` to name a real Issue, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya-check review-gate\`.`
         )
       }
       return failure(
         `review-gate severity:infra — could not fetch Issue #${source.issue}'s body via \`gh issue view\` to resolve its objectives version: ${(err as Error).message}`,
-        'Confirm `gh auth status` passes and the Issue number is correct, then re-run `vinaya check review-gate`.'
+        'Confirm `gh auth status` passes and the Issue number is correct, then re-run `vinaya-check review-gate`.'
       )
     }
     const parsed = objectivesOf(issueBody)
     if (!parsed.ok) {
       return failure(
         `review-gate severity:infra — Issue #${source.issue}'s \`## Objectives\` section does not parse (${parsed.errors.join('; ')}) — cannot verify the objectives-version binding.`,
-        `Fix Issue #${source.issue}'s \`## Objectives\` section, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya check review-gate\`.`
+        `Fix Issue #${source.issue}'s \`## Objectives\` section, or have a principal apply the \`vinaya/waiver:review\` label, then re-run \`vinaya-check review-gate\`.`
       )
     }
     return { ok: true, value: objectivesVersion(parsed.objectives) }
@@ -335,7 +335,7 @@ function resolveObjectivesVersion(pr: PrView, objectivesSinceIssue: number | nul
   if (!own.ok) {
     return failure(
       `review-gate severity:infra — this PR body's own \`## Objectives\` section does not parse (${own.errors.join('; ')}) — cannot verify the objectives-version binding.`,
-      "Fix the PR body's `## Objectives` section, or have a principal apply the `vinaya/waiver:review` label, then re-run `vinaya check review-gate`."
+      "Fix the PR body's `## Objectives` section, or have a principal apply the `vinaya/waiver:review` label, then re-run `vinaya-check review-gate`."
     )
   }
   return { ok: true, value: objectivesVersion(own.objectives) }
@@ -444,14 +444,14 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
   if (incomplete !== null) {
     return failure(
       `review-gate severity:infra — ${incomplete}`,
-      'Re-run the whole workflow run so its pull request read step writes the snapshot again (its own log names the failed read), then re-run `vinaya check review-gate`.'
+      'Re-run the whole workflow run so its pull request read step writes the snapshot again (its own log names the failed read), then re-run `vinaya-check review-gate`.'
     )
   }
   const pr = fetchPr(prNumber)
   if (!pr) {
     return failure(
       `review-gate severity:infra — could not fetch PR #${prNumber} via \`gh\`.`,
-      'Confirm `gh auth status` passes and PR_NUMBER is correct, then re-run `vinaya check review-gate`.'
+      'Confirm `gh auth status` passes and PR_NUMBER is correct, then re-run `vinaya-check review-gate`.'
     )
   }
 
@@ -464,7 +464,7 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
   if (!headSha) {
     return failure(
       `review-gate severity:infra — could not resolve PR #${prNumber}'s true head via \`git ls-remote\` or the forge's \`git/ref/heads\` API.`,
-      'Confirm the branch still exists on origin and `gh auth status` passes, then re-run `vinaya check review-gate`.'
+      'Confirm the branch still exists on origin and `gh auth status` passes, then re-run `vinaya-check review-gate`.'
     )
   }
 
@@ -484,7 +484,7 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
   if (!baseSha) {
     return failure(
       `review-gate severity:infra — could not resolve PR #${prNumber}'s base branch \`${pr.baseRefName}\`'s tip via \`git ls-remote\` or the forge's \`git/ref/heads\` API.`,
-      'Confirm the base branch still exists on origin and `gh auth status` passes, then re-run `vinaya check review-gate`.'
+      'Confirm the base branch still exists on origin and `gh auth status` passes, then re-run `vinaya-check review-gate`.'
     )
   }
 
@@ -505,8 +505,8 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
     return failure(
       `review-gate severity:infra — ${err.message}`,
       err.kind === 'not-configured'
-        ? `Ask a Principal to ${PRINCIPALS_FIX}, then re-run \`vinaya check review-gate\`.`
-        : "Confirm `gh auth status` passes (in CI, that the job's token is not empty) and the forge is reachable, then re-run `vinaya check review-gate`."
+        ? `Ask a Principal to ${PRINCIPALS_FIX}, then re-run \`vinaya-check review-gate\`.`
+        : "Confirm `gh auth status` passes (in CI, that the job's token is not empty) and the forge is reachable, then re-run `vinaya-check review-gate`."
     )
   }
   const trustAnchorConfig = loadTrustAnchorConfig()
@@ -523,7 +523,7 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
   } catch (err) {
     return failure(
       `review-gate severity:infra — ${err instanceof Error ? err.message : String(err)}`,
-      "Fix `reviewPolicy` in the default branch's `vinaya.config.json` to a known severity on each role's own scale, then re-run `vinaya check review-gate`."
+      "Fix `reviewPolicy` in the default branch's `vinaya.config.json` to a known severity on each role's own scale, then re-run `vinaya-check review-gate`."
     )
   }
 

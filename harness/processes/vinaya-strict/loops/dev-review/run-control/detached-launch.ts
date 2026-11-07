@@ -12,7 +12,7 @@
  * it. No `nohup` and no shell wrapper stands in for it.
  */
 
-import { cliEntryPath } from '../../../../../../apps/cli/src/lib/cli-entry.js'
+import { cliEntryPath } from '../../../tools/cli-entry.js'
 import { type ChildProcess, spawn, type StdioOptions } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { isDriverPidAlive, readDriverLock } from '../standalone/dev-review-loop/pause-resume.js'

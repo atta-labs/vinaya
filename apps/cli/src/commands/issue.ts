@@ -162,7 +162,7 @@ export function issueSurfaceCommand(args: string[]): void {
   if (exitCode !== 0) process.exit(exitCode)
 }
 
-import type { SurfaceExemption } from '../lib/surface-exemption'
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   'issue create': { date: '2026-09-11', callsToday: 9, retiresVia: 'forgeWrite' },

@@ -30,7 +30,7 @@
  * a `pull_request` event with no `ref:` checks out `refs/pull/N/merge`, so
  * `HEAD` in CI is the merge commit, never the PR head — using it would
  * red-line every PR that adopts this anchor. The emitter
- * (`apps/cli/src/commands/pr-report.ts`) runs locally, before the PR exists,
+ * (`harness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts`) runs locally, before the PR exists,
  * where `git rev-parse HEAD` IS the real head; this check runs in CI, so it
  * self-resolves the real head via `gh pr view --json headRefOid`, the same
  * pattern already live at `.github/workflows/vinaya-review-verdict.yml:47`
@@ -54,8 +54,8 @@
 
 import { execFileSync } from 'node:child_process'
 import { isPrincipal } from '../../tools/task-contract/waiver-label'
-import { agentCommandText, extractAgentCommandLines } from '../../../../../apps/cli/src/commands/pr-report'
-import { resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'
+import { agentCommandText, extractAgentCommandLines } from '../../tools/pr-report/bin/pr-report'
+import { resolveTrustedPrincipals } from '../../integration/config/compose'
 import {
   exitOnIncompleteForgeSnapshot,
   snapshotComments,
@@ -242,7 +242,7 @@ function main(): void {
       message:
         'evidence-fresh: the AEG:EVIDENCE block sits inside a `<details>` block, where its digits are exempt from `body-bare-digits` and nothing can verify what it claims. Move the block out of the collapsed section.',
       agent_recovery_prompt:
-        'Move the AEG:EVIDENCE anchor pair out of the `<details>` block (the canonical home is its own `## Evidence` section), then re-run `vinaya pr report --write <body-file>`.'
+        'Move the AEG:EVIDENCE anchor pair out of the `<details>` block (the canonical home is its own `## Evidence` section), then re-run `vinaya-pr-report --write <body-file>`.'
     })
     process.exit(1)
   }
@@ -261,7 +261,7 @@ function main(): void {
       severity: 'error',
       message: `evidence-fresh: could not resolve PR #${prNumberStr}'s head and base via \`gh pr view --json headRefOid,baseRefName\`.`,
       agent_recovery_prompt:
-        'Confirm `gh auth status` passes and PR_NUMBER is correct, then re-run `vinaya check evidence-fresh`.'
+        'Confirm `gh auth status` passes and PR_NUMBER is correct, then re-run `vinaya-check evidence-fresh`.'
     })
     process.exit(1)
   }
@@ -286,7 +286,7 @@ function main(): void {
       severity: 'error',
       message: `evidence-fresh: ${err instanceof Error ? err.message : String(err)}`,
       agent_recovery_prompt:
-        "This repo's default branch may not be reachable as `origin/main` or `main` from this checkout. Set BASE_SHA (e.g. `origin/<default-branch>`) on the check, or fetch the base branch, then re-run `vinaya check evidence-fresh`."
+        "This repo's default branch may not be reachable as `origin/main` or `main` from this checkout. Set BASE_SHA (e.g. `origin/<default-branch>`) on the check, or fetch the base branch, then re-run `vinaya-check evidence-fresh`."
     })
     process.exit(1)
   }
@@ -320,7 +320,7 @@ function main(): void {
         severity: 'error',
         message,
         agent_recovery_prompt:
-          'Re-run `vinaya pr report --write <body-file>` against the current head, commit, and push again.'
+          'Re-run `vinaya-pr-report --write <body-file>` against the current head, commit, and push again.'
       })
     }
     process.exit(1)

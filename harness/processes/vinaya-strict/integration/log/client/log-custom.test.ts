@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CustomEventDeclarations } from '../../../../../kernel/log/custom'
 import { LogEventSchema } from '../../../../../kernel/log/schema'
-import { resolveLogsSetting, VinayaConfigSchema } from '../../../../../../apps/cli/src/lib/config.js'
+import { resolveLogsSetting, VinayaConfigSchema } from '../../config/compose.js'
 import { emitCustomEvent } from '../../../../../kernel/log/client/log-custom.js'
 import { createLogSink, type LogEventInput } from '../../../../../kernel/log/log-sink.js'
 

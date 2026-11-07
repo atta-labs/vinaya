@@ -4,7 +4,7 @@ import type { LogEventInput } from '../../../log/log-sink'
 import type { CheckSpec } from '../contract'
 import { runChecks } from '../runner'
 
-const FIXTURES = join(import.meta.dir, '../../../../../apps/cli/tests/fixtures/checks')
+const FIXTURES = join(import.meta.dir, '../fixtures')
 const PASSING = join(FIXTURES, 'passing-check.ts')
 const FAILING = join(FIXTURES, 'failing-check.ts')
 const PENDING = join(FIXTURES, 'pending-check.ts')

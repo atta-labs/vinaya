@@ -2,4 +2,4 @@
 timeout = 30000
 # The pre-push hook runs every selected test file from here: the same private runtime
 # directory and environment hygiene apps/cli gives its own runs.
-preload = "./apps/cli/tests/lib/test-env-preload.ts"
+preload = "./harness/processes/vinaya-strict/integration/test-preload.ts"

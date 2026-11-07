@@ -1094,8 +1094,8 @@ describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
 describe('checkFileCollisions', () => {
   const A = 'packages/aeg-core/src/issue-validation.ts'
   const B = 'apps/cli/src/lib/forge-write.ts'
-  const C = 'apps/cli/src/lib/config.ts'
-  const D = 'packages/sources/src/config-reference.ts'
+  const C = 'harness/processes/vinaya-strict/integration/config/compose.ts'
+  const D = 'harness/processes/vinaya-strict/integration/config-reference.ts'
 
   const peer = (ref: string, files: string[], conflictsWith: string[] = []): TaskFileFacts => ({
     ref,
@@ -2117,7 +2117,7 @@ describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
   })
 
   it('passes when Boundary names a path to EXCLUDE it — covered by `out:`, not a gap', () => {
-    const body = `${surface}\n**Boundary** — Does NOT touch \`apps/cli/src/commands/task.ts\`.\n`
+    const body = `${surface}\n**Boundary** — Does NOT touch \`harness/processes/vinaya-strict/tools/task-contract/bin/task-brief.ts\`.\n`
     expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
   })
 
@@ -2940,7 +2940,7 @@ describe('checkMilestoneAttach', () => {
 const NOTHING_IN_TREE = () => false
 
 const FIXTURE_COMMAND_REFERENCE: CommandReferenceFacts = {
-  file: 'packages/sources/src/commands.ts',
+  file: 'harness/processes/vinaya-strict/integration/commands.ts',
   binary: 'vinaya',
   commands: [
     { name: 'check', flags: ['--all', '--json'], needs: [] },
@@ -2951,7 +2951,10 @@ const FIXTURE_COMMAND_REFERENCE: CommandReferenceFacts = {
 }
 
 const FIXTURE_CONFIG_REFERENCE: ConfigReferenceFacts = {
-  files: ['packages/sources/src/config-reference.ts', 'apps/cli/src/lib/config.ts'],
+  files: [
+    'harness/processes/vinaya-strict/integration/config-reference.ts',
+    'harness/processes/vinaya-strict/integration/config/compose.ts'
+  ],
   keys: ['checks', 'checks.timeoutMs', 'reviewPolicy', 'reviewPolicy.maxRounds', 'logs'],
   text: 'A folder (`logs.folder`) or a server (`logs.url`), never both.'
 }
@@ -3440,8 +3443,8 @@ describe('surfaceForcedSet', () => {
     expect(result?.loopInvariantMap).toEqual({
       newFiles: ['apps/cli/tests/lib/dev-review-loop-fresh.test.ts'],
       companions: [
-        { path: 'apps/cli/tests/fixtures/dev-review-architecture-invariants.json', reached: true },
-        { path: 'apps/cli/specs/dev-review-invariants.md', reached: false }
+        { path: 'harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json', reached: true },
+        { path: 'harness/processes/vinaya-strict/loops/dev-review/dev-review-invariants.md', reached: false }
       ],
       fix: ['apps/cli/specs']
     })
@@ -3897,7 +3900,7 @@ describe('checkTestPlanDeveloperRunnable — a Test plan line is one the dispatc
   const plan = (...lines: string[]): string => ['## Test plan', '', '```', ...lines, '```', ''].join('\n')
   const entry = (name: string, needs: string[]) => ({ name, flags: [], needs })
   const reference: CommandReferenceFacts = {
-    file: 'packages/sources/src/commands.ts',
+    file: 'harness/processes/vinaya-strict/integration/commands.ts',
     binary: 'vinaya',
     text: '',
     commands: [

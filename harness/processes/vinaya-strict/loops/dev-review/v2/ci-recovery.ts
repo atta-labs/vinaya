@@ -4,7 +4,7 @@ import {
   ciStateLine,
   ciSummaryLine,
   firstFailingTest
-} from '../../../../../../apps/cli/src/lib/push-progress'
+} from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
 
 // The required-CI read of a version-2 run whose ready push deferred its selected tests: the strict current-head test
 // verdict, and the recovery classification of a failure. Only the configured workflow's run for the approved head

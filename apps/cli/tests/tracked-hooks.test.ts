@@ -28,7 +28,7 @@ import type { UpgradeDeps } from '../src/commands/upgrade.js'
 import { runUpgrade, translateHookPaths } from '../src/commands/upgrade.js'
 import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../../../harness/processes/vinaya-strict/integration/artifacts.js'
 import { CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
-import type { ManagedManifest } from '../src/lib/config.js'
+import type { ManagedManifest } from '../../../harness/processes/vinaya-strict/integration/config/compose.js'
 import {
   activeRawHooks,
   customHooksPath,

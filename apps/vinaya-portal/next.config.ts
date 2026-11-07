@@ -2,7 +2,7 @@ import type { NextConfig } from 'next'
 
 const config: NextConfig = {
   // The portal's docs read the installed doctrine at build time; @attalabs packages ship raw .ts
-  transpilePackages: ['@attalabs/process-vinaya', '@attalabs/harness', '@attalabs/vinaya-sources'],
+  transpilePackages: ['@attalabs/process-vinaya', '@attalabs/harness'],
   // The docs read their Markdown from disk with a computed path, which tracing cannot see.
   outputFileTracingIncludes: { '/docs/**': ['./src/content/docs-tree/**'] },
   images: { remotePatterns: [{ protocol: 'https', hostname: 'cdn.sanity.io' }] },

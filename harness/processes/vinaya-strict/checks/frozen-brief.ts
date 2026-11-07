@@ -3,7 +3,7 @@ import { isIssueNotFoundError } from '../tools/task-contract/objectives'
 import { isTaskBranch, resolveNewestFrozenBrief } from '../tools/task-contract/brief-validation'
 import { parseLiveTestPlanItems } from '../tools/task-contract/issue-validation'
 import type { LiveGateInputs } from './test-plan-gate'
-import { PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../../../../apps/cli/src/lib/config'
+import { PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../integration/config/compose'
 import { isForgeReadOversize, readIssueComments } from '../../../kernel/adapters/code-host/github/forge-read'
 import { incompleteForgeSnapshot } from '../../../kernel/adapters/code-host/github/forge-snapshot'
 

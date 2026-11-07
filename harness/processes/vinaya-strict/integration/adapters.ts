@@ -15,10 +15,10 @@
  *     emits the exact TOML an operator adds; `self-hosting.md` records where it
  *     goes and the version it was verified against.
  *
- * Both point at `vinaya task-tools serve` in whichever invocation shape the
+ * Both point at the `vinaya-task-tools-serve` program in whichever invocation shape the
  * repo needs — published `npx` (pinned to the exact installed version, same
  * `ownVersion()` source the workflows and hooks pin to) or the vendored
- * `node <bin>` shape — so the self-hosting boundary (`self-hosting.md`) covers
+ * `bun <source>` shape — so the self-hosting boundary (`self-hosting.md`) covers
  * this registration exactly as it covers every other generated invocation.
  *
  * Each adapter carries the runtime version it was verified against. Claude Code
@@ -30,27 +30,27 @@
  */
 
 import { ownVersion } from './artifacts.js'
-import type { VendoredVinaya } from '../../../../apps/cli/src/lib/self-host.js'
+import type { VendoredVinaya } from '../tools/self-host.js'
 import { MCP_PROTOCOL_VERSION } from '../../../kernel/tools/mcp-protocol.js'
 import { TASK_TOOLS_MCP_SERVER_NAME } from './server.js'
-
-/** The `vinaya task-tools serve` subcommand argv — the one command both adapters register. */
-export const TASK_TOOLS_SERVE_ARGS = ['task-tools', 'serve'] as const
+import { type Program, PROGRAMS } from '../tools/programs.js'
 
 /** A launchable command: the program plus its argument vector, the shape both `.mcp.json` and Codex's TOML expect. */
 export type ServerInvocation = { command: string; args: string[] }
 
 /**
- * The shared server command in whichever shape the repo needs — the vendored
- * `node <bin>` form when the repo declares `@attalabs/vinaya` itself (npx
- * misresolves there, `self-hosting.md`), else published `npx` pinned to the
- * exact installed version.
+ * The shared server program (`vinaya-task-tools-serve`, the program table's
+ * `task-tools-serve`) in whichever shape the repo needs — `bun <source>` when
+ * the repo declares `@attalabs/vinaya` itself and so holds the program's
+ * source (`self-hosting.md`), else published `npx` pinned to the exact
+ * installed version, naming the program's own `bin`.
  */
 export function taskToolsServerInvocation(selfHost: VendoredVinaya | null): ServerInvocation {
+  const program = PROGRAMS.get('task-tools-serve') as Program
   if (selfHost) {
-    return { command: 'node', args: [selfHost.bin, ...TASK_TOOLS_SERVE_ARGS] }
+    return { command: 'bun', args: [program.source] }
   }
-  return { command: 'npx', args: ['--yes', `@attalabs/vinaya@${ownVersion()}`, ...TASK_TOOLS_SERVE_ARGS] }
+  return { command: 'npx', args: ['--yes', '-p', `@attalabs/vinaya@${ownVersion()}`, program.bin] }
 }
 
 /** What each adapter pins: the runtime it registers on, the version verified against, and the MCP protocol revision. */

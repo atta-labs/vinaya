@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fixture'
 import { execFileSync } from 'node:child_process'
 import {
   chooseTests,
@@ -575,7 +575,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       forge,
       repository: 'attalabs/round-decisions'
     })
-    fresh.cliEntry = gateCli
+    fresh.checkProgram = gateCli
     fresh.bound = {
       ...fresh.bound,
       localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),

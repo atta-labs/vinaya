@@ -73,7 +73,7 @@ Parent: Reference
 
 **Task** — One GitHub Issue: one frozen brief, one branch, at most one pull request, one parent branch.
 
-**Telemetry** — The feature that counts the Log's record: cost, time, review strictness, which checks catch most. `vinaya sync` reads stored events into a local cache that its questions read. See [Telemetry](/docs/features/telemetry).
+**Telemetry** — The feature that counts the Log's record: cost, time, review strictness, which checks catch most. `vinaya-sync` reads stored events into a local cache that its questions read. See [Telemetry](/docs/features/telemetry).
 
 **Tranche** — A named set of related tasks with declared dependencies and conflicts, planned and tracked together. Finished when every task in it has merged.
 

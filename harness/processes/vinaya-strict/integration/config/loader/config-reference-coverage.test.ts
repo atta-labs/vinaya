@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
-import { CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
-import { VinayaConfigShape } from '../../../../../../apps/cli/src/lib/config'
+import { CONFIG_REFERENCE } from '../../config-reference.js'
+import { VinayaConfigShape } from '../compose'
 
 /**
  * Key-presence coupling test: every `VinayaConfigSchema` top-level key, and

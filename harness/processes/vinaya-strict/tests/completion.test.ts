@@ -1,5 +1,5 @@
 import { initialLoopState, type VerdictObservation } from '../tools/dev-review-policy/types'
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -168,7 +168,7 @@ async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed>
     const verdicts = scenario.verdicts ?? approving
     const task = {
       runtimeDir,
-      cliEntry: '',
+      checkProgram: '',
       branch: 'task/issue-9',
       issueNumber: 9,
       worktreePath: wt,

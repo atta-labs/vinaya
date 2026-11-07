@@ -152,9 +152,13 @@ describe('classifyProseFile — the three-class map', () => {
   })
 
   it('classifies a file under a PRODUCT_SLUG_SCOPE prefix as product', () => {
-    expect(classifyProseFile('apps/cli/src/commands/dispatch.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe(
-      'product'
-    )
+    expect(
+      classifyProseFile(
+        'harness/processes/vinaya-strict/loops/dev-review/dispatch/bin/dispatch.ts',
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX
+      )
+    ).toBe('product')
     expect(classifyProseFile('.vinaya/hooks/pre-push', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('product')
     expect(classifyProseFile('apps/cli/README.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('product')
   })
@@ -384,7 +388,10 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
     const findings = checkUnresolvableReferences(
       [
         { path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md', content: 'Delivered by task 4.' },
-        { path: 'apps/cli/src/commands/dispatch.ts', content: '// delivered by task 4' }
+        {
+          path: 'harness/processes/vinaya-strict/loops/dev-review/dispatch/bin/dispatch.ts',
+          content: '// delivered by task 4'
+        }
       ],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX

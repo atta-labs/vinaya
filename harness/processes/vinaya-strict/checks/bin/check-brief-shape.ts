@@ -39,7 +39,7 @@ import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/ker
 import { resolveTaskFrozenBrief } from '../frozen-brief'
 import { readIssueBody, readIssueComments } from '../../../../../harness/kernel/adapters/code-host/github/forge-read'
 import { exitOnIncompleteForgeSnapshot } from '../../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
-import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'
+import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../integration/config/compose'
 
 const CHECK_NAME = 'brief-shape'
 
@@ -207,7 +207,7 @@ function main(): void {
       severity: 'error',
       message: `brief-shape: ${gradedBodyResolution.message}`,
       agent_recovery_prompt:
-        'Dispatch this task with `vinaya task dispatch <tranche> <n>` (posts the `aeg:brief:v1` Issue comment), or check `gh auth status`/network, then re-run `vinaya check brief-shape`. ' +
+        'Dispatch this task with `vinaya-task-brief <tranche> <n>` (posts the `aeg:brief:v1` Issue comment), or check `gh auth status`/network, then re-run `vinaya-check brief-shape`. ' +
         'When the message says no Principal is configured, apply the fix it names instead.'
     })
     process.exit(1)
@@ -221,7 +221,7 @@ function main(): void {
       check: CHECK_NAME,
       severity: 'error',
       message: `brief-validation objectives copy: ${objectivesResolution.fetchError}`,
-      agent_recovery_prompt: 'Check `gh auth status` and network, then re-run `vinaya check brief-shape`.'
+      agent_recovery_prompt: 'Check `gh auth status` and network, then re-run `vinaya-check brief-shape`.'
     })
     process.exit(1)
   }
@@ -261,7 +261,7 @@ function main(): void {
         agent_recovery_prompt:
           'Open the PR body and add or fix the section named above, following the canonical PR-body template ' +
           '(`harness/processes/vinaya-strict/executing/developer/doctrine.md` § PR body — canonical form / `harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md`). ' +
-          'Commit the corrected PR body, then re-run `vinaya check brief-shape`.'
+          'Commit the corrected PR body, then re-run `vinaya-check brief-shape`.'
       })
     }
     process.exit(1)

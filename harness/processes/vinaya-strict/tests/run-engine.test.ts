@@ -1,8 +1,8 @@
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { PAUSE_REASON_PROFILE } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { usageLimitPauseDetail } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
-import { newestStage, PAUSED_STAGE_ACTOR, parseDriverLogLine, STAGES } from '../../../../apps/cli/src/lib/follow-view'
+import { newestStage, PAUSED_STAGE_ACTOR, parseDriverLogLine, STAGES } from '../tools/follow-view'
 import { createStageNarrator, stageOfPause, V2_NODE_STAGES } from '../bin/run-engine'
 import {
   PROCESS as V2_PROCESS,
@@ -1483,7 +1483,7 @@ describe('closing a Developer turn on the Engine path', () => {
 
 describe('the CLI entry commands run from inside the Engine runner', () => {
   test('is the one the runner names, not the runner script itself', async () => {
-    const { cliEntryPath, CLI_ENTRY_ENV } = await import('../../../../apps/cli/src/lib/cli-entry')
+    const { cliEntryPath, CLI_ENTRY_ENV } = await import('../tools/cli-entry')
     const before = process.env[CLI_ENTRY_ENV]
     process.env[CLI_ENTRY_ENV] = '/opt/vinaya/apps/cli/src/index.ts'
     try {

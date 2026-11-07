@@ -38,7 +38,7 @@ import {
   taskFromPrBody as realTaskFromPrBody
 } from '../standalone/dev-review-loop/developer-dispatch.js'
 import { isDriverPidAlive as realIsDriverPidAlive } from '../standalone/dev-review-loop/pause-resume.js'
-import { GLOBAL_VINAYA_HOME } from '../../../../../../apps/cli/src/lib/config.js'
+import { GLOBAL_VINAYA_HOME } from '../../../integration/config/compose.js'
 import {
   DRIVER_LOCK_FILENAME,
   LEGACY_CONTROL_STORE,

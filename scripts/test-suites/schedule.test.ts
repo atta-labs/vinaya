@@ -297,7 +297,10 @@ describe('what a CI run schedules', () => {
       portal.map(() => 'shared')
     )
     // A change outside the portal leaves it to the selection.
-    const elsewhere = ciScheduleInput(view, { ...decision, changed: ['apps/cli/src/lib/config.ts'] })
+    const elsewhere = ciScheduleInput(view, {
+      ...decision,
+      changed: ['harness/processes/vinaya-strict/integration/config/compose.ts']
+    })
     expect(elsewhere.wholeSuites.map((w) => w.suite)).toEqual([])
   })
 

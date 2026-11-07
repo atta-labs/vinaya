@@ -3,7 +3,7 @@
  * `vinaya-log-v1`, Issue #406) — exercised through the real `vinaya dispatch`
  * CLI entry point (`execFileSync('bun', [INDEX, ...])`, same discipline as
  * `apps/cli/tests/commands/issue.test.ts`'s fake `gh`), never by importing
- * `dispatchRole` in-process: `apps/cli/src/lib/config.ts`'s
+ * `dispatchRole` in-process: `harness/processes/vinaya-strict/integration/config/compose.ts`'s
  * `GLOBAL_VINAYA_HOME` is a module-level constant frozen at first import from
  * whatever `HOME` happens to be, and `@attalabs/aeg-forge-state`'s
  * `resolveRepo()` caches its result for the process lifetime — an in-process
@@ -49,6 +49,8 @@ import {
   resolveOpenedAgentConfigPaths
 } from '../../../../../kernel/isolation/worker-boundary.js'
 import { surfaceOpenedAgentConfigPaths } from '../../../loops/dev-review/standalone/dev-review-loop.js'
+import { PROGRAMS, programCommandLine, programForBin } from '../../../tools/programs.js'
+import { parse as parseYaml } from 'yaml'
 import { devToolsSocketRoot } from '../../../../../kernel/tools/dev-tools-registration.js'
 import {
   CLI_ROOT,
@@ -342,7 +344,16 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
       writeFakeBinary(binDir, 'claude', `#!/bin/sh\ntouch "${spawnedMarker}"\ncat > /dev/null\necho '{}'\nexit 0\n`)
 
       const r = spawnBudgeted(
-        [INDEX, 'dispatch', role, '--agent', 'claude', '--prompt-file', promptFile, '--resume', 'earlier-session'],
+        [
+          ...(programCommandLine(['dispatch']) as string[]),
+          role,
+          '--agent',
+          'claude',
+          '--prompt-file',
+          promptFile,
+          '--resume',
+          'earlier-session'
+        ],
         {
           encoding: 'utf8',
           cwd,
@@ -378,7 +389,16 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     writeFakeBinary(binDir, 'codex', `#!/bin/sh\ntouch "${spawnedMarker}"\ncat > /dev/null\necho '{}'\nexit 0\n`)
 
     const r = spawnBudgeted(
-      [INDEX, 'dispatch', 'developer', '--agent', 'codex', '--prompt-file', promptFile, '--model', 'claude-opus-5'],
+      [
+        ...(programCommandLine(['dispatch']) as string[]),
+        'developer',
+        '--agent',
+        'codex',
+        '--prompt-file',
+        promptFile,
+        '--model',
+        'claude-opus-5'
+      ],
       {
         encoding: 'utf8',
         cwd,
@@ -957,6 +977,37 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
       expect(perms.allow).toContain(rule)
     }
     expect(perms.allow.some((r) => r.startsWith('Write(') || r.startsWith('Edit('))).toBe(false)
+  })
+
+  it('developer: every program `bin` its reference and prompts name is admitted by both allow lists, as its source file', () => {
+    const processRoot = join(import.meta.dir, '..', '..', '..')
+    const texts = [
+      'executing/developer/reference.md',
+      'executing/developer-prompt.ts',
+      'loops/dev-review/review-gate-input.ts',
+      'tools/task-contract/brief-assembly.ts'
+    ].map((file) => readFileSync(join(processRoot, file), 'utf8'))
+    const named = new Set(texts.flatMap((text) => [...text.matchAll(/\bvinaya-[a-z][a-z-]*[a-z]\b/g)].map((m) => m[0])))
+    const bins = [...named].filter((bin) => programForBin(bin) !== null)
+    expect(bins.length).toBeGreaterThan(0)
+    const runCommands = (
+      parseYaml(readFileSync(join(processRoot, 'executing', 'developer', 'grants.yaml'), 'utf8')) as {
+        capabilities: { run_commands: { allow: string[] } }
+      }
+    ).capabilities.run_commands.allow
+    const perms = buildRolePermissions('developer')
+    const missing: string[] = []
+    for (const bin of bins) {
+      const source = PROGRAMS.get(programForBin(bin) as string)?.source as string
+      if (!runCommands.includes(`bun ${source}`))
+        missing.push(`${bin}: grants.yaml run_commands lacks \`bun ${source}\``)
+      if (!perms.allow.includes(`Bash(bun ${source}:*)`))
+        missing.push(`${bin}: the Bash allow list lacks \`bun ${source}\``)
+    }
+    expect(missing).toEqual([])
+    // The published form every adopter's install runs a program through.
+    expect(runCommands).toContain('npx --yes -p @attalabs/vinaya@')
+    expect(perms.allow).toContain('Bash(npx --yes -p @attalabs/vinaya@:*)')
   })
 
   it('developer: holds NO forge write — no `git push` and no `gh` allow (O4, the publishing-tools task), published only through the driver-run tools', () => {
@@ -2685,7 +2736,14 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       const promptFile = join(cwd, 'prompt.txt')
       writeFileSync(promptFile, DOC_PROMPT)
       const result = spawnBudgeted(
-        [INDEX, 'dispatch', 'developer', '--agent', 'codex', '--prompt-file', promptFile],
+        [
+          ...(programCommandLine(['dispatch']) as string[]),
+          'developer',
+          '--agent',
+          'codex',
+          '--prompt-file',
+          promptFile
+        ],
         {
           encoding: 'utf8',
           cwd,
@@ -2795,7 +2853,7 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
     const r = spawnBudgeted(
-      [INDEX, 'dispatch', 'developer', '--agent', 'codex', '--prompt-file', promptFile],
+      [...(programCommandLine(['dispatch']) as string[]), 'developer', '--agent', 'codex', '--prompt-file', promptFile],
       {
         encoding: 'utf8',
         cwd,

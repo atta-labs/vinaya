@@ -72,7 +72,8 @@ export type RecordReach = (repoRoot: string, commit: string) => ReachedRecord
 export type GuardInput = { verdict: 'plan' | 'full'; reason: string; guarded: string[] }
 
 /** The one test the Linux sandbox job runs (`ci.yml`, "Run the suite under both sandboxes"). */
-export const SANDBOX_SUITE_TEST = 'apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts'
+export const SANDBOX_SUITE_TEST =
+  'harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/sandbox-conformance.test.ts'
 /** The root configuration the probe job proves (`scripts/ci/config-probe.ts`). */
 export const ROOT_CONFIG = 'vinaya.config.json'
 

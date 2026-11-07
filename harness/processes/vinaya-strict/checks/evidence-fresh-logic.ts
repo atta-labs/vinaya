@@ -122,7 +122,7 @@ export function compareEvidenceBlock(
     return {
       status: 'fail',
       errors: [
-        'evidence-fresh: the AEG:EVIDENCE block reads as the untouched placeholder, but this PR has already had at least one developer round — a real report should exist for this head. Re-run `vinaya pr report --write` to regenerate it; re-pasting the placeholder over a real block never passes.'
+        'evidence-fresh: the AEG:EVIDENCE block reads as the untouched placeholder, but this PR has already had at least one developer round — a real report should exist for this head. Re-run `vinaya-pr-report --write` to regenerate it; re-pasting the placeholder over a real block never passes.'
       ]
     }
   }
@@ -134,7 +134,7 @@ export function compareEvidenceBlock(
     return {
       status: 'fail',
       errors: [
-        'evidence-fresh: the AEG:EVIDENCE block is malformed — could not locate both a `Head:` line and a Group A fenced diff block. Re-run `vinaya pr report --write` to regenerate it.'
+        'evidence-fresh: the AEG:EVIDENCE block is malformed — could not locate both a `Head:` line and a Group A fenced diff block. Re-run `vinaya-pr-report --write` to regenerate it.'
       ]
     }
   }
@@ -162,7 +162,7 @@ export function compareEvidenceBlock(
     if (!samePatch) {
       const patchNote = patchIdOf ? ', and the patch changed' : ''
       errors.push(
-        `evidence-fresh: Group B is stale — the block's Head (${storedHead}) does not match the PR's real head (${resolvedHead})${patchNote}. Re-run \`vinaya pr report --write\` against the current head, commit, and push again.`
+        `evidence-fresh: Group B is stale — the block's Head (${storedHead}) does not match the PR's real head (${resolvedHead})${patchNote}. Re-run \`vinaya-pr-report --write\` against the current head, commit, and push again.`
       )
     }
   }

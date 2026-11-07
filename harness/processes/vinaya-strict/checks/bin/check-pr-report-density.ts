@@ -29,7 +29,7 @@ function main(): void {
         severity: 'error',
         message,
         agent_recovery_prompt:
-          'Collapse the named section to exactly one paragraph, then re-run `vinaya check pr-report-density`.'
+          'Collapse the named section to exactly one paragraph, then re-run `vinaya-check pr-report-density`.'
       })
     }
     process.exit(1)

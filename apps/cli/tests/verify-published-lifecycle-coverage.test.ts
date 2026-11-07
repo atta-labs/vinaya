@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { COMMANDS } from '@attalabs/vinaya-sources'
+import { COMMANDS } from '../../../harness/processes/vinaya-strict/integration/commands.js'
 import {
   declaredCommandNames,
   EXERCISES,
   EXEMPTIONS,
   HANDLED_INLINE,
+  programNames,
   RUN_ORDER,
   uncoveredShippedCommands
 } from '../scripts/verify-published-lifecycle'
@@ -15,7 +16,7 @@ import {
 // handling or a stated exemption fails at pull-request time instead of at the
 // next release. Nothing here installs, packs or reaches a forge.
 
-const shipped = COMMANDS.filter((c) => c.status === 'shipped').map((c) => c.name)
+const shipped = [...COMMANDS.filter((c) => c.status === 'shipped').map((c) => c.name), ...programNames()]
 
 describe('verify-published-lifecycle coverage', () => {
   test('every shipped command has an exercise, an inline handling or an exemption', () => {
@@ -49,8 +50,8 @@ describe('verify-published-lifecycle coverage', () => {
     expect(new Set(RUN_ORDER).size).toBe(RUN_ORDER.length)
   })
 
-  test('`sync` runs after `log emit`, whose folder it reads', () => {
-    expect(RUN_ORDER.indexOf('sync')).toBeGreaterThan(RUN_ORDER.indexOf('log emit'))
+  test('`vinaya-sync` runs after `vinaya-log-emit`, whose folder it reads', () => {
+    expect(RUN_ORDER.indexOf('vinaya-sync')).toBeGreaterThan(RUN_ORDER.indexOf('vinaya-log-emit'))
   })
 
   test('no command has both an exercise and an exemption', () => {

@@ -27,7 +27,6 @@ const MOVED_OUT_OF_THE_CLI: readonly (readonly [string, string])[] = [
   ['apps/cli/src/lib/claude-command-emitter.ts', `${PROCESS}/integration/claude-command-emitter.ts`],
   ['apps/cli/src/lib/claude-stop-hook-emitter.ts', `${PROCESS}/integration/claude-stop-hook-emitter.ts`],
   ['apps/cli/src/lib/context-packet.ts', `${PROCESS}/tools/task-contract/context-packet.ts`],
-  ['apps/cli/src/lib/decision-records.ts', `${PROCESS}/artifacts/decision-records.ts`],
   ['apps/cli/src/lib/detached-launch.ts', `${PROCESS}/loops/dev-review/run-control/detached-launch.ts`],
   ['apps/cli/src/lib/developer-turn-result.ts', `${PROCESS}/executing/developer/developer-turn-result.ts`],
   ['apps/cli/src/lib/dispatch-task.ts', `${PROCESS}/tools/task-contract/dispatch-task.ts`],

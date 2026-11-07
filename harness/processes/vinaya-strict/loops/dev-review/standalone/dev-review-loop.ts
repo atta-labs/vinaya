@@ -61,7 +61,8 @@ import {
   type TaskClock,
   type VerdictObservation
 } from '../../../tools/dev-review-policy/types'
-import { cliEntryPath, devBridgePath } from '../../../../../../apps/cli/src/lib/cli-entry.js'
+import { cliEntryPath } from '../../../tools/cli-entry.js'
+import { programFile, programForWords } from '../../../tools/programs.js'
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { guardedSpawnSync } from './driver-tool-guard.js'
@@ -70,7 +71,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
-import { configPath, loadTrustAnchorConfig } from '../../../../../../apps/cli/src/lib/config.js'
+import { configPath, loadTrustAnchorConfig } from '../../../integration/config/compose.js'
 import {
   buildDeveloperDeltaPacket,
   buildDeveloperFullPacket,
@@ -148,7 +149,7 @@ import {
 } from '../../../tools/task-contract/forge/forge-write.js'
 import { controlStoreRoot } from '../../../../../kernel/effects/effects.js'
 import { resolveRoleDoctrineText } from '../../../integration/roles/plan.js'
-import { validatePrBodyForCreate } from '../../../../../../apps/cli/src/commands/pr.js'
+import { validatePrBodyForCreate } from '../../../tools/pull-request/bin/pr.js'
 import { drainLogSink, log as logToDefaultSink, type LogSinkDeps } from '../../../../../kernel/log/log-sink.js'
 import { createVinayaLogSink, resolveVinayaLogAppendPath } from '../../../integration/log/log-sink-factory.js'
 import { crossRunnerRefusal, PROCESS_FOLDER_IN_CHECKOUT } from '../run-control/task-run-engine.js'
@@ -171,7 +172,7 @@ import {
   loopLogPathFor,
   narrateDriverEvent
 } from '../../../../../kernel/log/client/loop-log.js'
-import { detectVendoredVinaya } from '../../../../../../apps/cli/src/lib/self-host.js'
+import { detectVendoredVinaya } from '../../../tools/self-host.js'
 import { resolveRepo } from '../../../../../kernel/adapters/code-host/github/resolve-repo'
 import {
   checkPremiseAtHead,
@@ -2093,7 +2094,7 @@ async function defaultStartDevTools(input: {
     role: input.role ?? 'developer',
     toolGrants: vinayaToolGrantPolicy()
   })
-  return { bridge: driverDevBridgeInvocation(host.socketPath, devBridgePath()), close: () => host.close() }
+  return { bridge: driverDevBridgeInvocation(host.socketPath, programFile('dev-bridge')), close: () => host.close() }
 }
 
 /**
@@ -2340,7 +2341,7 @@ export async function defaultRunWorktreeChecks(
   worktreePath: string,
   env: Record<string, string> = {}
 ): Promise<{ passed: boolean; output: string }> {
-  const res = guardedSpawnSync(process.argv[0] as string, [cliEntryPath(), 'check', '--all'], {
+  const res = guardedSpawnSync(process.argv[0] as string, [programFile('check'), '--all'], {
     cwd: worktreePath,
     env: { ...process.env, ...env },
     maxBuffer: 64 * 1024 * 1024
@@ -2382,7 +2383,9 @@ async function defaultRefreshPrEvidence(input: {
   round: number
   repo: { owner: string; repo: string } | null
 }): Promise<{ head: string; checksPassed: boolean; evidence: string }> {
-  const res = guardedSpawnSync(process.argv[0] as string, [cliEntryPath(), ...prReportRefreshArgs(input.prNumber)], {
+  const report = programForWords(prReportRefreshArgs(input.prNumber))
+  if (report === null) throw new Error('no program runs `pr report`')
+  const res = guardedSpawnSync(process.argv[0] as string, [programFile(report.name), ...report.args], {
     cwd: input.worktreePath,
     maxBuffer: 64 * 1024 * 1024
   })
@@ -2530,7 +2533,10 @@ function defaultPullDefaultBranch(): { ok: true } | { ok: false; reason: string 
 
 /** O7: `process.argv[0]`/`[1]` are the interpreter and entry script this process itself was started with — re-spawning them with a fresh `args` tail reattaches under the exact same runtime, whether that's `bun apps/cli/src/index.ts` from source or a bundled `vinaya` binary. `stdio: 'inherit'` so the reattached run's own output reaches whatever terminal/log is watching this one. */
 function defaultReexecSelf(args: string[]): number | null {
-  const result = spawnSync(process.argv[0] as string, [cliEntryPath(), ...args], { stdio: 'inherit' })
+  // A relaunch of a command a program replaced starts that program; any other starts the command line.
+  const program = programForWords(args)
+  const argv = program === null ? [cliEntryPath(), ...args] : [programFile(program.name), ...program.args]
+  const result = spawnSync(process.argv[0] as string, argv, { stdio: 'inherit' })
   if (result.error) return null
   return result.status ?? 1
 }
@@ -2937,7 +2943,7 @@ export function surfaceOpenedAgentConfigPaths(surface: IssueSurface | null, agen
  * their Developer this same clause.
  */
 export function publishingInstructionLine(): string {
-  return 'publish only through the driver-run tools, which run outside your sandbox and hold the gates: `publish_changes` (pass your one-line `Type(scope): Description` commit header) to commit and push the task branch, `open_pull_request` (pass the full PR-report body) to open the pull request when none is open, `update_pull_request_body`/`refresh_evidence` for a body-only change, `read_pull_request` to read its state, its checks and the job-log tail of each failed check, and `run_checks` to run `vinaya check --all`; you hold no `gh`/`git push` credential and the driver does not commit, push or open on your behalf.'
+  return 'publish only through the driver-run tools, which run outside your sandbox and hold the gates: `publish_changes` (pass your one-line `Type(scope): Description` commit header) to commit and push the task branch, `open_pull_request` (pass the full PR-report body) to open the pull request when none is open, `update_pull_request_body`/`refresh_evidence` for a body-only change, `read_pull_request` to read its state, its checks and the job-log tail of each failed check, and `run_checks` to run `vinaya-check --all`; you hold no `gh`/`git push` credential and the driver does not commit, push or open on your behalf.'
 }
 
 /**
@@ -3050,7 +3056,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const openPr = d.findOpenPrForBranch(held.branch)
       if (openPr?.number !== resumePr) {
         throw new Error(
-          `devReviewLoop --resume: task ${closesTask}'s held pause state records no pull request — it paused before one existed — and PR #${resumePr} is not the open pull request on its branch \`${held.branch}\`. Continue it with \`${openPr ? `vinaya dev-review-loop --resume ${openPr.number}` : noPushResumeCommandFor(closesTask, held.branch, held.agent, held.model)}\`.`
+          `devReviewLoop --resume: task ${closesTask}'s held pause state records no pull request — it paused before one existed — and PR #${resumePr} is not the open pull request on its branch \`${held.branch}\`. Continue it with \`${openPr ? `vinaya-dev-review-loop --resume ${openPr.number}` : noPushResumeCommandFor(closesTask, held.branch, held.agent, held.model)}\`.`
         )
       }
       held = bindPauseToPullRequest(root, held, resumePr)
@@ -3060,7 +3066,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
     if (held.prNumber !== resumePr) {
       throw new Error(
-        `devReviewLoop --resume: task ${closesTask}'s held pause state names PR #${held.prNumber}, not PR #${resumePr}. Resume it with \`vinaya dev-review-loop --resume ${held.prNumber}\`.`
+        `devReviewLoop --resume: task ${closesTask}'s held pause state names PR #${held.prNumber}, not PR #${resumePr}. Resume it with \`vinaya-dev-review-loop --resume ${held.prNumber}\`.`
       )
     }
     /** The pull request this pause's escalation and ruling belong to — `null` for a pause bound after it was raised, whose ruling is on the task Issue. */
@@ -3156,7 +3162,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         : d.fetchRulings(resumePr)
     if (!bareAutomaticResume && rulings.length === 0) {
       throw new Error(
-        `devReviewLoop --resume: ${rulingSource} carries no Principal ruling comment yet — nothing to resume from. Continuing task ${closesTask} needs a Principal ruling posted on ${rulingSource}; then run \`vinaya dev-review-loop --resume ${resumePr}\`.` +
+        `devReviewLoop --resume: ${rulingSource} carries no Principal ruling comment yet — nothing to resume from. Continuing task ${closesTask} needs a Principal ruling posted on ${rulingSource}; then run \`vinaya-dev-review-loop --resume ${resumePr}\`.` +
           (held.reason === 'infrastructure' || held.reason === 'stale_driver'
             ? ` (task ${closesTask} has hit ${infrastructureRetriesSoFar} infrastructure/stale_driver pause(s) — at or past the bound of ${MAX_INFRASTRUCTURE_RETRIES}, a ruling is required even for this reason.)`
             : '')
@@ -8520,9 +8526,9 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
     throw new Error(
       `devReviewLoop --cancel: task ${task}'s held pause state names PR #${held.prNumber ?? '(none)'}, not ${targetLabel}. ${
         held.prNumber !== null
-          ? `Cancel it with \`vinaya dev-review-loop --cancel ${held.prNumber}\`.`
+          ? `Cancel it with \`vinaya-dev-review-loop --cancel ${held.prNumber}\`.`
           : openPrOnBranch
-            ? `It paused before any pull request existed, and the open pull request on its branch \`${held.branch}\` is PR #${openPrOnBranch.number} — cancel it with \`vinaya dev-review-loop --cancel ${openPrOnBranch.number}\`.`
+            ? `It paused before any pull request existed, and the open pull request on its branch \`${held.branch}\` is PR #${openPrOnBranch.number} — cancel it with \`vinaya-dev-review-loop --cancel ${openPrOnBranch.number}\`.`
             : `It paused before any pull request existed and none is open on its branch \`${held.branch}\` now — cancel it with the Operator's \`task_cancel\` for task ${task}.`
       }`
     )
@@ -9384,7 +9390,7 @@ async function watchPublishedPullRequest(
 }
 
 /**
- * issue-711 O4's own entry point — `apps/cli/src/commands/dev-review-loop.ts`'s
+ * issue-711 O4's own entry point — `harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.ts`'s
  * `--task` start and `task-run.ts`'s `runTask` both call this instead of
  * `devReviewLoop` directly (a human's own explicit `--resume <pr>`/
  * `--cancel <pr>` stay one-shot, unchanged — see this function's own

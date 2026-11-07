@@ -66,7 +66,7 @@ export const GATE_AUDIENCE: Record<string, GateAudience> = {
 
   'check-direct-main-push': {
     internal:
-      'Reaches adopters through `vinaya audit --only=direct-push`, not the check registry: it is a ring-2 sweep over merge history keyed on `GITHUB_SHA`, run by the generated archivist job on push to the default branch. It has no diff to key on, so there is nothing for `vinaya check` to run it against.'
+      'Reaches adopters through `vinaya audit --only=direct-push`, not the check registry: it is a ring-2 sweep over merge history keyed on `GITHUB_SHA`, run by the generated archivist job on push to the default branch. It has no diff to key on, so there is nothing for `vinaya-check` to run it against.'
   },
   'check-push-target': {
     internal:
@@ -74,7 +74,7 @@ export const GATE_AUDIENCE: Record<string, GateAudience> = {
   },
   'verify-task': {
     internal:
-      "A composite that shells this repo's own `typecheck`/`lint`/`test`/`build` scripts by name. Those names are this monorepo's toolchain (bun + turbo + biome), not an adopter's; the shipped equivalent of its intent is `vinaya check --all`, which is portable by construction."
+      "A composite that shells this repo's own `typecheck`/`lint`/`test`/`build` scripts by name. Those names are this monorepo's toolchain (bun + turbo + biome), not an adopter's; the shipped equivalent of its intent is `vinaya-check --all`, which is portable by construction."
   }
 }
 

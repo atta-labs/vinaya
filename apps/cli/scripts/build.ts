@@ -31,7 +31,8 @@
  *   casing between the two.
  */
 import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 
 const pkgRoot = join(import.meta.dir, '..')
 const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf-8')) as {
@@ -117,32 +118,16 @@ for (const n of ['verify-dispatch', 'verify-docs', 'verify-coherence']) {
 // exactly like a check bin so an adopter's published install can
 // `npx --yes -p @attalabs/vinaya@<version> <bin>` either one without going
 // through the CLI's own argv router at all.
-const libBinDir = join(pkgRoot, 'src', 'lib')
-const libBinNames = [
-  'pre-push-select-tests.ts',
-  'pre-push-changed-files.ts',
-  'pre-push-cache-test-run.ts',
-  'pre-push-record-tests.ts',
-  'pre-push-mode.ts',
-  // The hook's progress helper and the driver's progress observer: a published install reaches both here.
-  'pre-push-progress-dir.ts',
-  'push-progress-observer.ts'
-]
+// The hook's helpers, the hook's progress helper and the driver's progress observer: the program table's entries
+// built under `dist/lib`, each from its source file; a published install reaches them here.
+const libPrograms = [...PROGRAMS.values()].filter((program) => program.built.startsWith('dist/lib/'))
+const libBinNames = libPrograms.map((program) => program.built.slice('dist/lib/'.length))
 const libOutdir = join(pkgRoot, 'dist', 'lib')
 await build(
-  libBinNames.map((f) => {
-    const sources: Record<string, string> = {
-      'pre-push-select-tests.ts': 'harness/processes/vinaya-strict/integration/pre-push-select-tests.ts',
-      'pre-push-changed-files.ts': 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-changed-files.ts',
-      'pre-push-mode.ts': 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode.ts',
-      'pre-push-record-tests.ts': 'harness/kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts',
-      'pre-push-cache-test-run.ts': 'harness/processes/vinaya-strict/tools/pr-report/pre-push-cache-test-run.ts'
-    }
-    return sources[f] ? join(pkgRoot, '..', '..', sources[f] as string) : join(libBinDir, f)
-  }),
+  libPrograms.map((program) => join(pkgRoot, '..', '..', program.source)),
   libOutdir
 )
-for (const f of libBinNames) normalizeExecutable(join(libOutdir, f.replace(/\.ts$/, '.js')))
+for (const f of libBinNames) normalizeExecutable(join(libOutdir, f))
 
 // The tool bridge is a program of its own, not a CLI command: an agent's sandbox
 // runs this one file (`node dist/kernel/tools/host/dev-tools-bridge.js --socket <path>`)
@@ -152,10 +137,22 @@ const bridgeOutdir = join(pkgRoot, 'dist', 'kernel', 'tools', 'host')
 await build([bridgeSource], bridgeOutdir)
 normalizeExecutable(join(bridgeOutdir, 'dev-tools-bridge.js'))
 
-console.log(
-  `built dist/index.js + ${checkEntrypoints.length} check bin(s) + verify-dispatch in dist/checks/bin/ + ${libBinNames.length} lib bin(s) in dist/lib/ (external: ${external.join(', ') || 'none'})`
-)
+// Every program the process's program table names that the blocks above did not already emit (the audit and the
+// plumbing programs the command line no longer routes), each into its own built file, one build per program so its
+// file name — the name the program checks it was started as — is its own.
+const repoRoot = join(pkgRoot, '..', '..')
+for (const program of PROGRAMS.values()) {
+  const outFile = join(pkgRoot, program.built)
+  if (!program.built.startsWith('dist/programs/')) continue
+  await build([join(repoRoot, program.source)], dirname(outFile))
+  normalizeExecutable(outFile)
+}
+const unbuilt = [...PROGRAMS.values()].filter((program) => !existsSync(join(pkgRoot, program.built)))
+if (unbuilt.length > 0) {
+  console.error(`the build emitted no ${unbuilt.map((program) => program.built).join(', ')}`)
+  process.exit(1)
+}
 
-const auditOutdir = join(pkgRoot, 'dist', 'programs')
-await build([join(pkgRoot, '..', '..', 'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts')], auditOutdir)
-normalizeExecutable(join(auditOutdir, 'audit.js'))
+console.log(
+  `built dist/index.js + ${checkEntrypoints.length} check bin(s) + verify-dispatch in dist/checks/bin/ + ${libBinNames.length} lib bin(s) in dist/lib/ + ${PROGRAMS.size} program(s) (external: ${external.join(', ') || 'none'})`
+)

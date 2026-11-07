@@ -11,6 +11,7 @@
  * pattern as `apps/cli/tests/commands/issue.test.ts`'s fake `gh`.
  */
 
+import { programCommandLine } from '../../tools/programs.js'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -71,7 +72,7 @@ function runDispatch(
   path: string,
   extraEnv: Record<string, string> = {}
 ): CliResult {
-  const result = spawnSync('bun', [INDEX, 'dispatch', ...args], {
+  const result = spawnSync('bun', programCommandLine(['dispatch', ...args]) as string[], {
     encoding: 'utf8',
     cwd,
     env: { ...stripVinayaEnv(process.env), HOME: home, PATH: path, ...extraEnv },

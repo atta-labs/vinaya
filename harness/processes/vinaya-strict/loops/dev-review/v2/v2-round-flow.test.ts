@@ -4,7 +4,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parse } from 'yaml'
 import { loadProcess } from '../../../../../../harness/kernel/dev-process-socket/loader/load-process'
-import { fixtureDir } from '../../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fixture'
 import { decodeLoopState, type latestRecord, recordOutput } from '../../../executing/actions'
 import { V2_APPROVED_REPAIR_ALLOWANCE, exhaustedPause, withPolicyCeilings } from '../../../bin/run-engine'
 import { heldVerdictPath } from '../standalone/dev-review-loop/reviewer-dispatch'
@@ -1299,7 +1299,8 @@ describe('ready tests deferred to required CI', () => {
         attempt === 1
           ? {
               ok: false,
-              reason: 'the recorded loop baseline is stale; run `bun apps/cli/scripts/refresh-loop-baseline.ts`'
+              reason:
+                'the recorded loop baseline is stale; run `bun harness/processes/vinaya-strict/integration/conformance/unit/refresh-loop-baseline.ts`'
             }
           : { ok: true }
     })

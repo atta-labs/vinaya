@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { VinayaConfig } from '../../../../../../../apps/cli/src/lib/config.js'
+import type { VinayaConfig } from '../../../../integration/config/compose.js'
 import { resolveTrustAnchorSecurityScanCommand } from '../../../../loops/dev-review/standalone/dev-review-loop/security-scan-command.js'
 
 describe('resolveTrustAnchorSecurityScanCommand', () => {

@@ -70,7 +70,7 @@ function main(): void {
       severity: 'error',
       message: result.reason,
       agent_recovery_prompt:
-        'Push to a fresh task branch instead of this already-resolved one, then re-run `vinaya check dead-branch-push`.'
+        'Push to a fresh task branch instead of this already-resolved one, then re-run `vinaya-check dead-branch-push`.'
     })
     process.exit(1)
   }
@@ -82,7 +82,7 @@ function main(): void {
       severity: 'warning',
       message: `${CHECK_NAME}: the forge could not vouch for this push — ${result.reason}`,
       agent_recovery_prompt:
-        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check dead-branch-push` to learn whether this branch already has a merged or closed pull request.'
+        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya-check dead-branch-push` to learn whether this branch already has a merged or closed pull request.'
     })
   }
 

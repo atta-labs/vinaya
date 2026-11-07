@@ -14,7 +14,7 @@ import {
   deriveCodeReviewVerdict,
   renderCodeReviewComment,
   renderSecurityComment
-} from '../../../../../../../apps/cli/src/commands/review-post.js'
+} from '../../../../loops/dev-review/bin/review-post.js'
 import { spliceObjectivesSection } from '../../../../../../../apps/cli/src/commands/issue-objectives.js'
 import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
 import {
@@ -487,8 +487,8 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
  * is the loop-only variant that reads through `loadTrustAnchorConfigOrThrow` and
  * tells a FAILED read (retry, then throw → pause) apart from a missing/no-policy
  * config (defaults). The config-level read variant itself is covered in
- * `apps/cli/tests/config.test.ts`; the shared non-throwing `reviewPolicy` is
- * exercised by `apps/cli/tests/commands/review-status.test.ts`.
+ * `harness/processes/vinaya-strict/integration/config/config.test.ts`; the shared non-throwing `reviewPolicy` is
+ * exercised by `harness/processes/vinaya-strict/loops/dev-review/bin/review-status.test.ts`.
  */
 describe('reviewPolicyForLoop (issue #945) — retries a failed read, then throws; a null/no-policy config is the defaults path', () => {
   it('retries the read, then throws naming the read error when every attempt fails (O1/O3)', () => {

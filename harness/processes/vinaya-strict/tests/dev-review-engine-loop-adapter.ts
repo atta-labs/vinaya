@@ -73,8 +73,8 @@ import { readTaskRunner } from '../loops/dev-review/run-control/task-run-engine'
 import { cleanupAllReviewerIsolationArtifacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
 import { heldVerdictPath } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { handoffIdsInPrompt, OWNED_ENV_KEYS } from './standalone/lib/dev-review-loop-harness'
-import { FIXTURE_REPO } from '../../../../apps/cli/tests/lib/process-fixture'
-import type { Observation } from '../../../../apps/cli/tests/conformance/dev-review-current-loop-adapter'
+import { FIXTURE_REPO } from '../../../kernel/conformance/unit/process-fixture'
+import type { Observation } from '../integration/conformance/unit/dev-review-current-loop-adapter'
 
 /**
  * The real developer-review Flow and bound actions, supplied with a temporary
@@ -659,7 +659,7 @@ async function drive(
     if (logSink) await drainLogSink()
     return observeEngineRun(runtimeDir, [], error, logSink)
   }
-  task.cliEntry = gateCli
+  task.checkProgram = gateCli
   // The corpus repository has no installed hooks and no sandbox to probe: both controls are reported active.
   task.bound = {
     ...task.bound,

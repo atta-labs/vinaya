@@ -45,7 +45,7 @@ import {
   resolveReviewPolicy,
   resolveTrustedPrincipals,
   type VinayaConfig
-} from '../../../../../../../apps/cli/src/lib/config.js'
+} from '../../../../integration/config/compose.js'
 import {
   type AgentVendor,
   getProcessSnapshot,
@@ -424,7 +424,7 @@ export function fetchFrozenBrief(issueNumber: number): string {
   const found = resolveNewestFrozenBrief(fetchIssueComments(issueNumber, 'fetchFrozenBrief'), principalAllowlist())
   if (!found) {
     throw new Error(
-      `fetchFrozenBrief: Issue #${issueNumber} carries no principal-authored, frozen \`aeg:brief:v<k>\` comment — \`vinaya task brief\` must post the brief before this loop can start.`
+      `fetchFrozenBrief: Issue #${issueNumber} carries no principal-authored, frozen \`aeg:brief:v<k>\` comment — \`vinaya-task-brief\` must post the brief before this loop can start.`
     )
   }
   return found.content
@@ -598,7 +598,7 @@ export function resolveIssueObjectives(issueNumber: number): ObjectivesResolutio
   const brief = findPrincipalFrozenBrief(comments, allowlist)
   if (!brief) {
     throw new Error(
-      `resolveIssueObjectives: Issue #${issueNumber} carries no principal-authored, frozen \`aeg:brief:v1\` comment — \`vinaya task dispatch\` must post the brief before this loop can start.`
+      `resolveIssueObjectives: Issue #${issueNumber} carries no principal-authored, frozen \`aeg:brief:v1\` comment — \`vinaya-task-brief\` must post the brief before this loop can start.`
     )
   }
   const text = extractObjectivesSection(brief.content)

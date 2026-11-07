@@ -83,5 +83,5 @@ A healthy start logs `Developer starting round 1`.
   log events stay queued. Drain them with `log send` under `bash -ic`:
 
   ```bash
-  ssh dev@<vps> "bash -ic 'cd <checkout> && bun apps/cli/src/index.ts log send'"
+  ssh dev@<vps> "bash -ic 'cd <checkout> && bun harness/processes/vinaya-strict/integration/bin/log-send.ts'"
   ```

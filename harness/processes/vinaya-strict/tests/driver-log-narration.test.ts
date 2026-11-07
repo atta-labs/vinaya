@@ -1,4 +1,5 @@
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { programCommandLine } from '../tools/programs.js'
 import { afterAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -145,7 +146,16 @@ function standaloneDispatch(
   writeFileSync(promptFile, 'The scripted turn.\n')
   execFileSync(
     'bun',
-    [CLI_ENTRY, 'dispatch', role, '--agent', 'claude', '--prompt-file', promptFile, '--role-log-path', roleLogPath],
+    programCommandLine([
+      'dispatch',
+      role,
+      '--agent',
+      'claude',
+      '--prompt-file',
+      promptFile,
+      '--role-log-path',
+      roleLogPath
+    ]) as string[],
     {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],

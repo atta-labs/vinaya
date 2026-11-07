@@ -4,6 +4,7 @@
  * file keeps its own temporary-directory list and its own cleanup hook.
  */
 
+import { programCommandLine } from '../../../tools/programs.js'
 import { expect, it } from 'bun:test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from 'node:child_process'
@@ -172,7 +173,7 @@ export function runDispatch(
   extraEnv: Record<string, string> = {}
 ): CliResult {
   try {
-    const stdout = execFileSync('bun', [INDEX, 'dispatch', ...args], {
+    const stdout = execFileSync('bun', programCommandLine(['dispatch', ...args]) as string[], {
       encoding: 'utf8',
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -190,7 +191,7 @@ export function runDispatch(
     const err = e as { status?: number; stdout?: string; stderr?: string; signal?: string | null }
     if (err.signal) {
       throw new Error(
-        `vinaya dispatch subprocess killed by ${err.signal} after exceeding its ${DISPATCH_SUBPROCESS_BUDGET_MS}ms budget ` +
+        `vinaya-dispatch subprocess killed by ${err.signal} after exceeding its ${DISPATCH_SUBPROCESS_BUDGET_MS}ms budget ` +
           `(args: ${args.join(' ')})\n--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
       )
     }

@@ -14,11 +14,11 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { extractShortVersionAndChecklist } from '../../tools/docs/published-prose'
-import { createFileDoctrineSource } from '@attalabs/vinaya-sources'
+import { createFileDoctrineSource } from '../../tools/sources/doctrine-file-adapter.js'
 import { resolveDoctrineRoot } from '../../tools/doctrine/resolve-doctrine'
 import { roleEntry } from '../../tools/doctrine/doctrine-map'
-import { configPath, loadConfigChecked } from '../../../../../apps/cli/src/lib/config'
-import type { RoleEntry } from '../../../../../apps/cli/src/lib/config'
+import { configPath, loadConfigChecked } from '../config/compose'
+import type { RoleEntry } from '../config/compose'
 import { type RoleContract, validateRoleContract } from '../../../../kernel/config/loader/roles/contract'
 import {
   type ResolvedRole,

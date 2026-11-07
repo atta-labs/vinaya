@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url'
 import { buildPrincipalTestPlanWaitErrors } from '../../checks/bin/check-principal-test-plan-wait'
 import { compareEvidenceBlock, EVIDENCE_PLACEHOLDER_TEXT } from '../../checks/evidence-fresh-logic'
 import { resolveAnchoredRegion, ScanContext } from '../../../../kernel/gates/checks/scan-context'
-import { agentCommandText, extractAgentCommandLines } from '../../../../../apps/cli/src/commands/pr-report'
+import { agentCommandText, extractAgentCommandLines } from '../../tools/pr-report/bin/pr-report'
 import { checkBareDigits } from '../../tools/body-bare-digits-logic'
 import {
   buildReport,
@@ -41,7 +41,7 @@ import {
   type TestRunCacheRecord,
   testRunCacheKey
 } from '../../tools/pr-report/pr-report-engine'
-import { readyCiPlanCommand } from '../../../../../apps/cli/src/lib/pre-push-ready-policy'
+import { readyCiPlanCommand } from '../../tools/pre-push-ready-policy'
 import {
   isNativeRunCommand,
   nativeRunCommand,
@@ -49,7 +49,14 @@ import {
 } from '../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..', 'apps', 'cli')
-const ALWAYS_REFUSE_BODY_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', 'fake-always-refuse-body-check.cjs')
+const ALWAYS_REFUSE_BODY_CHECK = join(
+  import.meta.dir,
+  '..',
+  '..',
+  'fixtures',
+  'forge',
+  'fake-always-refuse-body-check.cjs'
+)
 
 const FIXED_GROUP_A = { head: 'a'.repeat(40), base: 'b'.repeat(40), numstat: '' }
 const PASSING_GATES: GateRunResult = { outcomes: [], failed: false }

@@ -66,22 +66,22 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TASK_TOOL_NAMES } from '../../../harness/kernel/tools/catalog/task-tools'
 import { trancheLabel } from '../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
-import { COMMANDS } from '@attalabs/vinaya-sources'
+import { COMMANDS } from '../../../harness/processes/vinaya-strict/integration/commands.js'
+import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 // Current source's registry, read to derive the expectation the published
 // artifact is measured against — the same "derive, never hand-maintain"
 // discipline this script already applies to the command coverage set.
 import { coreCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry.js'
 import { runsUnderAll } from '../../../harness/kernel/gates/checks/registry'
-// Same discipline for the `studio` exercise below: it probes the ports
-// current source would actually bind rather than hand-maintaining a second
-// copy of `3008`/`3108` that could silently drift from `studio.ts`.
-import { FALLBACK_PORT as STUDIO_FALLBACK_PORT, PRIMARY_PORT as STUDIO_PRIMARY_PORT } from '../src/commands/studio.js'
 // Same discipline again for the `init` exercise below (Issue #183): the
 // core-artifact expectation is read back from the manifest `init` itself
 // writes, via the same schema and filename `init.ts` uses, rather than a
 // hand-maintained list that can silently fall behind what `init` grows to
 // write.
-import { LOCAL_CONFIG_FILENAME, VinayaConfigSchema } from '../src/lib/config.js'
+import {
+  LOCAL_CONFIG_FILENAME,
+  VinayaConfigSchema
+} from '../../../harness/processes/vinaya-strict/integration/config/compose.js'
 import { resolveHookDir } from '../../../harness/kernel/connectors/git/detect.js'
 
 // `..` from `apps/cli/scripts/` is the package root — the same derivation
@@ -299,28 +299,11 @@ function git(cwd: string, args: string[]): string {
 }
 
 /**
- * Polls `http://127.0.0.1:<port>/studio` on every candidate port until one
- * answers or `timeoutMs` elapses. Two ports, not one: `studio.ts` falls back
- * from `STUDIO_PRIMARY_PORT` to `STUDIO_FALLBACK_PORT` when the primary is
- * already bound (a real possibility on a dev machine already running
- * `vinaya studio`), and this exercise must accept either — hardcoding one
- * port would make the exercise flaky on exactly the machine most likely to
- * run it by hand.
+ * A program's own `bin`, beside the command line's in the install's `node_modules/.bin`: every program the
+ * process's program table names ships as its own `bin`, never a command the command line routes.
  */
-async function waitForStudio(ports: number[], timeoutMs: number): Promise<{ port: number; status: number } | null> {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    for (const port of ports) {
-      try {
-        const res = await fetch(`http://127.0.0.1:${port}/studio`, { signal: AbortSignal.timeout(1000) })
-        return { port, status: res.status }
-      } catch {
-        // not up yet on this port — try the next, or the next poll cycle
-      }
-    }
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  return null
+function programBin(cliBin: string, name: string): string {
+  return join(dirname(cliBin), name)
 }
 
 // ---------------------------------------------------------------------------
@@ -533,7 +516,7 @@ exercise; never actually opened (--validate-only, no network write).
 `
 
 export const EXEMPTIONS: Record<string, string> = {
-  'pr verify-evidence':
+  'vinaya-pr-verify-evidence':
     "`pr verify-evidence` reads the target pull request's body and head via `gh pr view <n> --json body," +
     'headRefOid` UNCONDITIONALLY — there is no offline path, and the comparison is meaningless without a real ' +
     'published block to compare against. Same forge/credential boundary as `review post` and `archive` above. ' +
@@ -542,14 +525,14 @@ export const EXEMPTIONS: Record<string, string> = {
     'BASE_SHA override, head binding — are each proven against the real binary in ' +
     'tests/commands/pr-verify-evidence-cwd.test.ts and the comparison logic in ' +
     'harness/processes/vinaya-strict/tools/pr-report/pr-verify-evidence-logic.test.ts.',
-  tokens:
+  'vinaya-tokens':
     "`tokens` collects a role's usage from the host's own session transcript, which no fixture directory has: " +
     'the pointer file is written by a Stop hook during a real agent session, and `--transcript` needs a real ' +
     'JSONL transcript to summarize. **PRE-EXISTING GAP, not introduced by the change that added this note.** ' +
     '`tokens` has been `status: shipped` and unlisted here since it landed, so this script refused on `main` ' +
     'before `pr verify-evidence` existed. Recorded as an exemption rather than left as a silent refusal so ' +
     'the script runs at all; whether a synthetic-transcript exercise is worth building is a separate question.',
-  archive:
+  'vinaya-archive':
     '`archive` is a ring-2 post-merge mechanism: it resolves merged PRs and their associated Issues from the ' +
     'live forge (`gh` reads against real merge history) UNCONDITIONALLY — there is no dry-run path that skips ' +
     'the forge. Exercising it genuinely would require a real repo with real merged task PRs and real `gh` ' +
@@ -565,7 +548,7 @@ export const EXEMPTIONS: Record<string, string> = {
     'breaking the Part 4 eject byte-identity diff). The orchestration logic itself — prompt ordering, ' +
     'closeStdin-once discipline, partial-decline paths — is proven by tests/quickstart.test.ts against this ' +
     "workspace's own source, with real (non-mocked) git/hook behavior.",
-  'review post':
+  'vinaya-review-post':
     "`review post` resolves the target PR's real head via `gh pr view <n> --json headRefOid` UNCONDITIONALLY, " +
     'before it renders anything — the whole point of the command is that the sha is forge-resolved and never ' +
     'caller-supplied, so there is no flag that skips it and no honest way to add one. It then POSTS a comment ' +
@@ -602,11 +585,7 @@ export const EXEMPTIONS: Record<string, string> = {
     '`brief render` reads the task Issue from the forge and the default branch UNCONDITIONALLY — a FORGE READ ' +
     'with no offline path. Its rendering and refusals are proven against injected seams in ' +
     'tests/commands/brief-render.test.ts.',
-  'task dispatch':
-    '`task dispatch` checks the authenticated forge identity, posts the frozen brief as an Issue comment (a FORGE ' +
-    'WRITE) and can start a Developer session. Its logic is proven in harness/processes/vinaya-strict/tests/commands/dispatch-task.test.ts and ' +
-    'harness/processes/vinaya-strict/tests/lib/dispatch-task.test.ts.',
-  'task brief':
+  'vinaya-task-brief':
     '`task brief` posts the frozen brief as an Issue comment — a FORGE WRITE against a real Issue. Its logic is ' +
     'proven in tests/commands/task.test.ts.',
   'task run':
@@ -620,20 +599,14 @@ export const EXEMPTIONS: Record<string, string> = {
     '`task status` lists every open task Issue on the FORGE before it prints anything — a FORGE READ with no ' +
     'offline path. Its logic is proven in harness/processes/vinaya-strict/tests/commands/task-status.test.ts and ' +
     'harness/processes/vinaya-strict/tests/lib/task-status.test.ts.',
-  'task sweep':
+  'vinaya-task-sweep':
     "`task sweep` classifies folders by FORGE state and deletes from the machine's Vinaya home, which lies outside " +
     "the scratch root, so a real run would delete the invoking user's own task folders. Its logic is proven in " +
     'harness/processes/vinaya-strict/tests/commands/task-sweep.test.ts and harness/processes/vinaya-strict/tests/lib/task-sweep.test.ts.',
-  'task-tools result-proof':
-    '`task-tools result-proof` runs LIVE AGENT DISPATCHES on a SUBSCRIPTION LOGIN. Its logic is proven in ' +
-    'tests/lib/task-tools/result-proof.test.ts.',
-  'task-tools review-result-proof':
-    '`task-tools review-result-proof` runs LIVE REVIEWER DISPATCHES on a SUBSCRIPTION LOGIN. Its logic is proven in ' +
-    'tests/lib/task-tools/review-result-proof.test.ts.',
   'pr rule':
     '`pr rule` posts a ruling comment on a real pull request — a FORGE WRITE. Its logic is proven in ' +
     'tests/commands/pr-rule.test.ts.',
-  'pr snapshot':
+  'vinaya-pr-snapshot':
     '`pr snapshot` reads a real pull request and its task Issue over the FORGE REST API (network destination ' +
     'api.github.com) with a forge credential — a FORGE READ with no offline path.',
   'issue objectives edit':
@@ -646,31 +619,50 @@ export const EXEMPTIONS: Record<string, string> = {
   'milestone status':
     '`milestone status` reads a Milestone and its Issues from the FORGE — a FORGE READ. Its logic is proven in ' +
     'tests/milestone.test.ts.',
-  'review status':
+  'vinaya-review-status':
     "`review status` reads the pull request's comments and head from the FORGE UNCONDITIONALLY — a FORGE READ. " +
     'Its logic is proven in tests/commands/review-status.test.ts.',
-  'archive tranches':
+  'vinaya-archive tranches':
     '`archive tranches` reads tranche Issues and Milestones from the FORGE and writes archive state there — a ' +
     'FORGE READ and WRITE. Same boundary as `archive` and `archive tranche`; its logic is proven in ' +
     'tests/archive.test.ts.',
-  release:
-    '`release` needs an NPM LOGIN, a default-branch checkout equal to its remote and an IRREVERSIBLE PUBLISH to ' +
-    'the npm registry. Its logic is proven in src/commands/release.test.ts.',
-  dispatch:
+  'vinaya-dispatch':
     '`dispatch` starts a HEADLESS AGENT SESSION on a SUBSCRIPTION LOGIN. Its logic is proven in ' +
     'harness/processes/vinaya-strict/tests/commands/dispatch.test.ts and the three dispatch test files under harness/processes/vinaya-strict/tests/lib/dispatch/.',
-  'dev-review-loop':
+  'vinaya-dev-review-loop':
     '`dev-review-loop` makes FORGE WRITES and runs LIVE Developer and reviewer sessions on a SUBSCRIPTION LOGIN. ' +
     'Its logic is proven in tests/commands/dev-review-loop.test.ts and ' +
     'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts.',
-  'log selftest':
+  'vinaya-log-selftest':
     '`log selftest` passes only against a LOG SERVER (network destination: the configured `logs.url`) with an ' +
     'INGEST credential and a READ credential; a folder destination ends in a named failure by design, so a ' +
     'credential-free run can only assert the failure, not the command. Its logic is proven in ' +
     'tests/commands/log-selftest.test.ts.',
-  'log send':
+  'vinaya-log-send':
     '`log send` delivers to a LOG SERVER (network destination: the configured `logs.url`) with an INGEST ' +
-    'credential; a folder destination exits 1 by design. Its logic is proven in tests/commands/log-send.test.ts.'
+    'credential; a folder destination exits 1 by design. Its logic is proven in tests/commands/log-send.test.ts.',
+  'vinaya-select-tests':
+    '`vinaya-select-tests` is the test selector the generated pre-push hook runs inside a push, against a git push context and the runtime directory of its task; a credential-free fixture has neither. Its shipped file is asserted by tests/conformance/packed-push-progress.test.ts and its logic by the pre-push suites under harness/kernel/gates/ring0-hooks/pre-push/.',
+  'vinaya-changed-files':
+    '`vinaya-changed-files` is the changed-files lister the generated pre-push hook runs inside a push, against a git push context and the runtime directory of its task; a credential-free fixture has neither. Its shipped file is asserted by tests/conformance/packed-push-progress.test.ts and its logic by the pre-push suites under harness/kernel/gates/ring0-hooks/pre-push/.',
+  'vinaya-cache-test-run':
+    '`vinaya-cache-test-run` is the test-run cache writer the generated pre-push hook runs inside a push, against a git push context and the runtime directory of its task; a credential-free fixture has neither. Its shipped file is asserted by tests/conformance/packed-push-progress.test.ts and its logic by the pre-push suites under harness/kernel/gates/ring0-hooks/pre-push/.',
+  'vinaya-record-tests':
+    '`vinaya-record-tests` is the test-run recorder the generated pre-push hook runs inside a push, against a git push context and the runtime directory of its task; a credential-free fixture has neither. Its shipped file is asserted by tests/conformance/packed-push-progress.test.ts and its logic by the pre-push suites under harness/kernel/gates/ring0-hooks/pre-push/.',
+  'vinaya-push-mode':
+    '`vinaya-push-mode` is the push-mode reader the generated pre-push hook runs inside a push, against a git push context and the runtime directory of its task; a credential-free fixture has neither. Its shipped file is asserted by tests/conformance/packed-push-progress.test.ts and its logic by the pre-push suites under harness/kernel/gates/ring0-hooks/pre-push/.',
+  'vinaya-push-progress':
+    '`vinaya-push-progress` is the progress helper the generated pre-push hook runs inside a push, against a git push context and the runtime directory of its task; a credential-free fixture has neither. Its shipped file is asserted by tests/conformance/packed-push-progress.test.ts and its logic by the pre-push suites under harness/kernel/gates/ring0-hooks/pre-push/.',
+  'vinaya-push-progress-observer':
+    "`vinaya-push-progress-observer` is started by the review loop's driver around a push and exits once that driver " +
+    'is gone; a credential-free fixture has no driver. Its packed start is proven by tests/conformance/packed-push-progress.test.ts.',
+  'vinaya-dev-bridge':
+    "`vinaya-dev-bridge` connects an agent's sandbox to the review loop's driver-run tool host over that driver's " +
+    'socket; a credential-free fixture runs no driver. Its logic is proven in harness/kernel/tools/host/ and ' +
+    'harness/processes/vinaya-strict/integration/tools/host/role-grants-bridge.test.ts.',
+  'vinaya-audit':
+    '`vinaya-audit` reads branches and pushes from the FORGE and writes findings there — a FORGE READ and WRITE. ' +
+    'Its logic is proven in harness/processes/vinaya-strict/gates/ring2-audits/.'
 }
 
 export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
@@ -728,8 +720,8 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     }
   },
 
-  check: ({ bin, fixtureDir }) => {
-    const r = run(bin, ['check', '--all', '--json'], fixtureDir)
+  'vinaya-check': ({ bin, fixtureDir }) => {
+    const r = run(programBin(bin, 'vinaya-check'), ['--all', '--json'], fixtureDir)
     let reportedNames: string[] | null = null
     try {
       const parsed = JSON.parse(r.stdout) as { data?: { checks?: Array<{ name?: unknown }> } }
@@ -787,32 +779,32 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     }
   },
 
-  'pr create': ({ bin, fixtureDir }) => {
+  'vinaya-pr create': ({ bin, fixtureDir }) => {
     const bodyPath = join(fixtureDir, '.pr-body-fixture.md')
     writeFileSync(bodyPath, PR_BODY_FIXTURE, 'utf-8')
     const r = run(
-      bin,
-      ['pr', 'create', '--title', 'Chore: verify published lifecycle', '--body-file', bodyPath, '--validate-only'],
+      programBin(bin, 'vinaya-pr'),
+      ['create', '--title', 'Chore: verify published lifecycle', '--body-file', bodyPath, '--validate-only'],
       fixtureDir
     )
     const ok = r.status === 0 && /PASS/i.test(r.stdout)
     return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim() || r.stderr.trim()}` }
   },
 
-  'pr edit': ({ bin, fixtureDir }) => {
+  'vinaya-pr edit': ({ bin, fixtureDir }) => {
     // `--title` only, no `--body-file`: `prEditCommand` skips its forge fetch
     // entirely when `body === null` — a real, network-free exercise of the
     // command, unlike `issue edit` (see EXEMPTIONS).
     const r = run(
-      bin,
-      ['pr', 'edit', '999999', '--title', 'Chore: verify published lifecycle edit', '--validate-only'],
+      programBin(bin, 'vinaya-pr'),
+      ['edit', '999999', '--title', 'Chore: verify published lifecycle edit', '--validate-only'],
       fixtureDir
     )
     const ok = r.status === 0 && /PASS/i.test(r.stdout)
     return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim() || r.stderr.trim()}` }
   },
 
-  'pr report': ({ bin, fixtureDir }) => {
+  'vinaya-pr-report': ({ bin, fixtureDir }) => {
     // No `--write`: the block goes to stdout, so this exercise leaves the
     // fixture untouched and stays out of Part 4's byte-identity diff. The
     // write path is the same `buildReport` output routed through
@@ -858,7 +850,7 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     } catch {
       head = ''
     }
-    const r = run(bin, ['pr', 'report'], fixtureDir)
+    const r = run(programBin(bin, 'vinaya-pr-report'), [], fixtureDir)
     const hasBlock = r.stdout.includes('<!-- AEG:EVIDENCE:START -->') && r.stdout.includes('<!-- AEG:EVIDENCE:END -->')
     const bindsHead = head.length > 0 && r.stdout.includes(head)
     const ok = hasBlock && bindsHead
@@ -952,66 +944,13 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     }
   },
 
-  'demo break': ({ bin, fixtureDir }) => {
-    // Git-local end to end (branch + fixture commit + hook rejection + its own
-    // cleanup) — network-free, so it is exercised for real. It refuses on a
-    // dirty tree, and earlier exercises leave untracked fixture files behind:
-    // commit them first so the refusal path isn't what gets measured.
-    git(fixtureDir, ['add', '-A'])
-    git(fixtureDir, ['commit', '-m', 'Chore: absorb lifecycle fixtures pre demo-break', '--no-verify', '--allow-empty'])
-    const r = run(bin, ['demo', 'break'], fixtureDir)
-    const ok = r.status === 0
-    return {
-      status: ok ? 'pass' : 'fail',
-      detail: `exit ${r.status}: ${(r.stdout || r.stderr).trim().split('\n').filter(Boolean).pop()}`
-    }
-  },
-
-  studio: async ({ bin, fixtureDir }) => {
-    // `studio-standalone/` is now in the `files` allowlist and `bundle-studio`
-    // runs at `prepack`, so the shipped behavior for a published install is a
-    // REAL launch, not the refusal path this exercise asserted before Studio
-    // packaging shipped. `vinaya studio` never exits on its own (it's a
-    // server), so this spawns it detached, polls until it answers on either
-    // candidate port, then tears it down — the same "spawn, prove liveness,
-    // kill" shape Part 4 of this task's own brief uses for its end-to-end
-    // proof, just inlined here as one row of the lifecycle sweep.
-    const child = spawn(bin, ['studio'], { cwd: fixtureDir, stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    child.stdout?.on('data', (d: Buffer) => {
-      stdout += d.toString()
-    })
-    child.stderr?.on('data', (d: Buffer) => {
-      stderr += d.toString()
-    })
-    let exitCode: number | null = null
-    child.on('exit', (code) => {
-      exitCode = code
-    })
-
-    const hit = await waitForStudio([STUDIO_PRIMARY_PORT, STUDIO_FALLBACK_PORT], 20_000)
-
-    child.kill('SIGTERM')
-    await new Promise((r) => setTimeout(r, 500))
-    if (exitCode === null) child.kill('SIGKILL')
-
-    const launched = hit !== null && hit.status === 200
-    return {
-      status: launched ? 'pass' : 'fail',
-      detail: launched
-        ? `real launch: server on port ${hit?.port} answered /studio with ${hit?.status}`
-        : `no 200 from /studio on port ${STUDIO_PRIMARY_PORT} or ${STUDIO_FALLBACK_PORT} within 20s — exit ${exitCode ?? 'n/a (still running)'}, stdout tail: ${stdout.trim().slice(-300)}, stderr tail: ${stderr.trim().slice(-300)}`
-    }
-  },
-
-  waiver: ({ bin, fixtureDir }) => {
+  'vinaya-waiver': ({ bin, fixtureDir }) => {
     // --print-only executes nothing — it prints the `gh` commands a human
     // would run. A real, network-free exercise of the command's whole
     // argument/validation path.
     const r = run(
-      bin,
-      ['waiver', 'docs', '1', '--reason', 'verify-published-lifecycle fixture', '--print-only'],
+      programBin(bin, 'vinaya-waiver'),
+      ['docs', '1', '--reason', 'verify-published-lifecycle fixture', '--print-only'],
       fixtureDir
     )
     const ok = r.status === 0 && /nothing below was executed/i.test(r.stdout)
@@ -1021,7 +960,7 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     }
   },
 
-  'commit-msg': ({ bin, fixtureDir }) => {
+  'vinaya-commit-msg': ({ bin, fixtureDir }) => {
     // Pure local file validation — reads the message file's first line,
     // never touches the forge. Two invocations, not one: exit 0 alone would
     // also be produced by a command that never actually checked anything, so
@@ -1031,8 +970,8 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     const badPath = join(fixtureDir, '.commit-msg-bad.txt')
     writeFileSync(goodPath, 'Chore: verify-published-lifecycle commit-msg fixture\n', 'utf-8')
     writeFileSync(badPath, 'not a valid commit message\n', 'utf-8')
-    const good = run(bin, ['commit-msg', goodPath], fixtureDir)
-    const bad = run(bin, ['commit-msg', badPath], fixtureDir)
+    const good = run(programBin(bin, 'vinaya-commit-msg'), [goodPath], fixtureDir)
+    const bad = run(programBin(bin, 'vinaya-commit-msg'), [badPath], fixtureDir)
     const rejected = bad.status === 1 && /doesn't match this repo's commit convention/.test(bad.stderr)
     const ok = good.status === 0 && rejected
     return {
@@ -1109,31 +1048,6 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim() || r.stderr.trim()}` }
   },
 
-  'new adr': async ({ bin, fixtureDir, homeDir }) => {
-    // Decision records are opt-in: the command refuses while
-    // `decisionRecords.path` is unset, so the fixture config gets the key for
-    // the duration of this row only (`withConfigPatch` writes the original
-    // bytes back). The record and its index page land under
-    // `ADR_PROOF_DIR`, both listed in `SCRATCH_FIXTURE_PATHS`.
-    const env = isolatedEnv(homeDir)
-    const r = await withConfigPatch(
-      fixtureDir,
-      (config) => {
-        config.decisionRecords = { path: ADR_PROOF_DIR }
-      },
-      () => run(bin, ['new', 'adr', ADR_PROOF_TITLE], fixtureDir, env)
-    )
-    const recordPath = join(fixtureDir, ADR_PROOF_RECORD)
-    const indexPath = join(fixtureDir, ADR_PROOF_INDEX)
-    const recordWritten = existsSync(recordPath) && /Proposed/.test(readFileSync(recordPath, 'utf-8'))
-    const indexed = existsSync(indexPath) && readFileSync(indexPath, 'utf-8').includes('0001')
-    const ok = r.status === 0 && recordWritten && indexed
-    return {
-      status: ok ? 'pass' : 'fail',
-      detail: `exit ${r.status}, numbered record written with status Proposed: ${recordWritten}, index row added: ${indexed}${ok ? '' : ` — ${(r.stderr.trim() || r.stdout.trim()).slice(0, 200)}`}`
-    }
-  },
-
   'issue surface': ({ bin, fixtureDir, homeDir }) => {
     // Reads the draft body and the fixture's tracked files; writes nothing and
     // reaches no forge. A pinned file with one tracked importer gives the
@@ -1160,13 +1074,13 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     }
   },
 
-  'task-tools serve': async ({ bin, fixtureDir, homeDir }) => {
+  'vinaya-task-tools-serve': async ({ bin, fixtureDir, homeDir }) => {
     // The MCP lifecycle over stdio: initialize request, initialized
     // notification, tools/list request, then stdin is closed (the client's
     // shutdown signal). The child is killed at a bounded deadline so a server
     // that never exits cannot hang the run. The expected tool names are
     // `TASK_TOOL_NAMES` itself, never a copy.
-    const child = spawn(bin, ['task-tools', 'serve'], {
+    const child = spawn(programBin(bin, 'vinaya-task-tools-serve'), [], {
       cwd: fixtureDir,
       env: isolatedEnv(homeDir),
       stdio: ['pipe', 'pipe', 'pipe']
@@ -1215,7 +1129,7 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     }
   },
 
-  'log emit': async ({ bin, fixtureDir, homeDir }) => {
+  'vinaya-log-emit': async ({ bin, fixtureDir, homeDir }) => {
     // Records one declared event to the default local folder destination —
     // under `HOME` in the scratch root, with no URL or credential. The
     // declaration is added to the fixture config for this row only.
@@ -1226,7 +1140,13 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
         const logs = typeof config.logs === 'object' && config.logs !== null ? (config.logs as object) : {}
         config.logs = { ...logs, events: { [LOG_PROBE_EVENT]: { fields: LOG_PROBE_FIELDS } } }
       },
-      () => run(bin, ['log', 'emit', LOG_PROBE_EVENT, '--json', JSON.stringify({ note: 'lifecycle' })], fixtureDir, env)
+      () =>
+        run(
+          programBin(bin, 'vinaya-log-emit'),
+          [LOG_PROBE_EVENT, '--json', JSON.stringify({ note: 'lifecycle' })],
+          fixtureDir,
+          env
+        )
     )
     const ok = r.status === 0 && r.stdout.includes(LOG_PROBE_EVENT) && /folder/.test(r.stdout)
     return {
@@ -1235,11 +1155,11 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     }
   },
 
-  sync: ({ bin, fixtureDir, homeDir }) => {
+  'vinaya-sync': ({ bin, fixtureDir, homeDir }) => {
     // Reads the folder `log emit` just wrote into the local cache under the
     // scratch `HOME`. Run after `log emit` (see `RUN_ORDER`); at least one
     // stored row proves it read an event rather than an empty folder.
-    const r = run(bin, ['sync'], fixtureDir, isolatedEnv(homeDir))
+    const r = run(programBin(bin, 'vinaya-sync'), [], fixtureDir, isolatedEnv(homeDir))
     const stored = Number(/Rows stored:\s*(\d+)/.exec(r.stdout)?.[1] ?? Number.NaN)
     const ok = r.status === 0 && stored >= 1
     return {
@@ -1350,7 +1270,7 @@ async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
       await new Promise((resolve) => setTimeout(resolve, 2000))
     }
 
-    const r = run(bin, ['archive', 'tranche', slug, '--yes'], scratchDir)
+    const r = run(programBin(bin, 'vinaya-archive'), ['tranche', slug, '--yes'], scratchDir)
     const claimsClosed = new RegExp(`closed \\(Milestone #${milestoneNumber}\\)`).test(r.stdout)
 
     const reread = run('gh', ['api', `repos/${hostRepo}/milestones/${milestoneNumber}`], scratchDir)
@@ -1389,43 +1309,40 @@ async function exerciseArchiveTranche(bin: string): Promise<Outcome> {
 // `exerciseArchiveTranche` above): it is the only exercise that reaches a
 // real forge repo instead of the isolated `fixtureDir`. Named here purely so
 // `coverageCheck` sees all three as covered.
-export const HANDLED_INLINE = new Set(['init', 'eject', 'archive tranche'])
+export const HANDLED_INLINE = new Set(['init', 'eject', 'vinaya-archive tranche'])
 
 /**
  * The order `main` runs the generic exercises in, after `init` (run
  * separately, because it gates every other exercise) and before the inline
- * `archive tranche` and `eject`. An exercise that is not listed here is never
+ * `vinaya-archive tranche` and `eject`. An exercise that is not listed here is never
  * run: `unaccountedCommands` reports it after a run, and the coverage test
- * reports it before any run. `new adr`, `issue surface` and `task-tools
- * serve` need no other row; `sync` must follow `log emit`, whose folder it
- * reads.
+ * reports it before any run. `issue surface` and `vinaya-task-tools-serve`
+ * need no other row; `vinaya-sync` must follow `vinaya-log-emit`, whose folder
+ * it reads.
  */
 export const RUN_ORDER = [
   'help',
   'version',
   'init product',
-  'check',
+  'vinaya-check',
   'new check',
   'new noop-check',
   'new role',
-  'pr create',
-  'pr edit',
-  'pr report',
+  'vinaya-pr create',
+  'vinaya-pr edit',
+  'vinaya-pr-report',
   'issue create',
   'milestone create',
   'milestone edit',
-  'new adr',
   'issue surface',
-  'task-tools serve',
-  'log emit',
-  'sync',
+  'vinaya-task-tools-serve',
+  'vinaya-log-emit',
+  'vinaya-sync',
   'doctor',
   'upgrade',
   'doctrine',
-  'commit-msg',
-  'demo break',
-  'studio',
-  'waiver'
+  'vinaya-commit-msg',
+  'vinaya-waiver'
 ] as const
 
 export type RegistryEntry = { name: string; status: string }
@@ -1436,11 +1353,25 @@ export type RegistryEntry = { name: string; status: string }
  * a test can hand it a synthetic shipped command.
  */
 export function uncoveredShippedCommands(registry: readonly RegistryEntry[] = COMMANDS): string[] {
-  return registry
-    .filter(
-      (c) => c.status === 'shipped' && !(c.name in EXERCISES) && !(c.name in EXEMPTIONS) && !HANDLED_INLINE.has(c.name)
-    )
-    .map((c) => c.name)
+  return [...registry.filter((c) => c.status === 'shipped').map((c) => c.name), ...programNames()].filter(
+    (name) => !(name in EXERCISES) && !(name in EXEMPTIONS) && !HANDLED_INLINE.has(name)
+  )
+}
+
+/**
+ * What the run covers beside the shipped commands: each program's `bin` in the process's program table, written
+ * with the arguments it starts with when it stands for a command's sub-command (`vinaya-pr create`).
+ */
+export function programNames(): string[] {
+  const names: string[] = []
+  for (const program of PROGRAMS.values()) {
+    const forms = program.commands.length === 0 ? [[]] : program.commands.map((c) => [...c.argv])
+    for (const argv of forms) {
+      const name = [program.bin, ...argv].join(' ')
+      if (!names.includes(name)) names.push(name)
+    }
+  }
+  return names
 }
 
 /** Every name this script gives an exercise, an exemption or inline handling — for the stale-key check. */
@@ -1561,7 +1492,7 @@ async function main(): Promise<void> {
     // Reaches the real forge (`hostRepo`), not `fixtureDir` — see
     // `exerciseArchiveTranche` for why it runs here instead of through the
     // generic loop above.
-    results.set('archive tranche', await exerciseArchiveTranche(bin))
+    results.set('vinaya-archive tranche', await exerciseArchiveTranche(bin))
 
     for (const [name, reason] of Object.entries(EXEMPTIONS)) {
       results.set(name, { status: 'pass', detail: `EXEMPT — ${reason}` })

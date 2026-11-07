@@ -3,7 +3,7 @@
  * this repository's own `runtimeDir`) or a server, mutually exclusive,
  * trust-anchor-gated for an unattended caller exactly as `runtimeDir` already
  * is. `resolveLogsSetting`/`resolveTrustAnchorLogsDestination`/
- * `resolveLogsHeaderValues` (`../../../../../apps/cli/src/lib/config.js`) are pure;
+ * `resolveLogsHeaderValues` (`./config/compose.js`) are pure;
  * `resolveLogDestinationFrom` (`../../../../kernel/log/log-sink.js`) is the pure
  * decision layer built on top of them, mirroring `run-paths.ts`'s own
  * `resolveRuntimeDir`. The sink's own live delivery (folder append, server
@@ -22,7 +22,7 @@ import {
   resolveTrustAnchorLogsDestination,
   VinayaConfigSchema,
   type VinayaConfig
-} from '../../../../../apps/cli/src/lib/config.js'
+} from '../config/compose.js'
 import {
   createLogSink,
   createTrustAnchorCache,
@@ -34,7 +34,7 @@ import {
   type LogSinkDeps,
   type LogSinkOverrides
 } from '../../../../kernel/log/log-sink.js'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../../apps/cli/tests/lib/process-fixture'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
 
 const DEFAULT_FOLDER = '/h/runtime/atta-labs-vinaya/logs'
 
@@ -800,7 +800,7 @@ async function runServerDestinationScript(home: string, cwd: string, url: string
   const script = join(cwd, `run-log-${effectId}.ts`)
   writeFileSync(
     script,
-    `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\nimport { createLogSink } from ${JSON.stringify(LOG_SINK_PATH)}
+    `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', 'harness', 'processes', 'vinaya-strict', 'integration', 'config', 'compose.ts'))})).installVinayaConfigProvider()\nimport { createLogSink } from ${JSON.stringify(LOG_SINK_PATH)}
     const { log } = createLogSink({
       env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
       resolveBranchIssue: async () => null,
@@ -917,7 +917,7 @@ async function runAbruptExitScript(cwd: string, home: string, drainOnExit: boole
   writeFileSync(
     script,
     `import { drainLogSink, log } from ${JSON.stringify(LOG_SINK_PATH)}
-    await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()
+    await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', 'harness', 'processes', 'vinaya-strict', 'integration', 'config', 'compose.ts'))})).installVinayaConfigProvider()
     import { installVinayaLogSinkFactory } from ${JSON.stringify(LOG_SINK_FACTORY_PATH)}
     installVinayaLogSinkFactory()
     setInterval(() => {}, 60000)

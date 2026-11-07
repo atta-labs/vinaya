@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ts from 'typescript'
 import { describe, expect, it } from 'bun:test'
-import type { SurfaceExemption } from '../src/lib/surface-exemption'
+import type { SurfaceExemption } from '../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 /**
  * O2 — the export inventory is enforced from the real export set, with no

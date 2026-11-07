@@ -32,7 +32,7 @@ export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
 }
 ```
 
-`apps/cli/src/lib/surface-exemption.ts` defines the shape. `callsToday` is a ratchet: `surface-index.test.ts` recomputes the command's real in-scope call count from source on every run and fails if it no longer matches the marker — so a call silently added without updating the marker in the same file is refused, without anyone maintaining a central count. `retiresVia` names the chokepoint (existing or, per the Open note above, still aspirational) that retires the row once the command is rewritten to call it alone. No command is rewritten by declaring or reading this marker — it only records what is already true of the command's source today.
+`harness/processes/vinaya-strict/tools/pr-report/surface-exemption.ts` defines the shape. `callsToday` is a ratchet: `surface-index.test.ts` recomputes the command's real in-scope call count from source on every run and fails if it no longer matches the marker — so a call silently added without updating the marker in the same file is refused, without anyone maintaining a central count. `retiresVia` names the chokepoint (existing or, per the Open note above, still aspirational) that retires the row once the command is rewritten to call it alone. No command is rewritten by declaring or reading this marker — it only records what is already true of the command's source today.
 
 A non-command file colocated under `apps/cli/src/commands/` that isn't wired into the router (e.g. logic a future task moves into `apps/cli/src/lib/`) carries the same marker, keyed by its own filename instead of a command name.
 
