@@ -76,16 +76,22 @@ function isReachable(doc: Doc, bySlug: Map<string, Doc>, seen: Set<string> = new
 const MD_LINK_PATTERN = /\]\(([^)]+)\)/g
 
 /**
- * Resolves `target` relative to the directory of `fromRelPath`'s file, and
- * returns the logical key of the file it lands on. The link is resolved where
- * the file actually lives — the source path the doctrine map names for the
- * key — so a link written for the process folder's layout resolves; a target
- * that is no doctrine file keeps its resolved path. Returns null if it escapes
- * the doctrine tree.
+ * The logical keys `target` can name from `fromRelPath`: resolved against the
+ * entry's logical key, and — for a doctrine file the doctrine map names —
+ * against the source path the file actually lives at, mapped back to the key
+ * it lands on, so a link written for the process folder's layout resolves as
+ * well as one written for the logical layout. A target that is no doctrine
+ * file keeps its resolved path. Empty when every resolution escapes the
+ * doctrine tree.
  */
-function resolveRelativeMdLink(fromRelPath: string, target: string): string | null {
-  const resolved = resolveRelativePath(doctrineEntry(fromRelPath)?.source ?? fromRelPath, target)
-  return resolved === null ? null : (keyForSource(resolved) ?? resolved)
+function resolveRelativeMdLink(fromRelPath: string, target: string): string[] {
+  const candidates: string[] = []
+  const byKey = resolveRelativePath(fromRelPath, target)
+  if (byKey !== null) candidates.push(byKey)
+  const source = doctrineEntry(fromRelPath)?.source
+  const bySource = source === undefined ? null : resolveRelativePath(source, target)
+  if (bySource !== null) candidates.push(keyForSource(bySource) ?? bySource)
+  return candidates
 }
 
 function resolveRelativePath(fromRelPath: string, target: string): string | null {
@@ -137,9 +143,9 @@ export function evaluateDocsCoherence(
       if (!target.endsWith('.md')) continue
 
       const resolved = resolveRelativeMdLink(entry.relPath, target)
-      if (resolved === null) continue // escapes the doctrine tree — out of scope for this check
+      if (resolved.length === 0) continue // escapes the doctrine tree — out of scope for this check
 
-      if (!surfacedRelPaths.has(resolved)) {
+      if (!resolved.some((candidate) => surfacedRelPaths.has(candidate))) {
         errors.push(`C6: link "${target}" in "${entry.relPath}" resolves to no surfaced doc`)
       }
     }

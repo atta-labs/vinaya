@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
+import { DOCTRINE_REPO_PATHS } from '../tools/doctrine/doctrine-map'
 
 // Task `vinaya-adopter-portability-v1` 2 (Issue #232): `reader-resolvable-prose`
 // and `retired-vocabulary` both defaulted an unconfigured `proseGates.doctrineRoot`
@@ -503,10 +504,10 @@ describe('doctrine root genuinely unresolvable (Issue #314)', () => {
     execFileSync('git', ['clone', '--quiet', '--shared', REPO_ROOT, dest])
     execFileSync('git', ['checkout', '-q', '-b', 'test-no-aeg-root'], { cwd: dest })
     symlinkSync(join(REPO_ROOT, 'node_modules'), join(dest, 'node_modules'))
-    execFileSync('git', ['rm', '-rq', '--', 'aeg-root'], { cwd: dest })
+    execFileSync('git', ['rm', '-rq', '--', ...DOCTRINE_REPO_PATHS], { cwd: dest })
     execFileSync(
       'git',
-      ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '-q', '-m', 'Chore: remove aeg-root'],
+      ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '-q', '-m', 'Chore: remove the doctrine'],
       {
         cwd: dest
       }

@@ -209,7 +209,7 @@ describe('requestEffect', () => {
   })
 
   it('accepts a protected path the task Surface covers, and still refuses one it does not', () => {
-    const covers = (path: string) => path === 'aeg-root/roles/developer.md'
+    const covers = (path: string) => path === 'harness/processes/vinaya-strict/executing/developer/doctrine.md'
     const request = (path: string, key: string) => ({
       operation: 'branch-push',
       target: scopeTarget(2, 'task/worker-isolation-v1/2'),
@@ -221,9 +221,13 @@ describe('requestEffect', () => {
       poster: () => 'https://example.com',
       reconcile: neverReconcile
     })
-    expect(requestEffect(deps, worker, request('aeg-root/roles/developer.md', 'push-covered'))).toBe(
-      'https://example.com'
-    )
+    expect(
+      requestEffect(
+        deps,
+        worker,
+        request('harness/processes/vinaya-strict/executing/developer/doctrine.md', 'push-covered')
+      )
+    ).toBe('https://example.com')
     expect(() => requestEffect(deps, worker, request('.github/workflows/ci.yml', 'push-uncovered'))).toThrow(
       /\.github\/workflows\/ci\.yml.*Planner must add the path to the task's Surface/
     )
@@ -232,9 +236,9 @@ describe('requestEffect', () => {
   it.each([
     ['foo/../.github/workflows/ci.yml', 'a `..` segment that resolves back onto a protected prefix'],
     ['./.github/x', 'a leading `./` that defeats a raw `startsWith` compare'],
-    ['/aeg-root/x', 'a leading `/` that makes the path look absolute'],
+    ['/harness/processes/vinaya-strict/doctrine/enforcement.md', 'a leading `/` that makes the path look absolute'],
     ['../.github/workflows/ci.yml', 'a leading, unresolved `..` with nothing preceding it to cancel against'],
-    ['../../aeg-root/x', 'two leading unresolved `..` segments']
+    ['../../harness/processes/vinaya-strict/doctrine/enforcement.md', 'two leading unresolved `..` segments']
   ])('refuses a protected path disguised by %s (%s)', (path) => {
     expect(() =>
       requestEffect(deps, worker, {

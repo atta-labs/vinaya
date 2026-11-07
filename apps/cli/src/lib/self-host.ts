@@ -34,9 +34,11 @@
 // same bytes.
 
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
-import { resolveDoctrineRootInfo } from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
-import { DOCTRINE_TREE } from '../../../../harness/processes/vinaya-strict/tools/doctrine/doctrine-map.js'
+import { join, sep } from 'node:path'
+import {
+  gitToplevel,
+  resolveDoctrineRootInfo
+} from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
 
 /** The published name whose presence in the workspace is what breaks `npx`. */
 export const VINAYA_PACKAGE_NAME = '@attalabs/vinaya'
@@ -300,7 +302,8 @@ export function resolveAuthorRepoSourceEntry(ownPackageRoot: string, cwd: string
   const info = resolveDoctrineRootInfo(undefined, cwd)
   if (info?.source !== 'tree') return null
 
-  const toplevel = resolve(info.root, ...DOCTRINE_TREE.split('/').map(() => '..'))
+  const toplevel = gitToplevel(cwd)
+  if (toplevel === null) return null
   const cliPkg = readPackageJson(join(toplevel, 'apps', 'cli', 'package.json'))
   if (cliPkg?.name !== VINAYA_PACKAGE_NAME) return null
 

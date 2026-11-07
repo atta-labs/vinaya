@@ -930,6 +930,69 @@
       "reason": "The navigation test reads doctrine pages and their enforcement anchors from disk."
     },
     {
+      "id": "process-doctrine-map",
+      "kind": "fixture",
+      "paths": [
+        "harness/processes/vinaya-strict/doctrine/manual-flow.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/architect-planner.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/archivist-tranche-archivist.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/developer-reviewer.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/planner-developer.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/planner-operator.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/principal-operator.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/reviewer-archivist.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/security-archivist.md",
+        "harness/processes/vinaya-strict/doctrine/contracts/tranche-archivist-planner.md",
+        "harness/processes/vinaya-strict/doctrine/documentation-coherence.md",
+        "harness/processes/vinaya-strict/doctrine/enforcement.md",
+        "harness/processes/vinaya-strict/doctrine/glossary.md",
+        "harness/processes/vinaya-strict/doctrine/milestone-model.md",
+        "harness/processes/vinaya-strict/doctrine/process.md",
+        "harness/processes/vinaya-strict/thinking/reviewer-prompt.md",
+        "harness/processes/vinaya-strict/thinking/architect/doctrine.md",
+        "harness/processes/vinaya-strict/retrospecting/archivist/doctrine.md",
+        "harness/processes/vinaya-strict/executing/developer/doctrine.md",
+        "harness/processes/vinaya-strict/executing/developer/reference.md",
+        "harness/processes/vinaya-strict/executing/operator/doctrine.md",
+        "harness/processes/vinaya-strict/thinking/planner/doctrine.md",
+        "harness/processes/vinaya-strict/thinking/planner/reference.md",
+        "harness/processes/vinaya-strict/doctrine/roles/principal.md",
+        "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
+        "harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md",
+        "harness/processes/vinaya-strict/retrospecting/tranche-archivist/doctrine.md",
+        "harness/processes/vinaya-strict/doctrine/skills/context-packets/SKILL.md",
+        "harness/processes/vinaya-strict/doctrine/skills/context-packets/examples/operator-start.md",
+        "harness/processes/vinaya-strict/doctrine/skills/roles/SKILL.md",
+        "harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md",
+        "harness/processes/vinaya-strict/doctrine/state-machine.md",
+        "harness/processes/vinaya-strict/doctrine/task-model.md",
+        "harness/processes/vinaya-strict/artifacts/templates/brief-template.md",
+        "harness/processes/vinaya-strict/artifacts/templates/decision-record-template.md",
+        "harness/processes/vinaya-strict/artifacts/templates/issue-rationale-template.md",
+        "harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md",
+        "harness/processes/vinaya-strict/doctrine/tranche-model.md",
+        "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts"
+      ],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": [
+            "harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.test.ts",
+            "harness/processes/vinaya-strict/tools/doctrine/doctrine-map-readers.test.ts",
+            "harness/processes/vinaya-strict/integration/doctrine-pointer.test.ts",
+            "harness/processes/vinaya-strict/integration/log/doctrine-version.test.ts",
+            "harness/processes/vinaya-strict/doctrine/no-brief-author.test.ts",
+            "harness/processes/vinaya-strict/tools/actions.test.ts",
+            "harness/processes/vinaya-strict/tools/diagram-model.test.ts",
+            "harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts",
+            "apps/cli/tests/doctrine.test.ts",
+            "apps/cli/scripts/bundle-doctrine.test.ts"
+          ]
+        }
+      ],
+      "reason": "The doctrine resolution, the doctrine map's readers, the AGENTS.md pointer, the Log's doctrine version, the retired-role sweep, the action and diagram-model cross-checks, the node routes, the doctrine command's tests and the bundler's test read the doctrine files at the source paths the doctrine map names, so a moved or renamed doctrine file selects them even when its text is unchanged."
+    },
+    {
       "id": "developer-doctrine-pages",
       "kind": "fixture",
       "paths": [

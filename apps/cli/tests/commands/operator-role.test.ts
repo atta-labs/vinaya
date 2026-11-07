@@ -39,7 +39,7 @@ describe('vinaya doctrine --role operator', () => {
 
     const printed = (await captureStdout(() => doctrineCommand(['--role', 'operator']))).trim()
     expect(isAbsolute(printed)).toBe(true)
-    expect(printed).toBe(join(root, 'roles', 'operator.md'))
+    expect(printed).toBe(join(root, 'executing', 'operator', 'doctrine.md'))
     expect(existsSync(printed)).toBe(true)
   })
 
@@ -47,6 +47,6 @@ describe('vinaya doctrine --role operator', () => {
     const out = await captureStdout(() => doctrineCommand(['--role', 'operator', '--json']))
     const parsed = JSON.parse(out)
     expect(parsed.schema).toBe(1)
-    expect(parsed.data.entry).toBe(join(parsed.data.root, 'roles', 'operator.md'))
+    expect(parsed.data.entry).toBe(join(parsed.data.root, 'executing', 'operator', 'doctrine.md'))
   })
 })

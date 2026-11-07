@@ -5,13 +5,17 @@ import { DOCTRINE_TREE } from '../../../harness/processes/vinaya-strict/tools/do
 import type { StateSource } from './contract'
 
 /** Default governance root when no config value is supplied — the doctrine
- * map's doctrine tree, `harness/processes/vinaya-strict`. Never read
- * directly by adapter logic below — always through `config.root`, so a
- * relocation of this repo's governance data is a config flip, not a rewrite. */
+ * map's doctrine tree, `harness/processes/vinaya-strict`, which the doctrine
+ * file adapter reads. Never read directly by adapter logic below — always
+ * through `config.root`, so a relocation of this repo's governance data is a
+ * config flip, not a rewrite. */
 export const DEFAULT_GOVERNANCE_ROOT = DOCTRINE_TREE
 
+/** The retired tranche-file state an unconfigured file source still reads: `aeg-root/tranches`. */
+const LEGACY_TRANCHES_DIR = 'aeg-root/tranches'
+
 export type FileSourceConfig = {
-  /** Governance root to read from. Defaults to `DEFAULT_GOVERNANCE_ROOT`. */
+  /** Governance root to read from. Unset, tranches are read from the retired tranche-file state. */
   root?: string
 }
 
@@ -25,14 +29,14 @@ export type FileSourceConfig = {
  * moved to forge-only reads), so the completed path is the live case today.
  */
 export function createFileSource(config: FileSourceConfig = {}): StateSource {
-  const root = config.root ?? DEFAULT_GOVERNANCE_ROOT
+  const tranchesDir = config.root === undefined ? LEGACY_TRANCHES_DIR : join(config.root, 'tranches')
   return {
     async getTranche(slug: string) {
-      const activePath = join(root, 'tranches', `${slug}.md`)
-      const completedPath = join(root, 'tranches', 'completed', `${slug}.md`)
+      const activePath = join(tranchesDir, `${slug}.md`)
+      const completedPath = join(tranchesDir, 'completed', `${slug}.md`)
       const path = existsSync(activePath) ? activePath : completedPath
       if (!existsSync(path)) {
-        throw new Error(`No tranche file found for slug "${slug}" under ${root}/tranches`)
+        throw new Error(`No tranche file found for slug "${slug}" under ${tranchesDir}`)
       }
       return parseTranche(readFileSync(path, 'utf-8'))
     }

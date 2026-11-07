@@ -14,7 +14,7 @@
  * repository adapter hands it to the library as policy.
  */
 import type { ScannerDeclaration } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index.js'
-import { doctrineRepoPath, ROLE_ENTRIES } from '../tools/doctrine/doctrine-map.js'
+import { doctrineRepoPath } from '../tools/doctrine/doctrine-map.js'
 
 export {
   type RepoScannerTest,
@@ -86,7 +86,6 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: ['apps/cli/tests/', 'harness/processes/'],
     trigger: 'process-start'
   },
-  { test: 'apps/cli/scripts/bundle-doctrine.test.ts', roots: ['.'], trigger: 'content' },
   { test: 'harness/processes/vinaya-strict/tests/run-engine.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'harness/kernel/dev-process-socket/loader/load-process.test.ts',
@@ -110,7 +109,6 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'content'
   },
   { test: 'apps/cli/tests/commands/sync.test.ts', roots: ['apps/cli/src/commands/sync.ts'], trigger: 'content' },
-  { test: 'apps/cli/tests/doctrine.test.ts', roots: ['apps/cli/src/index.ts'], trigger: 'content' },
   { test: 'apps/cli/tests/eval/not-shipped.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'apps/cli/tests/eval/registry.test.ts',
@@ -173,7 +171,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   },
   // Spelled in two halves: the retired role id this test hunts is refused
   // anywhere under a source directory, this table included.
-  { test: `apps/cli/tests/no-brief-${'author'}.test.ts`, roots: ['.'], trigger: 'content' },
+  { test: `harness/processes/vinaya-strict/doctrine/no-brief-${'author'}.test.ts`, roots: ['.'], trigger: 'content' },
   { test: 'harness/processes/vinaya-strict/integration/run-paths-only.test.ts', roots: ['.'], trigger: 'content' },
   { test: 'apps/cli/tests/surface-index.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
   { test: 'apps/cli/tests/surface-spec-exports.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
@@ -188,17 +186,10 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'content'
   },
   {
-    test: 'harness/processes/vinaya-strict/tools/actions.test.ts',
-    roots: ROLE_ENTRIES.map((entry) => doctrineRepoPath(entry.key)),
-    trigger: 'content'
-  },
-  { test: 'harness/processes/vinaya-strict/tools/diagram-model.test.ts', roots: ['.'], trigger: 'content' },
-  {
     test: 'harness/processes/vinaya-strict/checks/docs/docs-coherence.test.ts',
     roots: ['harness/processes/vinaya-strict/checks/docs/fixtures/docs-coherence/'],
     trigger: 'content'
   },
-  { test: 'harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'harness/processes/vinaya-strict/checks/gate-audience.test.ts',
     roots: ['harness/processes/vinaya-strict/checks/standalone/'],

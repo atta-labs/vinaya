@@ -23,14 +23,17 @@ describe('deriveTierFromDiff', () => {
   })
 
   it('doc file in diff → tier 1', () => {
-    expect(deriveTierFromDiff(['aeg-root/roles/developer.md'])).toBe(1)
+    expect(deriveTierFromDiff(['harness/processes/vinaya-strict/executing/developer/doctrine.md'])).toBe(1)
     expect(deriveTierFromDiff(['.claude/skills/brief-authoring/SKILL.md'])).toBe(1)
   })
 
   it('code + doc together → tier 1', () => {
-    expect(deriveTierFromDiff(['apps/herald-ai/web/src/lib/foo.ts', 'aeg-root/skills/brief-authoring/SKILL.md'])).toBe(
-      1
-    )
+    expect(
+      deriveTierFromDiff([
+        'apps/herald-ai/web/src/lib/foo.ts',
+        'harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md'
+      ])
+    ).toBe(1)
   })
 })
 

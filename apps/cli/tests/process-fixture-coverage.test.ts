@@ -727,7 +727,6 @@ const GRANDFATHERED_FILES: readonly string[] = [
   'apps/cli/tests/commands/review-post.test.ts',
   'apps/cli/tests/commands/review-status.test.ts',
   'apps/cli/tests/commands/task.test.ts',
-  'harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.test.ts',
   'apps/cli/tests/doctrine.test.ts',
   'apps/cli/tests/fixtures/checks/spawns-grandchild.ts',
   'apps/cli/tests/fixtures/checks/spawns-stubborn-grandchild.ts',
