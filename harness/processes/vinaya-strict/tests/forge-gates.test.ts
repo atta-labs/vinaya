@@ -18,13 +18,7 @@ import { createActions } from '../executing/actions'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import { liveHandoffDeps, type HandoffDeps } from '../executing/handoff'
 import { keepLogLocal, SCENARIO_ENV_KEYS, useRuntimeDir } from './round-fakes'
-import {
-  fakeDeps,
-  makeWorld,
-  OWN,
-  SURFACE,
-  WORKFLOW
-} from '../../../../apps/cli/tests/lib/task-tools/live-developer-context-world'
+import { fakeDeps, makeWorld, OWN, SURFACE, WORKFLOW } from './live-developer-context-world'
 
 // The forge gates of the Engine Flow — mergeability, the forge's CI and the premise re-check — each driven end to
 // end on the real runner, Flow and bound actions: a real git repository and worktree, a stand-in check command that

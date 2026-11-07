@@ -1,4 +1,11 @@
 #!/usr/bin/env bun
+import {
+  initialLoopState,
+  type DevReviewLoopEventInput,
+  type LoopConfig,
+  type LoopState
+} from '../tools/dev-review-policy/types'
+import type { PauseReason } from '../tools/dev-review-policy/types'
 import { installVinayaCheckRegistry } from '../checks/registry'
 import { Database } from 'bun:sqlite'
 import type { RoleName } from '../../../../harness/kernel/adapters/agents/manifest'
@@ -14,7 +21,7 @@ import {
   defaultControlStoreDeps,
   writeExecutionRoundMirror
 } from '../../../kernel/connectors/checkpoint/control-store/index'
-import { initialLoopState, type DevReviewLoopEventInput, type LoopConfig, type LoopState } from '@attalabs/aeg-core'
+
 import { buildReviewInputManifest, type ReviewInputManifest } from '../tools/task-contract/review-input-manifest'
 import { DEFAULT_READY_PUSH_TIMEOUT_MINUTES, DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import {
@@ -106,7 +113,7 @@ import {
 } from '../../../kernel/tools/source-provider'
 import { briefHash as briefHashOf, policyDigest as policyDigestOf } from '../tools/task-contract/review-input-manifest'
 import { extractSourceRevision } from '../tools/task-contract/brief-render'
-import type { PauseReason } from '@attalabs/aeg-core'
+
 import { reviewerDevToolContext, type DevToolContext, type DevToolResult } from '../../../kernel/tools/dev-tools-server'
 import { createReadSourceTool } from '../../../kernel/tools/read-source'
 import {

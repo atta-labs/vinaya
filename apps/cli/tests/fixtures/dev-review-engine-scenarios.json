@@ -10,47 +10,47 @@
     "loopSurface": [
       {
         "path": "apps/cli/src/commands/dev-review-loop.ts",
-        "sha256": "544dc66715a1f7a8219a416d70bb87f6a4378f53203f589a32c872be90a78d93"
+        "sha256": "137c0858c7a1efa31898a123e5b330c17a3246f902f2c6ff23c7e801edfbb158"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "sha256": "672916b906f6bbb592a45b9ae2caca9075aa94d3b7634675704ad09f30b8333f"
+        "sha256": "19a5dd875ef765b293e13d884a294962a344ba9c1b2b22eb8cd6cc204fdecd61"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.ts",
-        "sha256": "ce805e3bf9bd7f8ee2ab41f8f7327e5e557931e8e54850506f100a27c521a2e5"
+        "sha256": "d4d79d9b1e01091409f7d4517c1fb7738c5d4b0e6de74bd132898ca4dbfc7d63"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-publication.ts",
-        "sha256": "7c9e47721ee32995abf5fecedff452fcdcc917ff6e03eb15fd9d520ccd6d0723"
+        "sha256": "bef0690b5baa261074e75526793135d9f9d58148bb98fc730a6941178eea11e5"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts",
-        "sha256": "0c88881165c242b918d50fdacda263088421718e9a3a3d106e7680007f98ed11"
+        "sha256": "77f1553a69a9bd9abd2426fcc17e0b7981db30beb57b24b6912e7b66aa8fc2b4"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/gate-reading.ts",
-        "sha256": "a7372b4199e7f3db612e5cdc827705dc92eb4d94fb692c6ec015a66436bf4d38"
+        "sha256": "3d3923efb907abed4bb29805583a33339f58f5bdb63bd1d821139ebe212f2272"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/journal-history.ts",
-        "sha256": "fbacc24e50dd3fb00cc0b0336d8a879226ab4dd5a421720a89e119f097fb68cb"
+        "sha256": "fa808e98649de786630d13c76f2fc20f432d4bfd119cbe6c4d08927a40500f5d"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/live-check.ts",
-        "sha256": "2d6f28696376595a1c81795f1ad303a01857063833489721b518dd41af24f344"
+        "sha256": "f7db2a50cc63bb1dd7de96db176100f111e641988be783e38137933bfd38771f"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts",
-        "sha256": "5d4c3bf3a3f241f0c42cfaa22b31718d7f894f9cfb327100b96fd1d8adafd950"
+        "sha256": "7b19c85b949545edf77c3f0d7ec4e7196906742cea105f9dc26e583412c238cb"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts",
-        "sha256": "9db3a93701a5eb514163572628f9c79613eca4649e4218f9fe1637f054521cc7"
+        "sha256": "7a93c3a2f6a7b0727f4d6a0d2d293cf5e0d4fbfb1ab99b4819d81a2149a73e21"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts",
-        "sha256": "9ba47cddd9a5d82bd2b38a7d48805d17470beee6aa35c9c77b3c039ade5f8a78"
+        "sha256": "ec28da5f28f3087acf6d82a6a71830556ee84b39d84a7a31577490ca41bc3926"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.ts",
@@ -58,7 +58,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.ts",
-        "sha256": "e09941b10508f19bc10a7457e34b8bfaeedba277384341e6453afe0855e6fd9c"
+        "sha256": "9eae2c21b5c6f51ba58abe63cef14ce8265a76e12be43dd15c261dd0ffdbff45"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/security-scan-command.ts",
@@ -66,35 +66,31 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.ts",
-        "sha256": "83f5b6a5c3b063f81afb171ba322690d81909588eaa436c073992327113f275e"
+        "sha256": "07e11be2375a9236952bb9b20f45c152a23588f6b30910b36b2be6c812c8becb"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/unpushed-work.ts",
         "sha256": "4fc72decb9d51f75ab2bdb18cb3d3f477b25534b4d629e4082ee726a6dbaed7e"
       },
       {
-        "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
-        "sha256": "66cb2ac1457d26af378c57649d911785e8472992a4a6929a6db3dfeefedc8a82"
+        "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
+        "sha256": "2b4071c10e4dbd9e6fe45d6626c5de0efe9cbd5c4d23dec6f58975435b3fa99d"
       },
       {
-        "path": "packages/aeg-core/src/dev-review-loop/fakes.ts",
+        "path": "harness/processes/vinaya-strict/tools/dev-review-policy/fakes.ts",
         "sha256": "d792fa717511a3f4ca68d24a3b0a687e8cbb42736b598ecfb726e61ec8d117f5"
       },
       {
-        "path": "packages/aeg-core/src/dev-review-loop/index.ts",
-        "sha256": "0a6f2c2008ea917c6e176e46f56723954fb17f3c10bc391dd911a58c14c917e8"
-      },
-      {
-        "path": "packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts",
+        "path": "harness/processes/vinaya-strict/tools/dev-review-policy/journal-reconstruction.ts",
         "sha256": "d016a7bdca59dab562f671d18aa31525b089c6370c2256b953694bc60e209a3f"
       },
       {
-        "path": "packages/aeg-core/src/dev-review-loop/render-summary.ts",
+        "path": "harness/processes/vinaya-strict/tools/dev-review-policy/render-summary.ts",
         "sha256": "6affa48c042e3322aaf9d8d9ee1f292d9bf9aeecdeef971def4a6dff7b87e9fe"
       },
       {
-        "path": "packages/aeg-core/src/dev-review-loop/types.ts",
-        "sha256": "2f4d91a549ad2856e6a87e18b2d451bb3e23812257c692a6dad7ddafc3018773"
+        "path": "harness/processes/vinaya-strict/tools/dev-review-policy/types.ts",
+        "sha256": "3532c966f98804823cc8bbfb36762881f8d0ed4a6580933441dd25f658fe89b8"
       }
     ]
   },

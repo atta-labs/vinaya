@@ -1,6 +1,0 @@
-export { buildDocNav } from './build-doc-nav'
-export type { BuildDocNavOptions } from './build-doc-nav'
-export { findDoc, getNextDoc, getPrevDoc } from './nav-helpers'
-export { nodeDocRoute, nodeDocHref } from './node-route'
-export type { NodeDocRoute } from './node-route'
-export { legacyAnchorSlugs } from './legacy-anchors'

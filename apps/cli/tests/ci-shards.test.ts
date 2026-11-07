@@ -103,7 +103,7 @@ describe('the CI test schedule covers every owner', () => {
     const tests = schedule.accounting.map((e) => e.test)
     expect(new Set(tests).size).toBe(tests.length)
     // Every owner is in it, not only the CLI: the kernel, the process, a Vitest package and the root suite.
-    for (const dir of ['apps/cli/', 'harness/', 'harness/processes/vinaya-strict/', 'packages/aeg-core/', 'scripts/'])
+    for (const dir of ['apps/cli/', 'harness/', 'harness/processes/vinaya-strict/', 'scripts/'])
       expect(`${dir} ${tests.some((t) => t.startsWith(dir))}`).toBe(`${dir} true`)
     for (let n = 1; n <= SHARD_COUNT; n++)
       for (const f of shardFiles(n)) {

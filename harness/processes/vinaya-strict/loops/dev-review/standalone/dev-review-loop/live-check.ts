@@ -1,7 +1,7 @@
 /**
  * The live check — a task's `[live]` Test plan lines, run by the review loop
  * itself on a head both reviewers approved, before the task concludes
- * (`apps/cli/specs/loop.md`, "The live check"). A `[live]` line needs real
+ * (`harness/processes/vinaya-strict/loops/dev-review/loop.md`, "The live check"). A `[live]` line needs real
  * signed-in agent sessions, so it is skipped in the Developer's sandbox, the
  * push hook and CI; the loop runs it from its own process, with an allowlisted
  * environment, bounded in time, in a fresh checkout of the approved head it
@@ -16,11 +16,12 @@
  * failed.
  */
 
+import type { DevReviewLoopEventInput, LoopState } from '../../../../tools/dev-review-policy/types'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { DevReviewLoopEventInput, LoopState } from '@attalabs/aeg-core'
+
 import type { LiveRecordEntry, LiveRecordLine } from '../../../../tools/task-contract/live-record'
 import { buildCheckEnv } from '../../../../../../kernel/gates/checks/runner.js'
 import { AGENT_VENDOR_NAMES, type AgentVendor } from '../../dispatch/dispatch.js'

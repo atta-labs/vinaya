@@ -144,7 +144,7 @@ describe('the committed inventory validates against this repository', () => {
   test('native groups and the CI layout come from the same view', () => {
     const groups = nativeGroups(head)
     expect(groups.reduce((n, g) => n + g.tests.length, 0)).toBe(head.tests.length)
-    expect(groups.find((g) => g.suite === 'aeg-core')?.runner).toBe('vitest')
+    expect(groups.find((g) => g.suite === 'log-server')?.runner).toBe('vitest')
     const layout = layoutOf(head)
     expect(layout.packageDirs).toContain('harness/kernel')
     expect(layout.preloads).toContain('apps/cli/tests/lib/test-env-preload.ts')
@@ -155,7 +155,7 @@ describe('the committed inventory validates against this repository', () => {
     const { selectAffectedTestFiles } = await import(
       '../../harness/processes/vinaya-strict/integration/repository-verification.ts'
     )
-    const changed = ['harness/kernel/gates/checks/anchored-region.ts']
+    const changed = ['apps/log-server/src/worker.test.ts']
     const plain = selectAffectedTestFiles(REPO_ROOT, changed)
     const vitestIds = new Set(head.tests.filter((t) => t.runner === 'vitest').map((t) => t.id))
     expect(plain.selected.map((f) => f.slice(REPO_ROOT.length + 1)).filter((f) => vitestIds.has(f))).toEqual([])
@@ -776,7 +776,6 @@ describe('the package-compatibility suite is a dedicated root suite the build jo
       .filter((e) => e.readers.includes('scripts/package-compat/package-compat.test.ts') && e.kind !== 'import')
       .map((e) => e.input)
     for (const path of [
-      'packages/aeg-core/',
       'packages/sources/',
       'apps/cli/',
       'apps/cli/scripts/build.ts',

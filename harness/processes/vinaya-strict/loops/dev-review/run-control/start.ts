@@ -94,7 +94,7 @@
  * is no unattended path and no attended bypass — an unattended start waits on
  * the worker-isolation boundary and a capability flag a later tranche adds
  * (`task_start`'s own catalog boundaries; `apps/cli/specs/self-hosting.md`,
- * `apps/cli/specs/loop.md`).
+ * `harness/processes/vinaya-strict/loops/dev-review/loop.md`).
  */
 
 import type { ChildProcess } from 'node:child_process'

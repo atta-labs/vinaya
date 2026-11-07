@@ -996,10 +996,7 @@ describe('renderBrief — a single-fix Issue with no Dependency rationale', () =
 // does, must render with zero bracketed placeholders and pass every check
 // `verify-brief`/`brief-shape` run — no hand edit needed to be dispatchable.
 describe('renderBrief — end-to-end from a real Issue body (#426 fixture)', () => {
-  const ISSUE_426_BODY = readFileSync(
-    join(import.meta.dirname, '../../../../../packages/aeg-core/tests/fixtures/issue-426-body.md'),
-    'utf8'
-  )
+  const ISSUE_426_BODY = readFileSync(join(import.meta.dirname, './fixtures/issue-426-body.md'), 'utf8')
 
   function factsFromIssue426(): BriefFacts {
     const surface = parseIssueSurface(ISSUE_426_BODY)

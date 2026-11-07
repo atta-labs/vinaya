@@ -32,11 +32,11 @@ describe('developer-review evaluation program mirror', () => {
   it('accounts for every named source document', () => {
     expect(manifest.documents).toEqual({
       'Tech spec — Developer-review on Atta Engine': {
-        path: 'apps/cli/specs/dev-review-engine-state-machine.md',
+        path: 'harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md',
         revisionPinned: false
       },
       'Tech spec — Developer-review capabilities and contracts': {
-        path: 'apps/cli/specs/dev-review-capabilities-contracts.md',
+        path: 'harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md',
         revisionPinned: false
       },
       'Tech spec — Agent sandbox': {

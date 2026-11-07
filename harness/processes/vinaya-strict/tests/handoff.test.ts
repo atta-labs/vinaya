@@ -1,9 +1,10 @@
+import { initialLoopState, type VerdictObservation } from '../tools/dev-review-policy/types'
 import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { initialLoopState, type VerdictObservation } from '@attalabs/aeg-core'
+
 import { createRunControl } from '@atta/executor-agent-spawn'
 import {
   escalationPrOf,

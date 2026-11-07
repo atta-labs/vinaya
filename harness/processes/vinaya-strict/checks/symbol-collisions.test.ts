@@ -38,10 +38,20 @@ function sourceFiles(dir: string, prefix = ''): [string, string][] {
  */
 function packageSourceFiles(): [string, string][] {
   const processDir = fileURLToPath(new URL('..', import.meta.url))
-  const srcDir = join(processDir, '../../../packages/aeg-core/src')
-  const binDir = join(processDir, '../../../packages/aeg-core/bin')
   // The files this package had before they moved into the process keep the names they were scanned under.
   const moved: [string, string][] = [
+    ['archive-task.ts', 'tools/archive-task.ts'],
+    ['bin/archive-task.ts', 'retrospecting/archivist/bin/archive-task.ts'],
+    ['bin/eval-agent-compliance.ts', 'evals/agent-compliance/eval-agent-compliance.ts'],
+    ['dev-review-loop/assess-round.ts', 'tools/dev-review-policy/assess-round.ts'],
+    ['dev-review-loop/fakes.ts', 'tools/dev-review-policy/fakes.ts'],
+    ['dev-review-loop/journal-reconstruction.ts', 'tools/dev-review-policy/journal-reconstruction.ts'],
+    ['dev-review-loop/render-summary.ts', 'tools/dev-review-policy/render-summary.ts'],
+    ['dev-review-loop/types.ts', 'tools/dev-review-policy/types.ts'],
+    ['docs/build-doc-nav.ts', 'artifacts/docs/build-doc-nav.ts'],
+    ['docs/legacy-anchors.ts', 'artifacts/docs/legacy-anchors.ts'],
+    ['docs/nav-helpers.ts', 'artifacts/docs/nav-helpers.ts'],
+    ['docs/node-route.ts', 'artifacts/docs/node-route.ts'],
     ['actions.ts', 'tools/actions.ts'],
     ['blast-radius-domains.ts', 'tools/task-contract/blast-radius-domains.ts'],
     ['brief-render.ts', 'tools/task-contract/brief-render.ts'],
@@ -132,11 +142,7 @@ function packageSourceFiles(): [string, string][] {
     ['test-plan-gate.ts', 'checks/test-plan-gate.ts'],
     ['vocabulary-citation.ts', 'checks/vocabulary-citation.ts']
   ]
-  return [
-    ...sourceFiles(srcDir),
-    ...sourceFiles(binDir, 'bin'),
-    ...moved.map(([rel, path]): [string, string] => [rel, join(processDir, path)])
-  ]
+  return [...moved.map(([rel, path]): [string, string] => [rel, join(processDir, path)])]
 }
 
 /** Every collision in this package, from the recursive scan — shared by the live case above and the gate below. */

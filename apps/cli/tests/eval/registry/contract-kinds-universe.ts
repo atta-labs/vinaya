@@ -16,7 +16,7 @@ import { OPERATOR_EXIT_EXCLUSIONS } from '../../../src/lib/dev-review-eval/exit-
 
 export const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..')
 
-export const CONTRACTS_DOC = 'apps/cli/specs/dev-review-capabilities-contracts.md'
+export const CONTRACTS_DOC = 'harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md'
 export const ISOLATION_DOC = 'harness/kernel/isolation/isolation.md'
 export const PROGRAM_DOC = 'apps/cli/specs/dev-review-evaluation-program.md'
 export const MATRIX_DOC = 'harness/kernel/loops/runtimes/atta-engine/dev-review-engine-capability-matrix.md'

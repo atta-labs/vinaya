@@ -18,7 +18,7 @@ export const ENGINE_SPEC = {
   revision: 17,
   section: '16.18',
   /** The repository file that states the revision; the specification itself is the Linear document above. */
-  revisionStatedIn: 'apps/cli/specs/dev-review-engine-state-machine.md'
+  revisionStatedIn: 'harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md'
 } as const
 
 /** The statement the rows of gates 14 and 15 carry: no known-failure entry is admitted. */

@@ -20,12 +20,13 @@
  * cancel to reach that line stay KEPT here too — see the KEPT block below.
  */
 
+import type { ReconstructedJournal } from '../../../../tools/dev-review-policy/journal-reconstruction'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { escalationIdFor } from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import type { ReconstructedJournal } from '@attalabs/aeg-core'
+
 import {
   cleanupWorlds,
   controlDir as ipControlDir,

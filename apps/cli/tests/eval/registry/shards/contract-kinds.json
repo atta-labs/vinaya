@@ -8,7 +8,7 @@
       "kind": "role",
       "module": "6.5",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "3. Capability grants"
       },
@@ -47,7 +47,7 @@
       "kind": "role",
       "module": "6.9",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "3. Capability grants"
       },
@@ -86,7 +86,7 @@
       "kind": "role",
       "module": "6.10",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "3. Capability grants"
       },
@@ -125,7 +125,7 @@
       "kind": "role",
       "module": "6.23",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "3. Capability grants"
       },
@@ -164,7 +164,7 @@
       "kind": "role",
       "module": "6.7",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "3. Capability grants"
       },
@@ -203,7 +203,7 @@
       "kind": "tool",
       "module": "6.6",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.0 Tool-contract components"
       },
@@ -242,7 +242,7 @@
       "kind": "tool",
       "module": "6.6",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.0 Tool-contract components"
       },
@@ -281,7 +281,7 @@
       "kind": "tool",
       "module": "6.6",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.1 Live tools (Developer)"
       },
@@ -320,7 +320,7 @@
       "kind": "tool",
       "module": "6.6",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.1 Live tools (Developer)"
       },
@@ -359,7 +359,7 @@
       "kind": "tool",
       "module": "6.6",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.1 Live tools (Developer)"
       },
@@ -398,7 +398,7 @@
       "kind": "tool",
       "module": "6.6",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.1 Live tools (Developer)"
       },
@@ -437,7 +437,7 @@
       "kind": "tool",
       "module": "6.6",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.1 Live tools (Developer)"
       },
@@ -476,7 +476,7 @@
       "kind": "tool",
       "module": "6.6",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.1 Live tools (Developer)"
       },
@@ -515,7 +515,7 @@
       "kind": "tool",
       "module": "6.6",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.1 Live tools (Developer)"
       },
@@ -554,7 +554,7 @@
       "kind": "tool",
       "module": "6.6",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.2 Built tool (reviewers)"
       },
@@ -827,7 +827,7 @@
       "kind": "effect",
       "module": "6.13",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.1 Live tools (Developer)"
       },
@@ -872,7 +872,7 @@
       "kind": "effect",
       "module": "6.13",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.1 Live tools (Developer)"
       },
@@ -917,7 +917,7 @@
       "kind": "effect",
       "module": "6.13",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.1 Live tools (Developer)"
       },
@@ -962,7 +962,7 @@
       "kind": "effect",
       "module": "6.13",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "4.1 Live tools (Developer)"
       },
@@ -1405,7 +1405,7 @@
       "kind": "gate",
       "module": "6.1",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "7. Workflow nodes and gates (summary)"
       },
@@ -1444,7 +1444,7 @@
       "kind": "gate",
       "module": "6.7",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "7. Workflow nodes and gates (summary)"
       },
@@ -1483,7 +1483,7 @@
       "kind": "gate",
       "module": "6.7",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "7. Workflow nodes and gates (summary)"
       },
@@ -1522,7 +1522,7 @@
       "kind": "gate",
       "module": "6.11",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "7. Workflow nodes and gates (summary)"
       },
@@ -1561,7 +1561,7 @@
       "kind": "gate",
       "module": "6.13",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "7. Workflow nodes and gates (summary)"
       },
@@ -1606,7 +1606,7 @@
       "kind": "gate",
       "module": "6.11",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "7. Workflow nodes and gates (summary)"
       },
@@ -1645,7 +1645,7 @@
       "kind": "gate",
       "module": "6.11",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "7. Workflow nodes and gates (summary)"
       },
@@ -1684,7 +1684,7 @@
       "kind": "gate",
       "module": "6.14",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "7. Workflow nodes and gates (summary)"
       },
@@ -1723,7 +1723,7 @@
       "kind": "gate",
       "module": "6.14",
       "source": {
-        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
         "revision": 17,
         "section": "7. Workflow nodes and gates (summary)"
       },

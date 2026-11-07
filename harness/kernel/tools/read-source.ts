@@ -1,6 +1,6 @@
 /**
  * The `read_source` tool — the code and security reviewers' only way to read
- * a required source (`apps/cli/specs/dev-review-capabilities-contracts.md`
+ * a required source (the review-loop specification
  * §4.2). Its contract, its handler and its paging live here, depending on
  * nothing in the loop driver, so any host that serves the reviewers' tools
  * consumes it as is.

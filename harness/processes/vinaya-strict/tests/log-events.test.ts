@@ -1,10 +1,12 @@
+import { assessRound } from '../tools/dev-review-policy/assess-round'
+import { initialLoopState, type LoopState, type Observations } from '../tools/dev-review-policy/types'
 import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { MemorySaver } from '@langchain/langgraph'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parse } from 'yaml'
-import { assessRound, initialLoopState, type LoopState, type Observations } from '@attalabs/aeg-core'
+
 import { buildReviewInputManifest } from '../tools/task-contract/review-input-manifest'
 import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import { buildHeader } from '../../../kernel/log/envelope'

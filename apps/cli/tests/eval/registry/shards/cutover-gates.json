@@ -530,7 +530,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "test": "apps/cli/tests/conformance/dev-review-engine-shadow.test.ts"
+          "test": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-shadow.test.ts"
         }
       },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",

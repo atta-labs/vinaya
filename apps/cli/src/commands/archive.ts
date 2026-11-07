@@ -1,7 +1,7 @@
 // `vinaya archive` — the post-merge Archivist, callable directly instead of
 // only from the `post-merge` job in the generated `vinaya-archivist.yml`
 // (see lib/artifacts.ts's `archivistWorkflow()`). Thin I/O shim mirroring
-// this monorepo's own `packages/aeg-core/bin/archive-task.ts`: resolves the
+// this monorepo's own `harness/processes/vinaya-strict/retrospecting/archivist/bin/archive-task.ts`: resolves the
 // merged PR from a merge SHA via `gh`, gathers `MergedPrFacts`, and calls
 // the pure `buildProvenanceBlock` / `taskRefFromBranch` / `hasProvenance` /
 // `isEligibleForProvenance` homed in `@attalabs/aeg-core` — already a CLI
@@ -11,14 +11,15 @@
 // (lib/detect.ts) — the same path every other command uses — never a
 // second auth/repo-resolution mechanism.
 
-import { execFileSync } from 'node:child_process'
 import {
   buildProvenanceBlock,
   hasProvenance,
   isEligibleForProvenance,
   taskRefFromBranch,
   type MergedPrFacts
-} from '@attalabs/aeg-core'
+} from '../../../../harness/processes/vinaya-strict/tools/archive-task'
+import { execFileSync } from 'node:child_process'
+
 import { formatTokensLine } from '../../../../harness/processes/vinaya-strict/tools/pr-report/tokens/report-tokens'
 import { parseDeveloperRoundMarker } from '../../../../harness/processes/vinaya-strict/tools/task-contract/review-status'
 import { resolveNewestFrozenBrief } from '../../../../harness/processes/vinaya-strict/tools/task-contract/brief-validation'

@@ -7,7 +7,7 @@ import corpus from '../fixtures/dev-review-engine-scenarios.json'
 import { currentRunId, type LogSinkDeps, type ResolvedLogDestination } from '../../../../harness/kernel/log/log-sink.js'
 import { RUNTIME_DIR_ENV_KEY } from '../../../../harness/kernel/run-paths.js'
 import { runStandaloneScenario } from './dev-review-current-loop-adapter.js'
-import { runEngineScenario } from './dev-review-engine-loop-adapter.js'
+import { runEngineScenario } from '../../../../harness/processes/vinaya-strict/tests/dev-review-engine-loop-adapter.js'
 
 /** The shared sink, recording to the scenario's own Log folder whatever the machine's config names. */
 const recording = (env: NodeJS.ProcessEnv): ResolvedLogDestination => ({

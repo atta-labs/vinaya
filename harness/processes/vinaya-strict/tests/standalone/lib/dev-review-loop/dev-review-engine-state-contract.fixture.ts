@@ -1,6 +1,6 @@
 /**
  * The target Atta-Engine-backed developer-review workflow's provider-neutral
- * state model — `apps/cli/specs/dev-review-engine-state-machine.md`'s own
+ * state model — `harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md`'s own
  * machine-readable data, consumed by
  * `dev-review-engine-state-contract.test.ts`.
  *

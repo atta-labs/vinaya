@@ -509,7 +509,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       'The object form maps each path to the most spec-class findings that file may carry — the count the check reports for it today. A listed file with more findings than its number fails, naming the file, its count and its limit; a file at or below its number passes. A listed file therefore can never gain a citation, and its number is lowered as the document is rewritten to state its facts plainly, down to `0`.',
       "The array form exempts each listed file entirely, from every rule the class runs, the task-number one included, and the check prints one warning per entry saying so — a file on it can gain any number of citations and still pass. Either form covers a file the defaults brought in (a root spec, a decision record) exactly as it covers one under an app's own `specs/**`."
     ],
-    example: `{ "specGrandfather": { "apps/cli/specs/loop.md": 130 } }`
+    example: `{ "specGrandfather": { "harness/processes/vinaya-strict/loops/dev-review/loop.md": 130 } }`
   },
   {
     key: 'proseGates.productPaths',

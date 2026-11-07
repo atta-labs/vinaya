@@ -1,10 +1,11 @@
+import { assessRound } from '../tools/dev-review-policy/assess-round'
 import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { MemorySaver } from '@langchain/langgraph'
 import { readFileSync } from 'node:fs'
 import { basename, dirname, resolve } from 'node:path'
 import { parse } from 'yaml'
-import { assessRound } from '@attalabs/aeg-core'
+
 import { createRunControl, type RunOutcome, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
 import {

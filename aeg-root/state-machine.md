@@ -578,7 +578,7 @@ A finding is `grandfathered: true` when its terminal event is strictly before `C
 
 ## Section 15c: Coherence Seam — Surfaced-Doc Manifest (`verify-docs.ts` full mode, check C6)
 
-The seam between **the surfaced-doc manifest** (which `aeg-root/` docs a `DiagramModel` node points at — the public set) and **the doc-nav tree** the docs engine (`packages/aeg-core/src/docs/`) builds from them. makes "what counts as a surfaced doc" a single, data-driven definition instead of two competing ones — this check (C6) and Vinaya's `/docs` loader both consume it.
+The seam between **the surfaced-doc manifest** (which `aeg-root/` docs a `DiagramModel` node points at — the public set) and **the doc-nav tree** the docs engine (`harness/processes/vinaya-strict/artifacts/docs/`) builds from them. makes "what counts as a surfaced doc" a single, data-driven definition instead of two competing ones — this check (C6) and Vinaya's `/docs` loader both consume it.
 
 ### The manifest: `harness/processes/vinaya-strict/tools/docs/surfaced-manifest.ts`
 

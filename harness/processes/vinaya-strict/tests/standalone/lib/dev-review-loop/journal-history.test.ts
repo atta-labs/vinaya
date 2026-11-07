@@ -1,5 +1,7 @@
+import { nextRoundNumber, type ReviewGateFact } from '../../../../tools/dev-review-policy/journal-reconstruction'
+import { renderPublishedMarker } from '../../../../tools/dev-review-policy/render-summary'
 import { describe, expect, it } from 'vitest'
-import { nextRoundNumber, renderPublishedMarker, type ReviewGateFact } from '@attalabs/aeg-core'
+
 import { loopHistoryFromComments } from '../../../../loops/dev-review/standalone/dev-review-loop/journal-history'
 import type { MarkerComment } from '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 

@@ -16,7 +16,7 @@ import {
 } from './dev-review-engine-state-contract.fixture'
 
 /**
- * `apps/cli/specs/dev-review-engine-state-machine.md`'s own test — the
+ * `harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md`'s own test — the
  * target, provider-neutral Atta-Engine-backed developer-review workflow's
  * state/transition/terminal-outcome/node-contract completeness (O1, O2) and
  * provider-neutrality (O3). This is Task 2 of `developer-review-architecture-v1`

@@ -178,7 +178,7 @@ export const LoopBudgetsSchema = z
     mechanicalRetries: z.number().int().nonnegative(),
     /** The substantive review-round count — bounded by `ReviewPolicy.maxRounds`. */
     reviewRounds: z.number().int().nonnegative(),
-    /** The cumulative count of `'infrastructure'`/`'stale_driver'` pauses this task has ever hit — never reset by a restart, unlike the in-memory counters above (`apps/cli/specs/loop.md`). */
+    /** The cumulative count of `'infrastructure'`/`'stale_driver'` pauses this task has ever hit — never reset by a restart, unlike the in-memory counters above (the review-loop specification). */
     infrastructureRetries: z.number().int().nonnegative()
   })
   .strict()
@@ -209,7 +209,7 @@ export const LoopStateRecordSchema = z
     kind: z.literal('loop_state'),
     task: taskId,
     round: z.number().int().positive(),
-    /** Mirrors `Decision['type']` (`packages/aeg-core/src/dev-review-loop/types.ts`) — a plain string here so this record stays independent of that package's own type, the same discipline `TransitionRecord.from`/`to` already uses for state names. */
+    /** Mirrors `Decision['type']` (the review policy’s decision type) — a plain string here so this record stays independent of that package's own type, the same discipline `TransitionRecord.from`/`to` already uses for state names. */
     phase: z.string().min(1),
     /** Set only while `phase === 'pause'`. */
     pauseReason: z.string().min(1).nullable(),

@@ -15,12 +15,9 @@ tests/lib/turbo-test-task-uncached.test.ts
 tests/log-destination-isolation.test.ts
 tests/lib/dispatch/fetch-documentation-tool.test.ts
 tests/conformance/dev-review-engine-architecture-exit.test.ts
-tests/conformance/dev-review-engine-shadow.test.ts
 tests/conformance/dev-review-engine-fault-rows.test.ts
 tests/lib/agent-line.test.ts
-tests/conformance/developer-doctrine-shape.test.ts
 tests/conformance/dev-review-evaluation-program-mirror.test.ts
-tests/conformance/agent-config-locations.test.ts
 tests/eval/failure-taxonomy.test.ts
 tests/eval/registry-cutover-gates.test.ts
 tests/eval/reviewer-quality-suite.test.ts
@@ -30,7 +27,6 @@ tests/eval/whole-loop.test.ts
 tests/conformance/role-grants-bridge.test.ts
 tests/lib/log-webhook-drain.test.ts
 tests/commands/issue.test.ts
-tests/lib/task-tools/engine-runner-routing.test.ts
 tests/conformance/dev-review-log-parity.test.ts
 tests/lib/dispatch/claude-sandbox-dir.test.ts
 tests/lib/pre-push-ready-policy.test.ts

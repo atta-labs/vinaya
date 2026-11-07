@@ -24,9 +24,10 @@
  * context, never evidence, and never read by a transition guard.
  */
 
+import type { Confidence, PauseReason } from '../../../../tools/dev-review-policy/types'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { Confidence, PauseReason } from '@attalabs/aeg-core'
+
 import { CONFIDENCE_REASON_MAX_LENGTH } from '../../../../../../kernel/log/schema'
 import {
   BLOCKER_KINDS,

@@ -329,7 +329,7 @@ export function checkG5(
 
 const PROCESS_CHECKS_DIRECTORY = ['harness', 'processes', ['vinaya', 'strict'].join('-'), 'checks'].join('/')
 const SHIPPED_BIN_PATH_PREFIXES = [`${PROCESS_CHECKS_DIRECTORY}/bin/check-`]
-const AEG_CORE_BIN_PATH_PREFIXES = ['packages/aeg-core/bin/', `${PROCESS_CHECKS_DIRECTORY}/standalone/`]
+const AEG_CORE_BIN_PATH_PREFIXES = [`${PROCESS_CHECKS_DIRECTORY}/standalone/`]
 
 function basenameNoExt(path: string): string {
   const base = path.slice(path.lastIndexOf('/') + 1)

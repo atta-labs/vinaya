@@ -2,7 +2,7 @@
  * `dev-review-loop`'s developer-publication concern — the pure gate logic the
  * driver's own publishing tools run before they touch the forge, so no
  * dispatched Developer ever holds a forge credential or writes to `.git`
- * itself (the task's whole point; see `apps/cli/specs/loop.md` § "Publishing
+ * itself (the task's whole point; see `harness/processes/vinaya-strict/loops/dev-review/loop.md` § "Publishing
  * each Developer turn"). The Developer publishes by calling the driver-run
  * tools (`publish_changes`, `open_pull_request`, …); these pure checks run
  * inside the driver's tool context (`developer-dev-tools-context.ts`) before

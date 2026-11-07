@@ -274,8 +274,7 @@ describe('what a CI run schedules', () => {
     )
     // The package-compatibility suite is never skipped, whatever the selection holds.
     expect(input.selected.map((t) => t.id)).toContain('scripts/package-compat/package-compat.test.ts')
-    expect(input.wholeSuites.map((w) => [w.suite, w.reason.includes('whole repository')])).toEqual([['aeg-core', true]])
-    expect(input.wholeSuites[0]?.identities).toHaveLength(view.tests.filter((t) => t.suite === 'aeg-core').length)
+    expect(input.wholeSuites.map((w) => [w.suite, w.reason.includes('whole repository')])).toEqual([])
   })
 
   test('a non-TypeScript portal change runs the whole portal suite, which a selection there never narrows', () => {
@@ -299,7 +298,7 @@ describe('what a CI run schedules', () => {
     )
     // A change outside the portal leaves it to the selection.
     const elsewhere = ciScheduleInput(view, { ...decision, changed: ['apps/cli/src/lib/config.ts'] })
-    expect(elsewhere.wholeSuites.map((w) => w.suite)).toEqual(['aeg-core'])
+    expect(elsewhere.wholeSuites.map((w) => w.suite)).toEqual([])
   })
 
   test('an unknown input runs everything, with its reason; so does a selected path the inventory does not hold', () => {

@@ -38,7 +38,7 @@ import {
   resolveNewestFrozenBrief
 } from './brief-validation'
 import { type Objective, objectivesOf } from './objectives'
-import { EOLS, FENCE_DELIMS, fenceShapes } from '../../../../../packages/aeg-core/tests/fixtures/fence-shapes'
+import { EOLS, FENCE_DELIMS, fenceShapes } from '../../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
 
 const WELL_FORMED = `

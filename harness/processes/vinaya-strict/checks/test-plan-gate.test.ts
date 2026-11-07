@@ -167,10 +167,7 @@ describe('evaluateTestPlanGate — the [agent] half is never graded here (task 1
  * section would grade the wrong list and fail a body that should pass.
  */
 describe("evaluateTestPlanGate — a real PR's own body (task 12, #387)", () => {
-  const LIVE = readFileSync(
-    join(import.meta.dirname, '../../../../packages/aeg-core/tests/fixtures/pr-body-393.md'),
-    'utf8'
-  )
+  const LIVE = readFileSync(join(import.meta.dirname, './fixtures/pr-body-393.md'), 'utf8')
   const OWN_BRANCH = 'task/review-convergence-v1/10'
 
   /** The same body with its one real `[principal]` tick reverted — the state before the Principal ticked it. */

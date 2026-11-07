@@ -19,11 +19,11 @@
   "sha256": "505c714e5e8c36f748b5e3971c6680d28d40729804eb66f10abea39bd9b010b2",
   "documents": {
     "Tech spec — Developer-review on Atta Engine": {
-      "path": "apps/cli/specs/dev-review-engine-state-machine.md",
+      "path": "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-state-machine.md",
       "revisionPinned": false
     },
     "Tech spec — Developer-review capabilities and contracts": {
-      "path": "apps/cli/specs/dev-review-capabilities-contracts.md",
+      "path": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
       "revisionPinned": false
     },
     "Tech spec — Agent sandbox": {

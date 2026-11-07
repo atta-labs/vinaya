@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { amendRationaleDeps } from '../../thinking/planner/tools/amend-rationale-deps'
 import { projectsFromBody } from './forge/list-tasks'
 import { describe, expect, it } from 'vitest'
-import { fenceShapes } from '../../../../../packages/aeg-core/tests/fixtures/fence-shapes'
+import { fenceShapes } from '../../tests/fixtures/fence-shapes'
 import {
   boundaryPinnedFiles,
   BRIEF_SECTIONS_SINCE_ISSUE,
@@ -481,8 +481,7 @@ const REGISTERED = REGISTRY.map((p) => p.name)
  * than the forge. Nothing these tests assert touches the redacted span — check an
  * identifier before copying the next body in.
  */
-const realBody = (n: number): string =>
-  readFileSync(join(__dirname, '../../../../../packages/aeg-core/tests/fixtures', `issue-${n}-body.md`), 'utf8')
+const realBody = (n: number): string => readFileSync(join(__dirname, './fixtures', `issue-${n}-body.md`), 'utf8')
 
 /**
  * The two control characters these tests smuggle through the gate, named rather
@@ -1388,10 +1387,7 @@ describe('checkIssueRationale / amendRationaleDeps — round-trip agreement (tas
   })
 
   it('rejects the exact colon-form body from Issue #736 (real, captured 2026-08-05) with an actionable error', () => {
-    const body = readFileSync(
-      join(__dirname, '../../../../../packages/aeg-core/tests/fixtures', 'issue-736-body.md'),
-      'utf8'
-    )
+    const body = readFileSync(join(__dirname, './fixtures', 'issue-736-body.md'), 'utf8')
     const result = checkIssueRationale(body)
     expect(result.status).toBe('fail')
     const depError = result.errors.find((e) => e.startsWith('issue-validation Dependency rationale'))
@@ -1546,10 +1542,7 @@ describe('checkProjectsRegistered — what reaches the operator’s terminal', (
 // parsers, and the gate that composes them.
 // ---------------------------------------------------------------------------
 
-const ISSUE_426_BODY = readFileSync(
-  join(import.meta.dirname, '../../../../../packages/aeg-core/tests/fixtures/issue-426-body.md'),
-  'utf8'
-)
+const ISSUE_426_BODY = readFileSync(join(import.meta.dirname, './fixtures/issue-426-body.md'), 'utf8')
 
 describe('parseIssueSurface', () => {
   it('parses a well-formed in:/out: pair', () => {

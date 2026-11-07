@@ -150,7 +150,7 @@ The second shard, `contract-kinds.json`, covers the kinds stated in the contract
 
 | Kind | Universe | Source |
 | -- | -- | -- |
-| `role` | the grant table's roles | `apps/cli/specs/dev-review-capabilities-contracts.md` §3 |
+| `role` | the grant table's roles | `harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md` §3 |
 | `tool` | `DEV_TOOL_NAMES`, matched against the §4.1 table; the built `read_source` of §4.2; `TASK_TOOL_NAMES`, the Operator's five tools and its pull-request read | `harness/kernel/tools/dev-tools-server.ts`, `harness/kernel/tools/catalog/task-tools.ts`, the contracts specification |
 | `effect` | each §4.1 tool marked as a write, and the controller's own publications named in the evaluation program's §6.12 and §6.13 | the contracts specification and the evaluation program |
 | `adapter` | `adapters` | `apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json` |

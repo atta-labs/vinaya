@@ -581,7 +581,7 @@ describe('fault-driven scenario fixtures (O2, task-log-v1 7, Issue #567)', () =>
     const events = [
       loopEvent(runId, pauseLoopId, 'paused', { round: 2, reason: 'escalation' }),
       // A --cancel is its own process — a fresh loop_id, no round history of
-      // its own (apps/cli/specs/loop.md § "Escalation, resolution, and --cancel").
+      // its own (harness/processes/vinaya-strict/loops/dev-review/loop.md § "Escalation, resolution, and --cancel").
       loopEvent(runId, cancelLoopId, 'cancelled', { round: 2, by: 'principal' })
     ]
     const { page } = runScenario(events)

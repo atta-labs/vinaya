@@ -22,6 +22,9 @@
  * carries it; none of them is ever estimated.
  */
 
+import { isPublishedSummaryComment } from '../../../tools/dev-review-policy/journal-reconstruction'
+import { parseSummaryConfidenceRows } from '../../../tools/dev-review-policy/render-summary'
+import type { PauseReason } from '../../../tools/dev-review-policy/types'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { hostname } from 'node:os'
@@ -37,7 +40,7 @@ import {
   readLoopState
 } from '../../../../../kernel/connectors/checkpoint/control-store/index'
 import { isPrincipal } from '../../../tools/task-contract/waiver-label'
-import { isPublishedSummaryComment, parseSummaryConfidenceRows, type PauseReason } from '@attalabs/aeg-core'
+
 import { resolveNewestFrozenBrief } from '../../../tools/task-contract/brief-validation'
 import { taskPhaseLabel } from '../../../tools/task-phase-history'
 import { resolveTaskIssueRef } from '../../../tools/task-contract/forge/list-tasks'

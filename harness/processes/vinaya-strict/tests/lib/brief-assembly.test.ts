@@ -695,9 +695,12 @@ describe('repoBriefCommandFacts', () => {
       // A real entry, so this case isolates the package-name identity check
       // rather than also tripping the entry-existence one below.
       writeFileSync(join(dir, 'apps', 'cli', 'src', 'index.ts'), '')
-      mkdirSync(join(dir, 'packages', 'aeg-core'), { recursive: true })
+      mkdirSync(join(dir, 'harness', 'processes', 'vinaya-strict'), { recursive: true })
       mkdirSync(join(dir, 'harness', 'processes', 'vinaya-strict', 'checks', 'standalone'), { recursive: true })
-      writeFileSync(join(dir, 'packages', 'aeg-core', 'package.json'), JSON.stringify({ name: 'not-aeg-core' }))
+      writeFileSync(
+        join(dir, 'harness', 'processes', 'vinaya-strict', 'package.json'),
+        JSON.stringify({ name: 'not-aeg-core' })
+      )
       writeFileSync(
         join(dir, 'harness', 'processes', 'vinaya-strict', 'checks', 'standalone', 'verify-dispatch.ts'),
         ''

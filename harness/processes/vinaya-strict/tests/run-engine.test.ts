@@ -44,7 +44,7 @@ import {
   OWN,
   WORKFLOW,
   type World
-} from '../../../../apps/cli/tests/lib/task-tools/live-developer-context-world'
+} from './live-developer-context-world'
 import { developerPrompt } from '../executing/developer-prompt'
 import { AGENT_EXIT_EVENT, createRoleLaunchers } from '../executing/actions'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'

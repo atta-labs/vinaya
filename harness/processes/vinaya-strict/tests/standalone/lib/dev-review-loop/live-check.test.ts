@@ -8,12 +8,13 @@
  * no `[live]` line runs the round exactly as before.
  */
 
+import type { DevReviewLoopEventInput, LoopState } from '../../../../tools/dev-review-policy/types'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import type { DevReviewLoopEventInput, LoopState } from '@attalabs/aeg-core'
+
 import { carryLiveRecord, readLiveRecord, withLiveRecord } from '../../../../tools/task-contract/live-record'
 import { evaluateTestPlanGate } from '../../../../checks/test-plan-gate'
 import { buildPrincipalTestPlanWaitErrors } from '../../../../checks/bin/check-principal-test-plan-wait.js'

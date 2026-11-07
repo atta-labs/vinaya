@@ -1,14 +1,17 @@
+import {
+  initialLoopState,
+  type DevReviewLoopEventInput,
+  type LoopState
+} from '../../../../tools/dev-review-policy/types'
+import {
+  reconstructRounds,
+  type ReconstructedJournal
+} from '../../../../tools/dev-review-policy/journal-reconstruction'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import {
-  initialLoopState,
-  reconstructRounds,
-  type DevReviewLoopEventInput,
-  type LoopState,
-  type ReconstructedJournal
-} from '@attalabs/aeg-core'
+
 import {
   createDriverExitRecorder,
   DRIVER_HEARTBEAT_INTERVAL_MS,
