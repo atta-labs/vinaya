@@ -148,6 +148,7 @@ const workflowWithoutProducers = [
   "workflow:ci.yml:test-cli-config-anchor:Report this job's GitHub token budget",
   "workflow:ci.yml:sandbox-conformance:Report this job's GitHub token budget",
   "workflow:ci.yml:record-reads:Report this job's GitHub token budget",
+  "workflow:ci.yml:record-reads-merge:Report this job's GitHub token budget",
   "workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Report this job's GitHub token budget",
   "workflow:ci.yml:aggregate:Report this job's GitHub token budget",
   "workflow:ci.yml:build:Print the limits of this job's GitHub reads",
@@ -393,7 +394,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(114)
+    expect(noProducer).toHaveLength(115)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })

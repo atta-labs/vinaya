@@ -859,6 +859,13 @@ jobs:
           path: ${{ runner.temp }}/read-record/read-record.json
           retention-days: 60
           if-no-files-found: error
+      # The token reaches only this failure-only step, never the merge.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   # The one job branch protection should require. Depends on every job
   # above and reports under the historical "Vinaya CI" name (`run-name`
