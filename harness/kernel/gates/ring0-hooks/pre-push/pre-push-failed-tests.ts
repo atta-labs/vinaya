@@ -626,7 +626,7 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
     return { base: from, kind: 'rerun', obligations, reason: `re-running ${what} at ${record.head}${onto}` }
   }
   const passing = inputs.passing
-  if (!passing || passing.selectionCompleted !== true || passing.branch !== inputs.branch)
+  if (passing?.selectionCompleted !== true || passing.branch !== inputs.branch)
     return full('no passing run on this branch to build on')
   if (context === null) return full('the passing run had another verification context')
   const compatible = contextReusable(passing.contextParts, inputs.contextParts)
@@ -765,7 +765,7 @@ function sinceGreenNote<Full extends { selected: string[] }>(
   context: string | null
 ): SelectionNote | null {
   const passing = deps.passing
-  if (!passing || passing.selectionCompleted !== true || passing.selection.length === 0) return null
+  if (passing?.selectionCompleted !== true || passing.selection.length === 0) return null
   if (passing.branch !== deps.branch || context === null || passing.context !== context) return null
   if (!deps.isAncestor(passing.head)) return null
   const changed = deps.changedBetween(passing.head)
