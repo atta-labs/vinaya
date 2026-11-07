@@ -11,7 +11,7 @@ import type { StateSource } from './contract'
  * config flip, not a rewrite. */
 export const DEFAULT_GOVERNANCE_ROOT = DOCTRINE_TREE
 
-/** The retired tranche-file state an unconfigured file source still reads: `aeg-root/tranches`. */
+/** The retired tranche-file state an unconfigured file source still reads. */
 const LEGACY_TRANCHES_DIR = 'aeg-root/tranches'
 
 export type FileSourceConfig = {

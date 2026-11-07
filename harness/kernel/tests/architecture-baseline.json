@@ -9,7 +9,7 @@
   "apps/cli/src/commands/doctor.ts": 32,
   "apps/cli/src/commands/doctrine.ts": 3,
   "apps/cli/src/commands/eject.ts": 1,
-  "apps/cli/src/commands/init.ts": 4,
+  "apps/cli/src/commands/init.ts": 3,
   "apps/cli/src/commands/issue-objectives.ts": 10,
   "apps/cli/src/commands/issue.ts": 4,
   "apps/cli/src/commands/log-emit.ts": 1,
@@ -112,6 +112,6 @@
   "packages/sources/src/config-reference.ts": 46,
   "packages/sources/src/contract.ts": 3,
   "packages/sources/src/doctrine-file-adapter.ts": 1,
-  "packages/sources/src/file-adapter.ts": 3,
+  "packages/sources/src/file-adapter.ts": 4,
   "packages/sources/src/forge-adapter.ts": 1
 }

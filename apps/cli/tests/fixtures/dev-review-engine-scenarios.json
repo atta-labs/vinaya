@@ -14,11 +14,11 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "sha256": "19a5dd875ef765b293e13d884a294962a344ba9c1b2b22eb8cd6cc204fdecd61"
+        "sha256": "4413644885d73d01343fe87038217bba9de25cc252c999fdc1aab9658709d9aa"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.ts",
-        "sha256": "d4d79d9b1e01091409f7d4517c1fb7738c5d4b0e6de74bd132898ca4dbfc7d63"
+        "sha256": "c546ef1241f3ccc209d63f1cd51fd727e609fe695eb42bf13b09e7d57d534dbe"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-publication.ts",
@@ -42,7 +42,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts",
-        "sha256": "7b19c85b949545edf77c3f0d7ec4e7196906742cea105f9dc26e583412c238cb"
+        "sha256": "9a4e84410c55878295bafbdb44bfe4b33930821136901a80cc4fb7f499422c12"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts",
@@ -50,7 +50,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts",
-        "sha256": "ec28da5f28f3087acf6d82a6a71830556ee84b39d84a7a31577490ca41bc3926"
+        "sha256": "1abc9c62d9b85f3947f83e1493ffa9812509e0dcbc7859b78d0d03f1b55fcb3c"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.ts",
