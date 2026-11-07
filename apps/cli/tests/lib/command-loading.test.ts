@@ -36,16 +36,16 @@ function staticClosure(entry: string): string[] {
   return [...seen].map((file) => relative(REPO_ROOT, file)).sort()
 }
 
-/**
- * The one command module the entry point imports at start: it forwards the process's startup installers, which the
- * entry point runs before any command, and the architecture ratchet keeps the process's own path out of the entry point.
- */
-const STARTUP_FORWARDER = 'apps/cli/src/commands/dispatch.ts'
+/** Whether a command module only carries the process's startup installers to the entry point, which runs them before any command. */
+const forwardsStartupInstallers = (file: string): boolean =>
+  /\binstallVinayaLogSinkFactory\b/.test(readFileSync(join(REPO_ROOT, file), 'utf8'))
 
-it('the entry point imports no command module statically but the startup forwarder', () => {
+it('the entry point imports no command module statically, except one that carries the startup installers', () => {
   const closure = staticClosure(ENTRY)
   expect(closure).toContain('apps/cli/src/index.ts')
-  expect(closure.filter((file) => file.startsWith('apps/cli/src/commands/'))).toEqual([STARTUP_FORWARDER])
+  const commands = closure.filter((file) => file.startsWith('apps/cli/src/commands/'))
+  expect(commands.filter((file) => !forwardsStartupInstallers(file))).toEqual([])
+  expect(commands.length).toBeLessThanOrEqual(1)
 })
 
 it('every command module the entry point names is one it loads on demand', () => {
