@@ -139,6 +139,7 @@ import {
 import {
   escalationIdFor,
   isDriverPidAlive,
+  type PauseState,
   pauseStatePath,
   readDriverLock,
   readEscalationRecord,
@@ -694,6 +695,59 @@ export type PauseDisposition =
   | 'unreadable'
   | 'none'
 
+/** What the held pause's records say: no hold, an unreadable record, a pause nobody resolved yet, or its resolution. */
+export type HeldPauseResolution =
+  | { status: 'none' }
+  | { status: 'unreadable' }
+  | { status: 'undecided'; held: PauseState; csDeps: ReturnType<typeof defaultControlStoreDeps> }
+  | { status: 'resolved'; decision: 'resume' | 'cancel'; consumedAt: string }
+
+/**
+ * The one reader of the held pause and its resolution — the pause record, the
+ * supersede rule and the escalation's resolution record — shared by
+ * `defaultPauseDisposition` and the run procedure's cancelled-checkpoint gate,
+ * so both start paths read one source. May throw on a filesystem error.
+ */
+export function readHeldPauseResolution(issue: number, root: string = runtimeDirForThisRepo()): HeldPauseResolution {
+  // "No pause record" and "a pause record that will not parse" are the
+  // same `null` from `readPauseState`, and they must not be the same
+  // answer here: `writePauseState` is a plain non-atomic write, so a kill
+  // or a full disk mid-write — the very crash this gate exists for — can
+  // leave a truncated record, and reading that as `none` would launch
+  // straight past a hold, as a FRESH dispatch rather than a resume, since
+  // `runTask`'s own `hasPauseState` reads the identical null. So the file's
+  // own existence is checked first, separately from its contents.
+  if (!existsSync(pauseStatePath(root, issue))) return { status: 'none' }
+  const held = readPauseState(root, issue)
+  if (held === null) return { status: 'unreadable' }
+  // A pause record is never cleared on resume, so one naming a round the
+  // control store has since published past is history, not a hold — the SAME
+  // supersede rule `deriveLoopState` applies before it will report
+  // `paused` at all.
+  if (pauseSuperseded(held, newestPublication(root, issue))) return { status: 'none' }
+
+  const csDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
+  const escalationId = held.escalationId ?? escalationIdFor(issue, held.round, held.head)
+  const resolution = readResolution(csDeps, issue, escalationId)
+  // `absent` is a real answer — nobody has decided yet. `corrupt` is not:
+  // a resolution that will not parse might be the `cancel` this gate
+  // exists to protect, so it is never read as "no decision recorded".
+  if (resolution.status === 'corrupt') return { status: 'unreadable' }
+  if (resolution.status === 'ok') {
+    return { status: 'resolved', decision: resolution.value.decision, consumedAt: resolution.value.consumedAt }
+  }
+  return { status: 'undecided', held, csDeps }
+}
+
+/** The held pause's resolution — decision and `consumedAt` — or `null` when there is none to read (no hold, undecided, or unreadable). */
+export function heldPauseResolution(
+  issue: number,
+  root: string = runtimeDirForThisRepo()
+): { decision: 'resume' | 'cancel'; consumedAt: string } | null {
+  const reading = readHeldPauseResolution(issue, root)
+  return reading.status === 'resolved' ? { decision: reading.decision, consumedAt: reading.consumedAt } : null
+}
+
 /**
  * Reads the disposition from the SAME two records the continuation itself
  * reads — the pause record and the escalation's resolution — so this gate
@@ -719,35 +773,13 @@ export type PauseDisposition =
  */
 export function defaultPauseDisposition(issue: number, root: string = runtimeDirForThisRepo()): PauseDisposition {
   try {
-    // "No pause record" and "a pause record that will not parse" are the
-    // same `null` from `readPauseState`, and they must not be the same
-    // answer here: `writePauseState` is a plain non-atomic write, so a kill
-    // or a full disk mid-write — the very crash this gate exists for — can
-    // leave a truncated record, and reading that as `none` would launch
-    // straight past a hold, as a FRESH dispatch rather than a resume, since
-    // `runTask`'s own `hasPauseState` reads the identical null. So the file's
-    // own existence is checked first, separately from its contents.
-    if (!existsSync(pauseStatePath(root, issue))) return 'none'
-    const held = readPauseState(root, issue)
-    if (held === null) return 'unreadable'
-    // A pause record is never cleared on resume, so one naming a round the
-    // control store has since published past is history, not a hold — the SAME
-    // supersede rule `deriveLoopState` applies before it will report
-    // `paused` at all. Without it, reading the record directly (which the
-    // gate must, see below) would refuse a task that paused, resumed and
-    // published rounds ago.
-    if (pauseSuperseded(held, newestPublication(root, issue))) return 'none'
-
-    const csDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
-    const escalationId = held.escalationId ?? escalationIdFor(issue, held.round, held.head)
-    const resolution = readResolution(csDeps, issue, escalationId)
-    // `absent` is a real answer — nobody has decided yet. `corrupt` is not:
-    // a resolution that will not parse might be the `cancel` this gate
-    // exists to protect, so it is never read as "no decision recorded".
-    if (resolution.status === 'corrupt') return 'unreadable'
-    if (resolution.status === 'ok') {
-      return resolution.value.decision === 'cancel' ? 'resolved_cancel' : 'resolved_resume'
+    const reading = readHeldPauseResolution(issue, root)
+    if (reading.status === 'none') return 'none'
+    if (reading.status === 'unreadable') return 'unreadable'
+    if (reading.status === 'resolved') {
+      return reading.decision === 'cancel' ? 'resolved_cancel' : 'resolved_resume'
     }
+    const { held, csDeps } = reading
     // These two reasons share the loop's bounded, ruling-free automatic
     // recovery gate. Classifying either as awaiting a ruling would strand a
     // dead driver behind a decision nobody needs to provide.
