@@ -5,7 +5,9 @@
  * test, fixture data a runner would collect, a runner the configuration
  * contradicts, a no-reader claim that would erase a scanner's or a security
  * policy's duty — and each reader kind answering a configuration change the
- * way its kind says. The build job's step that runs all of this is executed
+ * way its kind says. The doctrine map's rows are inputs narrowed to the tests
+ * that read each row, proved on a fixture through a local and a CI selection
+ * and on this repository's own map. The build job's step that runs all of this is executed
  * here against fake runners, so a failure of either command is shown to fail
  * the job.
  */
@@ -16,7 +18,16 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
 import { SUITE_INPUTS } from '../../harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/command-sources.ts'
-import { changedInputReaders as libraryChangedInputReaders } from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts'
+import {
+  changedInputReaders as libraryChangedInputReaders,
+  memoryRepository,
+  plannedTests,
+  selectTests
+} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts'
+import {
+  DOCTRINE_REPO_PATHS,
+  doctrineRepoPath
+} from '../../harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts'
 import {
   buildInventoryView,
   bunLockParser,
@@ -695,6 +706,227 @@ describe('referenced providers are read from syntax; an unreadable one stays opa
     const v = view(declare("export const INPUTS = computeInputs()\nthrow new Error('never run')\n"))
     expect(v.edges.filter((e) => e.source === 'provider:inputs')).toEqual([])
     expect(v.unknowns).toEqual([expect.objectContaining({ scope: module })])
+  })
+})
+
+// ── The doctrine map's readers ─────────────────────────────────────────────
+
+describe("the doctrine map's rows are inputs, each narrowed to the tests that read them", () => {
+  const MAP = 'proc/tools/doctrine-map.ts'
+  const ROLE = 'proc/executing/developer/doctrine.md'
+  const CONTRACT = 'proc/doctrine/contracts/planner-developer.md'
+  const TEMPLATE = 'proc/artifacts/brief-template.md'
+  const NOTES = 'proc/doctrine/notes.md'
+  const ADDED = 'proc/executing/reviewer/doctrine.md'
+  const T = {
+    role: 'apps/cli/tests/role.test.ts',
+    template: 'apps/cli/tests/template.test.ts',
+    pack: 'apps/cli/tests/pack.test.ts',
+    tree: 'apps/cli/tests/tree.test.ts',
+    unrelated: 'apps/cli/tests/config.test.ts'
+  }
+  type Row = [key: string, source: string, ships: boolean]
+  const ROWS: Row[] = [
+    ['roles/developer.md', 'executing/developer/doctrine.md', true],
+    ['contracts/planner-developer.md', 'doctrine/contracts/planner-developer.md', true],
+    ['templates/brief-template.md', 'artifacts/brief-template.md', true],
+    ['notes.md', 'doctrine/notes.md', false]
+  ]
+  const mapModule = (rows: Row[], root = "'proc'") =>
+    [
+      `export const DOCTRINE_TREE = ${root}`,
+      'export const DOCTRINE_MAP: readonly { key: string; source: string; ships: boolean }[] = [',
+      ...rows.map(([key, source, ships]) => `  { key: '${key}', source: '${source}', ships: ${ships} },`),
+      ']',
+      ''
+    ].join('\n')
+  const provider = (
+    readers: NonNullable<InventoryDeclarations['providers'][number]['readers']>
+  ): InventoryDeclarations['providers'][number] => ({
+    id: 'doctrine',
+    kind: 'fixture',
+    file: MAP,
+    export: 'DOCTRINE_MAP',
+    root: 'DOCTRINE_TREE',
+    shape: 'doctrine-map',
+    readers,
+    reason: 'fixture'
+  })
+  const READERS = [
+    { kind: 'raw-bytes' as const, rows: ['roles/'], tests: [T.role] },
+    { kind: 'raw-bytes' as const, rows: ['templates/brief-template.md'], tests: [T.template] },
+    { kind: 'raw-bytes' as const, ships: true, tests: [T.pack] },
+    { kind: 'raw-bytes' as const, tests: [T.tree] }
+  ]
+  const treeOf = (rows: Row[] = ROWS, mapText = mapModule(rows), readers = READERS) =>
+    withDeclarations(
+      (d) => {
+        d.providers.push(provider(readers))
+        d.policies.push({
+          id: 'inventory-gate',
+          kind: 'mandatory',
+          inputs: ['scripts/'],
+          duty: 'the build job runs the repository suite on every pull request',
+          source: '.github/workflows/ci.yml'
+        })
+      },
+      {
+        [MAP]: mapText,
+        ...Object.fromEntries(rows.map(([key, source]) => [`proc/${source}`, `# ${key}\n`])),
+        [T.role]: "import { test } from 'bun:test'\n",
+        [T.template]: "import { test } from 'bun:test'\n",
+        [T.pack]: "import { test } from 'bun:test'\n",
+        [T.tree]: "import { test } from 'bun:test'\n"
+      }
+    )
+  const readersOf = (base: Record<string, string>, head: Record<string, string>, path: string) =>
+    changedInputReaders(view(base, 'base'), view(head), { path, before: base[path] ?? null, after: head[path] ?? null })
+      .readers.map((r) => r.test)
+      .sort()
+
+  test('each row becomes one input at its source path, read only by the readers whose rows name it', () => {
+    const v = view(treeOf())
+    expect(v.problems).toEqual([])
+    expect(v.unknowns).toEqual([])
+    const readersAt = (path: string) =>
+      [...new Set(v.edges.filter((e) => e.input === path).flatMap((e) => e.readers))].sort()
+    expect(readersAt(ROLE)).toEqual([T.pack, T.role, T.tree].sort())
+    expect(readersAt(CONTRACT)).toEqual([T.pack, T.tree].sort())
+    expect(readersAt(TEMPLATE)).toEqual([T.pack, T.template, T.tree].sort())
+    // The packaging reader reads only shipped rows.
+    expect(readersAt(NOTES)).toEqual([T.tree])
+  })
+
+  test('a prose edit reaches the readers of its row and never an unrelated test or a reader of another row', () => {
+    const base = treeOf()
+    const head = { ...base, [ROLE]: '# roles/developer.md\n\nOne more rule.\n' }
+    expect(readersOf(base, head, ROLE)).toEqual([T.pack, T.role, T.tree].sort())
+  })
+
+  test('a template edit reaches the template reader; a contract edit only the readers of every shipped or every row', () => {
+    const base = treeOf()
+    expect(readersOf(base, { ...base, [TEMPLATE]: '# changed\n' }, TEMPLATE)).toEqual(
+      [T.pack, T.template, T.tree].sort()
+    )
+    expect(readersOf(base, { ...base, [CONTRACT]: '# changed\n' }, CONTRACT)).toEqual([T.pack, T.tree].sort())
+  })
+
+  test('an added row is an input from the head view on; a removed row keeps its readers from the base view', () => {
+    const grown: Row[] = [...ROWS, ['roles/reviewer.md', 'executing/reviewer/doctrine.md', true]]
+    const base = treeOf()
+    const head = treeOf(grown)
+    expect(view(head).problems).toEqual([])
+    expect(readersOf(base, head, ADDED)).toEqual([T.pack, T.role, T.tree].sort())
+    // Removed: the head no longer names the file, the base still does.
+    expect(readersOf(head, base, ADDED)).toEqual([T.pack, T.role, T.tree].sort())
+    // A removed row's file still in the tree is a file no reader reads through the map.
+    expect(view(treeOf(ROWS.slice(1), undefined, READERS.slice(1))).edges.some((e) => e.input === ROLE)).toBe(false)
+  })
+
+  test('a map that cannot be read from syntax keeps an explained fallback over the doctrine folder, or the tree', () => {
+    const computed = view(
+      treeOf(ROWS, "export const DOCTRINE_TREE = 'proc'\nexport const DOCTRINE_MAP = rowsFrom(disk)\n")
+    )
+    expect(computed.edges.some((e) => e.source === 'provider:doctrine')).toBe(false)
+    expect(computed.unknowns.map((u) => u.scope)).toEqual([MAP, 'proc/'])
+    expect(computed.unknowns.every((u) => u.reason.includes('provider doctrine'))).toBe(true)
+    const rootless = view(treeOf(ROWS, mapModule(ROWS, 'process.env.ROOT')))
+    expect(rootless.unknowns.map((u) => u.scope)).toEqual([MAP, '.'])
+  })
+
+  test('a reader row the map does not carry, or row narrowing outside a doctrine-map provider, is a problem', () => {
+    const stale = view(treeOf(ROWS, undefined, [{ kind: 'raw-bytes', rows: ['roles/retired.md'], tests: [T.role] }]))
+    expect(codes(stale)).toContain('missing doctrine')
+    const misplaced = view(
+      withDeclarations(
+        (d) =>
+          d.inputs.push({
+            id: 'notes',
+            kind: 'fixture',
+            paths: ['notes.md'],
+            readers: [{ kind: 'raw-bytes', rows: ['notes.md'], tests: [T.unrelated] }],
+            reason: 'fixture'
+          }),
+        { 'notes.md': '' }
+      )
+    )
+    expect(codes(misplaced)).toContain('schema notes')
+  })
+
+  // The same plan a local push and CI make: a local push walks one level and leaves the build job's suites to CI.
+  const plan = (head: Record<string, string>, ci: boolean) => {
+    const base = treeOf()
+    return selectTests({
+      repo: memoryRepository({ base, head }),
+      base: 'base',
+      head: 'head',
+      inventory: { head: view(head, 'head'), base: view(base, 'base') },
+      policy: {
+        depth: ci ? 'transitive' : 'one',
+        typescript: null,
+        obligations: ci
+          ? [{ id: 'inventory-gate', kind: 'policy', reason: 'the build job runs it', suites: ['repository'] }]
+          : []
+      },
+      records: null
+    })
+  }
+
+  for (const ci of [false, true])
+    test(`${ci ? 'CI' : 'a local push'} selects a doctrine edit's readers without a fallback${ci ? ', plus the mandatory duties' : ''}`, () => {
+      const edited = { ...treeOf(), [ROLE]: '# roles/developer.md\n\nOne more rule.\n' }
+      const selected = plan(edited, ci)
+      expect(selected.fallbacks).toEqual([])
+      expect(plannedTests(selected).sort()).toEqual(
+        (ci ? [T.pack, T.role, T.tree, 'scripts/root.test.ts'] : [T.pack, T.role, T.tree]).sort()
+      )
+      expect(plannedTests(selected)).not.toContain(T.unrelated)
+      expect(plannedTests(selected)).not.toContain(T.template)
+      const template = plan({ ...treeOf(), [TEMPLATE]: '# changed\n' }, ci)
+      expect(template.fallbacks).toEqual([])
+      expect(plannedTests(template)).toContain(T.template)
+      expect(plannedTests(template)).not.toContain(T.role)
+    })
+})
+
+describe("this repository's doctrine readers come from the doctrine map, with no doctrine fallback left", () => {
+  const { head } = readTestInventory(REPO_ROOT)
+  const doctrineEdges = head.edges.filter((e) => e.source.startsWith('provider:doctrine-'))
+  const role = doctrineRepoPath('roles/developer.md')
+  const template = doctrineRepoPath('templates/brief-template.md')
+  const edit = (path: string) => {
+    const text = readFileSync(join(REPO_ROOT, path), 'utf8')
+    return changedInputReaders(head, head, { path, before: text, after: `${text}\nOne more rule.\n` })
+  }
+
+  test('every map row is an input, and no unknown scope covers one', () => {
+    expect([...new Set(doctrineEdges.map((e) => e.input))].sort()).toEqual([...DOCTRINE_REPO_PATHS].sort())
+    for (const path of DOCTRINE_REPO_PATHS)
+      expect(head.unknowns.filter((u) => u.scope === '.' || path.startsWith(u.scope))).toEqual([])
+  })
+
+  test('a role doctrine edit keeps its readers — direct, role resolution, spawned, packaging, scanning — and no unrelated test', () => {
+    const impact = edit(role)
+    const readers = impact.readers.map((r) => r.test)
+    for (const kept of [
+      'harness/processes/vinaya-strict/executing/developer/developer-doctrine-shape.test.ts',
+      'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-1.test.ts',
+      'apps/cli/tests/doctrine.test.ts',
+      'scripts/package-compat/package-compat.test.ts',
+      'harness/processes/vinaya-strict/checks/retired-vocabulary.test.ts'
+    ])
+      expect(readers).toContain(kept)
+    expect(readers).not.toContain('apps/vinaya-portal/src/lib/brand-logo.test.ts')
+    expect(readers).not.toContain('apps/cli/tests/commands/issue.test.ts')
+    expect(impact.unknown).toEqual([])
+  })
+
+  test('a template edit reaches the template readers and not the review loop’s role readers', () => {
+    const readers = edit(template).readers.map((r) => r.test)
+    expect(readers).toContain('apps/cli/tests/commands/issue.test.ts')
+    expect(readers).not.toContain(
+      'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-1.test.ts'
+    )
   })
 })
 

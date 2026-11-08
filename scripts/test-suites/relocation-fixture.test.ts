@@ -8,8 +8,9 @@
  *
  * Each layout is a real tree on disk, read by the real selector (its own
  * workspace discovery, import graph and CI eligibility) and by the inventory
- * (its declared fixture, preload and spawned-program edges), the two answers
- * joined. Nothing here selects by owner or folder: a test is affected only
+ * (its declared fixture, preload and spawned-program edges, and the edges it
+ * derives from the process's doctrine map, whose root moves with the process),
+ * the two answers joined. Nothing here selects by owner or folder: a test is affected only
  * through an import, a declared input, or a test file changed itself.
  */
 import { afterAll, describe, expect, test } from 'bun:test'
@@ -124,6 +125,28 @@ function treeOf(layout: Layout): Record<string, string> {
     ].join('\n'),
     [`${p.process}/tests/fixtures/scenario.json`]: '{"rounds":3}\n',
     [`${p.process}/bin/run.ts`]: `import { flow } from '${spec(`${p.process}/bin/run.ts`, flow)}'\nflow()\n`,
+    // The process's doctrine map: its rows, relative to the process folder, are the doctrine files; a process test
+    // reads the role doctrine and a CLI test the brief template, each declared against the map's rows.
+    [`${p.process}/tools/doctrine-map.ts`]: [
+      `export const DOCTRINE_TREE = '${p.process}'`,
+      'export const DOCTRINE_MAP = [',
+      "  { key: 'roles/developer.md', source: 'executing/developer/doctrine.md', ships: true },",
+      "  { key: 'templates/brief-template.md', source: 'artifacts/brief-template.md', ships: true }",
+      ']',
+      ''
+    ].join('\n'),
+    [`${p.process}/executing/developer/doctrine.md`]: '# The developer\n',
+    [`${p.process}/artifacts/brief-template.md`]: '# Brief\n',
+    [`${p.process}/tests/role.test.ts`]: [
+      "import { readFileSync } from 'node:fs'",
+      "export const t = () => readFileSync(new URL('../executing/developer/doctrine.md', import.meta.url), 'utf8')",
+      ''
+    ].join('\n'),
+    'apps/cli/tests/template.test.ts': [
+      "import { readFileSync } from 'node:fs'",
+      `export const t = () => readFileSync('${p.process}/artifacts/brief-template.md', 'utf8')`,
+      ''
+    ].join('\n'),
     // The driver, wherever it lives, drives the flow.
     [p.driver]: `import { flow } from '${spec(p.driver, flow)}'\nexport const drive = () => flow()\n`
   }
@@ -179,7 +202,21 @@ function treeOf(layout: Layout): Record<string, string> {
         reason: 'the CLI test starts it as a process'
       }
     ],
-    providers: [],
+    providers: [
+      {
+        id: 'doctrine',
+        kind: 'fixture',
+        file: `${p.process}/tools/doctrine-map.ts`,
+        export: 'DOCTRINE_MAP',
+        root: 'DOCTRINE_TREE',
+        shape: 'doctrine-map',
+        readers: [
+          { kind: 'raw-bytes', rows: ['roles/'], tests: [`${p.process}/tests/role.test.ts`] },
+          { kind: 'raw-bytes', rows: ['templates/brief-template.md'], tests: ['apps/cli/tests/template.test.ts'] }
+        ],
+        reason: 'the role test and the template test read their doctrine rows from disk'
+      }
+    ],
     policies: [],
     unknowns: []
   }
@@ -233,7 +270,30 @@ const SCENARIOS: { name: string; changes: Change[]; expected: string[] }[] = [
   {
     name: 'a changed preload reaches every test of its suite',
     changes: [{ kind: 'modify', path: 'apps/cli/tests/lib/preload.ts', text: 'process.env.FIXTURE = "2"\n' }],
-    expected: ['apps/cli/tests/driver.test.ts', 'apps/cli/tests/spawn.test.ts']
+    expected: ['apps/cli/tests/driver.test.ts', 'apps/cli/tests/spawn.test.ts', 'apps/cli/tests/template.test.ts']
+  },
+  // A doctrine file is a non-source file of the process package, so the selector's package-metadata edge also selects
+  // the driver test, which imports through that package — in every layout alike. The doctrine map's rows decide the
+  // rest: the reader of the changed row, never the reader of another row, never the kernel's tests.
+  {
+    name: "a role doctrine edit reaches its reader through the doctrine map's row, never the template reader",
+    changes: [
+      { kind: 'modify', path: 'processes/vinaya/executing/developer/doctrine.md', text: '# The developer\n\nA rule.\n' }
+    ],
+    expected: ['apps/cli/tests/driver.test.ts', 'processes/vinaya/tests/role.test.ts']
+  },
+  {
+    name: 'a template edit reaches the template reader, never the role reader',
+    changes: [{ kind: 'modify', path: 'processes/vinaya/artifacts/brief-template.md', text: '# Brief\n\n## Goal\n' }],
+    expected: ['apps/cli/tests/driver.test.ts', 'apps/cli/tests/template.test.ts']
+  },
+  {
+    name: 'a doctrine file added with its map row reaches the readers of its rows',
+    changes: [
+      { kind: 'modify', path: 'processes/vinaya/tools/doctrine-map.ts', text: '' }, // filled per layout: one more row
+      { kind: 'add', path: 'processes/vinaya/executing/reviewer/doctrine.md', text: '# The reviewer\n' }
+    ],
+    expected: ['apps/cli/tests/driver.test.ts', 'processes/vinaya/tests/role.test.ts']
   },
   {
     name: 'a changed spawned program reaches the test that starts it',
@@ -277,6 +337,11 @@ function selectIn(
     let text = c.text
     if (path === placesOf(layout).driver && c.path === 'apps/cli/src/lib/driver.ts' && !text)
       text = `${before[path]}export const version = 2\n`
+    if (c.path === 'processes/vinaya/tools/doctrine-map.ts' && !text)
+      text = (before[path] as string).replace(
+        '\n]\n',
+        ",\n  { key: 'roles/reviewer.md', source: 'executing/reviewer/doctrine.md', ships: true }\n]\n"
+      )
     return { ...c, path, text }
   })
   for (const c of placedChanges) {
