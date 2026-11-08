@@ -600,9 +600,9 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
   const record = inputs.failed
   if (record && record.branch === inputs.branch && inputs.isAncestor(record.head)) {
     if (record.failed === 'all') return full('the last refused push named no failing file')
+    // A failed test file that is gone since the refused push is dropped, not a reason to run everything: a moved test
+    // is an added file in the changes since, and those select it; a deleted one has nothing left to run.
     const obligations = record.failed.filter(inputs.exists).sort()
-    if (obligations.length !== record.failed.length)
-      return full('a failed test file of the last refused push no longer exists', obligations)
     if (record.selectionCompleted !== true || context === null) return full(otherContext, obligations)
     const compatible = contextReusable(record.contextParts, inputs.contextParts)
     const merged = inputs.mergeAware
