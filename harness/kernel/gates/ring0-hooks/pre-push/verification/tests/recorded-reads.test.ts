@@ -140,10 +140,27 @@ describe('the syscall trace reader', () => {
       ),
       options()
     )
-    expect([...scoped.reads].sort()).toEqual(['bun.lock', 'bun.lock#@sanity/client', 'bun.lock#b'])
+    expect([...scoped.reads].sort()).toEqual(['bun.lock#@sanity/client', 'bun.lock#b'])
     expect([
       ...readsOfTrace(`1 stat("/work/repo/node_modules/x", 0x7) = 0\n`, options({ dependencyInput: null })).reads
     ]).toEqual([])
+  })
+
+  it('records nothing for the dependency folder the module resolver opens, and keeps a real read of the lockfile', () => {
+    // The shape Bun's resolver leaves on every bare import: the folder itself, opened as a directory.
+    const resolver = readsOfTrace(
+      trace(
+        '1 openat(AT_FDCWD</work/repo>, "/work/repo/node_modules/", O_RDONLY|O_LARGEFILE|O_CLOEXEC|O_DIRECTORY) = 13</work/repo/node_modules>',
+        '1 openat(AT_FDCWD</work/repo>, "/work/repo/apps/cli/node_modules/", O_RDONLY|O_DIRECTORY) = 11</work/repo/apps/cli/node_modules>'
+      ),
+      options()
+    )
+    expect([...resolver.reads]).toEqual([])
+    const lockReader = readsOfTrace(
+      trace('1 openat(AT_FDCWD</work/repo>, "/work/repo/bun.lock", O_RDONLY|O_CLOEXEC) = 3</work/repo/bun.lock>'),
+      options()
+    )
+    expect([...lockReader.reads]).toEqual(['bun.lock'])
   })
 
   it('marks a read under .git/ for static fallback', () => {

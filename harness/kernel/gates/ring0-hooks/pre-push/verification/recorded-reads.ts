@@ -82,7 +82,9 @@ export function indexRecordedTest(test: RecordedTest): RecordIndex {
 /**
  * A read under the installed dependencies is recorded per package, as the input they derive from joined to the
  * package's name with `#` (`bun.lock#zod`). A change to that input then reaches only the tests that read a package
- * whose entry changed; a read naming no package (the dependency folder itself) is recorded as the whole input.
+ * whose entry changed. A read naming no package — the dependency folder itself, which the module resolver opens on
+ * every bare import, or a dot-folder such as `.bin` or `.cache` — records nothing: what the test loads from the
+ * folder is its per-package reads, so the folder read would only make every test read the whole input.
  */
 export const DEPENDENCY_PACKAGE_SEPARATOR = '#'
 
@@ -293,10 +295,15 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
       if (rel !== '.git') git = true
       if (rel !== '.git') return
     }
-    if (rel === depFolder || rel.startsWith(`${depFolder}/`) || rel.includes(`/${depFolder}/`)) {
+    if (
+      rel === depFolder ||
+      rel.startsWith(`${depFolder}/`) ||
+      rel.includes(`/${depFolder}/`) ||
+      rel.endsWith(`/${depFolder}`)
+    ) {
       if (options.dependencyInput !== null) {
         const name = installedPackageName(rel, depFolder)
-        reads.add(name ? dependencyRead(options.dependencyInput, name) : options.dependencyInput)
+        if (name) reads.add(dependencyRead(options.dependencyInput, name))
       }
       return
     }
