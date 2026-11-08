@@ -86,8 +86,29 @@ function duration(ms: unknown): string | null {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
+function reasonKey(reasonCode: string | null, fallbackReason: string | null): string | null {
+  return reasonCode ?? (fallbackReason ? (PAUSE_WITHOUT_CODE[fallbackReason] ?? null) : null)
+}
+
+/**
+ * Who a pause or stop reason waits on, read from the same table the lines
+ * use: `'person'` when a person has to act, `'loop'` when the loop answers it
+ * itself, `null` when the table does not hold the reason. `reasonCode` is a
+ * pause's `reason_code` or a stop's `condition`; `fallbackReason` is a pause's
+ * three-value `reason`, read only when no code is given.
+ */
+export function reasonWaitsOn(
+  reasonCode: string | null,
+  fallbackReason: string | null = null
+): 'person' | 'loop' | null {
+  const key = reasonKey(reasonCode, fallbackReason)
+  const known = key ? REASONS[key] : undefined
+  if (!known) return null
+  return known.person ? 'person' : 'loop'
+}
+
 function paused(reasonCode: string | null, fallbackReason: string | null): NarrationLine {
-  const key = reasonCode ?? (fallbackReason ? (PAUSE_WITHOUT_CODE[fallbackReason] ?? null) : null)
+  const key = reasonKey(reasonCode, fallbackReason)
   const known = key ? REASONS[key] : undefined
   if (known) {
     return known.person

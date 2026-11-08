@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { buildExecution } from '../fixtures/executions'
-import { NARRATION_KINDS, narrate } from './narration'
+import { NARRATION_KINDS, narrate, reasonWaitsOn } from './narration'
 
 type Parsed = Record<string, any>
 
@@ -264,5 +264,24 @@ describe('narrate — records it has no wording for, and malformed ones', () => 
     expect(() => narrate({ ...loop, event: 'round_ended', round: 1 }, 'nope' as unknown as unknown[])).not.toThrow()
     expect(narrate(null)).toBeNull()
     expect(narrate({ ...loop, event: 'gate_result_read', round: 1, green: 'yes' })).toBeNull()
+  })
+})
+
+describe('reasonWaitsOn — the same table the lines read', () => {
+  it('names who a reason waits on, and nothing for a reason the table does not hold', () => {
+    expect(reasonWaitsOn('max_rounds')).toBe('person')
+    expect(reasonWaitsOn('stale_driver')).toBe('loop')
+    expect(reasonWaitsOn(null, 'principal_item')).toBe('person')
+    expect(reasonWaitsOn(null, 'refreeze_needed')).toBeNull()
+    expect(reasonWaitsOn('brand_new_reason', 'escalation')).toBeNull()
+  })
+
+  it('agrees with the line a pause reads as', () => {
+    for (const code of ['max_rounds', 'stale_driver', 'ruling_posted', 'no_push', 'brand_new_reason']) {
+      const line = narrate({ ...loop, event: 'paused', round: 1, reason: 'escalation', reason_code: code })
+      const waitsOn = reasonWaitsOn(code)
+      expect(line?.kind).toBe(waitsOn === 'person' ? 'blocked' : 'paused')
+      if (waitsOn === null) expect(line?.text).toBe(`Paused: ${code}.`)
+    }
   })
 })
