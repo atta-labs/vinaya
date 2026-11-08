@@ -18,6 +18,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
+  bunLockIdentity,
   memoryRepository,
   plannedTests,
   READ_RECORD_SCHEMA,
@@ -322,4 +323,40 @@ describe('no rule outside the static fallback names a path, folder, owner or ext
       expect(/['"`](?:apps|packages|harness|scripts|aeg-root|docs)\//.test(outside), 'a literal folder').toBe(false)
     })
   }
+})
+
+describe('a lockfile change reaches the tests that read a changed package', () => {
+  const lockOf = (zod: string) =>
+    `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "fx" } },\n  "packages": {\n    "react": ["react@18.0.0", "", {}, "sha-r"],\n    "zod": ["zod@${zod}", "", {}, "sha-${zod}"],\n  },\n}\n`
+  const base = { ...BASE_FILES, 'bun.lock': lockOf('3.0.0') }
+  const record = recordOf({
+    [T.double]: [CORE, 'bun.lock#zod'],
+    [T.triple]: [CORE, 'bun.lock#react'],
+    [T.process]: ['process.yaml', 'bun.lock'],
+    [T.flow]: ['flows/main.yaml'],
+    [T.doctrine]: ['doctrine/page.md'],
+    [T.dist]: ['packages/core/src/']
+  })
+  const select = (head: Record<string, string>, parse: boolean) => {
+    const plan = selectTests({
+      repo: memoryRepository({ base, head }),
+      base: 'base',
+      head: 'head',
+      inventory: { head: viewOf('head', head, DECLARATIONS), base: viewOf('base', base, DECLARATIONS) },
+      policy: {
+        depth: 'transitive',
+        ...(parse ? { parsers: { 'bun-lock': (text: string) => bunLockIdentity(Bun.JSONC.parse(text)) } } : {})
+      },
+      records: { record, platform: 'linux' }
+    })
+    return plannedTests(plan).sort()
+  }
+
+  it('selects the readers of the changed package and of the whole lockfile, not the readers of another package', () => {
+    expect(select({ ...base, 'bun.lock': lockOf('3.1.0') }, true)).toEqual([T.double, T.process].sort())
+  })
+
+  it('selects every package reader when the lockfile cannot be compared package by package', () => {
+    expect(select({ ...base, 'bun.lock': lockOf('3.1.0') }, false)).toEqual([T.double, T.process, T.triple].sort())
+  })
 })

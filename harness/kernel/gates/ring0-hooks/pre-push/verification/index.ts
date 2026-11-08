@@ -47,7 +47,7 @@ export {
   validateInventory,
   validateInventoryView
 } from './inventory.js'
-export { bunLockIdentity } from './lockfile-identity.js'
+export { bunLockIdentity, changedLockPackages, lockKeyPackageName } from './lockfile-identity.js'
 export {
   DEFAULT_CONFIGURATION,
   type ExecutedValidation,
@@ -64,7 +64,11 @@ export {
 export { globRegex, globToRegex, inputCovers, underDeclaredRoot } from './path-pattern.js'
 export {
   createTraceReader,
+  anyDependencyRead,
+  DEPENDENCY_PACKAGE_SEPARATOR,
+  dependencyRead,
   indexRecordedTest,
+  installedPackageName,
   isReadRecord,
   type PathChange,
   READ_RECORD_SCHEMA,

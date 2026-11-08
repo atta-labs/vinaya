@@ -77,6 +77,33 @@ export function indexRecordedTest(test: RecordedTest): RecordIndex {
   }
 }
 
+// ── Installed dependencies ─────────────────────────────────────────────────
+
+/**
+ * A read under the installed dependencies is recorded per package, as the input they derive from joined to the
+ * package's name with `#` (`bun.lock#zod`). A change to that input then reaches only the tests that read a package
+ * whose entry changed; a read naming no package (the dependency folder itself) is recorded as the whole input.
+ */
+export const DEPENDENCY_PACKAGE_SEPARATOR = '#'
+
+/** The recorded read for one installed package of `input`. */
+export const dependencyRead = (input: string, name: string): string => `${input}${DEPENDENCY_PACKAGE_SEPARATOR}${name}`
+
+/** The change that reaches every package of `input`: the input could not be compared package by package. */
+export const anyDependencyRead = (input: string): string => dependencyRead(input, '*')
+
+/** The package an installed path belongs to: the name after the last dependency folder, scoped or not. */
+export function installedPackageName(path: string, depFolder = 'node_modules'): string | null {
+  const segments = path.split('/')
+  const at = segments.lastIndexOf(depFolder)
+  if (at < 0) return null
+  const first = segments[at + 1]
+  if (!first || first.startsWith('.')) return null
+  if (!first.startsWith('@')) return first
+  const second = segments[at + 2]
+  return second ? `${first}/${second}` : null
+}
+
 /**
  * Why `change` reaches the recorded test, or `null`: the path is among its
  * reads (`exact` says the read names the very file, not a folder holding it),
@@ -88,6 +115,11 @@ export function recordReach(
 ): { detail: string; exact: boolean; via: string } | null {
   if (index.exact.has(change.path))
     return { detail: `the recorded run read ${change.path}`, exact: true, via: change.path }
+  const wildcard = change.path.endsWith(`${DEPENDENCY_PACKAGE_SEPARATOR}*`) ? change.path.slice(0, -1) : null
+  if (wildcard)
+    for (const read of index.exact)
+      if (read.startsWith(wildcard))
+        return { detail: `the recorded run read the installed package ${read}`, exact: true, via: read }
   const folder = index.folders.find((f) => change.path.startsWith(f))
   if (folder) return { detail: `the recorded run read under ${folder}`, exact: false, via: folder }
   if (change.status !== 'modified') {
@@ -262,7 +294,10 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
       if (rel !== '.git') return
     }
     if (rel === depFolder || rel.startsWith(`${depFolder}/`) || rel.includes(`/${depFolder}/`)) {
-      if (options.dependencyInput !== null) reads.add(options.dependencyInput)
+      if (options.dependencyInput !== null) {
+        const name = installedPackageName(rel, depFolder)
+        reads.add(name ? dependencyRead(options.dependencyInput, name) : options.dependencyInput)
+      }
       return
     }
     if (kind === 'list') {
