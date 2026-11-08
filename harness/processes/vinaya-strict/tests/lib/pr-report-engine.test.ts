@@ -26,10 +26,14 @@ import { checkBareDigits } from '../../tools/body-bare-digits-logic'
 import {
   buildReport,
   commandRunsCheckAll,
+  computeGroupA,
   computeGroupC,
   DeferredEvidenceError,
   type DeferredGroupCDeps,
   describeReuse,
+  FreshBaseUnavailableError,
+  obtainFreshReportBase,
+  UnresolvableMergeBaseError,
   type GateRunResult,
   type GroupC,
   groupCFailed,
@@ -657,5 +661,80 @@ describe('the native selected suite: composed only from its context-bound receip
     await recordGreenTestRun(command, ' 2 pass', dir, 'pre-push', cache, { context: CONTEXT })
     writeFileSync(join(dir, 'f.txt'), 'changed\n')
     expect((await computeGroupC(body, dir, {}, cache)).commands[0]?.receiptMissing).toBe(true)
+  })
+})
+
+describe('a live report compares against one freshly verified immutable base', () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, BASE_SHA: '' } }).trim()
+  const dirs: string[] = []
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
+  })
+  const noBaseEnv = { ...process.env, BASE_SHA: '' }
+
+  /** A bare `origin` whose `main` has moved past what the clone's remote-tracking ref knows. */
+  function staleClone(): { clone: string; origin: string; staleTip: string; freshTip: string } {
+    const root = mkdtempSync(join(tmpdir(), 'fresh-base-'))
+    dirs.push(root)
+    const origin = join(root, 'origin.git')
+    const seed = join(root, 'seed')
+    git(root, 'init', '-q', '--bare', '-b', 'main', origin)
+    git(root, 'init', '-q', '-b', 'main', seed)
+    git(seed, 'config', 'user.email', 't@example.com')
+    git(seed, 'config', 'user.name', 'T')
+    git(seed, 'commit', '-q', '--allow-empty', '-m', 'one')
+    git(seed, 'remote', 'add', 'origin', origin)
+    git(seed, 'push', '-q', 'origin', 'main')
+    const staleTip = git(seed, 'rev-parse', 'HEAD')
+    const clone = join(root, 'clone')
+    git(root, 'clone', '-q', origin, clone)
+    git(clone, 'config', 'user.email', 't@example.com')
+    git(clone, 'config', 'user.name', 'T')
+    git(clone, 'checkout', '-q', '-b', 'task/x/1')
+    writeFileSync(join(clone, 'task.txt'), 'task\n')
+    git(clone, 'add', '.')
+    git(clone, 'commit', '-q', '-m', 'task')
+    // Main moves on at the remote; the clone's `origin/main` stays stale.
+    writeFileSync(join(seed, 'later.txt'), 'later\n')
+    git(seed, 'add', '.')
+    git(seed, 'commit', '-q', '-m', 'two')
+    git(seed, 'push', '-q', 'origin', 'main')
+    return { clone, origin, staleTip, freshTip: git(seed, 'rev-parse', 'HEAD') }
+  }
+
+  it('reads the remote tip, ignoring the stale remote-tracking ref, and uses it for Group A', async () => {
+    const { clone, staleTip, freshTip } = staleClone()
+    expect(git(clone, 'rev-parse', 'origin/main')).toBe(staleTip)
+    const base = await obtainFreshReportBase(clone, noBaseEnv)
+    expect(base).toBe(freshTip)
+    const groupA = await computeGroupA(clone, { base: base as string })
+    expect(groupA.base).toBe(git(clone, 'merge-base', freshTip, 'HEAD'))
+    expect(groupA.numstat).toContain('task.txt')
+    expect(groupA.numstat).not.toContain('later.txt')
+  })
+
+  it('refuses as an infrastructure failure when the required read fails, never falling back to the stale ref', async () => {
+    const { clone, origin } = staleClone()
+    rmSync(origin, { recursive: true, force: true })
+    await expect(obtainFreshReportBase(clone, noBaseEnv)).rejects.toBeInstanceOf(FreshBaseUnavailableError)
+  })
+
+  it('an explicit BASE_SHA keeps its meaning: returned untouched, with no remote read', async () => {
+    const { clone, origin, staleTip } = staleClone()
+    rmSync(origin, { recursive: true, force: true })
+    expect(await obtainFreshReportBase(clone, { ...process.env, BASE_SHA: staleTip })).toBe(staleTip)
+  })
+
+  it('a repository with no origin is an offline calculation: no base is required', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fresh-base-offline-'))
+    dirs.push(dir)
+    git(dir, 'init', '-q', '-b', 'main')
+    expect(await obtainFreshReportBase(dir, noBaseEnv)).toBeUndefined()
+  })
+
+  it('an explicit base never falls back to a moving ref', async () => {
+    const { clone } = staleClone()
+    await expect(computeGroupA(clone, { base: 'does-not-exist' })).rejects.toBeInstanceOf(UnresolvableMergeBaseError)
   })
 })
