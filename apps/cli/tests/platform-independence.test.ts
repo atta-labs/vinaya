@@ -157,8 +157,6 @@ const REAL_SANDBOX_FILES: Readonly<Record<string, string>> = {
     "asserts the host's own Seatbelt boundary and bubblewrap detection against the real host facts",
   '../../../harness/processes/vinaya-strict/integration/adapters/agents/dispatch/unattended.test.ts':
     "spawns the real dispatch command, whose confinement is the host's real sandbox, so its confinement cases are per platform",
-  '../../../harness/processes/vinaya-strict/tests/commands/dispatch-task.test.ts':
-    "spawns the real dispatch command, whose confinement is the host's real sandbox, so its cases are per platform",
   '../../../harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts':
     "spawns the real dispatch command, whose confinement is the host's real sandbox, so its cases are per platform"
 }

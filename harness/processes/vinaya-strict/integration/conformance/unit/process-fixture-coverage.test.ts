@@ -967,7 +967,6 @@ describe('process-fixture coverage — O3 (#660, round 5): every real-process fi
       'harness/kernel/log/client/log-webhook-drain.test.ts',
       'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/gate-reading.test.ts',
       'harness/processes/vinaya-strict/integration/conformance/live-matrix/harness.ts',
-      'harness/processes/vinaya-strict/tests/commands/dispatch-task.test.ts',
       // Issue #670, O2 — the two dispatch test files hardened by that task's
       // own pid-capture-and-group-kill fixtures (`killLaunchedChild`) and its
       // new host-wide process-hygiene proof (a bare `execSync` call, covered
