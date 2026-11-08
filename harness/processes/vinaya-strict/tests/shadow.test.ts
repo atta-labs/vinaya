@@ -118,6 +118,7 @@ describe('the shadow classification', () => {
       'createTaskWorktree',
       'postMarkedComment',
       'publishRound',
+      'refreshPrEvidence',
       'rerunFailedWorkflowJobs',
       'updatePrBody',
       'writeDeferredFindingsIssue'
@@ -152,6 +153,10 @@ describe('the refusing recorders', () => {
     expect(shadow.writeDeferredFindingsIssue?.({ prNumber: 1, entries: [] })).toEqual({ issue: 0 })
     expect(() => shadow.rerunFailedWorkflowJobs?.(7)).toThrow('shadow mode refuses every forge effect')
     expect(shadow.postMarkedComment?.('pr', '1', 'round-1', 'body')).toBe('shadow-refused:round-1')
+    expect(shadow.refreshPrEvidence?.({ worktreePath: '/wt', prNumber: 1 })).toEqual({
+      head: 'shadow-refused',
+      checksPassed: true
+    })
     expect(recorder.names().sort()).toEqual(
       effectKeys(BOUND_FUNCTION_CLASSES)
         .map((name) => `bound:${name}`)

@@ -572,6 +572,7 @@ async function drive(
     rerunFailedWorkflowJobs: () => {},
     fetchMergeableState: () => (id === 'stale-conflict' ? 'CONFLICTING' : 'MERGEABLE'),
     fetchConflictingFiles: () => (id === 'stale-conflict' ? ['apps/cli/src/lib/x.ts'] : []),
+    refreshPrEvidence: () => ({ head, checksPassed: true }),
     postMarkedComment: (_kind, _ref, marker) => {
       append(effectFile, { kind: 'comment', marker })
       return `https://example.com/comment/${encodeURIComponent(marker)}`

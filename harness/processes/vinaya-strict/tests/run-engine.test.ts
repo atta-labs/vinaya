@@ -146,9 +146,9 @@ describe('the dry run', () => {
         shimPath: '/runs/1/dev-bridge.sh'
       })
       expect(lines[0]).toBe(`process ${loaded.identity.id}@${loaded.identity.version} digest ${loaded.digest}`)
-      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(27)
+      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(28)
       const bound = lines.filter((line) => line.startsWith('bound '))
-      expect(bound).toHaveLength(24)
+      expect(bound).toHaveLength(25)
       expect(bound).toContain(
         'bound check-publish-mergeability vinaya.check-publish-mergeability: pollMergeableState, fetchConflictingFiles, discardHeldVerdicts'
       )
@@ -365,6 +365,7 @@ describe('a stub run on the Engine path', () => {
       'run-mechanical-gates',
       'check-mergeability',
       'classify-mergeability',
+      'refresh-evidence',
       'read-forge-ci',
       'check-premise',
       'assess-gate',
