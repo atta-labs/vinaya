@@ -644,7 +644,7 @@ jobs:
     name: Sandbox conformance (Linux)
     needs: build
     if: needs.build.outputs.sandbox == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       issues: read
@@ -670,7 +670,9 @@ jobs:
       # ripgrep (the sandbox runtime). Ubuntu 24.04 strips capabilities from
       # unprivileged user namespaces by default, which bubblewrap needs —
       # the sandbox runtime's own README names this sysctl as the remedy.
-      # Host setup only; neither sandbox's policy is touched.
+      # Host setup only; neither sandbox's policy is touched. The job pins
+      # ubuntu-24.04: on ubuntu-26.04 the sandbox runtime's seccomp helper
+      # cannot create its nested user namespace, even with this sysctl.
       - name: Install the Linux sandbox tools
         run: |
           sudo apt-get update

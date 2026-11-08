@@ -8,10 +8,10 @@ import { printJson } from '../../../harness/kernel/effects/envelope.js'
 import {
   installVinayaCheckRegistry,
   installVinayaLogSinkFactory
-} from '../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/bin/dispatch.js'
+} from '../../../harness/processes/vinaya-strict/integration/cli-startup.js'
 import { ensureGhOnPath } from '../../../harness/kernel/adapters/code-host/github/gh-path.js'
 import { recordCliOperationAtExit } from '../../../harness/kernel/log/client/cli-operation-log.js'
-import { logSync } from '../../../harness/kernel/log/log-sink.js'
+type LogSinkModule = typeof import('../../../harness/kernel/log/log-sink.js')
 import { printHelp } from './lib/output.js'
 import { packageRoot } from './lib/package-root.js'
 import { resolveAuthorRepoSourceEntry } from '../../../harness/processes/vinaya-strict/tools/self-host.js'
@@ -90,7 +90,9 @@ const [, , command, ...args] = process.argv
 
 recordCliOperationAtExit(process.argv.slice(2), {
   on: (event, handler) => process.on(event, handler),
-  logSync,
+  // The Log sink loads only when an operation is recorded, so a start that records nothing never loads it.
+  logSync: (event, options) =>
+    (require('../../../harness/kernel/log/log-sink.js') as LogSinkModule).logSync(event, options),
   now: Date.now
 })
 
