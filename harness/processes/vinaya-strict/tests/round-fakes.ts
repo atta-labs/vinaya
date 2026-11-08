@@ -94,6 +94,7 @@ export const QUIET_FORGE_GATES: Pick<
   | 'fetchFailedCheckWorkflowRunIds'
   | 'rerunFailedWorkflowJobs'
   | 'postMarkedComment'
+  | 'refreshPrEvidence'
 > = {
   fetchMergeableState: () => 'MERGEABLE',
   fetchSettledCiConclusion: () => 'green',
@@ -101,5 +102,6 @@ export const QUIET_FORGE_GATES: Pick<
   fetchFailingCheckRuns: () => [],
   fetchFailedCheckWorkflowRunIds: () => [],
   rerunFailedWorkflowJobs: () => {},
-  postMarkedComment: () => 'https://example.invalid/comment'
+  postMarkedComment: () => 'https://example.invalid/comment',
+  refreshPrEvidence: () => ({ head: 'fake-head', checksPassed: true })
 }

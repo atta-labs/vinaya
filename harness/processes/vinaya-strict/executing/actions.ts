@@ -1980,7 +1980,7 @@ export const EVIDENCE_WRITE_ATTEMPTS = 3
 const EVIDENCE_WRITE_SPACING_MS = 5_000
 
 /** The driver's own `pr report --push <pr>` run in the worktree, through the shipped program. */
-function defaultRefreshPrEvidence(input: { worktreePath: string; prNumber: number }): {
+export function defaultRefreshPrEvidence(input: { worktreePath: string; prNumber: number }): {
   head: string
   checksPassed: boolean
 } {

@@ -286,6 +286,7 @@ import {
   recordedVerdicts,
   repairReviewOf,
   type BoundFunctions,
+  defaultRefreshPrEvidence,
   createRoleLaunchers,
   sandboxProbePlanFor,
   worktreeStats,
@@ -2532,6 +2533,8 @@ export interface EngineForge {
   fetchMergeableState: typeof fetchMergeableState
   fetchConflictingFiles: typeof fetchConflictingFiles
   postMarkedComment: typeof postMarkedComment
+  /** Writes the pull request body's Evidence block for the worktree's head; throws when nothing reached the forge. */
+  refreshPrEvidence: BoundFunctions['refreshPrEvidence']
 }
 
 export const liveForge: EngineForge = {
@@ -2558,7 +2561,8 @@ export const liveForge: EngineForge = {
   rerunFailedWorkflowJobs,
   fetchMergeableState,
   fetchConflictingFiles,
-  postMarkedComment
+  postMarkedComment,
+  refreshPrEvidence: defaultRefreshPrEvidence
 }
 
 /** The per-task input the actions read: the branch, the Log events' loop and the verdict plumbing. */
@@ -2762,6 +2766,7 @@ export async function liveTaskInput(
       fetchMergeableState: forge.fetchMergeableState,
       fetchConflictingFiles: forge.fetchConflictingFiles,
       postMarkedComment: forge.postMarkedComment,
+      refreshPrEvidence: forge.refreshPrEvidence,
       ...lookups.completion
     },
     get loopState(): LoopState {
