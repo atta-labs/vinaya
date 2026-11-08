@@ -925,10 +925,17 @@ describe('the native push: its base, its obligations and its proof', () => {
       kind: 'merge-base',
       obligations: []
     })
+  })
+
+  it('a failed test file that moved or was deleted since the refused push is dropped, and the push still narrows', () => {
     expect(chooseNativeBase(inputs({ failed: failedAt(), exists: () => false }))).toMatchObject({
-      kind: 'merge-base',
+      base: 'r'.repeat(40),
+      kind: 'rerun',
       obligations: []
     })
+    expect(
+      chooseNativeBase(inputs({ failed: unconfirmedAt(), exists: (path) => !path.endsWith('gone.test.ts') }))
+    ).toMatchObject({ base: 'r'.repeat(40), kind: 'rerun', obligations: ['/repo/apps/cli/tests/a.test.ts'] })
   })
 
   it('a refusal on another branch or outside this history is ignored', () => {
@@ -955,14 +962,12 @@ describe('the native push: its base, its obligations and its proof', () => {
   })
 
   it('every case that gave the full selection still does for a record holding every unconfirmed test', () => {
-    const exists = (path: string) => !path.endsWith('gone.test.ts')
     for (const over of [
       { failed: unconfirmedAt({ branch: 'task/x/2' }) },
       { failed: unconfirmedAt(), isAncestor: () => false },
       { failed: unconfirmedAt({ context: 'other' }) },
       { failed: unconfirmedAt(), context: null },
       { failed: unconfirmedAt(), changedBetween: () => ['/repo/vinaya.config.json'] },
-      { failed: unconfirmedAt(), exists },
       { failed: unconfirmedAt({ selectionCompleted: false }) },
       { failed: unconfirmedAt({ failed: 'all' }) }
     ])
