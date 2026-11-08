@@ -3,7 +3,6 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { COMMANDS } from '../../commands.js'
-import type { LogSyncOptions } from '../../../../../kernel/log/log-sink.js'
 import {
   CLI_OPERATION,
   CLI_OPERATION_STREAM,
@@ -17,6 +16,8 @@ import {
 import { isolatedConfigFixture, spawnSyncBudgeted } from '../../../../../kernel/conformance/unit/process-fixture.js'
 
 type LogEventInput = NonNullable<ReturnType<typeof cliOperationEvent>>
+/** The sink options the registration hands `logSync`, taken from its own signature so this file imports nothing from the sink. */
+type LogSyncOptions = Parameters<Parameters<typeof recordCliOperationAtExit>[1]['logSync']>[1]
 
 const ENTRY = join(
   dirname(fileURLToPath(import.meta.url)),

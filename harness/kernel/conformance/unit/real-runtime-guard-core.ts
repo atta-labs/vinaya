@@ -27,7 +27,7 @@
  *
  * One append is sanctioned whatever runs: the CLI's own per-invocation
  * operation event, which a taskless `vinaya` command anywhere on the host —
- * another session, a hook, the Principal at a terminal — appends as it exits,
+ * another session, a hook, a person at a terminal — appends as it exits,
  * to its own file `logs/<repository>/none-cli-operations.ndjson` (the name the
  * CLI registration passes as `logSync`'s `unattributedStream`; its rotation
  * slot `.1.ndjson` too). Only that file name, exactly one repository folder

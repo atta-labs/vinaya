@@ -25,7 +25,6 @@ import {
   touchedSince
 } from '../../../../../kernel/conformance/unit/real-runtime-guard-core'
 import { CLI_OPERATION_STREAM } from '../../../../../kernel/log/client/cli-operation-log'
-import { isUnattributedStreamName } from '../../../../../kernel/log/log-sink'
 
 /** The CLI's own entry point, run from source as the shipped program runs it. */
 const CLI_ENTRY = join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'index.ts')
@@ -143,9 +142,9 @@ describe('real runtime directory guard', () => {
     }
   })
 
-  it('exempts exactly the stream the CLI registration names, a name the Log sink accepts', () => {
+  // That the Log sink honours this name is proven by the real CLI run below, which finds its event in this file.
+  it('exempts exactly the stream the CLI registration names', () => {
     expect(SANCTIONED_APPEND_STREAM).toBe(CLI_OPERATION_STREAM)
-    expect(isUnattributedStreamName(CLI_OPERATION_STREAM)).toBe(true)
     const repo = 'owner-repo'
     expect(isSanctionedAppend(join('logs', repo, 'none-cli-operations.ndjson'))).toBe(true)
     expect(isSanctionedAppend(join('logs', repo, 'none-cli-operations.1.ndjson'))).toBe(true)
@@ -238,17 +237,20 @@ describe('real runtime directory guard', () => {
     const home = mkdtempSync(join(tmpdir(), 'guard-home-'))
     const work = mkdtempSync(join(tmpdir(), 'guard-cli-probe-'))
     try {
-      const root = join(home, '.vinaya', 'runtime', 'o-r')
+      const core = join(import.meta.dir, '../../../../../kernel/conformance/unit/real-runtime-guard-core.ts')
       const probe = join(work, 'probe.test.ts')
       const run = (leak: boolean) => {
-        rmSync(join(home, '.vinaya'), { recursive: true, force: true })
+        // a fresh home each run, so the CLI creates the whole runtime tree during the run
+        rmSync(home, { recursive: true, force: true })
+        mkdirSync(home)
         writeFileSync(
           probe,
           [
             "import { it } from 'bun:test'",
             "import { existsSync, readdirSync, writeFileSync } from 'node:fs'",
             "import { join } from 'node:path'",
-            `const ROOT = ${JSON.stringify(root)}`,
+            // the very directory the preload's end-of-run check watches
+            `const ROOT = (await import(${JSON.stringify(core)})).realRuntimeDir()`,
             "it('a taskless CLI command runs beside the suite', () => {",
             `  const r = Bun.spawnSync(['bun', ${JSON.stringify(CLI_ENTRY)}, 'version'], { cwd: ${JSON.stringify(work)}, env: { ...process.env, HOME: ${JSON.stringify(home)}, VINAYA_RUNTIME_DIR: ROOT } })`,
             "  if (r.exitCode !== 0) throw new Error('cli failed: ' + r.stderr.toString())",

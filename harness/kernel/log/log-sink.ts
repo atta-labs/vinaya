@@ -32,6 +32,7 @@ import { buildHeader, type HeaderInput } from './envelope'
 import { type Host, type LogEvent, LogEventSchema, type Provenance } from './schema'
 import { type OverflowDiagnostic, recordIdentity } from './store'
 import { redact } from './redact'
+import { loadDeferredLogSinkFactory } from './deferred-sink-factory.js'
 import { configProvider, type ProvidedConfig } from '../config/loader/config-provider.js'
 import {
   type LogsDestination,
@@ -47,8 +48,10 @@ import {
   resolveRuntimeDir,
   runtimeDirForRepoAsync
 } from '../run-paths.js'
-import { appendLoopLogLine, loopLogPathFor } from './client/loop-log.js'
-import { drainOutboxToWebhook } from './client/log-webhook-drain.js'
+// The loop log writer and the webhook drain load on first use, not with the sink: every command-line start loads
+// this module to record its operation, and most never write a loop log line or drain an outbox.
+type LoopLogModule = typeof import('./client/loop-log.js')
+const loopLog = (): LoopLogModule => require('./client/loop-log.js') as LoopLogModule
 
 /** Rotation cap (§9: "rotation and a size cap ship with the first write") — one `.1.ndjson` slot, overwritten each time the live file crosses this. */
 export const OUTBOX_MAX_BYTES = 8 * 1024 * 1024
@@ -770,6 +773,7 @@ export function recordFolderFallback(
 ): void {
   const message = describeFolderFallback(reason)
   if (issue !== null) {
+    const { appendLoopLogLine, loopLogPathFor } = loopLog()
     appendLoopLogLine(loopLogPathFor(repo, issue, runtimeDir), `[log] ${message}`)
   }
   try {
@@ -1551,7 +1555,7 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
     headers: Record<string, string> | undefined
   ): void => {
     drainChain = drainChain
-      .then(() => drainOutboxToWebhook(issue, url, headers))
+      .then(async () => (await import('./client/log-webhook-drain.js')).drainOutboxToWebhook(issue, url, headers))
       .then(() => undefined)
       .catch((err) => {
         warnOnce(
@@ -1898,6 +1902,7 @@ export function createDefaultLogSinkSlot(runId: string): DefaultLogSinkSlot {
     },
     sink: () => {
       if (sink !== undefined) return sink
+      if (factory === undefined) factory = loadDeferredLogSinkFactory()
       if (factory === undefined) {
         throw new Error(
           'vinaya log: no default log sink factory is installed — the entry point calls installDefaultLogSinkFactory before anything logs'
