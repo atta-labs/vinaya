@@ -8,7 +8,9 @@ import type { CheckSpec } from '../../../../../kernel/gates/checks/contract'
 import { buildCheckEnv, runChecks } from '../../../../../kernel/gates/checks/runner'
 import { createLogSink } from '../../../../../kernel/log/log-sink'
 
-const FIXTURES = join(import.meta.dir, '../../../../../../apps/cli/tests/fixtures/checks')
+const FIXTURES = join(import.meta.dir, '../../../../../kernel/gates/checks/fixtures')
+/** The check fixtures that read Vinaya's own configuration, beside this test. */
+const PROCESS_FIXTURES = join(import.meta.dir, 'fixtures')
 const PASSING = join(FIXTURES, 'passing-check.ts')
 const FAILING = join(FIXTURES, 'failing-check.ts')
 const MALFORMED = join(FIXTURES, 'malformed-check.ts')
@@ -16,9 +18,9 @@ const SLEEPER = join(FIXTURES, 'sleeper.ts')
 const STUBBORN_SLEEPER = join(FIXTURES, 'stubborn-sleeper.ts')
 const SPAWNS_GRANDCHILD = join(FIXTURES, 'spawns-grandchild.ts')
 const SPAWNS_STUBBORN_GRANDCHILD = join(FIXTURES, 'spawns-stubborn-grandchild.ts')
-const RUN_AND_HANG = join(FIXTURES, 'run-and-hang.ts')
+const RUN_AND_HANG = join(PROCESS_FIXTURES, 'run-and-hang.ts')
 const ENV_PROBE = join(FIXTURES, 'env-probe.ts')
-const LOADS_CONFIG = join(FIXTURES, 'loads-config.ts')
+const LOADS_CONFIG = join(PROCESS_FIXTURES, 'loads-config.ts')
 
 function fullScope(overrides: Partial<CheckSpec> & Pick<CheckSpec, 'name' | 'run'>): CheckSpec {
   return { scope: 'full', ...overrides }

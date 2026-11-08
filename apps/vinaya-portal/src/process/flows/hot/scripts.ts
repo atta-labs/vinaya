@@ -51,13 +51,13 @@ export const hotChat = (agent: Agent): ChatLine[] => [
 /** Hot issue's execution: the same gates as any task, review once on demand, the Principal merges. */
 export const hotExec: ChatLine[] = [
   L('cmd', 'git commit -m "Fix(cli): temp dir per test"'),
-  L('hook', 'pre-commit · biome · typecheck · vinaya check --diff-only'),
+  L('hook', 'pre-commit · biome · typecheck · vinaya-check --diff-only'),
   L('ok', '31 checks · 0 failed', {
     log: [{ name: 'gate.summary', detail: 'host=hook ran=31 failed=0' }],
     gates: [1, 0, 0]
   }),
   L('cmd', 'git push -u origin task/issue-1001'),
-  L('hook', 'pre-push · vinaya check --all'),
+  L('hook', 'pre-push · vinaya-check --all'),
   L('ok', '38 checks · 0 failed · Ring 0 green', {
     log: [{ name: 'gate.summary', detail: 'host=hook ran=38 failed=0' }],
     gates: [2, 0, 0]

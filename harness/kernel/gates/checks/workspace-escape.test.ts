@@ -27,7 +27,7 @@ describe('workspace-escape detection', () => {
   it('a clean tree — every reference stays inside its own package — produces silence', () => {
     const files = [
       {
-        path: 'apps/cli/tests/commands.test.ts',
+        path: 'harness/processes/vinaya-strict/integration/commands.test.ts',
         content: "const INDEX_TS = fileURLToPath(new URL('../src/index.ts', import.meta.url))"
       },
       {
@@ -36,7 +36,7 @@ describe('workspace-escape detection', () => {
       }
     ]
     const knownPaths = new Set([
-      'apps/cli/tests/commands.test.ts',
+      'harness/processes/vinaya-strict/integration/commands.test.ts',
       'apps/cli/src/index.ts',
       'packages/aeg-core/src/gate-audience.test.ts',
       'packages/aeg-core/bin'

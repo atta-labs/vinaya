@@ -16,10 +16,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { briefHash, policyDigest } from '../../../../tools/task-contract/review-input-manifest'
 import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
 import { objectivesOf, objectivesVersion, type Objective } from '../../../../tools/task-contract/objectives'
-import {
-  renderCodeReviewComment,
-  renderSecurityComment
-} from '../../../../../../../apps/cli/src/commands/review-post.js'
+import { renderCodeReviewComment, renderSecurityComment } from '../../../../loops/dev-review/bin/review-post.js'
 import { writeHeldVerdict } from '../../../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
 import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
 import {

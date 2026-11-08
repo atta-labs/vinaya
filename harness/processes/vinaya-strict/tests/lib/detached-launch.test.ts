@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
 import { attachedRunNotice } from '../../../../../apps/cli/src/commands/task-run.js'
 import { launchDetached, waitForLiveDriver } from '../../loops/dev-review/run-control/detached-launch.js'
-import { stripVinayaEnv } from '../../../../../apps/cli/tests/lib/process-fixture.js'
+import { stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture.js'
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 

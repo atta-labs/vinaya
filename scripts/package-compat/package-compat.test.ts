@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { parse } from 'yaml'
-import { fixtureDir } from '../../apps/cli/tests/lib/test-temp-fixture.ts'
+import { fixtureDir } from '../../harness/kernel/conformance/unit/test-temp-fixture.ts'
 import {
   allowlistProblems,
   type CompatRun,

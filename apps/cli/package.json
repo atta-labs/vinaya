@@ -14,13 +14,33 @@
     "vinaya-push-mode": "dist/lib/pre-push-mode.js",
     "vinaya-push-progress": "dist/lib/pre-push-progress-dir.js",
     "vinaya-push-progress-observer": "dist/lib/push-progress-observer.js",
-    "vinaya-audit": "dist/programs/audit.js"
+    "vinaya-dev-bridge": "dist/kernel/tools/host/dev-tools-bridge.js",
+    "vinaya-audit": "dist/programs/audit.js",
+    "vinaya-check": "dist/programs/check.js",
+    "vinaya-commit-msg": "dist/programs/commit-msg.js",
+    "vinaya-waiver": "dist/programs/waiver.js",
+    "vinaya-archive": "dist/programs/archive.js",
+    "vinaya-pr": "dist/programs/pr.js",
+    "vinaya-pr-report": "dist/programs/pr-report.js",
+    "vinaya-pr-verify-evidence": "dist/programs/pr-verify-evidence.js",
+    "vinaya-pr-snapshot": "dist/programs/pr-snapshot.js",
+    "vinaya-tokens": "dist/programs/tokens.js",
+    "vinaya-review-post": "dist/programs/review-post.js",
+    "vinaya-review-status": "dist/programs/review-status.js",
+    "vinaya-dispatch": "dist/programs/dispatch.js",
+    "vinaya-dev-review-loop": "dist/programs/dev-review-loop.js",
+    "vinaya-task-brief": "dist/programs/task-brief.js",
+    "vinaya-task-sweep": "dist/programs/task-sweep.js",
+    "vinaya-task-tools-serve": "dist/programs/task-tools-serve.js",
+    "vinaya-log-send": "dist/programs/log-send.js",
+    "vinaya-log-emit": "dist/programs/log-emit.js",
+    "vinaya-log-selftest": "dist/programs/log-selftest.js",
+    "vinaya-sync": "dist/programs/sync.js"
   },
   "files": [
     "dist",
     "templates",
     "vinaya-strict",
-    "studio-standalone",
     "README.md"
   ],
   "publishConfig": {
@@ -47,8 +67,7 @@
   "scripts": {
     "build": "bun scripts/build.ts",
     "bundle-doctrine": "bun scripts/bundle-doctrine.ts",
-    "bundle-studio": "bun scripts/bundle-studio.ts",
-    "prepack": "bun scripts/build.ts && bun scripts/bundle-doctrine.ts && bun scripts/bundle-studio.ts",
+    "prepack": "bun scripts/build.ts && bun scripts/bundle-doctrine.ts",
     "test": "bun test --timeout=30000",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src tests scripts",
@@ -60,20 +79,19 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
-    "@atta/adapter-langgraph": "file:tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz",
-    "@atta/agents": "file:tests/fixtures/atta-engine/atta-agents-0.1.0.tgz",
-    "@atta/engine": "file:tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
-    "@atta/executor-agent-spawn": "file:tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
-    "@atta/models": "file:tests/fixtures/atta-engine/atta-models-0.1.0.tgz",
+    "@atta/adapter-langgraph": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-adapter-langgraph-0.0.1.tgz",
+    "@atta/agents": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-agents-0.1.0.tgz",
+    "@atta/engine": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-engine-0.0.1.tgz",
+    "@atta/executor-agent-spawn": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-executor-agent-spawn-0.1.1.tgz",
+    "@atta/models": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-models-0.1.0.tgz",
     "@atta/typescript-config": "workspace:*",
-    "@attalabs/vinaya-sources": "workspace:*",
     "@types/bun": "latest",
     "@types/react": "^19.0.0",
     "typescript": "^5.5.0"
   },
   "overrides": {
-    "@atta/agents": "file:tests/fixtures/atta-engine/atta-agents-0.1.0.tgz",
-    "@atta/engine": "file:tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
-    "@atta/models": "file:tests/fixtures/atta-engine/atta-models-0.1.0.tgz"
+    "@atta/agents": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-agents-0.1.0.tgz",
+    "@atta/engine": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-engine-0.0.1.tgz",
+    "@atta/models": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-models-0.1.0.tgz"
   }
 }

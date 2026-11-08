@@ -19,7 +19,7 @@ Every rule belongs to exactly one group, and each group has exactly one check:
 A rule's scopes decide its group. Each check runs only its own group, where
 and when it always ran, so no finding is ever printed by both. Replacing
 either check with a no-op (`vinaya new noop-check`) turns off exactly its
-group and nothing else. `vinaya check --plan` prints, for each of the two
+group and nothing else. `vinaya-check --plan` prints, for each of the two
 checks, the rules it runs and their scopes, or that the check was replaced and
 its group does not run.
 
@@ -79,7 +79,7 @@ two source-comment citations (`source-comment-tranche-slug`,
 `source-comment-forge-number`), and two built-in rules that compute their own
 matches: the archived batch names (`legacy-batch-name`) and an undefined coined
 term (`coined-term`). The retired group carries the retired-mechanism patterns,
-`retired-vocabulary-1` onward. `vinaya check --plan` lists every id.
+`retired-vocabulary-1` onward. `vinaya-check --plan` lists every id.
 
 Under `proseGates.rules.defaults`, a default id maps to:
 
@@ -133,15 +133,8 @@ With the key set, three things change:
   record it supersedes; every other page states the decision instead of
   citing its number. The rule exists only while the key is set:
   `proseGates.rules.defaults` does not address it, and a custom rule may not
-  take its id. `vinaya check --plan` lists it among the rules
+  take its id. `vinaya-check --plan` lists it among the rules
   `reader-resolvable-prose` runs.
-- `vinaya new adr <title>` writes the next numbered record,
-  `NNNN-<kebab-title>.md`, into the folder from the shipped decision-record
-  template, with status Proposed and today's date, and adds a row for it to
-  the folder's `README.md` index page, creating that page on the first
-  record. Numbers start at `0001` and are one past the highest number any
-  file in the folder or any row of the index carries, so a number is never
-  reused. With the key absent, the command refuses and names the key.
 
 The template carries a title, a status, a date, and the sections Context,
 Decision, Considered options, Consequences and Where it is applied.

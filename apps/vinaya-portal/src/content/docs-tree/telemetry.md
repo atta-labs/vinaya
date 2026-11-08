@@ -1,8 +1,8 @@
 # Telemetry — definition
 
-Summary: The Log's record, counted: cost, time, review strictness, which checks catch most. vinaya sync reads stored events from your folder or server into a local cache, and a set of questions reads the cache.
+Summary: The Log's record, counted: cost, time, review strictness, which checks catch most. vinaya-sync reads stored events from your folder or server into a local cache, and a set of questions reads the cache.
 Parent: Features
-Badges: vinaya sync · Local cache · Ten questions, plus a confidence comparison · Unknown, never zero
+Badges: vinaya-sync · Local cache · Ten questions, plus a confidence comparison · Unknown, never zero
 
 ## About Telemetry
 
@@ -10,7 +10,7 @@ Telemetry is the feature that reads what the [Log](/docs/features/log) stores an
 
 Reading is separate from delivery. Delivery sends events out of a process; Telemetry gathers what was stored and answers questions about it.
 
-The read path has four steps: a **source** pages through stored lines, a **normaliser** turns each line into a row (or sets it aside), a **cache** keeps the rows, and **questions** read the rows. `vinaya sync` runs the first three. Every step is pure except the parts that open a folder, call a server or open a database.
+The read path has four steps: a **source** pages through stored lines, a **normaliser** turns each line into a row (or sets it aside), a **cache** keeps the rows, and **questions** read the rows. `vinaya-sync` runs the first three. Every step is pure except the parts that open a folder, call a server or open a database.
 
 ## How it works
 
@@ -31,7 +31,7 @@ A question reads the whole dataset and answers with a figure, or with "unknown" 
 ## Run a sync
 
 ```bash
-vinaya sync
+vinaya-sync
 ```
 
 | Option or outcome | Behaviour |
@@ -147,7 +147,7 @@ Every question is tested end to end over sample lines, a real folder and a stand
 
 | Key | Effect |
 | --- | --- |
-| `logs.folder` or `logs.url` | Which source `vinaya sync` reads |
+| `logs.folder` or `logs.url` | Which source `vinaya-sync` reads |
 | `logs.readHeaders` | The server's read credential (`${VAR}` filled from the environment) |
 | `runtimeDir` | Parent of `logs-cache/` |
 

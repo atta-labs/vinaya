@@ -62,7 +62,7 @@ function main(): void {
         check: CHECK_NAME,
         severity: 'error',
         message: `no-disk-state: ${f.path} (${f.status}) creates new on-disk state that must instead derive from the forge.`,
-        agent_recovery_prompt: `Remove ${f.path} from this diff and derive the equivalent fact from the forge instead, then re-run \`vinaya check no-disk-state\`.`,
+        agent_recovery_prompt: `Remove ${f.path} from this diff and derive the equivalent fact from the forge instead, then re-run \`vinaya-check no-disk-state\`.`,
         file: f.path
       })
     }

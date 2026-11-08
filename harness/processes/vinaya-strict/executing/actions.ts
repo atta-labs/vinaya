@@ -28,6 +28,7 @@ import type { RepairReview } from './review-input'
 import type { StagedPullRequest, V2Functions } from '../loops/dev-review/v2/v2-actions'
 import { encodeExecutionRound } from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import { runCliChecks } from '../../../../harness/kernel/gates/checks/run-checks'
+import { programForWords } from '../tools/programs'
 import { agentEnvAllowlist } from '../../../../harness/kernel/adapters/agents/launch-env'
 import type { GeneratedAgentConfig, GeneratorPaths } from '../../../../harness/kernel/isolation/policy'
 import {
@@ -96,7 +97,7 @@ import {
   describeConfidencePauseDetail,
   handoffFindings
 } from '../loops/dev-review/standalone/dev-review-loop'
-import { loadTrustAnchorConfig } from '../../../../apps/cli/src/lib/config'
+import { loadTrustAnchorConfig } from '../integration/config/compose'
 import {
   checkPremiseAtHead,
   describeFailingCheckRun,
@@ -192,8 +193,8 @@ export interface ReviewRoundInputs {
 export interface TaskInput {
   /** The runtime directory run files go under (`<runtimeDir>/tasks-execution/<task>/…`), never the repository. */
   runtimeDir: string
-  /** The CLI entry script whose `check --all` the gate step runs. */
-  cliEntry: string
+  /** The checks program file whose `--all` run the gate step runs. */
+  checkProgram: string
   branch: string
   issueNumber: number
   worktreePath: string
@@ -2154,9 +2155,10 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       if (previous && latestRecord(context.results)?.answered === 'ask-confidence')
         return { exitCode: previous.exitCode, stdout: stdoutOf(previous) ?? '' }
       const gates = await runCliChecks(
-        task.cliEntry,
+        task.checkProgram,
         task.worktreePath,
-        pullRequestCheckEnv(task.branch, task.bound?.pullRequestView)
+        pullRequestCheckEnv(task.branch, task.bound?.pullRequestView),
+        programForWords(['check', '--all'])?.args ?? []
       )
       return { exitCode: gates.passed ? 0 : 1, stdout: gates.output }
     }

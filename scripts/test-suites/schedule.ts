@@ -56,7 +56,7 @@ import {
   validateExecutedIdentities,
   type WholeSuiteRequest
 } from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
-import { testGroupEndLine, testGroupStartLine } from '../../apps/cli/src/lib/push-progress.js'
+import { testGroupEndLine, testGroupStartLine } from '../../harness/kernel/gates/ring0-hooks/pre-push/push-progress.js'
 import { type InventoryView, readTestInventory, type TestIdentity } from './inventory-check.js'
 
 export type Placement = 'build' | 'shared' | `shard-${number}`

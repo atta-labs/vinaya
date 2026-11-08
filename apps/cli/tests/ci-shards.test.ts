@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 import { CI_SHARD_COUNT, isCliTestFile } from '../../../harness/processes/vinaya-strict/checks/ci-shard-membership'
-import { spawnSyncBudgeted, stripVinayaEnv } from './lib/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../harness/kernel/conformance/unit/process-fixture'
 
 const CLI_ROOT = join(import.meta.dir, '..')
 const SHARD_DIR = join(import.meta.dir, 'ci-shards')

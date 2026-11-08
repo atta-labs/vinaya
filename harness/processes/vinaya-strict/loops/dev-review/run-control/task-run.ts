@@ -29,7 +29,7 @@ import {
   loadTaskRunner,
   resolveTaskRunner,
   type TaskRunner
-} from '../../../../../../apps/cli/src/lib/config.js'
+} from '../../../integration/config/compose.js'
 import {
   type BackendRollbackDeps,
   endEngineRunThrough,
@@ -703,7 +703,7 @@ export function widenSurfaceEscalationOf(
   const { pause } = facts
   if (pause === null) {
     throw new RunTaskError(
-      `runTask: ${label} holds no paused run — \`--widen-surface\` answers a widen-surface escalation, and there is none to answer. Widen a frozen brief that no escalation asked for with \`vinaya task brief … --supersede --reason <text> --surface-in <glob,...>\`.`
+      `runTask: ${label} holds no paused run — \`--widen-surface\` answers a widen-surface escalation, and there is none to answer. Widen a frozen brief that no escalation asked for with \`vinaya-task-brief … --supersede --reason <text> --surface-in <glob,...>\`.`
     )
   }
   const pr = pause.prNumber ?? openPr

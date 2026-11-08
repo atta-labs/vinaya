@@ -19,8 +19,7 @@ const folders = [
   'gates/ring0-hooks',
   'gates/ring1-ci/workflows',
   'gates/ring2-audits',
-  'conformance/unit',
-  'conformance/live-matrix'
+  'conformance/unit'
 ]
 test('each implemented kernel subsystem has files in its target folder', () => {
   for (const folder of folders) expect(readdirSync(join(import.meta.dir, '..', folder)).length).toBeGreaterThan(0)

@@ -1,0 +1,8 @@
+{
+  "checks": {
+    "typo-check": {
+      "run": "./harness/kernel/gates/checks/fixtures/passing-check.ts",
+      "scop": "diff"
+    }
+  }
+}

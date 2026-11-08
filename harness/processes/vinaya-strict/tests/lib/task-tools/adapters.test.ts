@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { VendoredVinaya } from '../../../../../../apps/cli/src/lib/self-host.js'
+import type { VendoredVinaya } from '../../../tools/self-host.js'
 import {
   CLAUDE_MCP_ADAPTER,
   claudeMcpJsonConfig,
@@ -7,7 +7,6 @@ import {
   CODEX_MCP_ADAPTER,
   codexMcpServersToml,
   MCP_RUNTIME_ADAPTERS,
-  TASK_TOOLS_SERVE_ARGS,
   taskToolsServerInvocation
 } from '../../../integration/adapters.js'
 import { MCP_PROTOCOL_VERSION, TASK_TOOLS_MCP_SERVER_NAME } from '../../../integration/server.js'
@@ -21,19 +20,22 @@ import { MCP_PROTOCOL_VERSION, TASK_TOOLS_MCP_SERVER_NAME } from '../../../integ
 
 const SELF_HOST: VendoredVinaya = { dir: 'apps/cli', bin: 'apps/cli/dist/index.js' } as VendoredVinaya
 
+/** The serve program's source file, the program table's `task-tools-serve` entry. */
+const SERVE_SOURCE = 'harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts'
+
 describe('taskToolsServerInvocation', () => {
-  it('published adopter: pinned npx invocation ending in the serve subcommand', () => {
+  it('published adopter: pinned npx invocation naming the serve program', () => {
     const inv = taskToolsServerInvocation(null)
     expect(inv.command).toBe('npx')
-    expect(inv.args[0]).toBe('--yes')
-    expect(inv.args[1]).toMatch(/^@attalabs\/vinaya@/)
-    expect(inv.args.slice(-TASK_TOOLS_SERVE_ARGS.length)).toEqual([...TASK_TOOLS_SERVE_ARGS])
+    expect(inv.args.slice(0, 2)).toEqual(['--yes', '-p'])
+    expect(inv.args[2]).toMatch(/^@attalabs\/vinaya@/)
+    expect(inv.args.slice(3)).toEqual(['vinaya-task-tools-serve'])
   })
 
-  it('vendoring repo: node <bin> invocation ending in the serve subcommand', () => {
+  it('vendoring repo: bun <source> invocation of the serve program', () => {
     const inv = taskToolsServerInvocation(SELF_HOST)
-    expect(inv.command).toBe('node')
-    expect(inv.args).toEqual(['apps/cli/dist/index.js', 'task-tools', 'serve'])
+    expect(inv.command).toBe('bun')
+    expect(inv.args).toEqual([SERVE_SOURCE])
   })
 })
 
@@ -43,8 +45,8 @@ describe('Claude .mcp.json adapter', () => {
     const server = cfg.mcpServers[TASK_TOOLS_MCP_SERVER_NAME]
     expect(server).toBeDefined()
     expect(server?.type).toBe('stdio')
-    expect(server?.command).toBe('node')
-    expect(server?.args).toEqual(['apps/cli/dist/index.js', 'task-tools', 'serve'])
+    expect(server?.command).toBe('bun')
+    expect(server?.args).toEqual([SERVE_SOURCE])
   })
 
   it('emits a parseable JSON file with a trailing newline', () => {
@@ -58,8 +60,8 @@ describe('Codex [mcp_servers] adapter', () => {
   it('emits the documented TOML table for the same command', () => {
     const toml = codexMcpServersToml(SELF_HOST)
     expect(toml).toContain(`[mcp_servers.${TASK_TOOLS_MCP_SERVER_NAME}]`)
-    expect(toml).toContain('command = "node"')
-    expect(toml).toContain('args = ["apps/cli/dist/index.js", "task-tools", "serve"]')
+    expect(toml).toContain('command = "bun"')
+    expect(toml).toContain(`args = ["${SERVE_SOURCE}"]`)
   })
 
   it('registers the same command as the Claude adapter — one server, two registrations', () => {

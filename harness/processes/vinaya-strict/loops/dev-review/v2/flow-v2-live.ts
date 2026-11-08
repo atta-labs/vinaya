@@ -53,9 +53,10 @@ import {
   readDeferredTestsRecord,
   type ReadyTestsPolicy,
   type RequiredCiPolicy
-} from '../../../../../../apps/cli/src/lib/pre-push-ready-policy'
+} from '../../../tools/pre-push-ready-policy'
 import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../kernel/conformance/unit/test-temp'
 import { appendLoopLogLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log'
+import { progressObserverEntry } from '../../../tools/programs'
 import {
   appendProgressBytes,
   appendProgressRecord,
@@ -64,7 +65,7 @@ import {
   ENGINE_RUNS_DIRNAME,
   isBunTestCommand,
   type ProgressRecord
-} from '../../../../../../apps/cli/src/lib/push-progress'
+} from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
 import {
   agentCommandEnv,
   agentCommandText,
@@ -85,7 +86,7 @@ import {
 } from '../../../tools/pr-report/pr-report-engine'
 import { defaultReadDefaultBranchTip } from '../standalone/dev-review-loop'
 import { readPostedReviewVerdicts } from '../review-gate-input'
-import { detectVendoredVinaya } from '../../../../../../apps/cli/src/lib/self-host'
+import { detectVendoredVinaya } from '../../../tools/self-host'
 import {
   type ExplicitCommandsResult,
   isTestRunLine,
@@ -168,7 +169,7 @@ async function withProgress<T>(
   let session: { dir: string | null; end: () => Promise<void> } | null = null
   if (context) {
     try {
-      session = await beginProgressSession({ ...context, worktreePath })
+      session = await beginProgressSession({ ...context, worktreePath, observer: { entry: progressObserverEntry() } })
     } catch {
       session = null
     }

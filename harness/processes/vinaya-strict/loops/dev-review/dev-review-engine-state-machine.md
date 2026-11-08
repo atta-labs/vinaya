@@ -26,12 +26,12 @@ on live in `harness/processes/vinaya-strict/loops/dev-review/dev-review-capabili
 
 ## Why this file exists, and what it consumes
 
-<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"rulingStatus": "ruled", -->
+<!-- AEG:CLAIM: harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json contains:"rulingStatus": "ruled", -->
 This model encodes only two kinds of fact: product guarantees the standalone
-loop already demonstrates (`apps/cli/specs/dev-review-invariants.md`'s
+loop already demonstrates (`harness/processes/vinaya-strict/loops/dev-review/dev-review-invariants.md`'s
 `product-guarantee` entries), and the thirteen policy questions frozen as
 `ambiguities` in
-`apps/cli/tests/fixtures/dev-review-architecture-invariants.json` — every
+`harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json` — every
 one of which now carries `rulingStatus: "ruled"` and a `ruling` field
 recording the Principal's answer. No entry in this file represents a
 Developer's own policy choice; where a transition's behavior follows
@@ -73,7 +73,7 @@ provider.
 
 ### Control state versus telemetry
 
-Exactly as `apps/cli/specs/dev-review-invariants.md` records for the
+Exactly as `harness/processes/vinaya-strict/loops/dev-review/dev-review-invariants.md` records for the
 standalone loop (`INV-096`), this model never treats the Vinaya Log as
 checkpoint or recovery authority. Every state above with `authority:
 control-state` is what resume and recovery read; the Log (tech spec §

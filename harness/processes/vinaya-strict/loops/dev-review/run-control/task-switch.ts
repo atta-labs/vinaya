@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { assembleAndRenderBrief } from '../../../tools/task-contract/brief-assembly.js'
-import type { TaskRunner } from '../../../../../../apps/cli/src/lib/config.js'
+import type { TaskRunner } from '../../../integration/config/compose.js'
 import type { AgentVendor } from '../dispatch/dispatch.js'
 import { developerBranchFor, findOpenPrForBranch } from '../standalone/dev-review-loop/developer-dispatch.js'
 import {

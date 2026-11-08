@@ -225,7 +225,7 @@ export function renderPauseComment(
 ): string {
   const resume =
     invocation?.resumeCommand ??
-    `vinaya dev-review-loop --resume ${prNumber}${invocation ? ` --agent ${invocation.agent}` : ''}${invocation?.model ? ` --model ${invocation.model}` : ''}`
+    `vinaya-dev-review-loop --resume ${prNumber}${invocation ? ` --agent ${invocation.agent}` : ''}${invocation?.model ? ` --model ${invocation.model}` : ''}`
   return [
     `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',

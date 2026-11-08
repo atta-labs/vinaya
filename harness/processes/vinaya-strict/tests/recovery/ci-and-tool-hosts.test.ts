@@ -68,7 +68,7 @@ function ciTask(heads: { local: string; remote: () => string | null }, ci: () =>
   const reads: string[] = []
   const task = {
     runtimeDir: scratchDir('ci-runtime-'),
-    cliEntry: '',
+    checkProgram: '',
     branch: 'task/issue-9',
     issueNumber: 9,
     worktreePath: scratchDir('ci-worktree-'),

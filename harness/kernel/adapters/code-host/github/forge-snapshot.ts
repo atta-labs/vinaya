@@ -263,7 +263,7 @@ export function forgeSnapshotCommand(args: string[], runner: ForgeRunner = ghRun
   const at = args.indexOf('--dir')
   const dir = at === -1 ? undefined : args[at + 1]
   if (!dir) {
-    process.stderr.write('Usage: vinaya pr snapshot --dir <dir>\n')
+    process.stderr.write('Usage: vinaya-pr-snapshot --dir <dir>\n')
     process.exit(2)
   }
   try {
@@ -386,7 +386,7 @@ export function exitOnIncompleteForgeSnapshot(checkName: string, env: NodeJS.Pro
     check: checkName,
     severity: 'error',
     message: `${checkName}: ${reason}`,
-    agent_recovery_prompt: `Re-run the whole workflow run so its pull request read step writes the snapshot again (its own log names the failed read), then let \`vinaya check ${checkName}\` re-run.`
+    agent_recovery_prompt: `Re-run the whole workflow run so its pull request read step writes the snapshot again (its own log names the failed read), then let \`vinaya-check ${checkName}\` re-run.`
   })
   process.exit(1)
 }

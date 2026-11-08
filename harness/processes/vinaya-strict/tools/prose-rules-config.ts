@@ -204,7 +204,7 @@ function defaultsIssues(value: unknown, issues: Issue[]): void {
     if (!rule) {
       issues.push({
         path,
-        message: `unknown default rule id "${id}" — \`vinaya check --plan\` lists the rules each prose check runs`
+        message: `unknown default rule id "${id}" — \`vinaya-check --plan\` lists the rules each prose check runs`
       })
       continue
     }

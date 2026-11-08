@@ -145,7 +145,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          node apps/cli/dist/index.js pr snapshot --dir "$RUNNER_TEMP/vinaya-forge-snapshot"
+          bun harness/processes/vinaya-strict/tools/pull-request/bin/pr-snapshot.ts --dir "$RUNNER_TEMP/vinaya-forge-snapshot"
       - name: Share the forge snapshot with the check jobs
         uses: actions/upload-artifact@v4
         with:
@@ -257,7 +257,7 @@ jobs:
           # forge for them again. Set on this step only.
           VINAYA_FORGE_SNAPSHOT_DIR: ${{ runner.temp }}/vinaya-forge-snapshot
           PR_BODY_FILE: ${{ runner.temp }}/vinaya-forge-snapshot/body.md
-        run: node apps/cli/dist/index.js check body-bare-digits
+        run: bun harness/processes/vinaya-strict/checks/check.ts body-bare-digits
       - name: Record the GraphQL budget at job end
         if: ${{ !cancelled() }}
         env:
@@ -359,7 +359,7 @@ jobs:
           # forge for them again. Set on this step only.
           VINAYA_FORGE_SNAPSHOT_DIR: ${{ runner.temp }}/vinaya-forge-snapshot
           PR_BODY_FILE: ${{ runner.temp }}/vinaya-forge-snapshot/body.md
-        run: node apps/cli/dist/index.js check principal-test-plan-wait
+        run: bun harness/processes/vinaya-strict/checks/check.ts principal-test-plan-wait
       - name: Record the GraphQL budget at job end
         if: ${{ !cancelled() }}
         env:

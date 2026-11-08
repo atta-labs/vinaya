@@ -36,19 +36,20 @@ import {
 } from '../../../kernel/gates/ring1-ci/workflows/managed-workflow-paths.js'
 import { buildClaudeCommandOps } from './claude-command-emitter.js'
 import { buildClaudeStopHookOps } from './claude-stop-hook-emitter.js'
-import type { VinayaConfig } from '../../../../apps/cli/src/lib/config.js'
+import type { VinayaConfig } from './config/compose.js'
 import { buildGeminiCommandOp } from './gemini-command-emitter.js'
 import { type HookDir, TRACKED_HOOK_DIR } from '../../../kernel/gates/ring0-hooks/init-hook-paths.js'
 import type { CreateLabelOp, Op } from '../../../kernel/gates/ops.js'
-import { ownVersion } from '../../../../apps/cli/src/lib/own-version.js'
+import { ownVersion } from '../tools/own-version.js'
 import { REVIEW_GATE_WORKFLOW_NAME } from '../tools/review-gate-check-name.js'
 import {
   ADOPTER_TEST_RUNNER,
   NO_LOCAL_TESTS_MARKER,
   REPOSITORY_LOCAL_RUN
 } from '../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
-import { READY_TESTS_DEFERRED_LINE } from '../../../../apps/cli/src/lib/pre-push-ready-policy.js'
-import type { VendoredVinaya } from '../../../../apps/cli/src/lib/self-host.js'
+import { READY_TESTS_DEFERRED_LINE } from '../tools/pre-push-ready-policy.js'
+import type { VendoredVinaya } from '../tools/self-host.js'
+import { type Program, PROGRAMS, programForWords } from '../tools/programs.js'
 
 export { type HookDir, TRACKED_HOOK_DIR } from '../../../kernel/gates/ring0-hooks/init-hook-paths.js'
 
@@ -188,7 +189,7 @@ export function starterConfig(): VinayaConfig {
 // needed it too, and `lib/brief-assembly.ts` cannot import this file without
 // closing an import cycle through the task-tools server.
 // ---------------------------------------------------------------------------
-export { ownVersion } from '../../../../apps/cli/src/lib/own-version.js'
+export { ownVersion } from '../tools/own-version.js'
 
 // ---------------------------------------------------------------------------
 // Workflow files (four, all refuse-if-foreign, all vinaya-prefixed)
@@ -331,7 +332,22 @@ ${bunInstallCacheStep()}      # This repo declares the \`@attalabs/vinaya\` work
  * reasoning as `hookRun`'s published shape; see `ownVersion()`.
  */
 function vinayaRun(selfHost: VendoredVinaya | null, args: string): string {
+  const program = programRun(selfHost, args)
+  if (program !== null) return program
   return selfHost ? `node ${selfHost.bin} ${args}` : `npx --yes @attalabs/vinaya@${ownVersion()} ${args}`
+}
+
+/**
+ * The words of a command a program replaced, run as that program in `libBinInvocation`'s two shapes —
+ * `bun <source>` in a repository that vendors the command line, the pinned `npx -p … <bin>` otherwise —
+ * followed by the program's arguments; `null` for a command the command line still routes.
+ */
+function programRun(selfHost: VendoredVinaya | null, args: string): string | null {
+  const words = args.split(' ')
+  const program = programForWords(words)
+  if (program === null) return null
+  const entry = PROGRAMS.get(program.name) as Program
+  return [libBinInvocation(selfHost, entry.source, entry.bin), ...program.args].join(' ')
 }
 
 /**
@@ -569,7 +585,7 @@ function diffBaseStep(): string {
 function checksWorkflow(selfHost: VendoredVinaya | null, ciSetup: string | null): string {
   return `# ${MANAGED_NOTE}
 #
-# The deterministic gate suite. Runs every registered vinaya check over the
+# The deterministic gate suite. Runs every registered vinaya-check over the
 # pull request's diff. This is the guarantee: a PR cannot merge red.
 name: Vinaya Checks
 
@@ -671,7 +687,7 @@ ${FORGE_SNAPSHOT_CHECK_ENV}          BRANCH: \${{ github.head_ref }}
         run: |
           set -o pipefail
           ${vinayaRun(selfHost, 'check --all --diff-only')} | tee vinaya-check-output.txt
-      # The job's one check name ("vinaya check --all --diff-only: failing")
+      # The job's one check name ("vinaya-check --all --diff-only: failing")
       # names no check. This step puts the runner's per-check lines — which
       # check failed, and its finding messages — on the run's Summary page,
       # readable without opening the log. \`!cancelled()\` rather than
@@ -682,7 +698,7 @@ ${FORGE_SNAPSHOT_CHECK_ENV}          BRANCH: \${{ github.head_ref }}
         if: \${{ !cancelled() }}
         run: |
           {
-            echo '### vinaya check --all --diff-only'
+            echo '### vinaya-check --all --diff-only'
             echo '~~~'
             cat vinaya-check-output.txt 2>/dev/null || echo 'no check output captured (runner did not start)'
             echo '~~~'
@@ -732,7 +748,7 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 #
 # \`synchronize\` is what runs \`evidence-fresh\` on every push, so a push
 # with no following body edit turns its check-run red instead of producing
-# no run at all; \`edited\` re-runs it on the body edit \`vinaya pr report
+# no run at all; \`edited\` re-runs it on the body edit \`vinaya-pr-report
 # --push\` makes after that push, so a body naming the pushed head turns the
 # same check-run green with no manual rerun.
 #
@@ -761,7 +777,7 @@ on:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
 
 # One run per pull request COMMIT, always. Several \`types:\` above can fire in the
-# same instant — \`vinaya pr create\` opens the PR and applies its tranche
+# same instant — \`vinaya-pr create\` opens the PR and applies its tranche
 # label immediately after, so \`opened\` and \`labeled\` arrive together and
 # GitHub starts TWO runs of this workflow. Both then report under the same
 # check name, and the merge box counts both: one can go green while its twin
@@ -1325,12 +1341,12 @@ ${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-${vinayaSetupSteps(selfHost)}      - name: Run vinaya archive
+${vinayaSetupSteps(selfHost)}      - name: Run vinaya-archive
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         run: ${vinayaRun(selfHost, 'archive')} --merge-sha=\${{ github.sha }}
       - name: Self-archive the tranche once its last task merges (O4)
-        # \`vinaya archive tranche\` already IS the "any open task Issue left"
+        # \`vinaya-archive tranche\` already IS the "any open task Issue left"
         # check (\`trancheArchivalStatus\`) — this step never re-derives that
         # rule, it only resolves which slug just merged and asks. Refusing
         # (exit 1) while task Issues remain open is the expected outcome on
@@ -1373,7 +1389,7 @@ ${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
         with:
           node-version: 22
 ${vinayaSetupSteps(selfHost)}      - name: Self-archive the tranche this Issue belongs to
-        # \`vinaya archive tranche\` already IS the "any open task Issue left"
+        # \`vinaya-archive tranche\` already IS the "any open task Issue left"
         # check — refusing (exit 1) while task Issues remain open is the
         # expected outcome on every close but the last, never a reason to fail
         # this job. The Issue number is the only event field read, and the
@@ -1505,6 +1521,8 @@ const HOOK_PREAMBLE = '#!/usr/bin/env sh\n'
 // `log-sink.ts`'s own fallback). CI needs no equivalent: `GITHUB_ACTIONS` is
 // already set by the platform, and `hostFromEnv` reads it first.
 function hookRun(selfHost: VendoredVinaya | null, args: string): string {
+  const program = programRun(selfHost, args)
+  if (program !== null) return `VINAYA_HOST=hook ${program} || exit 1`
   if (!selfHost) return `VINAYA_HOST=hook npx --yes @attalabs/vinaya@${ownVersion()} ${args} || exit 1`
   return `# This repo vendors the CLI, so \`npx @attalabs/vinaya\` resolves to its own
 # unbuilt workspace member. Run the built file instead.
@@ -1641,7 +1659,11 @@ ${adopterReadyTests()}`
   //    processes) cannot recur when there is only ever one. The full,
   //    unscoped affected suite stays CI's job, on the one push, exactly as
   //    before.
-  const progress = libBinInvocation(selfHost, 'apps/cli/src/lib/pre-push-progress-dir.ts', 'vinaya-push-progress')
+  const progress = libBinInvocation(
+    selfHost,
+    'harness/processes/vinaya-strict/integration/pre-push-progress-dir.ts',
+    'vinaya-push-progress'
+  )
   return `# Live progress for a version-2 driver behind this push: "on" only when the
 # helper resolves the run's reserved progress directory itself (a live
 # driver's mark, no symlinked component). It prints nothing else and every
@@ -1682,7 +1704,7 @@ if bunx turbo typecheck --affected; then VINAYA_STEP=pass; else VINAYA_STEP=fail
 # when the default branch opts in (prePush.readyTests) and the run's live
 # driver marked this push. Every check above has already run; the selector,
 # the test run and the test cache below do not. Anything else is "local".
-VINAYA_READY_TESTS="$(${libBinInvocation(selfHost, 'apps/cli/src/lib/pre-push-ready-policy.ts', 'vinaya-ready-policy')})" || exit 1
+VINAYA_READY_TESTS="$(${libBinInvocation(selfHost, 'harness/processes/vinaya-strict/tools/pre-push-ready-policy.ts', 'vinaya-ready-policy')})" || exit 1
 if [ "$VINAYA_READY_TESTS" = "deferred" ]; then
   echo "${READY_TESTS_DEFERRED_LINE} — local checks passed; the selected tests run in the required CI check on this head"
   exit 0
@@ -1937,7 +1959,7 @@ below for what that resolves to).
 
 ## How to see what's running
 
-- \`vinaya check --plan\` — prints the resolved check registry and the
+- \`vinaya-check --plan\` — prints the resolved check registry and the
   resolved \`roles\` registry (default / overridden / additive), without
   running anything.
 - \`vinaya doctor\` — reports what is installed and diagnoses hook, workflow,
@@ -1988,7 +2010,7 @@ machine with:
 ${resolveNote}
 
 Live task status is derived from the forge (Issues, labels, comments) via
-\`vinaya check\` — it is never written into a file here.
+\`vinaya-check\` — it is never written into a file here.
 `
 }
 
@@ -2064,7 +2086,7 @@ function starterDocOwners(): string {
 #   in-repo path with anchor e.g. \`docs/my-feature.md#section-2\`
 #   URL                      e.g. \`https://example.com/docs/x\`
 #
-# Coverage rule (enforced by C5, the doc-owners check bundled into \`vinaya check\`):
+# Coverage rule (enforced by C5, the doc-owners check bundled into \`vinaya-check\`):
 #   When a code file in the PR matches a glob:
 #     - in-repo pointer  → that path must appear in the PR diff, else FAIL
 #     - URL pointer      → require a \`Doc-ack: <pointer> — <note>\` PR-body line
@@ -2079,7 +2101,7 @@ function starterDocOwners(): string {
 #   This file absent, OR no glob matches any changed code file → silent no-op.
 #   The gate has no opinion until you teach it one.
 #
-# \`vinaya doctor\` (never \`vinaya check\`) separately reports — it does not
+# \`vinaya doctor\` (never \`vinaya-check\`) separately reports — it does not
 # fail the check — any binding whose code glob matches zero tracked files
 # anywhere in the repo, or whose in-repo pointer doesn't exist on disk. This
 # catches what the dormancy rule above structurally cannot: a glob matching
@@ -2091,7 +2113,7 @@ function starterDocOwners(): string {
 # Surfaces that legitimately need no bound doc are listed below. Format:
 #   # no-doc: <glob> — <reason>
 # These lines exempt the matching directory from the completeness scoreboard
-# (\`vinaya check\`'s advisory output). They do NOT affect C5 enforcement — if a
+# (\`vinaya-check\`'s advisory output). They do NOT affect C5 enforcement — if a
 # binding exists for a surface, C5 still fires on changed files regardless of
 # any no-doc line. Use no-doc for scaffold-only, config-only, or stub-only
 # surfaces where adding a doc-owners binding would be meaningless busywork.

@@ -58,7 +58,7 @@ export function evaluateTokenCollectionWiring(
         `(${capability.reason}) but could not reach it — ${capability.detail}`,
       agent_recovery_prompt:
         'Fix the token-collection wiring named above (the resolved transcript path), then re-run ' +
-        '`vinaya check token-collection-wired`. This is a wiring defect, not a missing capability — ' +
+        '`vinaya-check token-collection-wired`. This is a wiring defect, not a missing capability — ' +
         'do not report tokens as `—` for it.'
     }
   }

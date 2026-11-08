@@ -237,7 +237,7 @@ export function renderObjectives(objectives: Objective[]): string {
  *
  * Inspects the WHOLE error (message + stderr), since `execFileSync` puts
  * `gh`'s actual GraphQL text on a line that is rarely the first — the same
- * discipline `apps/cli/src/lib/config.ts`'s `isMissingFileError` uses.
+ * discipline `harness/processes/vinaya-strict/integration/config/compose.ts`'s `isMissingFileError` uses.
  */
 export function isIssueNotFoundError(err: unknown): boolean {
   const stderr = (err as { stderr?: Buffer | string })?.stderr
@@ -271,7 +271,7 @@ export function isIssueNotFoundError(err: unknown): boolean {
  * function reading anything itself.
  *
  * `cutoverIssue` is the resolved Objectives cutover (`gateCutovers.objectivesSinceIssue`,
- * resolved by `resolveGateCutovers`, `apps/cli/src/lib/config.ts`) — passed in,
+ * resolved by `resolveGateCutovers`, `harness/processes/vinaya-strict/integration/config/compose.ts`) — passed in,
  * not imported, because `issue-validation.ts` already imports FROM this module
  * (`objectivesOf`); importing the constant back would be circular. A number
  * grandfathers Issues below it; `null` means NO cutover — objectives grading

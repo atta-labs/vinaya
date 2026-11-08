@@ -41,7 +41,7 @@ import {
   writeEffect
 } from '../../../../../kernel/connectors/checkpoint/control-store/index'
 import type { TaskCancelResult } from '../../../../../kernel/tools/catalog/task-tools'
-import type { TaskRunner } from '../../../../../../apps/cli/src/lib/config.js'
+import type { TaskRunner } from '../../../integration/config/compose.js'
 import {
   fenceStartedEffectsAsUncertain,
   isDriverPidAlive,

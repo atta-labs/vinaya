@@ -7,7 +7,7 @@ import { doctrinePointer, pointerRoleNames } from './artifacts.js'
 // that silently failed to resolve would make the byte-identity test pass
 // vacuously even against the machine-local implementation it exists to kill.
 import { packageRoot } from '../../../../apps/cli/src/lib/package-root.js'
-import type { VendoredVinaya } from '../../../../apps/cli/src/lib/self-host.js'
+import type { VendoredVinaya } from '../tools/self-host.js'
 
 // Captured BEFORE any mock.module call rewires the live binding — module
 // mocks persist across test files in the same bun process, so afterAll puts
@@ -110,7 +110,7 @@ describe('doctrine pointer content (atta-labs/vinaya#41 — honest adopter entry
 
   it('names how to see what is running and how to extend, using only shipped commands', () => {
     const content = doctrinePointer(null, ROLES)
-    expect(content).toContain('vinaya check --plan')
+    expect(content).toContain('vinaya-check --plan')
     expect(content).toContain('vinaya doctor')
     expect(content).toContain('vinaya new check')
     // `vinaya new role` and `vinaya new noop-check` shipped in task 8 (#42) —

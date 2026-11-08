@@ -1,4 +1,4 @@
-import type { ConfigField } from '@attalabs/vinaya-sources'
+import type { ConfigField } from '@attalabs/process-vinaya/config-reference'
 import { Badge, CodeBlock } from '@/ui/components'
 import { Heading } from '@/ui/shared'
 import { configFieldSlug } from './config-navigation'

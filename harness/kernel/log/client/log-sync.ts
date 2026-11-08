@@ -122,7 +122,7 @@ function printReport(report: SyncReport, json: boolean, deps: Pick<LogSyncDeps, 
   const lines: string[] = []
   const where =
     report.destination.kind === 'folder' ? `folder ${report.destination.folder}` : `server ${report.destination.url}`
-  lines.push(`vinaya sync → ${where}${report.rebuild ? ' (rebuilt)' : ''}`)
+  lines.push(`vinaya-sync → ${where}${report.rebuild ? ' (rebuilt)' : ''}`)
   if (report.rebuild) {
     lines.push(
       "Rebuilt the cache from scratch — cache.sqlite was deleted and this run started from the beginning of what the destination still retains. An event already rotated out of a folder's single backup slot, or no longer retained by the destination, cannot be recovered; it shows up as a gap below, never silently."
@@ -136,7 +136,7 @@ function printReport(report: SyncReport, json: boolean, deps: Pick<LogSyncDeps, 
   lines.push(`Gaps: ${summary.gaps}`)
   lines.push(`Quarantined: ${summary.quarantined}`)
   if (report.rejected) lines.push(formatRejected(report.rejected))
-  if (summary.moreAvailable) lines.push('More is available — run `vinaya sync` again to continue.')
+  if (summary.moreAvailable) lines.push('More is available — run `vinaya-sync` again to continue.')
   deps.stdout(`${lines.join('\n')}\n`)
   if (summary.failure !== null) {
     deps.stderr(
@@ -170,7 +170,7 @@ export async function runLogSync(opts: SyncRunOptions, deps: LogSyncDeps = realL
         {
           ok: false,
           reason:
-            "no read credential is configured — set `logs.readHeaders` in vinaya.config.json to the server's read token (referenced by variable name), so `vinaya sync` can read events back."
+            "no read credential is configured — set `logs.readHeaders` in vinaya.config.json to the server's read token (referenced by variable name), so `vinaya-sync` can read events back."
         },
         opts.json,
         deps

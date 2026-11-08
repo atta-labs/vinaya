@@ -381,7 +381,7 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
     idempotencyAndReplay:
       'Repeatable observation, but it executes repository code and may differ as the worktree changes.',
     preconditions: ['The task worktree and check registry are available.'],
-    verifiedPostconditions: ['The result reports the exit status and bounded output of vinaya check --all.'],
+    verifiedPostconditions: ['The result reports the exit status and bounded output of vinaya-check --all.'],
     annotations: annotations(false, false, true, false)
   }),
   entry({

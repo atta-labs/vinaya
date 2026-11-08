@@ -55,7 +55,7 @@ import {
   CLAUDE_STOP_HOOK_SCRIPT_PATH
 } from '../../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
 import { resolveDoctrineRoot } from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
-import { detectVendoredVinaya } from '../lib/self-host.js'
+import { detectVendoredVinaya } from '../../../../harness/processes/vinaya-strict/tools/self-host.js'
 import {
   isDefaultedAgentVendorPath,
   MANAGED_MANIFEST_VERSION,
@@ -63,7 +63,7 @@ import {
   readRepoCiSetup,
   resolveAgentVendors,
   VinayaConfigSchema
-} from '../lib/config.js'
+} from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
 import {
   activeRawHooks,
   detectGitRepo,
@@ -90,7 +90,7 @@ import {
   stripBlockFromContent,
   writeFileWithDirs
 } from '../../../../harness/kernel/gates/ops.js'
-import { closeStdin, promptYesNo } from '../lib/prompt.js'
+import { closeStdin, promptYesNo } from '../../../../harness/kernel/effects/prompt.js'
 
 export type UpgradeDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -1000,7 +1000,7 @@ export async function upgradeCommand(args: string[]): Promise<void> {
   process.exit(await runUpgrade(args, realDeps()))
 }
 
-import type { SurfaceExemption } from '../lib/surface-exemption'
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   upgrade: { date: '2026-09-08', callsToday: 23, retiresVia: 'sharedCommandShell' }

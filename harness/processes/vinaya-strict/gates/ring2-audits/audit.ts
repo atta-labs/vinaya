@@ -26,7 +26,7 @@ import {
   type DeadBranchPush
 } from '../../../../kernel/gates/ring2-audits/dead-branch-push-audit'
 import { label } from '../../tools/task-contract/forge/labels'
-import { loadConfig } from '../../../../../apps/cli/src/lib/config.js'
+import { loadConfig } from '../../integration/config/compose.js'
 import { detectGitRepo, type RepoInfo } from '../../../../kernel/connectors/git/detect.js'
 import { printJson } from '../../../../kernel/effects/envelope.js'
 
@@ -453,7 +453,7 @@ export async function auditCommand(args: string[]): Promise<void> {
   process.exit(await runAudit(args, realDeps()))
 }
 
-import type { SurfaceExemption } from '../../../../../apps/cli/src/lib/surface-exemption'
+import type { SurfaceExemption } from '../../tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   audit: { date: '2026-09-05', callsToday: 1, retiresVia: 'runChecks' }

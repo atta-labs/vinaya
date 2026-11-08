@@ -31,7 +31,7 @@ import {
   UNATTENDED_ENV_KEY,
   type RunPathsRepo
 } from '../../../kernel/run-paths'
-import type { VinayaConfig } from '../../../../apps/cli/src/lib/config'
+import type { VinayaConfig } from './config/compose'
 
 const REPO: RunPathsRepo = { owner: 'atta-labs', repo: 'vinaya' }
 const RUNTIME = '/runtime'

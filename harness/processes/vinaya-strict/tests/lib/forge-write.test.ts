@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { programCommandLine } from '../../tools/programs.js'
 import { execFileSync } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -32,12 +33,19 @@ import {
 } from '../../tools/task-contract/forge/forge-write'
 import { readFileSync } from 'node:fs'
 import { resolveMilestoneAttachTarget } from '../../tools/task-contract/forge/fetch-milestone'
-import { COMMANDS } from '@attalabs/vinaya-sources'
+import { COMMANDS } from '../../integration/commands.js'
 
 const CLI_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', 'apps', 'cli')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
-const FAKE_PRINCIPAL_OWED_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', 'fake-principal-owed-check.cjs')
+const FAKE_PRINCIPAL_OWED_CHECK = join(
+  import.meta.dir,
+  '..',
+  '..',
+  'fixtures',
+  'forge',
+  'fake-principal-owed-check.cjs'
+)
 
 // ---------------------------------------------------------------------------
 // O1 — the write gate runs every group over one body and refuses once with
@@ -1348,12 +1356,16 @@ exit 1
 
   function runPrEdit(): { status: number; stderr: string } {
     try {
-      execFileSync('bun', [INDEX, 'pr', 'edit', 'one', '--validate-only', '--body-file', bodyPath], {
-        cwd,
-        encoding: 'utf8',
-        env: { ...process.env, PATH: `${cwd}:${process.env.PATH ?? ''}` },
-        stdio: ['ignore', 'pipe', 'pipe']
-      })
+      execFileSync(
+        'bun',
+        programCommandLine(['pr', 'edit', 'one', '--validate-only', '--body-file', bodyPath]) as string[],
+        {
+          cwd,
+          encoding: 'utf8',
+          env: { ...process.env, PATH: `${cwd}:${process.env.PATH ?? ''}` },
+          stdio: ['ignore', 'pipe', 'pipe']
+        }
+      )
       return { status: 0, stderr: '' }
     } catch (e) {
       const err = e as { status?: number; stderr?: string }
@@ -1532,7 +1544,7 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     write('apps/cli/src/lib/mirror-comment.ts', '// see apps/cli/specs/mirror.md\nexport const x = 1\n')
     write('apps/cli/src/lib/mirror-other.ts', "const text = readFileSync(join(root, 'docs/specs/mirror.md'), 'utf8')\n")
     write('apps/cli/src/lib/mirror-prose.ts', "export const NOTE = 'Reads `apps/cli/specs/mirror.md` when present'\n")
-    write('apps/cli/tests/fixtures/mirror-fixture.ts', "export const f = 'apps/cli/specs/mirror.md'\n")
+    write('harness/processes/vinaya-strict/fixtures/mirror-fixture.ts', "export const f = 'apps/cli/specs/mirror.md'\n")
     execFileSync('git', ['add', '-A'], { cwd: fixture })
     execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
   })
@@ -1609,7 +1621,7 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
   // stub — the arrangement where a tree answer can suppress a refusal, and so
   // the only one that proves it cannot suppress the wrong ones.
   const commandReference = {
-    file: 'packages/sources/src/commands.ts',
+    file: 'harness/processes/vinaya-strict/integration/commands.ts',
     binary: 'vinaya',
     commands: [
       { name: 'issue create', flags: ['--body-file'], needs: ['forge'] },
@@ -1646,12 +1658,15 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     expect(tokenExistsInTree(fixture)('rename')).toBe(true)
     expect(result.status).toBe('fail')
     expect(result.errors[0]).toContain('`vinaya issue rename`')
-    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+    expect(result.errors[0]).toContain('Add `harness/processes/vinaya-strict/integration` to `in:`')
   })
 
   it('refuses a brand-new configuration key the tree has never carried, in any wording', () => {
     const configReference = {
-      files: ['packages/sources/src/config-reference.ts', 'apps/cli/src/lib/config.ts'],
+      files: [
+        'harness/processes/vinaya-strict/integration/config-reference.ts',
+        'harness/processes/vinaya-strict/integration/config/compose.ts'
+      ],
       keys: ['logs', 'reviewPolicy.maxRounds'],
       text: 'A folder (`logs.folder`) or a server (`logs.url`), never both.'
     }

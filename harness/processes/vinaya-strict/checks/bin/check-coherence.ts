@@ -70,7 +70,7 @@ import {
   type TaskEntry
 } from '../coherence-checks'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
-import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'
+import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../integration/config/compose'
 import { warnOnUnreadPrincipals } from '../principals-refusal'
 
 const CHECK_NAME = 'coherence'
@@ -191,39 +191,39 @@ export function recoveryPromptFor(code: CoherenceFailureCode): string {
     case 'd1-self-dependency':
       return 'This is an INTERNAL parser-bug report, not a real coherence failure — a task cannot depend on itself, so there is nothing here to close or resolve. Do NOT work around it. Report it upstream, and re-run once the rationale text is corrected or the parser fix ships.'
     case 'closed-without-merge':
-      return "The task's Issue is closed but its closing PR is not merged. Verify the PR actually merged (or reopen the Issue if it was closed in error), then re-run `vinaya check coherence`."
+      return "The task's Issue is closed but its closing PR is not merged. Verify the PR actually merged (or reopen the Issue if it was closed in error), then re-run `vinaya-check coherence`."
     case 'archived-without-provenance':
-      return 'The closing PR merged but carries no `### AEG provenance` comment. Ask the Archivist to post it, then re-run `vinaya check coherence`.'
+      return 'The closing PR merged but carries no `### AEG provenance` comment. Ask the Archivist to post it, then re-run `vinaya-check coherence`.'
     case 'auto-close-misfire':
-      return 'The closing PR merged but the Issue is still open (a GitHub auto-close misfire). Manually close the Issue, then re-run `vinaya check coherence`.'
+      return 'The closing PR merged but the Issue is still open (a GitHub auto-close misfire). Manually close the Issue, then re-run `vinaya-check coherence`.'
     case 'phantom-issue-ref':
-      return "The topology names an Issue number that doesn't resolve on the forge. Fix the Issue number in the topology, or ask the Planner to re-cut it, then re-run `vinaya check coherence`."
+      return "The topology names an Issue number that doesn't resolve on the forge. Fix the Issue number in the topology, or ask the Planner to re-cut it, then re-run `vinaya-check coherence`."
     case 'orphan-task':
-      return "An open Issue under this tranche's label is missing from the topology. Add its row to the tranche's task list, then re-run `vinaya check coherence`."
+      return "An open Issue under this tranche's label is missing from the topology. Add its row to the tranche's task list, then re-run `vinaya-check coherence`."
     case 'tbd-in-active-tranche':
-      return 'A task in this active tranche has no Issue (#TBD). Ask the Planner to cut the Issue, then re-run `vinaya check coherence`.'
+      return 'A task in this active tranche has no Issue (#TBD). Ask the Planner to cut the Issue, then re-run `vinaya-check coherence`.'
     case 'dispatched-on-unmet-deps':
-      return "This task has an open PR but a declared dependency isn't closed. Close the dependency first (or verify it truly is), then re-run `vinaya check coherence`."
+      return "This task has an open PR but a declared dependency isn't closed. Close the dependency first (or verify it truly is), then re-run `vinaya-check coherence`."
     case 'missing-rationale-field':
-      return 'The Issue fails the rationale gate. Ask the Planner to complete the eight-field rationale on the Issue body, then re-run `vinaya check coherence`.'
+      return 'The Issue fails the rationale gate. Ask the Planner to complete the eight-field rationale on the Issue body, then re-run `vinaya-check coherence`.'
     case 'surface-excludes-bound-doc':
-      return "The Issue's Surface `out:` list excludes a doc-owners-bound document its `in:` list otherwise covers. Fix the Surface split, or update the bound doc in the same PR, then re-run `vinaya check coherence`."
+      return "The Issue's Surface `out:` list excludes a doc-owners-bound document its `in:` list otherwise covers. Fix the Surface split, or update the bound doc in the same PR, then re-run `vinaya-check coherence`."
     case 'surface-overlap':
-      return 'This Issue overlaps another open task Issue sharing the same Milestone. Resolve the overlap (split scope or serialize the tasks), then re-run `vinaya check coherence`.'
+      return 'This Issue overlaps another open task Issue sharing the same Milestone. Resolve the overlap (split scope or serialize the tasks), then re-run `vinaya-check coherence`.'
     case 'archive-recommended':
-      return 'This active tranche has no open task-Issues left (advisory). Archive it to `completed/`, or confirm it should stay open, then re-run `vinaya check coherence`.'
+      return 'This active tranche has no open task-Issues left (advisory). Archive it to `completed/`, or confirm it should stay open, then re-run `vinaya-check coherence`.'
     case 'premature-archive':
-      return 'This archived tranche still has an open task-Issue (advisory). Investigate whether the archive was premature, then re-run `vinaya check coherence`.'
+      return 'This archived tranche still has an open task-Issue (advisory). Investigate whether the archive was premature, then re-run `vinaya-check coherence`.'
     case 'milestone-drift':
-      return "This Issue's GitHub-native milestone doesn't match its `vinaya/tranche:` label (advisory, cosmetic). Re-attach the Issue to the correct Milestone, then re-run `vinaya check coherence`."
+      return "This Issue's GitHub-native milestone doesn't match its `vinaya/tranche:` label (advisory, cosmetic). Re-attach the Issue to the correct Milestone, then re-run `vinaya-check coherence`."
     case 'tranche-not-archived':
-      return 'Every task Issue in this tranche is closed but it was never archived. Ask the Tranche Archivist to run, then re-run `vinaya check coherence`.'
+      return 'Every task Issue in this tranche is closed but it was never archived. Ask the Tranche Archivist to run, then re-run `vinaya-check coherence`.'
     case 'doc-owners-dangling-pointer':
-      return 'A `.vinaya/doc-owners` entry points at a file that no longer exists in-repo. Fix or remove the dangling entry, then re-run `vinaya check coherence`.'
+      return 'A `.vinaya/doc-owners` entry points at a file that no longer exists in-repo. Fix or remove the dangling entry, then re-run `vinaya-check coherence`.'
     case 'doc-owners-duplicate-glob':
-      return 'A `.vinaya/doc-owners` glob is registered more than once. Remove the duplicate entry, then re-run `vinaya check coherence`.'
+      return 'A `.vinaya/doc-owners` glob is registered more than once. Remove the duplicate entry, then re-run `vinaya-check coherence`.'
     case 'forge-read-unavailable':
-      return 'A forge read failed while assembling coherence facts (severity:infra) — this is an outage, not a drift finding. Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check coherence`.'
+      return 'A forge read failed while assembling coherence facts (severity:infra) — this is an outage, not a drift finding. Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya-check coherence`.'
     default:
       return assertNeverCoherenceCode(code)
   }
@@ -241,7 +241,7 @@ function emitFailure(result: CheckResult): void {
       severity: 'error',
       message: `${result.check}: ${result.note ?? 'see check output'}`,
       agent_recovery_prompt:
-        'Read the named coherence failure and resolve the underlying forge/topology drift it names, then re-run `vinaya check coherence`.'
+        'Read the named coherence failure and resolve the underlying forge/topology drift it names, then re-run `vinaya-check coherence`.'
     })
     return
   }
@@ -450,7 +450,7 @@ function emitOtherTrancheL5(sweep: OtherTrancheL5Sweep): void {
       severity: 'warning',
       message: `coherence: L5 did not evaluate for tranche "${slug}" — a forge read failed while reading its Issue list: ${detail}`,
       agent_recovery_prompt:
-        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check coherence` so L5 evaluates this tranche.'
+        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya-check coherence` so L5 evaluates this tranche.'
     })
   }
 }
@@ -462,7 +462,7 @@ function emitLifecycleUnevaluated(slug: string, detail: string): void {
     severity: 'warning',
     message: `coherence: L2 and L4 did not evaluate for tranche "${slug}" — a forge read failed while collecting their facts: ${detail}`,
     agent_recovery_prompt:
-      'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check coherence` so the lifecycle advisories L2 and L4 evaluate.'
+      'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya-check coherence` so the lifecycle advisories L2 and L4 evaluate.'
   })
 }
 
@@ -485,7 +485,7 @@ async function main(): Promise<void> {
       severity: 'error',
       message: 'coherence severity:infra — could not resolve owner/repo.',
       agent_recovery_prompt:
-        'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya check coherence`.'
+        'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya-check coherence`.'
     })
     process.exit(1)
   }
@@ -550,7 +550,7 @@ async function main(): Promise<void> {
       severity: 'error',
       message: `coherence severity:infra — forge facts unavailable for tranche "${slug}": ${snapshot.reason ?? 'unknown'}`,
       agent_recovery_prompt:
-        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check coherence`.'
+        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya-check coherence`.'
     })
     process.exit(1)
   }

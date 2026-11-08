@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
 import { guardedSpawnSync } from '../../../loops/dev-review/standalone/driver-tool-guard.js'
-import { stripVinayaEnv } from '../../../../../../apps/cli/tests/lib/process-fixture.js'
+import { stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
 
 const GUARD = join(
   dirname(fileURLToPath(import.meta.url)),

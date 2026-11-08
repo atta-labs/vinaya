@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { spawn } from 'node:child_process'

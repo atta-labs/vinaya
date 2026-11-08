@@ -1,6 +1,6 @@
 import { assessRound } from '../tools/dev-review-policy/assess-round'
 import { initialLoopState, type LoopState, type VerdictObservation } from '../tools/dev-review-policy/types'
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'

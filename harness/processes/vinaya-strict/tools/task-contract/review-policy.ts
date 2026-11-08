@@ -7,7 +7,7 @@
  *
  * Pure — no `fs`, no `fetch`, no `process.env`, no config read, no agent
  * call. The caller resolves the effective policy once (`resolveReviewPolicy`,
- * `apps/cli/src/lib/config.ts`) and passes it in; this module never reads
+ * `harness/processes/vinaya-strict/integration/config/compose.ts`) and passes it in; this module never reads
  * config itself (Traps to avoid).
  *
  * One ordered scale per role, one threshold per scale — never booleans per
@@ -100,7 +100,7 @@ export type PolicyFinding = { severity: string; location?: string }
  * `findings.txt` location actually takes (`SEVERITY|file:line|description`).
  * Round 2 review, BLOCKER: `/\bcomment\b/i` alone matched `comment` as a
  * plain substring, so a real test file whose NAME happens to contain the
- * word (`apps/cli/tests/commands/pr-create-brief-comment.test.ts`) was
+ * word (`harness/processes/vinaya-strict/tools/pull-request/bin/pr-create-brief-comment.test.ts`) was
  * wrongly treated as "the finding's location is a comment" and capped to
  * `MINOR` — exactly the trap O5's own brief forbids (never cap a source or
  * test file). Gating the comment pattern on "does NOT also look like a real
@@ -117,7 +117,7 @@ const FILE_SHAPED_LOCATION = /\.[a-zA-Z0-9]{1,10}(:\d+)?\s*$/
  * of the severity the reviewer actually reported. Each of these, gated on
  * `FILE_SHAPED_LOCATION` below (a LOW round-2 review finding): a real file
  * whose own name happens to contain one of these words or phrases —
- * `apps/cli/tests/commands/pr-create-brief-comment.test.ts`, or any of the
+ * `harness/processes/vinaya-strict/tools/pull-request/bin/pr-create-brief-comment.test.ts`, or any of the
  * repo's own `pr-body-*.md` fixtures — is a source or test file, never
  * prose, no matter which of these patterns its path text also matches. The
  * role-doctrine pattern (the doctrine map's role files under `harness/processes/vinaya-strict/`) is deliberately NOT in this group and is checked
@@ -427,7 +427,7 @@ export function securityBlockingSeverities(policy: ReviewPolicy): string[] {
 /**
  * `true` when `value` is one of `scale`'s own members — the runtime check
  * behind O1's "an unknown severity or threshold value refuses at config
- * load, never falls back." Exported so `apps/cli/src/lib/config.ts`'s
+ * load, never falls back." Exported so `harness/processes/vinaya-strict/integration/config/compose.ts`'s
  * `resolveReviewPolicy` can validate a configured threshold against the
  * SAME scale this module evaluates against, rather than a second copy.
  */

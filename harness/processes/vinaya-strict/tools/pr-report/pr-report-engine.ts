@@ -23,10 +23,10 @@ import { locateTestPlanSection } from '../task-contract/test-plan-section'
 import { coreCheckRegistry } from '../../checks/registry'
 import { buildCheckEnv, CHECK_EXCLUDE_ENV } from '../../../../kernel/gates/checks/runner'
 import { ScanContext } from '../../../../kernel/gates/checks/scan-context'
-import { loadConfig } from '../../../../../apps/cli/src/lib/config'
+import { loadConfig } from '../../integration/config/compose'
 import { collectBodyCheckErrors } from '../task-contract/forge/forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../../kernel/connectors/git/numstat'
-import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
+import { programFile } from '../programs.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../kernel/run-paths.js'
 import {
   type DeferredTestsRecord,
@@ -35,7 +35,7 @@ import {
   readyCiPlanCommand,
   type ReadyTestsPolicy,
   readTrustedReadyTestsPolicy
-} from '../../../../../apps/cli/src/lib/pre-push-ready-policy.js'
+} from '../pre-push-ready-policy.js'
 import {
   isNativeRunCommand,
   parseNativeRunCommand
@@ -44,8 +44,8 @@ import {
 /**
  * The `AEG:EVIDENCE` engine — every function that computes, or writes, the
  * anchored block `harness/processes/vinaya-strict/executing/developer/doctrine.md`'s PR-body canonical form
- * describes. Moved out of `apps/cli/src/commands/pr-report.ts`:
- * a COMMAND (`apps/cli/src/commands/pr-report.ts`'s
+ * describes. Moved out of `harness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts`:
+ * a COMMAND (`harness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts`'s
  * `prReportCommand`, argv-parsing and console I/O only) and the loop's own
  * driver (`harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts`) both need this engine, and a
  * command never calls a command (`apps/cli/specs/surface.md`'s "the rule") —
@@ -356,11 +356,9 @@ function shouldRenderAsSkipped(outcome: GateOutcome, gradedBody: string): boolea
   )
 }
 
-/** `dist/index.js` when built, the raw `src/index.ts` entry otherwise — same fallback `checks/registry.ts` uses for its own bins. */
+/** The checks program's file: its built file when the build emitted it, the source file otherwise (`programs.ts`). */
 function resolveSelfEntry(): string {
-  const root = cliPackageRoot()
-  const dist = join(root, 'dist', 'index.js')
-  return existsSync(dist) ? dist : join(root, 'src', 'index.ts')
+  return programFile('check')
 }
 
 const FAILING_STATUSES = new Set(['fail', 'error', 'timeout'])
@@ -401,7 +399,7 @@ export async function runRealGates(cwd?: string, env?: NodeJS.ProcessEnv): Promi
   // before any write), so no false attestation could be published.
   let stdout = ''
   try {
-    const result = await execFileAsync(process.execPath, [entry, 'check', '--all', '--diff-only', '--json'], {
+    const result = await execFileAsync(process.execPath, [entry, '--all', '--diff-only', '--json'], {
       cwd: cwd ?? process.cwd(),
       // Explicit, and load-bearing under Bun — not merely clearer than omitting
       // the key. A one-shot CLI invocation (`--push`) sets `PR_BODY`/
@@ -440,7 +438,7 @@ export async function runRealGates(cwd?: string, env?: NodeJS.ProcessEnv): Promi
           name: 'check',
           status: 'error',
           errors: [
-            { severity: 'error', message: '`vinaya check --all --diff-only --json` did not produce parseable output.' }
+            { severity: 'error', message: '`vinaya-check --all --diff-only --json` did not produce parseable output.' }
           ]
         }
       ],
@@ -482,7 +480,7 @@ function renderGroupB(outcomes: GateOutcome[], gradedBodySource: GradedBodySourc
   return [
     '### Group B — attested',
     '',
-    '`vinaya check --all --diff-only`',
+    '`vinaya-check --all --diff-only`',
     '',
     `Graded body: ${describeGradedBodySource(gradedBodySource)}`,
     '',
@@ -503,7 +501,7 @@ function renderGroupB(outcomes: GateOutcome[], gradedBodySource: GradedBodySourc
  *
  * Policy, not a mirrored constant (issue-545, O5): `report.commandTimeoutMs`
  * in `vinaya.config.json`, defaulting to `DEFAULT_COMMAND_TIMEOUT_MS`. The
- * prior hardcoded `30_000` (mirrored from `apps/cli/src/commands/check.ts`'s
+ * prior hardcoded `30_000` (mirrored from `harness/processes/vinaya-strict/checks/check.ts`'s
  * own per-check default) was far too small for a real Test Plan command — a
  * production build, a booted app, an end-to-end check — so a genuinely slow
  * command was recorded as a false `timeout` for lack of budget, never for
@@ -1523,7 +1521,7 @@ export function renderGroupC(groupC: GroupC): string {
     // span, so `body-bare-digits` never refuses the body this note rides into.
     const omitted = c.omittedEvidenceFresh
       ? [
-          `\n_\`evidence-fresh\` was left out of this run: it grades the \`AEG:EVIDENCE\` block this same \`vinaya pr report\` is about to write, so here it can only fail against the previous block. CI's own \`vinaya check --all --diff-only\` is its authoritative run._`
+          `\n_\`evidence-fresh\` was left out of this run: it grades the \`AEG:EVIDENCE\` block this same \`vinaya-pr-report\` is about to write, so here it can only fail against the previous block. CI's own \`vinaya-check --all --diff-only\` is its authoritative run._`
         ]
       : []
     return [`#### C${i + 1}: \`${c.command}\``, '', '```', output, '```', ...reused, ...omitted].join('\n')

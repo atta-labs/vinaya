@@ -3,7 +3,7 @@
  * `vinaya-log-v1`, Issue #406) — exercised through the real `vinaya dispatch`
  * CLI entry point (`execFileSync('bun', [INDEX, ...])`, same discipline as
  * `apps/cli/tests/commands/issue.test.ts`'s fake `gh`), never by importing
- * `dispatchRole` in-process: `apps/cli/src/lib/config.ts`'s
+ * `dispatchRole` in-process: `harness/processes/vinaya-strict/integration/config/compose.ts`'s
  * `GLOBAL_VINAYA_HOME` is a module-level constant frozen at first import from
  * whatever `HOME` happens to be, and `@attalabs/aeg-forge-state`'s
  * `resolveRepo()` caches its result for the process lifetime — an in-process
@@ -14,6 +14,7 @@
  * `null` (the `unresolved/` outbox bucket) every time.
  */
 
+import { programCommandLine } from '../../../tools/programs.js'
 import { afterEach, beforeAll, describe, expect, it } from 'bun:test'
 import { execFileSync, execSync, spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
@@ -2018,7 +2019,14 @@ describe('dispatch observability — wired through a real run (#450)', () => {
     // `stderr: ''` on a successful run (`execFileSync` yields stdout only),
     // and the operator lines this test is about are written to stderr.
     const r = spawnBudgeted(
-      [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile],
+      [
+        ...(programCommandLine(['dispatch']) as string[]),
+        'developer',
+        '--agent',
+        'claude',
+        '--prompt-file',
+        promptFile
+      ],
       {
         encoding: 'utf8',
         cwd,
@@ -2110,7 +2118,10 @@ describe('dispatch role log — each agent’s stream through its translator', (
 
   it('a recorded Codex stream reaches the file as plain actions with real marks and detail lines', () => {
     const fixture = readFileSync(
-      join(import.meta.dir, '../../../../../../apps/cli/tests/fixtures/loop-narration/codex-developer-stream.jsonl'),
+      join(
+        import.meta.dir,
+        '../../../../../kernel/adapters/agents/fixtures/loop-narration/codex-developer-stream.jsonl'
+      ),
       'utf8'
     )
     const contents = dispatchLog('codex', fixture)
@@ -2222,7 +2233,14 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
 
     const r = spawnBudgeted(
-      [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile],
+      [
+        ...(programCommandLine(['dispatch']) as string[]),
+        'developer',
+        '--agent',
+        'claude',
+        '--prompt-file',
+        promptFile
+      ],
       {
         encoding: 'utf8',
         cwd,

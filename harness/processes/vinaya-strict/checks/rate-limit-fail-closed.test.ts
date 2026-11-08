@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { checkDispatchReadiness, type DispatchGateInput } from '../tools/dispatch-gate'
 import { clearEdgeCache, dependsOnFactFromEdge, edgeFromIssueJson, resolveEdge } from '../tools/edge-resolve'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../apps/cli/tests/lib/process-fixture'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
 
 const REPO_ROOT = join(import.meta.dir, '../../../..')
 const SINGLE_PLAN_BIN = join(REPO_ROOT, 'harness/processes/vinaya-strict/checks/bin/check-single-plan-pr.ts')

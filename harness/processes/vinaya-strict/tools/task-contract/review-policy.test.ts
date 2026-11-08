@@ -148,8 +148,12 @@ describe('isProseLocation (#543 O5)', () => {
   })
 
   test('a test file whose NAME contains the word "comment" is never prose-capped (round 2 review, BLOCKER)', () => {
-    expect(isProseLocation('apps/cli/tests/commands/pr-create-brief-comment.test.ts')).toBe(false)
-    expect(isProseLocation('apps/cli/tests/commands/pr-create-brief-comment.test.ts:42')).toBe(false)
+    expect(
+      isProseLocation('harness/processes/vinaya-strict/tools/pull-request/bin/pr-create-brief-comment.test.ts')
+    ).toBe(false)
+    expect(
+      isProseLocation('harness/processes/vinaya-strict/tools/pull-request/bin/pr-create-brief-comment.test.ts:42')
+    ).toBe(false)
   })
 
   test('the file-shape exemption applies to every prose pattern, not only "comment" (round 2 review, LOW, #547)', () => {
@@ -158,7 +162,7 @@ describe('isProseLocation (#543 O5)', () => {
     // the PR body itself, so the `\bpr\s*body\b` pattern must never cap it
     // either, the same guarantee the "comment" pattern already had.
     expect(isProseLocation('packages/aeg-core/tests/fixtures/pr-body-394-as-opened.md')).toBe(false)
-    expect(isProseLocation('apps/cli/tests/fixtures/pr-body-473.md:1')).toBe(false)
+    expect(isProseLocation('harness/processes/vinaya-strict/fixtures/pr-body-473.md:1')).toBe(false)
   })
 })
 

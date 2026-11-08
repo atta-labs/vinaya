@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { flowForFlags, parseFlags, runnerForFlags } from '../../../../apps/cli/src/commands/task-run.js'
-import { resolveTaskRunner, VinayaConfigSchema } from '../../../../apps/cli/src/lib/config.js'
+import { resolveTaskRunner, VinayaConfigSchema } from '../integration/config/compose.js'
 import { runTask, type RunTaskDeps } from '../loops/dev-review/run-control/task-run.js'
 import { ENGINE_FALLBACK_NOTICE, runTaskEngine } from '../loops/dev-review/run-control/task-run-engine.js'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../apps/cli/tests/lib/process-fixture.js'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture.js'
 
 function fixture(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
   return {

@@ -6,7 +6,7 @@ import { NO_GATE_CUTOVERS } from '../tools/task-contract/gate-cutovers'
 import type { CheckError } from '../../../kernel/gates/checks/contract'
 import { resolveDoctrineRoot } from '../tools/doctrine/resolve-doctrine'
 import { doctrineSource } from '../tools/doctrine/doctrine-map'
-import type { BriefSection } from '../../../../apps/cli/src/lib/config'
+import type { BriefSection } from '../integration/config/compose'
 import { validateForgeWrite, validateIssueContent } from '../tools/task-contract/forge/forge-write'
 
 /**

@@ -54,12 +54,12 @@ import {
   type DispatchPriorTrancheFact
 } from '../dispatch-gate'
 import { parseRationaleDeps } from './forge/parse-rationale-deps'
-import { createForgeSource } from '@attalabs/vinaya-sources'
+import { createForgeSource } from '../sources/forge-adapter.js'
 import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve.js'
-import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config.js'
-import { briefCliInvocation } from '../../../../../apps/cli/src/lib/own-version.js'
+import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../integration/config/compose.js'
+import { briefCliInvocation } from '../own-version.js'
 import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
-import { detectVendoredVinaya } from '../../../../../apps/cli/src/lib/self-host.js'
+import { detectVendoredVinaya } from '../self-host.js'
 import { BUNDLED_DOCTRINE_DIR, DOCTRINE_TREE, doctrineSource } from '../doctrine/doctrine-map'
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
@@ -1076,7 +1076,7 @@ export async function assembleAndRenderBriefForIssue(
     return {
       ok: false,
       missing: [
-        `Issue #${issueNumber} carries a \`vinaya/tranche:*\` label — it belongs to a tranche and renders via \`vinaya task brief <tranche> <n>\`, not the tranche-less backlog path.`
+        `Issue #${issueNumber} carries a \`vinaya/tranche:*\` label — it belongs to a tranche and renders via \`vinaya-task-brief <tranche> <n>\`, not the tranche-less backlog path.`
       ]
     }
   }

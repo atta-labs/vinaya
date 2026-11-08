@@ -53,7 +53,7 @@ import {
   renderEscalationComment,
   renderSecurityComment,
   SECRET_SCAN_CHECK
-} from '../../../../../../../apps/cli/src/commands/review-post.js'
+} from '../../bin/review-post.js'
 import type { AgentVendor, DispatchHandle } from '../../dispatch/dispatch.js'
 import {
   manifestDigest as reviewManifestDigest,
@@ -1315,7 +1315,7 @@ export function renderReviewerDispatchPrompt(
     ...(role === 'reviewer'
       ? ['Your summary states, in a few sentences, brief conformance, spec conformance, scope, tests and docs.']
       : [
-          `Your summary opens with your secrets judgement and is rendered as the comment's SECRETS line. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check, running inside the \`vinaya check --all --diff-only\` CI job — you hold no GitHub credential and must never call \`gh\` to inspect it; judge it from the CI line above instead (\`CI: green\` means that job, and so this scan, passed) plus your own read of the diff. Open with \`none found — ${SECRET_SCAN_CHECK} passed\` only when CI above is green; if CI is red or pending, say so instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`,
+          `Your summary opens with your secrets judgement and is rendered as the comment's SECRETS line. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check, running inside the \`vinaya-check --all --diff-only\` CI job — you hold no GitHub credential and must never call \`gh\` to inspect it; judge it from the CI line above instead (\`CI: green\` means that job, and so this scan, passed) plus your own read of the diff. Open with \`none found — ${SECRET_SCAN_CHECK} passed\` only when CI above is green; if CI is red or pending, say so instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`,
           'The summary then states your agent-config judgement — when an AGENT-CONFIG SCAN block appears above, base it on that block plus your own read of the agent-config diff; the driver already ran the scanner outside its own trust, so never run `npx`, install a package, or run a scanner yourself. When that block says the scan was not applicable, not configured, or could not run, say exactly that and judge the config on your own read.'
         ]),
     'If you cannot review — an input missing or unreadable, the diff unavailable, tooling unavailable, or a scope only the Principal can settle — return status blocked with that blocker kind instead of a verdict. A blocked result is no review, never approval.'

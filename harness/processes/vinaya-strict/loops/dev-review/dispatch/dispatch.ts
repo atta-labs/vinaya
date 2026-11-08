@@ -115,7 +115,7 @@ import {
   readClaudeTurnOutput,
   readCodexTurnOutput
 } from '../standalone/dev-review-loop/turn-result.js'
-import { loadConfig } from '../../../../../../apps/cli/src/lib/config.js'
+import { loadConfig } from '../../../integration/config/compose.js'
 import {
   RUN_AREA_DIRNAMES,
   runPath,
@@ -1635,7 +1635,12 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts:*)',
         'Bash(bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts:*)',
         'Bash(bun harness/processes/vinaya-strict/checks/standalone/verify-task.ts:*)',
-        'Bash(bun apps/cli/src/index.ts:*)'
+        'Bash(bun apps/cli/src/index.ts:*)',
+        'Bash(bun harness/processes/vinaya-strict/checks/check.ts:*)',
+        'Bash(bun harness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts:*)',
+        'Bash(bun harness/processes/vinaya-strict/loops/dev-review/bin/review-status.ts:*)',
+        'Bash(bun harness/processes/vinaya-strict/tools/pr-report/tokens/bin/tokens.ts:*)',
+        'Bash(npx --yes -p @attalabs/vinaya@:*)'
       ],
       deny: [
         // O4: the whole `git push` and `gh` families are denied — the

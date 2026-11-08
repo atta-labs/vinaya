@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { resolve } from 'node:path'
 import { MemorySaver } from '@langchain/langgraph'

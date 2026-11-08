@@ -59,8 +59,7 @@ export const PRODUCT_SLUG_SCOPE: readonly string[] = [
   'apps/cli/src',
   '.github/workflows',
   '.vinaya',
-  'apps/cli/README.md',
-  'packages/sources/README.md'
+  'apps/cli/README.md'
 ]
 
 /** A path equal to, or nested under, `prefix` — never a bare-prefix substring match (`apps/cli/srcx` must not match `apps/cli/src`). */

@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { programCommandLine } from '../../tools/programs.js'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -44,7 +45,7 @@ function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 function runCli(args: string[], env: Record<string, string | undefined>): CliResult {
   try {
-    const stdout = execFileSync('bun', [INDEX, ...args], {
+    const stdout = execFileSync('bun', programCommandLine(args) ?? [INDEX, ...args], {
       cwd: CLI_ROOT,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -143,15 +144,6 @@ function outputLines(stdout: string): string[] {
     .map((l) => l.trim())
     .filter((l) => l !== '')
 }
-
-describe('vinaya task sweep — router wiring', () => {
-  it("the 'task' router names 'sweep' among its expected subcommands", () => {
-    const r = runCli(['task', 'bogus'], {})
-    expect(r.status).toBe(2)
-    expect(r.stderr).toContain("Unknown 'task' subcommand")
-    expect(r.stderr).toContain('sweep')
-  })
-})
 
 describe('vinaya task sweep (O1) — the modern layout', () => {
   it('removes a finished-by-closed-Issue folder, removes a finished-by-merged-PR folder, keeps an open one and a live one, printing each with its reason', () => {

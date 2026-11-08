@@ -13,7 +13,7 @@ import {
   sweepAbandoned,
   writeOwnerMarker
 } from '../../../../kernel/conformance/unit/test-temp'
-import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
 import { ALL_RUNNERS } from './runners'
 
 // Test temp storage on disk with owned cleanup. The storage is shared by every runner's fixtures, so each case

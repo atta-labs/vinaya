@@ -224,7 +224,10 @@ describe('buildVerdictFromReview — objective-id coverage, the same rule `revie
     const result = build(
       completedReview('reviewer', {
         objectiveResults: [
-          notMet('O1', 'apps/cli/src/commands/pr-report.ts:42 never calls the new function'),
+          notMet(
+            'O1',
+            'harness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts:42 never calls the new function'
+          ),
           met('O2')
         ]
       })
@@ -707,8 +710,8 @@ describe('deferral helpers (O2/O3)', () => {
     // a real file stays a real file — a pr-body-*.md fixture, a comment-named
     // test, or a same-named file in some other directory
     for (const location of [
-      'apps/cli/tests/fixtures/pr-body-473.md:1',
-      'apps/cli/tests/commands/pr-create-brief-comment.test.ts:4',
+      'harness/processes/vinaya-strict/fixtures/pr-body-473.md:1',
+      'harness/processes/vinaya-strict/tools/pull-request/bin/pr-create-brief-comment.test.ts:4',
       `docs/${basename(stagedBody)}:2`
     ]) {
       expect(relocateStagedPrBodyFinding({ severity: 'MAJOR', location, description: 'd' }).location).toBe(location)

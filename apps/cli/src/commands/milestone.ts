@@ -924,7 +924,7 @@ export async function milestoneStatusCommand(args: string[]): Promise<void> {
   }
 }
 
-import type { SurfaceExemption } from '../lib/surface-exemption'
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   'milestone create': { date: '2026-09-05', callsToday: 7, retiresVia: 'forgeWrite' },

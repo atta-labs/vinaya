@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { CORPUS_REL, REFRESH_COMMAND } from '../../../../../../apps/cli/scripts/refresh-loop-baseline'
-import { fixtureDir } from '../../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { CORPUS_REL, REFRESH_COMMAND } from '../../../integration/conformance/unit/refresh-loop-baseline'
+import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fixture'
 import { checkReadyBaseline } from './ready-baseline'
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', '..')

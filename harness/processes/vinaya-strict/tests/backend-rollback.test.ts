@@ -14,7 +14,7 @@ import {
   writeEffect
 } from '../../../kernel/connectors/checkpoint/control-store/index'
 import { taskToolError } from '../../../kernel/tools/catalog/task-tools'
-import { COMMANDS } from '@attalabs/vinaya-sources'
+import { COMMANDS } from '../integration/commands.js'
 import { parseFlags, rollbackFlagConflict } from '../../../../apps/cli/src/commands/task-run.js'
 import {
   BackendRollbackRefusedError,

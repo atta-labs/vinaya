@@ -3,7 +3,7 @@ sidebar_title: "Template: Decision record"
 ---
 # Template — Decision record
 
-**`vinaya new adr <title>` copies the block below the divider into the next numbered file of the folder `decisionRecords.path` names, and fills in its number, its title and today's date.** The command refuses while that key is unset. A record is short — one decision, the forces behind it, and what follows from it — written for someone who joins long after the decision was made and needs to know why things are the way they are.
+A record is short — one decision, the forces behind it, and what follows from it — written for someone who joins long after the decision was made and needs to know why things are the way they are.
 
 Records are numbered in order from `0001`, and a number is never reused. A record starts as `Proposed`, becomes `Accepted` once it is agreed, and is never deleted: a decision that is reversed stays in the folder, marked `Superseded`, and names the record that replaced it. Only a record inside the folder may name another record by its number. Every other page states the decision itself, because a number means nothing to a reader without the folder in front of them.
 

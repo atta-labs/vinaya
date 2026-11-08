@@ -81,7 +81,7 @@ function failRateLimited(errorText: string): never {
     severity: 'error',
     message: `single-plan-pr: could not read the open pull requests — ${rateLimitMessage(errorText)}.`,
     agent_recovery_prompt:
-      'GitHub refused the open pull request read on a rate limit, so no conflict check ran. Re-run `vinaya check single-plan-pr` after the reset time.'
+      'GitHub refused the open pull request read on a rate limit, so no conflict check ran. Re-run `vinaya-check single-plan-pr` after the reset time.'
   })
   process.exit(1)
 }
@@ -106,7 +106,7 @@ function main(): void {
       severity: 'error',
       message: result.message ?? 'single-plan-pr check failed',
       agent_recovery_prompt:
-        'Another open PR already touches this tranche topology file. Wait for it to merge, or coordinate with its author, then re-run `vinaya check single-plan-pr`.'
+        'Another open PR already touches this tranche topology file. Wait for it to merge, or coordinate with its author, then re-run `vinaya-check single-plan-pr`.'
     })
     process.exit(1)
   }

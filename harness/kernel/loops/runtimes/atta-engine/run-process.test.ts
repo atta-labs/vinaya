@@ -142,6 +142,7 @@ describe('engine runtime', () => {
     // engine runtime, so they name that package; they are not the runtime's own source.
     const provingTheCommandLine = new Set([
       'dev-review-engine-capability-matrix.md',
+      'dev-review-engine-capability-matrix.json',
       'dev-review-engine-capability-matrix.test.ts',
       'packed-runtime-consumer.test.ts',
       'packed-runtime-public-run-control.test.ts'

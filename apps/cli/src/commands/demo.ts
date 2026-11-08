@@ -20,7 +20,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { TRACKED_HOOK_DIR } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { detectGitRepo, resolveHookDir } from '../../../../harness/kernel/connectors/git/detect.js'
+import { resolveHookDir } from '../../../../harness/kernel/connectors/git/detect.js'
 import { resolveManagedBlockPath } from '../../../../harness/kernel/gates/ops.js'
 
 const DEMO_BRANCH_PREFIX = 'vinaya/demo-break-'
@@ -113,7 +113,7 @@ function recoverFromCrash(repoRoot: string, statePath: string): void {
     if (onStrayBranch) {
       throw new Error(
         `On a leftover demo branch \`${currentBranch}\` with no recoverable state file. ` +
-          'Checkout the branch you want manually, then re-run `vinaya demo break`.'
+          'Checkout the branch you want manually, then re-run `vinaya quickstart`.'
       )
     }
     return
@@ -127,7 +127,7 @@ function recoverFromCrash(repoRoot: string, statePath: string): void {
     if (!branchExists(repoRoot, state.originalBranch)) {
       throw new Error(
         `Recorded original branch \`${state.originalBranch}\` no longer exists. ` +
-          'Checkout the branch you want manually, then re-run `vinaya demo break`.'
+          'Checkout the branch you want manually, then re-run `vinaya quickstart`.'
       )
     }
     gitCapture(repoRoot, ['checkout', state.originalBranch])
@@ -169,7 +169,7 @@ function briefFixture(opts: { includeTier: boolean }): string {
 Project: vinaya-demo-fixture
 ${tierLine}
 ## Summary
-Fixture brief staged only by \`vinaya demo break\` — discarded with the demo branch.
+Fixture brief staged only by the refusal-then-fix proof — discarded with the demo branch.
 
 ## Technical surface map
 None — fixture content only; no real files change.
@@ -254,7 +254,7 @@ export async function runDemoBreak(repoRoot: string, args: string[]): Promise<nu
   const dirty = gitCapture(repoRoot, ['status', '--porcelain'])
   if (dirty.length > 0) {
     console.error(
-      'Working tree has uncommitted changes. Commit or stash them before running `vinaya demo break` — ' +
+      'Working tree has uncommitted changes. Commit or stash them before running `vinaya quickstart` — ' +
         'the demo never touches a dirty tree.'
     )
     return 1
@@ -262,7 +262,7 @@ export async function runDemoBreak(repoRoot: string, args: string[]): Promise<nu
 
   const originalBranch = currentBranchName(repoRoot)
   if (originalBranch === 'HEAD') {
-    console.error('Cannot run `vinaya demo break` from a detached HEAD — checkout a branch first.')
+    console.error('Cannot run `vinaya quickstart` from a detached HEAD — checkout a branch first.')
     return 1
   }
 
@@ -326,18 +326,12 @@ export async function runDemoBreak(repoRoot: string, args: string[]): Promise<nu
   return 0
 }
 
-export async function demoBreakCommand(args: string[]): Promise<void> {
-  const repo = await detectGitRepo()
-  if (!repo) {
-    console.error('Error: not a git repository. Run `vinaya demo break` from inside your repo.')
-    process.exit(1)
-  }
-  const code = await runDemoBreak(repo.repoRoot, args)
-  process.exit(code)
-}
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
-import type { SurfaceExemption } from '../lib/surface-exemption'
-
+/**
+ * Not a routed command: `quickstart` runs this refusal-then-fix proof as its step 5 (the
+ * `demo break` route it once had is removed). It is a step of that command, not a command.
+ */
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'demo break': { date: '2026-09-05', callsToday: 3, retiresVia: 'sharedCommandShell' }
+  'demo.ts': { date: '2026-11-08', callsToday: 0, retiresVia: 'quickstart' }
 }

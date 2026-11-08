@@ -295,7 +295,7 @@ function revisionPromptText(
         ? forgeCiRed.summary
         : kind === 'gate-red'
           ? [
-              'The checks (`vinaya check --all`) are red on the last head. Fix the failing check(s).',
+              'The checks (`vinaya-check --all`) are red on the last head. Fix the failing check(s).',
               ...gateOutput.map((gate) => `\`${gate.reference}\` output (tail):\n\n${gate.summary}`)
             ].join('\n\n')
           : kind === 'live-red'

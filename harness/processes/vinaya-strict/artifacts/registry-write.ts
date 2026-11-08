@@ -18,8 +18,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { parseRegistry } from '../tools/task-contract/parse-registry'
-import type { ProjectEntry } from '../../../../apps/cli/src/lib/config.js'
-import { VinayaConfigSchema } from '../../../../apps/cli/src/lib/config.js'
+import type { ProjectEntry } from '../integration/config/compose.js'
+import { VinayaConfigSchema } from '../integration/config/compose.js'
 
 export const PROJECTS_REGISTRY_PATH = '.vinaya/projects.md'
 // Duplicated from `artifacts.ts`'s `CONFIG_PATH` rather than imported: that

@@ -3,7 +3,7 @@
  * that gate is grandfathered (an Issue/PR older than the cutover passes
  * unconditionally). Pure — no `fs`, no `fetch`, no config read: the caller
  * resolves the effective cutovers once (`resolveGateCutovers`,
- * `apps/cli/src/lib/config.ts`, reading `vinaya.config.json`'s optional
+ * `harness/processes/vinaya-strict/integration/config/compose.ts`, reading `vinaya.config.json`'s optional
  * `gateCutovers` key) and passes them into the pure validators, exactly the
  * seam `ReviewPolicy`/`resolveReviewPolicy` already use for the review
  * thresholds.
@@ -16,7 +16,7 @@
  * high-numbered Issue is (O1). A repository whose Issues predate a gate — this
  * one — sets the numbers in its own `vinaya.config.json` so its older Issues
  * and pull requests are judged exactly as before (O2). See
- * `packages/sources/src/config-reference.ts`'s `gateCutovers` entry (O3).
+ * `harness/processes/vinaya-strict/integration/config-reference.ts`'s `gateCutovers` entry (O3).
  *
  * The built-in constants that were these numbers (`OBJECTIVES_SINCE_ISSUE`
  * etc., still exported from `issue-validation.ts`/`brief-validation.ts`) remain

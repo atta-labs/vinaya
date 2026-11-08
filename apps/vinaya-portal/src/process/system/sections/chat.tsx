@@ -15,7 +15,7 @@ const kinds: ChatLine[] = [
   { kind: 'skill', text: '▸ doctrine loaded: planner' },
   { kind: 'me', text: 'Approved. Write them.' },
   { kind: 'ag', text: 'Tranche written. Briefs frozen.' },
-  { kind: 'hook', text: 'pre-push · vinaya check --all --local' },
+  { kind: 'hook', text: 'pre-push · vinaya-check --all --local' },
   { kind: 'ok', text: '38 checks · 0 failed · Ring 0 green' },
   { kind: 'ev', text: 'round 1 · dispatch developer' },
   { kind: 'hl', text: '── task 2 · #419' }

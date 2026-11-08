@@ -1,0 +1,417 @@
+[
+  {
+    "file": "apps/cli/src/commands/brief.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/demo.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/doctor.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/doctrine.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/eject.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/init.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/issue-objectives.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/issue.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/milestone.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/new-noop-check.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/pr-rule.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/quickstart.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/task-run.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/task-status.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/task-switch.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/commands/upgrade.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/index.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "apps/cli/src/lib/output.ts",
+    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
+    "owner": "@attalabs/vinaya"
+  },
+  {
+    "file": "harness/kernel/adapters/agents/agent-line.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/adapters/agents/claude-code/claude-code-transcript.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/adapters/agents/claude-code/loop-narration-claude.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/adapters/agents/claude-code/metering-io-guard.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/adapters/agents/claude-code/settings.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/adapters/agents/codex/auth.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/adapters/agents/codex/config.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/adapters/agents/codex/loop-narration-codex.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/adapters/agents/manifest.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/adapters/code-host/github/gh-path.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/adapters/code-host/github/strip-code.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/adapters/tracker/github-issues/issue-assignment.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/config/loader/roles/contract.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/conformance/unit/process-fixture.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/conformance/unit/real-runtime-guard-core.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/conformance/unit/test-env-preload.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/connectors/checkpoint/control-store/local.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/connectors/checkpoint/control-store/outcomes.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/connectors/checkpoint/control-store/records.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/effects/effects.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/evals/banned-terms.ts",
+    "reason": "Evaluation machinery that still names the roles whose cases it grades; its wording becomes generic when the generic suites replace the role suites.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/evals/contamination.ts",
+    "reason": "Evaluation machinery that still names the roles whose cases it grades; its wording becomes generic when the generic suites replace the role suites.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/evals/contracts.ts",
+    "reason": "Evaluation machinery that still names the roles whose cases it grades; its wording becomes generic when the generic suites replace the role suites.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/evals/exit-check.ts",
+    "reason": "Evaluation machinery that still names the roles whose cases it grades; its wording becomes generic when the generic suites replace the role suites.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/evals/generic-graders.ts",
+    "reason": "Evaluation machinery that still names the roles whose cases it grades; its wording becomes generic when the generic suites replace the role suites.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/evals/neutral-outcomes.ts",
+    "reason": "Evaluation machinery that still names the roles whose cases it grades; its wording becomes generic when the generic suites replace the role suites.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/evals/staging.ts",
+    "reason": "Evaluation machinery that still names the roles whose cases it grades; its wording becomes generic when the generic suites replace the role suites.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/gates/checks/contract.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/gates/checks/resolver.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/gates/checks/runner.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/gates/ring2-audits/direct-main-push.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/gates/ring2-audits/ensure-label.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/isolation/isolation-probe.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/isolation/probe.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/isolation/shell-eval.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/isolation/worker-boundary.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/log/client/cli-operation-log.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/log/client/log-sync-folder-source.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/log/client/log-webhook-drain.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/log/client/loop-log.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/log/client/narration.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/log/log-sink.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/log/schema.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/loops/runtimes/atta-engine/run-process.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/run-paths.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/source-manifest.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/telemetry/questions/convergence.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/telemetry/questions/index.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/telemetry/questions/judgment.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/telemetry/questions/labels.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/telemetry/questions/time.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/catalog/task-tools.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/dev-tools-names.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/dev-tools-registration.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/dev-tools-server.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/fetch-documentation.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/host/broker.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/host/dev-tools-bridge.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/host/dev-tools-host.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/mcp-protocol.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/read-source.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/source-provider.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  },
+  {
+    "file": "harness/kernel/tools/tool-catalog.ts",
+    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
+    "owner": "@attalabs/harness"
+  }
+]

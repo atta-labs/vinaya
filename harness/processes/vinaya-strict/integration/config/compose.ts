@@ -80,7 +80,7 @@ import type { ReviewPolicy } from '../../tools/task-contract/review-policy'
 
 // The composition of the kernel's configuration keys with Vinaya's section
 // into the one schema `vinaya.config.json` is validated against, and the one
-// loader that reads it. `apps/cli/src/lib/config.ts` re-exports what this
+// loader that reads it. `harness/processes/vinaya-strict/integration/config/compose.ts` re-exports what this
 // module exports, under the names and types that module always had.
 //
 // The order below is the order the composed object schema reports a

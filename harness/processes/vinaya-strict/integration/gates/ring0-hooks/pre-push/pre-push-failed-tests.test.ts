@@ -49,7 +49,7 @@ import {
   removedFilesSinceRemoteBase
 } from '../../../../../../kernel/connectors/git/remote-base'
 import { ROOT_CONFIG_FILENAME } from '../../../repository-verification'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../../apps/cli/tests/lib/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture'
 
 const RECORDER = join(import.meta.dir, '../../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts')
 

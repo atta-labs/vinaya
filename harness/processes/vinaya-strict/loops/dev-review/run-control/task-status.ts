@@ -44,17 +44,12 @@ import { isPrincipal } from '../../../tools/task-contract/waiver-label'
 import { resolveNewestFrozenBrief } from '../../../tools/task-contract/brief-validation'
 import { taskPhaseLabel } from '../../../tools/task-phase-history'
 import { resolveTaskIssueRef } from '../../../tools/task-contract/forge/list-tasks'
-import { resolveTrustedPrincipals, type TaskRunner } from '../../../../../../apps/cli/src/lib/config.js'
+import { resolveTrustedPrincipals, type TaskRunner } from '../../../integration/config/compose.js'
 import { readEngineRun, readTaskRunner, type EngineRunReading } from './task-run-engine.js'
 import { findOpenPrForBranch, runtimeDir } from '../standalone/dev-review-loop.js'
 import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from '../../../../../kernel/log/client/loop-log.js'
-import {
-  newestStage,
-  OVER_TYPICAL_MARK,
-  PAUSED_STAGE_ACTOR,
-  STAGES
-} from '../../../../../../apps/cli/src/lib/follow-view.js'
+import { newestStage, OVER_TYPICAL_MARK, PAUSED_STAGE_ACTOR, STAGES } from '../../../tools/follow-view.js'
 import { confidenceFromRecords, readTurnResultRecords } from '../standalone/dev-review-loop/turn-result.js'
 import {
   phaseHistoryLookup,
@@ -746,7 +741,7 @@ function claimPostdatesLock(claimStartedAt: string, lockStartedAt: string): bool
 
 /** `vinaya dev-review-loop --resume <pr>` — the exact string `renderPauseComment`/`task run` already print, rendered fresh from the pr number rather than duplicated as a literal in each caller. */
 export function resumeCommandFor(prNumber: number, agent?: string, model?: string): string {
-  return `vinaya dev-review-loop --resume ${prNumber}${agent ? ` --agent ${agent}` : ''}${model ? ` --model ${model}` : ''}`
+  return `vinaya-dev-review-loop --resume ${prNumber}${agent ? ` --agent ${agent}` : ''}${model ? ` --model ${model}` : ''}`
 }
 
 // --- O2: last round's verdict lines ---------------------------------------

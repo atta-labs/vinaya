@@ -103,7 +103,7 @@ describe('allowed', () => {
     expect(isScanned('apps/cli/src/index.ts')).toBe(false)
     expect(isScanned('apps/vinaya-portal/README.md')).toBe(false)
     expect(isScanned('packages/cms/src/utils/theme-corpus.fixture.json')).toBe(false)
-    expect(isScanned('packages/sources/src/index.ts')).toBe(false)
+    expect(isScanned('packages/widgets/src/index.ts')).toBe(false)
     expect(isScanned(PAGE)).toBe(true)
     expect(isScanned('apps/vinaya-other/src/x.ts')).toBe(true)
   })

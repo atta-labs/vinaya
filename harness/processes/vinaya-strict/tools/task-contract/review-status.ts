@@ -1,7 +1,7 @@
 /**
  * The review loop's own state, derived.
  * Pure — no `fs`, no `fetch`, no `process.env`; the CLI shim
- * (`apps/cli/src/commands/review-status.ts`) fetches the PR's comments, head
+ * (`harness/processes/vinaya-strict/loops/dev-review/bin/review-status.ts`) fetches the PR's comments, head
  * and base through `gh` and hands them here.
  *
  * Why this exists: two PRs of this tranche took six and four review rounds,

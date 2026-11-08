@@ -126,7 +126,7 @@ import {
   taskStartRequestIdentity,
   taskToolError
 } from '../../../../../kernel/tools/catalog/task-tools'
-import { loadConfig } from '../../../../../../apps/cli/src/lib/config.js'
+import { loadConfig } from '../../../integration/config/compose.js'
 import { type LaunchResult, launchDetached, waitForLiveDriver } from './detached-launch.js'
 import {
   type AgentVendor,

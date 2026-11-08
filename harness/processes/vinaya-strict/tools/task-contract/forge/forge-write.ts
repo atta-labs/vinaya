@@ -138,7 +138,8 @@ import {
   resolveMilestoneAttachTarget
 } from './fetch-milestone'
 import { parseRationaleDeps } from './parse-rationale-deps'
-import { COMMANDS, CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
+import { COMMANDS } from '../../../integration/commands.js'
+import { CONFIG_REFERENCE } from '../../../integration/config-reference.js'
 import { CORE_CHECK_RING, coreCheckRegistry } from '../../../checks/registry'
 import { resolveChecks } from '../../../../../kernel/gates/checks/resolver'
 import { defaultParallelism, runChecks } from '../../../../../kernel/gates/checks/runner'
@@ -160,7 +161,7 @@ import {
   resolveGateCutovers,
   resolveReleaseActor,
   resolveTrustedPrincipals
-} from '../../../../../../apps/cli/src/lib/config'
+} from '../../../integration/config/compose'
 import { printJson } from '../../../../../kernel/effects/envelope'
 import type { EffectIdentity, EffectReconcileResult } from '../../../../../kernel/effects/effects.js'
 import { sha256Hex } from '../../../../../kernel/effects/effects.js'
@@ -823,7 +824,7 @@ export async function collectBodyCheckErrors(
  *
  * Reads the errors alone, never the `CheckSpec` — deliberately NOT gated on
  * `principalOwed`. That flag also feeds the mechanical gate's red/green
- * reading (`isRunFailed`, `apps/cli/src/commands/check.ts`) and, through it,
+ * reading (`isRunFailed`, `harness/processes/vinaya-strict/checks/check.ts`) and, through it,
  * the loop's CI reader; marking `principal-test-plan-wait` with it to get
  * this write through would have changed what makes a run red, and an
  * unticked `[principal]` box must stay a merge condition. `isRunFailed`
@@ -1045,9 +1046,12 @@ export function readDocOwnersContent(root: string = repoRoot()): string | null {
  * goes dormant there, the same posture `readDocOwnersContent` takes for an
  * absent manifest.
  */
-const COMMAND_REFERENCE_FILE = 'packages/sources/src/commands.ts'
+const COMMAND_REFERENCE_FILE = 'harness/processes/vinaya-strict/integration/commands.ts'
 /** The adopter-facing configuration reference, and the schema that validates the same keys — a new key is an edit to both. */
-const CONFIG_REFERENCE_FILES = ['packages/sources/src/config-reference.ts', 'apps/cli/src/lib/config.ts']
+const CONFIG_REFERENCE_FILES = [
+  'harness/processes/vinaya-strict/integration/config-reference.ts',
+  'harness/processes/vinaya-strict/integration/config/compose.ts'
+]
 /** The CLI binary an invocation in an Issue is written with. */
 const CLI_BINARY = 'vinaya'
 
@@ -1706,7 +1710,7 @@ const ISSUE_CONTENT_RECOVERY = {
   newLoopFilesCoverInvariantMap:
     "Add the named directory globs to `## Surface`'s `in:` list so the loop invariant map's fixture and spec can map the new file, or pin an existing loop file instead. Then re-run `{cmd}`.",
   testPlanDeveloperRunnable:
-    'Rewrite the named `## Test plan` line as a command the Developer runs inside its sandbox — a test file of its own or a `vinaya check` command that proves the same outcome — or move the step to a `**[principal]**` item when only the Principal can perform it. Then re-run `{cmd}`.',
+    'Rewrite the named `## Test plan` line as a command the Developer runs inside its sandbox — a test file of its own or a `vinaya-check` command that proves the same outcome — or move the step to a `**[principal]**` item when only the Principal can perform it. Then re-run `{cmd}`.',
   documentationPathsExist:
     'Correct the named `## Documentation` path to a file the repository contains, or drop the source if it does not exist yet. Then re-run `{cmd}`.',
   documentationReadable:

@@ -10,7 +10,7 @@ import { runChecks } from '../../../../../kernel/gates/checks/runner'
  * custom check, with no extra field and no branch in the runner.
  */
 
-const FIXTURE = join(import.meta.dir, '../../../../../../apps/cli/tests/fixtures/checks/passing-check.ts')
+const FIXTURE = join(import.meta.dir, '../../../../../kernel/gates/checks/fixtures/passing-check.ts')
 
 const ALLOWED_KEYS = new Set<keyof CheckSpec>([
   'name',

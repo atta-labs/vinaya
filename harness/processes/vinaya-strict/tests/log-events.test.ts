@@ -1,6 +1,6 @@
 import { assessRound } from '../tools/dev-review-policy/assess-round'
 import { initialLoopState, type LoopState, type Observations } from '../tools/dev-review-policy/types'
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { MemorySaver } from '@langchain/langgraph'
 import { readFileSync } from 'node:fs'

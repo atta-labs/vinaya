@@ -379,7 +379,7 @@ export function checkClosesNPresence(prBody: string): BriefSectionResult {
  * `vinaya/type:*` label axis, since a commit type and a task type are
  * different things — see `harness/processes/vinaya-strict/tools/task-contract/forge/labels.ts`). The one
  * list: `COMMIT_TYPE_STYLE` below is derived from it, and the `commit-msg`
- * hook (`apps/cli/src/commands/commit-msg.ts`) reads `COMMIT_TYPES` for its
+ * hook (`harness/processes/vinaya-strict/gates/bin/commit-msg.ts`) reads `COMMIT_TYPES` for its
  * own error text — neither carries a second, independently-typed copy.
  */
 export const COMMIT_TYPES = [
@@ -603,7 +603,7 @@ export function checkNoAgentBoxes(prBody: string): BriefSectionResult {
   return {
     status: 'fail',
     errors: [
-      'brief-validation no agent boxes: the Test Plan carries a checkbox `[agent]` item — an agent never ticks a box or edits a PR body (Principal ruling, 2026-09-03, after PR #395). Render the `[agent]` half as a fenced command list instead; `vinaya pr report` runs each command from the PR head and writes its actual output into the AEG:EVIDENCE block. `[principal]` checkboxes are unaffected.'
+      'brief-validation no agent boxes: the Test Plan carries a checkbox `[agent]` item — an agent never ticks a box or edits a PR body (Principal ruling, 2026-09-03, after PR #395). Render the `[agent]` half as a fenced command list instead; `vinaya-pr-report` runs each command from the PR head and writes its actual output into the AEG:EVIDENCE block. `[principal]` checkboxes are unaffected.'
     ]
   }
 }
@@ -639,7 +639,7 @@ export function isGrandfatherableBriefRuleError(message: string): boolean {
  * The two PR rollout cutovers, `null` meaning NO cutover for that rule (its
  * findings block on every PR, from PR 1 — a repository that declares no
  * `gateCutovers`, O1). Resolved from `vinaya.config.json`'s optional
- * `gateCutovers` key by `resolveGateCutovers` (`apps/cli/src/lib/config.ts`)
+ * `gateCutovers` key by `resolveGateCutovers` (`harness/processes/vinaya-strict/integration/config/compose.ts`)
  * and passed into `partitionBriefErrorsByRollout`; this module reads no config.
  */
 export type BriefRolloutCutovers = {

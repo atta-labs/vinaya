@@ -44,7 +44,7 @@ import { changedFilesSinceRemoteBase, removedFilesSinceRemoteBase } from '../../
 import { discoverWorkspaceDirs, type SelectionExplanation } from './repository-verification.js'
 
 /** The test preload every `apps/cli` test runs under, which no test imports. */
-const TEST_PRELOAD = 'apps/cli/tests/lib/test-env-preload.ts'
+const TEST_PRELOAD = 'harness/processes/vinaya-strict/integration/test-preload.ts'
 
 /** The package folder a shard list's paths are relative to. */
 const CLI_DIR = 'apps/cli'

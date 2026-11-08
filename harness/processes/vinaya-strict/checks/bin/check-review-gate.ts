@@ -87,7 +87,7 @@ function main(): void {
       severity: 'error',
       message: `review-gate (PR #${prNumber}): ${result.reason}`,
       agent_recovery_prompt:
-        'Wait for a code-reviewer APPROVE and a security-review PASS on this PR (or ask a principal to apply the `vinaya/waiver:review` label), then re-run `vinaya check review-gate`.'
+        'Wait for a code-reviewer APPROVE and a security-review PASS on this PR (or ask a principal to apply the `vinaya/waiver:review` label), then re-run `vinaya-check review-gate`.'
     })
     process.exit(1)
   }

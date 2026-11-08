@@ -68,7 +68,7 @@ const SOURCE_ROOTS = [
   join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pr-report/tokens/sum-ledger.ts'),
   join(REPO_ROOT, 'harness/processes/vinaya-strict/checks/pr-report-density.ts'),
   join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-phase-history.ts'),
-  join(REPO_ROOT, 'packages', 'sources', 'src')
+  join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/sources')
 ]
 
 /** The source that moved out of `apps/cli/src` and `packages/aeg-core/src` into the kernel, so these scans read it where it now lives. */
@@ -145,7 +145,7 @@ const PROCESS_LOOPS_FOLDER = 'processes/vinaya-strict/loops/'
 const VINAYA_HOME_ALLOWED: ReadonlyArray<{ file: string; why: string }> = [
   { file: PATH_FUNCTION, why: 'the path function itself — it resolves the default runtime directory under the home' },
   {
-    file: 'apps/cli/src/lib/config.ts',
+    file: 'harness/processes/vinaya-strict/integration/config/compose.ts',
     why: 'defines the home, and the global config and trust-cache files that are not run files'
   },
   {

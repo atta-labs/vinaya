@@ -57,7 +57,11 @@ import {
   DISPATCH_AGENTS,
   type DispatchAgent
 } from '../../../../harness/processes/vinaya-strict/tools/task-contract/dispatch-task.js'
-import { loadConfig, loadTaskRunner, type TaskRunner } from '../lib/config.js'
+import {
+  loadConfig,
+  loadTaskRunner,
+  type TaskRunner
+} from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
 import {
   runTask,
   type RunTaskResult,
@@ -533,7 +537,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   await runAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...flow, ...widen, ...rollback })
 }
 
-import type { SurfaceExemption } from '../lib/surface-exemption'
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   'task run': { date: '2026-09-30', callsToday: 7, retiresVia: 'sharedCommandShell' }

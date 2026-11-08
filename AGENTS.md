@@ -52,7 +52,7 @@ below for what that resolves to).
 
 ## How to see what's running
 
-- `vinaya check --plan` — prints the resolved check registry and the
+- `vinaya-check --plan` — prints the resolved check registry and the
   resolved `roles` registry (default / overridden / additive), without
   running anything.
 - `vinaya doctor` — reports what is installed and diagnoses hook, workflow,
@@ -106,4 +106,4 @@ machine with:
    the `vinaya-strict/` directory above it is the full doctrine.
 
 Live task status is derived from the forge (Issues, labels, comments) via
-`vinaya check` — it is never written into a file here.
+`vinaya-check` — it is never written into a file here.

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { parseSwitchFlags } from '../../../../../apps/cli/src/commands/task-switch'
 import { readPauseState, writePauseState } from '../../loops/dev-review/standalone/dev-review-loop/pause-resume'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../apps/cli/tests/lib/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
 import {
   CHECKPOINT_FILES,
   liveSwitchDeps,

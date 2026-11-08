@@ -131,7 +131,7 @@ export function describeFolderFallback(reason: FolderFallbackReason): string {
       `not delivering to the configured log server ${reason.intendedUrl} — the default branch's ` +
       'vinaya.config.json could not be read to confirm it (the trust-anchor read via `gh` was offline, ' +
       'unauthenticated, or slower than its deadline); events are written to the local folder and can be ' +
-      'delivered later with `vinaya log send`'
+      'delivered later with `vinaya-log-send`'
     )
   }
   return (
@@ -1787,7 +1787,7 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
             : deps.unresolvedLogDestination(deps.env())
         if (destination.kind === 'folder' && !opts.quiet) {
           warnOnce(
-            `vinaya: the process ended before its log destination was resolved — the event is written to ${destination.folder}; \`vinaya log send\` delivers it to a configured server later\n`
+            `vinaya: the process ended before its log destination was resolved — the event is written to ${destination.folder}; \`vinaya-log-send\` delivers it to a configured server later\n`
           )
         }
         ctx = { repo: null, doctrine: 'unknown', destination }

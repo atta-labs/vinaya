@@ -222,8 +222,8 @@ export function extractPauseBoundRuling(
 
 /**
  * AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
- * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
- * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
+ * AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
+ * AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
  * A ruling, later widened:
  * all three markers are read from a comment's first FIVE lines only, never
  * anywhere else in the body. Every shape this package itself renders

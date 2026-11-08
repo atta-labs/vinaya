@@ -34,7 +34,7 @@ function main(): void {
       severity: 'error',
       message,
       agent_recovery_prompt:
-        'Fix the named Part to cite an objective id the `## Objectives` section actually defines, or add the missing objective, then re-run `vinaya check issue-parts-coverage`.'
+        'Fix the named Part to cite an objective id the `## Objectives` section actually defines, or add the missing objective, then re-run `vinaya-check issue-parts-coverage`.'
     })
   }
   process.exit(1)

@@ -4,7 +4,7 @@
  * judged against expectations written by hand, and real plans for recent
  * merged changes from local history.
  *
- * Case mode reads a fixture bundle (`apps/cli/tests/fixtures/ci-impact/replay.json`).
+ * Case mode reads a fixture bundle (`scripts/ci/fixtures/ci-impact/replay.json`).
  * Each case is a change applied to a pinned base commit, committed into the
  * object store as a commit no branch names (the checkout and its index are
  * never touched), and planned exactly as CI plans it — the base guard
@@ -24,7 +24,7 @@
  * inconclusive. A correlation is a lead, never proof the selection missed
  * anything.
  *
- *   bun scripts/ci/replay.ts --cases apps/cli/tests/fixtures/ci-impact/replay.json
+ *   bun scripts/ci/replay.ts --cases scripts/ci/fixtures/ci-impact/replay.json
  *   bun scripts/ci/replay.ts --history 20 [--ref HEAD] [--observations <file>]
  */
 import { execFileSync } from 'node:child_process'

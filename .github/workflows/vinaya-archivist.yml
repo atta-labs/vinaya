@@ -73,12 +73,12 @@ jobs:
         run: |
           bun install --frozen-lockfile --ignore-scripts
           bun run --cwd apps/cli build
-      - name: Run vinaya archive
+      - name: Run vinaya-archive
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node apps/cli/dist/index.js archive --merge-sha=${{ github.sha }}
+        run: bun harness/processes/vinaya-strict/retrospecting/bin/archive.ts --merge-sha=${{ github.sha }}
       - name: Self-archive the tranche once its last task merges (O4)
-        # `vinaya archive tranche` already IS the "any open task Issue left"
+        # `vinaya-archive tranche` already IS the "any open task Issue left"
         # check (`trancheArchivalStatus`) — this step never re-derives that
         # rule, it only resolves which slug just merged and asks. Refusing
         # (exit 1) while task Issues remain open is the expected outcome on
@@ -92,7 +92,7 @@ jobs:
           BRANCH="$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq .head.ref)"
           SLUG="$(printf '%s' "$BRANCH" | sed -n 's#^task/\([^/]*\)/.*#\1#p')"
           if [ -z "$SLUG" ]; then exit 0; fi
-          node apps/cli/dist/index.js archive tranche "$SLUG" --yes
+          bun harness/processes/vinaya-strict/retrospecting/bin/archive.ts tranche "$SLUG" --yes
       - name: Record the GraphQL budget at job end
         if: ${{ !cancelled() }}
         env:
@@ -171,7 +171,7 @@ jobs:
           bun install --frozen-lockfile --ignore-scripts
           bun run --cwd apps/cli build
       - name: Self-archive the tranche this Issue belongs to
-        # `vinaya archive tranche` already IS the "any open task Issue left"
+        # `vinaya-archive tranche` already IS the "any open task Issue left"
         # check — refusing (exit 1) while task Issues remain open is the
         # expected outcome on every close but the last, never a reason to fail
         # this job. The Issue number is the only event field read, and the
@@ -185,7 +185,7 @@ jobs:
           SLUGS="$(gh api "repos/${{ github.repository }}/issues/$ISSUE_NUMBER" --jq '.labels[].name | select(startswith("vinaya/tranche:")) | ltrimstr("vinaya/tranche:")')"
           for SLUG in $SLUGS; do
             case "$SLUG" in ''|-*|*[!A-Za-z0-9._-]*) continue ;; esac
-            node apps/cli/dist/index.js archive tranche "$SLUG" --yes
+            bun harness/processes/vinaya-strict/retrospecting/bin/archive.ts tranche "$SLUG" --yes
           done
       - name: Record the GraphQL budget at job end
         if: ${{ !cancelled() }}
@@ -271,7 +271,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node apps/cli/dist/index.js archive tranches --yes
+        run: bun harness/processes/vinaya-strict/retrospecting/bin/archive.ts tranches --yes
       - name: Record the GraphQL budget at job end
         if: ${{ !cancelled() }}
         env:

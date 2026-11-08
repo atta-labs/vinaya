@@ -132,8 +132,8 @@ describe('conformance matrix — every row exists and cites a real, tested file'
     const lines = matrix.split('\n').filter((line) => NINE_SCENARIOS.some((s) => line.startsWith(`| ${s} |`)))
     expect(lines.length).toBe(NINE_SCENARIOS.length)
     for (const line of lines) {
-      expect(line).toContain('apps/cli/tests/conformance/claude.test.ts')
-      expect(line).toContain('apps/cli/tests/conformance/codex.test.ts')
+      expect(line).toContain('harness/processes/vinaya-strict/integration/conformance/live-matrix/claude.test.ts')
+      expect(line).toContain('harness/processes/vinaya-strict/integration/conformance/live-matrix/codex.test.ts')
     }
   })
 })

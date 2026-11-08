@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
-import { loadConfigChecked, resolveTaskRunner, type VinayaConfig } from '../../../../../../apps/cli/src/lib/config'
+import { CONFIG_REFERENCE } from '../../../integration/config-reference.js'
+import { loadConfigChecked, resolveTaskRunner, type VinayaConfig } from '../../../integration/config/compose'
 import { cancelDevReviewLoop, taskFromPrBody } from '../standalone/dev-review-loop'
 import { readDriverLock, readPauseState, writeDriverLock } from '../standalone/dev-review-loop/pause-resume'
 import { runnerReadingFor } from './task-status'
@@ -11,6 +11,7 @@ import { runTask, type RunTaskDeps } from './task-run'
 import { ENGINE_FALLBACK_NOTICE, readTaskRunner, recordTaskRunner, taskRunnerRecordPath } from './task-run-engine'
 import { createTaskCancelHandler } from './cancel'
 import { resumeContinuation } from './resume'
+import { programInvocation } from '../../../tools/programs'
 import {
   makeWorld,
   runLoopInProcess,
@@ -141,10 +142,9 @@ describe('a run with no recorded runner', () => {
     expect(readTaskRunner(9, runtime)).toBe('standalone')
     expect(runnerReadingFor(9, runtime)).toEqual({ runner: 'standalone', engine: null })
     const target = { agent: 'claude' as const, issue: 9, branch: 'task/demo/1' }
-    expect(resumeContinuation({ ...target, pr: 70 }, readTaskRunner(9, runtime), 'vinaya')).toEqual({
-      command: 'vinaya',
-      argv: ['dev-review-loop', '--resume', '70', '--agent', 'claude']
-    })
+    expect(resumeContinuation({ ...target, pr: 70 }, readTaskRunner(9, runtime), 'vinaya')).toEqual(
+      programInvocation('dev-review-loop', ['--resume', '70', '--agent', 'claude'])
+    )
     expect(resumeContinuation({ ...target, pr: null }, readTaskRunner(9, runtime), 'vinaya').command).toBe('vinaya')
   })
 

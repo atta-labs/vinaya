@@ -83,9 +83,9 @@ import { fetchForgeFactsByIssue } from '../../tools/task-contract/forge/fetch-fo
 import { parseRationaleDeps } from '../../tools/task-contract/forge/parse-rationale-deps'
 import { resolveDuplicateTasks } from '../../tools/task-contract/forge/list-tasks'
 import { resolvePriorTrancheArchival } from '../../tools/prior-tranche-archival'
-import { createForgeSource } from '@attalabs/vinaya-sources'
+import { createForgeSource } from '../../tools/sources/forge-adapter.js'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
-import { resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'
+import { resolveTrustedPrincipals } from '../../integration/config/compose'
 import {
   exitOnIncompleteForgeSnapshot,
   snapshotIssue
@@ -219,7 +219,7 @@ function checkPremiseReassertion(): boolean {
 
 /**
  * `containedAbs(root, p)`, then re-verified through the REAL (symlink-
- * resolved) path — matches `apps/cli/src/lib/self-host.ts`'s
+ * resolved) path — matches `harness/processes/vinaya-strict/tools/self-host.ts`'s
  * `resolvesInsideRepo`, the same fix for the same escape class (a lexically-
  * safe path that resolves, through a symlink, to somewhere outside the
  * bound). Every failure shape — the lexical escape `containedAbs` already
@@ -353,7 +353,7 @@ async function runIssueMode(issueNumber: number): Promise<void> {
   if (!issueJson) {
     fail(
       `dispatch-gate issue-existence: Issue #${issueNumber} does not resolve on the forge.`,
-      'Confirm the Issue number is correct and `gh auth status` passes, then re-run `vinaya check dispatch-readiness`.'
+      'Confirm the Issue number is correct and `gh auth status` passes, then re-run `vinaya-check dispatch-readiness`.'
     )
   }
   if (issueJson.labels.some((l) => l.name.startsWith('vinaya/tranche:'))) {
@@ -367,7 +367,7 @@ async function runIssueMode(issueNumber: number): Promise<void> {
   if (!repo) {
     fail(
       'dispatch-gate severity:infra — could not resolve owner/repo.',
-      'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya check dispatch-readiness`.'
+      'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya-check dispatch-readiness`.'
     )
   }
 
@@ -427,7 +427,7 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
   if (!repo) {
     fail(
       'dispatch-gate severity:infra — could not resolve owner/repo.',
-      'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya check dispatch-readiness`.'
+      'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya-check dispatch-readiness`.'
     )
   }
 
@@ -616,19 +616,19 @@ export function recoveryPromptFor(blockerClass: DispatchBlockerClass): string {
     case 'internal-self-dependency':
       return 'This is an INTERNAL parser-bug report, not a real dispatch gate — a task cannot depend on itself, so there is nothing here to wait for or resolve. Do NOT work around it and do NOT skip the hook. Report it upstream, and re-run once the rationale text is corrected or the parser fix ships.'
     case 'issue-existence':
-      return 'This task has no resolvable Issue yet. Wait for the Planner to cut the Issue (or fix the phantom reference in the topology), then re-run `vinaya check dispatch-readiness`.'
+      return 'This task has no resolvable Issue yet. Wait for the Planner to cut the Issue (or fix the phantom reference in the topology), then re-run `vinaya-check dispatch-readiness`.'
     case 'rationale':
-      return "The task's Issue fails the rationale gate. Ask the Planner to complete the eight-field rationale on the Issue body, then re-run `vinaya check dispatch-readiness`."
+      return "The task's Issue fails the rationale gate. Ask the Planner to complete the eight-field rationale on the Issue body, then re-run `vinaya-check dispatch-readiness`."
     case 'depends-on-unresolvable':
-      return 'A declared dependency edge could not be resolved to any tranche/task/Issue — check the tranche slug and task id in the edge text, then re-run `vinaya check dispatch-readiness`.'
+      return 'A declared dependency edge could not be resolved to any tranche/task/Issue — check the tranche slug and task id in the edge text, then re-run `vinaya-check dispatch-readiness`.'
     case 'depends-on-not-merged':
-      return 'A declared dependency is not merged yet. Do not start this task — wait for the named dependency PR to merge, then re-run `vinaya check dispatch-readiness`.'
+      return 'A declared dependency is not merged yet. Do not start this task — wait for the named dependency PR to merge, then re-run `vinaya-check dispatch-readiness`.'
     case 'depends-on-read-failed':
-      return 'The forge could not be read for a declared dependency, so its merge status is unknown — this is a transient read failure, not a claim that the dependency is unmerged. Retry `vinaya check dispatch-readiness`; if it keeps failing, check forge access (network, rate limit, credentials) rather than waiting on the dependency.'
+      return 'The forge could not be read for a declared dependency, so its merge status is unknown — this is a transient read failure, not a claim that the dependency is unmerged. Retry `vinaya-check dispatch-readiness`; if it keeps failing, check forge access (network, rate limit, credentials) rather than waiting on the dependency.'
     case 'conflicts-with':
-      return 'A declared conflicting task has an open or in-flight PR. Wait for it to merge before continuing, then re-run `vinaya check dispatch-readiness`.'
+      return 'A declared conflicting task has an open or in-flight PR. Wait for it to merge before continuing, then re-run `vinaya-check dispatch-readiness`.'
     case 'prior-tranche-archival':
-      return "This project's previous tranche is not archived. Ask the Tranche Archivist to run first, then re-run `vinaya check dispatch-readiness`."
+      return "This project's previous tranche is not archived. Ask the Tranche Archivist to run first, then re-run `vinaya-check dispatch-readiness`."
     default:
       return assertNeverBlockerClass(blockerClass)
   }

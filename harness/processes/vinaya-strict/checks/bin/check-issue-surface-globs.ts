@@ -38,7 +38,7 @@ function main(): void {
       severity: 'error',
       message,
       agent_recovery_prompt:
-        'Fix the named `## Surface` `in:` glob so it matches at least one real tracked file (a typo, or a directory that does not exist yet), then re-run `vinaya check issue-surface-globs`.'
+        'Fix the named `## Surface` `in:` glob so it matches at least one real tracked file (a typo, or a directory that does not exist yet), then re-run `vinaya-check issue-surface-globs`.'
     })
   }
   process.exit(1)

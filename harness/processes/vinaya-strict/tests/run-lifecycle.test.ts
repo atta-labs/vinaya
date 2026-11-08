@@ -1,6 +1,6 @@
 import { initialLoopState } from '../tools/dev-review-policy/types'
 import type { ReconstructedJournal } from '../tools/dev-review-policy/journal-reconstruction'
-import { fixtureDir } from '../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { encodeExecutionRound } from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import { describe, expect, test } from 'bun:test'
 import { recordedHandoff } from './handoff-fakes'

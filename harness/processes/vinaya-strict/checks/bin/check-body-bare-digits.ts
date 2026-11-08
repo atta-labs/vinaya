@@ -47,7 +47,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { CHANGESET_RELEASE_BRANCH, isChangesetsReleasePr } from '../../tools/review-gate'
-import { loadTrustAnchorConfig, resolveReleaseActor } from '../../../../../apps/cli/src/lib/config'
+import { loadTrustAnchorConfig, resolveReleaseActor } from '../../integration/config/compose'
 import {
   exitOnIncompleteForgeSnapshot,
   snapshotPullRequest
@@ -115,7 +115,7 @@ function main(): void {
       severity: 'error',
       message: `body-bare-digits: bare digit outside a fenced block, line ${v.line}: ${v.text}`,
       agent_recovery_prompt:
-        'Move this into a fenced code block, or state it as a symbol reference instead of a narrative claim (e.g. `N`), then re-run `vinaya check body-bare-digits`.',
+        'Move this into a fenced code block, or state it as a symbol reference instead of a narrative claim (e.g. `N`), then re-run `vinaya-check body-bare-digits`.',
       line: v.line
     })
   }

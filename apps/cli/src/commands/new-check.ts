@@ -41,7 +41,7 @@ export function newCheckCommand(args: string[]): void {
   }
   if (!isValidNamespacedKey(name)) {
     console.error(
-      `Refusing: "${name}" is not a valid check id. ${USAGE.slice('Usage: '.length)}\n\`vinaya check\` refuses the entire run over a key it cannot resolve, so a bare, un-namespaced name would brick every check invocation in this repo.`
+      `Refusing: "${name}" is not a valid check id. ${USAGE.slice('Usage: '.length)}\n\`vinaya-check\` refuses the entire run over a key it cannot resolve, so a bare, un-namespaced name would brick every check invocation in this repo.`
     )
     process.exit(2)
   }

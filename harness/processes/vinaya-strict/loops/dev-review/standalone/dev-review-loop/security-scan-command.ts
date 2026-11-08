@@ -3,8 +3,8 @@
  * review loop and the Engine path so both read the scanner the same way.
  */
 
-import type { VinayaConfig } from '../../../../../../../apps/cli/src/lib/config.js'
-import { resolveSecurityScanCommand } from '../../../../../../../apps/cli/src/lib/config.js'
+import type { VinayaConfig } from '../../../../integration/config/compose.js'
+import { resolveSecurityScanCommand } from '../../../../integration/config/compose.js'
 
 /**
  * The configured scanner argv from the DEFAULT-BRANCH trust anchor — the

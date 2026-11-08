@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../apps/cli/tests/lib/process-fixture.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
 import { taskRefFromBranch } from '../../../integration/log/branch-issue.js'
 
 const BRANCH_ISSUE_MODULE = join(import.meta.dir, '..', '..', '..', 'integration', 'log', 'branch-issue.ts')
@@ -102,7 +102,7 @@ describe('log-sink — what the branch lookup costs, and when (O1)', () => {
       const probe = join(scratch, 'probe.ts')
       writeFileSync(
         probe,
-        `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\n` +
+        `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'harness', 'processes', 'vinaya-strict', 'integration', 'config', 'compose.ts'))})).installVinayaConfigProvider()\n` +
           `import { resolveBranchIssue } from ${JSON.stringify(BRANCH_ISSUE_MODULE)}\n` +
           `import { createVinayaLogSink } from ${JSON.stringify(LOG_SINK_FACTORY_MODULE)}\n` +
           "import { readdirSync } from 'node:fs'\n" +
@@ -247,7 +247,7 @@ describe('log-sink — one read per process, not per sink (O1)', () => {
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
-      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'lib', 'config.ts'))})).installVinayaConfigProvider()\n` +
+      `await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'harness', 'processes', 'vinaya-strict', 'integration', 'config', 'compose.ts'))})).installVinayaConfigProvider()\n` +
         `import { createVinayaLogSink } from ${JSON.stringify(LOG_SINK_FACTORY_MODULE)}\n` +
         'const [first, second, outbox] = process.argv.slice(2) as [string, string, string]\n' +
         'const sinkFor = (cwd: string) =>\n' +

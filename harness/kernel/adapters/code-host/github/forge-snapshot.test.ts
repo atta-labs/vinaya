@@ -41,9 +41,9 @@ type FixtureCase = {
   gh: { pull: unknown; pullComments: unknown[]; issue: unknown; issueComments: unknown[] }
 }
 
-const FIXTURE = JSON.parse(
-  readFileSync(join(import.meta.dir, '../../../../../apps/cli/tests/fixtures/forge-snapshot/gh-vs-rest.json'), 'utf8')
-) as { cases: FixtureCase[] }
+const FIXTURE = JSON.parse(readFileSync(join(import.meta.dir, 'fixtures/forge-snapshot/gh-vs-rest.json'), 'utf8')) as {
+  cases: FixtureCase[]
+}
 
 let dirs: string[] = []
 let savedEnv: Record<string, string | undefined> = {}

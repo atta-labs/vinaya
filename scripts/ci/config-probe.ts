@@ -22,7 +22,7 @@ import {
   loadTrustAnchorConfigOrThrow,
   resolveCiTrustAnchorProbeRef,
   VinayaConfigSchema
-} from '../../apps/cli/src/lib/config'
+} from '../../harness/processes/vinaya-strict/integration/config/compose'
 
 const CONFIG_PATH = 'vinaya.config.json'
 const PROBE_REF_VAR = 'VINAYA_CI_CONFIG_PROBE_REF'

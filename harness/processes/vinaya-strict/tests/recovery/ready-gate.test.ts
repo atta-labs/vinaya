@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import { join } from 'node:path'
 import { FAILED_TESTS_RECORD, gitPath } from '../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
 import { identityOf, registerProcess } from '../../../../kernel/conformance/unit/process-registry'
-import { fixtureDir } from '../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
 import {
   ReadyGateCancelledError,
   runReadyGateLive,

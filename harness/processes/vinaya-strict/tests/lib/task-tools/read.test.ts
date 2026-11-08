@@ -331,7 +331,7 @@ describe('readEscalationPacket', () => {
     })
     expect(packet?.requestedAuthority).toBe('operator')
     expect(packet?.permittedNextActions.length).toBeGreaterThan(0)
-    expect(packet?.permittedNextActions.at(-1)).toContain('vinaya dev-review-loop --resume 900')
+    expect(packet?.permittedNextActions.at(-1)).toContain('vinaya-dev-review-loop --resume 900')
   })
 
   it('reports a pause that has no pull request as having none, and names the continuation that exists for it', () => {

@@ -1,6 +1,6 @@
 import { DEFAULT_COLLISION_THRESHOLD, type TaskFileFacts } from '../issue-validation'
 import { describe, expect, it } from 'bun:test'
-import { resolveCollisionThreshold, type VinayaConfig } from '../../../../../../apps/cli/src/lib/config'
+import { resolveCollisionThreshold, type VinayaConfig } from '../../../integration/config/compose'
 import { buildCollisionPeers, pinnedFilesOf, validateIssueContent } from './forge-write'
 
 // The forced-companion gates are dormant here — this file exercises only the
@@ -40,8 +40,8 @@ describe('pinnedFilesOf', () => {
   const tracked = [
     'packages/aeg-core/src/issue-validation.ts',
     'apps/cli/src/lib/forge-write.ts',
-    'apps/cli/src/lib/config.ts',
-    'packages/sources/src/config-reference.ts'
+    'harness/processes/vinaya-strict/integration/config/compose.ts',
+    'harness/processes/vinaya-strict/integration/config-reference.ts'
   ]
 
   const bodyWith = (boundary: string) => `**Boundary** — ${boundary}\n\n**Sizing** — one agent.\n`
@@ -58,7 +58,7 @@ describe('pinnedFilesOf', () => {
 
   it('resolves a bare filename elided from a shared prefix, the same way the brief renderer does', () => {
     expect(pinnedFilesOf(bodyWith('Pinned files: `config-reference.ts`.'), tracked)).toEqual([
-      'packages/sources/src/config-reference.ts'
+      'harness/processes/vinaya-strict/integration/config-reference.ts'
     ])
   })
 
@@ -74,7 +74,7 @@ describe('pinnedFilesOf', () => {
 describe('validateIssueContent — the pinned-file collision findings', () => {
   const A = 'packages/aeg-core/src/issue-validation.ts'
   const B = 'apps/cli/src/lib/forge-write.ts'
-  const C = 'apps/cli/src/lib/config.ts'
+  const C = 'harness/processes/vinaya-strict/integration/config/compose.ts'
 
   const peer = (ref: string, files: string[]): TaskFileFacts => ({
     ref,

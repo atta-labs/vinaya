@@ -52,7 +52,7 @@ import { overrideActive } from '../../tools/task-contract/pr-tier'
 import { DOC_OWNERS_PATH, evaluateC5 } from '../../tools/doc-owners'
 import { fileDiffAgainst } from '../../../../../harness/kernel/connectors/git/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
-import { resolveTrustedPrincipals } from '../../../../../apps/cli/src/lib/config'
+import { resolveTrustedPrincipals } from '../../integration/config/compose'
 import { warnOnUnreadPrincipals } from '../principals-refusal'
 
 const CHECK_NAME = 'doc-coverage-push'

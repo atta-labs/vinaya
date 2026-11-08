@@ -70,11 +70,11 @@ describe('reassertPremiseFile — recovery prompts name the caller that emitted 
 
   it('unreadable-file shape: the prompt cites the caller-supplied checkName, not a hardcoded one', () => {
     const dispatchResult = reassertPremiseFile(CHECK_NAME, '/tmp/does-not-exist.md', null, () => null)
-    expect(dispatchResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${CHECK_NAME}`)
+    expect(dispatchResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya-check ${CHECK_NAME}`)
     expect(dispatchResult.errors[0]?.agent_recovery_prompt).not.toContain(OTHER_CHECK_NAME)
 
     const otherResult = reassertPremiseFile(OTHER_CHECK_NAME, '/tmp/does-not-exist.md', null, () => null)
-    expect(otherResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${OTHER_CHECK_NAME}`)
+    expect(otherResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya-check ${OTHER_CHECK_NAME}`)
     expect(otherResult.errors[0]?.agent_recovery_prompt).not.toContain(CHECK_NAME)
   })
 
@@ -82,11 +82,11 @@ describe('reassertPremiseFile — recovery prompts name the caller that emitted 
     const body = ['## Summary', '', 'No premise block here at all.', ''].join('\n')
 
     const dispatchResult = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, () => null)
-    expect(dispatchResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${CHECK_NAME}`)
+    expect(dispatchResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya-check ${CHECK_NAME}`)
     expect(dispatchResult.errors[0]?.agent_recovery_prompt).not.toContain(OTHER_CHECK_NAME)
 
     const otherResult = reassertPremiseFile(OTHER_CHECK_NAME, '/tmp/brief.md', body, () => null)
-    expect(otherResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${OTHER_CHECK_NAME}`)
+    expect(otherResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya-check ${OTHER_CHECK_NAME}`)
     expect(otherResult.errors[0]?.agent_recovery_prompt).not.toContain(CHECK_NAME)
   })
 
@@ -95,11 +95,11 @@ describe('reassertPremiseFile — recovery prompts name the caller that emitted 
     const files: Record<string, string> = { 'src/thing.ts': 'export function somethingElse() {}\n' }
 
     const dispatchResult = reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', body, (p) => files[p] ?? null)
-    expect(dispatchResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${CHECK_NAME}`)
+    expect(dispatchResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya-check ${CHECK_NAME}`)
     expect(dispatchResult.errors[0]?.agent_recovery_prompt).not.toContain(OTHER_CHECK_NAME)
 
     const otherResult = reassertPremiseFile(OTHER_CHECK_NAME, '/tmp/brief.md', body, (p) => files[p] ?? null)
-    expect(otherResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya check ${OTHER_CHECK_NAME}`)
+    expect(otherResult.errors[0]?.agent_recovery_prompt).toContain(`vinaya-check ${OTHER_CHECK_NAME}`)
     expect(otherResult.errors[0]?.agent_recovery_prompt).not.toContain(CHECK_NAME)
   })
 })

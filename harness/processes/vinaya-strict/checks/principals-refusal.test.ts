@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { WAIVER_LABEL } from '../tools/task-contract/waiver-label'
 import { type CheckError, CHECK_SCHEMA_VERSION } from '../../../kernel/gates/checks/contract'
 import { EVIDENCE_PLACEHOLDER_TEXT } from './evidence-fresh-logic'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../apps/cli/tests/lib/process-fixture'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
 
 /**
  * Every check that decides who counts as a Principal reads the list from the

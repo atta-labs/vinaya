@@ -9,7 +9,7 @@
  * flip — only its consumers moved.
  *
  * Reference for the resolution rules: the `checks` rows of
- * `packages/sources/src/config-reference.ts` (the adopter-facing field
+ * `harness/processes/vinaya-strict/integration/config-reference.ts` (the adopter-facing field
  * reference) and the process doctrine's enforcement page's `vinaya check` row. The former
  * pointer here — a Configuration architecture chapter in
  * `apps/vinaya/specs/vinaya-spec.md` — named a path that exists in no
@@ -139,5 +139,5 @@ export function overriddenReplacesCoreDiagnostic(name: string): string {
  * real rename.
  */
 export function bareKeyRejectedDiagnostic(key: string): string {
-  return `check "${sanitizeKeyForDisplay(key)}" has no namespace and matches no core check — it is REJECTED, and \`vinaya check\` refuses the whole run rather than executing a partial ruleset. Rename it to "<yourname>/<id>", both segments matching [a-z0-9][a-z0-9-]* — prefixing alone is not enough when the bare name itself breaks that grammar ("my_check", "QALint" need a real rename, not just a prefix).`
+  return `check "${sanitizeKeyForDisplay(key)}" has no namespace and matches no core check — it is REJECTED, and \`vinaya-check\` refuses the whole run rather than executing a partial ruleset. Rename it to "<yourname>/<id>", both segments matching [a-z0-9][a-z0-9-]* — prefixing alone is not enough when the bare name itself breaks that grammar ("my_check", "QALint" need a real rename, not just a prefix).`
 }

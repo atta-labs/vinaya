@@ -19,7 +19,7 @@ import {
   sanitizeForgeText
 } from '../run-control/pr-facts'
 import type { SelectionNote } from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
-import { PROGRESS_SUMMARY_INTERVAL_MS } from '../../../../../../apps/cli/src/lib/push-progress'
+import { PROGRESS_SUMMARY_INTERVAL_MS } from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
 import { manifestDigest } from '../../../executing/code-reviewer/review-result'
 import {
   isNativeRunCommand,
@@ -30,7 +30,7 @@ import {
   readyCiPlanCommand,
   type ReadyTestsPolicy,
   type RequiredCiPolicy
-} from '../../../../../../apps/cli/src/lib/pre-push-ready-policy'
+} from '../../../tools/pre-push-ready-policy'
 import { agentCommandText, extractAgentCommandLines } from '../../../tools/pr-report/pr-report-engine'
 import {
   type CiProgress,
@@ -270,7 +270,7 @@ export async function runLocalChecks(
   const run =
     fns.runLocalChecks ??
     ((checkEnv: Record<string, string>) => {
-      const res = runCli(task.cliEntry, task.worktreePath, ['check', '--all', '--local'], checkEnv)
+      const res = runCli(task.checkProgram, task.worktreePath, ['--all', '--local'], checkEnv)
       return { passed: res.status === 0, output: `${res.stdout}${res.stderr}` }
     })
   const gates = run(env)

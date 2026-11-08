@@ -19,7 +19,7 @@ import type { CallerContext } from '../../../integration/server.js'
 import { createTaskCancelHandler } from '../../../loops/dev-review/run-control/cancel.js'
 import type { CancelInput } from '../../../loops/dev-review/standalone/dev-review-loop.js'
 import { writePauseState } from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import { isolatedConfigFixture } from '../../../../../../apps/cli/tests/lib/process-fixture'
+import { isolatedConfigFixture } from '../../../../../kernel/conformance/unit/process-fixture'
 
 /**
  * `task_cancel` (task-operator-v1 4, O2) driven in-process against a real,

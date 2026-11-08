@@ -1270,7 +1270,7 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  * run, exactly as before. Keeping it out of THIS function's own return
  * value, rather than merging it in here, is what lets this function's
  * output match the vendor-literal `network`/`filesystem` key set another
- * task's sandbox-conformance suite (`apps/cli/tests/sandbox-conformance/`,
+ * task's sandbox-conformance suite (the one `scripts/ci/impact-plan.ts` names as `SANDBOX_SUITE_TEST`,
  * not this task's own Technical Surface) already asserts by exact equality —
  * that suite was added on `main` after this branch's own base, so this
  * branch merges `main` in (rather than carrying an independent copy of the

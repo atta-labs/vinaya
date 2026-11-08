@@ -60,7 +60,7 @@ import {
   type DoctrineSource,
   resolveDoctrineRootInfo
 } from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
-import { detectVendoredVinaya } from '../lib/self-host.js'
+import { detectVendoredVinaya } from '../../../../harness/processes/vinaya-strict/tools/self-host.js'
 import {
   type BriefSection,
   GLOBAL_CONFIG_PATH,
@@ -78,7 +78,7 @@ import {
   type VinayaConfig,
   VinayaConfigSchema,
   lintEnvDeclarations
-} from '../lib/config.js'
+} from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
 import { resolveRepo } from '../../../../harness/kernel/adapters/code-host/github/resolve-repo'
 import {
   describeFolderFallback,
@@ -1024,8 +1024,8 @@ function diagnoseTokenMetering(deps: DoctorDeps): Finding[] {
     info(
       'tokens',
       `Token-metering capability probe: incapable (${capability.reason}) — ${capability.detail} Real per-turn ` +
-        'token figures cannot currently be collected via `vinaya tokens`. Report them by whatever means your ' +
-        'host offers, or supply them directly with `vinaya tokens --in <n> --out <n>`.'
+        'token figures cannot currently be collected via `vinaya-tokens`. Report them by whatever means your ' +
+        'host offers, or supply them directly with `vinaya-tokens --in <n> --out <n>`.'
     )
   ]
 }
@@ -1804,7 +1804,7 @@ export async function doctorCommand(args: string[]): Promise<void> {
   process.exit(await runDoctor(args, realDeps()))
 }
 
-import type { SurfaceExemption } from '../lib/surface-exemption'
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   doctor: { date: '2026-09-05', callsToday: 24, retiresVia: 'sharedCommandShell' }

@@ -10,7 +10,7 @@
  * task specifies the contract production execution must satisfy, and does
  * not build that execution. It consumes Task 1's frozen, now fully
  * Principal-ruled ambiguity register
- * (`apps/cli/tests/fixtures/dev-review-architecture-invariants.json`) —
+ * (`harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json`) —
  * every `AMB-*` ruling it cites below is this model's only license to
  * encode that behavior; a policy choice with no ruling has no business
  * being decided in this file.

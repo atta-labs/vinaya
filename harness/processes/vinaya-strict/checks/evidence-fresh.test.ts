@@ -6,11 +6,11 @@ import { anchoredRegion } from '../../../kernel/gates/checks/anchored-region'
 import { describe, expect, it } from 'bun:test'
 import { EVIDENCE_PLACEHOLDER_TEXT, compareEvidenceBlock } from './evidence-fresh-logic'
 import { type ResolvedRegion, ScanContext, resolveAnchoredRegion } from '../../../kernel/gates/checks/scan-context'
-import { type GroupCCommandResult, renderGroupC } from '../../../../apps/cli/src/commands/pr-report'
+import { type GroupCCommandResult, renderGroupC } from '../tools/pr-report/bin/pr-report'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../kernel/connectors/git/numstat'
 
 const HEAD = 'a'.repeat(40)
-const NUMSTAT = '2\t1\tapps/cli/src/commands/pr-report.ts\n1\t0\tapps/cli/src/index.ts'
+const NUMSTAT = '2\t1\tharness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts\n1\t0\tapps/cli/src/index.ts'
 
 function evidenceBody(head: string, numstat: string): string {
   return [

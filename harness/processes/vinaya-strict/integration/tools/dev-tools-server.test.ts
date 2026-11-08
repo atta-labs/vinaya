@@ -21,7 +21,7 @@ import {
   dispatchDevTool,
   type DevToolContext
 } from '../../../../kernel/tools/dev-tools-server.js'
-import { stripVinayaEnv } from '../../../../../apps/cli/tests/lib/process-fixture.js'
+import { stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture.js'
 import { vinayaToolGrantPolicy } from '../policies/vinaya-policies.js'
 
 /**

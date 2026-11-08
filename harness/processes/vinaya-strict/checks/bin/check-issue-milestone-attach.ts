@@ -36,7 +36,7 @@ function main(): void {
       severity: 'error',
       message,
       agent_recovery_prompt:
-        'Attach this task Issue to the named Milestone (`--milestone <title>`), then re-run `vinaya check issue-milestone-attach`.'
+        'Attach this task Issue to the named Milestone (`--milestone <title>`), then re-run `vinaya-check issue-milestone-attach`.'
     })
   }
   process.exit(1)

@@ -69,8 +69,7 @@ describe('sweeps declare include (task 12, #387)', () => {
         'apps/cli/src/**',
         '.github/workflows/**',
         '.vinaya/**',
-        'apps/cli/README.md',
-        'packages/sources/README.md'
+        'apps/cli/README.md'
       ],
       'retired-vocabulary': [...DOCTRINE_REPO_PATHS],
       'doctrine-portability': [...DOCTRINE_REPO_PATHS],

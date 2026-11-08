@@ -85,7 +85,7 @@ const DOCTOR_PATH = 'apps/cli/src/commands/doctor.ts'
  * sink's own `appendHardenedLine`, so it never appears on the outbox-write
  * check below.
  */
-const LOG_SEND_PATH = 'apps/cli/src/commands/log-send.ts'
+const LOG_SEND_PATH = 'harness/processes/vinaya-strict/integration/bin/log-send.ts'
 /**
  * `vinaya log selftest` proves delivery end to end. Like `DOCTOR_PATH`
  * and `LOG_SEND_PATH` it is NOT a producer — it calls no `log()` and builds no
@@ -96,7 +96,7 @@ const LOG_SEND_PATH = 'apps/cli/src/commands/log-send.ts'
  * and sends its one marked event through the server's ingest contract
  * directly. Same "imports the sink's pure helpers, never `log()`" shape.
  */
-const LOG_SELFTEST_PATH = 'apps/cli/src/commands/log-selftest.ts'
+const LOG_SELFTEST_PATH = 'harness/processes/vinaya-strict/integration/bin/log-selftest.ts'
 /**
  * The writer of a consumer's own declared events: it checks one event
  * against `logs.events` and calls `log()` once — a `custom` line, or the
@@ -117,7 +117,7 @@ const LOG_CUSTOM_PATH = 'harness/kernel/log/client/log-custom.ts'
  * to land before the process exits. Same "imports the sink's pure helpers,
  * never `log()` directly" shape as `LOG_SEND_PATH`/`LOG_SELFTEST_PATH`.
  */
-const LOG_EMIT_PATH = 'apps/cli/src/commands/log-emit.ts'
+const LOG_EMIT_PATH = 'harness/processes/vinaya-strict/integration/bin/log-emit.ts'
 /**
  * The CLI's one `cli_command` event at process exit: the entry script registers
  * the handler (and hands it `logSync`), and `cli-operation-log.ts` builds the
@@ -162,6 +162,8 @@ const CALLER_ALLOWLIST = new Set([
   LOG_WEBHOOK_DRAIN_LIB_PATH,
   DISPATCH_PATH,
   DEV_REVIEW_LOOP_PATH,
+  // Conformance test support under the scanned process folders: a type-only import of the sink's dependencies.
+  'harness/processes/vinaya-strict/integration/conformance/unit/dev-review-current-loop-adapter.ts',
   DEV_REVIEW_LOOP_PAUSE_RESUME_PATH,
   DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH,
   LOG_SYNC_FOLDER_SOURCE_PATH,
@@ -206,7 +208,7 @@ const OUTBOX_APPEND_ALLOWLIST = new Set<string>([])
  * control-store path, never to write there.
  */
 const OUTBOX_RESUME_RECORD_ALLOWLIST = new Set([DISPATCH_PATH, TASK_TOOLS_RESUME_PATH])
-const CONFIG_PATH = 'apps/cli/src/lib/config.ts'
+const CONFIG_PATH = 'harness/processes/vinaya-strict/integration/config/compose.ts'
 const WORKER_BOUNDARY_PATH = 'harness/kernel/isolation/worker-boundary.ts'
 /**
  * `worker-boundary.ts` names `outboxPathFor`'s own file in prose (the exact
@@ -243,7 +245,10 @@ const OUTBOX_PROSE_MENTION_ALLOWLIST = new Set([
   WORKER_BOUNDARY_PATH,
   RUN_PATHS_PATH,
   LOOP_LOG_PATH,
-  LOG_SYNC_FOLDER_SOURCE_PATH
+  LOG_SYNC_FOLDER_SOURCE_PATH,
+  // Conformance test support that moved under the scanned process folders: each reads a run's outbox, never writes it.
+  'harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.ts',
+  'harness/processes/vinaya-strict/integration/conformance/live-matrix/live-smoke.ts'
 ])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {

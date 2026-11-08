@@ -30,7 +30,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../../apps/cli/tests/lib/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture'
 import {
   checkPremiseAtHead,
   judgeCiConclusion,

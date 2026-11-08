@@ -28,6 +28,7 @@ import {
 } from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { writeTurnResultRecord } from '../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import { readEscalationPacket } from '../../../loops/dev-review/run-control/read.js'
+import { programFile } from '../../../tools/programs.js'
 
 /**
  * `task_resume` (task-operator-v1 4, O1) driven in-process with injected
@@ -573,7 +574,7 @@ describe('task_resume handler', () => {
       const lock = readDriverLock(outbox, ISSUE)
       expect(lock !== null && isDriverPidAlive(lock.pid)).toBe(true)
       expect(readFileSync(argvLog, 'utf8').trim().split('\n')).toEqual([
-        `dev-review-loop --resume ${PR} --agent claude`
+        `${programFile('dev-review-loop')} --resume ${PR} --agent claude`
       ])
     } finally {
       if (launched !== null) {
@@ -849,7 +850,7 @@ describe('defaultResumeLaunch — the argv each pause shape continues through', 
       'claude'
     ])
     expect(await argvOf({ pr: PR, agent: 'codex', branch: `task/issue-${ISSUE}` }, 'with-pr')).toEqual([
-      'dev-review-loop',
+      programFile('dev-review-loop'),
       '--resume',
       String(PR),
       '--agent',
@@ -881,7 +882,8 @@ describe('task_resume handler — a widen-surface escalation is the Planner’s'
         status: 'needs_ruling',
         summary: 'The command reference row lives outside the Surface.',
         rulingRequest: {
-          question: 'May the Surface widen to `packages/sources/src` for the command reference row?',
+          question:
+            'May the Surface widen to `harness/processes/vinaya-strict/integration` for the command reference row?',
           decisions
         },
         sourceUses: null
@@ -904,7 +906,7 @@ describe('task_resume handler — a widen-surface escalation is the Planner’s'
     if (!result.ok) {
       expect(result.error.kind).toBe('authority')
       expect(result.error.message).toBe(
-        `task ${ISSUE}'s escalation '${ISSUE}-1-headsha1' asks for \`widen_surface\` — widening a Surface is the Planner's act, not the Operator's, so task_resume does not continue it. The Planner continues it with \`vinaya task run x 1 --widen-surface packages/sources/src --reason '<why the Surface widens>' --agent codex\`.`
+        `task ${ISSUE}'s escalation '${ISSUE}-1-headsha1' asks for \`widen_surface\` — widening a Surface is the Planner's act, not the Operator's, so task_resume does not continue it. The Planner continues it with \`vinaya task run x 1 --widen-surface harness/processes/vinaya-strict/integration --reason '<why the Surface widens>' --agent codex\`.`
       )
     }
     expect(launches).toHaveLength(0)
@@ -921,7 +923,7 @@ describe('task_resume handler — a widen-surface escalation is the Planner’s'
     writeWidenRequest()
     const packet = readEscalationPacket(outbox, ISSUE)
     expect(packet?.permittedNextActions).toContain(
-      "To widen the Surface the Developer asked for (Planner): vinaya task run x 1 --widen-surface packages/sources/src --reason '<why the Surface widens>' --agent codex"
+      "To widen the Surface the Developer asked for (Planner): vinaya task run x 1 --widen-surface harness/processes/vinaya-strict/integration --reason '<why the Surface widens>' --agent codex"
     )
   })
 

@@ -6,13 +6,13 @@ import { takeDriverLock } from '../../bin/run-lifecycle'
 import { runDirectory, type Agent } from '../../bin/run-engine'
 import { shadowRecordPath, type ShadowRecord } from '../../executing/shadow'
 import { readDriverLock } from './standalone/dev-review-loop/pause-resume'
-import type { Observation } from '../../../../../apps/cli/tests/conformance/dev-review-current-loop-adapter'
+import type { Observation } from '../../integration/conformance/unit/dev-review-current-loop-adapter'
 import {
   ENGINE_SCENARIO_DRIVERS,
   ENGINE_SCENARIO_TASK,
   runEngineScenario
 } from '../../tests/dev-review-engine-loop-adapter.js'
-import corpus from '../../../../../apps/cli/tests/fixtures/dev-review-engine-scenarios.json'
+import corpus from '../../fixtures/dev-review-engine-scenarios.json'
 
 /**
  * Shadow mode on the Engine backend: the evidence for fault-attack:29-shadow-mode-mutation and

@@ -15,7 +15,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
-import { SUITE_INPUTS } from '../../apps/cli/tests/sandbox-conformance/command-sources.ts'
+import { SUITE_INPUTS } from '../../harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/command-sources.ts'
 import { changedInputReaders as libraryChangedInputReaders } from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts'
 import {
   buildInventoryView,
@@ -62,7 +62,7 @@ describe('the committed inventory validates against this repository', () => {
         kind: 'repository',
         runner: 'bun',
         cwd: '.',
-        preload: 'apps/cli/tests/lib/test-env-preload.ts'
+        preload: 'harness/processes/vinaya-strict/integration/test-preload.ts'
       })
     }
   })
@@ -74,31 +74,37 @@ describe('the committed inventory validates against this repository', () => {
         'process-vinaya',
         'bun',
         'harness/processes/vinaya-strict',
-        'apps/cli/tests/lib/test-env-preload.ts'
+        'harness/processes/vinaya-strict/integration/test-preload.ts'
       ],
       [
         'harness/kernel/tests/architecture.test.ts',
         'kernel',
         'bun',
         'harness/kernel',
-        'apps/cli/tests/lib/test-env-preload.ts'
+        'harness/kernel/conformance/unit/test-env-preload.ts'
       ],
       [
         'harness/processes/vinaya-strict/tests/run-engine.test.ts',
         'process-vinaya',
         'bun',
         'harness/processes/vinaya-strict',
-        'apps/cli/tests/lib/test-env-preload.ts'
+        'harness/processes/vinaya-strict/integration/test-preload.ts'
       ],
       [
         'harness/processes/vinaya-strict/checks/no-binary-sources.test.ts',
         'process-vinaya',
         'bun',
         'harness/processes/vinaya-strict',
-        'apps/cli/tests/lib/test-env-preload.ts'
+        'harness/processes/vinaya-strict/integration/test-preload.ts'
       ],
       ['apps/log-server/src/worker.test.ts', 'log-server', 'vitest', 'apps/log-server', null],
-      ['packages/sources/src/file-adapter.test.ts', 'sources', 'bun', 'packages/sources', null],
+      [
+        'harness/processes/vinaya-strict/tools/sources/file-adapter.test.ts',
+        'process-vinaya',
+        'bun',
+        'harness/processes/vinaya-strict',
+        'harness/processes/vinaya-strict/integration/test-preload.ts'
+      ],
       ['apps/vinaya-portal/src/lib/brand-logo.test.ts', 'portal', 'bun', 'apps/vinaya-portal', null]
     ]
     for (const [id, suite, runner, cwd, preload] of expectations)
@@ -125,7 +131,8 @@ describe('the committed inventory validates against this repository', () => {
     expect([...new Set(resolved)].sort()).toEqual([...SUITE_INPUTS].sort())
     // No declared input restates one of those edges: the sandbox suite is a reader only through the provider.
     const declarations = JSON.parse(readFileSync(join(REPO_ROOT, INVENTORY_PATH), 'utf8')) as InventoryDeclarations
-    const sandboxTest = 'apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts'
+    const sandboxTest =
+      'harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/sandbox-conformance.test.ts'
     expect(declarations.inputs.filter((input) => input.readers.some((r) => r.tests?.includes(sandboxTest)))).toEqual([])
   })
 
@@ -147,7 +154,7 @@ describe('the committed inventory validates against this repository', () => {
     expect(groups.find((g) => g.suite === 'log-server')?.runner).toBe('vitest')
     const layout = layoutOf(head)
     expect(layout.packageDirs).toContain('harness/kernel')
-    expect(layout.preloads).toContain('apps/cli/tests/lib/test-env-preload.ts')
+    expect(layout.preloads).toContain('harness/kernel/conformance/unit/test-env-preload.ts')
     expect(layout.opaque).toContain('scripts/ci/config-probe.ts')
   })
 
@@ -291,7 +298,7 @@ describe('discovery refuses what it must', () => {
   })
 
   test('fixture data a runner would collect fails; declared as a real test it passes; excluded, no runner may collect it', () => {
-    const fixture = 'apps/cli/tests/fixtures/repo/sample.test.ts'
+    const fixture = 'apps/cli/tests/lib/fixtures/repo/sample.test.ts'
     expect(codes(view(baseFiles({ [fixture]: '' })))).toContain(`unclassified ${fixture}`)
     const declared = withDeclarations(
       (d) => {
@@ -764,7 +771,7 @@ describe('the package-compatibility suite is a dedicated root suite the build jo
   test('it is the one compatibility suite, run by Bun from the root under the root preload, owning only its test', () => {
     expect(inventory.suites.filter((s) => s.kind === 'compatibility').map((s) => s.id)).toEqual(['package-compat'])
     expect(suite).toMatchObject({ owner: 'repository', dir: '.', cwd: '.', runner: 'bun' })
-    expect(suite?.preload).toBe('apps/cli/tests/lib/test-env-preload.ts')
+    expect(suite?.preload).toBe('harness/processes/vinaya-strict/integration/test-preload.ts')
     expect(inventory.tests.filter((t) => t.suite === 'package-compat').map((t) => [t.id, t.kind])).toEqual([
       ['scripts/package-compat/package-compat.test.ts', 'compatibility']
     ])
@@ -776,7 +783,6 @@ describe('the package-compatibility suite is a dedicated root suite the build jo
       .filter((e) => e.readers.includes('scripts/package-compat/package-compat.test.ts') && e.kind !== 'import')
       .map((e) => e.input)
     for (const path of [
-      'packages/sources/',
       'apps/cli/',
       'apps/cli/scripts/build.ts',
       '.changeset/config.json',

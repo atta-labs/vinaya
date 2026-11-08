@@ -3,7 +3,7 @@
  * `vinaya-log-v1`, Issue #406) — exercised through the real `vinaya dispatch`
  * CLI entry point (`execFileSync('bun', [INDEX, ...])`, same discipline as
  * `apps/cli/tests/commands/issue.test.ts`'s fake `gh`), never by importing
- * `dispatchRole` in-process: `apps/cli/src/lib/config.ts`'s
+ * `dispatchRole` in-process: `harness/processes/vinaya-strict/integration/config/compose.ts`'s
  * `GLOBAL_VINAYA_HOME` is a module-level constant frozen at first import from
  * whatever `HOME` happens to be, and `@attalabs/aeg-forge-state`'s
  * `resolveRepo()` caches its result for the process lifetime — an in-process
@@ -189,7 +189,17 @@ describe('developerWrittenTextFromVendorOutput + the after-turn credential scan 
   // stand-in. Both carry real credential shapes (an AWS key, a Slack token, an
   // Anthropic key, a PEM block) as fixture values that are not secrets at all.
   const workerBoundaryFixture = readFileSync(
-    join(CLI_ROOT, 'tests', 'lib', 'dispatch', 'worker-boundary.test.ts'),
+    join(
+      CLI_ROOT,
+      '..',
+      '..',
+      'harness',
+      'processes',
+      'vinaya-strict',
+      'integration',
+      'isolation',
+      'worker-boundary.test.ts'
+    ),
     'utf8'
   )
   const redactFixture = readFileSync(join(REPO_ROOT, 'harness', 'kernel', 'log', 'redact.test.ts'), 'utf8')
@@ -208,7 +218,7 @@ describe('developerWrittenTextFromVendorOutput + the after-turn credential scan 
             {
               type: 'tool_use',
               name: 'Read',
-              input: { file_path: 'apps/cli/tests/lib/dispatch/worker-boundary.test.ts' }
+              input: { file_path: 'harness/processes/vinaya-strict/integration/isolation/worker-boundary.test.ts' }
             }
           ]
         }
@@ -232,7 +242,7 @@ describe('developerWrittenTextFromVendorOutput + the after-turn credential scan 
     const written = developerWrittenTextFromVendorOutput(readingTurnTee(), 'claude')
     // It kept the agent's own messages and the Read tool-use PATHS...
     expect(written).toContain('Reading the fixtures.')
-    expect(written).toContain('⚙ Read: apps/cli/tests/lib/dispatch/worker-boundary.test.ts')
+    expect(written).toContain('⚙ Read: harness/processes/vinaya-strict/integration/isolation/worker-boundary.test.ts')
     // ...and dropped both tool RESULTS, so neither fixture's credential shape is
     // in the scanned text, and the credential scan finds nothing.
     expect(findCredentialPatterns(written, "the Developer's own turn output")).toEqual([])

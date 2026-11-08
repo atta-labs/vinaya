@@ -17,7 +17,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { checkBranchTopology, taskBranchTopologyFields } from '../branch-topology-gate'
-import { createForgeSource } from '@attalabs/vinaya-sources'
+import { createForgeSource } from '../../tools/sources/forge-adapter.js'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'branch-topology'
@@ -77,7 +77,7 @@ async function main(): Promise<void> {
       severity: 'error',
       message: 'branch-topology severity:infra — could not resolve owner/repo.',
       agent_recovery_prompt:
-        'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya check branch-topology`.'
+        'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya-check branch-topology`.'
     })
     process.exit(1)
   }
@@ -93,7 +93,7 @@ async function main(): Promise<void> {
       severity: 'error',
       message: `branch-topology severity:infra — could not reach the forge for tranche "${fields.tranche}": ${(err as Error).message}`,
       agent_recovery_prompt:
-        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check branch-topology`.'
+        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya-check branch-topology`.'
     })
     process.exit(1)
   }
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
       severity: 'error',
       message: result.reason,
       agent_recovery_prompt:
-        'Confirm the branch name matches a real, forge-registered task row (tranche + task id), then re-run `vinaya check branch-topology`.'
+        'Confirm the branch name matches a real, forge-registered task row (tranche + task id), then re-run `vinaya-check branch-topology`.'
     })
     process.exit(1)
   }

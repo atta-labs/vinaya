@@ -38,6 +38,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { CLI_SPAWN_BINARY } from '../../harness/kernel/gates/ring0-hooks/pre-push/cli-spawn-tests.js'
 import { DEFAULT_CLI_ENTRYPOINT } from '../../harness/processes/vinaya-strict/integration/repository-verification.js'
+import { PROGRAMS } from '../../harness/processes/vinaya-strict/tools/programs.js'
 import {
   gitRepository,
   isReadRecord,
@@ -150,6 +151,22 @@ function obligationsOf(repoRoot: string, head: string, view: InventoryView, buil
 }
 
 /** This repository's selection policy, read from the head commit. */
+/**
+ * One program source per folder among the programs that replaced command-line
+ * commands. Tests start them through the program table, a spawn the selector
+ * reads only coarsely: its edge is the started program's own folder, the same
+ * for every program in that folder. So one entry per folder gives the same
+ * edges, and the selector scans each test once per folder, not once per program.
+ */
+function spawnedProgramSources(): string[] {
+  const byFolder = new Map<string, string>()
+  for (const program of PROGRAMS.values()) {
+    const folder = program.source.slice(0, program.source.lastIndexOf('/'))
+    if (program.commands.length > 0 && !byFolder.has(folder)) byFolder.set(folder, program.source)
+  }
+  return [...byFolder.values()]
+}
+
 export function repositoryPolicy(
   repoRoot: string,
   head: string,
@@ -160,7 +177,11 @@ export function repositoryPolicy(
   return {
     depth,
     scanners: scannerDeclarations(repoRoot, head),
-    spawnPrograms: [{ binary: CLI_SPAWN_BINARY, entrypoint: DEFAULT_CLI_ENTRYPOINT }],
+    spawnPrograms: [
+      { binary: CLI_SPAWN_BINARY, entrypoint: DEFAULT_CLI_ENTRYPOINT },
+      // The programs a test may spawn as `bun <source file>`, as the command line once was.
+      ...spawnedProgramSources().map((entrypoint) => ({ binary: 'bun', entrypoint }))
+    ],
     obligations: obligationsOf(repoRoot, head, view, buildGates),
     parsers: { toml: (text) => Bun.TOML.parse(text), 'bun-lock': bunLockParser }
   }

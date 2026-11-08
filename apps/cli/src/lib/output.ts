@@ -1,4 +1,4 @@
-import { COMMANDS } from '@attalabs/vinaya-sources'
+import { COMMANDS } from '../../../../harness/processes/vinaya-strict/integration/commands.js'
 
 const NAME_COLUMN_WIDTH = 28
 const PLANNED_MARKER = '[planned — not yet implemented] '

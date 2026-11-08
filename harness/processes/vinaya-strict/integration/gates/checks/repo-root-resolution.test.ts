@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { programCommandLine } from '../../../tools/programs.js'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -152,7 +153,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
       // far above the slowest run observed, not tight against it: a ceiling
       // this size still catches a test that genuinely stops terminating, and
       // the cost of setting it too low is the intermittent red this fixes.
-      const result = spawnSync('bun', [indexTs, 'check', '--all', '--diff-only'], {
+      const result = spawnSync('bun', programCommandLine(['check', '--all', '--diff-only']) as string[], {
         cwd: root,
         encoding: 'utf8',
         env: { ...process.env, PR_BODY: undefined }
@@ -194,7 +195,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
       // stretched the worst runs above is a machine-level effect, not one
       // proportional to how many checks run, so it is exposed to the same
       // tail and gets the same ceiling.
-      const result = spawnSync('bun', [indexTs, 'check', 'reader-resolvable-prose'], {
+      const result = spawnSync('bun', programCommandLine(['check', 'reader-resolvable-prose']) as string[], {
         cwd: root,
         encoding: 'utf8',
         env: { ...process.env, PR_BODY: undefined }

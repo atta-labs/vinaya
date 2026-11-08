@@ -68,7 +68,7 @@ export function buildPrincipalTestPlanWaitErrors(body: string, branch: string, l
       severity: 'error',
       message: `principal-test-plan-wait: unticked [principal] Test Plan item(s) — ${uncheckedLines.join('; ')}`,
       agent_recovery_prompt:
-        'Nothing for the Developer to fix here — wait for the Principal to verify in a real signed-in browser and tick each `[principal]` Test Plan box, then re-run `vinaya check principal-test-plan-wait`.',
+        'Nothing for the Developer to fix here — wait for the Principal to verify in a real signed-in browser and tick each `[principal]` Test Plan box, then re-run `vinaya-check principal-test-plan-wait`.',
       pending: true
     }
   ]
@@ -92,7 +92,7 @@ export function runPrincipalTestPlanWait(
         severity: 'error',
         message: `principal-test-plan-wait: ${resolved.message} The \`[live]\` lines this pull request must have passed are unknown, so the merge holds.`,
         agent_recovery_prompt:
-          'Check `gh auth status` and network, and that the task Issue carries its frozen `aeg:brief:v<k>` comment, then re-run `vinaya check principal-test-plan-wait`.'
+          'Check `gh auth status` and network, and that the task Issue carries its frozen `aeg:brief:v<k>` comment, then re-run `vinaya-check principal-test-plan-wait`.'
       }
     ]
   }

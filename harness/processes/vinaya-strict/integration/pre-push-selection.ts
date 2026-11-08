@@ -4,7 +4,7 @@
  * answers from the hook's own code rather than a copy that could drift.
  */
 import { affectedNames } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index.js'
-import { loadConfig } from '../../../../apps/cli/src/lib/config.js'
+import { loadConfig } from './config/compose.js'
 import {
   addedOrRenamedFilesSinceRemoteBaseAbsolute,
   changedFileDiffsSinceRemoteBase,

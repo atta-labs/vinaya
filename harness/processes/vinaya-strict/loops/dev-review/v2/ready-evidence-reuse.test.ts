@@ -16,17 +16,14 @@ import {
   nativeRunCommand,
   readyTestCommand
 } from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
-import {
-  READY_TESTS_DEFERRED_RECORD,
-  readyCiPlanCommand
-} from '../../../../../../apps/cli/src/lib/pre-push-ready-policy'
+import { READY_TESTS_DEFERRED_RECORD, readyCiPlanCommand } from '../../../tools/pre-push-ready-policy'
 import { writeJsonUnderGit } from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
 import { checkBareDigits } from '../../../tools/body-bare-digits-logic'
 import { compareEvidenceBlock } from '../../../checks/evidence-fresh-logic'
 import { resolveAnchoredRegion, ScanContext } from '../../../../../kernel/gates/checks/scan-context'
-import { fixtureDir } from '../../../../../../apps/cli/tests/lib/test-temp-fixture'
+import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fixture'
 import { readyGateEvidence, runExplicitCommandsLive } from './flow-v2-live'
-import { prReportCommand } from '../../../../../../apps/cli/src/commands/pr-report'
+import { prReportCommand } from '../../../tools/pr-report/bin/pr-report'
 import { useRuntimeDir } from '../../../tests/round-fakes'
 import { explicitTestPlanCommands, readyTestPlanCommand, withReadyTestCommand } from './v2-actions'
 
