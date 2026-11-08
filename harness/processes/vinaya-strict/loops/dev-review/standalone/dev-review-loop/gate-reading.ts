@@ -54,7 +54,8 @@ function sleepSyncMs(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
-function sh(cmd: string, args: string[]): string {
+/** `attempts` replaces the retry count for a `gh` read that is best-effort, so a failure costs one call and no backoff. */
+function sh(cmd: string, args: string[], options: { attempts?: number } = {}): string {
   if (cmd !== 'gh') {
     return execFileSync(cmd, args, {
       encoding: 'utf8',
@@ -68,7 +69,7 @@ function sh(cmd: string, args: string[]): string {
   // write (those never go through `sh()` — see `publication.ts`'s own
   // direct `execFileSync`). Read per call, not once at module load, so a
   // fixture can override it without needing a fresh module instance.
-  const attempts = shEnvOverride('VINAYA_DEV_REVIEW_LOOP_GH_RETRY_ATTEMPTS', 3)
+  const attempts = options.attempts ?? shEnvOverride('VINAYA_DEV_REVIEW_LOOP_GH_RETRY_ATTEMPTS', 3)
   const backoffMs = shEnvOverride('VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS', 500)
   let lastErr: unknown
   for (let attempt = 1; attempt <= attempts; attempt++) {

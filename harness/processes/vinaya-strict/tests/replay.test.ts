@@ -81,6 +81,8 @@ for (const vendor of ['claude', 'codex'] as const)
         expect.arrayContaining(['loop_started', 'round_started', 'gate_result_read', 'verdicts_read'])
       )
       expect(names.indexOf('gate_result_read')).toBeLessThan(names.indexOf('verdicts_read'))
+      // The run names its task from `loop_started` alone: the title the one Issue read at loop start gave.
+      expect(run.events.find((e) => e.event === 'loop_started')).toMatchObject({ task: TASK, title: 'A backlog task' })
     })
 
     test('a red gate loops back to develop, which continues its own session', async () => {

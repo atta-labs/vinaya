@@ -369,6 +369,12 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     const lineageRuns = new Set(resumedRunLines.map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run))
     expect(lineageRuns.size).toBe(1)
     expect([...lineageRuns][0]).not.toBeNull()
+
+    // The first run's `loop_started` and the resumed run's own both name the task Issue's title.
+    const started = lines.filter((l) => l.kind === 'dev_review_loop' && l.event === 'loop_started')
+    expect(started.length).toBe(2)
+    expect(lines.indexOf(started[1]!)).toBeGreaterThan(resumedIdx)
+    for (const line of started) expect(line).toMatchObject({ task: world.task, title: world.issueTitle })
   })
 })
 

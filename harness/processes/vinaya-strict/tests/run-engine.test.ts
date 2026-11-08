@@ -968,6 +968,30 @@ describe('agent-step failures and the live task context', () => {
     expect(backlog.branch).toBe('task/issue-9')
   })
 
+  test('the loop state carries the task title from the one Issue read at loop start', async () => {
+    const reads: number[] = []
+    const lookups = {
+      policy: () => ({ maxRounds: 4, maxTaskMinutes: 90 }) as never,
+      fetchLabels: (n: number) => (n === 1564 ? ['vinaya/tranche:engine-harness-v1'] : []),
+      fetchTitle: (n: number) => {
+        reads.push(n)
+        if (n === 11) throw new Error('gh issue view: could not reach the forge')
+        return n === 1564 ? '[engine-harness-v1] 5 — The Engine runs one task' : 'A backlog Issue'
+      }
+    }
+    const input = (task: number) =>
+      liveTaskInput({ task, agent: 'claude', dryRun: false }, '/repo', '/runtime', 'l', lookups)
+    // A tranche task's title is the one its branch derivation read.
+    expect((await input(1564)).loopState.config.title).toBe('[engine-harness-v1] 5 — The Engine runs one task')
+    // A backlog task's branch needs no title, so its title is read once for the Log.
+    expect((await input(9)).loopState.config.title).toBe('A backlog Issue')
+    // A read that fails records no title, and the loop still starts.
+    const untitled = await input(11)
+    expect(untitled.branch).toBe('task/issue-11')
+    expect('title' in untitled.loopState.config).toBe(false)
+    expect(reads).toEqual([1564, 9, 11])
+  })
+
   test('staging the review input writes run files under the runtime directory, nothing under the repository', async () => {
     const root = realpathSync(fixtureDir('engine-repo-'))
     const runtimeDir = realpathSync(fixtureDir('engine-runtime-'))

@@ -775,3 +775,68 @@ describe('version 1 Log compatibility', () => {
     }
   })
 })
+
+describe('loop_started names the task title', () => {
+  const title = '[studio-v1] 3 — A loop records its task title'
+  const gate: Observations = { kind: 'gate', round: 1, green: true, stats: stats(1) }
+  const loopStarted = (events: readonly unknown[]) =>
+    events.find((event) => (event as { event?: unknown }).event === 'loop_started') as
+      | Record<string, unknown>
+      | undefined
+  const expectParses = (event: Record<string, unknown> | undefined) => {
+    const parsed = DevReviewLoopEventSchema.safeParse({ ...event, ...envelope(0) })
+    if (!parsed.success) throw new Error(`loop_started does not parse: ${parsed.error.message}`)
+  }
+
+  test('a loop that starts with a title records it', () => {
+    const started = loopStarted(assessRound(initialLoopState({ ...config, title }), gate).events)
+    expect(started).toMatchObject({ event: 'loop_started', task: 1570, title })
+    expectParses(started)
+  })
+
+  test('a loop whose Issue read gave no title records none', () => {
+    const started = loopStarted(assessRound(initialLoopState(config), gate).events)
+    expect(started).toBeDefined()
+    expect(started && 'title' in started).toBe(false)
+    expectParses(started)
+  })
+
+  test('a restarted leg names the title its recorded loop state kept', () => {
+    const recorded = (state: LoopState) => ({
+      'assess-gate': {
+        exitCode: 0,
+        stderr: '',
+        stdout: JSON.stringify({
+          seq: 1,
+          state: JSON.parse(encodeLoopState(state)),
+          decision: { type: 'dispatch_reviewers' },
+          events: [
+            {
+              kind: 'dev_review_loop',
+              payload: {},
+              loop_id: 'loop-test',
+              event: 'round_started',
+              round: 1,
+              base_head: 'base-1'
+            }
+          ]
+        })
+      }
+    })
+    const restart = (state: LoopState) => {
+      const producer = createVinayaLogProducers(config)
+      producer.legStarted!({ resumed: true, steps: {} })
+      return producer.nodeCompleted!({ nodeId: 'assess-gate', runId: 'r', attempt: 1, steps: recorded(state) }) ?? []
+    }
+
+    const titled = loopStarted(restart(initialLoopState({ ...config, title })))
+    expect(titled).toMatchObject({ event: 'loop_started', task: 1570, title })
+    expectParses(titled)
+
+    // A state recorded before the title existed restarts with no title, as before.
+    const untitled = loopStarted(restart(initialLoopState(config)))
+    expect(untitled).toBeDefined()
+    expect(untitled && 'title' in untitled).toBe(false)
+    expectParses(untitled)
+  })
+})

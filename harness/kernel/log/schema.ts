@@ -433,6 +433,11 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       ...loopShared,
       event: z.literal('loop_started'),
       task: z.number().int(),
+      // The task Issue's title, read from the forge once when the loop starts
+      // and recorded here only. Optional: a run whose Issue read gave no title
+      // records none, and every line written before the field existed parses
+      // exactly as it always did.
+      title: z.string().optional(),
       policy: z
         .object({
           max_rounds: z.number().int().nonnegative(),

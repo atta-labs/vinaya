@@ -99,6 +99,7 @@ function loopStartedEvent(state: LoopState): DevReviewLoopEventInput {
     ...loopEventEnvelope(state),
     event: 'loop_started',
     task: state.config.task,
+    ...(state.config.title === undefined ? {} : { title: state.config.title }),
     policy: {
       // Repository policy, resolved once by the driver into
       // `LoopConfig.maxRounds` — never a hardcoded constant here.
