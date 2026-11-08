@@ -325,3 +325,13 @@ export async function runDemoBreak(repoRoot: string, args: string[]): Promise<nu
   process.stdout.write(`\n✓ Cleaned up — back on \`${originalBranch}\`, \`${demoBranch}\` deleted.\n`)
   return 0
 }
+
+import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
+
+/**
+ * Not a routed command: `quickstart` runs this refusal-then-fix proof as its step 5 (the
+ * `demo break` route it once had is removed). It is a step of that command, not a command.
+ */
+export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
+  'demo.ts': { date: '2026-11-08', callsToday: 0, retiresVia: 'quickstart' }
+}

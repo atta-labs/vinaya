@@ -17,15 +17,15 @@ import {
   defaultControlStoreDeps,
   readEffect,
   StaleEpochWriteError
-} from '../connectors/checkpoint/control-store/index'
+} from '../../../../kernel/connectors/checkpoint/control-store/index'
 import {
   createEffectExecutor,
   EffectExecutor,
   EffectRetryRefusedError,
   type EffectReconcileResult,
   sha256Hex
-} from './effects'
-import type { LogEventInput } from '../log/log-sink'
+} from '../../../../kernel/effects/effects'
+import type { LogEventInput } from '../../../../kernel/log/log-sink'
 
 let dir: string
 let deps: ControlStoreDeps

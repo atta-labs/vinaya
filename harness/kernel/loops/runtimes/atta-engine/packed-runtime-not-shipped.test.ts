@@ -15,6 +15,8 @@ import { join, relative } from 'node:path'
 
 const CLI = join(import.meta.dir, '../../../../../apps/cli')
 const FIXTURES = '../../harness/kernel/loops/runtimes/atta-engine/fixtures'
+/** Where the synthetic package below carries a copy of a vendored tarball inside its own tree. */
+const PACKED_COPY = 'tests/fixtures/atta-engine'
 const SOURCE = /\.(?:ts|tsx|js|jsx|mjs|cjs|mts|cts)$/
 const TRANSPILERS = {
   ts: new Bun.Transpiler({ loader: 'ts' }),
@@ -125,14 +127,14 @@ describe('packed Atta fixtures remain development-only', () => {
   it('flags a vendored tarball published by directory, by path, by glob, or copied under another name', () => {
     const root = mkdtempSync(join(tmpdir(), 'packed-runtime-not-shipped-'))
     scratch.push(root)
-    mkdirSync(join(root, FIXTURES), { recursive: true })
+    mkdirSync(join(root, PACKED_COPY), { recursive: true })
     mkdirSync(join(root, 'dist'), { recursive: true })
-    copyFileSync(join(CLI, FIXTURES, vendored[0] as string), join(root, FIXTURES, vendored[0] as string))
+    copyFileSync(join(CLI, FIXTURES, vendored[0] as string), join(root, PACKED_COPY, vendored[0] as string))
     writeFileSync(join(root, 'dist/index.js'), 'console.log(1)\n')
 
     expect(publishedOffenders(root, ['dist'], vendoredDigests)).toEqual([])
-    for (const files of [['tests'], [FIXTURES], [`${FIXTURES}/${vendored[0]}`], ['**/*.tgz']]) {
-      expect(publishedOffenders(root, files, vendoredDigests)).toEqual([`${FIXTURES}/${vendored[0]}`])
+    for (const files of [['tests'], [PACKED_COPY], [`${PACKED_COPY}/${vendored[0]}`], ['**/*.tgz']]) {
+      expect(publishedOffenders(root, files, vendoredDigests)).toEqual([`${PACKED_COPY}/${vendored[0]}`])
     }
 
     copyFileSync(join(CLI, FIXTURES, vendored[0] as string), join(root, 'dist/runtime.bin'))

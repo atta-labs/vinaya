@@ -29,7 +29,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { type BriefFacts, parseRationaleFields, renderBrief } from '../../../tools/task-contract/brief-render'
 import { NO_GATE_CUTOVERS } from '../../../tools/task-contract/gate-cutovers'
-import { PROGRAMS } from '../../../tools/programs'
+import { PROGRAMS } from '../../../tools/programs.js'
 
 export const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', '..')
 
@@ -52,6 +52,8 @@ export const SUITE_INPUTS: readonly string[] = [
   // The command data file, the known-failures list and the suite's own code.
   'harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/',
   'harness/kernel/conformance/unit/process-fixture.ts',
+  // The program table the suite reads each program's source and bin from.
+  'harness/processes/vinaya-strict/tools/programs.ts',
   'harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/driver-socket-reach.ts',
   // The driver code that builds each agent's sandbox settings.
   'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts',

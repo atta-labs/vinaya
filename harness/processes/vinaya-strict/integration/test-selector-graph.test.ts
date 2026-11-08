@@ -169,7 +169,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-vinaya-policy.test.ts',
     'harness/processes/vinaya-strict/integration/adapters/agents/dispatch/launch-intent.test.ts',
     'harness/processes/vinaya-strict/integration/isolation/worker-boundary.test.ts',
-    'harness/kernel/effects/executor.test.ts',
+    'harness/processes/vinaya-strict/integration/effects/executor.test.ts',
     'harness/processes/vinaya-strict/integration/log/client/loop-log.test.ts',
     'harness/processes/vinaya-strict/integration/run-paths.test.ts',
     'harness/processes/vinaya-strict/tests/lib/task-status.test.ts',

@@ -67,14 +67,18 @@ describe('every checks/bin executable carries mode 100755 in the git index', () 
     try {
       chmodSync(staleDistCheck, 0o000)
       utimesSync(staleDistCheck, new Date(0), new Date(0))
-      const result = spawnSyncBudgeted(process.execPath, ['apps/cli/src/index.ts', 'check', 'pr-report-density'], {
-        cwd: REPO_ROOT,
-        encoding: 'utf8',
-        env: {
-          ...stripVinayaEnv(),
-          PR_BODY: '## Scope\n\nSource execution.\n<!-- AEG:TIER:START -->\n**Tier:** 0\n<!-- AEG:TIER:END -->'
+      const result = spawnSyncBudgeted(
+        process.execPath,
+        ['harness/processes/vinaya-strict/checks/check.ts', 'pr-report-density'],
+        {
+          cwd: REPO_ROOT,
+          encoding: 'utf8',
+          env: {
+            ...stripVinayaEnv(),
+            PR_BODY: '## Scope\n\nSource execution.\n<!-- AEG:TIER:START -->\n**Tier:** 0\n<!-- AEG:TIER:END -->'
+          }
         }
-      })
+      )
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
       expect(result.stdout).toContain('pr-report-density: pass')
     } finally {

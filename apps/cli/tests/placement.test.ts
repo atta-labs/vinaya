@@ -79,10 +79,10 @@ afterEach(() => {
 })
 
 describe('placement — the Vinaya process holds its run control and role dispatch, the CLI does not', () => {
-  it('lists forty-one moved files, each with one old and one new path', () => {
-    expect(MOVED_OUT_OF_THE_CLI.length).toBe(41)
-    expect(new Set(MOVED_OUT_OF_THE_CLI.map(([old]) => old)).size).toBe(41)
-    expect(new Set(MOVED_OUT_OF_THE_CLI.map(([, now]) => now)).size).toBe(41)
+  it('lists forty moved files, each with one old and one new path', () => {
+    expect(MOVED_OUT_OF_THE_CLI.length).toBe(40)
+    expect(new Set(MOVED_OUT_OF_THE_CLI.map(([old]) => old)).size).toBe(40)
+    expect(new Set(MOVED_OUT_OF_THE_CLI.map(([, now]) => now)).size).toBe(40)
     for (const [old, now] of MOVED_OUT_OF_THE_CLI) {
       expect(old.startsWith('apps/cli/src/'), old).toBe(true)
       expect(now.startsWith(`${PROCESS}/`), now).toBe(true)

@@ -46,6 +46,14 @@ const MOVED_TEST_FILES = [
   'registry-write.test.ts',
   'task-run-engine.test.ts'
 ].map((name) => join(PROCESS_TESTS_ROOT, name))
+/** The real-sandbox tests and helpers that moved under the process's integration folder. */
+const MOVED_INTEGRATION_FILES = [
+  'isolation/sandbox-conformance/sandbox-conformance.test.ts',
+  'isolation/sandbox-conformance/sandbox-launch.ts',
+  'isolation/dispatch/linux-sandbox-probe.test.ts',
+  'isolation/worker-boundary.test.ts',
+  'adapters/agents/dispatch/unattended.test.ts'
+].map((name) => join(PROCESS_TESTS_ROOT, '..', 'integration', name))
 
 /** Syntax-tree walk: the host-platform reads in one source text, as 1-based line numbers. */
 export function hostPlatformReads(fileName: string, source: string): number[] {
@@ -139,15 +147,15 @@ export function hostPlatformReads(fileName: string, source: string): number[] {
  * reason beside it.
  */
 const REAL_SANDBOX_FILES: Readonly<Record<string, string>> = {
-  'sandbox-conformance/sandbox-conformance.test.ts':
+  '../../../harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/sandbox-conformance.test.ts':
     "drives each vendor's real sandbox on the host and asserts what it really confines",
-  'sandbox-conformance/sandbox-launch.ts':
+  '../../../harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/sandbox-launch.ts':
     'launches a real sandbox on the real host, so the scratch directory it hands the sandbox depends on the host platform',
-  'lib/dispatch/linux-sandbox-probe.test.ts':
+  '../../../harness/processes/vinaya-strict/integration/isolation/dispatch/linux-sandbox-probe.test.ts':
     'its live block runs the real Linux sandbox probe, which exists only on a Linux host',
-  'lib/dispatch/worker-boundary.test.ts':
+  '../../../harness/processes/vinaya-strict/integration/isolation/worker-boundary.test.ts':
     "asserts the host's own Seatbelt boundary and bubblewrap detection against the real host facts",
-  'lib/dispatch/unattended.test.ts':
+  '../../../harness/processes/vinaya-strict/integration/adapters/agents/dispatch/unattended.test.ts':
     "spawns the real dispatch command, whose confinement is the host's real sandbox, so its confinement cases are per platform",
   '../../../harness/processes/vinaya-strict/tests/commands/dispatch-task.test.ts':
     "spawns the real dispatch command, whose confinement is the host's real sandbox, so its cases are per platform",
@@ -204,7 +212,8 @@ describe('CLI tests do not read the host platform outside the real-sandbox list'
     ...testFiles(TESTS_ROOT),
     ...testFiles(STANDALONE_TESTS_ROOT),
     ...MOVED_TEST_FOLDERS.flatMap(testFiles),
-    ...MOVED_TEST_FILES
+    ...MOVED_TEST_FILES,
+    ...MOVED_INTEGRATION_FILES
   ]) {
     const lines = hostPlatformReads(file, readFileSync(file, 'utf8'))
     if (lines.length > 0) readers.set(relative(TESTS_ROOT, file), lines)

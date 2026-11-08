@@ -223,8 +223,8 @@ const SITES: Record<string, number> = {
   'harness/processes/vinaya-strict/integration/log/log-destination.test.ts createLogSink embedded': 1,
   'harness/processes/vinaya-strict/integration/log/log-sink.test.ts createLogSink code': 50,
   'harness/processes/vinaya-strict/integration/log/log-sink.test.ts createLogSink embedded': 2,
-  'harness/kernel/log/client/log-sync-folder-source.test.ts createLogSink code': 2,
-  'harness/kernel/log/log-sink-doctrine-identity.test.ts createLogSink code': 1,
+  'harness/processes/vinaya-strict/integration/log/client/log-sync-folder-source.test.ts createLogSink code': 2,
+  'harness/processes/vinaya-strict/integration/log/log-sink-doctrine-identity.test.ts createLogSink code': 1,
   // Run for the Log client's own sink and the Engine runner's, each taken as a loop value and called once per case.
   'harness/processes/vinaya-strict/integration/log/client/log-sink-off.test.ts createLogSink reference': 1,
   // Samples the destination-isolation analyzer reads as text; nothing runs them.
@@ -233,7 +233,12 @@ const SITES: Record<string, number> = {
 
 const CENSUS_FILE = 'harness/processes/vinaya-strict/integration/log/log-sink-factory.test.ts'
 
-const isTestPath = (path: string): boolean => path.includes('/tests/') || /\.test\.tsx?$/.test(path)
+// Test support outside a `tests/` folder counts as test code too: fixtures, and the process's test preload.
+const isTestPath = (path: string): boolean =>
+  path.includes('/tests/') ||
+  path.includes('/fixtures/') ||
+  path.endsWith('/test-preload.ts') ||
+  /\.test\.tsx?$/.test(path)
 
 function censusedSites(): Record<string, number> {
   const files = execFileSync(

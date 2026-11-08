@@ -169,7 +169,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-vinaya-policy.test.ts',
     'harness/processes/vinaya-strict/integration/adapters/agents/dispatch/launch-intent.test.ts',
     'harness/processes/vinaya-strict/integration/isolation/worker-boundary.test.ts',
-    'harness/kernel/effects/executor.test.ts',
+    'harness/processes/vinaya-strict/integration/effects/executor.test.ts',
     'harness/processes/vinaya-strict/integration/log/client/loop-log.test.ts',
     'harness/processes/vinaya-strict/integration/run-paths.test.ts',
     'harness/processes/vinaya-strict/tests/lib/task-status.test.ts',
@@ -375,14 +375,14 @@ describe('the repository-root configuration selects the whole CLI suite transiti
     // its selection is the rule's own doing and nothing else's.
     writeFileSync(join(cli, 'tests', 'orphan.test.ts'), 'const x = 1\nexport default x\n')
     mkdirSync(join(cli, 'src', 'lib'), { recursive: true })
-    writeFileSync(join(cli, 'src', 'lib', 'config.ts'), 'export function loadConfig() { return null }\n')
+    writeFileSync(join(cli, 'src', 'lib', 'settings.ts'), 'export function loadConfig() { return null }\n')
     writeFileSync(
       join(cli, 'src', 'uses-config.ts'),
-      "import { loadConfig } from './lib/config.js'\nexport function usesConfig() { return loadConfig() }\n"
+      "import { loadConfig } from './lib/settings.js'\nexport function usesConfig() { return loadConfig() }\n"
     )
     writeFileSync(
       join(cli, 'tests', 'loader.test.ts'),
-      "import { loadConfig } from '../src/lib/config.js'\nloadConfig()\n"
+      "import { loadConfig } from '../src/lib/settings.js'\nloadConfig()\n"
     )
     // Reaches the loader only through a second file: a depth-two edge.
     writeFileSync(
@@ -396,11 +396,7 @@ describe('the repository-root configuration selects the whole CLI suite transiti
     writeFileSync(join(other, 'src', 'index.ts'), 'export function other() { return 3 }\n')
     writeFileSync(join(other, 'src', 'other.test.ts'), "import { other } from './index.js'\nother()\n")
 
-    return {
-      root,
-      cliEntrypoint: 'apps/cli/src/index.ts',
-      configLoader: 'harness/processes/vinaya-strict/integration/config/compose.ts'
-    }
+    return { root, cliEntrypoint: 'apps/cli/src/index.ts', configLoader: 'apps/cli/src/lib/settings.ts' }
   }
 
   it('under the transitive walk a change to only it selects every test in the CLI package, orphan included', () => {
@@ -477,10 +473,9 @@ describe('the repository-root configuration selects the whole CLI suite transiti
     const { selected } = selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, ROOT_CONFIG_FILENAME)], { depth: 'one' })
     const cliTests = selected.filter((f) => f.startsWith(join(REPO_ROOT, 'apps', 'cli')))
     const onDisk = walkFiles(join(REPO_ROOT, 'apps', 'cli')).filter(isTestFile)
-    // The configuration golden test imports `../src/lib/config.js` directly, so it is one of them.
-    expect(cliTests).toContain(
-      join(REPO_ROOT, 'harness/processes/vinaya-strict/integration/config/config-golden.test.ts')
-    )
+    // The tracked-hooks test imports the loader directly, so it is one of them (the configuration golden test that
+    // did moved out of the CLI package with the loader).
+    expect(cliTests).toContain(join(REPO_ROOT, 'apps/cli/tests/tracked-hooks.test.ts'))
     expect(cliTests.length).toBeLessThan(onDisk.length / 4)
   }, 60_000)
 })

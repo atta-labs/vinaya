@@ -62,6 +62,8 @@ const MOVED_LIBRARY_FILES = ['loops/dev-review/flow-v2-events.ts', 'loops/dev-re
 /** The library modules that moved out of `apps/cli/src/lib/` into the kernel; the commands still call them as a library. */
 const KERNEL_LIBRARY_FILES = [
   'adapters/agents/agent-stream.ts',
+  'effects/prompt.ts',
+  'gates/ring0-hooks/pre-push/push-progress.ts',
   'adapters/agents/agent-vendors.ts',
   'adapters/agents/codex/loop-narration-codex.ts',
   'adapters/code-host/github/forge-read.ts',

@@ -707,7 +707,12 @@ function commitDrift(commit: string, recorded: Corpus['baseline']['loopSurface']
     range,
     recorded.map((f) => f.path)
   )
-  const corpusCommits = commitsTouching(cwd, range, [CORPUS_REL])
+  // Every name the corpus has had: a default-branch commit that updated it under an earlier name still records it.
+  const corpusNames = git(['log', '--follow', '--name-only', '--format=', '--', CORPUS_REL], cwd)
+    .out.toString()
+    .split('\n')
+    .filter(Boolean)
+  const corpusCommits = commitsTouching(cwd, range, [...new Set([CORPUS_REL, ...corpusNames])])
   const out: string[] = []
   for (const sha of later) {
     const newest = !later.some((o) => o !== sha && git(['merge-base', '--is-ancestor', sha, o], cwd).ok)

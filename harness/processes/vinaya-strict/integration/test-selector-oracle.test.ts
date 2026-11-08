@@ -169,7 +169,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-vinaya-policy.test.ts',
     'harness/processes/vinaya-strict/integration/adapters/agents/dispatch/launch-intent.test.ts',
     'harness/processes/vinaya-strict/integration/isolation/worker-boundary.test.ts',
-    'harness/kernel/effects/executor.test.ts',
+    'harness/processes/vinaya-strict/integration/effects/executor.test.ts',
     'harness/processes/vinaya-strict/integration/log/client/loop-log.test.ts',
     'harness/processes/vinaya-strict/integration/run-paths.test.ts',
     'harness/processes/vinaya-strict/tests/lib/task-status.test.ts',
@@ -696,7 +696,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // against a real, isolated sink), so a `log-sink.ts` change now selects that
 // one extra suite. Same rule.
 //
-// Raised 26 → 27 (`log-readers-v1` 6): `harness/kernel/log/client/log-sync-folder-source.test.ts`
+// Raised 26 → 27 (`log-readers-v1` 6): `harness/processes/vinaya-strict/integration/log/client/log-sync-folder-source.test.ts`
 // imports `log-sink.ts` directly — `createLogSink`, to write the real,
 // hardened-appended fixture folders the folder source is proven against,
 // never a fake filesystem — so a `log-sink.ts` change now selects that one
@@ -742,7 +742,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // Raised 37 → 38: the selection library's own test file was split into four by describe group, and one more of the
 // four imports `config.ts` directly — one new file, so a change to `config.ts` selects that one extra suite. Same rule.
 //
-// Raised 38 → 39: `harness/kernel/log/log-sink-doctrine-identity.test.ts` proves the sink's new `doctrineIdentity`
+// Raised 38 → 39: `harness/processes/vinaya-strict/integration/log/log-sink-doctrine-identity.test.ts` proves the sink's new `doctrineIdentity`
 // dependency and imports `log-sink.ts` directly — one new file, so a change to the sink selects that one extra suite.
 // Same rule.
 //

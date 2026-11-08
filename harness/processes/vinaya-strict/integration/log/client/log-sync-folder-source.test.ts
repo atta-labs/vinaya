@@ -12,8 +12,8 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogSink, type LogSinkDeps, type LogSinkOverrides } from '../log-sink.js'
-import { createFolderLogSource } from './log-sync-folder-source.js'
+import { createLogSink, type LogSinkDeps, type LogSinkOverrides } from '../../../../../kernel/log/log-sink.js'
+import { createFolderLogSource } from '../../../../../kernel/log/client/log-sync-folder-source.js'
 
 // The folder source is proven against REAL temporary folders, written for
 // the most part by the sink's own hardened append (O6) — no fake

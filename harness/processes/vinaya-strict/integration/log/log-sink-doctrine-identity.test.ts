@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogSink, type LogSinkDeps, type LogSinkOverrides } from './log-sink.js'
+import { createLogSink, type LogSinkDeps, type LogSinkOverrides } from '../../../../kernel/log/log-sink.js'
 
 // The sink names no doctrine layout: the version a header records comes from
 // the optional `doctrineIdentity` dependency its builder supplies, asked once
