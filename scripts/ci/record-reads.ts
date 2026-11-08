@@ -247,11 +247,15 @@ async function recordTest(
   })
   for await (const line of lines) reader.feed(line)
   rmSync(traceFile, { force: true })
-  const { reads, listed, git: touchedGit, truncated } = reader.result()
+  const { reads, listed, git: touchedGit, gitReaders, truncated } = reader.result()
   const recorded: RecordedTest = {
     reads: [...reads].sort(),
     listed: [...listed].sort(),
-    ...(touchedGit ? { fallback: 'git-read' as const } : truncated ? { fallback: 'truncated-path' as const } : {}),
+    ...(touchedGit
+      ? { fallback: 'git-read' as const, gitReaders: [...gitReaders].sort() }
+      : truncated
+        ? { fallback: 'truncated-path' as const }
+        : {}),
     ...(branchesOnPlatform(repoRoot, reads) ? { branchesOnPlatform: true } : {})
   }
   return { test, recorded, reason: 'recorded', ms }

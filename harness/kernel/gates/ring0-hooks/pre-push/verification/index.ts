@@ -67,6 +67,7 @@ export {
   anyDependencyRead,
   DEPENDENCY_PACKAGE_SEPARATOR,
   dependencyRead,
+  execArguments,
   gitPathArguments,
   indexRecordedTest,
   installedPackageName,

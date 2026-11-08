@@ -213,6 +213,29 @@ describe('the syscall trace reader', () => {
     expect(log.git).toBe(true)
   })
 
+  it('follows an execve the tracer printed in two halves, and names the command behind a fallback', () => {
+    const split = readsOfTrace(
+      trace(
+        '9 execve("/usr/bin/git", ["git", "show", "HEAD:a.json"], 0x7ffe /* 4 vars */ <unfinished ...>',
+        '9 <... execve resumed>)                = 0',
+        `9 openat(AT_FDCWD</work/repo>, "/work/repo/.git/objects/pack/pack-1.idx", O_RDONLY) = 3</work/repo/.git/objects/pack/pack-1.idx>`
+      ),
+      options()
+    )
+    expect(split.git).toBe(false)
+    expect(split.reads.has('a.json')).toBe(true)
+    const log = readsOfTrace(
+      trace(
+        '8 execve("/usr/bin/git", ["git", "log", "--oneline"], 0x7ffe /* 12 vars */ <unfinished ...>',
+        '8 <... execve resumed>)                = 0',
+        '8 stat("/work/repo/.git/index", 0x7) = 0'
+      ),
+      options()
+    )
+    expect(log.git).toBe(true)
+    expect([...log.gitReaders]).toEqual(['git log --oneline'])
+  })
+
   it('reads the paths of a git command only from <rev>:<path> arguments it can name', () => {
     expect(gitPathArguments('"/usr/bin/git", ["git", "show", "HEAD:a/b.json"], 0x1 /* 3 vars */')).toEqual(['a/b.json'])
     expect(gitPathArguments('"/usr/bin/git", ["git", "rev-parse", "HEAD"], 0x1')).toEqual([])

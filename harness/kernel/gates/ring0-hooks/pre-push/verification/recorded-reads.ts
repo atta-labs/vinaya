@@ -25,6 +25,8 @@ export type RecordedTest = {
   listed: string[]
   /** Set when the test read under `.git/`: the record cannot say what the repository's history changes, so static selection decides. */
   fallback?: RecordFallback
+  /** For a `git-read` fallback: the commands that read repository content under `.git/` with no path to name. */
+  gitReaders?: string[]
   /** Set when a source file the test read branches on `process.platform`: a record taken on Linux says nothing about another platform. */
   branchesOnPlatform?: boolean
 }
@@ -143,8 +145,10 @@ export type TraceReads = {
   reads: Set<string>
   /** Repository-relative folders listed. */
   listed: Set<string>
-  /** Whether anything under `.git/` was touched. */
+  /** Whether repository content under `.git/` (an object or the index) was read by a command whose paths are unknown. */
   git: boolean
+  /** The commands that made `git` true, as their argument lists, for the record to name. */
+  gitReaders: Set<string>
   /** Whether a path argument was cut short by the tracer, so a read went unrecorded. */
   truncated: boolean
 }
@@ -213,6 +217,23 @@ export function isGitContentRead(rel: string): boolean {
   return rel.startsWith('.git/objects/') && !rel.startsWith('.git/objects/info/')
 }
 
+/** An `execve` call's argument list, decoded; `null` when it was printed cut short or cannot be read. */
+export function execArguments(args: string): string[] | null {
+  const program = leadingString(args)
+  if (!program || program.truncated) return null
+  let rest = program.rest.replace(/^\s*,\s*\[/, '')
+  if (rest === program.rest) return null
+  const argv: string[] = []
+  for (;;) {
+    const arg = leadingString(rest)
+    if (!arg) break
+    if (arg.truncated) return null
+    argv.push(arg.value)
+    rest = arg.rest.replace(/^\s*,\s*/, '')
+  }
+  return rest.startsWith(']') ? argv : null
+}
+
 /** Git subcommands whose object reads are exactly the `<rev>:<path>` arguments they name. */
 const GIT_PATH_READERS = new Set(['show', 'cat-file', 'rev-parse'])
 
@@ -224,17 +245,8 @@ const GIT_PATH_READERS = new Set(['show', 'cat-file', 'rev-parse'])
 export function gitPathArguments(args: string): string[] | null {
   const program = leadingString(args)
   if (!program || program.truncated || !/(?:^|\/)git$/.test(program.value)) return null
-  let rest = program.rest.replace(/^\s*,\s*\[/, '')
-  if (rest === program.rest) return null
-  const argv: string[] = []
-  for (;;) {
-    const arg = leadingString(rest)
-    if (!arg) break
-    if (arg.truncated) return null
-    argv.push(arg.value)
-    rest = arg.rest.replace(/^\s*,\s*/, '')
-  }
-  if (!rest.startsWith(']')) return null
+  const argv = execArguments(args)
+  if (argv === null) return null
   let i = 1
   while (i < argv.length && (argv[i] as string).startsWith('-')) i += argv[i] === '-C' || argv[i] === '-c' ? 2 : 1
   const sub = argv[i]
@@ -336,6 +348,17 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
   }
   /** The repository paths a git process reads through `<rev>:<path>` arguments, by process id. */
   const gitPathReads = new Map<string, readonly string[]>()
+  /** Each process's program and arguments, from its last `execve`; an `execve` printed in two halves waits here. */
+  const commands = new Map<string, string>()
+  const pendingExec = new Map<string, string>()
+  const gitReaders = new Set<string>()
+  const startProgram = (pid: string, args: string) => {
+    const paths = gitPathArguments(args)
+    if (paths) gitPathReads.set(pid, paths)
+    else gitPathReads.delete(pid)
+    const argv = execArguments(args)
+    commands.set(pid, argv ? argv.join(' ') : 'an unreadable command')
+  }
   const record = (absolute: string, resolved: boolean, kind: 'read' | 'list', pid = '0') => {
     const real = resolved ? absolute : options.realpath(absolute)
     const rel = relativeOf(real)
@@ -345,7 +368,10 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
         const mapped = gitPathReads.get(pid)
         // The argument may name a file or a folder (a tree): both readings are kept.
         if (mapped) for (const path of mapped) reads.add(path).add(`${path.replace(/\/+$/, '')}/`)
-        else git = true
+        else {
+          git = true
+          gitReaders.add(commands.get(pid) ?? 'the test process')
+        }
       }
       if (rel !== '.git') return
     }
@@ -381,6 +407,12 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     const body = raw.replace(/^(?:\[pid\s+\d+\]\s+|\d+\s+)/, '')
     const resumed = RESUMED.exec(body)
     if (resumed) {
+      if (resumed[1] === 'execve') {
+        const args = pendingExec.get(pid)
+        pendingExec.delete(pid)
+        if (args !== undefined && /\)\s*=\s*0\s*$/.test(body)) startProgram(pid, args)
+        return
+      }
       // The arguments were on the unfinished half; the result's descriptor path still names a resolved file.
       const fd = /\)\s*=\s*\d+<([^>]+)>/.exec(body)
       if (fd && PATH_CALLS.has(resumed[1] as string)) record(fd[1] as string, true, 'read', pid)
@@ -403,9 +435,8 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     }
     if (!PATH_CALLS.has(name)) return
     if (name === 'execve') {
-      const paths = /\)\s*=\s*0\s*$/.test(body) ? gitPathArguments(args) : null
-      if (paths) gitPathReads.set(pid, paths)
-      else gitPathReads.delete(pid)
+      if (/<unfinished \.\.\.>\s*$/.test(body)) pendingExec.set(pid, args)
+      else if (/\)\s*=\s*0\s*$/.test(body)) startProgram(pid, args)
     }
 
     let rest = args
@@ -429,5 +460,5 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     else record(target, false, 'read', pid)
     if (name === 'chdir' && !failed && /\)\s*=\s*0\s*$/.test(body)) cwds.set(pid, options.realpath(target))
   }
-  return { feed, result: () => ({ reads, listed, git, truncated }) }
+  return { feed, result: () => ({ reads, listed, git, gitReaders, truncated }) }
 }
