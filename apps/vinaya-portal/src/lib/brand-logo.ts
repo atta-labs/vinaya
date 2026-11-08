@@ -1,5 +1,5 @@
 import 'server-only'
-import type { CMSBranding } from '@/cms'
+import type { CMSBranding } from '@vinaya/cms'
 import { sanitizeSvg } from '@/app/(site)/roadmap/_lib/sanitize-svg'
 
 // The logo is the CMS branding's solid SVG, inlined into the page rather than shown

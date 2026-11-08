@@ -3,7 +3,7 @@
 import { ImageIcon } from 'lucide-react'
 import Image from 'next/image'
 import { useEffect, useRef } from 'react'
-import type { RoadmapMilestone } from '@/cms'
+import type { RoadmapMilestone } from '@/lib/roadmap-milestones'
 import { Badge, type BadgeTone, Card, CardContent, CardHeader, CardTitle } from '@/ui/components'
 import { cn } from '@/ui/lib/utils'
 import { Flex, Text } from '@/ui/shared'

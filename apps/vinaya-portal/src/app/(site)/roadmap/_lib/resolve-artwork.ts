@@ -1,5 +1,5 @@
 import 'server-only'
-import type { RoadmapMilestone } from '@/cms'
+import type { RoadmapMilestone } from '@/lib/roadmap-milestones'
 import { sanitizeSvg } from './sanitize-svg'
 
 // What a roadmap card shows, decided entirely by that card's own CMS `image` —

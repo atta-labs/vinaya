@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext } from 'react'
-import type { CMSTheme } from '@/cms'
+import type { CMSTheme } from '@vinaya/cms'
 
 interface ThemeContextValue {
   theme: CMSTheme | null

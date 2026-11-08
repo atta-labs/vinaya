@@ -1,0 +1,24 @@
+{
+  "name": "@vinaya/cms",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@sanity/client": "^7.20.0",
+    "culori": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/culori": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}
