@@ -9,7 +9,7 @@ Neither function reads a clock, the disk or the network, and neither imports a N
 
 ## Order and repeats
 
-Order is the event's position, never the time it was received. An event at a position already read changes nothing but the picture's repeat count, so a reconnection that sends events again gives the same picture. A line the normaliser could not read is skipped and counted, never guessed. The same events in the same position order always give the same picture.
+Order is the event's position, never the time it was received. The caller delivers events in ascending position order; the reading keeps only the highest position read, so an event at or below it is treated as already read, and a late event at a lower position is counted as repeated, not read. An event at a position already read changes nothing but the picture's repeat count, so a reconnection that sends events again gives the same picture. A line the normaliser could not read is skipped and counted, never guessed. The same events in the same position order always give the same picture.
 
 ## Which tasks it shows
 
@@ -26,7 +26,7 @@ Every task is in exactly one state. Screens list them in this order:
 5. **Running** — the last sign of life is under ten minutes old, and no exit was recorded after it.
 6. **Ready to merge** — the loop ended ready: a green stop, a ready journal, or a finished driver.
 
-A pause is an event and death is silence, so a paused loop is never presumed dead. A pause the loop answers itself, such as a driver restarting on newer code, leaves the liveness rules in charge. The reasons a person must answer, and those the loop answers itself, come from the Log narration's own table.
+A pause is an event and death is silence, so a paused loop is never presumed dead. A pause the loop answers itself, such as a driver restarting on newer code, leaves the liveness rules in charge. The reasons a person must answer, and those the loop answers itself, come from the Log narration's own table, plus the person-needed set in `picture.ts` (`PERSON_NEEDED_PAUSE_CODES`): the loop's own `developer_turn_<kind>` pause codes, written when it pauses on a Developer turn result.
 
 ## Time
 
@@ -36,7 +36,7 @@ The driver records a heartbeat at most every five minutes. At a tick, a running 
 
 - its title from the loop's start record, or none
 - its state, its amber warning, its recorded reason and, for needs a look, the last decision
-- its rounds: each agent's state, the Developer's stated confidence, the round's time, and each reviewer's verdict with its blocking and non-blocking finding counts and severities. A reviewer's findings are its own only when the record says which reviewer reported them. Otherwise every reviewer in the round shares one mark and the round's counts.
+- its rounds: each agent's state, the Developer's stated confidence, the round's time, and each reviewer's verdict with its blocking and non-blocking finding counts and severities. A reviewer's findings are its own only when the record says which reviewer reported them, and its blocking count is its own whenever a record states it, including the per-reviewer `blockers` a verdicts read lists. Otherwise every reviewer in the round shares one mark and the round's counts.
 - its pull request number
 - a short now-line, its last sign of life, who must act and the exact command to run
 - its feed lines, in the Log narration's words, so a feed line and a terminal line about the same event say the same thing. No line carries an agent's reasoning or a finding's text.

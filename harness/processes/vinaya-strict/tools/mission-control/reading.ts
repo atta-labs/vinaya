@@ -18,6 +18,7 @@ import {
   AMBER_AFTER_MS,
   type FeedLine,
   type FindingCounts,
+  PERSON_NEEDED_PAUSE_CODES,
   type Picture,
   PRESUMED_DEAD_AFTER_MS,
   type ReadingEvent,
@@ -61,7 +62,10 @@ export function standingOf(task: TaskPicture, now: number | null): Standing {
   const { pause, handoff, stop, endedReady, exit } = task.signals
   if (handoff) return { state: 'needs_you', amber: false, reason: handoff.class, decision: null }
   if (pause) {
-    const waitsOn = reasonWaitsOn(pause.code, pause.reason)
+    const waitsOn =
+      pause.code !== null && PERSON_NEEDED_PAUSE_CODES.includes(pause.code)
+        ? 'person'
+        : reasonWaitsOn(pause.code, pause.reason)
     const recorded = pause.code ?? pause.reason
     if (waitsOn === 'person') return { state: 'needs_you', amber: false, reason: recorded, decision: null }
     if (waitsOn === null) {
@@ -203,12 +207,14 @@ function upsertReviewer(reviewers: ReviewerVerdict[], verdict: ReviewerVerdict):
 function reviewerFromDispatch(round: RoundPicture, role: string, outcome: Fields): RoundPicture {
   const word = outcome.verdict
   const verdict: ReviewerOutcome = word === 'APPROVE' || word === 'PASS' ? 'approve' : 'changes_requested'
+  const findings = countFindings(outcome.findings)
   return {
     ...round,
     reviewers: upsertReviewer(round.reviewers, {
       role,
       outcome: verdict,
-      findings: countFindings(outcome.findings),
+      blocking: findings.blocking,
+      findings,
       shared: false
     })
   }
@@ -219,6 +225,8 @@ function reviewerFromDispatch(round: RoundPicture, role: string, outcome: Fields
  * already gave its findings keeps them. Otherwise a finding is credited to a
  * reviewer only when the record names that reviewer alone; with more than
  * one, every reviewer of the round shares the round's counts and one mark.
+ * A listed reviewer's own `blockers` count is the record saying which
+ * reviewer blocked, so it is that reviewer's blocking count.
  */
 function verdictsRead(round: RoundPicture, record: Fields, policyReviewers: string[]): RoundPicture {
   const findings = Array.isArray(record.findings) ? countFindings(record.findings) : null
@@ -230,22 +238,28 @@ function verdictsRead(round: RoundPicture, record: Fields, policyReviewers: stri
           role: r.role as string,
           outcome: (r.outcome === 'approve' || r.outcome === 'not_reviewed'
             ? r.outcome
-            : 'changes_requested') as ReviewerOutcome
+            : 'changes_requested') as ReviewerOutcome,
+          blocking: whole(r.blockers)
         }))
     : null
   const mark: ReviewerOutcome = record.all_approve === true ? 'approve' : 'changes_requested'
-  const entries = listed ?? policyReviewers.map((role) => ({ role, outcome: mark }))
+  const entries = listed ?? policyReviewers.map((role) => ({ role, outcome: mark, blocking: null as number | null }))
   const alone = entries.length === 1
   let reviewers = round.reviewers
   for (const entry of entries) {
     const own = reviewers.find((r) => r.role === entry.role && !r.shared)
     if (own) {
-      reviewers = upsertReviewer(reviewers, { ...own, outcome: listed ? entry.outcome : own.outcome })
+      reviewers = upsertReviewer(reviewers, {
+        ...own,
+        outcome: listed ? entry.outcome : own.outcome,
+        blocking: own.blocking ?? entry.blocking
+      })
       continue
     }
     reviewers = upsertReviewer(reviewers, {
       role: entry.role,
       outcome: entry.outcome,
+      blocking: entry.blocking ?? (alone && findings ? findings.blocking : null),
       findings: alone ? findings : null,
       shared: !alone
     })

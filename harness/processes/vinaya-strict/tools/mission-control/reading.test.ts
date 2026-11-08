@@ -118,7 +118,7 @@ describe('O6 — every recorded fixture execution replays into its expected pict
       checksGreen: true,
       agents: { developer: 'done', 'code-reviewer': 'done' },
       confidence: null,
-      reviewers: [{ role: 'code-reviewer', outcome: 'approve', findings: counts(0, 0, {}), shared: false }]
+      reviewers: [{ role: 'code-reviewer', outcome: 'approve', blocking: 0, findings: counts(0, 0, {}), shared: false }]
     })
     expect(task.machine).toMatch(/^[0-9a-f]{64}$/)
     for (const role of ['developer', 'code-reviewer']) {
@@ -138,20 +138,27 @@ describe('O6 — every recorded fixture execution replays into its expected pict
       { value: 92, unavailable: false, extraTurnSpent: true }
     ])
     expect(task.rounds[0]?.reviewers).toEqual([
-      { role: 'code-reviewer', outcome: 'changes_requested', findings: counts(1, 0, { MAJOR: 1 }), shared: false }
+      {
+        role: 'code-reviewer',
+        outcome: 'changes_requested',
+        blocking: 1,
+        findings: counts(1, 0, { MAJOR: 1 }),
+        shared: false
+      }
     ])
     expect(task.rounds[1]?.reviewers).toEqual([
       {
         role: 'code-reviewer',
         outcome: 'changes_requested',
+        blocking: 1,
         findings: counts(1, 1, { MAJOR: 1, MINOR: 1 }),
         shared: false
       }
     ])
     // Round 3's verdicts name a security reviewer whose own findings no record gives.
     expect(task.rounds[2]?.reviewers).toEqual([
-      { role: 'code-reviewer', outcome: 'approve', findings: counts(0, 0, {}), shared: false },
-      { role: 'security', outcome: 'approve', findings: null, shared: true }
+      { role: 'code-reviewer', outcome: 'approve', blocking: 0, findings: counts(0, 0, {}), shared: false },
+      { role: 'security', outcome: 'approve', blocking: 0, findings: null, shared: true }
     ])
   })
 
@@ -340,6 +347,20 @@ describe('O2 — six states, in their order', () => {
       [1, loopBody('paused', { round: 1, reason: 'refreeze_needed' })]
     ])
     expect(stateAt(events, 60)).toMatchObject({ state: 'needs_a_look', decision: 'refreeze_needed' })
+  })
+
+  it("the loop's own pause on a Developer turn result is needs you, as the loop writes it", () => {
+    for (const kind of ['blocked', 'needs_ruling', 'rejected', 'stale', 'no_adapter']) {
+      const code = `developer_turn_${kind}`
+      // The driver-decided pause: a principal stop, then the pause with its code, then the round's end.
+      const events = stream(60, [
+        [0, loopStarted(60)],
+        [1, loopBody('stop_condition_met', { round: 2, condition: 'principal_stop' })],
+        [1, loopBody('paused', { round: 2, reason: 'principal_item', reason_code: code })],
+        [1, loopBody('driver_exited', { task: 60, reason: 'paused', last_decision: `pause(${code})` })]
+      ])
+      expect(stateAt(events, 600)).toMatchObject({ state: 'needs_you', reason: code, decision: null })
+    }
   })
 
   it('a pause the loop answers itself leaves the liveness rules in charge', () => {
@@ -533,12 +554,12 @@ describe('O1 — what a task holds', () => {
       severities: { MAJOR: 1, MINOR: 1, NIT: 1 }
     })
     expect(round?.reviewers).toEqual([
-      { role: 'code-reviewer', outcome: 'changes_requested', findings: null, shared: true },
-      { role: 'security', outcome: 'changes_requested', findings: null, shared: true }
+      { role: 'code-reviewer', outcome: 'changes_requested', blocking: null, findings: null, shared: true },
+      { role: 'security', outcome: 'changes_requested', blocking: null, findings: null, shared: true }
     ])
   })
 
-  it('a verdict listing each reviewer keeps each outcome, still sharing findings it does not attribute', () => {
+  it('a verdict listing each reviewer keeps each outcome and blocking count, still sharing findings it does not attribute', () => {
     const events = stream(51, [
       [0, loopStarted(51)],
       [
@@ -557,8 +578,8 @@ describe('O1 — what a task holds', () => {
       ]
     ])
     expect(only(replay(events)).rounds[0]?.reviewers).toEqual([
-      { role: 'code-reviewer', outcome: 'approve', findings: null, shared: true },
-      { role: 'security', outcome: 'changes_requested', findings: null, shared: true }
+      { role: 'code-reviewer', outcome: 'approve', blocking: 0, findings: null, shared: true },
+      { role: 'security', outcome: 'changes_requested', blocking: 1, findings: null, shared: true }
     ])
   })
 

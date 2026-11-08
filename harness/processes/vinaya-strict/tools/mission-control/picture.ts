@@ -54,14 +54,35 @@ export type ReviewerOutcome = 'approve' | 'changes_requested' | 'not_reviewed'
  * One reviewer's verdict in one round. `findings` is that reviewer's own
  * counts only when the record says which reviewer reported them; otherwise it
  * is `null`, `shared` is `true`, and the round's own `findings` hold the
- * counts every reviewer of the round shares.
+ * counts every reviewer of the round shares. `blocking` is the reviewer's own
+ * blocking count whenever a record states it — its own findings, or the
+ * per-reviewer `blockers` a verdicts read lists — and `null` when no record
+ * says how many of the round's blocking findings were this reviewer's.
  */
 export type ReviewerVerdict = {
   role: string
   outcome: ReviewerOutcome
+  blocking: number | null
   findings: FindingCounts | null
   shared: boolean
 }
+
+/**
+ * Pause codes the review loop writes that a person must answer, beyond the
+ * reasons the Log narration's own table already knows. The loop pauses on a
+ * Developer turn result with `developer_turn_<kind>`: `blocked` and
+ * `needs_ruling` are escalations for the Principal, and `rejected`, `stale`
+ * and `no_adapter` are infrastructure pauses, which the narration's table
+ * already counts as needing a person. A code in neither list is not
+ * recognised and reads as needs a look.
+ */
+export const PERSON_NEEDED_PAUSE_CODES: readonly string[] = [
+  'developer_turn_blocked',
+  'developer_turn_needs_ruling',
+  'developer_turn_rejected',
+  'developer_turn_stale',
+  'developer_turn_no_adapter'
+]
 
 /** What one role is doing in a round, from its dispatch records. */
 export type AgentState = 'working' | 'done' | 'escalated' | 'failed'
@@ -163,7 +184,11 @@ export type TaskPicture = {
 export type Picture = {
   /** The time of the newest tick; `null` before the first. */
   now: number | null
-  /** The highest position read; an event at or below it has already been read. */
+  /**
+   * The highest position read. The caller delivers events in ascending
+   * position order, so an event at or below it is treated as already read:
+   * a late event at a lower position is counted as repeated, never read.
+   */
   readThrough: number | null
   /** Lines the Log's normaliser could not read: skipped, never guessed. */
   skipped: number
