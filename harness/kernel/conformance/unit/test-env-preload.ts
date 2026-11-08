@@ -137,7 +137,10 @@ process.env.VINAYA_STEP_ONE_TMP ??= join(privateRuntimeDir ?? tmpdir(), 'step-on
  * directory above, and fail the run if any test wrote into the REAL runtime
  * directory (`real-runtime-guard-core.ts`). A preload `afterAll` is the one
  * hook every test process loads, so each CI shard and each local run is
- * covered, whichever files it was given.
+ * covered, whichever files it was given. The one write it never counts is the
+ * CLI's own operation event, which any taskless `vinaya` command on the host
+ * appends to its own file as it exits (`isSanctionedAppend`); the test
+ * process's own runtime stays the private directory above either way.
  */
 afterAll(async () => {
   const fixtures = await releaseFixtureRun()

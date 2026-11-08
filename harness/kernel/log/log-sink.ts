@@ -61,8 +61,17 @@ type Envelope = { meta: unknown; subject: unknown }
 type StripEnvelope<T> = T extends Envelope ? Omit<T, 'meta' | 'subject'> : never
 export type LogEventInput = StripEnvelope<LogEvent>
 
-/** `quiet` drops the one warning `logSync` prints when the process ended before its destination resolved — for a caller that records on every run and may not add a line to a command's stderr. A failure to write still warns. */
-export type LogSyncOptions = { quiet?: boolean }
+/**
+ * `quiet` drops the one warning `logSync` prints when the process ended before its destination resolved — for a caller that records on every run and may not add a line to a command's stderr. A failure to write still warns.
+ *
+ * `unattributedStream` names the file an event that names no Issue is appended to in a FOLDER destination, in place of the shared `none.ndjson`: `<folder>/<owner>-<repo>/<unattributedStream>.ndjson`. The caller chooses the name, so one kind of record can be told apart by its file alone; the line itself, its header and its schema are unchanged. Only a name `isUnattributedStreamName` accepts (`none-` and a lowercase label) is honoured, anything else falls back to `none`, so the name never reaches outside the repository folder, and `vinaya log send` delivers the file as unattributed, exactly as it delivers `none.ndjson`. An event that names an Issue, and a server destination's retry queue, are never affected.
+ */
+export type LogSyncOptions = { quiet?: boolean; unattributedStream?: string }
+
+/** Whether `name` is a valid `unattributedStream`: `none-` and a lowercase label of letters, digits and single hyphens. It holds no path separator, no dot (so never a rotation or drain suffix) and no `..`. */
+export function isUnattributedStreamName(name: string): boolean {
+  return /^none-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)
+}
 
 type RepoRef = { owner: string; repo: string }
 
@@ -824,10 +833,13 @@ export function telemetryOutboxRoot(): string {
 export function outboxPathFor(
   deps: Pick<LogSinkDeps, 'outboxRoot'>,
   repo: { owner: string; repo: string } | null,
-  issue: number | null
+  issue: number | null,
+  unattributedStream?: string
 ): string {
   const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
-  const fileName = `${issue ?? 'none'}.ndjson`
+  const unattributed =
+    unattributedStream !== undefined && isUnattributedStreamName(unattributedStream) ? unattributedStream : 'none'
+  const fileName = `${issue ?? unattributed}.ndjson`
   return join(deps.outboxRoot(), dirName, fileName)
 }
 
@@ -1616,7 +1628,8 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
     ctx: SinkContext,
     branchIssue: number | null,
     headSha: string | null,
-    deliver: boolean
+    deliver: boolean,
+    unattributedStream?: string
   ): void => {
     const { repo, doctrine: doctrineValue, destination } = ctx
     if (destination.kind === 'none') {
@@ -1699,7 +1712,13 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
       appendLine(outboxPathFor(deps, repo, header.subject.issue), line, warnOnce)
       if (deliver) scheduleWebhookDrain(header.subject.issue, destination.url, destination.headers)
     } else {
-      appendLine(outboxPathFor({ outboxRoot: () => destination.folder }, repo, header.subject.issue), line, warnOnce)
+      // Only a folder file is named by the caller's stream: a server's retry
+      // queue stays keyed by Issue, the key its drain reads.
+      appendLine(
+        outboxPathFor({ outboxRoot: () => destination.folder }, repo, header.subject.issue, unattributedStream),
+        line,
+        warnOnce
+      )
     }
   }
 
@@ -1794,7 +1813,7 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
       }
       const branchIssue = ctx.destination.kind === 'none' || call.envFields.task ? null : branchIssueIfSettled(ctx.repo)
       const headSha = e.kind === 'gate' && ctx.destination.kind !== 'none' ? headShaIfSettled() : null
-      writeEvent(e, call, ctx, branchIssue, headSha, false)
+      writeEvent(e, call, ctx, branchIssue, headSha, false, opts.unattributedStream)
     } catch (err) {
       warnOnce(`vinaya: logSync() failed — ${err instanceof Error ? err.message : String(err)}\n`)
     }

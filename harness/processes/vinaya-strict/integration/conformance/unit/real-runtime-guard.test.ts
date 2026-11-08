@@ -11,17 +11,24 @@
  * leaked path — a failing run's summary lists titles, not assertion output.
  */
 import { describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
 import {
   exemptPrefixes,
+  isSanctionedAppend,
   liveTaskPrefixes,
   PROCESS_START_MS,
   realRuntimeDir,
+  SANCTIONED_APPEND_STREAM,
   touchedSince
 } from '../../../../../kernel/conformance/unit/real-runtime-guard-core'
+import { CLI_OPERATION_STREAM } from '../../../../../kernel/log/client/cli-operation-log'
+import { isUnattributedStreamName } from '../../../../../kernel/log/log-sink'
+
+/** The CLI's own entry point, run from source as the shipped program runs it. */
+const CLI_ENTRY = join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'index.ts')
 
 /** Taken at module load so the test's own TITLE names the leaked paths. */
 const leakedAtLoad = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
@@ -135,6 +142,152 @@ describe('real runtime directory guard', () => {
       rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it('exempts exactly the stream the CLI registration names, a name the Log sink accepts', () => {
+    expect(SANCTIONED_APPEND_STREAM).toBe(CLI_OPERATION_STREAM)
+    expect(isUnattributedStreamName(CLI_OPERATION_STREAM)).toBe(true)
+    const repo = 'owner-repo'
+    expect(isSanctionedAppend(join('logs', repo, 'none-cli-operations.ndjson'))).toBe(true)
+    expect(isSanctionedAppend(join('logs', repo, 'none-cli-operations.1.ndjson'))).toBe(true)
+    for (const rel of [
+      'logs',
+      join('logs', repo),
+      join('logs', repo, 'none.ndjson'),
+      join('logs', repo, '9.ndjson'),
+      join('logs', repo, 'none-cli-operations.draining.ndjson'),
+      join('logs', 'none-cli-operations.ndjson'),
+      join('logs', repo, 'nested', 'none-cli-operations.ndjson'),
+      join('tasks-execution', repo, 'none-cli-operations.ndjson'),
+      join('logs', '..', 'none-cli-operations.ndjson')
+    ]) {
+      expect(isSanctionedAppend(rel)).toBe(false)
+    }
+  })
+
+  it('does not flag the sanctioned append or the parents it creates, and flags every other file in that new tree', () => {
+    const root = mkdtempSync(join(tmpdir(), 'real-runtime-guard-'))
+    try {
+      const cutoff = Date.now() - 1000
+      const folder = join(root, 'logs', 'owner-repo')
+      mkdirSync(folder, { recursive: true })
+      writeFileSync(join(folder, 'none-cli-operations.ndjson'), 'x')
+      writeFileSync(join(folder, 'none-cli-operations.1.ndjson'), 'x')
+      // only the sanctioned append, under parents born during the run: nothing to report
+      expect(touchedSince(root, cutoff, [])).toEqual([])
+      // an unrelated leaking test in the same newly created tree is still caught, file by file
+      writeFileSync(join(folder, 'none.ndjson'), 'x')
+      writeFileSync(join(folder, '9.ndjson'), 'x')
+      writeFileSync(join(root, 'logs', 'stray.ndjson'), 'x')
+      mkdirSync(join(folder, 'nested'))
+      writeFileSync(join(folder, 'nested', 'none-cli-operations.ndjson'), 'x')
+      mkdirSync(join(root, 'logs', 'other-repo'))
+      writeFileSync(join(root, 'logs', 'other-repo', 'none.ndjson'), 'x')
+      const found = touchedSince(root, cutoff, [])
+      expect(found).toContain(join('logs', 'owner-repo', 'none.ndjson'))
+      expect(found).toContain(join('logs', 'owner-repo', '9.ndjson'))
+      expect(found).toContain(join('logs', 'stray.ndjson'))
+      expect(found).toContain(join('logs', 'owner-repo', 'nested'))
+      expect(found).toContain(join('logs', 'owner-repo', 'nested', 'none-cli-operations.ndjson'))
+      expect(found).toContain(join('logs', 'other-repo'))
+      expect(found).toContain(join('logs', 'other-repo', 'none.ndjson'))
+      expect(found).not.toContain('logs')
+      expect(found).not.toContain(join('logs', 'owner-repo'))
+      expect(found.some((p) => p.endsWith(join('owner-repo', 'none-cli-operations.ndjson')))).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('flags a new logs tree that holds no sanctioned append, and a non-regular file under the sanctioned name', () => {
+    const root = mkdtempSync(join(tmpdir(), 'real-runtime-guard-'))
+    try {
+      const cutoff = Date.now() - 1000
+      mkdirSync(join(root, 'logs', 'owner-repo'), { recursive: true })
+      expect(touchedSince(root, cutoff, [])).toEqual(['logs', join('logs', 'owner-repo')])
+      symlinkSync(join(root, 'elsewhere'), join(root, 'logs', 'owner-repo', 'none-cli-operations.ndjson'))
+      expect(touchedSince(root, cutoff, [])).toEqual([
+        'logs',
+        join('logs', 'owner-repo'),
+        join('logs', 'owner-repo', 'none-cli-operations.ndjson')
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('applies one rule whichever coding agent runs the tests', () => {
+    const root = mkdtempSync(join(tmpdir(), 'real-runtime-guard-'))
+    try {
+      const cutoff = Date.now() - 1000
+      mkdirSync(join(root, 'logs', 'owner-repo'), { recursive: true })
+      writeFileSync(join(root, 'logs', 'owner-repo', 'none-cli-operations.ndjson'), 'x')
+      writeFileSync(join(root, 'logs', 'owner-repo', 'none.ndjson'), 'x')
+      const claude = { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' }
+      const codex = { CODEX_SANDBOX: 'seatbelt', CODEX_SANDBOX_NETWORK_DISABLED: '1' }
+      expect(exemptPrefixes(claude)).toEqual(exemptPrefixes(codex))
+      const underClaude = touchedSince(root, cutoff, exemptPrefixes(claude))
+      expect(underClaude).toEqual([join('logs', 'owner-repo', 'none.ndjson')])
+      expect(touchedSince(root, cutoff, exemptPrefixes(codex))).toEqual(underClaude)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // The real CLI, run beside a test process whose real runtime directory is a fixture, and the preload's end-of-run check.
+  it('passes a run while a taskless CLI command appends its operation event, and fails one that also leaks beside it', () => {
+    const home = mkdtempSync(join(tmpdir(), 'guard-home-'))
+    const work = mkdtempSync(join(tmpdir(), 'guard-cli-probe-'))
+    try {
+      const root = join(home, '.vinaya', 'runtime', 'o-r')
+      const probe = join(work, 'probe.test.ts')
+      const run = (leak: boolean) => {
+        rmSync(join(home, '.vinaya'), { recursive: true, force: true })
+        writeFileSync(
+          probe,
+          [
+            "import { it } from 'bun:test'",
+            "import { existsSync, readdirSync, writeFileSync } from 'node:fs'",
+            "import { join } from 'node:path'",
+            `const ROOT = ${JSON.stringify(root)}`,
+            "it('a taskless CLI command runs beside the suite', () => {",
+            `  const r = Bun.spawnSync(['bun', ${JSON.stringify(CLI_ENTRY)}, 'version'], { cwd: ${JSON.stringify(work)}, env: { ...process.env, HOME: ${JSON.stringify(home)}, VINAYA_RUNTIME_DIR: ROOT } })`,
+            "  if (r.exitCode !== 0) throw new Error('cli failed: ' + r.stderr.toString())",
+            "  const folders = readdirSync(join(ROOT, 'logs'))",
+            "  if (folders.length !== 1) throw new Error('expected one repository folder, found ' + folders.join(' '))",
+            `  const file = join(ROOT, 'logs', folders[0], ${JSON.stringify(`${CLI_OPERATION_STREAM}.ndjson`)})`,
+            "  if (!existsSync(file)) throw new Error('the CLI wrote no operation event: ' + readdirSync(join(ROOT, 'logs', folders[0])).join(' '))",
+            "  if (existsSync(join(ROOT, 'logs', folders[0], 'none.ndjson'))) throw new Error('the CLI wrote the shared none.ndjson')",
+            "  console.log('CLI_FOLDER=' + folders[0])",
+            leak ? "  writeFileSync(join(ROOT, 'logs', folders[0], '9.ndjson'), 'x')" : '',
+            '})',
+            ''
+          ].join('\n')
+        )
+        // the core backdates its start by one second; the runtime directory is born after it
+        const out = spawnSyncBudgeted(
+          'bun',
+          ['test', '--preload', join(import.meta.dir, '..', '..', 'test-preload.ts'), probe],
+          { cwd: work, env: { ...stripVinayaEnv(), HOME: home, AEG_REPO: 'o/r' }, encoding: 'utf8' }
+        )
+        return { status: out.status, output: `${out.stdout}${out.stderr}` }
+      }
+      const clean = run(false)
+      expect(clean.output).toContain('CLI_FOLDER=')
+      expect(clean.output).not.toContain('tests wrote into the real runtime directory')
+      expect(clean.status).toBe(0)
+      const leaked = run(true)
+      const folder = leaked.output.match(/CLI_FOLDER=(\S+)/)?.[1] as string
+      expect(folder).toBeDefined()
+      expect(leaked.status).not.toBe(0)
+      expect(leaked.output).toContain(
+        `tests wrote into the real runtime directory: ${join('logs', folder, '9.ndjson')}`
+      )
+      expect(leaked.output).not.toContain(join('logs', folder, `${CLI_OPERATION_STREAM}.ndjson`))
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+      rmSync(work, { recursive: true, force: true })
+    }
+  }, 60_000)
 
   // The preload's own end-of-run check, in a child test process whose real runtime directory is a fixture.
   it('passes a run whose other-task loop ends mid-run, fails one never live, and needs the start set', () => {

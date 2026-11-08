@@ -1,5 +1,5 @@
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
-import { recordCliOperationAtExit } from '../../../../kernel/log/client/cli-operation-log.js'
+import { CLI_OPERATION_STREAM, recordCliOperationAtExit } from '../../../../kernel/log/client/cli-operation-log.js'
 import { logSync } from '../../../../kernel/log/log-sink.js'
 import { installVinayaConfigProvider } from '../../integration/config/compose.js'
 import { installVinayaLogSinkFactory } from '../../integration/log/log-sink-factory.js'
@@ -466,7 +466,8 @@ if (isEntryPoint(import.meta.url, 'audit')) {
   recordCliOperationAtExit(['audit', ...process.argv.slice(2)], {
     on: (event, handler) => process.on(event, handler),
     logSync,
-    now: Date.now
+    now: Date.now,
+    unattributedStream: CLI_OPERATION_STREAM
   })
   await auditCommand(process.argv.slice(2))
 }

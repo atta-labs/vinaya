@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { COMMANDS } from '../../commands.js'
+import type { LogSyncOptions } from '../../../../../kernel/log/log-sink.js'
 import {
   CLI_OPERATION,
+  CLI_OPERATION_STREAM,
   cliOperationEvent,
   cliOperationResult,
   cliOperationTarget,
@@ -138,6 +140,22 @@ describe('recordCliOperationAtExit (O2)', () => {
     expect(h.logged).toHaveLength(0)
   })
 
+  it('passes the registration’s own unattributed stream to the sink, quietly, and no stream when none is given', () => {
+    const seen: Array<LogSyncOptions | undefined> = []
+    const handlers: Array<(code: number) => void> = []
+    const deps = {
+      on: (_event: 'exit', handler: (code: number) => void) => handlers.push(handler),
+      logSync: (_e: LogEventInput, opts?: LogSyncOptions) => {
+        seen.push(opts)
+      },
+      now: () => 0
+    }
+    recordCliOperationAtExit(['version'], { ...deps, unattributedStream: CLI_OPERATION_STREAM })
+    recordCliOperationAtExit(['version'], deps)
+    for (const handler of handlers) handler(0)
+    expect(seen).toEqual([{ quiet: true, unattributedStream: CLI_OPERATION_STREAM }, { quiet: true }])
+  })
+
   it('never throws when the sink does', () => {
     const h = harness()
     recordCliOperationAtExit(['check'], {
@@ -159,17 +177,36 @@ describe('the real entry point', () => {
       encoding: 'utf-8'
     })
     const events: Array<Record<string, unknown>> = []
+    const files: string[] = []
     const logsRoot = join(fixture.runtimeDir, 'logs')
     if (existsSync(logsRoot)) {
       for (const f of readdirSync(logsRoot, { recursive: true, encoding: 'utf-8' })) {
         if (!f.endsWith('.ndjson')) continue
         for (const line of readFileSync(join(logsRoot, f), 'utf-8').split('\n')) {
-          if (line.trim() !== '') events.push(JSON.parse(line))
+          if (line.trim() === '') continue
+          const event = JSON.parse(line)
+          if (event.kind === 'operation' && event.operation === CLI_OPERATION) files.push(f)
+          events.push(event)
         }
       }
     }
-    return { ...r, events: events.filter((e) => e.kind === 'operation' && e.operation === CLI_OPERATION) }
+    return { ...r, files, events: events.filter((e) => e.kind === 'operation' && e.operation === CLI_OPERATION) }
   }
+
+  it('appends a taskless invocation’s event to its own stream, never the shared none.ndjson, with the usual header', () => {
+    const r = run(['version'])
+    expect(r.status).toBe(0)
+    expect(r.files).toHaveLength(1)
+    const [folder, file, ...rest] = (r.files[0] as string).split(sep)
+    expect(rest).toEqual([])
+    expect(folder).not.toBe('')
+    expect(file).toBe(`${CLI_OPERATION_STREAM}.ndjson`)
+    const event = r.events[0] as { meta: Record<string, unknown>; subject: Record<string, unknown> }
+    expect(event.subject.issue).toBeNull()
+    expect(event.meta).toMatchObject({ host: 'cli' })
+    expect(typeof event.meta.event_id).toBe('string')
+    expect(typeof event.meta.run_id).toBe('string')
+  })
 
   it('records one event for a process.exit(2) from inside the command, and prints nothing extra', () => {
     const r = run(['not-a-real-command', '--token', 'ghp_secretvalue'])
