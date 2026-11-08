@@ -4,3 +4,4 @@ tests/commands/upgrade-stop-hook.test.ts
 tests/conformance/packed-push-progress.test.ts
 tests/placement.test.ts
 tests/lib/command-loading.test.ts
+tests/lib/startup-loading.test.ts
