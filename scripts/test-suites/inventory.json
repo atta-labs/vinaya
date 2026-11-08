@@ -91,6 +91,10 @@
   ],
   "typeInputs": [
     {
+      "path": "packages/ui",
+      "role": "shared component library package with no tests of its own; the web apps that import it run its code in their suites"
+    },
+    {
       "path": "packages/typescript-config",
       "role": "shared TypeScript configuration package with no tests"
     },
