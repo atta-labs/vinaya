@@ -214,6 +214,8 @@ const SITES: Record<string, number> = {
   'harness/processes/vinaya-strict/integration/log/log-sink.test.ts installVinayaLogSinkFactory embedded': 1,
   'harness/processes/vinaya-strict/tests/integration/log/log-sink-factory.test.ts installVinayaLogSinkFactory embedded': 1,
   'harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts installVinayaLogSinkFactory embedded': 2,
+  // A taskless check run beside a test process, appending its gate events as any check run on the host does.
+  'harness/processes/vinaya-strict/integration/conformance/unit/real-runtime-guard.test.ts installVinayaLogSinkFactory embedded': 1,
   'harness/processes/vinaya-strict/integration/gates/checks/fixtures/run-and-hang.ts installVinayaLogSinkFactory code': 1,
   // Kernel contract tests: each builds the Log client's own sink with a branch reader it gives itself.
   'harness/processes/vinaya-strict/integration/gates/checks/runner-launch.test.ts createLogSink code': 1,
