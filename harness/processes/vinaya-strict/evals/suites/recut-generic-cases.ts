@@ -1494,6 +1494,14 @@ export function formatJson(path: string, value: unknown): string {
 }
 
 const relative = (path: string) => path.slice(REPO_ROOT.length + 1)
+
+/**
+ * The folder every derivation source sat in when the derived files were frozen. The derived files record each
+ * source by that path and by its content digest; the digest binds the content, so a source that later moved is
+ * still recorded at the path it was frozen under, and the frozen bytes stay reproducible.
+ */
+const FROZEN_SOURCE_FOLDER = 'apps/cli/tests/eval'
+const recordedSourcePath = (path: string) => posix.join(FROZEN_SOURCE_FOLDER, posix.basename(path))
 const fileDigest = (path: string) => sha256(readFileSync(path))
 
 /**
@@ -1517,7 +1525,7 @@ function derivedFile(
   const value = {
     schemaVersion: 1,
     split,
-    derivedFrom: derivedFrom.map((source) => ({ file: relative(source), sha256: fileDigest(source) })),
+    derivedFrom: derivedFrom.map((source) => ({ file: recordedSourcePath(source), sha256: fileDigest(source) })),
     suites
   }
   const text = formatJson(path, value)
