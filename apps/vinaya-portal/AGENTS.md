@@ -12,6 +12,8 @@ To add a component to the library, follow the `ui-new-component` skill, [`.agent
 
 These are the same files Claude Code loads on its own for any file under `apps/vinaya-*`, so Claude Code and Codex follow one text.
 
+The Sanity client, the product, branding and theme queries and the theme's renderer are not in this app: they live in the shared CMS package, `@vinaya/cms` under [`packages/cms`](../../packages/cms), which every Vinaya web app imports. A query that reads only this app's own content, such as the roadmap's (`src/lib/roadmap-milestones.ts`), stays here and builds its client with `createProductClient` from that package.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know

@@ -21,7 +21,7 @@
     "changeset:version": "changeset version",
     "changeset:publish": "changeset publish",
     "upgrade": "bun apps/cli/src/index.ts upgrade",
-    "release": "bun apps/cli/src/index.ts release"
+    "release": "bun scripts/release/release.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",

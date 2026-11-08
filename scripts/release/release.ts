@@ -379,3 +379,14 @@ export async function releaseCommand(args: string[]): Promise<void> {
   }
   process.exit(0)
 }
+
+// Run as `bun scripts/release/release.ts [--dry-run] [--allow-any-commit]`: the same arguments and exits the
+// command line's `release` had, a thrown error included (`Error: <message>`, exit 1).
+if (import.meta.main) {
+  try {
+    await releaseCommand(process.argv.slice(2))
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`)
+    process.exit(1)
+  }
+}

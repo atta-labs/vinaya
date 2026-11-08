@@ -1,7 +1,7 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
-import { buildFaviconIcons } from '@/cms'
+import { buildFaviconIcons } from '@vinaya/cms'
 import { getPortalCms } from '@/lib/portal-cms'
 import { NextWebShell } from '@/ui/lib/next-web-shell'
 import { PreviewThemeListener } from '@/ui/lib/preview-theme-listener'

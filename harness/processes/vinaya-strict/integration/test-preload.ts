@@ -3,8 +3,10 @@
  * `bunfig.toml` files name it): the kernel's generic test preload first —
  * cleared credential and host variables, a private runtime directory, the
  * spawn environment wrapper, the abandoned-fixture sweep and the real-runtime
- * guard — then the two installs a Vinaya test process needs, in the order the
- * command line's entry makes them.
+ * guard — then the two installs a Vinaya test process needs: the
+ * configuration provider, then the Log sink factory (the command line's entry
+ * installs the factory first; a test process keeps the order the test preload
+ * always had).
  */
 import '../../../kernel/conformance/unit/test-env-preload.ts'
 

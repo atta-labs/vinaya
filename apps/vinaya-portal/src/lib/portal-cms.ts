@@ -1,7 +1,7 @@
 import 'server-only'
 import { unstable_cache } from 'next/cache'
 import { cache } from 'react'
-import { createProductClient, getProductCms, getThemeById, type ProductCms } from '@/cms'
+import { createProductClient, getProductCms, getThemeById, type ProductCms } from '@vinaya/cms'
 
 const REVALIDATE_SECONDS = 60
 

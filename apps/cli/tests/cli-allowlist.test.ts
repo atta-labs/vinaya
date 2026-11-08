@@ -37,6 +37,22 @@ const tracked = execFileSync('git', ['ls-files', '--', '.'], { cwd: CLI, encodin
   .split('\n')
   .filter(Boolean)
 
+/** The manifest's `bin` map, read from `apps/cli/package.json`. */
+function manifestBin(): Record<string, string> {
+  return (JSON.parse(readFileSync(join(CLI, 'package.json'), 'utf8')) as { bin: Record<string, string> }).bin
+}
+
+/** How a `bin` map differs from `vinaya` plus the program table: bins the table does not name, table bins it lacks, bins at another file. */
+function binDrift(bin: Record<string, string>): { unnamed: string[]; missing: string[]; misplaced: string[] } {
+  const expected: Record<string, string> = { vinaya: 'dist/index.js' }
+  for (const program of PROGRAMS.values()) expected[program.bin] = program.built
+  return {
+    unnamed: Object.keys(bin).filter((name) => !(name in expected)),
+    missing: Object.keys(expected).filter((name) => !(name in bin)),
+    misplaced: Object.keys(bin).filter((name) => name in expected && bin[name] !== expected[name])
+  }
+}
+
 describe('the command line allow list', () => {
   test('classifies every tracked file under apps/cli exactly once', () => {
     expect(tracked.length).toBeGreaterThan(0)
@@ -67,14 +83,11 @@ describe('the command line allow list', () => {
   })
 
   test('the manifest bin map is vinaya plus exactly the program table, each at its built file', () => {
-    const manifest = JSON.parse(readFileSync(join(CLI, 'package.json'), 'utf8')) as { bin: Record<string, string> }
-    const expected: Record<string, string> = { vinaya: 'dist/index.js' }
-    for (const program of PROGRAMS.values()) expected[program.bin] = program.built
-    expect(manifest.bin).toEqual(expected)
+    expect(binDrift(manifestBin())).toEqual({ unnamed: [], missing: [], misplaced: [] })
   })
 
   test('a manifest bin the program table does not name fails', () => {
-    const tableBins = new Set([...PROGRAMS.values()].map((program) => program.bin))
-    expect(['vinaya-not-a-program'].filter((bin) => !tableBins.has(bin))).toEqual(['vinaya-not-a-program'])
+    const drift = binDrift({ ...manifestBin(), 'vinaya-not-a-program': 'dist/programs/not-a-program.js' })
+    expect(drift.unnamed).toEqual(['vinaya-not-a-program'])
   })
 })

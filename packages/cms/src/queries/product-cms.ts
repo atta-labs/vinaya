@@ -20,7 +20,7 @@ async function orNull<T>(label: string, promise: Promise<T>): Promise<T | null> 
   } catch (error) {
     if (process.env.NODE_ENV !== 'production') {
       const reason = error instanceof Error ? error.message : String(error)
-      console.error(`[@atta/cms] ${label} failed — falling back to no CMS content. ${reason}`)
+      console.error(`[@vinaya/cms] ${label} failed — falling back to no CMS content. ${reason}`)
     }
     return null
   }

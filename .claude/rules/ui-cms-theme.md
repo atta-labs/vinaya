@@ -1,11 +1,13 @@
 ---
 paths:
   - "apps/vinaya-*/**"
+  - "packages/ui/**"
+  - "packages/cms/**"
 ---
 
 # The CMS theme — how the portal's variables get their values
 
-These rules govern every web app under `apps/vinaya-*`. They are one of three UI rule files, read together: `.claude/rules/ui-components.md` (components), `.claude/rules/ui-theme-tokens.md` (the variables UI code may use) and this file (how the CMS theme reaches those variables). Claude Code loads them for any file under `apps/vinaya-*`; Codex is pointed at them by the app's `AGENTS.md`. The `atta-labs/ui-rules` check enforces them in CI on every pull request, whichever agent wrote the change.
+These rules govern every web app under `apps/vinaya-*` and the two packages they share: the UI package under `packages/ui` and the CMS package, `@vinaya/cms`, under `packages/cms`, which holds the Sanity client, the queries and the theme's renderer every app reads. They are one of three UI rule files, read together: `.claude/rules/ui-components.md` (components), `.claude/rules/ui-theme-tokens.md` (the variables UI code may use) and this file (how the CMS theme reaches those variables). Claude Code loads this file for any file under `apps/vinaya-*`, `packages/ui` or `packages/cms`; Codex is pointed at it by the app's `AGENTS.md`. The `atta-labs/ui-rules` check enforces them in CI on every pull request, whichever agent wrote the change.
 
 ## Where the theme lives
 
@@ -18,10 +20,10 @@ Editing a colour, a font or the radius is a content change in the Sanity studio,
 
 ## How the theme reaches the variables
 
-1. **One read.** `getPortalCms()` in `apps/vinaya-portal/src/lib/portal-cms.ts` is the app's only CMS read. It calls `getProductCms('vinayaPortal')` (`src/cms/queries/product-cms.ts`), which reads the config singleton and resolves its theme against the Atta Labs project (`getProductConfig` in `src/cms/queries/product-ui-config.ts`). The result is cached for 60 seconds. `PORTAL_THEME_ID` and `PORTAL_COLOR_SCHEME` override the theme and the scheme for one machine without touching the CMS config.
+1. **One read.** `getPortalCms()` in `apps/vinaya-portal/src/lib/portal-cms.ts` is the app's only CMS read. It calls `getProductCms('vinayaPortal')` (`packages/cms/src/queries/product-cms.ts`), which reads the config singleton and resolves its theme against the Atta Labs project (`getProductConfig` in `packages/cms/src/queries/product-ui-config.ts`). The result is cached for 60 seconds. `PORTAL_THEME_ID` and `PORTAL_COLOR_SCHEME` override the theme and the scheme for one machine without touching the CMS config.
 2. **The root layout.** `apps/vinaya-portal/src/app/layout.tsx` passes the config to `NextWebShell` (`src/ui/lib/next-web-shell.tsx`) with `styleId='vinaya-theme'`, `cookieName='vinaya-color-scheme'` and `staticColorScheme`, so the site renders statically.
-3. **The renderer.** `NextWebShell` calls `generateThemeCSS` (`src/cms/utils/theme.ts`), which writes both schemes — light on `:root`, dark on `:root[data-theme="dark"]` — into `<style id="vinaya-theme">`. Each colour field becomes a variable by its kebab-case name (`FIELD_TO_CSS_VAR` in `src/cms/types.ts` for the multi-word ones), its value converted to `oklch` by `cssColorToOklch` (`src/cms/utils/oklch.ts`); typography, spacing and shadows follow. Every declaration passes `toCssDeclarations` (`src/cms/utils/css-safety.ts`), which drops any name or value that could break out of its declaration or fetch a remote resource.
-4. **Fonts.** `getGoogleFontsUrl` (`src/cms/utils/font-loader.ts`) turns `typography` into the Google Fonts `<link>` in `<head>`; no font is named in code.
+3. **The renderer.** `NextWebShell` calls `generateThemeCSS` (`packages/cms/src/utils/theme.ts`), which writes both schemes — light on `:root`, dark on `:root[data-theme="dark"]` — into `<style id="vinaya-theme">`. Each colour field becomes a variable by its kebab-case name (`FIELD_TO_CSS_VAR` in `packages/cms/src/types.ts` for the multi-word ones), its value converted to `oklch` by `cssColorToOklch` (`packages/cms/src/utils/oklch.ts`); typography, spacing and shadows follow. Every declaration passes `toCssDeclarations` (`packages/cms/src/utils/css-safety.ts`), which drops any name or value that could break out of its declaration or fetch a remote resource.
+4. **Fonts.** `getGoogleFontsUrl` (`packages/cms/src/utils/font-loader.ts`) turns `typography` into the Google Fonts `<link>` in `<head>`; no font is named in code.
 5. **The scheme.** `<html data-theme>` starts at the CMS default; a blocking script first in `<head>` corrects it from the `vinaya-color-scheme` cookie before first paint. Tailwind's `dark:` variant follows `data-theme`, not the browser's preference. `ColorSchemeToggle` (`src/ui/lib/color-scheme-toggle.tsx`) flips the attribute, rewrites the style tag and writes the cookie. The cookie name default, the attribute and the resolution order live in `src/ui/lib/color-scheme.ts`; import them, never retype them.
 6. **Tailwind.** The `@theme inline` block of `src/ui/styles/globals.css` maps the rendered variables to Tailwind's names (`--color-primary: var(--primary)`), so `bg-primary` reaches the theme.
 7. **Preview.** In the admin's preview frame, `PreviewThemeListener` (`src/ui/lib/preview-theme-listener.tsx`) receives a theme by `postMessage` and `applyThemeToDOM` (`src/ui/lib/preview-theme-utils.ts`) writes its variables onto `<html>`, so an editor sees a theme before publishing it.
@@ -44,8 +46,8 @@ A genuinely new theme field is a change to the shared theme schema in the Atta L
 
 - Every web app's root layout renders through `NextWebShell`; nothing replicates what it does (no `<style>` of variables per component, no second theme injection).
 - App code reads the CMS through `getPortalCms()`, never through a Sanity client or a GROQ query of its own.
-- A Sanity project is resolved from its product key (`createProductClient` in `src/cms/client.ts`), never from an environment variable.
+- A Sanity project is resolved from its product key (`createProductClient` in `packages/cms/src/client.ts`), never from an environment variable.
 - A theme looked up by id (`getThemeById`) is read from the Atta Labs project, `createProductClient('attalabs')`, where `uiTheme` documents live.
 - `getProductCms` already degrades to `null` and says why outside production; never wrap it in `.catch(() => null)`.
-- A theme value is CSS-guarded at the sink: anything added to `src/cms/utils/theme.ts` that writes a declaration goes through `toCssDeclarations`.
+- A theme value is CSS-guarded at the sink: anything added to `packages/cms/src/utils/theme.ts` that writes a declaration goes through `toCssDeclarations`.
 - Component CSS never overrides `--font-sans`, `--font-serif`, `--font-mono` or any other theme variable.

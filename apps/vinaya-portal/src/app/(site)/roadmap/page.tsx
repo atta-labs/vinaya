@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { getRoadmapMilestones, type RoadmapMilestone } from '@/cms'
+import { getRoadmapMilestones, type RoadmapMilestone } from '@/lib/roadmap-milestones'
 import { getPublishedVersion } from '@/lib/published-version'
 import { Badge } from '@/ui/components'
 import { Heading, Text } from '@/ui/shared'

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test'
-import type { CMSBranding } from '@/cms'
+import type { CMSBranding } from '@vinaya/cms'
 
 mock.module('server-only', () => ({}))
 
