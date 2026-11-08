@@ -3,8 +3,19 @@ import { spawn } from 'node:child_process'
 import { cpus } from 'node:os'
 import { globToRegex } from '../glob-to-regex'
 import type { GateOutcome } from '../../log/schema'
-import { log as defaultLog, warmupLogSink, LOG_FOLDER_ONLY_ENV, type LogEventInput } from '../../log/log-sink.js'
+import { logWithOptions, warmupLogSink, LOG_FOLDER_ONLY_ENV, type LogEventInput } from '../../log/log-sink.js'
 import { CHECK_SCHEMA_VERSION, type CheckError, type CheckOutcome, type CheckSpec, type CheckStatus } from './contract'
+
+/**
+ * The folder file a check run's `gate` events land in when they name no Issue:
+ * `<folder>/<repository>/none-gates.ndjson`, passed to the Log sink as its
+ * `unattributedStream`. Any check run on the host — a hook, another session's
+ * checks — appends it, so a concurrent test run's real-runtime guard
+ * (`harness/kernel/conformance/unit/real-runtime-guard-core.ts`) exempts this
+ * one file, and `vinaya log send` still delivers it as unattributed. An event
+ * that names an Issue keeps that Issue's own file.
+ */
+export const GATE_STREAM = 'none-gates'
 
 export type RunOptions = {
   /** Concurrency cap; excess checks queue. */
@@ -785,7 +796,9 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
   const checkCallerEnv = { ...callerEnv }
   if (opts.skipFull) checkCallerEnv.VINAYA_COMMIT_HOOK = '1'
   else delete checkCallerEnv.VINAYA_COMMIT_HOOK
-  const logFn = opts.log ?? defaultLog
+  // A check run's own `gate` events that name no Issue land in their own
+  // folder file (`GATE_STREAM`), never the shared `none.ndjson`.
+  const logFn = opts.log ?? ((e: LogEventInput) => logWithOptions(e, { unattributedStream: GATE_STREAM }))
   const runStart = performance.now()
   // Only for the real default sink — an injected test logger has no
   // doctrine/repo resolution to warm, and calling this before a burst of
