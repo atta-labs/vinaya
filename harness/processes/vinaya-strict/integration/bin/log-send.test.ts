@@ -15,7 +15,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
@@ -157,7 +157,7 @@ describe('vinaya log send — delivers a repository’s local events to the conf
     expect(server2.requests).toHaveLength(0)
   }, 30000)
 
-  it('delivers a named unattributed stream (the CLI’s operation events) as unattributed, beside none.ndjson', async () => {
+  it('delivers the named unattributed streams (the CLI’s operation events, a check run’s gate events) as unattributed, beside none.ndjson', async () => {
     const cwd = tempDir('log-send-cwd-')
     initGitRepo(cwd)
     const home = tempDir('log-send-home-')
@@ -167,6 +167,7 @@ describe('vinaya log send — delivers a repository’s local events to the conf
     const stream = join(folder, 'none-cli-operations.ndjson')
     seed(stream, [ndjsonLine('cli-1', null)])
     seed(join(folder, 'none-cli-operations.1.ndjson'), [ndjsonLine('cli-0', null)])
+    seed(join(folder, 'none-gates.ndjson'), [ndjsonLine('gate-1', null)])
     seed(folderFile(home, null), [ndjsonLine('shared-1', null)])
     // a name the sink never writes is not delivered
     seed(join(folder, 'none-X.ndjson'), [ndjsonLine('not-a-stream', null)])
@@ -175,7 +176,8 @@ describe('vinaya log send — delivers a repository’s local events to the conf
     server.stop()
 
     expect(result.status).toBe(0)
-    expect(server.requests.flatMap(runIdsOf).sort()).toEqual(['cli-0', 'cli-1', 'shared-1'])
+    expect(server.requests.flatMap(runIdsOf).sort()).toEqual(['cli-0', 'cli-1', 'gate-1', 'shared-1'])
+    expect(existsSync(join(folder, 'none-gates.ndjson'))).toBe(false)
     expect(result.json.tasks?.every((t) => t.issue === null)).toBe(true)
     expect(existsSync(stream)).toBe(false)
     expect(existsSync(join(folder, 'none-cli-operations.1.ndjson'))).toBe(false)

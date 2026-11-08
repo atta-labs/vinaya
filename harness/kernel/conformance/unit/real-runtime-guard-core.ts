@@ -25,22 +25,24 @@
  * neither read and stays flagged; and a stale lock whose pid now names an
  * unrelated process, or a lock naming this process's own pid, reads as live.
  *
- * One append is sanctioned whatever runs: the CLI's own per-invocation
- * operation event, which a taskless `vinaya` command anywhere on the host —
- * another session, a hook, a person at a terminal — appends as it exits,
- * to its own file `logs/<repository>/none-cli-operations.ndjson` (the name the
- * CLI registration passes as `logSync`'s `unattributedStream`; its rotation
- * slot `.1.ndjson` too). Only that file name, exactly one repository folder
- * below `logs`, is exempt — never `logs`, a repository folder, or the shared
- * `none.ndjson`. A directory born during the run is not flagged when it is
- * `logs` or `logs/<repository>` and holds that file, since the append creates
- * its parents on a host that had none; the walk still enters it, so any other
- * file beneath it is flagged on its own path. The precise blind spot: a test
- * that itself writes that one file (or its rotation slot) as a regular file is
- * not detected, and neither is a test that creates `logs` or the repository
- * folder holding it, when nothing else it wrote lies beneath them. The rule
- * reads no environment, so a run under Claude Code and one under Codex are
- * judged alike.
+ * Two appends are sanctioned whatever runs, because any process on the host —
+ * another session, a hook, a person at a terminal — makes them while a test
+ * run is in progress: the CLI's own per-invocation operation event, appended
+ * as a taskless `vinaya` command exits, to
+ * `logs/<repository>/none-cli-operations.ndjson` (the CLI registration's
+ * `unattributedStream`), and a check run's taskless `gate` events, appended to
+ * `logs/<repository>/none-gates.ndjson` (the check runner's). Each file's
+ * rotation slot `.1.ndjson` is sanctioned too. Only those file names, exactly
+ * one repository folder below `logs`, are exempt — never `logs`, a repository
+ * folder, or the shared `none.ndjson`. A directory born during the run is not
+ * flagged when it is `logs` or `logs/<repository>` and holds such a file,
+ * since the append creates its parents on a host that had none; the walk
+ * still enters it, so any other file beneath it is flagged on its own path.
+ * The precise blind spot: a test that itself writes one of those files (or a
+ * rotation slot) as a regular file is not detected, and neither is a test
+ * that creates `logs` or the repository folder holding one, when nothing else
+ * it wrote lies beneath them. The rule reads no environment, so a run under
+ * Claude Code and one under Codex are judged alike.
  */
 import { execFileSync } from 'node:child_process'
 import { lstatSync, readdirSync, readFileSync } from 'node:fs'
@@ -89,13 +91,14 @@ export function realRuntimeDir(): string {
 }
 
 /**
- * The one sanctioned append's stream name. Kept as a literal rather than
- * imported, so this module stays dependent on nothing in the Log client; the
- * guard's test holds it equal to the CLI's `CLI_OPERATION_STREAM`.
+ * The sanctioned appends' stream names. Kept as literals rather than
+ * imported, so this module stays dependent on nothing in the Log client or the
+ * check runner; the guard's test holds them equal to the CLI's
+ * `CLI_OPERATION_STREAM` and the check runner's `GATE_STREAM`.
  */
-export const SANCTIONED_APPEND_STREAM = 'none-cli-operations'
+export const SANCTIONED_APPEND_STREAMS: readonly string[] = ['none-cli-operations', 'none-gates']
 
-/** Whether `rel` (relative to the runtime root) is the sanctioned append's file: `logs/<repository>/<stream>.ndjson` or its `.1.ndjson` rotation slot, with `<repository>` exactly one segment. */
+/** Whether `rel` (relative to the runtime root) is a sanctioned append's file: `logs/<repository>/<stream>.ndjson` or its `.1.ndjson` rotation slot, with `<repository>` exactly one segment. */
 export function isSanctionedAppend(rel: string): boolean {
   const parts = rel.split(sep)
   return (
@@ -104,7 +107,7 @@ export function isSanctionedAppend(rel: string): boolean {
     parts[1] !== '' &&
     parts[1] !== '.' &&
     parts[1] !== '..' &&
-    (parts[2] === `${SANCTIONED_APPEND_STREAM}.ndjson` || parts[2] === `${SANCTIONED_APPEND_STREAM}.1.ndjson`)
+    SANCTIONED_APPEND_STREAMS.some((stream) => parts[2] === `${stream}.ndjson` || parts[2] === `${stream}.1.ndjson`)
   )
 }
 

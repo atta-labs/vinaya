@@ -65,11 +65,12 @@ type StripEnvelope<T> = T extends Envelope ? Omit<T, 'meta' | 'subject'> : never
 export type LogEventInput = StripEnvelope<LogEvent>
 
 /**
- * `quiet` drops the one warning `logSync` prints when the process ended before its destination resolved — for a caller that records on every run and may not add a line to a command's stderr. A failure to write still warns.
- *
- * `unattributedStream` names the file an event that names no Issue is appended to in a FOLDER destination, in place of the shared `none.ndjson`: `<folder>/<owner>-<repo>/<unattributedStream>.ndjson`. The caller chooses the name, so one kind of record can be told apart by its file alone; the line itself, its header and its schema are unchanged. Only a name `isUnattributedStreamName` accepts (`none-` and a lowercase label) is honoured, anything else falls back to `none`, so the name never reaches outside the repository folder, and `vinaya log send` delivers the file as unattributed, exactly as it delivers `none.ndjson`. An event that names an Issue, and a server destination's retry queue, are never affected.
+ * What `log()` and `logSync()` both take. `unattributedStream` names the file an event that names no Issue is appended to in a FOLDER destination, in place of the shared `none.ndjson`: `<folder>/<owner>-<repo>/<unattributedStream>.ndjson`. The caller chooses the name, so one kind of record can be told apart by its file alone; the line itself, its header and its schema are unchanged. Only a name `isUnattributedStreamName` accepts (`none-` and a lowercase label) is honoured, anything else falls back to `none`, so the name never reaches outside the repository folder, and `vinaya log send` delivers the file as unattributed, exactly as it delivers `none.ndjson`. An event that names an Issue, and a server destination's retry queue, are never affected.
  */
-export type LogSyncOptions = { quiet?: boolean; unattributedStream?: string }
+export type LogOptions = { unattributedStream?: string }
+
+/** `quiet` drops the one warning `logSync` prints when the process ended before its destination resolved — for a caller that records on every run and may not add a line to a command's stderr. A failure to write still warns. */
+export type LogSyncOptions = LogOptions & { quiet?: boolean }
 
 /** Whether `name` is a valid `unattributedStream`: `none-` and a lowercase label of letters, digits and single hyphens. It holds no path separator, no dot (so never a rotation or drain suffix) and no `..`. */
 export function isUnattributedStreamName(name: string): boolean {
@@ -1278,7 +1279,7 @@ export type LogSinkOverrides = Partial<LogSinkDeps> & Pick<LogSinkDeps, 'resolve
 
 /** One Log sink: what `createLogSink` returns and what a log sink factory builds. */
 export type LogSink = {
-  log: (e: LogEventInput, attribution?: LaunchLogAttribution) => void
+  log: (e: LogEventInput, attribution?: LaunchLogAttribution, opts?: LogOptions) => void
   logSync: (e: LogEventInput, opts?: LogSyncOptions) => void
   runId: string
   warmup: () => void
@@ -1726,7 +1727,7 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
     }
   }
 
-  function log(e: LogEventInput, attribution?: LaunchLogAttribution): void {
+  function log(e: LogEventInput, attribution?: LaunchLogAttribution, opts: LogOptions = {}): void {
     try {
       const call = snapshot(attribution)
       const write = async (): Promise<void> => {
@@ -1756,7 +1757,7 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
         // overtake an earlier one that waited for it.
         const branchIssue = call.envFields.task ? null : await branchIssueOnce(ctx.repo)
         const headSha = e.kind === 'gate' ? await headShaOnce() : null
-        writeEvent(e, call, ctx, branchIssue, headSha, true)
+        writeEvent(e, call, ctx, branchIssue, headSha, true, opts.unattributedStream)
       }
       // Every event's write is queued behind the one before it, so the
       // outbox holds them in `log()` call order — the order `meta.seq`
@@ -1974,6 +1975,15 @@ export function currentRunId(): string {
  */
 export function log(e: LogEventInput): void {
   defaultSinkSlot.sink().log(e)
+}
+
+/**
+ * `log(e)` with `LogOptions`: `opts.unattributedStream` places an event that
+ * names no Issue in a folder file of the caller's choosing. Everything else is
+ * `log(e)`'s, so `log`'s own call shape stays one argument.
+ */
+export function logWithOptions(e: LogEventInput, opts: LogOptions): void {
+  defaultSinkSlot.sink().log(e, undefined, opts)
 }
 
 /**
