@@ -13,6 +13,7 @@ import {
   LOCAL_GROUP_FILE_CAP,
   LOCAL_RUN_EXECUTION,
   type LocalRunOutcome,
+  leftOutByBranchSide,
   localNativePlan,
   nativeContext,
   recordLocalRun,
@@ -162,6 +163,111 @@ describe('the plan a push freezes', () => {
       obligations: []
     })
     expect(local.problems).toEqual([expect.objectContaining({ code: 'missing', path: 'apps/cli/tests/gone.test.ts' })])
+  })
+})
+
+describe('the plan a push freezes from a branch-side set', () => {
+  const MAIN_ONLY = 'apps/cli/src/main-only.ts'
+  const BRANCH = 'apps/cli/src/branch.ts'
+  const changes = [MAIN_ONLY, BRANCH, 'apps/cli/src/other-main.ts'].map((path) => ({
+    path,
+    status: 'modified' as const,
+    accountedBy: []
+  }))
+  const because = (test: string, ...vias: string[]) => ({
+    ...required(test),
+    reasons: vias.map((via) => ({
+      kind: 'direct-dependency' as const,
+      detail: 'imports the changed file',
+      via,
+      revision: 'head' as const
+    }))
+  })
+
+  it('leaves out a test every reason of which names a path only the default branch changed, and keeps the rest', () => {
+    const p = plan({
+      changes,
+      required: [
+        because('apps/cli/tests/a.test.ts', MAIN_ONLY),
+        because('apps/cli/tests/b.test.ts', BRANCH),
+        because('apps/cli/tests/failed.test.ts', MAIN_ONLY, BRANCH)
+      ]
+    })
+    expect(leftOutByBranchSide(p, [BRANCH], () => [])).toEqual(['apps/cli/tests/a.test.ts'])
+  })
+
+  it('a reason naming no single changed path — a folder, an installed package, a glob — keeps its test', () => {
+    for (const via of ['apps/cli/src', 'typescript', 'apps/cli/tests/**/*.test.ts'])
+      expect(
+        leftOutByBranchSide(
+          plan({ changes, required: [because('apps/cli/tests/a.test.ts', MAIN_ONLY, via)] }),
+          [BRANCH],
+          () => []
+        )
+      ).toEqual([])
+  })
+
+  it('a fallback scope over default-branch paths only is left out; the plan’s own duties always stay', () => {
+    const p = plan({
+      changes,
+      fallbacks: [
+        { id: 'unknown:apps/cli', reason: 'unmodeled', paths: [MAIN_ONLY], tests: ['apps/cli/tests/b.test.ts'] }
+      ],
+      obligations: [
+        {
+          test: 'apps/cli/tests/a.test.ts',
+          suite: 'cli',
+          runner: 'bun',
+          obligation: 'duty',
+          kind: 'policy',
+          reason: 'always'
+        }
+      ],
+      required: [because('apps/cli/tests/a.test.ts', MAIN_ONLY)]
+    })
+    expect(leftOutByBranchSide(p, [BRANCH], () => [])).toEqual(['apps/cli/tests/b.test.ts'])
+  })
+
+  it('a test the selector credited to a default-branch path stays when the plan from the merged-in commit selects it too', () => {
+    // The selector names only the first change a test's import walk reaches; the plan from the commit the merge
+    // brought in holds only what differs from the default branch, so it finds the branch-side path behind the test.
+    const p = plan({
+      changes,
+      required: [
+        because('apps/cli/tests/a.test.ts', MAIN_ONLY),
+        because('apps/cli/tests/b.test.ts', 'apps/cli/src/other-main.ts')
+      ]
+    })
+    expect(leftOutByBranchSide(p, [BRANCH], () => ['apps/cli/tests/a.test.ts'])).toEqual(['apps/cli/tests/b.test.ts'])
+    let asked = 0
+    leftOutByBranchSide(plan({ changes, required: [because('apps/cli/tests/a.test.ts', BRANCH)] }), [BRANCH], () => {
+      asked++
+      return []
+    })
+    expect(asked).toBe(0)
+  })
+
+  it('an empty branch-side set still runs every obligation, and the plan counts what it left out', () => {
+    const p = plan({
+      changes,
+      required: [because('apps/cli/tests/a.test.ts', MAIN_ONLY), because('apps/cli/tests/failed.test.ts', MAIN_ONLY)]
+    })
+    const leftOut = leftOutByBranchSide(p, [], () => [])
+    expect(leftOut).toEqual(['apps/cli/tests/a.test.ts', 'apps/cli/tests/failed.test.ts'])
+    const local = localNativePlan({ plan: p, view: VIEW, obligations: ['apps/cli/tests/failed.test.ts'], leftOut })
+    expect(local.identities).toEqual(['apps/cli/tests/failed.test.ts@default'])
+    expect(local.leftOut).toEqual(['apps/cli/tests/a.test.ts'])
+  })
+
+  it('a whole-suite expansion runs as before, its left-out tests inside it', () => {
+    const p = plan({
+      changes: [{ path: 'apps/vinaya-portal/src/page.tsx', status: 'modified', accountedBy: [] }],
+      required: [{ ...because('apps/vinaya-portal/src/p.test.ts', 'apps/vinaya-portal/src/page.tsx'), suite: 'portal' }]
+    })
+    const leftOut = leftOutByBranchSide(p, [], () => [])
+    const local = localNativePlan({ plan: p, view: VIEW, obligations: [], leftOut })
+    expect(local.groups.map((g) => [g.id, g.scope])).toEqual([['portal@default', 'suite']])
+    expect(local.leftOut).toEqual([])
   })
 })
 

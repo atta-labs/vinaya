@@ -46,6 +46,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   changedBetween,
+  newestMergeSince,
   chooseNativeBase,
   clearRecordOfKind,
   type ContextParts,
@@ -159,6 +160,41 @@ export type LocalPlanInput = {
   view: InventoryView
   /** Repository-relative unresolved failed tests the push adds on top of the selection. */
   obligations: readonly string[]
+  /** Repository-relative planned tests the branch-side set left out ({@link leftOutByBranchSide}); never an obligation. */
+  leftOut?: readonly string[]
+}
+
+/**
+ * The planned tests a branch-side change set leaves out: a test the plan requires, or a fallback scope runs, whose
+ * every reason names a single changed path outside the set — a path only the default branch changed. A reason that
+ * names no single changed path (a folder, an installed package, a glob) keeps its test, and so does any reason naming
+ * a path in the set. The plan's own obligations (its duties) always stay.
+ *
+ * The selector records the first change a test's import walk reaches, not every one, so a test reached both by a
+ * default-branch path and by a branch-side path may carry only the former. Such a candidate is kept when the plan from
+ * the commit the merge brought in — a comparison holding only what differs from the default branch — selects it too;
+ * `fromBrought` computes that plan's tests, and only when some candidate needs it.
+ */
+export function leftOutByBranchSide(
+  plan: SelectionPlan,
+  branchSide: readonly string[],
+  fromBrought: () => readonly string[]
+): string[] {
+  const changed = new Set(plan.changes.flatMap((c) => (c.from ? [c.path, c.from] : [c.path])))
+  const side = new Set(branchSide)
+  const duties = new Set(plan.obligations.map((o) => o.test))
+  const named = new Map<string, string[]>()
+  const name = (test: string, via: string) => named.set(test, [...(named.get(test) ?? []), via])
+  for (const t of plan.required) for (const reason of t.reasons) name(t.test, reason.via)
+  for (const scope of plan.fallbacks) for (const test of scope.tests) for (const path of scope.paths) name(test, path)
+  const candidates = plannedTests(plan).filter((test) => {
+    if (duties.has(test)) return false
+    const vias = named.get(test) ?? []
+    return vias.length > 0 && vias.every((via) => changed.has(via) && !side.has(via))
+  })
+  if (candidates.length === 0) return []
+  const reached = new Set(fromBrought())
+  return candidates.filter((test) => !reached.has(test))
 }
 
 export type LocalPlan = {
@@ -168,6 +204,8 @@ export type LocalPlan = {
   /** Suites run whole, with why. */
   expanded: { suite: string; reason: string }[]
   problems: NativeProblem[]
+  /** Planned tests the branch-side set left out that no whole-suite run holds either, sorted. */
+  leftOut: string[]
 }
 
 /**
@@ -185,12 +223,16 @@ export function localNativePlan(input: LocalPlanInput): LocalPlan {
   const removed = new Set(plan.removedTests)
   const byId = new Map(view.tests.map((t) => [t.id, t]))
   const wanted = [...new Set([...plannedTests(plan), ...input.obligations])].filter((id) => !removed.has(id)).sort()
-  const known: TestIdentity[] = []
+  // A test the branch-side set left out is still read for problems and whole-suite expansion, exactly as before; it
+  // is only not requested on its own. An obligation is never left out.
+  const leftOut = new Set((input.leftOut ?? []).filter((id) => !input.obligations.includes(id)))
+  const planned: TestIdentity[] = []
   for (const id of wanted) {
     const identity = byId.get(id)
-    if (identity) known.push(identity)
+    if (identity) planned.push(identity)
     else problems.push({ code: 'missing', path: id, detail: 'planned but not a test the head inventory holds' })
   }
+  const known = planned.filter((t) => !leftOut.has(t.id))
   const changed = plan.changes.flatMap((c) => (c.from ? [c.path, c.from] : [c.path]))
   const wholeSuites: WholeSuiteRequest[] = []
   // static-fallback begin: a suite whose inputs the selection does not model runs whole — its tests with no
@@ -198,7 +240,7 @@ export function localNativePlan(input: LocalPlanInput): LocalPlan {
   const recorded = new Set(plan.records.recorded)
   for (const suite of view.suites) {
     const prefix = suite.dir === '.' ? '' : `${suite.dir}/`
-    const selected = known.some((t) => t.suite === suite.id)
+    const selected = planned.some((t) => t.suite === suite.id)
     const reason =
       selected && suite.runner === 'vitest' && WHOLE_SUITE_OWNERS[suite.owner] !== undefined
         ? WHOLE_SUITE_OWNERS[suite.owner]
@@ -226,7 +268,11 @@ export function localNativePlan(input: LocalPlanInput): LocalPlan {
     groups: grouping.groups,
     identities,
     expanded: wholeSuites.map((w) => ({ suite: w.suite, reason: w.reason })),
-    problems
+    problems,
+    leftOut: planned
+      .filter((t) => leftOut.has(t.id) && !whole.has(t.suite))
+      .map((t) => t.id)
+      .sort(compare)
   }
 }
 
@@ -306,6 +352,7 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
     isAncestor: (ancestor) => isAncestor(repoRoot, ancestor, head),
     exists: existsSync,
     changedBetween: (from) => changedBetween(repoRoot, from, head),
+    mergeSince: (from) => newestMergeSince(repoRoot, from, head),
     mergeAware: {
       cleanMergeOnto: (recordHead) => cleanMergeOnto(repoRoot, recordHead),
       contextAtRecord: (recordHead) => {
@@ -332,7 +379,19 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
     return { plan: selectTests(input), view: input.inventory.head }
   }
   const { plan, view } = planFrom(choice.base)
-  const local = localNativePlan({ plan, view, obligations })
+  // After a merge since the recorded head, only the tests the branch's own changes reach run besides the obligations.
+  // A plan from the merged-in commit that cannot be made leaves nothing out.
+  const branchSide = choice.branchSide
+  const leftOut = branchSide
+    ? leftOutByBranchSide(plan, branchSide.paths.map(relative), () => {
+        try {
+          return plannedTests(planFrom(branchSide.brought).plan)
+        } catch {
+          return plannedTests(plan)
+        }
+      })
+    : []
+  const local = localNativePlan({ plan, view, obligations, leftOut })
   if (local.problems.length > 0)
     throw new Error(
       `the native plan is not runnable: ${local.problems.map((p) => `${p.code} ${p.path}${p.group ? ` (${p.group})` : ''}: ${p.detail}`).join('; ')}`
@@ -401,6 +460,11 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
       ? `vinaya pre-push: ${plan.records.recorded.length} test(s) decided by the read record of ${reached.record.commit.slice(0, 12)}; ${plan.records.fallbacks.map((f) => `${f.tests.length} by static selection (${f.id})`).join(', ') || 'none left to static selection'}`
       : `vinaya pre-push: every test decided by static selection (${reached.reason})`,
     ...local.expanded.map((e) => `vinaya pre-push: ${e.suite} runs whole: ${e.reason}`),
+    ...(branchSide
+      ? [
+          `vinaya pre-push: the branch-side set (${branchSide.paths.length} path(s) the branch itself changed since the merge of ${branchSide.brought.slice(0, 12)}) left out ${local.leftOut.length} planned test(s) only default-branch changes reached`
+        ]
+      : []),
     ...(context === null
       ? ['vinaya pre-push: the verification context is unreadable; the run will be refused even if every runner passes']
       : [])
