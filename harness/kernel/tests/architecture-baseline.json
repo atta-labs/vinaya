@@ -1,6 +1,6 @@
 {
   "apps/cli/src/commands/brief.ts": 5,
-  "apps/cli/src/commands/demo.ts": 2,
+  "apps/cli/src/commands/demo.ts": 3,
   "apps/cli/src/commands/doctor.ts": 35,
   "apps/cli/src/commands/doctrine.ts": 4,
   "apps/cli/src/commands/eject.ts": 3,
