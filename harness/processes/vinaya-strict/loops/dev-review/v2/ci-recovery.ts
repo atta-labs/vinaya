@@ -124,6 +124,8 @@ export const SANDBOX_SETUP_DIAGNOSTICS = [
   /^bwrap: setting up uid map: Permission denied/m,
   /^bwrap: Can't mount proc on \/newroot\/proc/m,
   /^bwrap: Failed to mount tmpfs/m,
+  /^bwrap: Can't remount readonly on .*/m,
+  /^bwrap: Can't mount tmpfs on .*/m,
   /^sandbox-exec: sandbox_apply: Operation not permitted/m
 ]
 
@@ -324,10 +326,73 @@ function ghLines<T>(args: string[], gh: (args: string[]) => string = (a) => sh('
     .map((line) => JSON.parse(line) as T)
 }
 
-/** A step's log, or null when it cannot be read. */
-function readStepLog(jobId: number, step: number): string | null {
+/** The provider's per-line timestamp prefix: an ISO time with optional fractional seconds, then one space. */
+const LOG_LINE_TIMESTAMP = /^\uFEFF?(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?Z ?/
+/** The line that opens a step's own output: its group header, or the cleanup line that opens the post steps. */
+const STEP_OPENER = /^(?:##\[group\]Run |Post job cleanup\.)/
+
+/**
+ * Pure: one step's own lines from a job's whole log, each with its timestamp prefix removed. Step times are whole
+ * seconds and the next step often starts in the second this one completes, so a step is delimited by its opening
+ * marker — the first `##[group]Run ` line (the first `Post job cleanup.` line for a post step) stamped at or after
+ * the step's `started_at` second — and ends before the next such marker, or after its `completed_at` second. A line
+ * with no timestamp belongs to the step of the nearest timestamped line before it. Null when the step has no times
+ * or the log holds no opening marker for it.
+ */
+export function sliceStepLog(
+  jobLog: string,
+  step: { name: string; started_at?: string | null; completed_at?: string | null }
+): string | null {
+  const second = (value: string | null | undefined): string | null =>
+    value && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(value) ? value.slice(0, 19) : null
+  const started = second(step.started_at)
+  const completed = second(step.completed_at)
+  if (started === null || completed === null) return null
+  const isPost = /^Post /.test(step.name)
+  const kept: string[] = []
+  let inside = false
+  let seenStamp = false
+  for (const line of jobLog.split(/\r?\n/)) {
+    const match = LOG_LINE_TIMESTAMP.exec(line)
+    const body = match ? line.slice(match[0].length) : line
+    if (match) {
+      seenStamp = true
+      const stamp = match[1] as string
+      if (inside && stamp > completed) break
+      if (STEP_OPENER.test(body)) {
+        const opensThisStep = isPost ? body.startsWith('Post job cleanup.') : body.startsWith('##[group]Run ')
+        if (inside) break
+        if (opensThisStep && stamp >= started && stamp <= completed) inside = true
+      }
+    } else if (!seenStamp) continue
+    if (inside) kept.push(body)
+  }
+  return kept.length === 0 ? null : kept.join('\n')
+}
+
+/**
+ * A step's own log text, or null when it cannot be read. The per-step log endpoint is not served for a completed
+ * job, so this reads the job's step times and its whole log, then slices out the step.
+ */
+export function readStepLog(
+  jobId: number,
+  step: number,
+  gh: (args: string[]) => string = (args) => sh('gh', args)
+): string | null {
   try {
-    return sh('gh', ['api', `repos/{owner}/{repo}/actions/jobs/${jobId}/steps/${step}/logs`])
+    const record = JSON.parse(gh(['api', `repos/{owner}/{repo}/actions/jobs/${jobId}`])) as {
+      steps?: { name: string; number: number; started_at?: string | null; completed_at?: string | null }[]
+    }
+    const found = (record.steps ?? []).find((candidate) => candidate.number === step)
+    if (!found) return null
+    const endpoint = `repos/{owner}/{repo}/actions/jobs/${jobId}/logs`
+    let raw: string
+    try {
+      raw = gh(['api', endpoint, '--allow-escape-sequences'])
+    } catch {
+      raw = gh(['api', endpoint])
+    }
+    return sliceStepLog(raw, found)
   } catch {
     return null
   }
