@@ -42,7 +42,8 @@
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   changedBetween,
@@ -171,14 +172,14 @@ export type LocalPlanInput = {
  * a path in the set. The plan's own obligations (its duties) always stay.
  *
  * The selector records the first change a test's import walk reaches, not every one, so a test reached both by a
- * default-branch path and by a branch-side path may carry only the former. Such a candidate is kept when the plan from
- * the commit the merge brought in — a comparison holding only what differs from the default branch — selects it too;
- * `fromBrought` computes that plan's tests, and only when some candidate needs it.
+ * default-branch path and by a branch-side path may carry only the former. Such a candidate is kept only when the plan
+ * of a comparison whose every changed path is in the branch-side set ({@link branchSideBase}) selects it — that is, when
+ * a branch-side path reaches it; `fromBranchSide` computes that plan's tests, and only when some candidate needs it.
  */
 export function leftOutByBranchSide(
   plan: SelectionPlan,
   branchSide: readonly string[],
-  fromBrought: () => readonly string[]
+  fromBranchSide: () => readonly string[]
 ): string[] {
   const changed = new Set(plan.changes.flatMap((c) => (c.from ? [c.path, c.from] : [c.path])))
   const side = new Set(branchSide)
@@ -193,8 +194,49 @@ export function leftOutByBranchSide(
     return vias.length > 0 && vias.every((via) => changed.has(via) && !side.has(via))
   })
   if (candidates.length === 0) return []
-  const reached = new Set(fromBrought())
+  const reached = new Set(fromBranchSide())
   return candidates.filter((test) => !reached.has(test))
+}
+
+/**
+ * A commit whose tree is the head's with only the branch-side paths (repository-relative) as they were at the
+ * recorded head — present with that content, or absent when the recorded head lacks them — so the comparison from it
+ * to the head changes exactly those paths. Built in a temporary index; the commit is written to the object store
+ * unreferenced. `null` when any git step fails.
+ */
+export function branchSideBase(
+  repoRoot: string,
+  recordHead: string,
+  head: string,
+  paths: readonly string[]
+): string | null {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-branch-side-'))
+  const env = {
+    ...cleanGitEnv(),
+    GIT_INDEX_FILE: join(dir, 'index'),
+    GIT_AUTHOR_NAME: 'vinaya',
+    GIT_AUTHOR_EMAIL: 'vinaya@localhost',
+    GIT_COMMITTER_NAME: 'vinaya',
+    GIT_COMMITTER_EMAIL: 'vinaya@localhost'
+  }
+  const run = (args: string[]): string =>
+    execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env }).trim()
+  try {
+    run(['read-tree', head])
+    for (const path of paths) {
+      const entry = run(['ls-tree', recordHead, '--', path])
+      const match = /^(\d+) blob ([0-9a-f]+)\t/.exec(entry)
+      if (match) run(['update-index', '--add', '--cacheinfo', `${match[1]},${match[2]},${path}`])
+      else if (entry === '') run(['update-index', '--force-remove', '--', path])
+      else return null
+    }
+    const tree = run(['write-tree'])
+    return run(['commit-tree', tree, '-p', recordHead, '-m', 'vinaya: the branch-side comparison base'])
+  } catch {
+    return null
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 export type LocalPlan = {
@@ -380,12 +422,15 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
   }
   const { plan, view } = planFrom(choice.base)
   // After a merge since the recorded head, only the tests the branch's own changes reach run besides the obligations.
-  // A plan from the merged-in commit that cannot be made leaves nothing out.
+  // A branch-side comparison that cannot be built or planned leaves nothing out.
   const branchSide = choice.branchSide
+  const sidePaths = branchSide ? branchSide.paths.map(relative) : []
   const leftOut = branchSide
-    ? leftOutByBranchSide(plan, branchSide.paths.map(relative), () => {
+    ? leftOutByBranchSide(plan, sidePaths, () => {
+        const sideBase = branchSideBase(repoRoot, choice.base, head, sidePaths)
+        if (!sideBase) return plannedTests(plan)
         try {
-          return plannedTests(planFrom(branchSide.brought).plan)
+          return plannedTests(planFrom(sideBase).plan)
         } catch {
           return plannedTests(plan)
         }

@@ -13,6 +13,7 @@ import {
   LOCAL_GROUP_FILE_CAP,
   LOCAL_RUN_EXECUTION,
   type LocalRunOutcome,
+  branchSideBase,
   leftOutByBranchSide,
   localNativePlan,
   nativeContext,
@@ -228,9 +229,10 @@ describe('the plan a push freezes from a branch-side set', () => {
     expect(leftOutByBranchSide(p, [BRANCH], () => [])).toEqual(['apps/cli/tests/b.test.ts'])
   })
 
-  it('a test the selector credited to a default-branch path stays when the plan from the merged-in commit selects it too', () => {
-    // The selector names only the first change a test's import walk reaches; the plan from the commit the merge
-    // brought in holds only what differs from the default branch, so it finds the branch-side path behind the test.
+  it('a test the selector credited to a default-branch path stays only when the branch-side comparison selects it too', () => {
+    // The selector names only the first change a test's import walk reaches; the comparison whose every changed path
+    // is in the branch-side set finds the branch-side path behind the test, and selects nothing a default-branch
+    // path alone reaches.
     const p = plan({
       changes,
       required: [
@@ -245,6 +247,44 @@ describe('the plan a push freezes from a branch-side set', () => {
       return []
     })
     expect(asked).toBe(0)
+  })
+
+  it('the branch-side comparison base differs from the head in exactly the branch-side paths (real git repository)', () => {
+    const dir = fixtureDir('vinaya-branch-side-base-')
+    const env = stripVinayaEnv({ ...process.env })
+    for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', env }).trim()
+    const put = (files: Record<string, string>, message: string) => {
+      for (const [file, content] of Object.entries(files)) {
+        mkdirSync(dirname(join(dir, file)), { recursive: true })
+        writeFileSync(join(dir, file), content)
+      }
+      git('add', '-A')
+      git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', message)
+      return git('rev-parse', 'HEAD')
+    }
+    git('init', '-q', '-b', 'main')
+    put({ 'shared.txt': 'one\ntwo\nthree\n', 'gone.txt': 'gone\n' }, 'base')
+    git('checkout', '-q', '-b', 'task/x/1')
+    // A branch change already proven at the recorded head: never part of the branch-side comparison.
+    put({ 'early.txt': 'early\n', 'shared.txt': 'ONE\ntwo\nthree\n' }, 'early branch work')
+    const recordHead = git('rev-parse', 'HEAD')
+    git('checkout', '-q', 'main')
+    put({ 'shared.txt': 'one\ntwo\nTHREE\n', 'main-only.txt': 'main\n' }, 'default-branch work')
+    git('checkout', '-q', 'task/x/1')
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'merge', '-q', '--no-ff', '--no-edit', 'main')
+    git('rm', '-q', 'gone.txt')
+    const head = put({ 'late.txt': 'late\n' }, 'late branch work')
+    const sides = ['gone.txt', 'late.txt', 'shared.txt']
+    const sideBase = branchSideBase(dir, recordHead, head, sides)
+    expect(sideBase).not.toBeNull()
+    expect(
+      git('diff', '--name-only', sideBase as string, head)
+        .split('\n')
+        .sort()
+    ).toEqual(sides)
+    expect(git('show', `${sideBase}:shared.txt`)).toBe('ONE\ntwo\nthree')
+    expect(branchSideBase(dir, 'no-such-commit', head, sides)).toBeNull()
   })
 
   it('an empty branch-side set still runs every obligation, and the plan counts what it left out', () => {
