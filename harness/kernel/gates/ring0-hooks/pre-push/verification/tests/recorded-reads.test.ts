@@ -2,7 +2,17 @@
 // a Bun test and the child processes it starts leave. They import only the public entrypoint.
 import { describe, expect, it } from 'bun:test'
 import { posix } from 'node:path'
-import { indexRecordedTest, readsOfTrace, recordReach, type TraceOptions } from '../index.js'
+import {
+  bunLockIdentity,
+  changedLockPackages,
+  indexRecordedTest,
+  installedPackageName,
+  lockKeyPackageName,
+  readsOfTrace,
+  recordReach,
+  stableJson,
+  type TraceOptions
+} from '../index.js'
 
 const ROOT = '/work/repo'
 
@@ -113,14 +123,24 @@ describe('the syscall trace reader', () => {
     expect([...result.reads].sort()).toEqual(['apps/cli/src/', 'packages/core/src/'])
   })
 
-  it('records a read under installed third-party dependencies as the input they derive from', () => {
+  it('records a read under installed third-party dependencies as the input they derive from, per package', () => {
     const result = readsOfTrace(
       trace(
         `1 openat(AT_FDCWD</work/repo>, "node_modules/typescript/lib/typescript.js", O_RDONLY) = 3</work/repo/node_modules/.bun/typescript@5/node_modules/typescript/lib/typescript.js>`
       ),
       options()
     )
-    expect([...result.reads]).toEqual(['bun.lock'])
+    expect([...result.reads]).toEqual(['bun.lock#typescript'])
+    const scoped = readsOfTrace(
+      trace(
+        '1 openat(AT_FDCWD</work/repo>, "/work/repo/node_modules/@sanity/client/dist/index.js", O_RDONLY) = 3',
+        '1 openat(AT_FDCWD</work/repo>, "/work/repo/node_modules/a/node_modules/b/index.js", O_RDONLY) = 4',
+        '1 getdents64(5</work/repo/node_modules>, 0x1, 32768) = 0',
+        '1 stat("/work/repo/node_modules/.bin/tsc", 0x7) = 0'
+      ),
+      options()
+    )
+    expect([...scoped.reads].sort()).toEqual(['bun.lock', 'bun.lock#@sanity/client', 'bun.lock#b'])
     expect([
       ...readsOfTrace(`1 stat("/work/repo/node_modules/x", 0x7) = 0\n`, options({ dependencyInput: null })).reads
     ]).toEqual([])
@@ -166,5 +186,68 @@ describe('a record answers for a change', () => {
     expect(recordReach(index, { path: 'a/old.ts', status: 'deleted' })).not.toBeNull()
     expect(recordReach(index, { path: 'a/other.ts', status: 'modified' })).toBeNull()
     expect(recordReach(index, { path: 'z.ts', status: 'added' })).toBeNull()
+  })
+})
+
+describe('installed packages', () => {
+  it('names the package an installed path belongs to, scoped or not, nested or not', () => {
+    expect(installedPackageName('node_modules/zod/index.js')).toBe('zod')
+    expect(installedPackageName('node_modules/@sanity/client/dist/x.js')).toBe('@sanity/client')
+    expect(installedPackageName('node_modules/a/node_modules/@s/b/x.js')).toBe('@s/b')
+    expect(installedPackageName('apps/cli/node_modules/zod/x.js')).toBe('zod')
+    expect(installedPackageName('node_modules')).toBeNull()
+    expect(installedPackageName('node_modules/.bin/tsc')).toBeNull()
+    expect(installedPackageName('node_modules/@sanity')).toBeNull()
+  })
+
+  it('names the package a lockfile key installs', () => {
+    expect(lockKeyPackageName('zod')).toBe('zod')
+    expect(lockKeyPackageName('@sanity/client')).toBe('@sanity/client')
+    expect(lockKeyPackageName('a/b')).toBe('b')
+    expect(lockKeyPackageName('a/@s/b')).toBe('@s/b')
+    expect(lockKeyPackageName('@s/a/@t/b')).toBe('@t/b')
+  })
+
+  const lock = (packages: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    bunLockIdentity({ lockfileVersion: 1, workspaces: { '': { name: 'root' } }, packages, ...extra })
+  const same = (a: unknown, b: unknown) => stableJson(a) === stableJson(b)
+
+  it('lists the packages whose lockfile entry changed, was added or was removed', () => {
+    const before = lock({
+      zod: ['zod@3.0.0', '', {}, 'sha-a'],
+      'a/b': ['b@1.0.0', '', {}, 'sha-b'],
+      gone: ['gone@1', '', {}, 'x']
+    })
+    const after = lock({
+      zod: ['zod@3.0.0', '', {}, 'sha-a'],
+      'a/b': ['b@1.1.0', '', {}, 'sha-c'],
+      added: ['added@1', '', {}, 'y']
+    })
+    expect(changedLockPackages(before, after, same)).toEqual(['added', 'b', 'gone'])
+    expect(changedLockPackages(before, before, same)).toEqual([])
+  })
+
+  it('a workspace range alone changes no package, and an override answers that every package may have changed', () => {
+    const packages = { zod: ['zod@3.0.0', '', {}, 'sha-a'] }
+    const before = lock(packages)
+    const ranged = bunLockIdentity({
+      lockfileVersion: 1,
+      workspaces: { '': { name: 'root', dependencies: { zod: '^3' } } },
+      packages
+    })
+    expect(changedLockPackages(before, ranged, same)).toEqual([])
+    expect(changedLockPackages(before, lock(packages, { overrides: { zod: '3.1.0' } }), same)).toBeNull()
+    expect(changedLockPackages(before, { packages: 'x' }, same)).toBeNull()
+  })
+
+  it('a change of every package reaches any per-package read, and a named package only its own', () => {
+    const index = indexRecordedTest({ reads: ['bun.lock#zod'], listed: [] })
+    expect(recordReach(index, { path: 'bun.lock#*', status: 'modified' })).not.toBeNull()
+    expect(recordReach(index, { path: 'bun.lock#zod', status: 'modified' })).not.toBeNull()
+    expect(recordReach(index, { path: 'bun.lock#react', status: 'modified' })).toBeNull()
+    expect(recordReach(index, { path: 'bun.lock', status: 'modified' })).toBeNull()
+    expect(
+      recordReach(indexRecordedTest({ reads: ['bun.lock'], listed: [] }), { path: 'bun.lock', status: 'modified' })
+    ).not.toBeNull()
   })
 })

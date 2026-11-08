@@ -67,7 +67,8 @@
         "scripts/ci/job-oracle.test.ts",
         "scripts/test-suites/local-run.test.ts",
         "scripts/test-suites/turbo-test-task-uncached.test.ts",
-        "scripts/release/release.test.ts"
+        "scripts/release/release.test.ts",
+        "scripts/ci/record-reads.test.ts"
       ]
     },
     {
@@ -518,7 +519,17 @@
     {
       "id": "process-forge-fixtures",
       "kind": "fixture",
-      "paths": ["harness/processes/vinaya-strict/fixtures/forge/", "apps/cli/tests/fixtures/forge/"],
+      "paths": [
+        "harness/processes/vinaya-strict/fixtures/forge/",
+        "apps/cli/tests/fixtures/forge/issue-blast-radius-violation.md",
+        "apps/cli/tests/fixtures/forge/issue-brief-content.md",
+        "apps/cli/tests/fixtures/forge/issue-brief-sections-missing-parts.md",
+        "apps/cli/tests/fixtures/forge/issue-brief-sections-valid.md",
+        "apps/cli/tests/fixtures/forge/issue-no-doc-path.md",
+        "apps/cli/tests/fixtures/forge/issue-no-rationale.md",
+        "apps/cli/tests/fixtures/forge/issue-valid-with-objectives.md",
+        "apps/cli/tests/fixtures/forge/issue-valid.md"
+      ],
       "readers": [
         {
           "kind": "raw-bytes",

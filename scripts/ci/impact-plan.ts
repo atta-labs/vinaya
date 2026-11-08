@@ -53,6 +53,8 @@ import {
   stableHash
 } from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts'
 import {
+  INVENTORY_PATH,
+  type InventoryDeclarations,
   type InventoryView,
   readTestInventory,
   revisionReader,
@@ -427,15 +429,38 @@ function plannedRuns(selection: SelectionPlan): PlannedRun[] {
   return [...runs.values()].sort((a, b) => compare(a.test, b.test))
 }
 
+/** The inventory provider whose readers are the Linux sandbox suite. */
+const SANDBOX_PROVIDER_ID = 'sandbox-suite-inputs'
+
+/**
+ * The sandbox suite's test as the planned tree names it: the first test its
+ * `sandbox-suite-inputs` provider reader lists in that tree's inventory, so a
+ * plan of a tree from before the suite moved still finds it. `SANDBOX_SUITE_TEST`
+ * when the tree's inventory names none or cannot be read.
+ */
+export function sandboxSuiteTest(tree: TreeReader): string {
+  try {
+    const raw = tree.read(INVENTORY_PATH)
+    if (raw === null) return SANDBOX_SUITE_TEST
+    const declarations = JSON.parse(raw) as Partial<InventoryDeclarations>
+    const provider = declarations.providers?.find((p) => p.id === SANDBOX_PROVIDER_ID)
+    return provider?.readers?.flatMap((r) => r.tests ?? [])[0] ?? SANDBOX_SUITE_TEST
+  } catch {
+    return SANDBOX_SUITE_TEST
+  }
+}
+
 /** The jobs a plan decides: each with whether the aggregate requires it and why. */
 export function planJobs(input: {
   event: CiEvent
   full: boolean
   changed: readonly string[]
   tests: readonly string[]
+  /** The sandbox suite's test in the planned tree ({@link sandboxSuiteTest}); `SANDBOX_SUITE_TEST` when not given. */
+  sandboxTest?: string
 }): Record<CiJob, JobDecision> {
   const configChanged = input.event === 'pull_request' && input.changed.includes(ROOT_CONFIG)
-  const sandbox = input.full || input.tests.includes(SANDBOX_SUITE_TEST)
+  const sandbox = input.full || input.tests.includes(input.sandboxTest ?? SANDBOX_SUITE_TEST)
   const each = input.full
     ? 'every scheduled test of its place runs'
     : 'the selected tests its place holds run; a place with none selected passes having run none'
@@ -529,7 +554,13 @@ function narrowed(repoRoot: string, event: CiEvent, base: string, tested: string
     unknown,
     changed,
     decision,
-    jobs: planJobs({ event, full: false, changed, tests: tests.map((t) => t.test) })
+    jobs: planJobs({
+      event,
+      full: false,
+      changed,
+      tests: tests.map((t) => t.test),
+      sandboxTest: sandboxSuiteTest(revisionReader(repoRoot, tested))
+    })
   }
 }
 

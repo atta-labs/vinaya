@@ -55,16 +55,16 @@ const { guardedClosure, guardRepository, guardVerdict, relativeSpecifiers } = (a
 const { GOVERNANCE_OBLIGATIONS } = (await load('scripts/ci/governance-obligations.ts')) as {
   GOVERNANCE_OBLIGATIONS: { id: string; job: string; step?: string; when: string }[]
 }
-const { buildCiPlan, ciSelection, githubOutputs, readGuard, SANDBOX_SUITE_TEST, scheduleCheck } = (await load(
-  'scripts/ci/impact-plan.ts'
-)) as {
-  buildCiPlan: (input: Record<string, unknown>) => CiPlan
-  ciSelection: (root: string, base: string, head: string) => { plan: SelectionPlan }
-  githubOutputs: (plan: CiPlan) => string
-  readGuard: (path: string | undefined) => Guard | null
-  SANDBOX_SUITE_TEST: string
-  scheduleCheck: (tree: TreeReader, view: unknown, decision: unknown) => Problems
-}
+const { buildCiPlan, ciSelection, githubOutputs, readGuard, SANDBOX_SUITE_TEST, sandboxSuiteTest, scheduleCheck } =
+  (await load('scripts/ci/impact-plan.ts')) as {
+    buildCiPlan: (input: Record<string, unknown>) => CiPlan
+    ciSelection: (root: string, base: string, head: string) => { plan: SelectionPlan }
+    githubOutputs: (plan: CiPlan) => string
+    readGuard: (path: string | undefined) => Guard | null
+    SANDBOX_SUITE_TEST: string
+    sandboxSuiteTest: (tree: TreeReader) => string
+    scheduleCheck: (tree: TreeReader, view: unknown, decision: unknown) => Problems
+  }
 const { syntheticCommit } = (await load('scripts/ci/replay.ts')) as {
   syntheticCommit: (root: string, base: string, changes: Record<string, unknown>) => string
 }
@@ -259,16 +259,21 @@ describe('the CI plan', () => {
   })
 
   it('starts the Linux sandbox suite only when the change reaches it through its SUITE_INPUTS or its imports', () => {
-    expect(plan.jobs['sandbox-conformance'].required).toBe(plan.tests.some((t) => t.test === SANDBOX_SUITE_TEST))
-    // A path the suite's own list names, read from the list itself.
-    const input = SUITE_INPUTS.find((path) => path === 'harness/kernel/conformance/unit/process-fixture.ts')
+    // The suite is the one the planned tree's inventory names: at the replay base it sits where it sat then.
+    const atBase = sandboxSuiteTest(revisionReader(REPO_ROOT, BASE))
+    expect(atBase).not.toBe(SANDBOX_SUITE_TEST)
+    expect(atBase).toMatch(/\/sandbox-conformance\.test\.ts$/)
+    expect(sandboxSuiteTest(revisionReader(REPO_ROOT, 'HEAD'))).toBe(SANDBOX_SUITE_TEST)
+    expect(plan.jobs['sandbox-conformance'].required).toBe(plan.tests.some((t) => t.test === atBase))
+    // A path the suite's own list names, read from the list itself, that the replay base also holds.
+    const input = SUITE_INPUTS.find((path) => path === '.github/workflows/ci.yml')
     expect(input).toBeDefined()
     const reached = buildCiPlan({
       repoRoot: REPO_ROOT,
       event: 'pull_request',
       base: BASE,
-      approvedHead: syntheticCommit(REPO_ROOT, BASE, { [input as string]: { append: '// a sandbox input' } }),
-      testedTree: syntheticCommit(REPO_ROOT, BASE, { [input as string]: { append: '// a sandbox input' } }),
+      approvedHead: syntheticCommit(REPO_ROOT, BASE, { [input as string]: { append: '# a sandbox input' } }),
+      testedTree: syntheticCommit(REPO_ROOT, BASE, { [input as string]: { append: '# a sandbox input' } }),
       guard: PLAN
     })
     expect(reached.jobs['sandbox-conformance'].required).toBe(true)
@@ -371,17 +376,24 @@ describe('the workflow the plan drives', () => {
         'aggregate',
         'build',
         'record-reads',
+        'record-reads-merge',
         'sandbox-conformance',
         'test-cli',
         'test-cli-config-anchor',
         'test-shared-packages'
       ].sort()
     )
-    // The read recorder runs on a push only and nothing, the required check included, waits for it.
-    expect(workflow.jobs['record-reads']?.if).toBe(
-      "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
-    )
-    for (const job of Object.values(workflow.jobs)) expect([job.needs ?? []].flat()).not.toContain('record-reads')
+    // The read recorder's shards and their merge run on a push only, and nothing but the merge, the required check
+    // included, waits for them.
+    for (const recorder of ['record-reads', 'record-reads-merge'])
+      expect(workflow.jobs[recorder]?.if).toBe(
+        "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+      )
+    expect(workflow.jobs['record-reads-merge']?.needs).toBe('record-reads')
+    for (const [id, job] of Object.entries(workflow.jobs)) {
+      if (id !== 'record-reads-merge') expect([job.needs ?? []].flat()).not.toContain('record-reads')
+      expect([job.needs ?? []].flat()).not.toContain('record-reads-merge')
+    }
     expect(workflow.jobs.build?.name).toBe('Build, lint & typecheck')
     expect(workflow.jobs.build?.needs).toBeUndefined()
     for (const job of ['test-cli', 'test-shared-packages', 'test-cli-config-anchor', 'sandbox-conformance'])
