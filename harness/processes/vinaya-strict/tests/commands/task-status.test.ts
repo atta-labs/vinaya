@@ -838,7 +838,7 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
     // never as rows of it.
     expect(outputLines(r.stdout)).toContain('reviewer (round 1): VERDICT: REQUEST CHANGES')
     expect(outputLines(r.stdout)).toContain('security (round 1): VERDICT: PASS')
-    expect(outputLines(r.stdout)).toContain('Resume with: vinaya dev-review-loop --resume 702')
+    expect(outputLines(r.stdout)).toContain('Resume with: vinaya-dev-review-loop --resume 702')
     expect(r.status).toBe(0)
   })
 

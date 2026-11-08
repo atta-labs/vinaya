@@ -180,7 +180,7 @@ describe('renderPauseComment (pure) — O1: every pause reason renders its detai
     const body = renderPauseComment(42, reason, 'a concrete, observed fact about this pause')
     expect(body).toContain(reason)
     expect(body).toContain('a concrete, observed fact about this pause')
-    expect(body).toContain('vinaya dev-review-loop --resume 42')
+    expect(body).toContain('vinaya-dev-review-loop --resume 42')
   })
 
   it.each(ALL_PAUSE_REASONS)(
@@ -209,7 +209,7 @@ describe('renderPauseComment (pure) — O1: every pause reason renders its detai
       agent: 'codex',
       model: 'gpt-5.6-terra'
     })
-    expect(body).toContain('vinaya dev-review-loop --resume 682 --agent codex --model gpt-5.6-terra')
+    expect(body).toContain('vinaya-dev-review-loop --resume 682 --agent codex --model gpt-5.6-terra')
   })
 
   it('says a running loop picks up a ruling and reserves --resume for a stopped process', () => {

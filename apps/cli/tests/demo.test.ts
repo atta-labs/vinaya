@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { runDemoBreak } from '../src/commands/demo.js'
 import { stripAmbientFixtureEnv } from './fixture-env.js'
 import { withSerialLock } from './serial-lock.js'
+import { programFile } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 
 // The real CLI source, invoked directly by `bun` rather than through a
 // published `npx vinaya` — there is nothing to `npx` resolve from a disposable
@@ -27,7 +28,7 @@ function git(cwd: string, args: string[]): string {
  * never fire.
  */
 function installRealHook(root: string): void {
-  const body = `#!/usr/bin/env sh\nbun ${INDEX_TS} check --all --diff-only || exit 1\n`
+  const body = `#!/usr/bin/env sh\nbun ${programFile('check')} --all --diff-only || exit 1\n`
   writeFileSync(join(root, '.git/hooks/pre-commit'), body, { mode: 0o755 })
 }
 

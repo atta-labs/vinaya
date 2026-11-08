@@ -97,6 +97,8 @@ const TASK = 9001
 export const ENGINE_SCENARIO_TASK = TASK
 const BRANCH = `task/issue-${TASK}`
 const PR = 123
+// The task Issue's title the standalone harness's world reads, so both runners record the same `loop_started` title.
+const ISSUE_TITLE = `[task ${TASK}] do the thing`
 const SOURCE = 'https://example.com/required-source'
 const ROLES = ['developer', 'code-reviewer', 'security-reviewer'] as const
 type Role = (typeof ROLES)[number]
@@ -647,7 +649,7 @@ async function drive(
   try {
     task = await liveTaskInput({ task: TASK, agent, dryRun: false }, repo, runtimeDir, 'corpus', {
       fetchLabels: () => [],
-      fetchTitle: () => 'A test task',
+      fetchTitle: () => ISSUE_TITLE,
       policy: () => {
         if (id === 'review-policy-unreadable') throw new Error('fake: trust-anchor read failed')
         return policy

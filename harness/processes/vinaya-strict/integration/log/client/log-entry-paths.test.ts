@@ -17,17 +17,17 @@ const workflowRoutes: Record<string, Route> = {
     producer: 'operation',
     commandToken: 'doctor'
   },
-  'workflow:vinaya-archivist.yml:post-merge:Run vinaya archive': {
+  'workflow:vinaya-archivist.yml:post-merge:Run vinaya-archive': {
     producer: 'operation',
     commandToken: 'archive'
   },
   'workflow:vinaya-archivist.yml:post-merge:Self-archive the tranche once its last task merges (O4)': {
     producer: 'operation',
-    commandToken: 'archive tranche'
+    commandToken: 'harness/processes/vinaya-strict/retrospecting/bin/archive.ts tranche'
   },
   'workflow:vinaya-archivist.yml:issue-closed:Self-archive the tranche this Issue belongs to': {
     producer: 'operation',
-    commandToken: 'archive tranche'
+    commandToken: 'harness/processes/vinaya-strict/retrospecting/bin/archive.ts tranche'
   },
   'workflow:vinaya-archivist.yml:daily-drift:Run vinaya audit --only=dead-branches': {
     producer: 'operation',
@@ -35,7 +35,7 @@ const workflowRoutes: Record<string, Route> = {
   },
   'workflow:vinaya-archivist.yml:daily-drift:Archive every finished tranche not yet archived': {
     producer: 'operation',
-    commandToken: 'archive tranches'
+    commandToken: 'harness/processes/vinaya-strict/retrospecting/bin/archive.ts tranches'
   },
   'workflow:vinaya-archivist.yml:direct-main-push-detection:Run vinaya audit --only=direct-push': {
     producer: 'operation',
@@ -43,47 +43,47 @@ const workflowRoutes: Record<string, Route> = {
   },
   'workflow:vinaya-body-checks.yml:vinaya-body-checks:Body checks': {
     producer: 'gate',
-    commandToken: 'check body-bare-digits'
+    commandToken: 'harness/processes/vinaya-strict/checks/check.ts body-bare-digits'
   },
   'workflow:vinaya-body-checks.yml:vinaya-principal-test-plan-wait:Principal Test Plan wait': {
     producer: 'gate',
-    commandToken: 'check principal-test-plan-wait'
+    commandToken: 'harness/processes/vinaya-strict/checks/check.ts principal-test-plan-wait'
   },
   'workflow:vinaya-checks.yml:vinaya-checks:Run checks': {
     producer: 'gate',
-    commandToken: 'check --all --diff-only'
+    commandToken: 'harness/processes/vinaya-strict/checks/check.ts --all --diff-only'
   },
   'workflow:vinaya-review-verdict.yml:evaluate:Review gate (verdict evaluation)': {
     producer: 'gate',
-    commandToken: 'check review-gate'
+    commandToken: 'harness/processes/vinaya-strict/checks/check.ts review-gate'
   },
   'workflow:vinaya-review.yml:vinaya-review:Review gate': {
     producer: 'gate',
-    commandToken: 'check review-gate'
+    commandToken: 'harness/processes/vinaya-strict/checks/check.ts review-gate'
   },
   'workflow:vinaya-body-checks.yml:vinaya-forge-read:Write the forge snapshot': {
     producer: 'operation',
-    commandToken: 'pr snapshot'
+    commandToken: 'harness/processes/vinaya-strict/tools/pull-request/bin/pr-snapshot.ts'
   },
   'workflow:vinaya-checks.yml:vinaya-checks:Write the forge snapshot': {
     producer: 'operation',
-    commandToken: 'pr snapshot'
+    commandToken: 'harness/processes/vinaya-strict/tools/pull-request/bin/pr-snapshot.ts'
   },
   'workflow:vinaya-review-verdict.yml:evaluate:Write the forge snapshot': {
     producer: 'operation',
-    commandToken: 'pr snapshot'
+    commandToken: 'harness/processes/vinaya-strict/tools/pull-request/bin/pr-snapshot.ts'
   },
   'workflow:vinaya-review.yml:vinaya-review:Write the forge snapshot': {
     producer: 'operation',
-    commandToken: 'pr snapshot'
+    commandToken: 'harness/processes/vinaya-strict/tools/pull-request/bin/pr-snapshot.ts'
   },
   'workflow:vinaya-review.yml:vinaya-evidence-fresh:Write the forge snapshot': {
     producer: 'operation',
-    commandToken: 'pr snapshot'
+    commandToken: 'harness/processes/vinaya-strict/tools/pull-request/bin/pr-snapshot.ts'
   },
   'workflow:vinaya-review.yml:vinaya-evidence-fresh:Evidence freshness': {
     producer: 'gate',
-    commandToken: 'check evidence-fresh'
+    commandToken: 'harness/processes/vinaya-strict/checks/check.ts evidence-fresh'
   }
 }
 
@@ -305,8 +305,14 @@ function checkEntries(): Map<string, string> {
 
 const inventory: InventoryRow[] = [
   { id: 'git-hook:.vinaya/hooks/commit-msg', route: { producer: 'operation', commandToken: 'commit-msg' } },
-  { id: 'git-hook:.vinaya/hooks/pre-commit', route: { producer: 'gate', commandToken: 'check --all' } },
-  { id: 'git-hook:.vinaya/hooks/pre-push', route: { producer: 'gate', commandToken: 'check --all' } },
+  {
+    id: 'git-hook:.vinaya/hooks/pre-commit',
+    route: { producer: 'gate', commandToken: 'harness/processes/vinaya-strict/checks/check.ts --all' }
+  },
+  {
+    id: 'git-hook:.vinaya/hooks/pre-push',
+    route: { producer: 'gate', commandToken: 'harness/processes/vinaya-strict/checks/check.ts --all' }
+  },
   ...Object.entries(workflowRoutes).map(([id, route]) => ({ id, route })),
   ...workflowWithoutProducers.map((id) => ({ id, noProducer: NO_PRODUCER_REASON })),
   {

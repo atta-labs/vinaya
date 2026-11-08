@@ -269,7 +269,7 @@ describe('task_escalation_read', () => {
     const world = await pausedWorld()
     const standalone = readEscalationPacket(world.runtimeDir, world.task)!
     expect(standalone.runIdentity).not.toBeNull()
-    expect(standalone.permittedNextActions.at(-1)).toBe(`Or run: vinaya dev-review-loop --resume ${world.prNumber}`)
+    expect(standalone.permittedNextActions.at(-1)).toBe(`Or run: vinaya-dev-review-loop --resume ${world.prNumber}`)
     recordTaskRunner(world.task, 'atta-engine', world.runtimeDir)
     const engine = readEscalationPacket(world.runtimeDir, world.task)!
     expect(engine.runIdentity).toEqual(standalone.runIdentity)

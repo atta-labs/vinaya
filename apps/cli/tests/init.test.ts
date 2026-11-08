@@ -59,6 +59,7 @@ import { runEject } from '../src/commands/eject.js'
 import type { EjectDeps } from '../src/commands/eject.js'
 import { planInstall, renderInstallDiff } from '../../../harness/kernel/gates/ops.js'
 import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
+import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 
 let root: string
 let createdLabels: string[]
@@ -77,6 +78,27 @@ const OWN_VERSION = (
 
 /** The published invocation the generators emit, version pin included. */
 const PUBLISHED_RUN = `npx --yes @attalabs/vinaya@${OWN_VERSION}`
+/** The published invocation of a program a command became, by its name: `vinaya-<name>` from the pinned package. */
+const PUBLISHED_PROGRAM = (name: string) => `npx --yes -p @attalabs/vinaya@${OWN_VERSION} vinaya-${name}`
+
+/**
+ * Generated text with each program a command became written back as that command: the pinned published program
+ * (`npx --yes -p @attalabs/vinaya@<version> vinaya-<name>`) as `${PUBLISHED_RUN} <words>`, and the vendored
+ * `bun <source file>` as `${vendoredBin} <words>`. The generators' shapes are otherwise unchanged, so the
+ * assertions below keep counting and placing each invocation by the command it was.
+ */
+function asCommandWords(content: string, vendoredBin: string): string {
+  let out = content
+  for (const program of PROGRAMS.values()) {
+    const first = program.commands[0]
+    if (!first || program.bin === 'vinaya-audit') continue
+    const words = first.words.slice(0, first.words.length - first.argv.length).join(' ')
+    out = out
+      .replaceAll(`npx --yes -p @attalabs/vinaya@${OWN_VERSION} ${program.bin}`, `${PUBLISHED_RUN} ${words}`)
+      .replaceAll(`bun ${program.source}`, `${vendoredBin} ${words}`)
+  }
+  return out
+}
 
 function makeDeps(overrides: Partial<InitDeps> = {}): InitDeps {
   const labels: LabelGateway = {
@@ -350,7 +372,7 @@ describe('vinaya init', () => {
     expect(hookOps.length).toBe(2)
     for (const op of hookOps) {
       if (op.kind !== 'managed-block') continue
-      expect(op.body).toContain(`${PUBLISHED_RUN} check`)
+      expect(op.body).toContain(`${PUBLISHED_PROGRAM('check')}`)
       expect(op.body).not.toContain('--no-install')
     }
   })
@@ -615,7 +637,7 @@ describe('workflows', () => {
     // Assert the INVOCATION, pin included — not the bare subcommand string,
     // which also appears as the job's `name:` and would keep passing even if
     // the run step lost its invocation entirely.
-    expect(checks).toContain(`${PUBLISHED_RUN} check --all --diff-only`)
+    expect(checks).toContain(`${PUBLISHED_PROGRAM('check')} --all --diff-only`)
     // PR_NUMBER wiring is what makes the review-gate adapter EVALUATE —
     // without it the check reads "local dev" and exits 0 unconditionally,
     // a vacuous gate (PR #813 review blocker). Guard all three PR-facing
@@ -641,7 +663,7 @@ describe('workflows', () => {
     expect(review).not.toContain('github.event.pull_request.body')
     // review-gate is the review job's sole check (#870) — decoupled from the
     // PR_BODY-driven check --all it used to run.
-    expect(review).toContain(`${PUBLISHED_RUN} check review-gate`)
+    expect(review).toContain(`${PUBLISHED_PROGRAM('check')} review-gate`)
     expect(review).not.toContain('check --all')
     // A body-only edit must re-trigger the checks workflow so test-plan/
     // closes-n re-evaluate against the corrected body (#870).
@@ -716,7 +738,7 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
   }
 
   function generated(): Map<string, string> {
-    return new Map(WORKFLOWS.map((p) => [p, readFileSync(join(root, p), 'utf-8')]))
+    return new Map(WORKFLOWS.map((p) => [p, asCommandWords(readFileSync(join(root, p), 'utf-8'), VENDORED_BIN)]))
   }
 
   /**
@@ -1371,7 +1393,7 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const hook = readFileSync(join(root, '.husky/pre-commit'), 'utf-8')
-    expect(hook).toContain('node apps/cli/dist/index.js check')
+    expect(hook).toContain('bun harness/processes/vinaya-strict/checks/check.ts')
     expect(hook).not.toContain('npx --yes')
   })
 })
@@ -1433,7 +1455,7 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     // in the hook, including the doctrine gate — then the check, then
     // typecheck, then the selector.
     const biomeIdx = prePush.indexOf('bunx biome check')
-    const checkIdx = prePush.indexOf('check --all --local')
+    const checkIdx = prePush.indexOf('checks/check.ts --all --local')
     const typecheckIdx = prePush.indexOf('bunx turbo typecheck --affected')
     const selectorIdx = prePush.indexOf('pre-push-select-tests.ts')
     expect(biomeIdx).toBeLessThan(checkIdx)
@@ -1580,7 +1602,7 @@ git rev-parse --git-dir 2>&1 || true
     const modeIdx = prePush.indexOf(
       'VINAYA_PUSH_MODE="$(bun harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode.ts)" || exit 1'
     )
-    const checkIdx = prePush.indexOf('check --all --local')
+    const checkIdx = prePush.indexOf('checks/check.ts --all --local')
     const storageExitIdx = prePush.indexOf('vinaya pre-push: storage push')
     const typecheckIdx = prePush.indexOf('bunx turbo typecheck --affected')
     expect(modeIdx).toBeGreaterThan(biomeIdx)
@@ -1622,6 +1644,9 @@ git rev-parse --git-dir 2>&1 || true
     // reaches the fake `bunx` below at the typecheck line.
     mkdirSync(join(root, 'apps/cli/dist'), { recursive: true })
     writeFileSync(join(root, 'apps/cli/dist/index.js'), 'process.exit(0)\n')
+    // The hook runs the check program from source in a vendoring repository; stand in for it too.
+    mkdirSync(join(root, 'harness/processes/vinaya-strict/checks'), { recursive: true })
+    writeFileSync(join(root, 'harness/processes/vinaya-strict/checks/check.ts'), 'process.exit(0)\n')
     // The push-mode step is required (a failed mode read refuses the push); this
     // stand-in answers the ordinary mode so execution reaches the typecheck.
     mkdirSync(join(root, 'harness/kernel/gates/ring0-hooks/pre-push'), { recursive: true })
@@ -1732,7 +1757,7 @@ describe('generated pre-commit hook: scoped format/lint/typecheck (O9)', () => {
       preCommit.indexOf('bunx turbo typecheck --affected')
     )
     expect(preCommit.indexOf('bunx turbo typecheck --affected')).toBeLessThan(
-      preCommit.indexOf('check --all --diff-only')
+      preCommit.indexOf('checks/check.ts --all --diff-only')
     )
   })
 
@@ -1989,11 +2014,11 @@ describe('generated git hooks: published vs vendored invocation (atta-labs/attal
       .map((op) => (op.kind === 'managed-block' ? op.body : ''))
   }
 
-  it('vendored repo: both hooks run the built bin, never npx', () => {
+  it('vendored repo: both hooks run the check program from source, never npx', () => {
     const bodies = hookBodies(VENDORED)
     expect(bodies.length).toBe(2)
     for (const body of bodies) {
-      expect(body).toContain(`node ${VENDORED.bin} check`)
+      expect(body).toContain('bun harness/processes/vinaya-strict/checks/check.ts')
       // The generated comment names `npx` to explain why it isn't used; what
       // must be absent is an npx INVOCATION.
       expect(body).not.toContain('npx --yes')
@@ -2003,13 +2028,12 @@ describe('generated git hooks: published vs vendored invocation (atta-labs/attal
     expect(bodies.filter((b) => b.includes('--diff-only')).length).toBe(1)
   })
 
-  it('vendored repo: a missing build fails the hook loudly — never a silent skip', () => {
+  it('vendored repo: the hooks run programs from source, so a fresh clone or worktree needs no build first', () => {
     // `dist/` is generated and git-ignored, so it is legitimately absent in a
-    // fresh clone and in every new worktree. Skipping the checks there would
-    // turn a loud breakage into an absent ring 0, with nothing saying so.
+    // fresh clone and in every new worktree. The check program runs as its
+    // source file there, so no build guard stands in front of it.
     for (const body of hookBodies(VENDORED)) {
-      expect(body).toContain(`if [ ! -f ${VENDORED.bin} ]`)
-      expect(body).toContain(`bun run --cwd ${VENDORED.dir} build`)
+      expect(body).not.toContain(`if [ ! -f ${VENDORED.bin} ]`)
       expect(body).toContain('exit 1')
     }
   })
@@ -2018,7 +2042,7 @@ describe('generated git hooks: published vs vendored invocation (atta-labs/attal
     // The constraint #929 established for workflows, applied here: an adopter
     // with no local copy must not pay for a problem they do not have.
     for (const body of hookBodies(null)) {
-      expect(body).toContain('npx --yes @attalabs/vinaya@')
+      expect(body).toContain('npx --yes -p @attalabs/vinaya@')
       expect(body).not.toContain('node ')
       expect(body).not.toContain('if [ ! -f')
     }
@@ -2058,17 +2082,16 @@ describe('generated commit-msg hook (Issue #63)', () => {
     ])
   })
 
-  it('vendored repo: runs the built bin, never npx, passing $1 and $2 through', () => {
+  it('vendored repo: runs the commit-msg program from source, never npx, passing $1 and $2 through', () => {
     const body = commitMsgBody(VENDORED)
-    expect(body).toContain(`node ${VENDORED.bin} commit-msg "$1" "$2"`)
+    expect(body).toContain('bun harness/processes/vinaya-strict/gates/bin/commit-msg.ts "$1" "$2"')
     expect(body).not.toContain('npx --yes')
-    expect(body).toContain(`if [ ! -f ${VENDORED.bin} ]`)
-    expect(body).toContain(`bun run --cwd ${VENDORED.dir} build`)
+    expect(body).not.toContain(`if [ ! -f ${VENDORED.bin} ]`)
   })
 
   it('ordinary adopter: byte-for-byte the published shape, with no build guard', () => {
     const body = commitMsgBody(null)
-    expect(body).toContain('npx --yes @attalabs/vinaya@')
+    expect(body).toContain('npx --yes -p @attalabs/vinaya@')
     expect(body).toContain('commit-msg "$1" "$2"')
     expect(body).not.toContain('node ')
     expect(body).not.toContain('if [ ! -f')
@@ -2366,7 +2389,7 @@ describe('adopter-declared CI setup (ci.setup)', () => {
       expect(content).toContain('          npm ci')
       // preparation must precede execution — the step exists so the check
       // runner finds the adopter's code already installed
-      expect(content.indexOf('Adopter CI setup')).toBeLessThan(content.indexOf(PUBLISHED_RUN))
+      expect(content.indexOf('Adopter CI setup')).toBeLessThan(content.indexOf(PUBLISHED_PROGRAM('check')))
     }
     expect(workflowContent('npm ci', REVIEW_WORKFLOW_PATH)).not.toContain('Adopter CI setup')
     expect(workflowContent('npm ci', REVIEW_VERDICT_WORKFLOW_PATH)).not.toContain('Adopter CI setup')

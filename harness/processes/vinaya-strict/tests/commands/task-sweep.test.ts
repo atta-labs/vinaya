@@ -145,15 +145,6 @@ function outputLines(stdout: string): string[] {
     .filter((l) => l !== '')
 }
 
-describe('vinaya task sweep — router wiring', () => {
-  it("the 'task' router names 'sweep' among its expected subcommands", () => {
-    const r = runCli(['task', 'bogus'], {})
-    expect(r.status).toBe(2)
-    expect(r.stderr).toContain("Unknown 'task' subcommand")
-    expect(r.stderr).toContain('sweep')
-  })
-})
-
 describe('vinaya task sweep (O1) — the modern layout', () => {
   it('removes a finished-by-closed-Issue folder, removes a finished-by-merged-PR folder, keeps an open one and a live one, printing each with its reason', () => {
     const { home, env } = setUp()

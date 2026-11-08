@@ -192,7 +192,7 @@ describe("the Engine Developer's prompt is today's loop prompt", () => {
     const prompt = developerPrompt('x', FACTS, results, { resumeSessionId: SESSION })
     // The loop names the failing CI check-runs and their logs; the Engine's gate is the local
     // `vinaya check --all`, so it names that output instead.
-    expect(prompt).toContain('The checks (`vinaya check --all`) are red on the last head. Fix the failing check(s).')
+    expect(prompt).toContain('The checks (`vinaya-check --all`) are red on the last head. Fix the failing check(s).')
     expect(prompt).toContain('✗ closes-n: fail')
     expect(prompt).toContain('Resuming task Issue #7.')
   })
@@ -283,7 +283,7 @@ describe("the Engine Developer's prompt after a forge gate sent it back", () => 
     expect(prompt).toContain(
       'CI is red on the last head. Failing check-run(s): unit (run 9), lint (run 10). Fix the failing check(s).'
     )
-    expect(prompt).not.toContain('The checks (`vinaya check --all`) are red')
+    expect(prompt).not.toContain('The checks (`vinaya-check --all`) are red')
     expect(prompt).not.toContain('# Frozen brief')
   })
 })

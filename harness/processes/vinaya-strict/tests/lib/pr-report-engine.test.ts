@@ -438,7 +438,7 @@ describe('renderGroupC — the O2 omission note for a `check --all` run (#788)',
     expect(omitted.startsWith(plain)).toBe(true)
     const note = omitted.slice(plain.length)
     expect(note).toContain('`evidence-fresh` was left out of this run')
-    expect(note).toContain("CI's own `vinaya check --all --diff-only` is its authoritative run")
+    expect(note).toContain("CI's own `vinaya-check --all --diff-only` is its authoritative run")
   })
 
   it('a run WITHOUT the flag renders exactly as before — no note (O3)', () => {

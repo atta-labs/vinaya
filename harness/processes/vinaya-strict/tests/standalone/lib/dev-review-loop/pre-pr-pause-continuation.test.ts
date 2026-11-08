@@ -274,7 +274,7 @@ describe('devReviewLoop --resume <pr> against a pause recorded before any pull r
       runLoopInProcess(world, { resumePr: world.prNumber + 1, agent: 'claude' } as LoopInput, {
         fetchPrBody: () => `Closes #${world.task}`
       })
-    ).rejects.toThrow(`Continue it with \`vinaya dev-review-loop --resume ${world.prNumber}\``)
+    ).rejects.toThrow(`Continue it with \`vinaya-dev-review-loop --resume ${world.prNumber}\``)
     expect(readPauseState(world.runtimeDir, world.task)?.prNumber).toBeNull()
   })
 
@@ -479,7 +479,7 @@ describe('a pause whose escalation has no durable record — every refusal names
     const refusal = runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' } as LoopInput)
     await expect(refusal).rejects.toThrow('no escalation record was ever written')
     await expect(refusal).rejects.toThrow('is a Principal decision')
-    await expect(refusal).rejects.not.toThrow('then run `vinaya dev-review-loop --resume')
+    await expect(refusal).rejects.not.toThrow('then run `vinaya-dev-review-loop --resume')
   })
 
   it('names the Principal decision for an infrastructure pause whose bare-resume budget is spent', async () => {
@@ -510,7 +510,7 @@ describe('a pause whose escalation has no durable record — every refusal names
     const world = makeWorld({ developerPushed: true, prOpened: true })
     pauseOnPr(world, { prNumber: null, head: 'unknown' })
     await expect(cancelInProcess(world, world.prNumber + 1)).rejects.toThrow(
-      `cancel it with \`vinaya dev-review-loop --cancel ${world.prNumber}\``
+      `cancel it with \`vinaya-dev-review-loop --cancel ${world.prNumber}\``
     )
     expect(readPauseState(world.runtimeDir, world.task)?.prNumber).toBeNull()
   })

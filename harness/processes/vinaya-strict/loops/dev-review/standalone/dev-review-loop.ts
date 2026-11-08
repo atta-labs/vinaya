@@ -207,6 +207,7 @@ import {
   createTaskWorktreeFromRemote,
   describeObjectivesEdit,
   developerBranchFor,
+  issueTitleOrNone,
   DeveloperStopSignal,
   fetchDeveloperStop,
   TaskWorktreeDivergedError,
@@ -565,7 +566,8 @@ export type LoopDeps = {
   resolveIssueObjectives: typeof resolveIssueObjectives
   /** O2: the frozen brief's own source revision, named to the reviewer as a fact. */
   fetchSourceRevision: typeof fetchSourceRevision
-  developerBranchFor: (issueNumber: number) => string
+  /** `fetchTitle` replaces the Issue title read the derivation makes, so the caller keeps the title it read. */
+  developerBranchFor: (issueNumber: number, fetchTitle?: (n: number) => string) => string
   /**
    * Runs the task's dispatch-readiness gate from this (unsandboxed) driver
    * process, before every Developer turn — `dispatchDeveloperOnce` calls
@@ -2635,7 +2637,7 @@ export function defaultDeps(): LoopDeps {
     fetchFrozenBrief,
     resolveIssueObjectives,
     fetchSourceRevision,
-    developerBranchFor: (n) => developerBranchFor(n),
+    developerBranchFor: (n, fetchTitle) => developerBranchFor(n, fetchTitle),
     // `VINAYA_DEV_REVIEW_LOOP_FAKE_DISPATCH_READINESS=1` exists only so a
     // real subprocess test (`dev-review-loop.test.ts`'s own fixtures, which
     // carry no real forge identity by design — AEG_REPO deleted, the fake
@@ -3016,6 +3018,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
   let task: number
   let branch: string
+  /** The task Issue's title, from the one Issue read this run makes at loop start; `loop_started` records it. */
+  let taskTitle: string | undefined
   let prNumber = -1 // resolved below, before any use — never read while -1
   let resumeFrom: PauseState | null = null
   let dispatchAgent: AgentVendor = input.agent ?? 'claude'
@@ -3320,9 +3324,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       resumeFrom =
         resumeHeadAlreadyMoved && rulings.length > 0 ? { ...held, round: d.fetchNewestRulingOrdinal(resumePr) } : held
     }
+    // A resumed run derives no branch, so it makes no Issue read on the way in: its one title read is this one, and a
+    // read that fails records no title rather than refusing the resume.
+    taskTitle = issueTitleOrNone(task, d.fetchIssueTitle)
   } else {
     task = input.task
-    branch = d.developerBranchFor(task)
+    // A tranche task's branch derivation reads the title, and hands it back here, so the loop records it without a
+    // second read. A backlog task's derivation reads no title: its one title read is the one below.
+    let titleRead = false
+    branch = d.developerBranchFor(task, (n) => {
+      titleRead = true
+      const title = d.fetchIssueTitle(n)
+      taskTitle = title
+      return title
+    })
+    if (!titleRead) taskTitle = issueTitleOrNone(task, d.fetchIssueTitle)
     process.env.VINAYA_RUNTIME = dispatchAgent
   }
 
@@ -3630,6 +3646,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const config: LoopConfig = {
       loopId,
       task: task,
+      ...(taskTitle ? { title: taskTitle } : {}),
       // `loop_started`'s own schema constrains `policy.reviewers`/`policy.models`
       // keys to `RoleSchema` (`schema.ts`) — the DOCTRINE role vocabulary
       // (`code-reviewer`), not `VerdictObservation.role`'s separate

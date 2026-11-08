@@ -264,7 +264,7 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     // The pause comment names the exact command to resume this run (the
     // harness fake `postPauseComment` renders the real body via
     // `renderPauseComment`, which embeds this `--resume` line).
-    expect(pauseComment.body).toMatch(new RegExp(`vinaya dev-review-loop --resume ${world.prNumber}`))
+    expect(pauseComment.body).toMatch(new RegExp(`vinaya-dev-review-loop --resume ${world.prNumber}`))
     expect(pauseComment.body).not.toMatch(/^VERDICT:/m)
     // O1 ([task-log-v1] 9, Issue #631): `assessRound`'s own 'escalation'
     // decision carries no `detail` at all — the driver narrates it from the
@@ -369,6 +369,12 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     const lineageRuns = new Set(resumedRunLines.map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run))
     expect(lineageRuns.size).toBe(1)
     expect([...lineageRuns][0]).not.toBeNull()
+
+    // The first run's `loop_started` and the resumed run's own both name the task Issue's title.
+    const started = lines.filter((l) => l.kind === 'dev_review_loop' && l.event === 'loop_started')
+    expect(started.length).toBe(2)
+    expect(lines.indexOf(started[1]!)).toBeGreaterThan(resumedIdx)
+    for (const line of started) expect(line).toMatchObject({ task: world.task, title: world.issueTitle })
   })
 })
 
@@ -520,7 +526,7 @@ describe('devReviewLoop — --resume with a different --agent continues the task
     expect(readPauseStateFile(world)).toMatchObject({ agent: 'claude', model: 'claude-opus-5-5' })
     const pauseComment = world.postedComments[world.postedComments.length - 1]!
     expect(pauseComment.body).toContain(
-      `vinaya dev-review-loop --resume ${world.prNumber} --agent claude --model claude-opus-5-5`
+      `vinaya-dev-review-loop --resume ${world.prNumber} --agent claude --model claude-opus-5-5`
     )
     expect(pauseComment.body).not.toContain('--agent codex')
   })

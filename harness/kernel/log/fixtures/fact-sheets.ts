@@ -26,7 +26,7 @@ export type FactSheet = {
 }
 
 export const FACT_SHEETS: Record<ExecutionName, FactSheet> = {
-  // loop_started, one round of four events, stop condition and journal; one developer and one reviewer dispatch pair; one typecheck.
+  // loop_started (carrying the task's title), one round of four events, stop condition and journal; one developer and one reviewer dispatch pair; one typecheck.
   'green-one-round': {
     lines: 12,
     schemas: { '4': 12 },

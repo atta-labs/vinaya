@@ -2658,9 +2658,9 @@ describe('taskStatusIdentityMatches', () => {
 
 describe('resumeCommandFor', () => {
   it("renders the exact command the loop's own pause comment prints", () => {
-    expect(resumeCommandFor(517)).toBe('vinaya dev-review-loop --resume 517')
+    expect(resumeCommandFor(517)).toBe('vinaya-dev-review-loop --resume 517')
     expect(resumeCommandFor(682, 'codex', 'gpt-5.6-terra')).toBe(
-      'vinaya dev-review-loop --resume 682 --agent codex --model gpt-5.6-terra'
+      'vinaya-dev-review-loop --resume 682 --agent codex --model gpt-5.6-terra'
     )
   })
 })
@@ -2772,7 +2772,7 @@ console.log('ROWS:' + JSON.stringify(view.rows.map((r) => (${reader.row ?? '{ is
     const { child } = spawnReader('{ issue: 704 }', ['daniboomerang'], {
       before: `import { recordTaskRunner } from '../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-engine.ts'
 import { appendLoopLogLine, loopLogPathFor } from '../../harness/kernel/log/client/loop-log.ts'
-import { formatStageLine } from './src/lib/follow-view.ts'
+import { formatStageLine } from '../../harness/processes/vinaya-strict/tools/follow-view.ts'
 recordTaskRunner(704, 'atta-engine')
 const log = loopLogPathFor(null, 704)
 const ago = (minutes) => new Date(Date.now() - minutes * 60_000)

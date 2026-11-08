@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { LogEventSchema } from './schema'
+import { classifyStoredLine } from './store'
 
 /**
  * Compatibility fixtures (Part 3, O1/O3) — one literal snapshot per event
@@ -95,7 +96,31 @@ describe('pre-task-log-v1 fixtures — dev_review_loop family', () => {
       task: 412,
       policy: { max_rounds: 5, reviewers: ['code-reviewer', 'security'], models: { 'code-reviewer': 'sonnet' } }
     }
-    expect(LogEventSchema.safeParse(line).success).toBe(true)
+    const parsed = LogEventSchema.safeParse(line)
+    expect(parsed.success).toBe(true)
+    // A line recorded before the title existed reads back exactly as written, with no title added.
+    expect(parsed.data as unknown).toEqual(line)
+    expect(parsed.data && 'title' in parsed.data).toBe(false)
+  })
+
+  it('loop_started carrying the task title', () => {
+    const line = {
+      ...loopBase,
+      event: 'loop_started' as const,
+      task: 412,
+      title: '[studio-v1] 3 — A loop records its task title',
+      policy: { max_rounds: 5, reviewers: ['code-reviewer', 'security'], models: { 'code-reviewer': 'sonnet' } }
+    }
+    const parsed = LogEventSchema.safeParse(line)
+    expect(parsed.success).toBe(true)
+    expect(parsed.data as unknown).toEqual(line)
+    // Still strict: the title is a string, and loop_started takes no other new key.
+    expect(LogEventSchema.safeParse({ ...line, title: 3 }).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...line, name: 'x' }).success).toBe(false)
+    // The log server's per-line decision is this module's `classifyStoredLine`: the title is stored, as sent.
+    const stored = classifyStoredLine(JSON.stringify(line), '')
+    expect(stored.status).toBe('ok')
+    expect(stored.status === 'ok' && (stored.event as { title?: string }).title).toBe(line.title)
   })
 
   it('round_started', () => {

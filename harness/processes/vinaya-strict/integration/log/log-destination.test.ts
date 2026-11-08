@@ -386,7 +386,7 @@ describe('describeFolderFallback (pure) — one line, names the url, never a tok
     const message = describeFolderFallback({ kind: 'anchor-unreadable', intendedUrl: URL })
     expect(message).toContain(URL)
     expect(message).toContain('could not be read')
-    expect(message).toContain('vinaya log send')
+    expect(message).toContain('vinaya-log-send')
     expect(message).not.toContain('\n')
   })
 
@@ -436,7 +436,7 @@ describe('log-sink — a folder fallback prints its reason exactly once (O2)', (
 
       expect(stderr).toHaveLength(1)
       expect(stderr[0]).toContain('https://logs.example.com/events')
-      expect(stderr[0]).toContain('vinaya log send')
+      expect(stderr[0]).toContain('vinaya-log-send')
       // The events still landed in the folder — the fallback delivers, it never drops.
       const written = readFileSync(join(dir, 'folder', 'acme-widget', 'none.ndjson'), 'utf8')
       expect(written.trim().split('\n')).toHaveLength(2)

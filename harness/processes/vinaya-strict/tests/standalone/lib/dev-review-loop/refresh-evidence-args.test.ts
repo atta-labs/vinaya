@@ -11,27 +11,13 @@
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { prReportRefreshArgs } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture.js'
+import { programCommandLine } from '../../../../tools/programs.js'
 
-const INDEX = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  '..',
-  '..',
-  '..',
-  '..',
-  '..',
-  'apps',
-  'cli',
-  'src',
-  'index.ts'
-)
-const USAGE = 'Usage: vinaya pr report [--write <body-file> | --push <pr> [--body-file <path>]]'
+const USAGE = 'Usage: vinaya-pr-report [--write <body-file> | --push <pr> [--body-file <path>]]'
 
 describe('refresh_evidence argv', () => {
   it('runs `pr report --push <prNumber>`, never the bare `--write` the usage gate rejects', () => {
@@ -47,7 +33,7 @@ describe('refresh_evidence argv', () => {
     // dir into the child and is killed with a diagnostic if it ever hangs.
     const dir = mkdtempSync(join(tmpdir(), 'vinaya-refresh-evidence-args-'))
     try {
-      const result = spawnSyncBudgeted('bun', [INDEX, ...prReportRefreshArgs(1055)], {
+      const result = spawnSyncBudgeted('bun', programCommandLine(prReportRefreshArgs(1055)) ?? [], {
         cwd: dir,
         encoding: 'utf8',
         env: stripVinayaEnv()
@@ -89,7 +75,7 @@ describe('refresh_evidence on a head whose tests are deferred to required CI', (
         `#!/bin/sh\nif [ "$1" = "pr" ] && [ "$2" = "view" ]; then cat ${JSON.stringify(join(dir, 'live-body.md'))}; exit 0; fi\necho "gh stub: refused $*" >&2\nexit 1\n`
       )
       chmodSync(join(bin, 'gh'), 0o755)
-      const result = spawnSyncBudgeted('bun', [INDEX, ...prReportRefreshArgs(7)], {
+      const result = spawnSyncBudgeted('bun', programCommandLine(prReportRefreshArgs(7)) ?? [], {
         cwd: dir,
         encoding: 'utf8',
         env: { ...env, PATH: `${bin}:${env.PATH ?? ''}` }

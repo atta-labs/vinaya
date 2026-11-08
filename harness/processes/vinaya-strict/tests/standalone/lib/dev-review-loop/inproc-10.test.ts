@@ -767,7 +767,7 @@ describe('an agent usage limit — a stop condition with a reset, never a crash'
     const onPr = renderPauseComment(7, 'infrastructure', detail, { agent: 'codex' })
     expect(onPr).toContain('usage limit was reached')
     expect(onPr).toContain('No Principal ruling is needed')
-    expect(onPr).toContain('vinaya dev-review-loop --resume 7 --agent codex')
+    expect(onPr).toContain('vinaya-dev-review-loop --resume 7 --agent codex')
     const onIssue = renderNoPushStopComment(1184, 'task/issue-1184', 'infrastructure', detail, { agent: 'codex' })
     expect(onIssue).toContain('usage limit was reached')
     expect(onIssue).toContain('No Principal ruling is needed')

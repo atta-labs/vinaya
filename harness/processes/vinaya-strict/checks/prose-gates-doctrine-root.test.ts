@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { DOCTRINE_REPO_PATHS } from '../tools/doctrine/doctrine-map'
+import { programCommandLine, programFile } from '../tools/programs.js'
 
 // Task `vinaya-adopter-portability-v1` 2 (Issue #232): `reader-resolvable-prose`
 // and `retired-vocabulary` both defaulted an unconfigured `proseGates.doctrineRoot`
@@ -121,7 +122,7 @@ describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — ta
       execFileSync('git', ['add', '-A'], { cwd: root })
       execFileSync('git', ['commit', '-q', '-m', 'Chore: add fixture doctrine'], { cwd: root })
 
-      const result = Bun.spawnSync(['bun', INDEX_TS, 'check', 'reader-resolvable-prose'], {
+      const result = Bun.spawnSync(['bun', programFile('check'), 'reader-resolvable-prose'], {
         cwd: root,
         env: checkChildEnv({ PR_BODY: undefined })
       })
@@ -200,7 +201,7 @@ for (const check of [
     }
 
     function run(cwd: string): { exitCode: number; stderr: string } {
-      const result = Bun.spawnSync(['bun', INDEX_TS, 'check', check.name], {
+      const result = Bun.spawnSync(['bun', programFile('check'), check.name], {
         cwd,
         env: checkChildEnv({ BASE_SHA: 'main', PR_BODY: undefined })
       })
@@ -580,7 +581,7 @@ describe('explicit proseGates.doctrineRoot still wins — retired-vocabulary (Is
       execFileSync('git', ['add', '-A'], { cwd: root })
       execFileSync('git', ['commit', '-q', '-m', 'Chore: add fixture doctrine'], { cwd: root })
 
-      const result = Bun.spawnSync(['bun', INDEX_TS, 'check', 'retired-vocabulary'], {
+      const result = Bun.spawnSync(['bun', programFile('check'), 'retired-vocabulary'], {
         cwd: root,
         env: checkChildEnv({ PR_BODY: undefined })
       })
@@ -960,7 +961,7 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
       expect(stderr).toContain('proseGates.specPaths.0')
       expect(stderr).not.toContain('notes.md')
 
-      const validated = Bun.spawnSync(['bun', INDEX_TS, 'check', 'reader-resolvable-prose'], {
+      const validated = Bun.spawnSync(['bun', programFile('check'), 'reader-resolvable-prose'], {
         cwd: root,
         env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
       })
@@ -1055,7 +1056,10 @@ describe('proseGates.rules — configured writing rules, end to end', () => {
   }
 
   function run(root: string, args: string[]) {
-    const result = Bun.spawnSync(['bun', INDEX_TS, ...args], { cwd: root, env: checkChildEnv({ PR_BODY: undefined }) })
+    const result = Bun.spawnSync(['bun', ...(programCommandLine(args) ?? [INDEX_TS, ...args])], {
+      cwd: root,
+      env: checkChildEnv({ PR_BODY: undefined })
+    })
     return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
   }
 

@@ -227,7 +227,7 @@ describe('vinaya task run --issue — argv parsing (task-run-v1 task 15, O1)', (
 describe('vinaya task run — pauseResumeCommand (#785, O1)', () => {
   it('names `dev-review-loop --resume <pr>` for a pause with a real pull request', () => {
     expect(pauseResumeCommand({ prNumber: 501, task: 785, branch: 'task/issue-785' }, { agent: 'claude' })).toBe(
-      'vinaya dev-review-loop --resume 501 --agent claude'
+      'vinaya-dev-review-loop --resume 501 --agent claude'
     )
   })
 
@@ -237,7 +237,7 @@ describe('vinaya task run — pauseResumeCommand (#785, O1)', () => {
         { prNumber: 682, task: 785, branch: 'task/issue-785' },
         { agent: 'codex', model: 'gpt-5.6-terra' }
       )
-    ).toBe('vinaya dev-review-loop --resume 682 --agent codex --model gpt-5.6-terra')
+    ).toBe('vinaya-dev-review-loop --resume 682 --agent codex --model gpt-5.6-terra')
   })
 
   it('names `task run --issue <n>` for a before-any-push pause on a backlog branch (prNumber 0), never `--resume 0`', () => {

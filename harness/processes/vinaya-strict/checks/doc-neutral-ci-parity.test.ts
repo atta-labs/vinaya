@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { programFile } from '../tools/programs.js'
 
 /**
  * `Doc-neutral:` must clear a fired binding in the BLOCKING check, not only in
@@ -68,20 +69,17 @@ async function runBlockingCheckThroughRunner(
   gitIndexFile: string,
   commitHook = true
 ): Promise<{ code: number; stderr: string }> {
-  const proc = Bun.spawn(
-    ['bun', join(REPO_ROOT, 'apps/cli/src/index.ts'), 'check', 'doc-coverage', ...(commitHook ? ['--skip-full'] : [])],
-    {
-      cwd: dir,
-      env: {
-        ...process.env,
-        BASE_SHA: base,
-        GIT_INDEX_FILE: gitIndexFile,
-        PR_NUMBER: ''
-      },
-      stdout: 'pipe',
-      stderr: 'pipe'
-    }
-  )
+  const proc = Bun.spawn(['bun', programFile('check'), 'doc-coverage', ...(commitHook ? ['--skip-full'] : [])], {
+    cwd: dir,
+    env: {
+      ...process.env,
+      BASE_SHA: base,
+      GIT_INDEX_FILE: gitIndexFile,
+      PR_NUMBER: ''
+    },
+    stdout: 'pipe',
+    stderr: 'pipe'
+  })
   const stderr = await new Response(proc.stderr).text()
   return { code: await proc.exited, stderr }
 }

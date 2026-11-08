@@ -40,6 +40,7 @@ import {
   unsetCoreHooksPath
 } from '../../../harness/kernel/connectors/git/detect.js'
 import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
+import { programFile } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 
 // The real CLI source, invoked directly by `bun` instead of the hook's real
 // `npx --yes @attalabs/vinaya` body — same technique quickstart.test.ts uses,
@@ -353,7 +354,7 @@ describe('commit-msg hook fires on a real commit (issue-989)', () => {
     writeFileSync(join(root, TRACKED_HOOK_DIR, 'pre-commit'), '#!/usr/bin/env sh\nexit 0\n', { mode: 0o755 })
     writeFileSync(
       join(root, TRACKED_HOOK_DIR, 'commit-msg'),
-      `#!/usr/bin/env sh\nbun ${INDEX_TS} commit-msg "$1" "$2" || exit 1\n`,
+      `#!/usr/bin/env sh\nbun ${programFile('commit-msg')} "$1" "$2" || exit 1\n`,
       { mode: 0o755 }
     )
 

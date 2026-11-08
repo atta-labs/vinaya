@@ -110,7 +110,7 @@ describe('doctrine pointer content (atta-labs/vinaya#41 — honest adopter entry
 
   it('names how to see what is running and how to extend, using only shipped commands', () => {
     const content = doctrinePointer(null, ROLES)
-    expect(content).toContain('vinaya check --plan')
+    expect(content).toContain('vinaya-check --plan')
     expect(content).toContain('vinaya doctor')
     expect(content).toContain('vinaya new check')
     // `vinaya new role` and `vinaya new noop-check` shipped in task 8 (#42) —

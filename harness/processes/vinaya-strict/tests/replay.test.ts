@@ -81,6 +81,8 @@ for (const vendor of ['claude', 'codex'] as const)
         expect.arrayContaining(['loop_started', 'round_started', 'gate_result_read', 'verdicts_read'])
       )
       expect(names.indexOf('gate_result_read')).toBeLessThan(names.indexOf('verdicts_read'))
+      // The run names its task from `loop_started` alone: the title the one Issue read at loop start gave.
+      expect(run.events.find((e) => e.event === 'loop_started')).toMatchObject({ task: TASK, title: 'A backlog task' })
     })
 
     test('a red gate loops back to develop, which continues its own session', async () => {
@@ -92,7 +94,7 @@ for (const vendor of ['claude', 'codex'] as const)
       expect(develops[1]?.args.slice(0, 3)).toEqual(
         vendor === 'claude' ? ['-p', '--resume', session] : ['exec', 'resume', session]
       )
-      expect(develops[1]?.prompt).toContain('The checks (`vinaya check --all`) are red on the last head.')
+      expect(develops[1]?.prompt).toContain('The checks (`vinaya-check --all`) are red on the last head.')
       expect(develops[1]?.prompt).toContain('✗ closes-n: fail')
       expect(run.cliCalls).toHaveLength(2)
       expect(run.published.map((p) => p.round)).toEqual([1])

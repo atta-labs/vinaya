@@ -162,6 +162,8 @@ const CALLER_ALLOWLIST = new Set([
   LOG_WEBHOOK_DRAIN_LIB_PATH,
   DISPATCH_PATH,
   DEV_REVIEW_LOOP_PATH,
+  // Conformance test support under the scanned process folders: a type-only import of the sink's dependencies.
+  'harness/processes/vinaya-strict/integration/conformance/unit/dev-review-current-loop-adapter.ts',
   DEV_REVIEW_LOOP_PAUSE_RESUME_PATH,
   DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH,
   LOG_SYNC_FOLDER_SOURCE_PATH,
@@ -243,7 +245,10 @@ const OUTBOX_PROSE_MENTION_ALLOWLIST = new Set([
   WORKER_BOUNDARY_PATH,
   RUN_PATHS_PATH,
   LOOP_LOG_PATH,
-  LOG_SYNC_FOLDER_SOURCE_PATH
+  LOG_SYNC_FOLDER_SOURCE_PATH,
+  // Conformance test support that moved under the scanned process folders: each reads a run's outbox, never writes it.
+  'harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.ts',
+  'harness/processes/vinaya-strict/integration/conformance/live-matrix/live-smoke.ts'
 ])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {

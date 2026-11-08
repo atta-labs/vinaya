@@ -540,7 +540,7 @@ describe('same-bytes body plumbing', () => {
   })
 
   it('reads a --body-file path once and records the slot', () => {
-    const path = join(FORGE_FIXTURES, 'pr-valid.md')
+    const path = join(PR_FORGE_FIXTURES, 'pr-valid.md')
     const r = locateBody(['--body-file', path])
     expect(r?.body).toBe(validPr)
     expect(r?.source).toEqual({ kind: 'file', argIndex: 1, inlineForm: false })
@@ -555,7 +555,7 @@ describe('same-bytes body plumbing', () => {
   })
 
   it('materializes the buffered body and rewrites the file slot to the same bytes', () => {
-    const path = join(FORGE_FIXTURES, 'pr-valid.md')
+    const path = join(PR_FORGE_FIXTURES, 'pr-valid.md')
     const args = ['--body-file', path]
     const bodyResult = locateBody(args)
     const { finalArgs, cleanup } = resolveShippableArgs(args, bodyResult)

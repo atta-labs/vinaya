@@ -86,7 +86,10 @@ import {
   resolveHead
 } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import { postMarkedComment } from '../tools/task-contract/forge/forge-write'
-import { developerBranchFor } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import {
+  developerBranchAndTitleFor,
+  developerBranchFor
+} from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import { publishRound } from '../loops/dev-review/standalone/dev-review-loop/publication'
 import {
   createWorkerBoundary,
@@ -2586,7 +2589,9 @@ export async function liveTaskInput(
 ): Promise<TaskInput & { stageReviewInput: (round: number) => VinayaStagedReviewInput | null }> {
   const forge: EngineForge = { ...liveForge, ...lookups.forge }
   // Tranche tasks live on `task/<tranche>/<n>`, backlog tasks on `task/issue-<n>`.
-  const branch = developerBranchFor(args.task, lookups.fetchTitle, lookups.fetchLabels)
+  // The same Issue read hands back the task's title, which `loop_started` records; absent when no title was read.
+  const { branch, title: taskTitle } = developerBranchAndTitleFor(args.task, lookups.fetchTitle, lookups.fetchLabels)
+  const titled = taskTitle ? { title: taskTitle } : {}
   const worktreePath = join(repoRoot, '.worktrees', branch)
   // The policy is read when first needed, never when this input is built: an unreadable policy pauses through the
   // handoff (the prepare-run step reports it) instead of throwing before the run starts.
@@ -2776,6 +2781,7 @@ export async function liveTaskInput(
         loopState = initialLoopState({
           loopId,
           task: args.task,
+          ...titled,
           ...loopRoles,
           maxRounds: DEFAULT_REVIEW_POLICY.maxRounds,
           maxTaskMinutes: DEFAULT_REVIEW_POLICY.maxTaskMinutes
@@ -2785,6 +2791,7 @@ export async function liveTaskInput(
       const config: LoopConfig = {
         loopId,
         task: args.task,
+        ...titled,
         ...loopRoles,
         maxRounds: policy.maxRounds,
         maxTaskMinutes: policy.maxTaskMinutes

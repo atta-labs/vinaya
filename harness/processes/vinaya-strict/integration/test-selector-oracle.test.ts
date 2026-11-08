@@ -576,8 +576,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
         '-rlE',
         ORIGIN_PATTERN,
         join(REPO_ROOT, 'apps/cli/tests'),
-        join(REPO_ROOT, 'harness/processes/vinaya-strict/tests'),
-        join(REPO_ROOT, 'harness/processes/vinaya-strict/integration'),
+        join(REPO_ROOT, 'harness/processes/vinaya-strict'),
         join(REPO_ROOT, 'harness/kernel'),
         '--include=*.ts'
       ],
@@ -746,8 +745,12 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // Raised 38 → 39: `harness/kernel/log/log-sink-doctrine-identity.test.ts` proves the sink's new `doctrineIdentity`
 // dependency and imports `log-sink.ts` directly — one new file, so a change to the sink selects that one extra suite.
 // Same rule.
+//
+// Raised 39 → 41: the command line's configuration forwarder was deleted, so the tests that imported it now import
+// `harness/processes/vinaya-strict/integration/config/compose.ts` directly, and two of them now sit one import from
+// this change set. The selection rule is unchanged.
 describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings (Issue #707, O1)', () => {
-  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 39 files', () => {
+  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 41 files', () => {
     const changed = [
       join(REPO_ROOT, 'harness/kernel/log/log-sink.ts'),
       join(REPO_ROOT, 'harness/processes/vinaya-strict/integration/config/compose.ts'),
@@ -756,7 +759,7 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })
     // Runner selection and disabled-recording suites directly consume these modules too, and so does the
     // standalone and Engine Log replay, which records both runners through the sink's own overrides.
-    expect(selected.length).toBeLessThanOrEqual(39)
+    expect(selected.length).toBeLessThanOrEqual(41)
   }, 30_000)
 
   it('a change to a widely imported export of the shared core package selects at most 25 files', () => {

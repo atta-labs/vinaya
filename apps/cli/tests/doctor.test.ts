@@ -1688,7 +1688,7 @@ describe('vinaya doctor — the log destination works (Issue #793)', () => {
     expect(finding.message).toContain(folder)
     expect(finding.message).toContain(SERVER)
     expect(finding.message).toContain('could not be read')
-    expect(finding.message).toContain('vinaya log send')
+    expect(finding.message).toContain('vinaya-log-send')
     expect(report.healthy).toBe(true)
   })
 

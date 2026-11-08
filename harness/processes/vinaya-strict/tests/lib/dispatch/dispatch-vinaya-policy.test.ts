@@ -988,7 +988,9 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
       'tools/task-contract/brief-assembly.ts'
     ].map((file) => readFileSync(join(processRoot, file), 'utf8'))
     const named = new Set(texts.flatMap((text) => [...text.matchAll(/\bvinaya-[a-z][a-z-]*[a-z]\b/g)].map((m) => m[0])))
-    const bins = [...named].filter((bin) => programForBin(bin) !== null)
+    // `vinaya-task-brief` appears only in the brief renderer's refusal to a Planner, never as a Developer step.
+    const plannerOnly = new Set(['vinaya-task-brief'])
+    const bins = [...named].filter((bin) => programForBin(bin) !== null && !plannerOnly.has(bin))
     expect(bins.length).toBeGreaterThan(0)
     const runCommands = (
       parseYaml(readFileSync(join(processRoot, 'executing', 'developer', 'grants.yaml'), 'utf8')) as {
