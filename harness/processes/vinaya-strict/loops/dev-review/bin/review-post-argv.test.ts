@@ -56,7 +56,38 @@ const TOKENS = {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+/**
+ * Runs `review post` the way a hand reviewer does: the judged manifest is
+ * exported first (`--export-manifest`, nothing written to the forge) and the
+ * snapshot file is passed to the post as `--manifest-file`. A call that already
+ * carries `--manifest-file` or `--export-manifest`, names no `--pr`, or whose
+ * export is refused (a broken forge, which the call's own assertions expect)
+ * runs exactly as given.
+ */
 function runCli(args: string[], opts: { cwd: string; env?: Record<string, string | undefined> }): CliResult {
+  const prIndex = args.indexOf('--pr')
+  if (prIndex === -1 || args.includes('--manifest-file') || args.includes('--export-manifest')) {
+    return runCliRaw(args, opts)
+  }
+  const exported = runCliRaw(['review', 'post', '--export-manifest', '--pr', String(args[prIndex + 1])], opts)
+  const file = join(mkdtempSync(join(tmpdir(), 'judged-manifest-')), 'manifest.json')
+  writeFileSync(file, exported.status === 0 ? exported.stdout : PLACEHOLDER_SNAPSHOT)
+  return runCliRaw([...args, '--manifest-file', file], opts)
+}
+
+/** A well-formed snapshot for a call whose own forge reads are expected to fail: the post gets past the snapshot's shape check and meets the failure the call asserts. */
+const PLACEHOLDER_SNAPSHOT = JSON.stringify({
+  manifestVersion: 2,
+  headSha: 'b'.repeat(40),
+  baseSha: 'a'.repeat(40),
+  briefHash: null,
+  objectivesVersion: null,
+  rulingOrdinal: 0,
+  pauseBoundRuling: null,
+  policyDigest: 'c'.repeat(64)
+})
+
+function runCliRaw(args: string[], opts: { cwd: string; env?: Record<string, string | undefined> }): CliResult {
   try {
     const stdout = execFileSync('bun', programCommandLine(args) ?? [INDEX, ...args], {
       cwd: opts.cwd,
@@ -142,6 +173,14 @@ if (args[0] === 'api' && String(args[1]).endsWith('/contents/vinaya.config.json'
 const commentsPath = ${JSON.stringify(join(stateDir, 'comments.json'))}
 function readComments() {
   try { return JSON.parse(readFileSync(commentsPath, 'utf8')) } catch { return [] }
+}
+if (args[0] === 'pr' && args[1] === 'view' && args.includes('baseRefName')) {
+  process.stdout.write('main')
+  process.exit(0)
+}
+if (args[0] === 'api' && args[1] === 'repos/{owner}/{repo}/git/ref/heads/main') {
+  process.stdout.write(${JSON.stringify('a'.repeat(40))})
+  process.exit(0)
 }
 if (args[0] === 'pr' && args[1] === 'view' && args.includes('headRefName')) {
   process.stdout.write('stub-branch')
@@ -230,6 +269,14 @@ if (args[0] === 'api' && String(args[1]).endsWith('/contents/vinaya.config.json'
 const commentsPath = ${JSON.stringify(join(stateDir, 'comments.json'))}
 function readComments() {
   try { return JSON.parse(readFileSync(commentsPath, 'utf8')) } catch { return [] }
+}
+if (args[0] === 'pr' && args[1] === 'view' && args.includes('baseRefName')) {
+  process.stdout.write('main')
+  process.exit(0)
+}
+if (args[0] === 'api' && args[1] === 'repos/{owner}/{repo}/git/ref/heads/main') {
+  process.stdout.write(${JSON.stringify('a'.repeat(40))})
+  process.exit(0)
 }
 if (args[0] === 'pr' && args[1] === 'view' && args.includes('headRefName')) {
   process.stdout.write('stub-branch')
@@ -876,6 +923,14 @@ const commentsPath = ${JSON.stringify(join(stateDir, 'comments.json'))}
 function readComments() {
   try { return JSON.parse(readFileSync(commentsPath, 'utf8')) } catch { return [] }
 }
+if (args[0] === 'pr' && args[1] === 'view' && args.includes('baseRefName')) {
+  process.stdout.write('main')
+  process.exit(0)
+}
+if (args[0] === 'api' && args[1] === 'repos/{owner}/{repo}/git/ref/heads/main') {
+  process.stdout.write(${JSON.stringify('a'.repeat(40))})
+  process.exit(0)
+}
 if (args[0] === 'pr' && args[1] === 'view' && args.includes('headRefName')) {
   process.stdout.write(${JSON.stringify(branch)})
   process.exit(0)
@@ -921,6 +976,14 @@ process.exit(1)
     chmodSync(gh, 0o755)
     const env = { PATH: `${dir}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'acme/widget' }
     try {
+      const exported = spawnSync(
+        'bun',
+        [...(programCommandLine(['review', 'post']) as string[]), '--export-manifest', '--pr', '1'],
+        { cwd: repo, encoding: 'utf8', env: { ...process.env, ...env } }
+      )
+      expect(exported.status).toBe(0)
+      const manifestFile = join(stateDir, 'judged-manifest.json')
+      writeFileSync(manifestFile, exported.stdout)
       // `spawnSync`, not `runCli`: `runCli` discards stderr on a successful
       // (exit 0) run, and the headRefOid-disagreement warning below is
       // logged on the success path, not a failure path.
@@ -951,7 +1014,9 @@ process.exit(1)
           '--tokens-out',
           '-',
           '--cost',
-          '-'
+          '-',
+          '--manifest-file',
+          manifestFile
         ],
         { cwd: repo, encoding: 'utf8', env: { ...process.env, ...env } }
       )
@@ -1773,13 +1838,16 @@ describe('review post — --scope-evidence-file: a fence directly below the verd
       expect(lines[verdictLine + 6]).toBe('Brief hash: (none)')
       expect(lines[verdictLine + 8]).toMatch(/^Policy digest: [0-9a-f]{64}$/)
       // Judged base: renders last of the head lines (`#555`, O1), ahead of the
-      // scope-evidence fence, which shifts down by two.
+      // scope-evidence fence, which shifts down by two. The judged snapshot's
+      // `Manifest version:` and `Pause-bound ruling:` lines follow it.
       expect(lines[verdictLine + 10]).toMatch(/^Judged base: /)
-      expect(lines[verdictLine + 12]).toBe('```')
-      expect(lines[verdictLine + 13]).toContain('2 files changed')
+      expect(lines[verdictLine + 12]).toBe('Manifest version: 2')
+      expect(lines[verdictLine + 14]).toBe('Pause-bound ruling: (none)')
+      expect(lines[verdictLine + 16]).toBe('```')
+      expect(lines[verdictLine + 17]).toContain('2 files changed')
       // The fence closes before BRIEF CONFORMANCE — evidence sits directly
       // below the verdict block, not mixed into the free-text fields.
-      const fenceClose = lines.indexOf('```', verdictLine + 13)
+      const fenceClose = lines.indexOf('```', verdictLine + 17)
       expect(lines[fenceClose + 2]).toBe('BRIEF CONFORMANCE: x')
       // No Objectives version: line either — this PR is `Closes #1`, well
       // below `OBJECTIVES_SINCE_ISSUE`, so `resolveObjectivesForPr` returns
@@ -2064,6 +2132,72 @@ describe('verifyPostedCodeReview/verifyPostedSecurity — objectives version bin
     )
     expect(result.ok).toBe(true)
   })
+})
+
+describe('verifyPostedCodeReview/verifyPostedSecurity — the post is checked against the full current manifest (#1853)', () => {
+  const BASE = 'a'.repeat(40)
+  const DIGEST = 'c'.repeat(64)
+  const CURRENT = {
+    manifestVersion: 2 as const,
+    headSha: HEAD,
+    baseSha: BASE,
+    briefHash: null,
+    objectivesVersion: null,
+    rulingOrdinal: 0,
+    pauseBoundRuling: null,
+    policyDigest: DIGEST
+  }
+  const bodyOf = (value: string, lines: Partial<Record<string, string>> = {}): string =>
+    [
+      `VERDICT: ${value}`,
+      '',
+      `Judged head: ${lines.head ?? HEAD}`,
+      '',
+      'Ruling ordinal: 0',
+      '',
+      'Brief hash: (none)',
+      '',
+      `Policy digest: ${lines.policy ?? DIGEST}`,
+      '',
+      `Judged base: ${BASE}`,
+      '',
+      `Manifest version: ${lines.version ?? '2'}`,
+      '',
+      `Pause-bound ruling: ${lines.pause ?? '(none)'}`
+    ].join('\n')
+  const comments = (body: string) => [{ body, author: 'daniboomerang' }]
+
+  for (const [role, verify, value] of [
+    ['code-reviewer', verifyPostedCodeReview, 'APPROVE'],
+    ['security', verifyPostedSecurity, 'PASS']
+  ] as const) {
+    it(`${role}: a post that echoes every current binding verifies clean`, () => {
+      const body = bodyOf(value)
+      const result = verify(comments(body), value as never, HEAD, ['daniboomerang'], body, null, 0, CURRENT)
+      expect(result.ok).toBe(true)
+    })
+
+    it(`${role}: a policy digest that is not the current one fails the post-write check`, () => {
+      const body = bodyOf(value, { policy: 'd'.repeat(64) })
+      const result = verify(comments(body), value as never, HEAD, ['daniboomerang'], body, null, 0, CURRENT)
+      expect(result.ok).toBe(false)
+      expect(result.reason).toContain('policyDigest')
+    })
+
+    it(`${role}: a pause-bound ruling the current manifest does not carry fails the post-write check`, () => {
+      const body = bodyOf(value, { pause: `pr:1:ruling:1|p1|${'e'.repeat(64)}` })
+      const result = verify(comments(body), value as never, HEAD, ['daniboomerang'], body, null, 0, CURRENT)
+      expect(result.ok).toBe(false)
+      expect(result.reason).toContain('pauseBoundRuling')
+    })
+
+    it(`${role}: a missing manifest version line fails the post-write check`, () => {
+      const body = bodyOf(value).replace('Manifest version: 2\n\n', '')
+      const result = verify(comments(body), value as never, HEAD, ['daniboomerang'], body, null, 0, CURRENT)
+      expect(result.ok).toBe(false)
+      expect(result.reason).toContain('manifestVersion')
+    })
+  }
 })
 
 describe('review post — objectives resolution and refusals end-to-end (#412, O1)', () => {
