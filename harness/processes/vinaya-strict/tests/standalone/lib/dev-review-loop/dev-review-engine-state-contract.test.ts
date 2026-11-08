@@ -29,9 +29,9 @@ import {
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', '..', '..')
 const AMBIGUITY_FIXTURE_PATH = join(
   REPO_ROOT,
-  'apps',
-  'cli',
-  'tests',
+  'harness',
+  'processes',
+  'vinaya-strict',
   'fixtures',
   'dev-review-architecture-invariants.json'
 )
