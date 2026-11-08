@@ -13,7 +13,13 @@ import { join } from 'node:path'
 import { assembleAndRenderBrief } from '../../../tools/task-contract/brief-assembly.js'
 import type { TaskRunner } from '../../../integration/config/compose.js'
 import type { AgentVendor } from '../dispatch/dispatch.js'
-import { developerBranchFor, findOpenPrForBranch } from '../standalone/dev-review-loop/developer-dispatch.js'
+import {
+  developerBranchAndTitleFor,
+  developerBranchFor,
+  fetchIssueLabels,
+  fetchIssueTitle,
+  findOpenPrForBranch
+} from '../standalone/dev-review-loop/developer-dispatch.js'
 import {
   isDriverPidAlive,
   readDriverLock,
@@ -31,7 +37,31 @@ export const CHECKPOINT_FILES = ['checkpoints.sqlite', 'checkpoints.sqlite-wal',
 /** What a checkpoint recorded of the run that wrote it; a field is null when the checkpoint never recorded it. */
 export type CheckpointRecord = { agent: string | null; model: string | null }
 
-export type SwitchTaskInput = { task: number; agent: AgentVendor; model?: string | undefined }
+/** The two address forms a run accepts: `<tranche> <n>` for a tranche task, `--issue <n>` for a backlog Issue. */
+export type TaskAddress = { tranche: string; n: number } | { issue: number }
+
+export type SwitchTaskInput = {
+  task: number
+  /** The form the run is started and printed in; the `--issue` form of `task` when absent. */
+  address?: TaskAddress | undefined
+  agent: AgentVendor
+  model?: string | undefined
+}
+
+/** The address as `task run` takes it on its command line. */
+export function addressWords(address: TaskAddress): string {
+  return 'tranche' in address ? `${address.tranche} ${address.n}` : `--issue ${address.issue}`
+}
+
+/** Whether a run accepts the address: a non-empty tranche with a positive whole task id, or a positive whole Issue. */
+function addressIsRunnable(address: TaskAddress): boolean {
+  if ('tranche' in address) {
+    return (
+      address.tranche.trim() !== '' && !address.tranche.startsWith('--') && Number.isInteger(address.n) && address.n > 0
+    )
+  }
+  return Number.isInteger(address.issue) && address.issue > 0
+}
 
 export type SwitchTaskDeps = {
   runtimeDir: string
@@ -56,7 +86,7 @@ export type SwitchTaskDeps = {
   /** Waits `ms` between two reads of the driver's liveness. */
   sleep: (ms: number) => Promise<void>
   /** Starts the task's run in the background on the agent and model; returns the acknowledgement to print. */
-  startBackground: (task: number, agent: AgentVendor, model: string | undefined) => Promise<string>
+  startBackground: (address: TaskAddress, agent: AgentVendor, model: string | undefined) => Promise<string>
 }
 
 /** How long a stopped driver has to exit, and how often that is checked. */
@@ -88,10 +118,18 @@ function freshFolder(runDir: string, at: Date): string {
 
 export async function switchTask(input: SwitchTaskInput, deps: SwitchTaskDeps): Promise<SwitchTaskResult> {
   const { task, agent } = input
+  const address: TaskAddress = input.address ?? { issue: task }
+  const run = `vinaya task run ${addressWords(address)} --agent ${agent}${input.model ? ` --model ${input.model}` : ''}`
+  if (!addressIsRunnable(address)) {
+    return {
+      kind: 'refused',
+      message: `vinaya task switch: task ${task}'s address (${addressWords(address)}) is not one a run accepts; nothing was changed.`
+    }
+  }
   if (deps.readRunner(task) !== 'atta-engine') {
     return {
       kind: 'standalone',
-      message: `vinaya task switch: task ${task} runs on the standalone runner, which already continues a task on a new --agent by itself; nothing was changed. Run: vinaya task run --issue ${task} --agent ${agent}${input.model ? ` --model ${input.model}` : ''}`
+      message: `vinaya task switch: task ${task} runs on the standalone runner, which already continues a task on a new --agent by itself; nothing was changed. Run: ${run}`
     }
   }
   const pid = deps.liveDriverPid(task)
@@ -138,16 +176,24 @@ export async function switchTask(input: SwitchTaskInput, deps: SwitchTaskDeps): 
     task,
     `Switched task ${task} from ${fromAgent} (${fromModel}) to ${agent} (${toModel}); old checkpoint ${folder ?? 'none, the task had no checkpoint'}`
   )
-  const next = `vinaya task run --issue ${task} --agent ${agent}${input.model ? ` --model ${input.model}` : ''}`
   const where =
     folder === null ? 'The task had no checkpoint to set aside.' : `The old checkpoint is kept in ${folder}.`
   const work = publishedWork
     ? 'Its branch and pull request are untouched; the next run continues them from the next round.'
     : 'It has no published work; the next run starts fresh.'
-  const acknowledgement = await deps.startBackground(task, agent, input.model)
+  let acknowledgement: string
+  try {
+    acknowledgement = await deps.startBackground(address, agent, input.model)
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    return {
+      kind: 'refused',
+      message: `vinaya task switch: task ${task} was switched to ${agent} (${toModel}), but its background run did not start: ${reason}\n${where} Start the run with: ${run} --background`
+    }
+  }
   return {
     kind: 'switched',
-    message: `vinaya task switch: task ${task} now continues on ${agent} (${toModel}). ${where} ${work} Started: ${next} --background\n${acknowledgement}`,
+    message: `vinaya task switch: task ${task} now continues on ${agent} (${toModel}). ${where} ${work} Started: ${run} --background\n${acknowledgement}`,
     publishedWork,
     folder,
     moved: present
@@ -221,8 +267,8 @@ export function liveSwitchDeps(runtimeDir: string, published: SwitchTaskDeps['ha
       }
     },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    startBackground: async (task, agent, model) => {
-      const handle = await startBackgroundRun({ issue: task, agent, ...(model ? { model } : {}) })
+    startBackground: async (address, agent, model) => {
+      const handle = await startBackgroundRun({ ...address, agent, ...(model ? { model } : {}) })
       return [
         `vinaya task run: task ${handle.task} — background controller acknowledged (pid ${handle.pid}, run ${handle.runId})`,
         `Follow with: vinaya task status --issue ${handle.task} --follow`,
@@ -253,14 +299,51 @@ export type TaskSwitchRequest = ({ tranche: string; n: number } | { issue: numbe
   model?: string | undefined
 }
 
+/** The reads that tell a `--issue` request whether its Issue is a tranche task; injectable so no forge is needed. */
+export type SwitchResolution = {
+  fetchLabels?: (issue: number) => string[]
+  fetchTitle?: (issue: number, options?: { once?: boolean }) => string
+  /** The switch's own dependencies; the live ones over this repository when absent. */
+  switchDeps?: SwitchTaskDeps
+}
+
+/**
+ * The tranche address of a tranche-labeled Issue, read from its label and its `[<tranche>] <n> —` title by the
+ * standalone dispatch's own branch derivation; the `--issue` form for an Issue without a tranche label. Throws when
+ * the Issue cannot be read or carries a tranche label with a malformed title.
+ */
+export function resolveIssueAddress(issue: number, resolution: SwitchResolution = {}): TaskAddress {
+  const { branch } = developerBranchAndTitleFor(
+    issue,
+    resolution.fetchTitle ?? fetchIssueTitle,
+    resolution.fetchLabels ?? fetchIssueLabels
+  )
+  const tranche = /^task\/([^/]+)\/(\d+)$/.exec(branch)
+  return tranche ? { tranche: tranche[1] as string, n: Number.parseInt(tranche[2] as string, 10) } : { issue }
+}
+
 /**
  * The command's whole run over this repository: resolves the task's Issue (a `<tranche> <n>` address through the
- * read-only brief render, `--issue` as given), then switches it. Throws when the address cannot be resolved.
+ * read-only brief render, `--issue` as given) and the address the run is started in (a tranche-labeled `--issue`
+ * Issue resolves to its tranche address), then switches it. Throws when the address cannot be resolved, before
+ * anything changes.
  */
-export async function runTaskSwitch(request: TaskSwitchRequest): Promise<SwitchTaskResult> {
+export async function runTaskSwitch(
+  request: TaskSwitchRequest,
+  resolution: SwitchResolution = {}
+): Promise<SwitchTaskResult> {
   let task: number
-  if ('issue' in request) task = request.issue
-  else {
+  let address: TaskAddress
+  if ('issue' in request) {
+    task = request.issue
+    try {
+      address = resolveIssueAddress(task, resolution)
+    } catch (err) {
+      throw new Error(
+        `vinaya task switch: could not resolve the address of Issue #${task}; nothing was changed: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  } else {
     const rendered = await assembleAndRenderBrief(request.tranche, String(request.n))
     if (!rendered.ok) {
       throw new Error(
@@ -268,9 +351,12 @@ export async function runTaskSwitch(request: TaskSwitchRequest): Promise<SwitchT
       )
     }
     task = rendered.issue
+    address = { tranche: request.tranche, n: request.n }
   }
-  const deps = liveSwitchDeps(thisRepoRuntimeDir(), (issue) =>
-    realHasPublishedWork(issue, { developerBranchFor, findOpenPrForBranch, commitsBeyondMain })
-  )
-  return switchTask({ task, agent: request.agent, ...(request.model ? { model: request.model } : {}) }, deps)
+  const deps =
+    resolution.switchDeps ??
+    liveSwitchDeps(thisRepoRuntimeDir(), (issue) =>
+      realHasPublishedWork(issue, { developerBranchFor, findOpenPrForBranch, commitsBeyondMain })
+    )
+  return switchTask({ task, address, agent: request.agent, ...(request.model ? { model: request.model } : {}) }, deps)
 }

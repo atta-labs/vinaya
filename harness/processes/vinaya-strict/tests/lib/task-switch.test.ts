@@ -11,6 +11,7 @@ import {
   liveSwitchDeps,
   readCheckpointRecordFromFile,
   realHasPublishedWork,
+  runTaskSwitch,
   switchTask,
   type SwitchTaskDeps
 } from '../../loops/dev-review/run-control/task-switch'
@@ -139,7 +140,7 @@ describe('switchTask', () => {
         }
       })
     )
-    expect(started).toEqual([[7, 'claude', 'opus']])
+    expect(started).toEqual([[{ issue: 7 }, 'claude', 'opus']])
     expect(result.message).toContain('background controller acknowledged')
   })
 
@@ -236,6 +237,120 @@ describe('switchTask', () => {
     }
     await switchTask({ task: 8, agent: 'claude' }, live)
     expect(readPauseState(root, 8)).toBeNull()
+  })
+})
+
+describe('the address a switch restarts a task in', () => {
+  const tranche = { tranche: 'some-tranche-v1', n: 4 }
+
+  it('starts a tranche-addressed task with the tranche address and prints that form everywhere', async () => {
+    const started: unknown[] = []
+    const result = await switchTask(
+      { task: 7, address: tranche, agent: 'claude', model: 'opus' },
+      deps({
+        startBackground: async (...args) => {
+          started.push(args)
+          return 'ok'
+        }
+      })
+    )
+    expect(started).toEqual([[tranche, 'claude', 'opus']])
+    expect(result.message).toContain(
+      'Started: vinaya task run some-tranche-v1 4 --agent claude --model opus --background'
+    )
+    expect(result.message).not.toContain('--issue')
+  })
+
+  it('names the tranche form in the standalone-runner message', async () => {
+    const result = await switchTask(
+      { task: 7, address: tranche, agent: 'codex' },
+      deps({ readRunner: () => 'standalone' })
+    )
+    expect(result.message).toContain('Run: vinaya task run some-tranche-v1 4 --agent codex')
+  })
+
+  const resolution = (labels: string[], title: string, started: unknown[]) => ({
+    fetchLabels: () => labels,
+    fetchTitle: () => title,
+    switchDeps: deps({
+      startBackground: async (...args) => {
+        started.push(args)
+        return 'ok'
+      }
+    })
+  })
+
+  it('resolves a tranche-labeled --issue request to its tranche address', async () => {
+    const started: unknown[] = []
+    const result = await runTaskSwitch(
+      { issue: 7, agent: 'claude' },
+      resolution(['vinaya/tranche:some-tranche-v1'], '[some-tranche-v1] 4 — A title', started)
+    )
+    expect(started).toEqual([[tranche, 'claude', undefined]])
+    expect(result.message).toContain('vinaya task run some-tranche-v1 4 --agent claude --background')
+  })
+
+  it('keeps the --issue form for an Issue without a tranche label', async () => {
+    const started: unknown[] = []
+    await runTaskSwitch(
+      { issue: 7, agent: 'claude' },
+      resolution([], '[some-tranche-v1] 4 — Looks like a tranche task', started)
+    )
+    expect(started).toEqual([[{ issue: 7 }, 'claude', undefined]])
+  })
+
+  it('throws before changing anything when a labeled Issue has a malformed title', async () => {
+    seedCheckpoint(7)
+    const started: unknown[] = []
+    let rewritten = false
+    const r = resolution(['vinaya/tranche:some-tranche-v1'], 'no shape here', started)
+    r.switchDeps.rewritePauseAgent = () => {
+      rewritten = true
+      return true
+    }
+    await expect(runTaskSwitch({ issue: 7, agent: 'claude' }, r)).rejects.toThrow('nothing was changed')
+    for (const name of CHECKPOINT_FILES) expect(existsSync(join(runDir(7), name))).toBe(true)
+    expect(rewritten).toBe(false)
+    expect(started).toEqual([])
+  })
+
+  it('refuses an address no run accepts before stopping a driver, moving a file or rewriting a pause', async () => {
+    seedCheckpoint(7)
+    const stopped: number[] = []
+    let rewritten = false
+    const result = await switchTask(
+      { task: 7, address: { tranche: '', n: 4 }, agent: 'claude' },
+      deps({
+        liveDriverPid: () => 4242,
+        holdsPause: () => true,
+        stopDriver: (pid) => stopped.push(pid),
+        rewritePauseAgent: () => {
+          rewritten = true
+          return true
+        }
+      })
+    )
+    expect(result.kind).toBe('refused')
+    expect(stopped).toEqual([])
+    expect(rewritten).toBe(false)
+    expect(lines).toEqual([])
+    for (const name of CHECKPOINT_FILES) expect(existsSync(join(runDir(7), name))).toBe(true)
+  })
+
+  it('reports the checkpoint folder and the start command when the background start fails after the move', async () => {
+    seedCheckpoint(7)
+    const result = await switchTask(
+      { task: 7, address: tranche, agent: 'claude' },
+      deps({
+        startBackground: async () => {
+          throw new Error('spawn failed')
+        }
+      })
+    )
+    expect(result.kind).toBe('refused')
+    expect(result.message).toContain('spawn failed')
+    expect(result.message).toContain(join(runDir(7), 'switched-2026-10-27T03-04-05.678Z'))
+    expect(result.message).toContain('vinaya task run some-tranche-v1 4 --agent claude --background')
   })
 })
 
