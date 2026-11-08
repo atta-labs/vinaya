@@ -2,7 +2,7 @@
 
 import { motion } from 'motion/react'
 import { useId } from 'react'
-import { cn } from '@/ui/lib/utils'
+import { cn } from '@vinaya/ui/lib/utils'
 import { AgentFrame, type AgentRole, AgentSign } from './agents'
 import { Glyph, LINE, MARK } from './glyph'
 import { type IconProps, SIGNATURE, useIconStill } from './icon-motion'

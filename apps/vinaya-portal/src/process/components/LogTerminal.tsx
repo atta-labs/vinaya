@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
-import { cn } from '@/ui/lib/utils'
+import { cn } from '@vinaya/ui/lib/utils'
 import type { ChatLine, Environment, LogEvent } from '../types'
 import { ChatWindow } from './ChatWindow'
 

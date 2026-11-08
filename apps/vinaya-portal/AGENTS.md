@@ -4,13 +4,15 @@
 
 Every UI change in this app follows three rule files at the repository root. Read all three before writing or editing any component, page, style or icon here:
 
-- [`.claude/rules/ui-components.md`](../../.claude/rules/ui-components.md) — components live in `src/ui`, built on Ariakit primitives under shadcn's names and props, animated with `motion`; app code never renders raw interactive HTML; a missing component is added to the library.
+- [`.claude/rules/ui-components.md`](../../.claude/rules/ui-components.md) — components live in the shared library, `@vinaya/ui` under [`packages/ui`](../../packages/ui), built on Ariakit primitives under shadcn's names and props, animated with `motion`; app code never renders raw interactive HTML; a missing component is added to the library.
 - [`.claude/rules/ui-theme-tokens.md`](../../.claude/rules/ui-theme-tokens.md) — colours, radii and fonts only from the CSS variables the CMS theme renders; no palette classes or colour literals; inline styles only for runtime values; the four places icons come from.
 - [`.claude/rules/ui-cms-theme.md`](../../.claude/rules/ui-cms-theme.md) — how the CMS theme reaches those variables, and why theme work never adds one.
 
 To add a component to the library, follow the `ui-new-component` skill, [`.agents/skills/ui-new-component/SKILL.md`](../../.agents/skills/ui-new-component/SKILL.md).
 
-These are the same files Claude Code loads on its own for any file under `apps/vinaya-*`, so Claude Code and Codex follow one text.
+These are the same files Claude Code loads on its own for any file under `apps/vinaya-*`, `packages/ui` or `packages/cms`, so Claude Code and Codex follow one text.
+
+The component library is not in this app: every component, the shared layout and typography pieces, the class helper, the colour-scheme and theme helpers, the preview-theme listener, the web shell the root layout renders through and the global stylesheet live in the shared UI package, `@vinaya/ui` under [`packages/ui`](../../packages/ui), which every Vinaya web app imports. This app keeps only its own chrome — the top bar (`src/ui/topbar`) and the footer with its marks (`src/ui/footer`) — and its site stylesheet, `src/ui/styles/site.css`, which imports the package's `@vinaya/ui/styles/globals.css` and is the one stylesheet the root layout imports.
 
 The Sanity client, the product, branding and theme queries and the theme's renderer are not in this app: they live in the shared CMS package, `@vinaya/cms` under [`packages/cms`](../../packages/cms), which every Vinaya web app imports. A query that reads only this app's own content, such as the roadmap's (`src/lib/roadmap-milestones.ts`), stays here and builds its client with `createProductClient` from that package.
 

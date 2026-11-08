@@ -1,7 +1,7 @@
 import * as THREE from 'three'
-import { alphaAt, coverageMask, drawnMask } from '@/ui/lib/mask-canvas'
-import { tokenHex } from '@/ui/lib/theme-color'
-import { clamp01 } from '@/ui/lib/math'
+import { alphaAt, coverageMask, drawnMask } from '@vinaya/ui/lib/mask-canvas'
+import { tokenHex } from '@vinaya/ui/lib/theme-color'
+import { clamp01 } from '@vinaya/ui/lib/math'
 
 /**
  * Complex work's life cycle as one scroll-driven descent: product Projects →

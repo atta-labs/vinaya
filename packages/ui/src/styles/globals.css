@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "./site.css";
 
 /* Align Tailwind's dark: variant with our SSR-driven [data-theme="dark"]
    attribute on <html>. Without this, dark: would resolve via the browser's
@@ -22,7 +21,11 @@
 @custom-variant data-horizontal (&:where([data-orientation="horizontal"]));
 @custom-variant data-vertical (&:where([data-orientation="vertical"]));
 
-@source "../../**/*.{ts,tsx}";
+/* Tailwind scans from the app's working directory and skips node_modules, so a
+   class used only inside this package would never reach an app's stylesheet.
+   Register the package's own files, and every Vinaya web app's source tree. */
+@source "../**/*.{ts,tsx}";
+@source "../../../../apps/vinaya-*/src/**/*.{ts,tsx}";
 
 @theme inline {
   /* The standard shadcn multi-series chart palette (`chart1`..`chart5` in

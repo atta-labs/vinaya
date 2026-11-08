@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { clamp01, easeInOutCubic, lerp, smoothstep } from '@/ui/lib/math'
+import { clamp01, easeInOutCubic, lerp, smoothstep } from '@vinaya/ui/lib/math'
 import { buildFloaters } from '../canvas/floaters'
 import { buildField } from './field-3d'
 import { buildHarness, heroColor, heroFabricAlpha, readToken } from './harness-model'

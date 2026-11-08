@@ -1,4 +1,4 @@
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/ui/components'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@vinaya/ui/components'
 import { toneText } from '../tone'
 import type { Tone } from '../types'
 

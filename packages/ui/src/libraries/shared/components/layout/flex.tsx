@@ -1,5 +1,5 @@
 import React from 'react'
-import { Slot } from '@/ui/lib/slot'
+import { Slot } from '../../../../lib/slot'
 import { cn } from '../../../../lib/utils'
 import { getFlexClasses } from './class-utils'
 import type { FlexProps } from './types'
