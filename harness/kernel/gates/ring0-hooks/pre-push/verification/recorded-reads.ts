@@ -203,6 +203,53 @@ const AT_CALLS = new Set([
 ])
 const CLONE_CALLS = new Set(['clone', 'clone3', 'fork', 'vfork'])
 
+/**
+ * Whether a path under `.git/` is a read of repository content: an object or the index. Git touches the rest on every
+ * command to find the repository — `.git` itself, `HEAD`, `config`, the refs, and an `access` of the objects folder —
+ * and those name no tracked file's content.
+ */
+export function isGitContentRead(rel: string): boolean {
+  if (rel === '.git/index') return true
+  return rel.startsWith('.git/objects/') && !rel.startsWith('.git/objects/info/')
+}
+
+/** Git subcommands whose object reads are exactly the `<rev>:<path>` arguments they name. */
+const GIT_PATH_READERS = new Set(['show', 'cat-file', 'rev-parse'])
+
+/**
+ * The repository paths a git command reads through its objects, from an `execve` call's arguments: `git show
+ * HEAD:vinaya.config.json` reads `vinaya.config.json`. `null` when the call is not git, is one whose object reads
+ * name no path (`git show HEAD`, `git log`), or was printed cut short.
+ */
+export function gitPathArguments(args: string): string[] | null {
+  const program = leadingString(args)
+  if (!program || program.truncated || !/(?:^|\/)git$/.test(program.value)) return null
+  let rest = program.rest.replace(/^\s*,\s*\[/, '')
+  if (rest === program.rest) return null
+  const argv: string[] = []
+  for (;;) {
+    const arg = leadingString(rest)
+    if (!arg) break
+    if (arg.truncated) return null
+    argv.push(arg.value)
+    rest = arg.rest.replace(/^\s*,\s*/, '')
+  }
+  if (!rest.startsWith(']')) return null
+  let i = 1
+  while (i < argv.length && (argv[i] as string).startsWith('-')) i += argv[i] === '-C' || argv[i] === '-c' ? 2 : 1
+  const sub = argv[i]
+  if (sub === undefined || !GIT_PATH_READERS.has(sub)) return null
+  const paths: string[] = []
+  for (const arg of argv.slice(i + 1)) {
+    if (arg.startsWith('-')) continue
+    const at = arg.indexOf(':')
+    const path = at > 0 ? arg.slice(at + 1) : ''
+    if (path !== '' && !path.startsWith('./') && !path.startsWith('../') && !path.startsWith('/')) paths.push(path)
+    else if (sub !== 'rev-parse') return null
+  }
+  return sub === 'rev-parse' || paths.length > 0 ? paths : null
+}
+
 const LINE = /^(?:\[pid\s+(\d+)\]\s+|(\d+)\s+)?/
 const RESUMED = /^<\.\.\. (\w+) resumed>/
 
@@ -287,12 +334,19 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     if (absolute === root) return '.'
     return absolute.startsWith(`${root}/`) ? absolute.slice(root.length + 1) : null
   }
-  const record = (absolute: string, resolved: boolean, kind: 'read' | 'list') => {
+  /** The repository paths a git process reads through `<rev>:<path>` arguments, by process id. */
+  const gitPathReads = new Map<string, readonly string[]>()
+  const record = (absolute: string, resolved: boolean, kind: 'read' | 'list', pid = '0') => {
     const real = resolved ? absolute : options.realpath(absolute)
     const rel = relativeOf(real)
     if (rel === null) return
     if (rel === '.git' || rel.startsWith('.git/')) {
-      if (rel !== '.git') git = true
+      if (isGitContentRead(rel)) {
+        const mapped = gitPathReads.get(pid)
+        // The argument may name a file or a folder (a tree): both readings are kept.
+        if (mapped) for (const path of mapped) reads.add(path).add(`${path.replace(/\/+$/, '')}/`)
+        else git = true
+      }
       if (rel !== '.git') return
     }
     if (
@@ -329,7 +383,7 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     if (resumed) {
       // The arguments were on the unfinished half; the result's descriptor path still names a resolved file.
       const fd = /\)\s*=\s*\d+<([^>]+)>/.exec(body)
-      if (fd && PATH_CALLS.has(resumed[1] as string)) record(fd[1] as string, true, 'read')
+      if (fd && PATH_CALLS.has(resumed[1] as string)) record(fd[1] as string, true, 'read', pid)
       return
     }
     const call = /^(\w+)\((.*)$/s.exec(body)
@@ -344,10 +398,15 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     }
     if (name === 'getdents64' || name === 'getdents') {
       const fd = /^\d+<([^>]+)>/.exec(args)
-      if (fd) record(fd[1] as string, true, 'list')
+      if (fd) record(fd[1] as string, true, 'list', pid)
       return
     }
     if (!PATH_CALLS.has(name)) return
+    if (name === 'execve') {
+      const paths = /\)\s*=\s*0\s*$/.test(body) ? gitPathArguments(args) : null
+      if (paths) gitPathReads.set(pid, paths)
+      else gitPathReads.delete(pid)
+    }
 
     let rest = args
     let dir: string | 'cwd' | null = 'cwd'
@@ -366,8 +425,8 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     const done = /\)\s*=\s*\d+<([^>]+)>\s*$/.exec(body)
     const failed = /\)\s*=\s*-1\b/.test(body)
     if (done && !failed && (name === 'open' || name === 'openat' || name === 'openat2' || name === 'creat'))
-      record(done[1] as string, true, 'read')
-    else record(target, false, 'read')
+      record(done[1] as string, true, 'read', pid)
+    else record(target, false, 'read', pid)
     if (name === 'chdir' && !failed && /\)\s*=\s*0\s*$/.test(body)) cwds.set(pid, options.realpath(target))
   }
   return { feed, result: () => ({ reads, listed, git, truncated }) }

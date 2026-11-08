@@ -3,6 +3,8 @@
 import { describe, expect, it } from 'bun:test'
 import { posix } from 'node:path'
 import {
+  gitPathArguments,
+  isGitContentRead,
   bunLockIdentity,
   changedLockPackages,
   indexRecordedTest,
@@ -163,13 +165,64 @@ describe('the syscall trace reader', () => {
     expect([...lockReader.reads]).toEqual(['bun.lock'])
   })
 
-  it('marks a read under .git/ for static fallback', () => {
-    const result = readsOfTrace(
-      trace(`1 openat(AT_FDCWD</work/repo>, ".git/HEAD", O_RDONLY) = 3</work/repo/.git/HEAD>`),
+  it('marks a read of repository content under .git/ for static fallback', () => {
+    const object = readsOfTrace(
+      trace(
+        `1 openat(AT_FDCWD</work/repo>, ".git/objects/pack/pack-1.idx", O_RDONLY) = 3</work/repo/.git/objects/pack/pack-1.idx>`
+      ),
       options()
     )
-    expect(result.git).toBe(true)
-    expect(result.reads.has('.git/HEAD')).toBe(false)
+    expect(object.git).toBe(true)
+    expect(object.reads.has('.git/objects/pack/pack-1.idx')).toBe(false)
+    expect(readsOfTrace(trace('1 stat("/work/repo/.git/index", 0x7) = 0'), options()).git).toBe(true)
+  })
+
+  it('does not mark the reads git makes to find the repository', () => {
+    // The shape every git command leaves: HEAD, config, refs, and an access of the objects folder.
+    const result = readsOfTrace(
+      trace(
+        `1 openat(AT_FDCWD</work/repo>, ".git/HEAD", O_RDONLY) = 3</work/repo/.git/HEAD>`,
+        '1 stat("/work/repo/.git/config", 0x7) = 0',
+        '1 openat(AT_FDCWD</work/repo>, "/work/repo/.git/refs/heads/main", O_RDONLY) = 4</work/repo/.git/refs/heads/main>',
+        '1 access("/work/repo/.git/objects", X_OK) = 0',
+        '1 stat("/work/repo/.git/objects/info/alternates", 0x7) = -1 ENOENT (No such file or directory)'
+      ),
+      options()
+    )
+    expect(result.git).toBe(false)
+    expect([...result.reads].filter((r) => r.startsWith('.git/'))).toEqual([])
+  })
+
+  it('records the path a git command reads through a <rev>:<path> argument instead of marking it', () => {
+    const show = readsOfTrace(
+      trace(
+        '7 execve("/usr/bin/git", ["git", "-C", "/work/repo", "show", "HEAD:vinaya.config.json"], 0x7ffe /* 12 vars */) = 0',
+        `7 openat(AT_FDCWD</work/repo>, "/work/repo/.git/objects/pack/pack-1.idx", O_RDONLY) = 3</work/repo/.git/objects/pack/pack-1.idx>`
+      ),
+      options()
+    )
+    expect(show.git).toBe(false)
+    expect(show.reads.has('vinaya.config.json')).toBe(true)
+    const log = readsOfTrace(
+      trace(
+        '8 execve("/usr/bin/git", ["git", "log", "--oneline"], 0x7ffe /* 12 vars */) = 0',
+        `8 openat(AT_FDCWD</work/repo>, "/work/repo/.git/objects/pack/pack-1.idx", O_RDONLY) = 3</work/repo/.git/objects/pack/pack-1.idx>`
+      ),
+      options()
+    )
+    expect(log.git).toBe(true)
+  })
+
+  it('reads the paths of a git command only from <rev>:<path> arguments it can name', () => {
+    expect(gitPathArguments('"/usr/bin/git", ["git", "show", "HEAD:a/b.json"], 0x1 /* 3 vars */')).toEqual(['a/b.json'])
+    expect(gitPathArguments('"/usr/bin/git", ["git", "rev-parse", "HEAD"], 0x1')).toEqual([])
+    expect(gitPathArguments('"/usr/bin/git", ["git", "show", "HEAD"], 0x1')).toBeNull()
+    expect(gitPathArguments('"/usr/bin/git", ["git", "show", "HEAD:./a.json"], 0x1')).toBeNull()
+    expect(gitPathArguments('"/usr/bin/git", ["git", "cat-file", "--batch"], 0x1')).toBeNull()
+    expect(gitPathArguments('"/usr/bin/git", ["git", "show", "HEAD:a"...], 0x1')).toBeNull()
+    expect(gitPathArguments('"/usr/bin/node", ["node", "show", "HEAD:a"], 0x1')).toBeNull()
+    expect(isGitContentRead('.git/objects')).toBe(false)
+    expect(isGitContentRead('.git/objects/ab/cdef')).toBe(true)
   })
 
   it('decodes escaped and non-ASCII names, and ignores a truncated string', () => {

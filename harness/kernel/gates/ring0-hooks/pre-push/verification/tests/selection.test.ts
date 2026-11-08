@@ -454,13 +454,13 @@ describe('selectTests decided by recorded reads', () => {
     expect(plan.fallbacks[0]?.tests).toEqual(['packages/app/tests/data.test.ts'])
   })
 
-  it('a test that branches on process.platform is decided statically when the push is not from Linux', () => {
+  it('a push from another platform is decided by the same Linux record, so it selects what CI selects', () => {
     const records = record({ 'packages/app/tests/data.test.ts': { branchesOnPlatform: true } })
     const linux = select({ 'scratch/notes.txt': 'changed\n' }, records, 'linux')
-    expect(linux.records.fallbacks).toEqual([])
     const mac = select({ 'scratch/notes.txt': 'changed\n' }, records, 'darwin')
-    expect(mac.records.fallbacks.map((f) => f.id)).toEqual(['record-platform-branch'])
-    expect(mac.fallbacks[0]?.tests).toEqual(['packages/app/tests/data.test.ts'])
+    expect(linux.records.fallbacks).toEqual([])
+    expect(mac.records.fallbacks).toEqual([])
+    expect(mac.required.map((t) => t.test)).toEqual(linux.required.map((t) => t.test))
   })
 
   it('a record is used for a test only when none of its paths changed between the record commit and the base', () => {

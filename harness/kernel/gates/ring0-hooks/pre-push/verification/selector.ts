@@ -2398,13 +2398,9 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
             ? 'the test read under .git/, which a record cannot say what changes'
             : 'the tracer cut a path short, so a read of the test went unrecorded'
         )
-      } else if (entry.branchesOnPlatform && records.platform !== 'linux') {
-        leaveToStatic(
-          test,
-          'record-platform-branch',
-          `the test branches on process.platform and this push runs on ${records.platform}, not the recorded linux`
-        )
       } else {
+        // A push from another platform uses the same Linux record CI uses: tests are platform-independent except the
+        // real-sandbox ones, so the push and CI select the same tests.
         const index = indexRecordedTest(entry)
         if (drift.some((change) => recordReach(index, change) !== null))
           leaveToStatic(
