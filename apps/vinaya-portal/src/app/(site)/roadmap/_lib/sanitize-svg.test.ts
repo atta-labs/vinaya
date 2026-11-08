@@ -1,6 +1,5 @@
 // Node, not jsdom: production runs the sanitizer in Next's Node server runtime,
-// where isomorphic-dompurify builds its own jsdom window. A jsdom test
-// environment would hand it the test's window instead.
+// and the sanitizer itself never touches a DOM. jsdom only parses its output here.
 import { JSDOM } from 'jsdom'
 import { describe, expect, it, mock } from 'bun:test'
 
@@ -100,7 +99,7 @@ describe('sanitizeSvg — a hostile SVG is neutralized', () => {
   })
 })
 
-// Payloads that DOMPurify alone lets through, because it does not look inside CSS:
+// Payloads an element/attribute allowlist alone lets through, because it does not look inside CSS:
 // each one resolves to a remote fetch (or a page-covering overlay) in a browser.
 describe('sanitizeSvg — CSS-level bypasses are closed', () => {
   const styleOf = (markup: string) => parse(sanitizeSvg(markup)).querySelector('rect')?.getAttribute('style') ?? null
@@ -151,5 +150,41 @@ describe('sanitizeSvg — the mark cannot borrow the page CSS', () => {
       `<svg class="fixed inset-0" id="root" xmlns="http://www.w3.org/2000/svg"><rect id="a" class="h-screen" width="1" height="1"></rect></svg>`
     )
     expect(out).not.toMatch(/class=|id=/)
+  })
+})
+
+describe('sanitizeSvg — parser-level tricks are closed', () => {
+  it('drops an entity-encoded javascript: href', () => {
+    const out = sanitizeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg"><a href="&#106;avascript:alert(1)"><rect width="1" height="1"></rect></a></svg>`
+    )
+    expect(out).not.toMatch(/javascript|alert/i)
+  })
+
+  it('drops upper-case and nested script, and everything inside a dropped element', () => {
+    const out = sanitizeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg"><SCRIPT>alert(1)</SCRIPT><foreignObject><svg><rect onclick="x()"></rect></svg><p>text</p></foreignObject><g><rect width="1" height="1"></rect></g></svg>`
+    )
+    expect(out).toBe('<svg xmlns="http://www.w3.org/2000/svg"><g><rect width="1" height="1"></rect></g></svg>')
+  })
+
+  it('drops comments, CDATA and processing instructions', () => {
+    const out = sanitizeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg"><!-- <script>x</script> --><![CDATA[<script>y</script>]]><?xml-stylesheet href="https://evil.example/s.css"?><rect width="1" height="1"></rect></svg>`
+    )
+    expect(out).toBe('<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"></rect></svg>')
+  })
+
+  it('cannot break out of an attribute value or a text node', () => {
+    const out = sanitizeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg"><rect fill='a"><script>alert(1)</script>' width="1" height="1"></rect><text>&lt;img src=x onerror=alert(2)&gt;</text></svg>`
+    )
+    expect(out).not.toMatch(/<script|<img/i)
+    expect(parse(out).querySelector('rect')?.getAttribute('fill')).toBe('a"><script>alert(1)</script>')
+  })
+
+  it('drops a namespace declaration that points anywhere but its standard namespace', () => {
+    const out = sanitizeSvg(`<svg xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="https://evil.example"></svg>`)
+    expect(out).toBe('<svg></svg>')
   })
 })
