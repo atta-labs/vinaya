@@ -301,6 +301,7 @@ import {
   endReadyDeferral,
   endStoragePushes,
   liveV2Functions,
+  readFetchedMainTip,
   readyGateEvidence,
   stagedPullRequestStore,
   sweepReadyGateRuns,
@@ -3099,6 +3100,7 @@ async function runLive(
     // The required check a ready or repair publication owes, from the same trusted read and independent of where its
     // tests run: a locally tested head owes it exactly as a deferred one does.
     const requiredCiPolicy = () => readTrustedRequiredCiPolicy()
+    const readyRemoteUrl = repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null
     taskInput.v2 = liveV2Functions({
       runId: loopId,
       readyTestsPolicy,
@@ -3112,12 +3114,17 @@ async function runLive(
       readyPushDeadlineMs: () =>
         (taskInput.reviewPolicy?.().readyPushTimeoutMinutes ?? DEFAULT_READY_PUSH_TIMEOUT_MINUTES) * 60_000,
       // A conflict's repair is proven against the default branch's tip the driver fetches from here.
-      remoteUrl: repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null,
+      remoteUrl: readyRemoteUrl,
       openWithDeveloperTool: (title, body) => liveContext.context.openPullRequest(title, body),
       // The loop writes the Evidence block once the pull request is open; the Developer's v2 turn runs no tests.
       writeEvidence: async ({ pr, head }) => {
         try {
+          // One freshly verified tip, read once: the report and its receipts use this hash even if the remote moves on.
+          const evidenceBase = readFetchedMainTip(taskInput.worktreePath, readyRemoteUrl)
+          if (readyRemoteUrl !== null && evidenceBase === null)
+            throw new Error('could not obtain a fresh default-branch tip for the Evidence comparison')
           const body = await readyGateEvidence({
+            ...(evidenceBase ? { base: evidenceBase } : {}),
             body: liveForge.prBody(pr),
             head,
             resultPath: store.gateResultPath,
