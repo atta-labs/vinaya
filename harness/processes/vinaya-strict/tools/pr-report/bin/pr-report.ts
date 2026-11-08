@@ -5,9 +5,11 @@ import {
   buildReport,
   DeferredEvidenceError,
   type GateRunner,
+  FreshBaseUnavailableError,
   gh,
   GitCommandError,
   ghEditBody,
+  obtainFreshReportBase,
   prReportExitCode,
   replaceEvidenceBlock,
   type ReportResult,
@@ -204,14 +206,18 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
 
   let result: ReportResult
   try {
+    // One freshly verified comparison for the whole report, read once here and passed down explicitly.
+    const base = await obtainFreshReportBase()
     result = await buildReport({
       body: bodyFileSource ?? preEditBody ?? existingForWrite,
       gradedBodySource,
-      gateRunner: testOverrides?.gateRunner
+      gateRunner: testOverrides?.gateRunner,
+      ...(base ? { base } : {})
     })
   } catch (err) {
     if (
       err instanceof UnresolvableMergeBaseError ||
+      err instanceof FreshBaseUnavailableError ||
       err instanceof GitCommandError ||
       err instanceof DeferredEvidenceError
     ) {

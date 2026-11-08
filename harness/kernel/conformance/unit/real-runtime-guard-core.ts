@@ -24,11 +24,30 @@
  * its loop ends; a loop that both starts and ends inside one run is live at
  * neither read and stays flagged; and a stale lock whose pid now names an
  * unrelated process, or a lock naming this process's own pid, reads as live.
+ *
+ * Two appends are sanctioned whatever runs, because any process on the host —
+ * another session, a hook, a person at a terminal — makes them while a test
+ * run is in progress: the CLI's own per-invocation operation event, appended
+ * as a taskless `vinaya` command exits, to
+ * `logs/<repository>/none-cli-operations.ndjson` (the CLI registration's
+ * `unattributedStream`), and a check run's taskless `gate` events, appended to
+ * `logs/<repository>/none-gates.ndjson` (the check runner's). Each file's
+ * rotation slot `.1.ndjson` is sanctioned too. Only those file names, exactly
+ * one repository folder below `logs`, are exempt — never `logs`, a repository
+ * folder, or the shared `none.ndjson`. A directory born during the run is not
+ * flagged when it is `logs` or `logs/<repository>` and holds such a file,
+ * since the append creates its parents on a host that had none; the walk
+ * still enters it, so any other file beneath it is flagged on its own path.
+ * The precise blind spot: a test that itself writes one of those files (or a
+ * rotation slot) as a regular file is not detected, and neither is a test
+ * that creates `logs` or the repository folder holding one, when nothing else
+ * it wrote lies beneath them. The rule reads no environment, so a run under
+ * Claude Code and one under Codex are judged alike.
  */
 import { execFileSync } from 'node:child_process'
 import { lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 
 export const PROCESS_START_MS = Date.now() - process.uptime() * 1000 - 1000
 
@@ -69,6 +88,27 @@ export function realRuntimeDir(): string {
   }
   resolvedRuntimeDir = join(homedir(), '.vinaya', 'runtime', owner && repo ? `${owner}-${repo}` : 'unresolved')
   return resolvedRuntimeDir
+}
+
+/**
+ * The sanctioned appends' stream names. Kept as literals rather than
+ * imported, so this module stays dependent on nothing in the Log client or the
+ * check runner; the guard's test holds them equal to the CLI's
+ * `CLI_OPERATION_STREAM` and the check runner's `GATE_STREAM`.
+ */
+export const SANCTIONED_APPEND_STREAMS: readonly string[] = ['none-cli-operations', 'none-gates']
+
+/** Whether `rel` (relative to the runtime root) is a sanctioned append's file: `logs/<repository>/<stream>.ndjson` or its `.1.ndjson` rotation slot, with `<repository>` exactly one segment. */
+export function isSanctionedAppend(rel: string): boolean {
+  const parts = rel.split(sep)
+  return (
+    parts.length === 3 &&
+    parts[0] === 'logs' &&
+    parts[1] !== '' &&
+    parts[1] !== '.' &&
+    parts[1] !== '..' &&
+    SANCTIONED_APPEND_STREAMS.some((stream) => parts[2] === `${stream}.ndjson` || parts[2] === `${stream}.1.ndjson`)
+  )
 }
 
 export function exemptPrefixes(env: NodeJS.ProcessEnv): string[] {
@@ -139,6 +179,8 @@ export function touchedSince(
   liveAtStart: string[] = root === START_ROOT ? LIVE_AT_START : []
 ): string[] {
   const touched: string[] = []
+  // The repository folders under `logs` that hold the sanctioned append's file.
+  const sanctionedFolders = new Set<string>()
   const exemptAll = [...exempt, ...liveAtStart, ...liveTaskPrefixes(root)]
   const walk = (dir: string): void => {
     let names: string[]
@@ -164,9 +206,20 @@ export function touchedSince(
       if (st.isDirectory()) {
         if (st.birthtimeMs >= sinceMs) touched.push(rel)
         walk(full)
+      } else if (st.isFile() && isSanctionedAppend(rel)) {
+        // Only a regular file: the append refuses anything else, so a symlink there is judged like any path.
+        sanctionedFolders.add(rel.split(sep)[1] as string)
       } else if (st.mtimeMs >= sinceMs || st.ctimeMs >= sinceMs) touched.push(rel)
     }
   }
   walk(root)
-  return touched
+  // A parent the sanctioned append created is not a leak of its own; every
+  // other path beneath it was judged on its own above.
+  return touched.filter((rel) => {
+    if (sanctionedFolders.size === 0) return true
+    const parts = rel.split(sep)
+    if (parts[0] !== 'logs') return true
+    if (parts.length === 1) return false
+    return !(parts.length === 2 && sanctionedFolders.has(parts[1] as string))
+  })
 }

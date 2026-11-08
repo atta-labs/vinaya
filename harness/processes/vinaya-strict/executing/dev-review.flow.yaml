@@ -48,7 +48,9 @@ steps:
   - id: classify-mergeability
     type: mechanical
     action: vinaya.classify-mergeability
-    decision: { examine: check-mergeability, if_true: develop, if_false: read-forge-ci, max_revisions: 3 }
+    decision: { examine: check-mergeability, if_true: develop, if_false: refresh-evidence, max_revisions: 3 }
+  # The Evidence block is written for this head before the CI wait: the Evidence-dependent check cannot pass without it.
+  - { id: refresh-evidence, type: mechanical, action: vinaya.refresh-evidence }
   - { id: read-forge-ci, type: mechanical, action: vinaya.read-forge-ci }
   - { id: check-premise, type: mechanical, action: vinaya.check-premise }
   - { id: assess-gate, type: mechanical, action: vinaya.assess-gate }

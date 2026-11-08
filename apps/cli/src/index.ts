@@ -10,7 +10,7 @@ import {
   installVinayaLogSinkFactory
 } from '../../../harness/processes/vinaya-strict/integration/cli-startup.js'
 import { ensureGhOnPath } from '../../../harness/kernel/adapters/code-host/github/gh-path.js'
-import { recordCliOperationAtExit } from '../../../harness/kernel/log/client/cli-operation-log.js'
+import { CLI_OPERATION_STREAM, recordCliOperationAtExit } from '../../../harness/kernel/log/client/cli-operation-log.js'
 type LogSinkModule = typeof import('../../../harness/kernel/log/log-sink.js')
 import { printHelp } from './lib/output.js'
 import { packageRoot } from './lib/package-root.js'
@@ -88,12 +88,15 @@ function readVersion(): string {
 
 const [, , command, ...args] = process.argv
 
+// A taskless invocation's event lands in its own folder file, never the shared
+// `none.ndjson`, so a test run's real-runtime guard can exempt it alone.
 recordCliOperationAtExit(process.argv.slice(2), {
   on: (event, handler) => process.on(event, handler),
   // The Log sink loads only when an operation is recorded, so a start that records nothing never loads it.
   logSync: (event, options) =>
     (require('../../../harness/kernel/log/log-sink.js') as LogSinkModule).logSync(event, options),
-  now: Date.now
+  now: Date.now,
+  unattributedStream: CLI_OPERATION_STREAM
 })
 
 if (!command || command === 'help' || command === '--help' || command === '-h') {

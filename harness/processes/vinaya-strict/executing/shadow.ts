@@ -52,7 +52,10 @@ export const BOUND_FUNCTION_CLASSES = {
   rerunFailedWorkflowJobs: 'effect',
   fetchMergeableState: 'read',
   fetchConflictingFiles: 'read',
-  postMarkedComment: 'effect'
+  postMarkedComment: 'effect',
+  refreshPrEvidence: 'effect',
+  readComparisonBase: 'read',
+  evidenceRetrySleep: 'run-local'
 } as const satisfies { readonly [K in keyof BoundFunctions]-?: ShadowClass }
 
 /** Every writer and poster a pause hands off to, classified. The control-store records go under the run's own runtime directory. */
@@ -179,6 +182,10 @@ export function boundFunctionRecorders(
     postMarkedComment: (...args) => {
       refuse('postMarkedComment', args)
       return `shadow-refused:${String(args[2])}`
+    },
+    refreshPrEvidence: (...args) => {
+      refuse('refreshPrEvidence', args)
+      return { head: 'shadow-refused', checksPassed: true }
     }
   }
 }

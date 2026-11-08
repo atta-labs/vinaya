@@ -14,6 +14,17 @@ import type { LogEventInput, LogSyncOptions } from '../log-sink.js'
 /** The operation name every CLI invocation records. */
 export const CLI_OPERATION = 'cli_command'
 
+/**
+ * The folder file a taskless invocation's event is appended to —
+ * `<folder>/<owner>-<repo>/none-cli-operations.ndjson`, never the shared
+ * `none.ndjson` other unattributed events land in. The CLI's registration
+ * passes it as `logSync`'s `unattributedStream`, so this one record has a file
+ * of its own: a concurrent test run's real-runtime guard
+ * (`harness/kernel/conformance/unit/real-runtime-guard-core.ts`) exempts that
+ * file, and only it, and `vinaya log send` still delivers it as unattributed.
+ */
+export const CLI_OPERATION_STREAM = 'none-cli-operations'
+
 /** The target of an invocation whose command is in no table below. */
 export const UNKNOWN_CLI_TARGET = 'unknown'
 
@@ -107,6 +118,10 @@ export function cliOperationEvent(args: readonly string[], exitCode: number, dur
  * and `process.exit(n)` from anywhere inside a command. The handler is
  * synchronous (`logSync`), prints nothing, never throws and never changes the
  * exit code. A process ended by a signal never runs it: the one gap.
+ *
+ * `unattributedStream`, when the registration gives one, is passed to
+ * `logSync` unchanged: the caller, not this module, chooses where a taskless
+ * event's line lands (the CLI passes `CLI_OPERATION_STREAM`).
  */
 export function recordCliOperationAtExit(
   args: readonly string[],
@@ -114,13 +129,18 @@ export function recordCliOperationAtExit(
     on: (event: 'exit', handler: (code: number) => void) => unknown
     logSync: (e: LogEventInput, opts?: LogSyncOptions) => void
     now: () => number
+    unattributedStream?: string
   }
 ): void {
   const startedAt = deps.now()
+  const options: LogSyncOptions =
+    deps.unattributedStream === undefined
+      ? { quiet: true }
+      : { quiet: true, unattributedStream: deps.unattributedStream }
   deps.on('exit', (code) => {
     try {
       const event = cliOperationEvent(args, code, deps.now() - startedAt)
-      if (event !== null) deps.logSync(event, { quiet: true })
+      if (event !== null) deps.logSync(event, options)
     } catch {
       // Runs as the process ends: nothing may throw or print here.
     }

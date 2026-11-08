@@ -267,14 +267,66 @@ export class UnresolvableMergeBaseError extends Error {
  * that class's doc comment for why silently degrading to an empty base is
  * the wrong failure mode.
  */
-export async function resolveMergeBase(head: string, cwd?: string): Promise<string> {
-  const primary = process.env.BASE_SHA || 'origin/main'
-  const tried = primary === 'main' ? [primary] : [primary, 'main']
+export async function resolveMergeBase(head: string, cwd?: string, explicitBase?: string): Promise<string> {
+  // An explicit immutable comparison is the only candidate: it never falls back to a moving ref.
+  const primary = explicitBase || process.env.BASE_SHA || 'origin/main'
+  const tried = explicitBase || primary === 'main' ? [primary] : [primary, 'main']
   for (const ref of tried) {
     const base = await git(['merge-base', ref, head], cwd)
     if (base) return base
   }
   throw new UnresolvableMergeBaseError(head, tried)
+}
+
+/**
+ * Thrown by `obtainFreshReportBase` when the default branch's tip is required
+ * (the repository has an `origin`) but cannot be read from the remote or made
+ * present locally. An infrastructure failure: falling back to the local
+ * remote-tracking ref would grade the report against a possibly stale base.
+ */
+export class FreshBaseUnavailableError extends Error {
+  constructor(detail: string) {
+    super(
+      `could not obtain a fresh default-branch tip for the report comparison: ${detail}. ` +
+        'The local remote-tracking ref is never used in its place — set BASE_SHA to an explicit base to override.'
+    )
+    this.name = 'FreshBaseUnavailableError'
+  }
+}
+
+/**
+ * The one immutable comparison a live report uses: the default branch's tip as
+ * the remote reports it right now, made present in the object store under the
+ * hash the remote reported. An explicit `BASE_SHA` is returned untouched (it
+ * keeps its documented meaning, with no network read), and a repository with
+ * no `origin` is an offline calculation (`undefined`: the existing local
+ * resolution applies). With an `origin`, a failed read or fetch throws
+ * `FreshBaseUnavailableError`. Obtained once per report by the live
+ * orchestration — the pure calculations only receive the result.
+ */
+export async function obtainFreshReportBase(
+  cwd?: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string | undefined> {
+  if (env.BASE_SHA) return env.BASE_SHA
+  if (!(await git(['remote', 'get-url', 'origin'], cwd))) return undefined
+  const listed = await git(['ls-remote', 'origin', 'refs/heads/main'], cwd)
+  const tip = listed.split(/\s+/)[0] ?? ''
+  if (!/^[0-9a-f]{40,64}$/.test(tip))
+    throw new FreshBaseUnavailableError('`git ls-remote origin refs/heads/main` returned no tip')
+  const present = async (): Promise<boolean> => {
+    try {
+      await gitStrict(['cat-file', '-e', `${tip}^{commit}`], cwd)
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (!(await present())) {
+    await git(['fetch', '-q', 'origin', 'refs/heads/main'], cwd)
+    if (!(await present())) throw new FreshBaseUnavailableError(`tip ${tip} could not be fetched`)
+  }
+  return tip
 }
 
 export type GroupA = { head: string; base: string; numstat: string }
@@ -291,14 +343,14 @@ export type GroupA = { head: string; base: string; numstat: string }
  * `GitCommandError` again. Only an empty `numstat` from a SUCCEEDING diff is
  * a legitimate result, and it is returned normally.
  */
-export async function computeGroupA(cwd?: string): Promise<GroupA> {
+export async function computeGroupA(cwd?: string, opts: { base?: string } = {}): Promise<GroupA> {
   // Every step throws rather than degrading. An unborn branch (no commits
   // yet, so `rev-parse HEAD` fails) previously short-circuited BOTH ternaries
   // below, so `resolveMergeBase` was never reached and nothing refused — the
   // emitter wrote an empty head and an empty Group A and exited 0. That is
   // the same fail-open shape, reached by a different door.
   const head = await gitStrict(['rev-parse', 'HEAD'], cwd)
-  const base = await resolveMergeBase(head, cwd)
+  const base = await resolveMergeBase(head, cwd, opts.base)
   const numstat = await gitStrict(['diff', `${base}...${head}`, '--numstat'], cwd)
   return { head, base, numstat }
 }
@@ -1729,13 +1781,15 @@ export async function buildReport(
     gradedBodySource?: GradedBodySource
     cwd?: string
     envOverlay?: NodeJS.ProcessEnv
+    /** The one immutable comparison (a commit hash) the whole report uses: Group A's merge-base and the gate child's `BASE_SHA`. Obtained once by the live caller (`obtainFreshReportBase`); absent, the local resolution applies. */
+    base?: string
     /** Where a green Test-plan run is looked up and recorded. Defaults to this repository's own runtime directory — a test that wants isolation from that real location injects its own, an in-memory one most often. */
     testRunCache?: TestRunCache
     /** The deferred-head reads (`resolveDeferredGroupC`), for a test that injects them. */
     deferral?: DeferredGroupCDeps
   } = {}
 ): Promise<ReportResult> {
-  const groupA = opts.groupA ?? (await computeGroupA(opts.cwd))
+  const groupA = opts.groupA ?? (await computeGroupA(opts.cwd, opts.base ? { base: opts.base } : {}))
   const gradedBody = opts.body ?? process.env.PR_BODY ?? ''
   // Resolved only when Group C is computed here, exactly as before.
   const testRunCache = opts.groupC ? undefined : (opts.testRunCache ?? defaultTestRunCache())
@@ -1748,7 +1802,14 @@ export async function buildReport(
         testRunCache,
         opts.deferral
       )
-  const gateRunner = opts.gateRunner ?? (() => runRealGates(opts.cwd, opts.envOverlay))
+  const gateRunner =
+    opts.gateRunner ??
+    (() =>
+      runRealGates(
+        opts.cwd,
+        // The gate child's freshness check grades against the same comparison, set on its environment copy only.
+        opts.base ? { ...(opts.envOverlay ?? process.env), BASE_SHA: opts.base } : opts.envOverlay
+      ))
   const gateResult = await gateRunner()
   const gradedBodySource = opts.gradedBodySource ?? 'ambient'
   // O6 (found live 2026-09-04, initially misread): this gate run happens

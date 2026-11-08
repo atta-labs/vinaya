@@ -325,7 +325,13 @@ import {
   writeTurnResultRecord
 } from './dev-review-loop/turn-result.js'
 import type { DeveloperTurnResult } from '../../../executing/developer/developer-turn-result.js'
-import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from '../../../tools/pr-report/pr-report-engine.js'
+import {
+  buildReport,
+  gh,
+  obtainFreshReportBase,
+  resolveMergeBase,
+  runReportForOpenPr
+} from '../../../tools/pr-report/pr-report-engine.js'
 import type { PremiseReassertResult } from '../../../tools/premise-reassert-logic.js'
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
 import { patchIdAt } from '../../../../../kernel/connectors/git/patch-id.js'
@@ -2583,7 +2589,15 @@ async function defaultRunEvidenceReport(
   }
   const envOverlay: NodeJS.ProcessEnv = { ...process.env, PR_BODY: preEditBody, PR_NUMBER: pushPr, BRANCH: branch }
   try {
-    const result = await buildReport({ body: preEditBody, gradedBodySource: 'push', cwd, envOverlay })
+    // A required fresh-base read failure reaches the catch below as an infrastructure failure, never a stale ref.
+    const base = await obtainFreshReportBase(cwd, envOverlay)
+    const result = await buildReport({
+      body: preEditBody,
+      gradedBodySource: 'push',
+      cwd,
+      envOverlay,
+      ...(base ? { base } : {})
+    })
     // Every non-`'ok'` kind carries a `message` and reaches here as an
     // ordinary return, never a process exit — including `'body-checks-refused'`:
     // a body-check refusal during this push is just one more
