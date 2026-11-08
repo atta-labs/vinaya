@@ -4,6 +4,7 @@ import { afterAll, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSyncBudgeted } from '../../../../harness/kernel/conformance/unit/process-fixture'
 
 const REPO_ROOT = join(import.meta.dir, '../../../..')
 const ENTRY = join(REPO_ROOT, 'apps/cli/src/index.ts')
@@ -16,13 +17,8 @@ writeFileSync(
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 function loadedBy(args: string[]): string[] {
-  const run = Bun.spawnSync(['bun', '--preload', preload, ENTRY, ...args], {
-    cwd: REPO_ROOT,
-    stderr: 'pipe',
-    stdout: 'pipe'
-  })
-  const line = run.stderr
-    .toString()
+  const run = spawnSyncBudgeted('bun', ['--preload', preload, ENTRY, ...args], { cwd: REPO_ROOT, encoding: 'utf8' })
+  const line = String(run.stderr)
     .split('\n')
     .find((l) => l.startsWith('LOADED '))
   expect(line).toBeDefined()
