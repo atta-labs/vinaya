@@ -29,6 +29,8 @@ import type { StagedPullRequest, V2Functions } from '../loops/dev-review/v2/v2-a
 import { encodeExecutionRound } from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import { runCliChecks } from '../../../../harness/kernel/gates/checks/run-checks'
 import { programForWords } from '../tools/programs'
+import { refreshPrEvidence } from './refresh-evidence'
+import { guardedSpawnSync } from '../loops/dev-review/standalone/driver-tool-guard'
 import { agentEnvAllowlist } from '../../../../harness/kernel/adapters/agents/launch-env'
 import type { GeneratedAgentConfig, GeneratorPaths } from '../../../../harness/kernel/isolation/policy'
 import {
@@ -337,6 +339,12 @@ export interface BoundFunctions {
   fetchConflictingFiles: typeof fetchConflictingFiles
   /** Posts a marked comment on the pull request: the round marker the reviewers' dispatch leaves. */
   postMarkedComment: typeof postMarkedComment
+  /** Regenerates the pull request body's Evidence block for the worktree's head and writes it back; throws when nothing reached the forge. */
+  refreshPrEvidence: (input: { worktreePath: string; prNumber: number }) => { head: string; checksPassed: boolean }
+  /** The merge base of the worktree's head with the default branch (the comparison the Evidence is judged against), or null when git cannot say. */
+  readComparisonBase: (worktreePath: string) => string | null
+  /** Waits between two attempts of the Evidence write; a test replaces it. */
+  evidenceRetrySleep: (ms: number) => void
 }
 
 interface Binding {
@@ -1967,6 +1975,81 @@ export async function readForgeCi(
   )
 }
 
+/** The attempts the Evidence write gets before it surfaces as an infrastructure pause. */
+export const EVIDENCE_WRITE_ATTEMPTS = 3
+const EVIDENCE_WRITE_SPACING_MS = 5_000
+
+/** The driver's own `pr report --push <pr>` run in the worktree, through the shipped program. */
+function defaultRefreshPrEvidence(input: { worktreePath: string; prNumber: number }): {
+  head: string
+  checksPassed: boolean
+} {
+  const { head, checksPassed } = refreshPrEvidence({
+    worktreePath: input.worktreePath,
+    prNumber: () => input.prNumber,
+    readHead: readWorktreeHead,
+    runCli: (program, cwd, args) => {
+      const res = guardedSpawnSync(process.argv[0] as string, [program, ...args], {
+        cwd,
+        maxBuffer: 64 * 1024 * 1024
+      })
+      return { status: res.status, stdout: res.stdout ?? '', stderr: res.stderr ?? '' }
+    }
+  })
+  return { head, checksPassed }
+}
+
+function defaultComparisonBase(worktreePath: string): string | null {
+  try {
+    return execFileSync('git', ['merge-base', 'origin/main', 'HEAD'], { cwd: worktreePath, encoding: 'utf8' }).trim()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Writes the pull request body's Evidence block for the head about to be judged, before the CI wait: the
+ * Evidence-dependent check (`evidence-fresh`) cannot turn green until the block names this head, so waiting on all
+ * of CI first would wait on a check only this write can satisfy. It runs after the independent prerequisite
+ * (mergeability), never for a red local gate (decided alone) or an unpushed head (no pull request head to match).
+ * The write is one recorded effect per head and comparison base: a resumed round that already completed it does not
+ * repeat it, and a moved head or base writes again. A write that never reaches the pull request is retried within
+ * `EVIDENCE_WRITE_ATTEMPTS`, then pauses through recovery as infrastructure; it is never read as success.
+ */
+export function refreshEvidenceStep(
+  task: TaskInput,
+  context: ActionContext
+): { exitCode: number; stdout: string; refused?: true } {
+  const gate = context.results['run-mechanical-gates']
+  if (gate !== undefined && gate.exitCode !== 0) return ok(JSON.stringify({ evidence: 'skipped', head: null }))
+  if (unpushedHeadOf(task) !== null) return ok(JSON.stringify({ evidence: 'skipped', head: null }))
+  const head = judgedHeadOf(task)
+  const prNumber = openPullRequestOf(task, 'refresh-evidence')
+  const base = (task.bound?.readComparisonBase ?? defaultComparisonBase)(task.worktreePath)
+  const refresh = task.bound?.refreshPrEvidence ?? defaultRefreshPrEvidence
+  const sleep = task.bound?.evidenceRetrySleep ?? ((ms: number) => Bun.sleepSync(ms))
+  const key = `evidence-refresh-${prNumber}-${head}-${base ?? 'no-base'}`
+  let lastError = ''
+  for (let attempt = 1; attempt <= EVIDENCE_WRITE_ATTEMPTS; attempt += 1) {
+    try {
+      let reused = true
+      postForgeEffectOnce(task.runtimeDir, task.issueNumber, key, () => {
+        reused = false
+        refresh({ worktreePath: task.worktreePath, prNumber })
+        return `evidence:${head}`
+      })
+      return ok(JSON.stringify({ evidence: reused ? 'reused' : 'written', head, base }))
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+      if (attempt < EVIDENCE_WRITE_ATTEMPTS) sleep(EVIDENCE_WRITE_SPACING_MS)
+    }
+  }
+  return refuseThrough(task, 'refresh-evidence', {
+    reason: 'infrastructure',
+    detail: `the Evidence block for head ${head} never reached pull request ${prNumber} after ${EVIDENCE_WRITE_ATTEMPTS} attempts: ${lastError}`
+  })
+}
+
 /**
  * The dispatch gate's premise re-assertion against the pull request's live body at this head
  * (`checkPremiseAtHead`). A stale pin pauses through the handoff before any reviewer is dispatched; a body that
@@ -2168,6 +2251,10 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
     build: (task) => (context) => checkMergeability(task, context)
   },
   'vinaya.classify-mergeability': { adapts: [classifyMergeability], build: () => classifyMergeability },
+  'vinaya.refresh-evidence': {
+    adapts: [refreshPrEvidence],
+    build: (task) => (context) => refreshEvidenceStep(task, context)
+  },
   'vinaya.read-forge-ci': {
     adapts: [fetchCiConclusion, rerunFailedWorkflowJobs],
     build: (task) => (context) => readForgeCi(task, context)

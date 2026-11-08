@@ -46,6 +46,8 @@ interface Forge {
   /** The workflow runs whose failed jobs a rerun reruns; a rerun turns the CI read green when `rerunTurnsGreen`. */
   failedRunIds: number[]
   rerunTurnsGreen: boolean
+  /** How many Evidence writes fail before one reaches the pull request; absent, every write reaches it. */
+  evidenceFailures?: number
 }
 
 interface World {
@@ -67,6 +69,9 @@ interface Observed {
   markers: string[]
   published: number
   steps: Array<{ node: string; exitCode: number; stdout: string }>
+  /** Every Evidence write attempt and every CI read, in the order the round made them. */
+  events: string[]
+  evidenceAttempts: number
 }
 
 const turn = (addressed: string[] = []) => ({
@@ -233,7 +238,9 @@ async function run(
     sleeps: 0,
     markers: [],
     published: 0,
-    steps: []
+    steps: [],
+    events: [],
+    evidenceAttempts: 0
   }
   const next = <T>(queue: T[]): T => (queue.length > 1 ? (queue.shift() as T) : (queue[0] as T))
   let reran = false
@@ -253,6 +260,7 @@ async function run(
     fetchSourceRevision: () => 'revision',
     fetchCiConclusion: (head) => {
       observed.ciReads.push(head)
+      observed.events.push('ci-read')
       return reran && forge.rerunTurnsGreen ? 'green' : next(forge.ci)
     },
     fetchFailingCheckRuns: () => [{ name: 'unit', id: 9, startedAt: null }],
@@ -306,7 +314,16 @@ async function run(
   task.bound = {
     ...task.bound,
     localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
-    probeAgentSandbox: async () => ({ ok: true })
+    probeAgentSandbox: async () => ({ ok: true }),
+    readComparisonBase: () => 'base-0',
+    evidenceRetrySleep: () => {},
+    refreshPrEvidence: ({ prNumber }) => {
+      observed.evidenceAttempts += 1
+      observed.events.push('evidence-write')
+      if (observed.evidenceAttempts <= (forge.evidenceFailures ?? 0))
+        throw new Error(`pr report --push ${prNumber} failed:\nforge refused`)
+      return { head: world.remote, checksPassed: true }
+    }
   }
   const actions: ActionRegistry = Object.fromEntries(
     Object.entries(createActions(task)).map(([name, action]) => [
@@ -471,6 +488,53 @@ for (const agent of AGENTS) {
       expect(observed.pauseReason).toBe('repeat_failure')
       expect(observed.spawns['code-reviewer']).toBe(0)
       expect(observed.spawns['security-reviewer']).toBe(0)
+    })
+  })
+
+  describe(`the Evidence refresh (${agent})`, () => {
+    const forge = (extra: Partial<Forge> = {}): Forge => ({
+      ci: ['green'],
+      mergeable: ['MERGEABLE'],
+      conflictFiles: [],
+      prBody: `Closes #${TASK}`,
+      failedRunIds: [],
+      rerunTurnsGreen: false,
+      ...extra
+    })
+
+    test('the Evidence is written for the head before the CI wait, and the final gates still pass', async () => {
+      const observed = await run(agent, forge())
+      expect(observed.outcome).toBe('completed')
+      // A round that begins with missing Evidence writes it before it reads CI.
+      expect(observed.events[0]).toBe('evidence-write')
+      expect(observed.events.indexOf('evidence-write')).toBeLessThan(observed.events.indexOf('ci-read'))
+      expect(JSON.parse(stepsNamed(observed, 'refresh-evidence')[0]!.stdout)).toMatchObject({ evidence: 'written' })
+      expect(observed.published).toBe(1)
+    })
+
+    test('a red Evidence-dependent read sends the Developer back, and the new head gets its own write', async () => {
+      const observed = await run(agent, forge({ ci: ['red', 'green'] }))
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(2)
+      expect(observed.evidenceAttempts).toBe(2)
+      expect(observed.events.slice(0, 2)).toEqual(['evidence-write', 'ci-read'])
+    })
+
+    test('a write that fails transiently is retried within its bound and then goes on', async () => {
+      const observed = await run(agent, forge({ evidenceFailures: 2 }))
+      expect(observed.evidenceAttempts).toBe(3)
+      expect(observed.outcome).toBe('completed')
+      expect(observed.published).toBe(1)
+    })
+
+    test('a write that never reaches the pull request pauses as infrastructure before any CI read or reviewer', async () => {
+      const observed = await run(agent, forge({ evidenceFailures: 99 }))
+      expect(observed.evidenceAttempts).toBe(3)
+      expect(observed.outcome).toBe('paused')
+      expect(observed.pauseReason).toBe('infrastructure')
+      expect(observed.ciReads).toEqual([])
+      expect(observed.spawns['code-reviewer']).toBe(0)
+      expect(observed.published).toBe(0)
     })
   })
 
