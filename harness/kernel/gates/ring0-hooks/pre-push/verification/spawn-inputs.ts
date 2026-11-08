@@ -179,6 +179,41 @@ function collectTopLevelBindings(
  * `null` — neither signal appears anywhere in the file: an ordinary spawn of
  * something else entirely, left exactly as reachability already treats it.
  */
+/**
+ * A file's syntax tree, parsed once per text: the selector asks about every test once per spawned program, and the
+ * text, not the program, decides the tree.
+ */
+const parsedTrees = new Map<string, { source: string; tree: import('typescript').SourceFile }>()
+function parsedSource(ts: TypeScriptApi, file: string, source: string): import('typescript').SourceFile {
+  const hit = parsedTrees.get(file)
+  if (hit && hit.source === source) return hit.tree
+  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true)
+  parsedTrees.set(file, { source, tree })
+  return tree
+}
+
+/** A tree's top-level bindings, computed once per parsed tree for the same reason as the tree itself. */
+const treeBindings = new WeakMap<object, Map<string, ReturnType<typeof collectTopLevelBindings>>>()
+function bindingsOf(
+  ts: TypeScriptApi,
+  sourceFile: import('typescript').SourceFile,
+  file: string,
+  fileDir: string,
+  repoRoot: string
+): ReturnType<typeof collectTopLevelBindings> {
+  let byRoot = treeBindings.get(sourceFile)
+  if (!byRoot) {
+    byRoot = new Map()
+    treeBindings.set(sourceFile, byRoot)
+  }
+  let bindings = byRoot.get(repoRoot)
+  if (!bindings) {
+    bindings = collectTopLevelBindings(ts, sourceFile, file, fileDir, repoRoot)
+    byRoot.set(repoRoot, bindings)
+  }
+  return bindings
+}
+
 export function spawnEdgeOf(
   ts: TypeScriptApi,
   file: string,
@@ -189,11 +224,11 @@ export function spawnEdgeOf(
   const fileDir = dirname(file)
   let sourceFile: import('typescript').SourceFile
   try {
-    sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true)
+    sourceFile = parsedSource(ts, file, source)
   } catch {
     return null
   }
-  const bindings = collectTopLevelBindings(ts, sourceFile, file, fileDir, repoRoot)
+  const bindings = bindingsOf(ts, sourceFile, file, fileDir, repoRoot)
 
   let classification: SpawnClassification | null = null
   const visit = (node: import('typescript').Node): void => {
@@ -266,11 +301,11 @@ export function startedScriptsOf(
   const fileDir = dirname(file)
   let sourceFile: import('typescript').SourceFile
   try {
-    sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true)
+    sourceFile = parsedSource(ts, file, source)
   } catch {
     return null
   }
-  const bindings = collectTopLevelBindings(ts, sourceFile, file, fileDir, repoRoot)
+  const bindings = bindingsOf(ts, sourceFile, file, fileDir, repoRoot)
   const evaluate = (node: import('typescript').Node): string | null =>
     ts.isSpreadElement(node) ? null : evaluateExpression(ts, node, file, fileDir, repoRoot, bindings)
 
