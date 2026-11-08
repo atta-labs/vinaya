@@ -83,7 +83,17 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { briefHash, policyDigest as reviewPolicyDigest } from '../../../tools/task-contract/review-input-manifest'
+import {
+  briefHash,
+  buildReviewInputManifest,
+  compareManifest,
+  type EchoedManifest,
+  type ManifestBindingResult,
+  manifestAsEchoed,
+  type PauseBoundRuling,
+  type ReviewInputManifest
+} from '../../../tools/task-contract/review-input-manifest'
+import { resolveFrozenPauseBoundRuling } from '../review-gate-input'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
   codeReviewBlockingSeverities,
@@ -875,7 +885,8 @@ function checkExtraction(
   expectedValue: string,
   headSha: string,
   expectedObjectivesVersion: string | null,
-  expectedRulingOrdinal: number
+  expectedRulingOrdinal: number,
+  currentManifest?: ReviewInputManifest
 ): SelfVerifyResult {
   if (extraction.danglingNote) {
     return {
@@ -908,6 +919,18 @@ function checkExtraction(
     return {
       ok: false,
       reason: `re-extraction found ruling ordinal ${extraction.rulingOrdinal ?? 'none'}, expected ${expectedRulingOrdinal} — the posted comment's Ruling ordinal: line does not match what this command rendered.`
+    }
+  }
+  if (currentManifest !== undefined) {
+    // The merge gate's own comparison over every binding — head, base, brief,
+    // objectives, ruling, pause-bound ruling, manifest version and policy —
+    // against the manifest re-resolved after the write.
+    const binding = compareManifest(extraction as EchoedManifest, currentManifest)
+    if (!binding.bound) {
+      return {
+        ok: false,
+        reason: `the posted comment does not bind the current review-input manifest: ${unboundFields(binding).join(', ')}.`
+      }
     }
   }
   return { ok: true, reason: 'clean' }
@@ -962,14 +985,16 @@ export function verifyPostedCodeReview(
   principalAllowlist: readonly string[],
   postedBody: string,
   objectivesVersion: string | null,
-  rulingOrdinal: number
+  rulingOrdinal: number,
+  currentManifest?: ReviewInputManifest
 ): SelfVerifyResult {
   const own = checkExtraction(
     extractCodeReviewVerdict(principalBodies(comments, principalAllowlist)),
     CODE_REVIEW_VERDICT_TEXT[verdict],
     headSha,
     objectivesVersion,
-    rulingOrdinal
+    rulingOrdinal,
+    currentManifest
   )
   if (!own.ok) return own
   return checkNoCrossRoleVerdict(postedBody, extractSecurityReviewVerdict, 'security') ?? own
@@ -982,14 +1007,16 @@ export function verifyPostedSecurity(
   principalAllowlist: readonly string[],
   postedBody: string,
   objectivesVersion: string | null,
-  rulingOrdinal: number
+  rulingOrdinal: number,
+  currentManifest?: ReviewInputManifest
 ): SelfVerifyResult {
   const own = checkExtraction(
     extractSecurityReviewVerdict(principalBodies(comments, principalAllowlist)),
     verdict,
     headSha,
     objectivesVersion,
-    rulingOrdinal
+    rulingOrdinal,
+    currentManifest
   )
   if (!own.ok) return own
   return checkNoCrossRoleVerdict(postedBody, extractCodeReviewVerdict, 'code-review') ?? own
@@ -1455,6 +1482,12 @@ function resolveRulingOrdinalForPr(pr: string): number {
  * closed on the resulting mismatch.
  */
 export function resolveBriefHashForPr(pr: string, principalAllowlist: readonly string[]): string | null {
+  const content = resolveFrozenBriefContentForPr(pr, principalAllowlist)
+  return content === null ? null : briefHash(content)
+}
+
+/** The frozen brief's own text for the Issue `pr` closes — `null` in exactly the cases `resolveBriefHashForPr` documents; every fetch failure refuses. */
+function resolveFrozenBriefContentForPr(pr: string, principalAllowlist: readonly string[]): string | null {
   const prBody = fetchPrBody(pr)
   const { issue } = extractIssue(prBody)
   if (issue === null) return null
@@ -1480,7 +1513,7 @@ export function resolveBriefHashForPr(pr: string, principalAllowlist: readonly s
     )
   }
   const frozen = resolveNewestFrozenBrief(comments, principalAllowlist as string[])
-  return frozen ? briefHash(frozen.content) : null
+  return frozen ? frozen.content : null
 }
 
 function readObjectivesFile(path: string): ObjectiveResult[] {
@@ -1585,6 +1618,210 @@ function printOnlyResult(json: boolean, role: string, headSha: string, body: str
   }
 }
 
+// --- the judged manifest snapshot ------------------------------------------------
+
+const FULL_SHA = /^[0-9a-f]{40}$/
+const SHA256_HEX = /^[0-9a-f]{64}$/
+const JUDGED_MANIFEST_KEYS = [
+  'manifestVersion',
+  'headSha',
+  'baseSha',
+  'briefHash',
+  'objectivesVersion',
+  'rulingOrdinal',
+  'pauseBoundRuling',
+  'policyDigest'
+] as const
+
+/** The binding names `compareManifest` reports as not holding, in its own field order. */
+function unboundFields(binding: ManifestBindingResult): string[] {
+  const names = [
+    'head',
+    'base',
+    'briefHash',
+    'objectivesVersion',
+    'rulingOrdinal',
+    'pauseBoundRuling',
+    'manifestVersion',
+    'policyDigest'
+  ] as const
+  return names.filter((name) => !binding[name])
+}
+
+/**
+ * The review-input manifest of `pr` right now, built by the one
+ * `buildReviewInputManifest` from the forge facts the merge gate reads: the
+ * true head, the base tip, the frozen brief, the objectives version, the
+ * newest ruling ordinal, the pause-bound ruling the newest driver round
+ * froze, and the effective policy. Refuses — before anything is written —
+ * when the head or the base cannot be resolved, or the pause-bound ruling
+ * cannot be proven: a snapshot with a missing binding is never exported or
+ * compared.
+ */
+function resolveCurrentManifest(
+  pr: string,
+  policy: ReviewPolicy,
+  principalAllowlist: readonly string[]
+): ReviewInputManifest {
+  const headSha = resolveHeadSha(pr)
+  const baseSha = resolveBaseShaForPr(pr)
+  if (baseSha === null) {
+    refuseCmd(
+      `Could not resolve PR ${pr}'s base branch tip — a review-input manifest with no base cannot be exported or compared.`,
+      'Confirm `gh auth status` passes and the base branch exists on origin, then re-run.'
+    )
+  }
+  const resolution = resolveObjectivesForPr(pr)
+  const prNumber = Number(pr)
+  if (!Number.isInteger(prNumber) || prNumber <= 0) {
+    refuseCmd(`\`--pr ${pr}\` is not a pull request number.`, 'Pass the pull request number to `--pr`.')
+  }
+  const pauseBound = resolveFrozenPauseBoundRuling(prNumber, fetchComments(pr), principalAllowlist, (issue) =>
+    readIssueComments(issue, `Issue #${issue}`).map((c) => ({ body: c.body, author: c.author?.login ?? null }))
+  )
+  if (!pauseBound.ok) refuseCmd(pauseBound.failure.message, pauseBound.failure.agentRecoveryPrompt)
+  return buildReviewInputManifest({
+    headSha,
+    baseSha,
+    briefContent: resolveFrozenBriefContentForPr(pr, principalAllowlist),
+    objectivesVersion: resolution.kind === 'list' ? resolution.version : null,
+    rulingOrdinal: resolveRulingOrdinalForPr(pr),
+    pauseBoundRuling: pauseBound.value,
+    policy
+  })
+}
+
+/**
+ * Reads and validates the judged snapshot `--export-manifest` printed. Every
+ * field is required and closed: an unknown key, a missing key, a version other
+ * than 2, a head or base that is not a full sha, or a malformed digest is
+ * refused here, before any forge contact — an older or hand-edited snapshot is
+ * never completed from current values.
+ */
+export function parseJudgedManifest(text: string): ReviewInputManifest {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    throw new Error('the judged manifest is not valid JSON')
+  }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error('the judged manifest is not a JSON object')
+  }
+  const record = raw as Record<string, unknown>
+  for (const key of JUDGED_MANIFEST_KEYS) {
+    if (!Object.hasOwn(record, key)) throw new Error(`the judged manifest is missing \`${key}\``)
+  }
+  const unknown = Object.keys(record).filter((key) => !(JUDGED_MANIFEST_KEYS as readonly string[]).includes(key))
+  if (unknown.length > 0) throw new Error(`the judged manifest carries unsupported field(s): ${unknown.join(', ')}`)
+  if (record.manifestVersion !== 2) {
+    throw new Error(`the judged manifest version ${JSON.stringify(record.manifestVersion)} is unsupported (only 2)`)
+  }
+  const sha = (key: 'headSha' | 'baseSha'): string => {
+    const value = record[key]
+    if (typeof value !== 'string' || !FULL_SHA.test(value))
+      throw new Error(`\`${key}\` is not a full 40-hex commit sha`)
+    return value
+  }
+  const nullableString = (key: 'briefHash' | 'objectivesVersion'): string | null => {
+    const value = record[key]
+    if (value !== null && (typeof value !== 'string' || value === '')) {
+      throw new Error(`\`${key}\` is neither null nor a non-empty string`)
+    }
+    return value
+  }
+  const briefHashValue = nullableString('briefHash')
+  if (briefHashValue !== null && !SHA256_HEX.test(briefHashValue))
+    throw new Error('`briefHash` is not a sha256 hex digest')
+  const rulingOrdinal = record.rulingOrdinal
+  if (typeof rulingOrdinal !== 'number' || !Number.isInteger(rulingOrdinal) || rulingOrdinal < 0) {
+    throw new Error('`rulingOrdinal` is not a non-negative integer')
+  }
+  const policyDigest = record.policyDigest
+  if (typeof policyDigest !== 'string' || !SHA256_HEX.test(policyDigest)) {
+    throw new Error('`policyDigest` is not a sha256 hex digest')
+  }
+  let pauseBoundRuling: PauseBoundRuling | null = null
+  const pause = record.pauseBoundRuling
+  if (pause !== null) {
+    const p = pause as Record<string, unknown>
+    if (
+      typeof pause !== 'object' ||
+      Array.isArray(pause) ||
+      Object.keys(p).sort().join(',') !== 'contentDigest,pauseId,rulingId' ||
+      typeof p.rulingId !== 'string' ||
+      typeof p.pauseId !== 'string' ||
+      !/^\S+$/.test(p.rulingId) ||
+      !/^\S+$/.test(p.pauseId) ||
+      typeof p.contentDigest !== 'string' ||
+      !SHA256_HEX.test(p.contentDigest)
+    ) {
+      throw new Error('`pauseBoundRuling` is neither null nor a { rulingId, pauseId, contentDigest } record')
+    }
+    pauseBoundRuling = { rulingId: p.rulingId, pauseId: p.pauseId, contentDigest: p.contentDigest }
+  }
+  return {
+    manifestVersion: 2,
+    headSha: sha('headSha'),
+    baseSha: sha('baseSha'),
+    briefHash: briefHashValue,
+    objectivesVersion: nullableString('objectivesVersion'),
+    rulingOrdinal,
+    pauseBoundRuling,
+    policyDigest
+  }
+}
+
+function readJudgedManifest(path: string): ReviewInputManifest {
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch {
+    return refuseCmd(
+      `Could not read the judged manifest at ${path}.`,
+      'Export it with `vinaya-review-post --export-manifest --pr <n>` before reviewing, save the output, and pass that file to `--manifest-file`.'
+    )
+  }
+  try {
+    return parseJudgedManifest(text)
+  } catch (err) {
+    return refuseCmd(
+      `The judged manifest at ${path} is refused: ${err instanceof Error ? err.message : String(err)}.`,
+      'Re-export it with `vinaya-review-post --export-manifest --pr <n>`, review that head, and pass the unedited file to `--manifest-file`.'
+    )
+  }
+}
+
+/**
+ * Compares the judged snapshot with the manifest of `pr` right now through the
+ * merge gate's own `compareManifest` — no patch-identity tolerance, so a head
+ * that moved at all is drift — and, for the two fields `compareManifest` skips
+ * when the current side is `null` (the frozen brief and the objectives
+ * version), also requires exact equality. Refuses naming every binding that no
+ * longer holds; returns the current manifest on a match.
+ */
+function requireJudgedManifestCurrent(
+  judged: ReviewInputManifest,
+  pr: string,
+  policy: ReviewPolicy,
+  principalAllowlist: readonly string[]
+): ReviewInputManifest {
+  const current = resolveCurrentManifest(pr, policy, principalAllowlist)
+  const binding = compareManifest(manifestAsEchoed(judged), current)
+  const drift = unboundFields(binding)
+  if (judged.briefHash !== current.briefHash && !drift.includes('briefHash')) drift.push('briefHash')
+  if (judged.objectivesVersion !== current.objectivesVersion && !drift.includes('objectivesVersion')) {
+    drift.push('objectivesVersion')
+  }
+  if (drift.length > 0) {
+    refuseCmd(
+      `The judged manifest no longer matches PR ${pr}: ${drift.join(', ')} changed since it was exported — nothing was posted.`,
+      'Re-export the manifest with `vinaya-review-post --export-manifest --pr <n>`, review the current input, and post against the new file.'
+    )
+  }
+  return current
+}
+
 function postComment(pr: string, body: string): string {
   const tmp = join(tmpdir(), `vinaya-review-post-${process.pid}-${Date.now()}.md`)
   writeFileSync(tmp, body)
@@ -1674,6 +1911,7 @@ const VALUE_FLAGS = [
   '--docs',
   '--escalate',
   '--findings-file',
+  '--manifest-file',
   '--model',
   '--objectives-file',
   '--pr',
@@ -1690,7 +1928,7 @@ const VALUE_FLAGS = [
   '--tokens-out',
   '--verdict'
 ] as const
-const NULLARY_FLAGS = ['--json', '--print-only'] as const
+const NULLARY_FLAGS = ['--export-manifest', '--json', '--print-only'] as const
 
 /**
  * Exported so `review-post.test.ts` can re-derive this surface from the source
@@ -1822,7 +2060,34 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   rejectUnknownFlags(args)
   const json = args.includes('--json')
   const printOnly = args.includes('--print-only')
+  const exportManifest = args.includes('--export-manifest')
   const flags = parseFlags(args.filter((a) => !NULLARY_FLAGS.includes(a as (typeof NULLARY_FLAGS)[number])))
+
+  // The judged snapshot a hand reviewer takes BEFORE reading the pull
+  // request: one JSON `ReviewInputManifest`, built by the same builder the
+  // loop's driver uses, printed and nothing else — no render, no forge write.
+  if (exportManifest) {
+    const extra = ['--role', '--verdict', '--escalate', '--manifest-file'].filter((f) => flags.has(f))
+    if (printOnly || extra.length > 0) {
+      refuseCmd(
+        `\`--export-manifest\` was given together with ${printOnly ? '`--print-only`' : extra.map((f) => `\`${f}\``).join(', ')} — exporting the judged manifest is its own step.`,
+        'Run `vinaya-review-post --export-manifest --pr <n>` alone, save its output, then post with `--manifest-file <path>`.'
+      )
+    }
+    let exportPolicy: ReviewPolicy
+    try {
+      exportPolicy = resolveReviewPolicy(loadTrustAnchorConfig())
+    } catch (err) {
+      refuseCmd(
+        err instanceof Error ? err.message : String(err),
+        "Fix `reviewPolicy` in the default branch's `vinaya.config.json` to a known severity on each role's own scale, then re-run."
+      )
+    }
+    const exportPr = requireFlag(flags, '--pr')
+    const manifest = resolveCurrentManifest(exportPr, exportPolicy, principalsOrRefuse())
+    process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`)
+    return
+  }
 
   const role = flags.get('--role')
   if (role !== 'code-reviewer' && role !== 'security') {
@@ -1859,6 +2124,28 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   const roleLabel: 'Reviewer' | 'Security' = role === 'code-reviewer' ? 'Reviewer' : 'Security'
   const tokensRole: 'review' | 'security' = role === 'code-reviewer' ? 'review' : 'security'
 
+  // Required for every post, read and validated before any forge contact: the
+  // verdict echoes this judged snapshot, never values resolved at post time.
+  // Called at the top of each path, after its own flag validation and before
+  // that path's first forge contact.
+  const loadJudged = (): {
+    judgedManifest: ReviewInputManifest
+    judgedEcho: { manifestVersion: 2; pauseBoundRuling: PauseBoundRuling | null }
+  } => {
+    const manifestFile = flags.get('--manifest-file')
+    if (manifestFile === undefined || manifestFile === '') {
+      refuseCmd(
+        '`--manifest-file` is missing — a review is posted only against the judged manifest snapshot taken before it.',
+        'Run `vinaya-review-post --export-manifest --pr <n>` before reviewing, save the output, review that input, then pass the file as `--manifest-file <path>`.'
+      )
+    }
+    const judgedManifest = readJudgedManifest(manifestFile)
+    return {
+      judgedManifest,
+      judgedEcho: { manifestVersion: 2, pauseBoundRuling: judgedManifest.pauseBoundRuling ?? null }
+    }
+  }
+
   const escalateRaw = flags.get('--escalate')
   const verdictRaw = flags.get('--verdict')
 
@@ -1894,14 +2181,9 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
         'Post the verdict instead (`--verdict ...`), or drop the blocking finding from the escalation.'
       )
     }
-    const headSha = resolveHeadSha(pr)
-    const escalationObjectivesResolution = resolveObjectivesForPr(pr)
-    const escalationObjectivesVersion =
-      escalationObjectivesResolution.kind === 'list' ? escalationObjectivesResolution.version : null
-    const escalationRulingOrdinal = resolveRulingOrdinalForPr(pr)
-    const escalationPrincipalAllowlist = principalsOrRefuse()
-    const escalationBriefHash = resolveBriefHashForPr(pr, escalationPrincipalAllowlist)
-    const escalationBaseSha = resolveBaseShaForPr(pr)
+    const { judgedManifest } = loadJudged()
+    requireJudgedManifestCurrent(judgedManifest, pr, policy, principalsOrRefuse())
+    const headSha = judgedManifest.headSha
     const body = renderEscalationComment({
       ...tokens,
       headSha,
@@ -1909,11 +2191,11 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       summary,
       role: tokensRole,
       roleLabel,
-      objectivesVersion: escalationObjectivesVersion,
-      rulingOrdinal: escalationRulingOrdinal,
-      briefHash: escalationBriefHash,
-      policyDigest: reviewPolicyDigest(policy),
-      baseSha: escalationBaseSha
+      objectivesVersion: judgedManifest.objectivesVersion,
+      rulingOrdinal: judgedManifest.rulingOrdinal,
+      briefHash: judgedManifest.briefHash,
+      policyDigest: judgedManifest.policyDigest,
+      baseSha: judgedManifest.baseSha
     })
     checkRenderedCommentOrRefuse(body, { kind: 'escalation' })
     if (printOnly) {
@@ -1976,9 +2258,13 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       }
     }
 
+    const { judgedManifest, judgedEcho } = loadJudged()
     const principalAllowlist = principalsOrRefuse()
 
-    const headSha = resolveHeadSha(pr)
+    // The judged snapshot is the only source of every binding this verdict
+    // echoes; the live manifest is read once, here, to prove it is unchanged.
+    requireJudgedManifestCurrent(judgedManifest, pr, policy, principalAllowlist)
+    const headSha = judgedManifest.headSha
 
     const objectivesResolution = resolveObjectivesForPr(pr)
     const { objectivesVersion: resolvedObjectivesVersion, objectiveResults } = resolveObjectiveResultsForCommand(
@@ -1986,8 +2272,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       flags.get('--objectives-file')
     )
     refuseIfCleanVerdictHasNotMetObjective(isCleanVerdict(verdict), 'APPROVE', objectiveResults)
-    const resolvedRulingOrdinal = resolveRulingOrdinalForPr(pr)
-    const resolvedBriefHash = resolveBriefHashForPr(pr, principalAllowlist)
+    const resolvedRulingOrdinal = judgedManifest.rulingOrdinal
 
     let comments: ReviewGateComment[]
     try {
@@ -2011,6 +2296,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
 
     const input: CodeReviewInput = {
       ...tokens,
+      ...judgedEcho,
       headSha,
       verdict,
       briefConformance,
@@ -2020,12 +2306,12 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       scopeEvidence,
       tests,
       docs,
-      objectivesVersion: resolvedObjectivesVersion,
+      objectivesVersion: judgedManifest.objectivesVersion,
       objectiveResults,
       rulingOrdinal: resolvedRulingOrdinal,
-      briefHash: resolvedBriefHash,
-      policyDigest: reviewPolicyDigest(policy),
-      baseSha: resolveBaseShaForPr(pr)
+      briefHash: judgedManifest.briefHash,
+      policyDigest: judgedManifest.policyDigest,
+      baseSha: judgedManifest.baseSha
     }
     const body = renderCodeReviewComment(input)
     checkRenderedCommentOrRefuse(body, { kind: 'code-review', verdict })
@@ -2051,7 +2337,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       principalAllowlist,
       body,
       resolvedObjectivesVersion,
-      resolvedRulingOrdinal
+      resolvedRulingOrdinal,
+      resolveCurrentManifest(pr, policy, principalAllowlist)
     )
     if (!result.ok) {
       refuseCmd(
@@ -2088,6 +2375,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   // passing scan-check result to this exact head, so the head is needed for the
   // `noneFoundClaimCitesScanCheck` gate below, not only for the rendered
   // `Judged head:` line further down.
+  const { judgedManifest, judgedEcho } = loadJudged()
   const headSha = resolveHeadSha(pr)
 
   const configScan = requireFlag(flags, '--config-scan')
@@ -2121,8 +2409,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     flags.get('--objectives-file')
   )
   refuseIfCleanVerdictHasNotMetObjective(isCleanVerdict(verdict), 'PASS', objectiveResults)
-  const resolvedRulingOrdinal = resolveRulingOrdinalForPr(pr)
-  const resolvedBriefHash = resolveBriefHashForPr(pr, principalAllowlist)
+  const resolvedRulingOrdinal = judgedManifest.rulingOrdinal
+  requireJudgedManifestCurrent(judgedManifest, pr, policy, principalAllowlist)
 
   let comments: ReviewGateComment[]
   try {
@@ -2146,18 +2434,19 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
 
   const input: SecurityInput = {
     ...tokens,
+    ...judgedEcho,
     headSha,
     verdict,
     findings,
     configScan,
     secrets,
     secretsEvidence,
-    objectivesVersion: resolvedObjectivesVersion,
+    objectivesVersion: judgedManifest.objectivesVersion,
     objectiveResults,
     rulingOrdinal: resolvedRulingOrdinal,
-    briefHash: resolvedBriefHash,
-    policyDigest: reviewPolicyDigest(policy),
-    baseSha: resolveBaseShaForPr(pr)
+    briefHash: judgedManifest.briefHash,
+    policyDigest: judgedManifest.policyDigest,
+    baseSha: judgedManifest.baseSha
   }
   const body = renderSecurityComment(input)
   checkRenderedCommentOrRefuse(body, { kind: 'security', verdict })
@@ -2183,7 +2472,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     principalAllowlist,
     body,
     resolvedObjectivesVersion,
-    resolvedRulingOrdinal
+    resolvedRulingOrdinal,
+    resolveCurrentManifest(pr, policy, principalAllowlist)
   )
   if (!result.ok) {
     refuseCmd(
