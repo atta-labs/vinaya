@@ -1,6 +1,7 @@
 /**
- * `vinaya task sweep` (`commands/task-sweep.ts`) and the driver's own
- * start-of-run call (`dev-review-loop.ts`) — the one function that decides
+ * `vinaya task sweep` (`commands/task-sweep.ts`) and the start-of-run calls of
+ * the standalone driver (`dev-review-loop.ts`) and of the Engine runner
+ * (`bin/run-engine.ts`, with its own runtime directory) — the one function that decides
  * whether a task's folder under `<runtimeDir>/tasks-execution/` still
  * earns its place on disk, and removes it when it doesn't.
  *
@@ -27,7 +28,7 @@
  */
 
 import { execFile, execFileSync } from 'node:child_process'
-import { lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { chmodSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join, sep, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
 import { issueBranchName } from '../../../tools/task-contract/task-branch-identity'
@@ -190,6 +191,29 @@ function commitExistsInThisRepo(sha: string): boolean {
   }
 }
 
+/**
+ * Gives the owner write permission on every directory of the tree at `path`, never following a symlink and
+ * touching nothing outside it. A reviewer's candidate snapshot strips every write bit, and a read-only directory
+ * cannot have its entries removed; unlinking a file needs write on its directory only, so files keep their modes.
+ */
+export function unlockDirectories(path: string): void {
+  let info: ReturnType<typeof lstatSync>
+  try {
+    info = lstatSync(path)
+  } catch {
+    return
+  }
+  if (!info.isDirectory()) return
+  chmodSync(path, info.mode | 0o700)
+  for (const child of readdirSync(path)) unlockDirectories(join(path, child))
+}
+
+/** The default removal of a folder: unlock its read-only directories, then remove it. The caller has already refused a path outside its root and a symlink. */
+export function removeTree(path: string): void {
+  unlockDirectories(path)
+  rmSync(path, { recursive: true, force: true })
+}
+
 export const defaultTaskSweepDeps: TaskSweepDeps = {
   runtimeDir: runtimeDirForThisRepo,
   isDriverPidAlive: realIsDriverPidAlive,
@@ -200,7 +224,7 @@ export const defaultTaskSweepDeps: TaskSweepDeps = {
   fetchPrForBranch,
   fetchPrBody: realFetchPrBody,
   taskFromPrBody: realTaskFromPrBody,
-  rm: (path) => rmSync(path, { recursive: true, force: true }),
+  rm: removeTree,
   resolveRepo: resolveRepoSync,
   commitExistsInThisRepo
 }
@@ -559,7 +583,7 @@ export const defaultTaskSweepAsyncDeps: TaskSweepAsyncDeps = {
   fetchPrForBranch: fetchPrForBranchAsync,
   fetchPrBody: fetchPrBodyAsync,
   taskFromPrBody: realTaskFromPrBody,
-  rm: (path) => rmSync(path, { recursive: true, force: true }),
+  rm: removeTree,
   resolveRepo: resolveRepoSync,
   listWorktrees: listWorktreesAsync,
   worktreeHasUncommitted: worktreeHasUncommittedAsync,
@@ -808,6 +832,84 @@ export async function sweepModernTasksAsync(
   const worktrees = await sweepWorktreesAsync(root, names, excludeScope, onDecision, deps)
   removed.push(...worktrees.removed)
   kept.push(...worktrees.kept)
+  const engineRuns = await sweepEngineRunsAsync(root, excludeScope, onDecision, deps, concurrency)
+  removed.push(...engineRuns.removed)
+  kept.push(...engineRuns.kept)
+  return { removed, kept }
+}
+
+// --- Engine run folders under `<runtimeDir>/engine-runs/` -------------------
+// The Engine runner keeps a run's checkpoints, trace and generated files in
+// `<runtimeDir>/engine-runs/<task>`, a second folder per task that nothing
+// else removes. The same classification decides it as the task folder.
+
+const ENGINE_RUNS_DIRNAME = 'engine-runs'
+
+async function sweepEngineRunsAsync(
+  root: string,
+  excludeScope: RunScope | undefined,
+  onDecision: (decision: SweepAsyncDecision) => void,
+  deps: TaskSweepAsyncDeps,
+  concurrency: number
+): Promise<SweepReport> {
+  const engineRunsRoot = join(root, ENGINE_RUNS_DIRNAME)
+  let names: string[]
+  try {
+    names = readdirSync(engineRunsRoot).filter((name) => /^\d+$/.test(name))
+  } catch {
+    return { removed: [], kept: [] }
+  }
+  const total = names.length
+  const results: { removed: boolean; entry: SweepEntry }[] = new Array(total)
+  let completed = 0
+  let cursor = 0
+
+  async function decide(index: number): Promise<void> {
+    const name = names[index] as string
+    const scope: RunScope = Number(name)
+    const label = `engine run ${describeScope(scope)}`
+    const settle = (wasRemoved: boolean, reason: string, failed = false): void => {
+      results[index] = { removed: wasRemoved, entry: { folder: label, reason } }
+      completed++
+      onDecision({ completed, total, folder: label, removed: wasRemoved, ...(failed ? { failed } : {}), reason })
+    }
+    if (excludeScope !== undefined && scopesEqual(scope, excludeScope)) {
+      settle(false, 'this run’s own task — never swept by its own driver')
+      return
+    }
+    const cls = await classifyTaskFolderAsync(scope, root, deps)
+    if (cls.kind !== 'finished') {
+      settle(false, `${cls.kind} — ${cls.reason}`)
+      return
+    }
+    // Same discipline as a task folder: read again immediately before removing.
+    const recheck = await classifyTaskFolderAsync(scope, root, deps)
+    if (recheck.kind !== 'finished') {
+      settle(false, `${recheck.kind} — ${recheck.reason}`)
+      return
+    }
+    const folderPath = join(engineRunsRoot, name)
+    try {
+      assertSafeToRemove(folderPath, root)
+      deps.rm(folderPath)
+      settle(true, recheck.reason)
+    } catch (err) {
+      settle(false, `finished (${recheck.reason}) but could not be removed: ${message(err)}`, true)
+    }
+  }
+
+  async function worker(): Promise<void> {
+    while (cursor < names.length) {
+      const index = cursor++
+      await decide(index)
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, names.length) }, () => worker()))
+
+  const removed: SweepEntry[] = []
+  const kept: SweepEntry[] = []
+  for (const r of results) (r.removed ? removed : kept).push(r.entry)
   return { removed, kept }
 }
 

@@ -436,6 +436,55 @@ describe('a stub run on the Engine path', () => {
     expect(readFileSync(join(generated, 'role-mcp.json'), 'utf8')).toContain(shim)
   })
 
+  test('starts the injected sweep once with the run task and runtime directory, never waits on it before the first dispatch, and awaits it before returning', async () => {
+    const { options, calls } = stubRun()
+    const sweepCalls: Array<{ task: number; runtimeDir: string }> = []
+    let release: () => void = () => {}
+    let finished = false
+    // Resolves only once the Developer has been dispatched: a runner that waited on the sweep first would never get there.
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate
+    })
+    const spawnFn = options.spawnFn as NonNullable<EngineRunOptions['spawnFn']>
+    const result = await runEngine({
+      ...options,
+      spawnFn: ((...spawnArgs: Parameters<typeof spawnFn>) => {
+        release()
+        return spawnFn(...spawnArgs)
+      }) as typeof spawnFn,
+      sweepTasks: async (task, runtimeDir) => {
+        sweepCalls.push({ task, runtimeDir })
+        await gate
+        await new Promise((resolveTimer) => setTimeout(resolveTimer, 20))
+        finished = true
+      }
+    })
+    expect(result.exitCode).toBe(0)
+    expect(sweepCalls).toEqual([{ task: 7, runtimeDir: options.runtimeDir }])
+    expect(finished).toBe(true)
+    expect(calls).toContain('spawn:develop')
+  })
+
+  test('writes a sweep failure to the driver log and still completes the run', async () => {
+    const { options } = stubRun()
+    const result = await runEngine({
+      ...options,
+      sweepTasks: async () => {
+        throw new Error('gh timed out')
+      }
+    })
+    expect(result.exitCode).toBe(0)
+    const log = readFileSync(loopLogPathFor(null, 7, options.runtimeDir), 'utf8')
+    expect(log).toContain('Sweep failed: gh timed out')
+  })
+
+  test('runs no sweep when none is injected', async () => {
+    const { options } = stubRun()
+    const result = await runEngine(options)
+    expect(result.exitCode).toBe(0)
+    expect(readFileSync(loopLogPathFor(null, 7, options.runtimeDir), 'utf8')).not.toContain('Sweep')
+  })
+
   test('keeps the run checkpoints in a SQLite file under the run directory', async () => {
     const { options } = stubRun()
     await runEngine({ ...options, revision: 'rev-under-test' })

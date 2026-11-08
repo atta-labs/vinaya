@@ -176,7 +176,9 @@ import {
 } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { formatAgentLine } from '../../../kernel/adapters/agents/agent-line'
 import { formatStageLine, type Stage, type StageChange } from '../tools/follow-view'
+import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from '../loops/dev-review/run-control/task-sweep'
 import {
+  appendDriverLine,
   appendLoopLogLine,
   appendRoleLine,
   appendRunStartMarker,
@@ -1358,6 +1360,32 @@ export interface EngineRunOptions {
   narration?: { rendererFor?: AgentRendererFor; narrateEvent?: typeof narrateDriverEvent }
   /** The key the role hosts' sockets are derived from; `engine-<task>` unless a run beside the live one needs its own. */
   hostKey?: string
+  /**
+   * The start-of-run sweep of finished tasks' worktrees and folders: started before the legs, never waited on before
+   * the first dispatch, awaited before the runner returns. A failure is written to the driver log and never ends the
+   * run. Absent, nothing is swept; only the runner's own entry sets the live sweep.
+   */
+  sweepTasks?: (task: number, runtimeDir: string, log: (line: string, mark: 'done' | 'failed') => void) => Promise<void>
+}
+
+/** The live start-of-run sweep: the standalone loop's own `sweepModernTasksAsync`, over this run's runtime directory with its own task excluded. */
+export async function liveSweepTasks(
+  task: number,
+  runtimeDir: string,
+  log: (line: string, mark: 'done' | 'failed') => void
+): Promise<void> {
+  let removed = 0
+  let kept = 0
+  await sweepModernTasksAsync(
+    task,
+    (decision) => {
+      if (decision.removed) removed++
+      else kept++
+      if (decision.failed) log(`Sweep could not remove ${decision.folder}: ${decision.reason}`, 'failed')
+    },
+    { ...defaultTaskSweepAsyncDeps, runtimeDir: () => runtimeDir }
+  )
+  log(`Sweep finished: removed ${removed} finished folder${removed === 1 ? '' : 's'}, kept ${kept}.`, 'done')
 }
 
 export interface EngineLifecycleOptions {
@@ -1434,9 +1462,11 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
   process.env.VINAYA_TASK = String(options.args.task)
   if (saved.host === undefined) process.env.VINAYA_HOST = 'loop'
   delete process.env.VINAYA_PR
+  const sweeping = startSweep(options)
   try {
     return await runEngineLegs(options)
   } finally {
+    await sweeping
     for (const [key, value] of [
       ['VINAYA_TASK', saved.task],
       ['VINAYA_HOST', saved.host],
@@ -1446,6 +1476,25 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       else process.env[key] = value
     }
   }
+}
+
+/** Starts the run's sweep without waiting for it. The returned promise never rejects: a failure is a driver-log line. */
+function startSweep(options: EngineRunOptions): Promise<void> {
+  const sweep = options.sweepTasks
+  if (sweep === undefined) return Promise.resolve()
+  const logPath = loopLogPathFor(null, options.args.task, options.runtimeDir)
+  const line = (words: string, mark: 'done' | 'failed'): void => {
+    try {
+      appendDriverLine(logPath, words, mark)
+    } catch {
+      // The sweep's narration is never a reason to fail the run.
+    }
+  }
+  return Promise.resolve()
+    .then(() => sweep(options.args.task, options.runtimeDir, line))
+    .catch((error: unknown) =>
+      line(`Sweep failed: ${error instanceof Error ? error.message : String(error)}`, 'failed')
+    )
 }
 
 /** Runs the task's legs. The host is closed and the sink drained on every way out. */
@@ -3203,6 +3252,7 @@ async function runLive(
     startHost: startDevToolsHost,
     developerFacts: async () => ({ ...(await baseFacts()), flow: loaded.flowKey }),
     allowUnixSockets: linuxUnixSocketFilterOptIn(),
+    sweepTasks: liveSweepTasks,
     lifecycle: {
       dispatchConfig: loadConfig()?.dispatch,
       recovery: liveRecovery({ args, runtimeDir, taskInput }),

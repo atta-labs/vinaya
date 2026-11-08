@@ -427,6 +427,25 @@ printed and reported exactly like a task folder's, labelled
 `worktree .worktrees/<branch>`. `vinaya-task-sweep` on demand does not
 sweep worktrees.
 
+The Engine runner starts the same sweep at the start of every run. Its
+`EngineRunOptions.sweepTasks` member is set only by the runner's own entry,
+to a call of `sweepModernTasksAsync` with the run's task as `excludeScope`
+and the run's own runtime directory, so the live-driver check reads the
+directory the Engine wrote its driver lock into. The sweep is started before
+the legs and never waited on before the first dispatch; the runner awaits it
+before it returns. Its summary line, and a failure line (`Sweep failed: …`),
+go to the run's driver log, and a failure never pauses or fails the run.
+
+A task folder that holds a read-only reviewer candidate snapshot is
+removed too: before the removal, owner write permission is added to the
+directories of the folder being removed, never to anything outside it and
+never through a symlink. The same unlock serves `vinaya-task-sweep`.
+
+The sweep also removes a finished task's Engine run folder,
+`<runtimeDir>/engine-runs/<task>`. It is decided by the same
+`classifyTaskFolderAsync` keep rules as the task folder, read a second time
+immediately before removal, and the run's own task is never removed.
+
 The driver's own start-of-run call never reaches the legacy-layout half
 of the sweep (`sweepLegacyLayout`, `--include-legacy`) at all — its
 result was always discarded here even before this change (`runTaskSweep`
