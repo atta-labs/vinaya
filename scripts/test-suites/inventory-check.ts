@@ -26,9 +26,12 @@
  * alone does not), `parsed-keys` (named key domains only) or
  * `schema-policy` (a schema or policy consumer, mandatory on any change).
  * Lists another module already owns — the sandbox suite's inputs, the
- * folder-scanning tests' declarations — are referenced and read from that
- * module's syntax, never copied; one that cannot be read that way is opaque
- * and keeps a scoped, explained fallback. Governance policy (what must run
+ * folder-scanning tests' declarations, the doctrine map's files — are
+ * referenced and read from that module's syntax, never copied; one that cannot
+ * be read that way is opaque and keeps a scoped, explained fallback. A
+ * doctrine-map reader names the map rows it reads by logical key (or only the
+ * shipped ones), so an edit to one doctrine file reaches only that file's
+ * readers. Governance policy (what must run
  * whatever changed) is a separate list from dependency data.
  *
  * Every view is per revision: the base is read from the base tree's own
@@ -139,6 +142,13 @@ export type ReaderDeclaration = {
   tests?: string[]
   /** Suite ids: every test of the suite reads it. */
   suites?: string[]
+  /**
+   * For a `doctrine-map` provider: the map rows these tests read, by logical
+   * key — an exact key, or a key prefix ending in `/`. Absent: every row.
+   */
+  rows?: string[]
+  /** For a `doctrine-map` provider: only the rows the map marks as shipped in the published package. */
+  ships?: boolean
 }
 
 export type InputDeclaration = {
@@ -163,9 +173,14 @@ export type ProviderDeclaration = {
   /**
    * `path-list` — an array of repository paths (folders end in `/`), read by
    * the `readers` given here; `scanner-declarations` — objects with `test`,
-   * `roots` and `trigger`, each test reading its own roots.
+   * `roots` and `trigger`, each test reading its own roots; `doctrine-map` —
+   * the doctrine map's `{ key, source, ships }` rows, each source relative to
+   * the folder `root` names, read by the `readers` given here, each reader
+   * narrowed to the rows it reads (`rows`, `ships`).
    */
-  shape: 'path-list' | 'scanner-declarations'
+  shape: 'path-list' | 'scanner-declarations' | 'doctrine-map'
+  /** For a `doctrine-map` provider: the exported constant holding the folder the rows' sources are relative to. */
+  root?: string
   readers?: ReaderDeclaration[]
   reason: string
 }
@@ -459,6 +474,69 @@ export function readExportedScannerDeclarations(
     out.push({ test: testPath, trigger: triggerName, roots: rootPaths as string[] })
   }
   return out
+}
+
+/** One row of the doctrine map, as the inventory reads it: its logical key, its source relative to the map's root, and whether it ships. */
+export type DoctrineMapRow = { key: string; source: string; ships: boolean }
+
+/**
+ * The doctrine map an exported constant holds, read from the module's syntax:
+ * the folder the `root` constant names (a string literal) and every row's
+ * `key`, `source` and `ships` (string literals and a boolean keyword; other
+ * fields are ignored). Either half is `null` when it is a shape this cannot
+ * prove — a computed root or row, a spread, a missing field — so the caller
+ * keeps an explained fallback instead of guessing which doctrine files exist.
+ */
+export function readExportedDoctrineMap(
+  text: string,
+  file: string,
+  name: string,
+  root: string
+): { root: string | null; rows: DoctrineMapRow[] | null } {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
+  const consts = new Map<string, ts.Expression>()
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    for (const decl of statement.declarationList.declarations)
+      if (ts.isIdentifier(decl.name) && decl.initializer) consts.set(decl.name.text, decl.initializer)
+  }
+  const unwrap = (node: ts.Expression): ts.Expression =>
+    ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isParenthesizedExpression(node)
+      ? unwrap(node.expression)
+      : node
+  const rootValue = consts.get(root)
+  const folder = rootValue ? staticString(unwrap(rootValue)) : null
+  const readRows = (): DoctrineMapRow[] | null => {
+    const list = consts.get(name)
+    const array = list ? unwrap(list) : null
+    if (!array || !ts.isArrayLiteralExpression(array)) return null
+    const rows: DoctrineMapRow[] = []
+    for (const element of array.elements) {
+      if (!ts.isObjectLiteralExpression(element)) return null
+      const fields = new Map<string, ts.Expression>()
+      for (const property of element.properties) {
+        if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) return null
+        fields.set(property.name.text, property.initializer)
+      }
+      const key = fields.get('key')
+      const path = fields.get('source')
+      const ships = fields.get('ships')
+      const keyText = key ? staticString(key) : null
+      const sourceText = path ? staticString(path) : null
+      if (keyText === null || sourceText === null || !ships) return null
+      if (ships.kind !== ts.SyntaxKind.TrueKeyword && ships.kind !== ts.SyntaxKind.FalseKeyword) return null
+      rows.push({ key: keyText, source: sourceText, ships: ships.kind === ts.SyntaxKind.TrueKeyword })
+    }
+    return rows
+  }
+  return { root: folder, rows: readRows() }
+}
+
+/** Whether a reader's `rows` and `ships` narrowing keeps a doctrine map row. */
+export function doctrineRowRead(reader: ReaderDeclaration, row: DoctrineMapRow): boolean {
+  if (reader.ships === true && !row.ships) return false
+  if (!reader.rows) return true
+  return reader.rows.some((pattern) => (pattern.endsWith('/') ? row.key.startsWith(pattern) : row.key === pattern))
 }
 
 /** The workspace patterns a root manifest declares, expanded over a tree's own directories. */
@@ -816,10 +894,14 @@ export function buildInventoryView(tree: TreeReader, options: ViewOptions = {}):
   const edges: ResolvedEdge[] = []
   const resolveReaders = (
     readers: readonly ReaderDeclaration[] | undefined,
-    where: string
+    where: string,
+    doctrineRows = false
   ): Map<ReaderDeclaration, string[]> => {
     const out = new Map<ReaderDeclaration, string[]>()
     for (const reader of readers ?? []) {
+      // Row narrowing means something only over the doctrine map's rows; anywhere else it would be ignored.
+      if (!doctrineRows && (reader.rows !== undefined || reader.ships !== undefined))
+        problem('schema', where, 'rows and ships narrow only a doctrine-map provider reader')
       const ids = new Set<string>()
       for (const suiteId of reader.suites ?? []) {
         if (!declById.has(suiteId)) problem('missing', where, `reader suite ${suiteId} is not declared`)
@@ -917,6 +999,43 @@ export function buildInventoryView(tree: TreeReader, options: ViewOptions = {}):
             readers: ids,
             source: `provider:${provider.id}`
           })
+      }
+    } else if (provider.shape === 'doctrine-map') {
+      const map = readExportedDoctrineMap(text, provider.file, provider.export, provider.root ?? '')
+      if (map.root === null || map.rows === null) {
+        // The map's rows are the only list of the doctrine files these readers read. Unread, every
+        // change under the doctrine folder keeps the conservative answer — the whole tree when even
+        // that folder cannot be read.
+        unknowns.push({
+          scope: provider.file,
+          reason: `provider ${provider.id}: ${provider.export} is not a literal doctrine map, so the doctrine files its readers read stay opaque`
+        })
+        unknowns.push({
+          scope: map.root === null ? '.' : `${map.root}/`,
+          reason: `provider ${provider.id}: the doctrine map cannot be read, so which files are doctrine, and which tests read them, is unknown`
+        })
+        continue
+      }
+      const { root, rows } = map as { root: string; rows: DoctrineMapRow[] }
+      const resolved = resolveReaders(provider.readers, provider.id, true)
+      for (const reader of provider.readers ?? [])
+        for (const pattern of reader.rows ?? [])
+          if (!rows.some((row) => doctrineRowRead({ kind: reader.kind, rows: [pattern] }, row)))
+            problem('missing', provider.id, `reader row ${pattern} names no row of the doctrine map`)
+      for (const row of rows) {
+        const path = `${root}/${row.source}`
+        if (!exists(path))
+          problem('missing', path, `provider ${provider.id}: the doctrine map names a file that is not in the tree`)
+        for (const [reader, ids] of resolved) {
+          if (!doctrineRowRead(reader, row)) continue
+          edges.push({
+            input: path,
+            kind: provider.kind,
+            readerKind: reader.kind,
+            readers: ids,
+            source: `provider:${provider.id}`
+          })
+        }
       }
     } else {
       const declared = readExportedScannerDeclarations(text, provider.file, provider.export)
