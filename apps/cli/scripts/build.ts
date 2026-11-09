@@ -64,6 +64,11 @@ async function build(entrypoints: string[], outdir: string): Promise<void> {
     target: 'node',
     format: 'esm',
     external,
+    // A workspace package that also publishes on its own (`@attalabs/test-selection`)
+    // exports its TypeScript source under the `source` condition and its built
+    // `dist/` under `import`: the CLI inlines the source, so it never needs that
+    // package built first.
+    conditions: ['source'],
     naming: '[name].[ext]'
   })
   if (!result.success) {

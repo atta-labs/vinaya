@@ -5,16 +5,16 @@
  * directory.
  */
 import { readFileSync } from 'node:fs'
-import { join, posix } from 'node:path'
+import { join } from 'node:path'
 import {
-  type InventoryView,
+  type InventoryDeclarations,
+  inventoryViewOf,
   memoryRepository,
   type RepositoryReader,
-  type ResolvedEdge,
   type SelectionPolicy,
   type SelectTestsInput,
-  stableHash
-} from '../index.js'
+  TEST_FILE_NAME
+} from '../src/index.js'
 
 export type Scenario = {
   name: string
@@ -31,13 +31,12 @@ export type Scenario = {
   policies?: string[]
 }
 
-export type FixtureDeclarations = {
-  suites: { id: string; dir: string; runner: 'bun' | 'vitest'; preload: string | null }[]
-  /** Readers name test ids, or `suite:<id>` for every test of a suite. */
-  edges: ResolvedEdge[]
-  unknowns: { scope: string; reason: string }[]
-  policies: InventoryView['policies']
-}
+export type FixtureDeclarations = InventoryDeclarations
+
+/** One revision's inventory view, built the way a repository would from the fixture's declarations. */
+export const viewOf = inventoryViewOf
+
+export const TEST_NAME = TEST_FILE_NAME
 
 export type Fixture = {
   files: Record<string, string>
@@ -50,76 +49,6 @@ export const FIXTURES = ['workspaces-repo.json', 'flat-repo.json'] as const
 
 export function fixture(name: (typeof FIXTURES)[number]): Fixture {
   return JSON.parse(readFileSync(join(import.meta.dir, 'fixtures', name), 'utf8')) as Fixture
-}
-
-export const TEST_NAME = /\.(test|spec)\.[cm]?[jt]sx?$/
-
-/** One revision's inventory view, built the way a repository would from the fixture's declarations. */
-export function viewOf(
-  revision: string,
-  files: Record<string, string>,
-  decl: FixtureDeclarations,
-  dropEdges: readonly string[] = []
-): InventoryView {
-  const suites = decl.suites.map((s) => ({
-    id: s.id,
-    owner: s.id,
-    kind: 'workspace' as const,
-    dir: s.dir,
-    cwd: s.dir,
-    runner: s.runner,
-    preload: s.preload,
-    environment: {},
-    configFiles: [posix.join(s.dir, 'package.json')],
-    include: [],
-    exclude: []
-  }))
-  const tests = Object.keys(files)
-    .sort()
-    .flatMap((path) => {
-      const suite = suites.find((s) => s.dir === '.' || path.startsWith(`${s.dir}/`))
-      if (!suite || !TEST_NAME.test(path)) return []
-      return [
-        {
-          id: path,
-          suite: suite.id,
-          owner: suite.owner,
-          kind: suite.kind,
-          runner: suite.runner,
-          cwd: suite.cwd,
-          preload: suite.preload,
-          environment: {}
-        }
-      ]
-    })
-  const ids = new Set(tests.map((t) => t.id))
-  const edges = decl.edges
-    .filter((e) => !dropEdges.includes(e.source))
-    .map((e) => ({
-      ...e,
-      readers: e.readers
-        .flatMap((r) => (r.startsWith('suite:') ? tests.filter((t) => t.suite === r.slice(6)).map((t) => t.id) : [r]))
-        .filter((r) => ids.has(r))
-        .sort()
-    }))
-  return {
-    revision,
-    modeled: true,
-    schemaIdentity: 'fixture-inventory@1',
-    declarationVersion: 1,
-    declarationIdentity: stableHash(decl),
-    contextIdentity: stableHash({ suites, decl }),
-    graphIdentity: stableHash({ revision, suites, tests, edges, unknowns: decl.unknowns }),
-    workspaces: [],
-    suites,
-    tests,
-    exclusions: [],
-    typeInputs: [],
-    edges,
-    unknowns: decl.unknowns,
-    policies: decl.policies,
-    problems: []
-  }
 }
 
 /** A scenario's head files: the fixture's files with its changes and renames applied. */

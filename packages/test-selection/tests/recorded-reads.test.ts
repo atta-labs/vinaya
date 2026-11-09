@@ -14,7 +14,7 @@ import {
   recordReach,
   stableJson,
   type TraceOptions
-} from '../index.js'
+} from '../src/index.js'
 
 const ROOT = '/work/repo'
 

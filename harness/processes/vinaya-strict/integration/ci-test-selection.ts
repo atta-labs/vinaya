@@ -187,8 +187,8 @@ export type CiDecision =
       selected: readonly string[]
       native?: readonly string[]
       changed?: readonly string[]
-      /** The tests a record of their reads decided; the static whole-suite rules apply to no other. */
-      recorded?: readonly string[]
+      /** The suites the selection runs whole, each with why and the tests it runs (`SelectionPlan.wholeSuites`). */
+      wholeSuites?: readonly { suite: string; reason: string; tests: readonly string[] }[]
     }
 
 /** The facts a decision is made from, each read by {@link readCiFacts}. */
@@ -242,8 +242,8 @@ export function shardFilesToRun(repoRoot: string, shardList: readonly string[], 
  * A decision with every path repository-relative and sorted — what
  * `--decision <file>` writes for the test schedule
  * (`scripts/test-suites/schedule.ts`) to read. A narrowed decision also
- * carries the changed paths, `changed`, so the schedule can run whole a
- * suite whose own changes the selector narrows without modeling (the portal).
+ * carries the changed paths, `changed`, and the suites the selection runs whole
+ * (`wholeSuites`), which the schedule runs as whole-suite groups.
  */
 export function repositoryDecision(
   repoRoot: string,
@@ -257,7 +257,7 @@ export function repositoryDecision(
     selected: rel(decision.selected),
     native: rel(decision.native ?? []),
     changed: [...new Set(changed)].sort(),
-    ...(decision.recorded ? { recorded: [...decision.recorded].sort() } : {})
+    ...(decision.wholeSuites ? { wholeSuites: decision.wholeSuites } : {})
   }
 }
 

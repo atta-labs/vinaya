@@ -180,6 +180,20 @@ jobs:
       # and the review loop's head-bound read of `Vinaya CI`. A push to
       # `main` plans everything, and also a shadow pull-request plan for
       # `aggregate` to compare failures against.
+      # The pass entries the test jobs of this pull request's earlier runs
+      # stored (`pass-entries-<head sha>-<place>-<run attempt>`, below): each a test file
+      # that passed completely, under the key of everything it reads
+      # (`passEntryKey`). The plan reuses an entry whose key still matches, so
+      # a required check never re-runs a file an earlier run of the same pull
+      # request passed when nothing in its key changed. None can be read: none
+      # is reused.
+      # An artifact is written by the code the run tested, which the pull
+      # request controls, so it is trusted only by where it came from: runs
+      # of this workflow from this pull request's own head repository and
+      # branch, each filed under the head commit GitHub reports for it. The
+      # plan then keeps only a head that is a commit of this branch and whose
+      # every change is still in the change under review
+      # (`trustedPassProducer` in scripts/test-suites/repository-selection.ts).
       - name: Build this pull request's CI plan
         id: plan
         env:
@@ -188,12 +202,26 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           TESTED_SHA: ${{ github.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           PLAN_DIR="$RUNNER_TEMP/ci-plan"
           mkdir -p "$PLAN_DIR"
           GUARD="$PLAN_DIR/guard.json"
           SHADOW=""
+          PASSES=""
           if [ "$EVENT" = "pull_request" ]; then
+            PASS_DIR="$RUNNER_TEMP/pass-entries"
+            mkdir -p "$PASS_DIR"
+            RUNS=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" -f event=pull_request -f branch="$HEAD_REF" -f per_page=20 \
+              --jq '.workflow_runs[] | select(.head_repository.full_name == env.HEAD_REPO) | "\(.id) \(.head_sha)"' 2>/dev/null || true)
+            printf '%s\n' "$RUNS" | while read -r RUN SHA; do
+              if [ -z "$RUN" ] || [ "$RUN" = "$GITHUB_RUN_ID" ]; then continue; fi
+              case "$SHA" in *[!0-9a-f]*|'') continue ;; esac
+              gh run download "$RUN" --pattern 'pass-entries-*' --dir "$PASS_DIR/$SHA/$RUN" 2>/dev/null || true
+            done
+            echo "Pass-entry files fetched: $(find "$PASS_DIR" -name '*.json' | wc -l)" >&2
+            PASSES="--passes $PASS_DIR"
             if git show "$BASE_SHA:scripts/ci/base-guard.ts" > "$PLAN_DIR/base-guard.ts" 2>/dev/null; then
               # From its own folder, so no configuration the pull request commits
               # (a `bunfig.toml` preload) loads into the process that judges it.
@@ -204,7 +232,18 @@ jobs:
           else
             SHADOW="--shadow"
           fi
-          bun scripts/ci/impact-plan.ts --event "$EVENT" --base "$BASE_SHA" --head "$HEAD_SHA" --tested "$TESTED_SHA" --guard "$GUARD" $SHADOW --out-dir "$PLAN_DIR" --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+          bun scripts/ci/impact-plan.ts --event "$EVENT" --base "$BASE_SHA" --head "$HEAD_SHA" --tested "$TESTED_SHA" --guard "$GUARD" $SHADOW $PASSES --out-dir "$PLAN_DIR" --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+
+      # The read record the plan was decided with: each test job keys the
+      # passes it stores with the same one.
+      - name: Store the plan's read record for the test jobs
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-plan-record-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-plan/read-record.json
+          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Build the Vinaya CLI
         run: bun run --cwd apps/cli build
@@ -318,7 +357,7 @@ jobs:
       - name: Check the test inventory and run the repository suite
         run: |
           bun scripts/test-suites/inventory-check.ts
-          bun test ./scripts/test-suites/bun-runtime.test.ts ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts ./scripts/test-suites/recorded-selection.test.ts ./scripts/test-suites/read-records.test.ts ./scripts/ci/ci-limits-diagnostic.test.ts ./scripts/ci/config-probe.test.ts ./scripts/ci/impact-plan.test.ts ./scripts/ci/job-oracle.test.ts ./scripts/release/release.test.ts ./scripts/test-suites/local-run.test.ts ./scripts/test-suites/turbo-test-task-uncached.test.ts ./scripts/ci/record-reads.test.ts
+          bun test ./scripts/test-suites/bun-runtime.test.ts ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts ./scripts/test-suites/recorded-selection.test.ts ./scripts/test-suites/read-records.test.ts ./scripts/ci/ci-limits-diagnostic.test.ts ./scripts/ci/config-probe.test.ts ./scripts/ci/impact-plan.test.ts ./scripts/ci/job-oracle.test.ts ./scripts/release/release.test.ts ./scripts/test-suites/local-run.test.ts ./scripts/test-suites/turbo-test-task-uncached.test.ts ./scripts/ci/record-reads.test.ts ./scripts/test-suites/real-replay.test.ts
 
       # The package-compatibility suite (`scripts/package-compat/`): each
       # published package is packed — the three aeg packages through the
@@ -436,12 +475,20 @@ jobs:
       # plan, or a plan for another tree, refuses. A push to `main` skips this
       # step and runs everything in the next one. Each runner's own report
       # must name exactly the files it was given.
+      - name: Fetch the plan's read record
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-plan-record-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-plan-record
       - name: Test the packages the pull request affects
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_PLAN_DECISION: ${{ needs.build.outputs.decision }}
           CI_PLAN_TESTED: ${{ needs.build.outputs.plan_tested }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           DECISION="$RUNNER_TEMP/decision.json"
           if [ -z "$CI_PLAN_DECISION" ] || [ "$CI_PLAN_TESTED" != "$(git rev-parse HEAD)" ]; then
@@ -450,7 +497,17 @@ jobs:
           fi
           printf '%s\n' "$CI_PLAN_DECISION" > "$DECISION"
           unset CI_PLAN_DECISION CI_PLAN_TESTED
-          bun scripts/test-suites/schedule.ts --run --placement shared --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY"
+          bun scripts/test-suites/schedule.ts --run --placement shared --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY" --pass-entries "$RUNNER_TEMP/pass-entries/shared.json" --record "$RUNNER_TEMP/ci-plan-record/read-record.json" --approved-head "$PR_HEAD"
+      # Every test file this job passed completely, for the next run of this
+      # pull request to reuse — kept when other files failed too.
+      - name: Store this job's pass entries
+        if: github.event_name == 'pull_request' && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pass-entries-${{ github.event.pull_request.head.sha }}-shared-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pass-entries/shared.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Test
         if: github.event_name != 'pull_request'
         env:
@@ -517,12 +574,20 @@ jobs:
       # Each runner's own report must name exactly the files it was given. A
       # push to `main` skips this step and runs the whole schedule in the
       # next one.
+      - name: Fetch the plan's read record
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-plan-record-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-plan-record
       - name: Test shard ${{ matrix.shard }}'s selected files
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_PLAN_DECISION: ${{ needs.build.outputs.decision }}
           CI_PLAN_TESTED: ${{ needs.build.outputs.plan_tested }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           DECISION="$RUNNER_TEMP/decision.json"
           if [ -z "$CI_PLAN_DECISION" ] || [ "$CI_PLAN_TESTED" != "$(git rev-parse HEAD)" ]; then
@@ -533,7 +598,17 @@ jobs:
           # The tests run under the same environment as on `main`, the job
           # token included; the plan's own variable never reaches them.
           unset CI_PLAN_DECISION CI_PLAN_TESTED
-          bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY"
+          bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY" --pass-entries "$RUNNER_TEMP/pass-entries/shard-${{ matrix.shard }}.json" --record "$RUNNER_TEMP/ci-plan-record/read-record.json" --approved-head "$PR_HEAD"
+      # Every test file this shard passed completely, for the next run of this
+      # pull request to reuse — kept when other files failed too.
+      - name: Store this shard's pass entries
+        if: github.event_name == 'pull_request' && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pass-entries-${{ github.event.pull_request.head.sha }}-shard-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pass-entries/shard-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Test shard ${{ matrix.shard }}
         if: github.event_name != 'pull_request'
         env:

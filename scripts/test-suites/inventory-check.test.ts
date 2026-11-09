@@ -23,7 +23,7 @@ import {
   memoryRepository,
   plannedTests,
   selectTests
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts'
+} from '@attalabs/test-selection'
 import {
   DOCTRINE_REPO_PATHS,
   doctrineRepoPath
@@ -154,7 +154,8 @@ describe('the committed inventory validates against this repository', () => {
       'mandatory',
       'mandatory',
       'oracle',
-      'security'
+      'security',
+      'whole-suite'
     ])
     expect(head.edges.every((e) => !('duty' in e))).toBe(true)
   })

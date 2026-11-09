@@ -40,7 +40,7 @@ export const GUARDED_ENTRYPOINTS: readonly string[] = [
   'scripts/test-suites/repository-selection.ts',
   'scripts/test-suites/inventory-check.ts',
   'scripts/test-suites/schedule.ts',
-  'harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts',
+  'packages/test-selection/src/index.ts',
   'harness/processes/vinaya-strict/integration/ci-test-selection.ts',
   'harness/processes/vinaya-strict/integration/pre-push-selection.ts',
   'harness/processes/vinaya-strict/checks/ci-shard-membership.ts'
@@ -51,7 +51,7 @@ export const GUARDED_FOLDERS: readonly string[] = [
   '.github/workflows/',
   'scripts/ci/',
   'scripts/test-suites/',
-  'harness/kernel/gates/ring0-hooks/pre-push/verification/',
+  'packages/test-selection/',
   'apps/cli/tests/ci-shards/'
 ]
 

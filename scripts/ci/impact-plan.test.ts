@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
-import { plannedTests, type SelectionPlan } from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
+import { plannedTests, type SelectionPlan } from '@attalabs/test-selection'
 import { SUITE_INPUTS } from '../../harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/command-sources.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../harness/kernel/conformance/unit/process-fixture.js'
 
@@ -142,7 +142,7 @@ describe('the base guard', () => {
       'scripts/ci/impact-plan.ts',
       'scripts/ci/base-guard.ts',
       'scripts/ci/governance-obligations.ts',
-      'harness/kernel/gates/ring0-hooks/pre-push/verification/README.md',
+      'packages/test-selection/README.md',
       'apps/cli/src/lib/verification/selector.ts',
       'scripts/test-suites/inventory.json',
       'apps/cli/tests/ci-shards/shard-3.txt',

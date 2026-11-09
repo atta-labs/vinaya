@@ -3,7 +3,7 @@
  * a base ref, so any caller that needs to know what the hook runs for a diff
  * answers from the hook's own code rather than a copy that could drift.
  */
-import { affectedNames } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index.js'
+import { affectedNames } from '@attalabs/test-selection'
 import { loadConfig } from './config/compose.js'
 import {
   addedOrRenamedFilesSinceRemoteBaseAbsolute,
@@ -14,7 +14,7 @@ import {
   resolveRemoteBase
 } from '../../../kernel/connectors/git/remote-base.js'
 import { type SelectionOptions, type SelectionResult, selectAffectedTestFiles } from './repository-verification.js'
-import { loadTypeScript } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index.js'
+import { loadTypeScript } from '@attalabs/test-selection'
 
 /**
  * What pre-push selects for the diff between `base` and `HEAD` — by default

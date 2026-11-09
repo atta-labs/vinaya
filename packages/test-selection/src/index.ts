@@ -61,6 +61,8 @@ export {
   validateExecutedIdentities,
   type WholeSuiteRequest
 } from './native.js'
+export { type InventoryDeclarations, inventoryViewOf, TEST_FILE_NAME } from './memory-inventory.js'
+export { type PassKeyInput, passEntryKey, passKeys } from './pass-entries.js'
 export { globRegex, globToRegex, inputCovers, underDeclaredRoot } from './path-pattern.js'
 export {
   createTraceReader,
@@ -87,7 +89,9 @@ export {
 export { type ScannerDeclaration, type ScannerTrigger, scannerTriggered } from './scanner-inputs.js'
 export {
   diskTree,
+  FAILED_RERUN_OBLIGATION,
   gitRepository,
+  leftOutByBranchSide,
   memoryRepository,
   plannedTests,
   revisionTree,
@@ -98,6 +102,10 @@ export {
 } from './selector.js'
 export { spawnEdgeOf, startedScriptsOf, type SpawnClassification, type SpawnProgram } from './spawn-inputs.js'
 export type {
+  BranchSideInput,
+  PassEntry,
+  SelectionHistory,
+  WholeSuitePolicy,
   EdgeKind,
   FallbackScope,
   FormatParsers,

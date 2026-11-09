@@ -2,11 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  READ_RECORD_SCHEMA,
-  type ReadRecord,
-  type RecordedTest
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
+import { READ_RECORD_SCHEMA, type ReadRecord, type RecordedTest } from '@attalabs/test-selection'
 import { RECORD_FILE } from '../test-suites/read-records.js'
 import {
   mergeShardRecords,
