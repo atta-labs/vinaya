@@ -1,5 +1,4 @@
-import { Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@vinaya/ui/components'
-import { Heading, Text } from '@vinaya/ui/shared'
+import { Card, Heading, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Text } from '@vinaya/ui'
 
 /** The board's columns, left to right; the rows arrive with the board itself. */
 const BOARD_COLUMNS = ['State', 'Task', 'Rounds', 'Pull request', 'Last sign'] as const

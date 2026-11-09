@@ -18,7 +18,7 @@ mock.module('@vinaya/cms', () => ({
   }
 }))
 
-const { NextWebShell } = await import('@vinaya/ui/lib/next-web-shell')
+const { NextWebShell } = await import('@vinaya/ui/server')
 const layout = await import('./layout')
 const { STUDIO_SCREENS, isOnScreen } = await import('@/ui/header/screens')
 const { default: MissionControlPage } = await import('./page')

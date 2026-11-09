@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 import { buildFaviconIcons } from '@vinaya/cms'
-import { NextWebShell } from '@vinaya/ui/lib/next-web-shell'
+import { NextWebShell } from '@vinaya/ui/server'
 import { getStudioCms } from '@/lib/studio-cms'
 import { StudioHeader } from '@/ui/header'
 import '@/ui/styles/studio.css'

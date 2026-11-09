@@ -1,9 +1,7 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
-import { ColorSchemeToggle } from '@vinaya/ui/lib/color-scheme-toggle'
-import { NextLink } from '@vinaya/ui/lib/next-link'
-import { Text } from '@vinaya/ui/shared'
+import { ColorSchemeToggle, NextLink, Text } from '@vinaya/ui'
 import { isOnScreen, STUDIO_SCREENS } from './screens'
 
 /** Studio's own header: its name, its three screens and the colour-scheme switch. */

@@ -1,4 +1,4 @@
-import { Heading, Text } from '@vinaya/ui/shared'
+import { Heading, Text } from '@vinaya/ui'
 
 export default function MilestonesPage() {
   return (
