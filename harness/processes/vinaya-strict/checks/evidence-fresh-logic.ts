@@ -43,7 +43,7 @@ const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
 
 /**
  * The `## Evidence` placeholder text `harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md`
- * ships between the `AEG:EVIDENCE` anchors — verbatim, so a freshly opened
+ * ships between the `VINAYA:EVIDENCE` anchors — verbatim, so a freshly opened
  * PR whose driver-path report has not run yet carries this
  * exact line, never a `Head:`/fence pair. Must stay byte-identical to the
  * template's own line; a drift between the two would make every untouched
@@ -52,7 +52,7 @@ const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
 export const EVIDENCE_PLACEHOLDER_TEXT = '[run `vinaya pr report --write` to populate — do not type this block by hand]'
 
 /**
- * Compares an already-located `AEG:EVIDENCE` region against the facts a
+ * Compares an already-located `VINAYA:EVIDENCE` region against the facts a
  * checker can independently derive. Assumes the caller already handled the
  * "no block" / "no PR body" / "no PR yet" / "hidden" bypasses — `resolved`
  * here is always real anchor content.
@@ -122,7 +122,7 @@ export function compareEvidenceBlock(
     return {
       status: 'fail',
       errors: [
-        'evidence-fresh: the AEG:EVIDENCE block reads as the untouched placeholder, but this PR has already had at least one developer round — a real report should exist for this head. Re-run `vinaya-pr-report --write` to regenerate it; re-pasting the placeholder over a real block never passes.'
+        'evidence-fresh: the VINAYA:EVIDENCE block reads as the untouched placeholder, but this PR has already had at least one developer round — a real report should exist for this head. Re-run `vinaya-pr-report --write` to regenerate it; re-pasting the placeholder over a real block never passes.'
       ]
     }
   }
@@ -134,7 +134,7 @@ export function compareEvidenceBlock(
     return {
       status: 'fail',
       errors: [
-        'evidence-fresh: the AEG:EVIDENCE block is malformed — could not locate both a `Head:` line and a Group A fenced diff block. Re-run `vinaya-pr-report --write` to regenerate it.'
+        'evidence-fresh: the VINAYA:EVIDENCE block is malformed — could not locate both a `Head:` line and a Group A fenced diff block. Re-run `vinaya-pr-report --write` to regenerate it.'
       ]
     }
   }

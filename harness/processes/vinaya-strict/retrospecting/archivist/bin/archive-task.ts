@@ -31,6 +31,7 @@ import {
 } from '../../../tools/archive-task'
 import { resolveNewestFrozenBrief } from '../../../tools/task-contract/brief-validation'
 import { extractIssue } from '../../../../../kernel/adapters/code-host/github/extract-issue'
+import { REGION_PREFIXES } from '../../../tools/legacy-markers'
 import type { MergedPrFacts } from '../../../tools/archive-task'
 import { readConfigPrincipals } from '../../../tools/task-contract/principals-config'
 
@@ -111,7 +112,7 @@ export function main(): void {
   // `isEligibleForProvenance` (pure, unit-tested) makes the actual decision;
   // this shim only fetches the two facts it needs — the branch ref, and the
   // closed Issue's live labels.
-  const { issue: primaryIssue } = extractIssue(pr.body)
+  const { issue: primaryIssue } = extractIssue(pr.body, REGION_PREFIXES)
   const ref = taskRefFromBranch(pr.headRefName)
   let issueLabels: string[] = []
   if (ref === null && primaryIssue !== null) {

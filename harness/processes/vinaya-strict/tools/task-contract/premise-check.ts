@@ -19,6 +19,7 @@
 
 import { createHash } from 'node:crypto'
 import { anchoredRegion } from '../../../../kernel/gates/checks/anchored-region'
+import { REGION_PREFIXES } from '../legacy-markers'
 
 export type PremiseAssertion =
   | { kind: 'contains'; path: string; value: string }
@@ -50,14 +51,14 @@ const PREMISE_LINE = /^[-*]\s*(\S+)\s+(contains|absent|sha256)\s*:\s*(.+)$/i
  * (`checkPremiseCoverage`). Stops the block at the first blank line or the
  * first non-bullet line after the header.
  *
- * When the body carries an `AEG:PREMISE` anchor pair (`anchored-region.ts`,
+ * When the body carries an `VINAYA:PREMISE` anchor pair (`anchored-region.ts`,
  * task 30), the block is parsed exclusively inside that pair — the pair must
  * contain the `**Premise:**` header line and its bullets; a premise-shaped
  * block anywhere else in the body is ignored. Bodies without the pair parse
  * exactly as before.
  */
 export function parsePremiseBlock(prBody: string): PremiseAssertion[] {
-  const searchIn = anchoredRegion(prBody, 'PREMISE') ?? prBody
+  const searchIn = anchoredRegion(prBody, 'PREMISE', REGION_PREFIXES) ?? prBody
   const lines = searchIn.split(/\r?\n/)
   const assertions: PremiseAssertion[] = []
   let inBlock = false
@@ -90,7 +91,7 @@ export function parsePremiseBlock(prBody: string): PremiseAssertion[] {
  * boundaries rather than a second one.
  */
 export function premiseBlockText(prBody: string): string | null {
-  const searchIn = anchoredRegion(prBody, 'PREMISE') ?? prBody
+  const searchIn = anchoredRegion(prBody, 'PREMISE', REGION_PREFIXES) ?? prBody
   const lines = searchIn.split(/\r?\n/)
   let startIdx = -1
   let endIdxExclusive = lines.length

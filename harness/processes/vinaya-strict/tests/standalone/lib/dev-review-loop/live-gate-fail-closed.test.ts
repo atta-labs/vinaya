@@ -97,7 +97,7 @@ describe('the live check fails closed', () => {
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
     expect(ran).toEqual([])
     expect(world.publishedRounds).toEqual([])
-    expect(world.prBodyUpdates.some((b) => b.includes('AEG:LIVE'))).toBe(false)
+    expect(world.prBodyUpdates.some((b) => b.includes('VINAYA:LIVE'))).toBe(false)
     expect(readLiveRecord(world.prBody)).toEqual([])
     expect(infrastructureRetries(world)).toBe(1)
   })
@@ -124,6 +124,6 @@ describe('the live check fails closed', () => {
 
     expect(result.finalDecision.type).toBe('publish')
     expect(ran).toEqual([])
-    expect(world.prBody).not.toContain('AEG:LIVE')
+    expect(world.prBody).not.toContain('VINAYA:LIVE')
   })
 })

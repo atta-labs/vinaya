@@ -150,9 +150,9 @@ jobs:
             BODY="$(jq -r '.body // ""' "$RAW/pull.json")"
             WAIT_FOR=""
             if [[ "$BRANCH" =~ ^task/[^/]+/[^/]+$ ]]; then
-              CLOSES_REGION="$(printf '%s\n' "$BODY" | sed -n '/<!-- AEG:CLOSES:START -->/,/<!-- AEG:CLOSES:END -->/p')"
+              CLOSES_REGION="$(printf '%s\n' "$BODY" | sed -n '/<!-- [A-Z]*:CLOSES:START -->/,/<!-- [A-Z]*:CLOSES:END -->/p')"
               if ! printf '%s\n' "$CLOSES_REGION" | grep -qE '#[0-9]+'; then
-                WAIT_FOR="a real Closes #N inside the AEG:CLOSES region for task branch $BRANCH"
+                WAIT_FOR="a real Closes #N inside the CLOSES region for task branch $BRANCH"
               fi
             fi
             if [ -z "$WAIT_FOR" ]; then
@@ -208,7 +208,7 @@ jobs:
           BRANCH: ${{ github.head_ref }}
           # The pull request's own head — never `git rev-parse HEAD`, which on
           # a pull_request run is the merge ref — at which `test-plan` demands
-          # a passed `AEG:LIVE` entry for each `[live]` line of the brief.
+          # a passed `VINAYA:LIVE` entry for each `[live]` line of the brief.
           PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           # BASE_SHA comes from the job environment `Resolve the diff base`
           # wrote — never set here, where a step-level entry would override it.

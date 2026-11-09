@@ -19,6 +19,7 @@
  */
 
 import { describe, expect, it } from 'bun:test'
+import { REGION_PREFIXES } from '../../../tools/legacy-markers'
 import { checkBareDigits } from '../../../tools/body-bare-digits-logic'
 import { compareEvidenceBlock } from '../../../checks/evidence-fresh-logic'
 import { ScanContext, resolveAnchoredRegion, summaryLineIndex } from '../../../../../kernel/gates/checks/scan-context'
@@ -58,7 +59,7 @@ const SUMMARY_LINE = `${EVIDENCE_SUMMARY_PREFIX}\`${summariseNumstat(NUMSTAT)}\`
 const HONEST_INNER = [`Head: ${HEAD}`, SUMMARY_LINE, '', '### Group A — recomputable', '', '```', NUMSTAT, '```']
 
 function regionText(body: string): string | 'hidden' | null {
-  const resolved = resolveAnchoredRegion(ScanContext.from(body), 'EVIDENCE')
+  const resolved = resolveAnchoredRegion(ScanContext.from(body, REGION_PREFIXES), 'EVIDENCE')
   return resolved === null || resolved === 'hidden' ? resolved : resolved.region
 }
 
@@ -174,7 +175,7 @@ describe('scan-context — construction closure (compile-time)', () => {
   it('a third, previously-unenumerated consumer agrees with both existing ones for free', () => {
     // Written the only way it can be written, it is correct by construction —
     // including on the diverged body that defeated the enumerated guard.
-    const thirdConsumer = (raw: string) => resolveAnchoredRegion(ScanContext.from(raw), 'EVIDENCE')
+    const thirdConsumer = (raw: string) => resolveAnchoredRegion(ScanContext.from(raw, REGION_PREFIXES), 'EVIDENCE')
     const diverged = bodyWith(HONEST_INNER, { anchorStart: `<!-- AEG:EVIDENCE${ZWSP}:START -->` })
     const third = thirdConsumer(diverged)
     expect(third).not.toBeNull()
@@ -233,7 +234,7 @@ describe('scan-context — the Summary line needs no exemption, and is verified'
     // comparison below is the thing that has to catch it.
     expect(checkBareDigits(fabricated).violations).toEqual([])
 
-    const resolved = resolveAnchoredRegion(ScanContext.from(fabricated), 'EVIDENCE')
+    const resolved = resolveAnchoredRegion(ScanContext.from(fabricated, REGION_PREFIXES), 'EVIDENCE')
     if (resolved === null || resolved === 'hidden') throw new Error('fixture lost its block')
     const result = compareEvidenceBlock(resolved, HEAD, NUMSTAT)
     expect(result.status).toBe('fail')
@@ -241,13 +242,13 @@ describe('scan-context — the Summary line needs no exemption, and is verified'
   })
 
   it('the honest Summary line passes the comparison', () => {
-    const resolved = resolveAnchoredRegion(ScanContext.from(honest), 'EVIDENCE')
+    const resolved = resolveAnchoredRegion(ScanContext.from(honest, REGION_PREFIXES), 'EVIDENCE')
     if (resolved === null || resolved === 'hidden') throw new Error('fixture lost its block')
     expect(compareEvidenceBlock(resolved, HEAD, NUMSTAT).status).toBe('pass')
   })
 
   it('a Summary line inside a fence is never the compared one — selection reads the mask', () => {
-    const resolved = resolveAnchoredRegion(ScanContext.from(honest), 'EVIDENCE')
+    const resolved = resolveAnchoredRegion(ScanContext.from(honest, REGION_PREFIXES), 'EVIDENCE')
     if (resolved === null || resolved === 'hidden') throw new Error('fixture lost its block')
     const index = summaryLineIndex(resolved.maskedRegion)
     expect(index).not.toBeNull()
@@ -256,7 +257,7 @@ describe('scan-context — the Summary line needs no exemption, and is verified'
 
   it('a block with no Summary line has nothing to verify', () => {
     const noSummary = bodyWith([`Head: ${HEAD}`, '', '### Group A — recomputable', '', '```', NUMSTAT, '```'])
-    const resolved = resolveAnchoredRegion(ScanContext.from(noSummary), 'EVIDENCE')
+    const resolved = resolveAnchoredRegion(ScanContext.from(noSummary, REGION_PREFIXES), 'EVIDENCE')
     if (resolved === null || resolved === 'hidden') throw new Error('fixture lost its block')
     expect(summaryLineIndex(resolved.maskedRegion)).toBeNull()
     expect(compareEvidenceBlock(resolved, HEAD, NUMSTAT).status).toBe('pass')

@@ -35,6 +35,7 @@ import {
 } from '../../tools/task-contract/objectives'
 import { readTierFromPrBody } from '../../tools/task-contract/pr-tier'
 import { extractIssue } from '../../../../../harness/kernel/adapters/code-host/github/extract-issue'
+import { REGION_PREFIXES } from '../../tools/legacy-markers'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import { resolveTaskFrozenBrief } from '../frozen-brief'
 import { readIssueBody, readIssueComments } from '../../../../../harness/kernel/adapters/code-host/github/forge-read'
@@ -148,7 +149,7 @@ function resolveObjectivesApplicability(
     const own = objectivesOf(prBody)
     return { applies: true, objectives: own.ok ? own.objectives : [] }
   }
-  const { issue } = extractIssue(prBody)
+  const { issue } = extractIssue(prBody, REGION_PREFIXES)
   // A `null` cutover means no grandfathering — every Issue is graded (O1).
   if (issue === null || (objectivesSinceIssue !== null && issue < objectivesSinceIssue)) return { applies: false }
   try {

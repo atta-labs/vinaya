@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { PROVENANCE_HEADING, PROVENANCE_HEADINGS, REGION_PREFIXES } from './legacy-markers'
 import { buildProvenanceBlock, hasProvenance, isEligibleForProvenance, taskRefFromBranch } from './archive-task'
 import { extractIssue } from '../../../kernel/adapters/code-host/github/extract-issue'
 import type { MergedPrFacts } from './archive-task'
@@ -77,11 +78,11 @@ describe('taskRefFromBranch', () => {
 describe('extractIssue', () => {
   it('finds Closes #N on a non-task-branch PR body (the #530 shape)', () => {
     const body = '<!-- AEG:CLOSES:START -->\nCloses #524\n<!-- AEG:CLOSES:END -->\n\n## Summary\n\nCleanup fix.'
-    expect(extractIssue(body)).toEqual({ issue: 524, extraIssues: [], outsideHeader: false })
+    expect(extractIssue(body, REGION_PREFIXES)).toEqual({ issue: 524, extraIssues: [], outsideHeader: false })
   })
 
   it('returns null when no Closes #N is present', () => {
-    expect(extractIssue('## Summary\n\nNo closing reference here.')).toEqual({
+    expect(extractIssue('## Summary\n\nNo closing reference here.', REGION_PREFIXES)).toEqual({
       issue: null,
       extraIssues: [],
       outsideHeader: false
@@ -102,12 +103,12 @@ describe('extractIssue', () => {
       '',
       'Closes #524 — but written outside the pair, so it does not close.'
     ].join('\n')
-    expect(extractIssue(body)).toEqual({ issue: null, extraIssues: [524], outsideHeader: false })
+    expect(extractIssue(body, REGION_PREFIXES)).toEqual({ issue: null, extraIssues: [524], outsideHeader: false })
   })
 
   it('an empty AEG:CLOSES pair with no reference anywhere is null with nothing flagged', () => {
     const body = '<!-- AEG:CLOSES:START -->\n\n<!-- AEG:CLOSES:END -->\n\n## Summary\n\nNothing here.'
-    expect(extractIssue(body)).toEqual({ issue: null, extraIssues: [], outsideHeader: false })
+    expect(extractIssue(body, REGION_PREFIXES)).toEqual({ issue: null, extraIssues: [], outsideHeader: false })
   })
 
   it('a populated AEG:CLOSES pair still flags body-wide extras beyond its own reference', () => {
@@ -120,7 +121,7 @@ describe('extractIssue', () => {
       '',
       'Also Closes #530 in passing.'
     ].join('\n')
-    expect(extractIssue(body)).toEqual({ issue: 524, extraIssues: [530], outsideHeader: false })
+    expect(extractIssue(body, REGION_PREFIXES)).toEqual({ issue: 524, extraIssues: [530], outsideHeader: false })
   })
 })
 
@@ -158,11 +159,21 @@ describe('hasProvenance', () => {
   })
 
   it('is true when the first comment carries the heading', () => {
-    expect(hasProvenance(['### AEG provenance — task 1 (tranche x)', 'unrelated'])).toBe(true)
+    expect(hasProvenance([`${PROVENANCE_HEADING.current} — task 1 (tranche x)`, 'unrelated'])).toBe(true)
+  })
+
+  it('is true for a comment written under the retired heading', () => {
+    expect(hasProvenance([`${PROVENANCE_HEADING.old} — task 1 (tranche x)`])).toBe(true)
+  })
+
+  it('writes only the current heading', () => {
+    expect(PROVENANCE_HEADINGS[0]).toBe(PROVENANCE_HEADING.current)
   })
 
   it('is true when a later comment carries the heading', () => {
-    expect(hasProvenance(['unrelated', 'also unrelated', '### AEG provenance — task 1 (tranche x)'])).toBe(true)
+    expect(hasProvenance(['unrelated', 'also unrelated', `${PROVENANCE_HEADING.current} — task 1 (tranche x)`])).toBe(
+      true
+    )
   })
 })
 
@@ -171,7 +182,7 @@ describe('buildProvenanceBlock', () => {
     const { block, issue, dangling } = buildProvenanceBlock(
       facts({ body: FULL_BODY, briefCommentUrl: 'https://github.com/acme/widget/issues/309#issuecomment-1' })
     )
-    expect(block.split('\n')[0]).toBe('### AEG provenance — task 5d (tranche aeg-governance-hardening)')
+    expect(block.split('\n')[0]).toBe(`${PROVENANCE_HEADING.current} — task 5d (tranche aeg-governance-hardening)`)
     expect(issue).toBe(309)
     expect(dangling).toEqual([
       'no code-reviewer verdict comment found on this PR',
@@ -286,7 +297,7 @@ describe('buildProvenanceBlock', () => {
 
   it('labels the task from the branch when headRefName does not match task/<tranche>/<n>', () => {
     const { block } = buildProvenanceBlock(facts({ body: FULL_BODY, headRefName: 'fix/some-branch' }))
-    expect(block.split('\n')[0]).toBe('### AEG provenance — task (branch fix/some-branch)')
+    expect(block.split('\n')[0]).toBe(`${PROVENANCE_HEADING.current} — task (branch fix/some-branch)`)
   })
 
   // A backlog Issue's `task/issue-<n>` branch labels
@@ -295,7 +306,7 @@ describe('buildProvenanceBlock', () => {
     const { block } = buildProvenanceBlock(
       facts({ body: FULL_BODY.replace('Closes #309', 'Closes #521'), headRefName: 'task/issue-521' })
     )
-    expect(block.split('\n')[0]).toBe('### AEG provenance — task (backlog Issue #521)')
+    expect(block.split('\n')[0]).toBe(`${PROVENANCE_HEADING.current} — task (backlog Issue #521)`)
   })
 
   it('flags a missing Project field as DANGLING', () => {

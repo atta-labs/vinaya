@@ -113,7 +113,7 @@ describe('publication preconditions on the shared live context', () => {
     expect(opened).toEqual({ ok: true, result: { prNumber: 7 } })
     expect(world.opened).toHaveLength(1)
     const body = world.opened[0]?.body ?? ''
-    expect(body).toContain('AEG:BEYOND-SURFACE')
+    expect(body).toContain('VINAYA:BEYOND-SURFACE')
     expect(body).toContain(OUTSIDE)
     expect(body).not.toContain(OWN)
   })

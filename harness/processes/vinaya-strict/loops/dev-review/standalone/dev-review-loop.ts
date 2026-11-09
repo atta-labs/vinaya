@@ -781,7 +781,7 @@ export type LoopDeps = {
   /** O7: the driver's actual process-exit call, injected so a test can observe "the driver would hand off here" without killing the test process. Production default is the real `process.exit`. */
   exitProcess: (code: number) => never
   /**
-   * Runs the `AEG:EVIDENCE` report in-process and pushes it
+   * Runs the `VINAYA:EVIDENCE` report in-process and pushes it
    * onto `prNumber`'s live body, from `cwd` (the task's own worktree — see
    * `pr-report-engine.ts`'s module doc, "`cwd`"). The SAME engine function
    * `vinaya pr report --push` itself calls (`runReportForOpenPr`) — never a
@@ -2364,7 +2364,7 @@ export async function defaultRunWorktreeChecks(
  * no body-file (which `pr report`'s own usage gate rejected before touching
  * anything: `Usage: vinaya pr report [--write <body-file> | --push <pr> …]`).
  * `--push <n>` fetches the live PR body, splices a freshly-regenerated
- * AEG:EVIDENCE block for the current head into it, and writes it back via
+ * VINAYA:EVIDENCE block for the current head into it, and writes it back via
  * `gh pr edit` — the driver runs this outside the sandbox, where the forge
  * credential lives. Exported so a test can run this very shape through the
  * real `prReportCommand` parser and prove it is not the usage refusal.
@@ -2381,7 +2381,7 @@ export function prReportRefreshArgs(prNumber: number): string[] {
  * failure, a missing anchor) left the body untouched.
  */
 function prReportDidPush(stdout: string, prNumber: number): boolean {
-  return stdout.includes(`Pushed AEG:EVIDENCE block to PR ${prNumber}`)
+  return stdout.includes(`Pushed VINAYA:EVIDENCE block to PR ${prNumber}`)
 }
 
 /** O2/O3: regenerate the PR body's Evidence block for the worktree's current head and write it back to the live PR — `vinaya pr report --push <prNumber>` in the worktree (the `refresh_evidence` tool). Throws only when the body was NOT updated (a genuine refusal) so the context returns a structured refusal; a red gate that still pushed the block returns `checksPassed: false`. */
@@ -4378,7 +4378,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
-     * `body` with its `AEG:BEYOND-SURFACE` block rewritten to list every path
+     * `body` with its `VINAYA:BEYOND-SURFACE` block rewritten to list every path
      * the task branch changed (from its merge base, the same three-dot diff
      * the `surface-scope` check reads) that the task's Surface does not cover
      * — the driver's own marked region, replaced on every body write the way
@@ -4390,7 +4390,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return sharedWithBeyondSurfaceRecord(liveContextScope(), body)
     }
 
-    /** Rewrite the open pull request's `AEG:BEYOND-SURFACE` block after the branch moved — a no-op with no open pull request or no change to the block. Never throws: a failed write is logged, and the next body write records it. */
+    /** Rewrite the open pull request's `VINAYA:BEYOND-SURFACE` block after the branch moved — a no-op with no open pull request or no change to the block. Never throws: a failed write is logged, and the next body write records it. */
     async function syncBeyondSurfaceRecord(pr: number | null): Promise<void> {
       return sharedSyncBeyondSurfaceRecord(liveContextScope(), pr)
     }
@@ -5948,7 +5948,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * A line naming a vendor this host holds no subscription sign-in for is
      * not run and not failed: it is recorded unverified, which the merge gate
      * holds like an unticked `[principal]` item. Every outcome is written to
-     * the pull request's `AEG:LIVE` record, keyed by `head`, so a later head
+     * the pull request's `VINAYA:LIVE` record, keyed by `head`, so a later head
      * runs every line again.
      *
      * The check fails closed. `brief` is the frozen brief the caller already

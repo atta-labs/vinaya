@@ -193,7 +193,7 @@ export function recoveryPromptFor(code: CoherenceFailureCode): string {
     case 'closed-without-merge':
       return "The task's Issue is closed but its closing PR is not merged. Verify the PR actually merged (or reopen the Issue if it was closed in error), then re-run `vinaya-check coherence`."
     case 'archived-without-provenance':
-      return 'The closing PR merged but carries no `### AEG provenance` comment. Ask the Archivist to post it, then re-run `vinaya-check coherence`.'
+      return 'The closing PR merged but carries no `### Vinaya provenance` comment. Ask the Archivist to post it, then re-run `vinaya-check coherence`.'
     case 'auto-close-misfire':
       return 'The closing PR merged but the Issue is still open (a GitHub auto-close misfire). Manually close the Issue, then re-run `vinaya-check coherence`.'
     case 'phantom-issue-ref':

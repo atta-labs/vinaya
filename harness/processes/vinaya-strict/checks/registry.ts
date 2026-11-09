@@ -353,7 +353,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-surface-scope'),
       scope: 'diff',
       timeoutMs: 15_000,
-      // Reads the pull request body's `AEG:BEYOND-SURFACE` record, which
+      // Reads the pull request body's `VINAYA:BEYOND-SURFACE` record, which
       // exists only once the pull request is open — the local hooks skip it.
       // See `CheckSpec.requiresOpenPr`'s doc comment.
       requiresOpenPr: true,

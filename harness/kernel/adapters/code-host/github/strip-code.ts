@@ -26,7 +26,7 @@
  * **This is the same code recognition as `stripCode`, and must stay so.** It ran
  * on the naive `` /```[\s\S]*?```/g `` + single-backtick regexes long after
  * `stripCode` was hardened off them, 27 lines below in this same file — so a
- * decoy `AEG:CLOSES` anchor inside a tilde fence, a ≥4-backtick fence, or a
+ * decoy `CLOSES` anchor inside a tilde fence, a ≥4-backtick fence, or a
  * double-backtick span was invisible to the mask, won `anchoredRegion`, and
  * `extractClosesReferences`/`extractIssue` then resolved a *wrong* Issue number
  * (caught in review). That is worse than the strandings that fix exists for: the
@@ -82,7 +82,7 @@ const DETAILS_CLOSE = /<\/details\s*>/gi
  * fenced block or an inline code span is already inert same-length filler
  * by the time this runs, so it can never be mistaken for a real region
  * boundary. Reversing the order reopens the exact decoy class
- * `anchoredRegionBounds` closed for the `AEG:*` anchors (caught in review): a
+ * `anchoredRegionBounds` closed for the region anchors (caught in review): a
  * real narrative digit could sit between a quoted `` `<details>` `` and a
  * real `</details>`, and this scanner would mask it by mistake, believing a
  * real block was open when only a code-quoted example was.
@@ -157,7 +157,7 @@ export function maskDetailsBlocks(body: string): string {
  * list content in the full body (kept; GitHub auto-closes it) and a bare
  * indented code block once sliced (blanked), which reintroduced a stranded
  * Issue through `extractIssue` (caught in review as a MAJOR finding). Strip, then slice — the
- * `AEG:*` markers are HTML comments and survive the strip, so region selection
+ * region markers are HTML comments and survive the strip, so region selection
  * works on stripped text, and a decoy anchor inside code never survives to be
  * sliced at all.
  */

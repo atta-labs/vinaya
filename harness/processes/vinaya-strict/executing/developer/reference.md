@@ -55,7 +55,7 @@ verification results are the Evidence block's.>
 a fenced list of commands — one command per line, each with its expected
 observable after a literal `→`. `vinaya-pr-report` runs every line in that
 fence from the PR head and writes the command plus its actual output into the
-`AEG:EVIDENCE` block below; there is no `[agent]` checkbox to tick.>
+`VINAYA:EVIDENCE` block below; there is no `[agent]` checkbox to tick.>
 
 ```
 <scriptable / non-auth / no-vendor-key command> → <expected observable>
@@ -70,9 +70,9 @@ fence from the PR head and writes the command plus its actual output into the
 Emitted by `vinaya-pr-report --write <body-file>` — see
 [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed).
 
-<!-- AEG:EVIDENCE:START -->
+<!-- VINAYA:EVIDENCE:START -->
 [populated by `vinaya-pr-report --write`]
-<!-- AEG:EVIDENCE:END -->
+<!-- VINAYA:EVIDENCE:END -->
 
 ## Scope
 
@@ -90,9 +90,9 @@ field on its own line:>
 | Decisions        | One line per choice the brief left open — the alternatives considered and why yours won, not a restatement of the diff. Verification claims (typecheck/lint/test/diff-stat output, pass counts) belong in Evidence; `pr-report-density` holds the section to one block. "No open choices" is a valid value, stated explicitly, same as `Test Plan: unit-tests-only`'s sentinel pattern — a blank section is not.                    |
 | **Bare digits (whole body)** | `body-bare-digits` (CI) rejects any bare digit outside a fenced/indented/inline code span or `Closes`/`Project`/`Tier`/`Evidence`'s own anchor, correctly placed under its own documented section. `Premise`/`Test plan` get no anchor exemption (their content is free text, scanned like ordinary prose). An Issue/PR ref, a date, a version, a path, a section number each take their own backticks (`` `#N` ``); a countable claim ("138 passed", a duration, a percentage) belongs in a fenced block. |
 | Test plan        | Every runtime-observable check. The Issue's `## Test plan` section makes this a **required** field, rendered mechanically into the brief — empty plans use `Test Plan: unit-tests-only` as the sentinel.   |
-| `[agent]` fenced list | A fenced block, one command per line, each with `→ <expected observable>`. `vinaya-pr-report` runs every line from the PR head and writes the command plus its actual output into `AEG:EVIDENCE` — not a checkbox, not a hand-pasted comment. (This is the `[agent]` half of the Verification phase, see `state-machine.md` § Verification.) |
+| `[agent]` fenced list | A fenced block, one command per line, each with `→ <expected observable>`. `vinaya-pr-report` runs every line from the PR head and writes the command plus its actual output into `VINAYA:EVIDENCE` — not a checkbox, not a hand-pasted comment. (This is the `[agent]` half of the Verification phase, see `state-machine.md` § Verification.) |
 | `[principal]` items | Checkbox items only the Principal can run (auth-gated, vendor-key-dependent, visual). The Principal ticks these, after running in a real browser; `review-gate` holds the merge while one is unticked.            |
-| Evidence         | The `AEG:EVIDENCE` block — emitted by `vinaya-pr-report --write`. See [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed). `evidence-fresh` rejects a body whose block doesn't match the head it's attached to. |
+| Evidence         | The `VINAYA:EVIDENCE` block — emitted by `vinaya-pr-report --write`. See [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed). `evidence-fresh` rejects a body whose block doesn't match the head it's attached to. |
 | Scope            | One paragraph + the Tier field. Ends with `**Tier:** 0 \| 1 \| 3` on its own line.                                                                                                |
 | **Tier syntax**  | Exactly `Tier: 0`, `Tier: 1`, `Tier: 3` (plain) — or `**Tier:** 0`, `**Tier:** 1`, `**Tier:** 3` (bold). `Tier 1` (no colon), `Tier-1`, `Tier:1` (no space) are **rejected**. |
 | `Doc-ack:`       | Optional. `Doc-ack: <pointer> — <note>` — acknowledges an external (URL) binding in `.vinaya/doc-owners` that fired on this PR. `<pointer>` exactly matches the binding URL. Separator is flexible — em-dash `—`, en-dash `–`, or a plain ASCII hyphen `-` (with surrounding whitespace) are all accepted, so `Doc-ack: <pointer> - <note>` parses identically. **Body field, not a label.** (state-machine.md Section 15) |
@@ -102,11 +102,11 @@ field on its own line:>
 
 ### Evidence is emitted, never typed
 
-The `AEG:EVIDENCE` block is populated by `vinaya-pr-report --write <body-file>` — not by hand-typing a diff stat, a test count, or a gate's pass/fail line into the PR body. `vinaya-pr-report --write` both runs the real gates (Group B) and recomputes the diff stat (Group A), so its exit code doubles as a verification run — a red gate still writes the block (recording the failure honestly) but exits non-zero, so a scripted `--write && open-pr` never carries a failing suite onto the forge.
+The `VINAYA:EVIDENCE` block is populated by `vinaya-pr-report --write <body-file>` — not by hand-typing a diff stat, a test count, or a gate's pass/fail line into the PR body. `vinaya-pr-report --write` both runs the real gates (Group B) and recomputes the diff stat (Group A), so its exit code doubles as a verification run — a red gate still writes the block (recording the failure honestly) but exits non-zero, so a scripted `--write && open-pr` never carries a failing suite onto the forge.
 
 `evidence-fresh` (CI) rejects a body whose block doesn't match the head it's attached to — recomputing Group A exactly and checking Group B for staleness. This closes fabrication for **Group A only** (a hand-typed diff stat cannot survive a byte-compare); Group B is checked for freshness, not re-run, so a stale-but-not-fabricated Group B slips past unless the block is also out of date. It closes fabrication for the two facts a checker can cheaply recompute, not for the Decisions section's prose.
 
-**After open, regenerating `AEG:EVIDENCE` is the driver's job.** Under the review loop the driver runs the same engine `vinaya-pr-report --push` calls, in-process, once your head's independent prerequisites (mergeability) pass and before it waits on CI, because the Evidence-dependent `evidence-fresh` check cannot turn green until that block names your head — every round, retried within a bound and paused as infrastructure when it never reaches the pull request — and posts the round marker comment in your place. `refresh_evidence` is the tool for a regeneration you need mid-turn. Working manually, `vinaya-pr-report --push <n>` regenerates it on the open PR; its `--body-file <path>` mode also splices a section outside the two generated blocks — a Decisions bullet, most often — that only ever existed in a local draft.
+**After open, regenerating `VINAYA:EVIDENCE` is the driver's job.** Under the review loop the driver runs the same engine `vinaya-pr-report --push` calls, in-process, once your head's independent prerequisites (mergeability) pass and before it waits on CI, because the Evidence-dependent `evidence-fresh` check cannot turn green until that block names your head — every round, retried within a bound and paused as infrastructure when it never reaches the pull request — and posts the round marker comment in your place. `refresh_evidence` is the tool for a regeneration you need mid-turn. Working manually, `vinaya-pr-report --push <n>` regenerates it on the open PR; its `--body-file <path>` mode also splices a section outside the two generated blocks — a Decisions bullet, most often — that only ever existed in a local draft.
 
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/v2/v2-actions.ts contains:const evidence = await writeEvidenceFor(fns, pr, head) -->
 **Under the review-locally, push-once flow (version 2) only: no tests and no `refresh_evidence` in your turn.** In that flow the ready push runs the selected tests on the approved commit, and the driver writes the Evidence block once the pull request opens. Your turn runs the local checks (`run_checks`) and publishes; it runs no test suite and never calls `refresh_evidence`. Every other flow, and manual work, is unchanged: you run the tests and keep the Evidence block fresh as described above.
@@ -169,7 +169,7 @@ Your turn ends once your work is published: dispatched, when `publish_changes` h
 
 Under the review loop, the rest is the driver's:
 
-- **The `AEG:EVIDENCE` block** is regenerated by the driver itself, in-process, before it waits on your head's CI.
+- **The `VINAYA:EVIDENCE` block** is regenerated by the driver itself, in-process, before it waits on your head's CI.
 - **The round marker comment** — `Head: <sha>`, `<!-- aeg:developer:round-<n> -->`, and from round 2 the ids of the findings you addressed and the checks you report running — is composed and posted by the driver, from your turn result.
 - **A branch behind its base** is caught by the driver's own mergeability check before it dispatches a reviewer or runs the report. A conflicting head comes back to you with the conflicting files named and the one sanctioned way through: a merge of the default branch started without committing, the conflicts resolved, and `publish_changes`, which makes the merge commit.
 - **Ticking `[agent]`/`[principal]` boxes** is no agent's: the `[agent]` half is Evidence, and the `[principal]` boxes are the Principal's.
@@ -304,7 +304,7 @@ Working manually, with no driver, run the same static gates yourself before open
 
 The checks above are **static**: they prove the change compiles, lints, types and matches its declared surface. They do not prove the feature works. Verification is the separate, mandatory phase that runs the brief's Test Plan against a booted app, after the review passes and before the Principal merges.
 
-**It is a phase, not an actor.** There is no Verifier to dispatch. The plan splits by who can structurally execute it: `vinaya-pr-report` runs the `[agent]` half's fenced command list from the PR head and writes it into `AEG:EVIDENCE`; the Principal runs the `[principal]` half in a real signed-in browser and ticks its boxes. Both halves are satisfied before a merge is allowed — the `[agent]` half by the Evidence block existing and matching a fresh recompute (`evidence-fresh`), the `[principal]` half by every `[principal]` box in the PR body being ticked, which `review-gate` checks — `test-plan` grades the `[agent]` half and the plan's structure only; it is `principalOwed`, so its own `pending` failure never blocks the loop's mechanical gate, and enforcement of the unticked box lives at `review-gate` instead.
+**It is a phase, not an actor.** There is no Verifier to dispatch. The plan splits by who can structurally execute it: `vinaya-pr-report` runs the `[agent]` half's fenced command list from the PR head and writes it into `VINAYA:EVIDENCE`; the Principal runs the `[principal]` half in a real signed-in browser and ticks its boxes. Both halves are satisfied before a merge is allowed — the `[agent]` half by the Evidence block existing and matching a fresh recompute (`evidence-fresh`), the `[principal]` half by every `[principal]` box in the PR body being ticked, which `review-gate` checks — `test-plan` grades the `[agent]` half and the plan's structure only; it is `principalOwed`, so its own `pending` failure never blocks the loop's mechanical gate, and enforcement of the unticked box lives at `review-gate` instead.
 
 **Live proofs needing an operator login stay on the host.** Never run a proof command that starts a real subscription-authenticated coding-agent session from inside the Developer sandbox: the operator's login is unreachable there. Build the command and its tests, list the exact command lines in the pull request's `[principal]` test-plan items, and leave the operator to run them on the host and add the resulting output.
 
@@ -321,12 +321,12 @@ If the brief declares `unit-tests-only` and the diff really is pure logic, the p
 
 ### The `[agent]` half — under the loop, the driver's; standalone, yours
 
-**Under the automated dev-review loop, this already ran.** The driver's own per-round evidence report (see [§ After your turn — it ends here](#after-your-turn--it-ends-here)) executes the SAME §9 fenced command list, from the SAME PR head, into the SAME `AEG:EVIDENCE` block, before it waits on your head's CI — every round, automatically.
+**Under the automated dev-review loop, this already ran.** The driver's own per-round evidence report (see [§ After your turn — it ends here](#after-your-turn--it-ends-here)) executes the SAME §9 fenced command list, from the SAME PR head, into the SAME `VINAYA:EVIDENCE` block, before it waits on your head's CI — every round, automatically.
 
 **If you are working outside the loop** — dispatched by hand, with no driver watching this PR — the phase is still yours to run explicitly:
 
 1. **Boot the app(s)** named in the brief from the worktree, and wait until each is reachable, if your §9 fenced commands need one running. If it does not boot, that is the failure — the plan never gets a chance to run.
-2. **Run `vinaya-pr-report --push <n>`.** It executes every line in your §9 fenced command list from the PR head and writes each command plus its actual output into `AEG:EVIDENCE` — not a hand-pasted comment, not a checkbox tick. A command this tool did not run is not evidence. **Accepted risk, Principal default:** `pr report --push` executes the PR's own §9 commands on the machine running it, with no check of who is running it — only the PR's author runs it; nothing enforces that today.
+2. **Run `vinaya-pr-report --push <n>`.** It executes every line in your §9 fenced command list from the PR head and writes each command plus its actual output into `VINAYA:EVIDENCE` — not a hand-pasted comment, not a checkbox tick. A command this tool did not run is not evidence. **Accepted risk, Principal default:** `pr report --push` executes the PR's own §9 commands on the machine running it, with no check of who is running it — only the PR's author runs it; nothing enforces that today.
 3. **Stop there.** The `[principal]` items are not yours to execute; mark them as awaiting the Principal.
 
 A failed `[agent]` command makes the PR unmergeable (`vinaya-pr-report`'s own exit code reflects it, and `evidence-fresh` binds the recorded output to the PR head). Fix on the same branch — under the loop, the next round's own automatic report overwrites the block with fresh output; standalone, re-run `vinaya-pr-report --push <n>` yourself — either way it overwrites, never appends a second copy.
@@ -346,7 +346,7 @@ It does not edit code (failures go back to you as the Developer), does not autho
 The merge waits on three conditions, which `review-gate` and `evidence-fresh` check in CI:
 
 1. **Reviewer approved.** The PR carries an approving verdict — from a human, an installed review-bot GitHub App, or another agent.
-2. **`[agent]` evidence fresh.** The `AEG:EVIDENCE` block's third group (the §9 fenced command list, run by `vinaya-pr-report`) matches a fresh recompute at the PR head.
+2. **`[agent]` evidence fresh.** The `VINAYA:EVIDENCE` block's third group (the §9 fenced command list, run by `vinaya-pr-report`) matches a fresh recompute at the PR head.
 3. **Principal confirmation.** The PR body's Test Plan section has no unchecked `- [ ] **[principal]**` lines.
 
 Before any merge-adjacent action (commenting "MERGE", helping the Principal merge, or pushing a "fix CI" commit after review), read the three: under the review loop through `read_pull_request`; working manually through `gh pr view <n> --json reviews,statusCheckRollup,body`. If any is missing, say exactly which — your turn result under the loop, a PR comment working manually — and stop. The Principal decides what to do next.

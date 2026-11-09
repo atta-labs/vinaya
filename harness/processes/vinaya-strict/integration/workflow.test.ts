@@ -33,6 +33,13 @@ describe('generated vinaya-checks.yml: no log artifact, no collector', () => {
     expect(checks).not.toContain('actions/upload-artifact')
   })
 
+  it('the Closes wait matches the region by its field name, whatever its prefix', () => {
+    const checks = contentOf(opsFor(null), CHECKS_WORKFLOW_PATH)
+    expect(checks).toContain('<!-- [A-Z]*:CLOSES:START -->')
+    expect(checks).toContain('<!-- [A-Z]*:CLOSES:END -->')
+    expect(checks).not.toMatch(/<!-- [A-Z]{2,}:CLOSES:START -->/)
+  })
+
   it('the generated workflow set carries no collector workflow', () => {
     const ops = opsFor(null)
     expect(ops.find((o) => o.kind === 'create-file' && o.path.includes('task-log-collector'))).toBeUndefined()

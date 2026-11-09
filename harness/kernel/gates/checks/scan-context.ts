@@ -4,7 +4,7 @@
  *
  * ## What this closes
  *
- * `body-bare-digits` exempts the `AEG:EVIDENCE` region's digits *because*
+ * `body-bare-digits` exempts the EVIDENCE region's digits *because*
  * `check-evidence-fresh` verifies that region. The exemption is only sound
  * while both checks agree on **which bytes the region is**. They did not.
  *
@@ -12,12 +12,12 @@
  *     decode — then masked code and `<details>`, then resolved the anchor.
  *   - `check-evidence-fresh` resolved the anchor from the raw `PR_BODY`.
  *
- * One zero-width character inside `<!-- AEG:EVIDENCE:START -->` split them:
+ * One zero-width character inside `<!-- <PREFIX>:EVIDENCE:START -->` split them:
  * `body-bare-digits` stripped it, saw a real machine-emitted evidence block,
  * and exempted every digit in it; `check-evidence-fresh` saw no anchor at all,
  * took its "anchors are opt-in" bypass, and exited 0 having verified nothing.
  * Two green checks, and a fabricated headline figure between them. The
- * named-entity spelling (`&lt;!-- AEG:EVIDENCE:START --&gt;`) is the same
+ * named-entity spelling (`&lt;!-- <PREFIX>:EVIDENCE:START --&gt;`) is the same
  * channel; so is an anchor pair reachable to one side but masked away for the
  * other.
  *
@@ -96,7 +96,7 @@ import { EVIDENCE_SUMMARY_PREFIX } from '../../connectors/git/numstat'
 // round 4 found one embedded inside an otherwise-recognized token
 // ("te" + U+200B + "sts") defeats regex matching regardless of what the regex
 // is looking for, and the same risk applies to the masking boundaries
-// themselves: a fence marker, an `AEG:*` tag. Stripped from the WHOLE body
+// themselves: a fence marker, an anchor tag. Stripped from the WHOLE body
 // once, here, before any masking or tokenizing. Written as escape sequences,
 // deliberately, never as literal characters in this source file — an actual
 // zero-width character sitting in this regex literal would be exactly as
@@ -163,12 +163,14 @@ export class ScanContext {
     /** The body after `normalizeBody` — what a region's text is sliced from. */
     readonly normalised: string,
     /** The same text with code and `<details>` blanked, offsets preserved — what a region is located in. */
-    readonly masked: string
+    readonly masked: string,
+    /** The marker prefixes the caller reads; every lookup through this context uses them. */
+    readonly prefixes: readonly string[]
   ) {}
 
-  static from(rawBody: string): ScanContext {
+  static from(rawBody: string, prefixes: readonly string[]): ScanContext {
     const normalised = normalizeBody(rawBody)
-    return new ScanContext(rawBody, normalised, buildAnchorLookupMask(normalised))
+    return new ScanContext(rawBody, normalised, buildAnchorLookupMask(normalised), prefixes)
   }
 
   /**
@@ -182,8 +184,8 @@ export class ScanContext {
    * one side that cannot adopt the shared offsets.
    */
   rawResolutionAgrees(field: AnchorField): boolean {
-    const rawHasPair = anchoredRegionBounds(this.raw, field) !== null
-    return rawHasPair === (anchoredRegionBounds(this.masked, field) !== null)
+    const rawHasPair = anchoredRegionBounds(this.raw, field, this.prefixes) !== null
+    return rawHasPair === (anchoredRegionBounds(this.masked, field, this.prefixes) !== null)
   }
 }
 
@@ -219,11 +221,11 @@ export type ResolvedRegion = {
  *   - a `ResolvedRegion` — the real pair, in both views, at the same offsets.
  */
 export function resolveAnchoredRegion(ctx: ScanContext, field: AnchorField): ResolvedRegion | 'hidden' | null {
-  const bounds = anchoredRegionBounds(ctx.masked, field)
+  const bounds = anchoredRegionBounds(ctx.masked, field, ctx.prefixes)
   if (bounds === null) {
     // `anchoredRegionBounds` code-masks internally, so a pair found here but
     // not above survived `maskCode` and was removed by `maskDetailsBlocks`.
-    return anchoredRegionBounds(ctx.normalised, field) !== null ? 'hidden' : null
+    return anchoredRegionBounds(ctx.normalised, field, ctx.prefixes) !== null ? 'hidden' : null
   }
   return {
     region: ctx.normalised.slice(bounds.innerStart, bounds.innerEnd),

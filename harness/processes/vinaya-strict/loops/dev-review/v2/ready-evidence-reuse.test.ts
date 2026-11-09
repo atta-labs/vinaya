@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { REGION_PREFIXES } from '../../../tools/legacy-markers'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -329,7 +330,7 @@ describe('the Evidence of a head whose ready push deferred its tests to required
     expect(composed).not.toMatch(/\[exit /)
     expect(composed.match(/_Reused from /g)?.length).toBe(2)
     expect(existsSync(marker)).toBe(false)
-    const region = resolveAnchoredRegion(ScanContext.from(composed), 'EVIDENCE')
+    const region = resolveAnchoredRegion(ScanContext.from(composed, REGION_PREFIXES), 'EVIDENCE')
     if (region === null || region === 'hidden') throw new Error('no evidence region')
     const expected = extractAgentCommandLines(composed).map(agentCommandText)
     expect(expected).toEqual([ciLine, explicitTest(marker), verify])
@@ -625,7 +626,7 @@ describe('the Evidence of a head whose ready push ran its selected tests locally
     }
     expect(readFileSync(counter, 'utf8')).toBe('x')
     const composed = await readyGateEvidence({ body, head, resultPath, worktreePath: dir, cache })
-    const region = resolveAnchoredRegion(ScanContext.from(composed), 'EVIDENCE')
+    const region = resolveAnchoredRegion(ScanContext.from(composed, REGION_PREFIXES), 'EVIDENCE')
     if (region === null || region === 'hidden') throw new Error('no evidence region')
     const expected = extractAgentCommandLines(composed).map(agentCommandText)
     expect(expected).toEqual([readyTestPlanCommand(selected, dir), explicitTest, verify])
@@ -670,7 +671,7 @@ describe('the Evidence of a head whose ready push ran its selected tests locally
     const expected = extractAgentCommandLines(composed).map(agentCommandText)
     expect(expected).toEqual([readyTestPlanCommand(selected, dir), verify])
     expect(composed).toContain(`${readyTestPlanCommand(selected, dir)} → every selected test file passes`)
-    const region = resolveAnchoredRegion(ScanContext.from(composed), 'EVIDENCE')
+    const region = resolveAnchoredRegion(ScanContext.from(composed, REGION_PREFIXES), 'EVIDENCE')
     if (region === null || region === 'hidden') throw new Error('no evidence region')
     expect(compareEvidenceBlock(region, head, '', expected).status).toBe('pass')
     expect(existsSync(marker)).toBe(false)
@@ -746,7 +747,7 @@ describe('the Evidence of a head whose native local run passed and that still ow
       true
     )
     const composed = await readyGateEvidence({ body, head, resultPath, worktreePath: dir, cache })
-    const region = resolveAnchoredRegion(ScanContext.from(composed), 'EVIDENCE')
+    const region = resolveAnchoredRegion(ScanContext.from(composed, REGION_PREFIXES), 'EVIDENCE')
     if (region === null || region === 'hidden') throw new Error('no evidence region')
     const expected = extractAgentCommandLines(composed).map(agentCommandText)
     expect(expected).toEqual([command])
@@ -775,7 +776,7 @@ describe('the Evidence of a head whose native local run passed and that still ow
     const expected = extractAgentCommandLines(composed).map(agentCommandText)
     expect(expected).toEqual([command, verify])
     expect(composed).not.toContain(stale)
-    const region = resolveAnchoredRegion(ScanContext.from(composed), 'EVIDENCE')
+    const region = resolveAnchoredRegion(ScanContext.from(composed, REGION_PREFIXES), 'EVIDENCE')
     if (region === null || region === 'hidden') throw new Error('no evidence region')
     expect(compareEvidenceBlock(region, head, '', expected).status).toBe('pass')
     // The stale line against the same Evidence is what evidence-fresh refused before: the comparison stays exact.

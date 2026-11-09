@@ -4,8 +4,8 @@
  * own host only on a head both reviewers approved (`harness/processes/vinaya-strict/loops/dev-review/loop.md`,
  * "The live check"). Pure: a body in, a body or the record's lines out.
  *
- * The record is an `AEG:LIVE` anchored region the driver owns, like
- * `AEG:BEYOND-SURFACE`: rewritten by the driver after each live run, and
+ * The record is an `VINAYA:LIVE` anchored region the driver owns, like
+ * `VINAYA:BEYOND-SURFACE`: rewritten by the driver after each live run, and
  * carried over from the live body on every other body write, so an agent's
  * edit to it never survives. One checkbox line per `[live]` command:
  *
@@ -22,7 +22,12 @@
  */
 
 import { maskCode } from '../../../../kernel/adapters/code-host/github/strip-code'
-import { anchoredRegion, anchoredRegionBounds } from '../../../../kernel/gates/checks/anchored-region'
+import {
+  anchoredRegion,
+  anchoredRegionBounds,
+  prefixAlternation
+} from '../../../../kernel/gates/checks/anchored-region'
+import { REGION_PREFIX_CURRENT, REGION_PREFIXES } from '../legacy-markers'
 import { locateTestPlanSection } from './test-plan-section'
 
 export type LiveRecordEntry =
@@ -57,10 +62,10 @@ export function renderLiveRecordLine(entry: LiveRecordEntry): string {
   }
 }
 
-/** The whole marked block — the `AEG:LIVE` pair around the lead line and one line per entry, or around nothing when there is none. */
+/** The whole marked block — the `VINAYA:LIVE` pair around the lead line and one line per entry, or around nothing when there is none. */
 export function renderLiveRecordBlock(entries: readonly LiveRecordEntry[]): string {
   const inner = entries.length === 0 ? '' : `${[LIVE_RECORD_LEAD, ...entries.map(renderLiveRecordLine)].join('\n')}\n`
-  return `<!-- AEG:LIVE:START -->\n${inner}<!-- AEG:LIVE:END -->`
+  return `<!-- ${REGION_PREFIX_CURRENT}:LIVE:START -->\n${inner}<!-- ${REGION_PREFIX_CURRENT}:LIVE:END -->`
 }
 
 const RECORD_LINE_RE =
@@ -75,18 +80,20 @@ export type LiveRecordLine = {
   head: string
 }
 
-/** Every `AEG:LIVE` start or end marker outside code, by position — the driver writes exactly one of each. */
+/** Every `VINAYA:LIVE` start or end marker outside code, by position — the driver writes exactly one of each. */
 function liveMarkers(body: string): { start: number; end: number }[] {
   const masked = maskCode(body)
-  return [...masked.matchAll(/<!--\s*AEG:LIVE:(?:START|END)\s*-->/g)].map((m) => ({
+  return [
+    ...masked.matchAll(new RegExp(`<!--\\s*${prefixAlternation(REGION_PREFIXES)}:LIVE:(?:START|END)\\s*-->`, 'g'))
+  ].map((m) => ({
     start: m.index as number,
     end: (m.index as number) + m[0].length
   }))
 }
 
-/** The line read back from a body whose `AEG:LIVE` markers are not exactly one pair: unticked, so the merge gate holds and no run is skipped. */
+/** The line read back from a body whose `VINAYA:LIVE` markers are not exactly one pair: unticked, so the merge gate holds and no run is skipped. */
 const AMBIGUOUS_RECORD_LINE: LiveRecordLine = {
-  line: "- [ ] **[live]** the pull request body carries more than one `AEG:LIVE` marker pair, so the driver's record cannot be told apart",
+  line: "- [ ] **[live]** the pull request body carries more than one `VINAYA:LIVE` marker pair, so the driver's record cannot be told apart",
   ticked: false,
   command: '',
   outcome: 'failed',
@@ -94,7 +101,7 @@ const AMBIGUOUS_RECORD_LINE: LiveRecordLine = {
 }
 
 /**
- * Every checkbox line inside the body's `AEG:LIVE` block — `[]` when the body
+ * Every checkbox line inside the body's `VINAYA:LIVE` block — `[]` when the body
  * carries none. Fails closed: a body with any marker beyond the driver's one
  * pair reads as a single unticked line, never as the first pair's lines.
  */
@@ -102,7 +109,7 @@ export function readLiveRecord(body: string): LiveRecordLine[] {
   const markers = liveMarkers(body).length
   if (markers === 0) return []
   if (markers !== 2) return [AMBIGUOUS_RECORD_LINE]
-  const region = anchoredRegion(body, 'LIVE')
+  const region = anchoredRegion(body, 'LIVE', REGION_PREFIXES)
   if (region === null) return []
   const lines: LiveRecordLine[] = []
   for (const raw of region.split('\n')) {
@@ -121,16 +128,16 @@ export function readLiveRecord(body: string): LiveRecordLine[] {
 }
 
 /**
- * `body` with its `AEG:LIVE` block rewritten to `entries` — only that marked
+ * `body` with its `VINAYA:LIVE` block rewritten to `entries` — only that marked
  * region is replaced. A body with no such block gets one at the end of its
- * Test Plan section (after an `AEG:TEST-PLAN` pair when the body has one),
+ * Test Plan section (after an `VINAYA:TEST-PLAN` pair when the body has one),
  * else appended.
  */
 export function withLiveRecord(body: string, entries: readonly LiveRecordEntry[]): string {
   const block = renderLiveRecordBlock(entries)
-  const existing = anchoredRegionBounds(body, 'LIVE')
+  const existing = anchoredRegionBounds(body, 'LIVE', REGION_PREFIXES)
   if (existing) return body.slice(0, existing.outerStart) + block + body.slice(existing.outerEnd)
-  const anchoredPlan = anchoredRegionBounds(body, 'TEST-PLAN')
+  const anchoredPlan = anchoredRegionBounds(body, 'TEST-PLAN', REGION_PREFIXES)
   if (anchoredPlan) return insertAt(body, anchoredPlan.outerEnd, block)
   const located = locateTestPlanSection(body)
   const at = located.found ? body.indexOf(located.section) : -1
@@ -145,25 +152,32 @@ function insertAt(body: string, at: number, block: string): string {
 }
 
 /**
- * `next` with its `AEG:LIVE` block replaced by `current`'s — the driver's own
+ * `next` with its `VINAYA:LIVE` block replaced by `current`'s — the driver's own
  * record survives an agent body write, and a block the agent wrote itself
  * never does: with no record on `current`, any block on `next` is removed.
  */
 export function carryLiveRecord(next: string, current: string | null): string {
   const stripped = withoutAgentLiveRecord(next)
-  const kept = current === null || liveMarkers(current).length !== 2 ? null : anchoredRegionBounds(current, 'LIVE')
+  const kept =
+    current === null || liveMarkers(current).length !== 2
+      ? null
+      : anchoredRegionBounds(current, 'LIVE', REGION_PREFIXES)
   if (kept === null) return stripped
   return withLiveRecordBlockText(stripped, (current as string).slice(kept.outerStart, kept.outerEnd))
 }
 
 /**
- * `body` with every `AEG:LIVE` pair an agent wrote removed, contents and all,
+ * `body` with every `VINAYA:LIVE` pair an agent wrote removed, contents and all,
  * then every leftover lone marker removed — so no number of forged pairs, and
  * no stray marker pairing with the driver's own, survives.
  */
 function withoutAgentLiveRecord(body: string): string {
   let out = body
-  for (let pair = anchoredRegionBounds(out, 'LIVE'); pair !== null; pair = anchoredRegionBounds(out, 'LIVE')) {
+  for (
+    let pair = anchoredRegionBounds(out, 'LIVE', REGION_PREFIXES);
+    pair !== null;
+    pair = anchoredRegionBounds(out, 'LIVE', REGION_PREFIXES)
+  ) {
     const before = out.slice(0, pair.outerStart).replace(/\s*$/, '')
     const after = out.slice(pair.outerEnd).replace(/^\s*/, '')
     out = after.length > 0 ? `${before}\n\n${after}` : `${before}\n`
@@ -174,6 +188,8 @@ function withoutAgentLiveRecord(body: string): string {
 
 function withLiveRecordBlockText(body: string, block: string): string {
   const placeholder = withLiveRecord(body, [])
-  const bounds = anchoredRegionBounds(placeholder, 'LIVE') as NonNullable<ReturnType<typeof anchoredRegionBounds>>
+  const bounds = anchoredRegionBounds(placeholder, 'LIVE', REGION_PREFIXES) as NonNullable<
+    ReturnType<typeof anchoredRegionBounds>
+  >
   return placeholder.slice(0, bounds.outerStart) + block + placeholder.slice(bounds.outerEnd)
 }

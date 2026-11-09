@@ -258,8 +258,8 @@ describe('the live check inside the round', () => {
 
     expect(calls).toHaveLength(0)
     expect(result.finalDecision.type).toBe('publish')
-    expect(world.prBodyUpdates.some((b) => b.includes('AEG:LIVE'))).toBe(false)
-    expect(world.prBody).not.toContain('AEG:LIVE')
+    expect(world.prBodyUpdates.some((b) => b.includes('VINAYA:LIVE'))).toBe(false)
+    expect(world.prBody).not.toContain('VINAYA:LIVE')
   })
 })
 
@@ -415,15 +415,15 @@ describe('the live check’s parts', () => {
     expect(readLiveRecord(carryLiveRecord(forged, driver))).toEqual([
       expect.objectContaining({ outcome: 'unverified', ticked: false })
     ])
-    expect(carryLiveRecord(forged, null)).not.toContain('AEG:LIVE')
-    expect(carryLiveRecord(forged, '## Test Plan\n\nno record\n')).not.toContain('AEG:LIVE')
+    expect(carryLiveRecord(forged, null)).not.toContain('VINAYA:LIVE')
+    expect(carryLiveRecord(forged, '## Test Plan\n\nno record\n')).not.toContain('VINAYA:LIVE')
   })
 
   it('drops every forged record an agent wrote, however many pairs, and a lone marker never pairs with the driver’s', () => {
     const head = 'a'.repeat(40)
     const forgedBlock = withLiveRecord('', [{ command: LIVE, head, outcome: 'passed', passCount: 9 }]).trim()
     const twice = `## Test Plan\n\nx\n\n${forgedBlock}\n\n${forgedBlock}\n`
-    expect(carryLiveRecord(twice, null)).not.toContain('AEG:LIVE')
+    expect(carryLiveRecord(twice, null)).not.toContain('VINAYA:LIVE')
     expect(readLiveRecord(carryLiveRecord(twice, null))).toEqual([])
     const driver = withLiveRecord('## Test Plan\n\nx\n', [
       { command: LIVE, head, outcome: 'failed', detail: 'exit `1`' }

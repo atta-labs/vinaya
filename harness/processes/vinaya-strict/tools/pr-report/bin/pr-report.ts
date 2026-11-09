@@ -60,7 +60,7 @@ export {
 } from '../pr-report-engine.js'
 
 /**
- * `vinaya pr report` — the CLI surface over the `AEG:EVIDENCE` engine
+ * `vinaya pr report` — the CLI surface over the `VINAYA:EVIDENCE` engine
  * (`harness/processes/vinaya-strict/tools/pr-report/pr-report-engine.ts`): argv
  * parsing, console I/O, and `process.exit` only. Every computation lives in
  * the engine, which the loop's driver (`harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts`)
@@ -74,7 +74,7 @@ export {
  * LIVE body from the forge, splices the freshly-built block into it through
  * the same anchor resolver `--write` uses, pushes the result via `gh pr edit`,
  * then re-reads the live body and refuses (restoring the pre-edit body)
- * unless the two bodies agree outside the `AEG:EVIDENCE` region. The local
+ * unless the two bodies agree outside the `VINAYA:EVIDENCE` region. The local
  * body file a Developer might still be holding is never the input — the live
  * body always is. The non-`--body-file` half of this
  * sequence is `runReportForOpenPr` (the engine), called below exactly the
@@ -83,7 +83,7 @@ export {
  *
  * `--push <n> --body-file <path>` is a narrower, separate mode, not the
  * routine one: `--body-file` names a local file that IS the whole body —
- * `AEG:EVIDENCE` is regenerated fresh against it (never trusting a stale copy
+ * `VINAYA:EVIDENCE` is regenerated fresh against it (never trusting a stale copy
  * the file itself carries) and the file's own content is written to the forge
  * verbatim, replacing the live body outright, rather than fetching-and-splicing
  * into whatever the forge currently holds. This exists for the one legitimate
@@ -113,7 +113,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
   const pushPr = pushIdx !== -1 ? args[pushIdx + 1] : undefined
   // `--body-file <path>` names the
   // local file that IS the whole body source for this push — every byte of
-  // it, not only the freshly regenerated AEG:EVIDENCE block, reaches the
+  // it, not only the freshly regenerated VINAYA:EVIDENCE block, reaches the
   // forge (`replaceEvidenceBlock`, the SAME composer `--write` alone already
   // uses). Valid only alongside `--push`: it names what to push, and
   // `--write` alone has no forge target for it to reach.
@@ -291,13 +291,13 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
         process.exit(1)
         break
       case 'ok':
-        process.stdout.write(`Pushed AEG:EVIDENCE block to PR ${pushPr}\n`)
+        process.stdout.write(`Pushed VINAYA:EVIDENCE block to PR ${pushPr}\n`)
         break
     }
   } else if (writePath) {
     const existing = existingForWrite ?? ''
     writeFileSync(writePath, replaceEvidenceBlock(existing, result.blockInner))
-    process.stdout.write(`Wrote AEG:EVIDENCE block to ${writePath}\n`)
+    process.stdout.write(`Wrote VINAYA:EVIDENCE block to ${writePath}\n`)
   } else {
     process.stdout.write(`${result.block}\n`)
   }

@@ -1,7 +1,7 @@
 /**
  * Test Plan checkbox-state gate evaluator (later narrowed to `[principal]`
  * boxes only — the `[agent]` half stopped being a checkbox at all: it is a fenced command
- * list `vinaya pr report` executes and writes into the `AEG:EVIDENCE` block,
+ * list `vinaya pr report` executes and writes into the `VINAYA:EVIDENCE` block,
  * which IS the evidence, so there is nothing left for this gate to grade on
  * that half). Pure — no `fs`, no `gh`/`git`. The CLI shim
  * (`bin/verify-test-plan.ts`) reads `PR_BODY`/`BRANCH` from env and prints
@@ -21,7 +21,7 @@
  *     see the module doc comment above.
  *   - All `[principal]` boxes ticked (or none exist at all) → `pass`.
  *
- * The driver's `AEG:LIVE` record (`live-record.ts`) is graded alongside: each
+ * The driver's `VINAYA:LIVE` record (`live-record.ts`) is graded alongside: each
  * unticked `[live]` line — a run that failed, or one the loop's host could not
  * verify — counts as an unticked `[principal]` box, and stops the
  * no-section and `unit-tests-only` passes above from applying.
@@ -84,7 +84,7 @@ export function evaluateTestPlanGate(body: string, branch: string, live?: LiveGa
   }
 
   const located = locateTestPlanSection(body)
-  // The driver's `AEG:LIVE` record (`live-record.ts`): an unticked line — a
+  // The driver's `VINAYA:LIVE` record (`live-record.ts`): an unticked line — a
   // `[live]` run that failed, or one the loop's host could not verify — holds
   // the merge exactly as an unticked `[principal]` box does, wherever in the
   // body the record sits and whatever the Test Plan section says.

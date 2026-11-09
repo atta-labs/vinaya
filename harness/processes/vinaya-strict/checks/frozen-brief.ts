@@ -1,4 +1,5 @@
 import { extractIssue } from '../../../kernel/adapters/code-host/github/extract-issue'
+import { REGION_PREFIXES } from '../tools/legacy-markers'
 import { isIssueNotFoundError } from '../tools/task-contract/objectives'
 import { isTaskBranch, resolveNewestFrozenBrief } from '../tools/task-contract/brief-validation'
 import { parseLiveTestPlanItems } from '../tools/task-contract/issue-validation'
@@ -34,7 +35,7 @@ export function resolveTaskFrozenBrief(
   principalAllowlist: () => readonly string[],
   purpose: string
 ): FrozenBriefResolution {
-  const { issue } = extractIssue(prBody)
+  const { issue } = extractIssue(prBody, REGION_PREFIXES)
   if (issue === null) {
     return {
       ok: false,

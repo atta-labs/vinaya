@@ -7,7 +7,7 @@ import { programFile, programForWords } from '../tools/programs'
  * updated. The CLI does not export it, so a test reads the `pr report` source
  * and fails if its wording drifts from this one.
  */
-export const pushedEvidenceMarker = (prNumber: number): string => `Pushed AEG:EVIDENCE block to PR ${prNumber}`
+export const pushedEvidenceMarker = (prNumber: number): string => `Pushed VINAYA:EVIDENCE block to PR ${prNumber}`
 
 /** What refreshing the Evidence block needs; every forge, git and CLI reach is injected. */
 export interface RefreshEvidenceDeps {

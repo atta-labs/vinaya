@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { MARKER_FAMILIES, REGION_PREFIX, REGION_PREFIXES } from '../../../tools/legacy-markers'
 import { anchoredRegion } from '../../../../../kernel/gates/checks/anchored-region'
 import { buildProvenanceBlock, type MergedPrFacts } from '../../../tools/archive-task'
 import { extractIssue } from '../../../../../kernel/adapters/code-host/github/extract-issue'
@@ -46,42 +47,42 @@ function makeFacts(body: string): MergedPrFacts {
 describe('anchoredRegion — grammar', () => {
   it('returns the text between a START/END pair', () => {
     const body = 'before\n<!-- AEG:TIER:START -->\n**Tier:** 1\n<!-- AEG:TIER:END -->\nafter'
-    expect(anchoredRegion(body, 'TIER')).toBe('\n**Tier:** 1\n')
+    expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBe('\n**Tier:** 1\n')
   })
 
   it('returns null when the body carries no pair for the field', () => {
-    expect(anchoredRegion('**Tier:** 1\n', 'TIER')).toBeNull()
+    expect(anchoredRegion('**Tier:** 1\n', 'TIER', REGION_PREFIXES)).toBeNull()
   })
 
   it('is field-scoped — a TIER pair is not a PROJECT pair', () => {
     const body = '<!-- AEG:TIER:START -->\n**Tier:** 1\n<!-- AEG:TIER:END -->'
-    expect(anchoredRegion(body, 'PROJECT')).toBeNull()
+    expect(anchoredRegion(body, 'PROJECT', REGION_PREFIXES)).toBeNull()
   })
 
   it('tolerates extra whitespace inside the comment markers', () => {
     const body = '<!--  AEG:TIER:START  -->\n**Tier:** 3\n<!--\tAEG:TIER:END -->'
-    expect(anchoredRegion(body, 'TIER')).toBe('\n**Tier:** 3\n')
+    expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBe('\n**Tier:** 3\n')
   })
 
   it('treats a START with no following END as no anchor at all', () => {
     const body = '<!-- AEG:TIER:START -->\n**Tier:** 1\n(no end marker)'
-    expect(anchoredRegion(body, 'TIER')).toBeNull()
+    expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBeNull()
   })
 
   it('first pair wins when a field is anchored twice', () => {
     const body =
       '<!-- AEG:TIER:START -->\nfirst\n<!-- AEG:TIER:END -->\n<!-- AEG:TIER:START -->\nsecond\n<!-- AEG:TIER:END -->'
-    expect(anchoredRegion(body, 'TIER')).toBe('\nfirst\n')
+    expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBe('\nfirst\n')
   })
 
   it('ignores markers inside fenced code blocks', () => {
     const body = ['```', '<!-- AEG:TIER:START -->', 'Tier: 3', '<!-- AEG:TIER:END -->', '```'].join('\n')
-    expect(anchoredRegion(body, 'TIER')).toBeNull()
+    expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBeNull()
   })
 
   it('ignores markers inside inline code spans', () => {
     const body = 'use `<!-- AEG:TIER:START -->` and `<!-- AEG:TIER:END -->` to anchor the field'
-    expect(anchoredRegion(body, 'TIER')).toBeNull()
+    expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBeNull()
   })
 
   it('a fenced decoy marker does not shadow a real pair later in the body', () => {
@@ -95,7 +96,7 @@ describe('anchoredRegion — grammar', () => {
       '**Tier:** 1',
       '<!-- AEG:TIER:END -->'
     ].join('\n')
-    expect(anchoredRegion(body, 'TIER')).toBe('\n**Tier:** 1\n')
+    expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBe('\n**Tier:** 1\n')
   })
 })
 
@@ -112,7 +113,7 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
 
   it('carries no anchor pair for any field (a genuine freeform body)', () => {
     for (const field of ['CLOSES', 'PROJECT', 'TIER', 'PREMISE', 'TEST-PLAN'] as const) {
-      expect(anchoredRegion(body, field)).toBeNull()
+      expect(anchoredRegion(body, field, REGION_PREFIXES)).toBeNull()
     }
   })
 
@@ -170,7 +171,7 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
     // names the Issue's `aeg:brief:v1` comment URL (DANGLING here — this
     // fixture's `makeFacts` carries no `briefCommentUrl`) instead of the
     // retired "in this PR body" text. Assembly is otherwise untouched.
-    expect(sha256(block)).toBe('f741d8b432279690daf4a8b4270c8a1c33805555db5b498a8fd5cfff80df2f98')
+    expect(sha256(block)).toBe('6a1494b858b65f0d262e9ac790b88892f53420546c100c469b5ee8b36cdfa9c2')
   })
 })
 
@@ -441,7 +442,7 @@ describe('maskCode / stripCode grammar parity (PR #617 review BLOCKER)', () => {
     ],
     ['CRLF body', '<!-- AEG:CLOSES:START -->\r\nCloses #616\r\n<!-- AEG:CLOSES:END -->', '\r\nCloses #616\r\n']
   ])('does not over-mask a real anchor: %s', (_name, body, expected) => {
-    expect(anchoredRegion(body, 'CLOSES')).toBe(expected)
+    expect(anchoredRegion(body, 'CLOSES', REGION_PREFIXES)).toBe(expected)
   })
 })
 
@@ -473,13 +474,13 @@ describe('strip whole, then slice (PR #617 review MAJOR)', () => {
 
   it('an anchor indented inside a list item still resolves (GitHub auto-closes it)', () => {
     expect(checkClosesNField(listAnchor).status).toBe('pass')
-    expect(extractIssue(listAnchor).issue).toBe(616)
+    expect(extractIssue(listAnchor, REGION_PREFIXES).issue).toBe(616)
     expect([...extractClosesReferences(listAnchor)]).toEqual([616])
   })
 
   it('a genuine indented code block is still stripped (the guard is not simply disabled)', () => {
     const body = 'Shape:\n\n    <!-- AEG:CLOSES:START -->\n    Closes #123\n    <!-- AEG:CLOSES:END -->\n'
-    expect(extractIssue(body).issue).toBeNull()
+    expect(extractIssue(body, REGION_PREFIXES).issue).toBeNull()
   })
 
   // The invariant that broke: one body, two parsers, one answer. Both read the
@@ -494,7 +495,49 @@ describe('strip whole, then slice (PR #617 review MAJOR)', () => {
     ['CRLF anchor', '<!-- AEG:CLOSES:START -->\r\nCloses #616\r\n<!-- AEG:CLOSES:END -->'],
     ['anchor between inline spans', '`a` <!-- AEG:CLOSES:START -->Closes #616<!-- AEG:CLOSES:END --> `b`']
   ])('extractIssue and extractClosesReferences agree: %s', (_name, body) => {
-    expect(extractIssue(body).issue).toBe(616)
+    expect(extractIssue(body, REGION_PREFIXES).issue).toBe(616)
     expect([...extractClosesReferences(body)]).toEqual([616])
+  })
+})
+
+describe('marker prefixes are the caller’s to name', () => {
+  const regionIn = (prefix: string): string =>
+    `## Summary\n\n<!-- ${prefix}:TIER:START -->\n**Tier:** 2\n<!-- ${prefix}:TIER:END -->\n`
+
+  it('reads a body in each spelling to the same region', () => {
+    const current = anchoredRegion(regionIn(REGION_PREFIX.current), 'TIER', REGION_PREFIXES)
+    const old = anchoredRegion(regionIn(REGION_PREFIX.old), 'TIER', REGION_PREFIXES)
+    expect(current).toBe('\n**Tier:** 2\n')
+    expect(old).toBe(current)
+  })
+
+  it('finds only the prefixes it is given', () => {
+    expect(anchoredRegion(regionIn(REGION_PREFIX.old), 'TIER', [REGION_PREFIX.current])).toBeNull()
+    expect(anchoredRegion(regionIn(REGION_PREFIX.current), 'TIER', [REGION_PREFIX.old])).toBeNull()
+  })
+
+  it('refuses an empty prefix list rather than reading as if no region existed', () => {
+    expect(() => anchoredRegion(regionIn(REGION_PREFIX.current), 'TIER', [])).toThrow()
+  })
+
+  it('a decoy pair inside a fence loses to the real pair whichever spelling each uses', () => {
+    const decoy = `\`\`\`\n<!-- ${REGION_PREFIX.old}:TIER:START -->\n**Tier:** 9\n<!-- ${REGION_PREFIX.old}:TIER:END -->\n\`\`\`\n`
+    expect(anchoredRegion(decoy + regionIn(REGION_PREFIX.current), 'TIER', REGION_PREFIXES)).toBe('\n**Tier:** 2\n')
+  })
+
+  it('reads the Closes region in each spelling to the same Issue', () => {
+    for (const prefix of REGION_PREFIXES) {
+      const body = `<!-- ${prefix}:CLOSES:START -->\nCloses #77\n<!-- ${prefix}:CLOSES:END -->\n`
+      expect(extractIssue(body, REGION_PREFIXES).issue).toBe(77)
+    }
+  })
+
+  it('pairs each marker family’s old spelling with its new one', () => {
+    expect(Object.keys(MARKER_FAMILIES).sort()).toEqual(['provenanceHeading', 'regionPrefix'])
+    for (const family of Object.values(MARKER_FAMILIES)) {
+      expect(family.old.length).toBeGreaterThan(0)
+      expect(family.current).not.toBe(family.old)
+    }
+    expect(REGION_PREFIXES).toEqual([REGION_PREFIX.current, REGION_PREFIX.old])
   })
 })

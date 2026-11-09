@@ -23,6 +23,7 @@ import { locateTestPlanSection } from '../task-contract/test-plan-section'
 import { coreCheckRegistry } from '../../checks/registry'
 import { buildCheckEnv, CHECK_EXCLUDE_ENV } from '../../../../kernel/gates/checks/runner'
 import { ScanContext } from '../../../../kernel/gates/checks/scan-context'
+import { REGION_PREFIX_CURRENT, REGION_PREFIXES } from '../legacy-markers'
 import { loadConfig } from '../../integration/config/compose'
 import { collectBodyCheckErrors } from '../task-contract/forge/forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../../kernel/connectors/git/numstat'
@@ -42,7 +43,7 @@ import {
 } from '../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
 
 /**
- * The `AEG:EVIDENCE` engine — every function that computes, or writes, the
+ * The `VINAYA:EVIDENCE` engine — every function that computes, or writes, the
  * anchored block `harness/processes/vinaya-strict/executing/developer/doctrine.md`'s PR-body canonical form
  * describes. Moved out of `harness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts`:
  * a COMMAND (`harness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts`'s
@@ -118,12 +119,12 @@ import {
  * that omits its own `cwd` would corrupt whichever one starts second.
  */
 
-const EVIDENCE_START = '<!-- AEG:EVIDENCE:START -->'
-const EVIDENCE_END = '<!-- AEG:EVIDENCE:END -->'
+const EVIDENCE_START = `<!-- ${REGION_PREFIX_CURRENT}:EVIDENCE:START -->`
+const EVIDENCE_END = `<!-- ${REGION_PREFIX_CURRENT}:EVIDENCE:END -->`
 
 /**
  * The one check name that is self-referential inside `vinaya pr report`: it
- * grades the `AEG:EVIDENCE` block this very command is about to (re)write, so
+ * grades the `VINAYA:EVIDENCE` block this very command is about to (re)write, so
  * both places this command would otherwise let it run against the PRE-write
  * body leave it out —
  *   - Group B's rendered outcomes (a stale `fail` that is a fact about the
@@ -548,7 +549,7 @@ function renderGroupB(outcomes: GateOutcome[], gradedBodySource: GradedBodySourc
  * renderer emits §9 as a fenced list of commands, one per line, each with
  * its expected observable after a literal `→`; this runs every command in
  * that list from the PR head and records its actual output, so the
- * `AEG:EVIDENCE` block IS the evidence — never a round comment, never a
+ * `VINAYA:EVIDENCE` block IS the evidence — never a round comment, never a
  * hand-typed paste.
  *
  * Policy, not a mirrored constant (issue-545, O5): `report.commandTimeoutMs`
@@ -574,7 +575,7 @@ export type GroupCCommandResult = {
   overflowed: boolean
   /** Set only when this result was reused from a prior green run against the identical head, working tree and command — names the run it reused rather than silently re-presenting cached output as freshly run. `undefined` for every command this call actually executed. */
   reusedFrom?: string
-  /** Set only for a Group C command that runs `check --all` (`commandRunsCheckAll`): this run left `evidence-fresh` out, because it would grade the AEG:EVIDENCE block this same report is about to write. `renderGroupC` states that omission on one line below the command's fence (O2); `undefined` for every other command, where `evidence-fresh` was never in play. */
+  /** Set only for a Group C command that runs `check --all` (`commandRunsCheckAll`): this run left `evidence-fresh` out, because it would grade the VINAYA:EVIDENCE block this same report is about to write. `renderGroupC` states that omission on one line below the command's fence (O2); `undefined` for every other command, where `evidence-fresh` was never in play. */
   omittedEvidenceFresh?: boolean
   /**
    * Set only for the review loop's automatic selected-suite line on a head whose ready or driver-owned repair push
@@ -1087,7 +1088,7 @@ export function agentCommandText(line: string): string {
  * (`→ summary line ends "0 fail"`) is conventionally the tail of the run,
  * never the head — never silently dropped, marked when cut. Kept the tail,
  * not the whole run (task 1): task `12` measured a `47` KB PR body
- * from six-command §9 lists whose full output rode into `AEG:EVIDENCE`
+ * from six-command §9 lists whose full output rode into `VINAYA:EVIDENCE`
  * uncut at `4_000` chars each; `renderGroupC` below puts the pass/fail
  * status first in the block, so cutting the tail harder never costs the one
  * fact a reviewer actually reads first.
@@ -1114,7 +1115,7 @@ export function truncateAgentOutput(output: string): string {
  * baseline `runner.ts` gives every registered check (`PATH`/`LANG`/`HOME`/
  * proxy vars/`TMPDIR` only) — never the bare `spawnSync` default of the full
  * `process.env` (Principal ruling, PR `open-1` addendum). This command's
- * text came from a PR body; nothing in `AEG:EVIDENCE`'s trust model lets a
+ * text came from a PR body; nothing in `VINAYA:EVIDENCE`'s trust model lets a
  * body author choose what secrets its own §9 line can read, so
  * `GH_TOKEN`/`GITHUB_TOKEN` never reach it. `extraEnv` (round 3 review,
  * F2 test-honesty) is never a secret — `PR_BODY` is the exact text this
@@ -1502,7 +1503,7 @@ export async function computeGroupC(
       continue
     }
     // A Group C `check --all` run grades `evidence-fresh` against the
-    // PRE-write AEG:EVIDENCE block — this report writes the new block only
+    // PRE-write VINAYA:EVIDENCE block — this report writes the new block only
     // AFTER Group C runs — so left alone it can only ever record that command
     // FAILING, never passing. Leave `evidence-fresh` out via the
     // runner's own exclusion channel, carried as `CHECK_EXCLUDE_ENV` into the
@@ -1573,7 +1574,7 @@ export function renderGroupC(groupC: GroupC): string {
     // span, so `body-bare-digits` never refuses the body this note rides into.
     const omitted = c.omittedEvidenceFresh
       ? [
-          `\n_\`evidence-fresh\` was left out of this run: it grades the \`AEG:EVIDENCE\` block this same \`vinaya-pr-report\` is about to write, so here it can only fail against the previous block. CI's own \`vinaya-check --all --diff-only\` is its authoritative run._`
+          `\n_\`evidence-fresh\` was left out of this run: it grades the \`VINAYA:EVIDENCE\` block this same \`vinaya-pr-report\` is about to write, so here it can only fail against the previous block. CI's own \`vinaya-check --all --diff-only\` is its authoritative run._`
         ]
       : []
     return [`#### C${i + 1}: \`${c.command}\``, '', '```', output, '```', ...reused, ...omitted].join('\n')
@@ -1619,7 +1620,7 @@ function buildBlockInner(
 }
 
 /**
- * Replaces the content between the REAL, non-fenced `AEG:EVIDENCE` anchor
+ * Replaces the content between the REAL, non-fenced `VINAYA:EVIDENCE` anchor
  * pair in `body`, in place — found via `anchoredRegionBounds`'s masked
  * search, never a raw `indexOf`. A raw `indexOf` finds whichever copy of the
  * marker text comes first, fenced decoy included; a PR body that quotes a
@@ -1633,7 +1634,7 @@ function buildBlockInner(
 export class DivergentEvidenceAnchorError extends Error {
   constructor() {
     super(
-      'the AEG:EVIDENCE anchor resolves differently before and after normalisation — a zero-width character or an HTML entity inside a marker makes this writer and the checks that read the block disagree about which pair is real. Remove it and re-run.'
+      'the VINAYA:EVIDENCE anchor resolves differently before and after normalisation — a zero-width character or an HTML entity inside a marker makes this writer and the checks that read the block disagree about which pair is real. Remove it and re-run.'
     )
     this.name = 'DivergentEvidenceAnchorError'
   }
@@ -1649,10 +1650,10 @@ export function replaceEvidenceBlock(body: string, blockInner: string): string {
   // unchecked, a body with a zero-width character in its START marker gets a
   // SECOND block appended here while `body-bare-digits` treats the first,
   // hand-written one as the trusted region.
-  if (!ScanContext.from(body).rawResolutionAgrees('EVIDENCE')) throw new DivergentEvidenceAnchorError()
+  if (!ScanContext.from(body, REGION_PREFIXES).rawResolutionAgrees('EVIDENCE')) throw new DivergentEvidenceAnchorError()
 
   const full = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
-  const bounds = anchoredRegionBounds(body, 'EVIDENCE')
+  const bounds = anchoredRegionBounds(body, 'EVIDENCE', REGION_PREFIXES)
   if (bounds) {
     return `${body.slice(0, bounds.outerStart)}${full}${body.slice(bounds.outerEnd)}`
   }
@@ -1662,7 +1663,7 @@ export function replaceEvidenceBlock(body: string, blockInner: string): string {
 
 /**
  * Thrown by `spliceIntoLiveBody` when the live PR body carries no real
- * `AEG:EVIDENCE` pair. `replaceEvidenceBlock` itself APPENDS a fresh pair in
+ * `VINAYA:EVIDENCE` pair. `replaceEvidenceBlock` itself APPENDS a fresh pair in
  * that case — the right behaviour for `--write`'s local draft, which starts
  * from `harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md` and is expected to grow the
  * pair on first adoption. A LIVE, already-open PR body with no pair is a
@@ -1675,7 +1676,7 @@ export function replaceEvidenceBlock(body: string, blockInner: string): string {
 export class MissingEvidenceAnchorError extends Error {
   constructor() {
     super(
-      'the live PR body carries no AEG:EVIDENCE anchor pair. `--push` never appends one the way `--write` ' +
+      'the live PR body carries no VINAYA:EVIDENCE anchor pair. `--push` never appends one the way `--write` ' +
         'does for a fresh local draft — a live PR body without the pair is malformed. Add the `## Evidence` ' +
         'section (see harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md) to the PR body first, then re-run --push.'
     )
@@ -1695,23 +1696,23 @@ export class MissingEvidenceAnchorError extends Error {
  * silently append rather than refuse).
  *
  * A body that still carries an older run's token table keeps it, byte for
- * byte: this function's only write is the `AEG:EVIDENCE` region, and no code
+ * byte: this function's only write is the `VINAYA:EVIDENCE` region, and no code
  * path here reads or edits any other anchor.
  */
 export function spliceIntoLiveBody(live: string, blockInner: string): string {
-  if (!ScanContext.from(live).rawResolutionAgrees('EVIDENCE')) throw new DivergentEvidenceAnchorError()
-  if (anchoredRegionBounds(live, 'EVIDENCE') === null) throw new MissingEvidenceAnchorError()
+  if (!ScanContext.from(live, REGION_PREFIXES).rawResolutionAgrees('EVIDENCE')) throw new DivergentEvidenceAnchorError()
+  if (anchoredRegionBounds(live, 'EVIDENCE', REGION_PREFIXES) === null) throw new MissingEvidenceAnchorError()
   return replaceEvidenceBlock(live, blockInner)
 }
 
-/** Removes the first real `AEG:<field>` anchored region (markers included) from `body`, or returns `body` unchanged when none is found — `anchoredRegionBounds` already does the masked, decoy-blind search. */
+/** Removes the first real `VINAYA:<field>` anchored region (markers included) from `body`, or returns `body` unchanged when none is found — `anchoredRegionBounds` already does the masked, decoy-blind search. */
 function stripAnchoredRegion(body: string, field: AnchorField): string {
-  const bounds = anchoredRegionBounds(body, field)
+  const bounds = anchoredRegionBounds(body, field, REGION_PREFIXES)
   return bounds ? body.slice(0, bounds.outerStart) + body.slice(bounds.outerEnd) : body
 }
 
 /**
- * The `--push` self-verification predicate: with the `AEG:EVIDENCE` region
+ * The `--push` self-verification predicate: with the `VINAYA:EVIDENCE` region
  * removed from both, are `before` and `after` the exact same bytes? That
  * region is the only one a `--push` run is authorized to change
  * (`harness/processes/vinaya-strict/executing/developer/doctrine.md`'s frozen-body rule); anything else
@@ -1813,7 +1814,7 @@ export async function buildReport(
   const gateResult = await gateRunner()
   const gradedBodySource = opts.gradedBodySource ?? 'ambient'
   // O6 (found live 2026-09-04, initially misread): this gate run happens
-  // while the OLD AEG:EVIDENCE block is still the live/on-disk body —
+  // while the OLD VINAYA:EVIDENCE block is still the live/on-disk body —
   // `evidence-fresh` necessarily grades that stale block against a fresh
   // recompute and reports `fail`, even though the block this very Group B is
   // part of is about to replace it. Pasting that `fail` into Group B reads
@@ -1999,7 +2000,7 @@ export async function runReportForOpenPr(
     }
     return {
       kind: 'drift-restored',
-      message: `vinaya pr report: refused — self-verification FAILED: PR ${pushPr}'s live body changed outside the AEG:EVIDENCE region after the push. Restored the pre-edit body. Inspect this command and PR ${pushPr} for drift before retrying.`
+      message: `vinaya pr report: refused — self-verification FAILED: PR ${pushPr}'s live body changed outside the VINAYA:EVIDENCE region after the push. Restored the pre-edit body. Inspect this command and PR ${pushPr} for drift before retrying.`
     }
   }
 

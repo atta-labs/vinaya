@@ -60,6 +60,7 @@ import {
 } from '../../tools/task-contract/objectives'
 import { readTierFromPrBody } from '../../tools/task-contract/pr-tier'
 import { extractIssue } from '../../../../kernel/adapters/code-host/github/extract-issue'
+import { REGION_PREFIXES } from '../../tools/legacy-markers'
 import { readConfigObjectivesSinceIssue } from '../../tools/task-contract/objectives-cutover-config'
 import { readConfigPrincipals } from '../../tools/task-contract/principals-config'
 
@@ -187,7 +188,7 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
   const principals = readConfigPrincipals()
   if (!principals.ok) return { ok: false, message: principals.reason }
 
-  const { issue } = extractIssue(prBody)
+  const { issue } = extractIssue(prBody, REGION_PREFIXES)
   if (issue === null) {
     return { ok: false, message: 'not dispatched — no `Closes #N` in the PR body to resolve the task Issue.' }
   }
@@ -258,7 +259,7 @@ function resolveIssueObjectives(prBody: string, isTaskBranch: boolean): Objectiv
     const own = objectivesOf(prBody)
     return own.ok ? own.objectives : []
   }
-  const { issue } = extractIssue(prBody)
+  const { issue } = extractIssue(prBody, REGION_PREFIXES)
   const cutover = readConfigObjectivesSinceIssue()
   if (issue === null || (cutover !== null && issue < cutover)) return null
   try {

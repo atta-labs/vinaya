@@ -122,6 +122,7 @@ import { newestPrincipalRulingOrdinal } from '../../../tools/task-contract/rulin
 import { resolveNewestFrozenBrief } from '../../../tools/task-contract/brief-validation'
 import type { ReviewGateComment } from '../../../tools/review-gate'
 import { extractIssue } from '../../../../../kernel/adapters/code-host/github/extract-issue'
+import { REGION_PREFIXES } from '../../../tools/legacy-markers'
 import {
   loadConfig,
   loadTrustAnchorConfig,
@@ -1395,7 +1396,7 @@ export type ObjectivesResolution =
  */
 function resolveObjectivesForPr(pr: string): ObjectivesResolution {
   const prBody = fetchPrBody(pr)
-  const { issue } = extractIssue(prBody)
+  const { issue } = extractIssue(prBody, REGION_PREFIXES)
   // The Objectives cutover from the working-tree config — an absent
   // `gateCutovers.objectivesSinceIssue` resolves to `null` (no cutover: render
   // the objectives block for every Issue, from 1, O1); this repo restates its
@@ -1489,7 +1490,7 @@ export function resolveBriefHashForPr(pr: string, principalAllowlist: readonly s
 /** The frozen brief's own text for the Issue `pr` closes — `null` in exactly the cases `resolveBriefHashForPr` documents; every fetch failure refuses. */
 function resolveFrozenBriefContentForPr(pr: string, principalAllowlist: readonly string[]): string | null {
   const prBody = fetchPrBody(pr)
-  const { issue } = extractIssue(prBody)
+  const { issue } = extractIssue(prBody, REGION_PREFIXES)
   if (issue === null) return null
   let comments: Array<{ body: string; author: string | null }>
   try {

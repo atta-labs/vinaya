@@ -1,5 +1,6 @@
 import { isEntryPoint } from '../../../../../kernel/gates/checks/entry-point.js'
 import { forgeSnapshotCommand } from '../../../../../kernel/adapters/code-host/github/forge-snapshot'
+import { REGION_PREFIXES } from '../../legacy-markers.js'
 
 /**
  * `vinaya pr snapshot --dir <dir>` — CI plumbing, not a user command: the
@@ -8,7 +9,7 @@ import { forgeSnapshotCommand } from '../../../../../kernel/adapters/code-host/g
  * `lib/forge-snapshot.ts`, the one owner of writing and reading the snapshot.
  */
 export function prSnapshotCommand(args: string[]): void {
-  forgeSnapshotCommand(args)
+  forgeSnapshotCommand(args, REGION_PREFIXES)
 }
 
 // Run as a program (`vinaya-pr-snapshot`): started through the shared program entry.

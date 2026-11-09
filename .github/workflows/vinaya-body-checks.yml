@@ -124,9 +124,9 @@ jobs:
             BODY="$(jq -r '.body // ""' "$RAW/pull.json")"
             WAIT_FOR=""
             if [[ "$BRANCH" =~ ^task/[^/]+/[^/]+$ ]]; then
-              CLOSES_REGION="$(printf '%s\n' "$BODY" | sed -n '/<!-- AEG:CLOSES:START -->/,/<!-- AEG:CLOSES:END -->/p')"
+              CLOSES_REGION="$(printf '%s\n' "$BODY" | sed -n '/<!-- [A-Z]*:CLOSES:START -->/,/<!-- [A-Z]*:CLOSES:END -->/p')"
               if ! printf '%s\n' "$CLOSES_REGION" | grep -qE '#[0-9]+'; then
-                WAIT_FOR="a real Closes #N inside the AEG:CLOSES region for task branch $BRANCH"
+                WAIT_FOR="a real Closes #N inside the CLOSES region for task branch $BRANCH"
               fi
             fi
             if [ -z "$WAIT_FOR" ]; then

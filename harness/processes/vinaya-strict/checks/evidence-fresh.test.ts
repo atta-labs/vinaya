@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { anchoredRegion } from '../../../kernel/gates/checks/anchored-region'
 import { describe, expect, it } from 'bun:test'
+import { REGION_PREFIXES } from '../tools/legacy-markers'
 import { EVIDENCE_PLACEHOLDER_TEXT, compareEvidenceBlock } from './evidence-fresh-logic'
 import { type ResolvedRegion, ScanContext, resolveAnchoredRegion } from '../../../kernel/gates/checks/scan-context'
 import { type GroupCCommandResult, renderGroupC } from '../tools/pr-report/bin/pr-report'
@@ -43,7 +44,7 @@ function evidenceBody(head: string, numstat: string): string {
 
 /** Resolves through the real, shared path — the same one `check-evidence-fresh` uses. */
 function regionOf(body: string): ResolvedRegion {
-  const resolved = resolveAnchoredRegion(ScanContext.from(body), 'EVIDENCE')
+  const resolved = resolveAnchoredRegion(ScanContext.from(body, REGION_PREFIXES), 'EVIDENCE')
   if (resolved === null) throw new Error('fixture body carries no AEG:EVIDENCE block')
   if (resolved === 'hidden') throw new Error('fixture body hides its AEG:EVIDENCE block in a <details> block')
   return resolved
@@ -79,11 +80,11 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
 
   it('(d) no AEG:EVIDENCE block → pass (caller bypasses before calling compareEvidenceBlock)', () => {
     const body = ['## Summary', '', 'no evidence block here.'].join('\n')
-    expect(anchoredRegion(body, 'EVIDENCE')).toBeNull()
+    expect(anchoredRegion(body, 'EVIDENCE', REGION_PREFIXES)).toBeNull()
   })
 
   it('(e) no PR body → pass (caller bypasses before calling compareEvidenceBlock)', () => {
-    expect(anchoredRegion('', 'EVIDENCE')).toBeNull()
+    expect(anchoredRegion('', 'EVIDENCE', REGION_PREFIXES)).toBeNull()
   })
 
   it('a mutation that reverts the check would still be caught: an unmutated body against a DIFFERENT real numstat fails', () => {

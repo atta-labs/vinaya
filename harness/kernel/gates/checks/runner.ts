@@ -59,7 +59,7 @@ export type RunOptions = {
    * blanket switches this names specific checks by identity: its one caller is
    * `vinaya pr report`'s Group C (`lib/pr-report-engine.ts`), which runs a
    * Test Plan's own `vinaya check --all` from the PR head and would otherwise
-   * grade `evidence-fresh` against the very `AEG:EVIDENCE` block that same
+   * grade `evidence-fresh` against the very EVIDENCE block that same
    * report is about to write — a self-inflicted staleness failure the command
    * could never record passing, never a fact about the command.
    * The command text a Group C run records is never rewritten to carry an

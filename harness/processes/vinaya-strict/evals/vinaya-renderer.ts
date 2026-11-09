@@ -41,6 +41,8 @@ import {
 import type { SourceDeliveryReceipt } from '../../../kernel/source-manifest'
 import { type GrantedRole, ROLE_TOOL_GRANTS } from '../integration/policies/roles'
 import { AGENT_TOOL_CATALOG } from '../../../kernel/tools/tool-catalog'
+import { anchoredRegionBounds } from '../../../kernel/gates/checks/anchored-region'
+import { REGION_PREFIXES } from '../tools/legacy-markers'
 import type { Digest } from '../../../kernel/evals/contracts'
 import {
   canonicalJson,
@@ -646,7 +648,7 @@ function readEvidence(record: VinayaTrialRecord) {
  */
 function readScope(record: VinayaTrialRecord) {
   const body = stringOf(record.pullRequest?.body, 'pullRequest.body')
-  if (!/<!--\s*AEG:BEYOND-SURFACE:START\s*-->[\s\S]*<!--\s*AEG:BEYOND-SURFACE:END\s*-->/.test(body)) {
+  if (anchoredRegionBounds(body, 'BEYOND-SURFACE', REGION_PREFIXES) === null) {
     throw new Absent('the pull request body carries no beyond-Surface record')
   }
   return { recordedOutOfScopePaths: recordedBeyondSurfacePaths(body) }
@@ -885,6 +887,7 @@ export const MAPPING_SOURCE_PATHS: readonly string[] = [
   'harness/kernel/log/schema.ts',
   'harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts',
   'harness/kernel/gates/checks/anchored-region.ts',
+  'harness/processes/vinaya-strict/tools/legacy-markers.ts',
   'harness/kernel/adapters/code-host/github/strip-code.ts'
 ]
 

@@ -113,7 +113,7 @@ At close-out you assemble one **provenance record** for the task and post it as 
 Fields (omit any whose source fact is genuinely absent; never invent one):
 
 ```
-### AEG provenance — task <n> (tranche <name>)
+### Vinaya provenance — task <n> (tranche <name>)
 - Issue:        #N  (closed by merge)
 - Tier:         0|1|3
 - Brief:        frozen on the task Issue's `aeg:brief:v1` comment

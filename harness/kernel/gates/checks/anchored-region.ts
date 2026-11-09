@@ -1,9 +1,9 @@
 /**
- * AEG anchored-region grammar. Pure —
+ * Anchored-region grammar. Pure —
  * no `fs`, no `gh`/`git`.
  *
  * One anchor syntax for every gate-read field: an HTML comment pair
- * `<!-- AEG:<FIELD>:START -->` … `<!-- AEG:<FIELD>:END -->` delimiting the
+ * `<!-- <PREFIX>:<FIELD>:START -->` … `<!-- <PREFIX>:<FIELD>:END -->` delimiting the
  * field's one canonical home inside a PR/Issue body. HTML comments render
  * invisibly on the forge, survive inside `<details>` blocks, and can never be
  * produced accidentally by freeform prose — which is exactly the failure class
@@ -35,9 +35,9 @@
  *
  * The field line/block goes on its own line(s) INSIDE the pair — e.g.
  *
- *     <!-- AEG:TIER:START -->
+ *     <!-- VINAYA:TIER:START -->
  *     **Tier:** 1
- *     <!-- AEG:TIER:END -->
+ *     <!-- VINAYA:TIER:END -->
  *
  * Deliberately minimal: eight field names, one shape. This is a delimiting
  * convention, not a metadata DSL; resist adding structure to it.
@@ -91,6 +91,16 @@ export { stripCode } from '../../adapters/code-host/github/strip-code'
 export type { StripCodeOptions } from '../../adapters/code-host/github/strip-code'
 
 /**
+ * The regex alternation for the caller's accepted marker prefixes. The grammar
+ * names no spelling of its own: a caller states every prefix it reads, and an
+ * empty list is a programming error, not a body with no regions.
+ */
+export function prefixAlternation(prefixes: readonly string[]): string {
+  if (prefixes.length === 0) throw new Error('anchored-region: the caller must name at least one marker prefix')
+  return `(?:${prefixes.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`
+}
+
+/**
  * The START/END markers' positions in `body`, found the same code-blind way
  * `anchoredRegion` finds its content — `null` under the identical conditions
  * `anchoredRegion` returns `null`. `outerStart`/`outerEnd` span the markers
@@ -108,26 +118,28 @@ export type { StripCodeOptions } from '../../adapters/code-host/github/strip-cod
  */
 export function anchoredRegionBounds(
   body: string,
-  field: AnchorField
+  field: AnchorField,
+  prefixes: readonly string[]
 ): { outerStart: number; outerEnd: number; innerStart: number; innerEnd: number } | null {
   const masked = maskCode(body)
-  const start = new RegExp(`<!--\\s*AEG:${field}:START\\s*-->`).exec(masked)
+  const tag = prefixAlternation(prefixes)
+  const start = new RegExp(`<!--\\s*${tag}:${field}:START\\s*-->`).exec(masked)
   if (!start) return null
   const innerStart = start.index + start[0].length
-  const end = new RegExp(`<!--\\s*AEG:${field}:END\\s*-->`).exec(masked.slice(innerStart))
+  const end = new RegExp(`<!--\\s*${tag}:${field}:END\\s*-->`).exec(masked.slice(innerStart))
   if (!end) return null
   const innerEnd = innerStart + end.index
   return { outerStart: start.index, outerEnd: innerEnd + end[0].length, innerStart, innerEnd }
 }
 
 /**
- * The text between the first `<!-- AEG:<field>:START -->` and the first
- * `<!-- AEG:<field>:END -->` after it, or `null` when the body carries no
+ * The text between the first `<!-- <prefix>:<field>:START -->` and the first
+ * `<!-- <prefix>:<field>:END -->` after it, or `null` when the body carries no
  * (well-formed, non-code) pair for this field. `null` is the signal for
  * consumers to run their unchanged prose/heading recognition.
  */
-export function anchoredRegion(body: string, field: AnchorField): string | null {
-  const bounds = anchoredRegionBounds(body, field)
+export function anchoredRegion(body: string, field: AnchorField, prefixes: readonly string[]): string | null {
+  const bounds = anchoredRegionBounds(body, field, prefixes)
   if (!bounds) return null
   return body.slice(bounds.innerStart, bounds.innerEnd)
 }

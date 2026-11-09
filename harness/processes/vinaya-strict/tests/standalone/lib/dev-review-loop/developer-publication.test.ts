@@ -713,7 +713,7 @@ describe('a refused publication never advances the recorded base', () => {
 
 describe('the beyond-Surface record when an input cannot be read', () => {
   const handWritten =
-    '## Scope\n\nScope.\n\n<!-- AEG:BEYOND-SURFACE:START -->\n- `src/sneaked.ts` hand-added\n<!-- AEG:BEYOND-SURFACE:END -->\n\n**Tier:** 3\n'
+    '## Scope\n\nScope.\n\n<!-- VINAYA:BEYOND-SURFACE:START -->\n- `src/sneaked.ts` hand-added\n<!-- VINAYA:BEYOND-SURFACE:END -->\n\n**Tier:** 3\n'
 
   /**
    * Runs a loop whose round-1 review blocks; between that review and the
@@ -794,7 +794,7 @@ describe('the beyond-Surface record when an input cannot be read', () => {
   for (const [input, overrides] of unreadable) {
     it(`writes the block empty when ${input} cannot be read, dropping the hand-written list`, async () => {
       const body = await writtenBody(surfaceWorld(), overrides)
-      expect(body).toContain('<!-- AEG:BEYOND-SURFACE:START -->\n<!-- AEG:BEYOND-SURFACE:END -->')
+      expect(body).toContain('<!-- VINAYA:BEYOND-SURFACE:START -->\n<!-- VINAYA:BEYOND-SURFACE:END -->')
       expect(recordedBeyondSurfacePaths(body)).toEqual([])
       expect(body).not.toContain('src/sneaked.ts')
     })

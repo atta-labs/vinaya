@@ -28,7 +28,7 @@
  * Reads `PR_BODY`, `BRANCH` and `PULL_REQUEST_HEAD_SHA`, the same inputs
  * `check-test-plan.ts` reads. On a task branch it grades the task Issue's
  * frozen brief `[live]` lines at the pull request's head
- * (`resolveLiveCheckInputs`): each with no passed `AEG:LIVE` entry at that
+ * (`resolveLiveCheckInputs`): each with no passed `VINAYA:LIVE` entry at that
  * head is an unticked line, so the merge holds until it passes there or the
  * Principal ticks it. Inputs that cannot be learned — a brief that cannot be
  * read, a not-found Issue included, or a head with no body — are a blocking
