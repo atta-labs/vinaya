@@ -9,6 +9,10 @@
  * A replay therefore changes the same lines back: each changed file's diff applied in reverse, or — when later
  * commits moved those lines — the file as it was before the change; a file the record's commit no longer holds
  * cannot be changed there and is left out.
+ *
+ * The recorded set is not asserted to be smaller than the static one: the record also finds the tests that read a
+ * changed file through other files, which static selection misses, so it may select more, and that set is the
+ * correct one. The static count is pinned only to show the difference.
  */
 import { describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
