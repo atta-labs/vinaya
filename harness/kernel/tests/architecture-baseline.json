@@ -15,7 +15,7 @@
   "apps/cli/src/commands/task-status.ts": 7,
   "apps/cli/src/commands/task-switch.ts": 2,
   "apps/cli/src/commands/upgrade.ts": 9,
-  "apps/cli/src/index.ts": 3,
+  "apps/cli/src/index.ts": 2,
   "apps/cli/src/lib/output.ts": 1,
   "harness/kernel/adapters/agents/agent-line.ts": 13,
   "harness/kernel/adapters/agents/claude-code/claude-code-transcript.ts": 1,
