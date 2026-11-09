@@ -836,6 +836,56 @@ describe('what a native run records', () => {
     expect(await lookupGreenRun(note.native?.command as string, dir, cache)).toBeNull()
   })
 
+  it('a run stopped after its first failing group credits no unrun test and names only the failing one', async () => {
+    const { dir, head } = repo()
+    const note = frozen(dir, head, ['a.test.ts@default', 'b.test.ts@default'])
+    const first: NativeGroup = { ...GROUP, cwd: '.', tests: ['a.test.ts'], args: ['./a.test.ts'] }
+    const second: NativeGroup = { ...first, id: 'second@default', tests: ['b.test.ts'], args: ['./b.test.ts'] }
+    const native = {
+      ...nativeOf([first, second], note.context),
+      identities: ['a.test.ts@default', 'b.test.ts@default']
+    }
+    const stoppedNote: SelectionNote = { ...note, native }
+    const startedGroups: string[] = []
+    const outcome = runFrozenPlan(dir, native, {
+      run: (groups, onGroupEnd) => {
+        startedGroups.push((groups[0] as NativeGroup).id)
+        const ended = groupOutcome(first, { failed: ['a.test.ts'], confirmed: [], obligations: ['a.test.ts'] })
+        onGroupEnd(ended)
+        return {
+          failedRunners: [first.id],
+          problems: [],
+          executions: [{ group: first.id, outcome: 'completed', files: ['a.test.ts'] }],
+          failedTests: { [first.id]: ['a.test.ts'] },
+          outcomes: [ended]
+        }
+      },
+      state: () => 'same',
+      context: () => note.context,
+      roots: [dir]
+    })
+    expect(outcome).toMatchObject({ passed: false, failed: ['a.test.ts'], stopped: { tests: 1, groups: 1 } })
+    expect(outcome.completion.problems).toEqual([])
+    const cache = memoryCache()
+    const { receipt } = await recordLocalRun({
+      repoRoot: dir,
+      note: stoppedNote,
+      outcome,
+      log: ' 1 fail',
+      elapsedSeconds: 1,
+      mode: 'default',
+      cache
+    })
+    expect(receipt).toBe(false)
+    const record = JSON.parse(readJsonUnderGit(dir, FAILED_TESTS_RECORD) as string)
+    expect(record).toMatchObject({ version: 1, failedHoldsUnconfirmed: true, confirmed: [] })
+    expect(record.kind).toBeUndefined()
+    expect([...record.failed].sort()).toEqual([join(dir, 'a.test.ts'), join(dir, 'b.test.ts')])
+    const last = JSON.parse(readJsonUnderGit(dir, LAST_PUSH_RESULT) as string)
+    expect(last).toMatchObject({ outcome: 'failed', selectionCompleted: false, failed: [join(dir, 'a.test.ts')] })
+    expect(await lookupGreenRun(native.command as string, dir, cache)).toBeNull()
+  })
+
   it('a green run on an uncommitted tree leaves no passing record; drift leaves no proof at all', async () => {
     const { dir, head } = repo()
     writeFileSync(join(dir, 'a.test.ts'), 'edited\n')
@@ -1156,9 +1206,19 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     const refused = step('run')
     expect(refused.status).toBe(1)
     expect(refused.out).toContain(`failing: ${BOUNDARY}`)
+    // The push stopped at the failing group: the unrun test stays an obligation but is never named as failing.
+    expect(refused.out).toContain('not run; the next push runs them')
     expect(json(dir, FAILED_TESTS_RECORD)).toMatchObject({
-      failed: [expect.stringMatching(/\/apps\/cli\/tests\/import-boundary\.test\.ts$/)],
+      failed: [
+        expect.stringMatching(/\/apps\/cli\/tests\/import-boundary\.test\.ts$/),
+        expect.stringMatching(/\/scripts\/package-compat\/package-compat\.test\.ts$/)
+      ],
+      failedHoldsUnconfirmed: true,
+      confirmed: [],
       selectionCompleted: true
+    })
+    expect(json(dir, LAST_PUSH_RESULT)).toMatchObject({
+      failed: [expect.stringMatching(/\/apps\/cli\/tests\/import-boundary\.test\.ts$/)]
     })
 
     // The repair: compared with the refused head, the failed test re-run as an obligation, green again.
