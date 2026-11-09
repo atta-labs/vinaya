@@ -55,6 +55,8 @@ import {
   verificationInputsDirty,
   writeJsonUnderGit
 } from '../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests.js'
+// The context is read under the same environment the selection read it under, so a plan and its run agree.
+import { runEnvironment } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store.js'
 import {
   defaultTestRunCache,
   recordGreenTestRun
@@ -309,6 +311,8 @@ export type LocalRunOutcome = {
   drift: string | null
   /** Each Bun runner group's JUnit report, as written, with the folder it ran in: the run's complete passes. */
   reports?: { cwd: string; xml: string }[]
+  /** Present when the run stopped after a failing runner group: what it left unrun, for the next push to run. */
+  stopped?: { tests: number; groups: number }
 }
 
 /** Where the run writes the record each finished runner group leaves, and what binds it to this run. */
@@ -456,7 +460,8 @@ export function runFrozenPlan(
 ): LocalRunOutcome {
   const state = deps.state ?? (() => trackedState(repoRoot))
   const contextNow =
-    deps.context ?? (() => nativeContext(computeVerificationContext(repoRoot)?.digest ?? null, native.inventory))
+    deps.context ??
+    (() => nativeContext(computeVerificationContext(repoRoot, runEnvironment())?.digest ?? null, native.inventory))
   const now = deps.now ?? (() => new Date())
   const before = state()
   const contextBefore = contextNow()
@@ -506,7 +511,8 @@ export function runFrozenPlan(
         log: (line) => process.stderr.write(`${line}\n`),
         announce: true,
         onGroupEnd: onEnd,
-        onReport: (group, xml) => reports.push({ cwd: group.cwd, xml })
+        onReport: (group, xml) => reports.push({ cwd: group.cwd, xml }),
+        stopAfterFailedGroup: true
       }))
   const reports: { cwd: string; xml: string }[] = []
   // An empty plan starts nothing.
@@ -514,7 +520,15 @@ export function runFrozenPlan(
     native.groups.length === 0
       ? { failedRunners: [], problems: [], executions: [], failedTests: {}, outcomes: [] }
       : run(native.groups, onGroupEnd)
-  const completion = completionOf(native.groups, result, roots)
+  // A run that stopped after a failing group never started the rest: those groups are unrun, not missing executions.
+  // A group ran when the scheduler heard its end (a signaled or interrupted one included) or recorded its execution.
+  const started = new Set([...(result.outcomes ?? []).map((o) => o.group), ...result.executions.map((e) => e.group)])
+  const unrunGroups = native.groups.filter((g) => !started.has(g.id))
+  const stopped = result.failedRunners.length > 0 && started.size > 0 && unrunGroups.length > 0
+  const ranGroups = stopped ? native.groups.filter((g) => started.has(g.id)) : native.groups
+  const ranTests = new Set(ranGroups.flatMap((g) => g.tests))
+  const base = completionOf(ranGroups, result, roots)
+  const completion: NativeCompletion = stopped ? { ...base, completed: false } : base
   const failed = failedOf(result, completion)
   const after = state()
   const contextAfter = contextNow()
@@ -533,7 +547,15 @@ export function runFrozenPlan(
     unreported: [...new Set((outcomes ?? []).flatMap((o) => o.unreported))].sort(compare),
     ...(outcomes !== undefined ? { unconfirmed: plan.filter((id) => !confirmed.has(id)) } : {}),
     drift,
-    reports
+    reports,
+    ...(stopped
+      ? {
+          stopped: {
+            tests: new Set(unrunGroups.flatMap((g) => g.tests).filter((t) => !ranTests.has(t))).size,
+            groups: unrunGroups.length
+          }
+        }
+      : {})
   }
 }
 
@@ -577,7 +599,7 @@ export async function recordLocalRun(input: {
       completion: outcome.completion,
       head,
       branch,
-      context: nativeContext(computeVerificationContext(repoRoot)?.digest ?? null, native.inventory),
+      context: nativeContext(computeVerificationContext(repoRoot, runEnvironment())?.digest ?? null, native.inventory),
       inputsClean: verificationInputsDirty(repoRoot) === false,
       treeClean: trackedTreeClean(repoRoot),
       now
@@ -595,8 +617,9 @@ export async function recordLocalRun(input: {
     // Every runner passed, but what it ran is no longer the head under test: no proof either way.
     clearRecordOfKind(repoRoot, 'passed')
   } else if (unconfirmed !== undefined) {
+    // A stopped run always leaves the unconfirmed record: it names its unrun tests as unconfirmed, never as proven.
     const record =
-      unconfirmed.length === 0 || unconfirmed.length === planTests(native).length
+      outcome.stopped === undefined && (unconfirmed.length === 0 || unconfirmed.length === planTests(native).length)
         ? unprovenRecord({ repoRoot, native, head, branch, now })
         : unconfirmedRecord({
             repoRoot,
@@ -753,6 +776,10 @@ async function runCommand(repoRoot: string, logPath: string | undefined): Promis
     return 0
   }
   process.stdout.write(`\nvinaya pre-push: refused — selected ${count} test(s), ${elapsed}s:\n`)
+  if (outcome.stopped)
+    process.stdout.write(
+      `  stopped after the first failing runner group: ${outcome.stopped.tests} test(s) in ${outcome.stopped.groups} runner group(s) not run; the next push runs them\n`
+    )
   if (outcome.failed === 'all') process.stdout.write('  a runner failed without naming its failing tests\n')
   else {
     const unreported = new Set(outcome.unreported ?? [])
@@ -773,7 +800,10 @@ function exactCommand(repoRoot: string, argv: readonly string[]): number {
   }
   const head = currentHead(repoRoot)
   const view = readTestInventory(repoRoot, { head }).head
-  const context = nativeContext(computeVerificationContext(repoRoot)?.digest ?? null, view.contextIdentity)
+  const context = nativeContext(
+    computeVerificationContext(repoRoot, runEnvironment())?.digest ?? null,
+    view.contextIdentity
+  )
   if (context !== parsed.context) {
     process.stderr.write(
       `vinaya local-run: refused — this command names verification context ${parsed.context}, and this checkout runs under ${context ?? 'an unreadable context'}\n`

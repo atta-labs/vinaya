@@ -661,6 +661,8 @@ export function runGroups(
     onReport?: (group: NativeGroup, xml: string) => void
     /** How long one runner may take before it is stopped and run once more; none when absent. */
     groupTimeLimitMs?: number
+    /** Start no later group once a group's runner did not exit zero (failed, signaled or interrupted); off when absent. */
+    stopAfterFailedGroup?: boolean
   } = {}
 ): RunResult {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`))
@@ -677,8 +679,12 @@ export function runGroups(
     if (options.announce) log(testGroupEndLine({ group: group.id, executed: outcome.executed, failed: outcome.failed }))
     options.onGroupEnd?.(outcome, index)
   }
+  let stopped = false
+  let ranCount = 0
   try {
     groups.forEach((group, index) => {
+      if (stopped) return
+      ranCount = index + 1
       const report = join(dir, `${index}.${group.runner === 'bun' ? 'xml' : 'json'}`)
       const command = runnerCommand(group, report)
       log(
@@ -711,6 +717,7 @@ export function runGroups(
         failedRunners.push(group.id)
         failedTests[group.id] = 'all'
         ended(group, index, { status: run.status, signal: run.signal, report: null })
+        if (options.stopAfterFailedGroup) stopped = true
         return
       }
       let text: string | null = null
@@ -735,6 +742,7 @@ export function runGroups(
           .map((entry) => scheduledTestOf(group, entry, repoRoot))
           .filter((id): id is string => id !== null)
         failedTests[group.id] = named.length > 0 ? [...new Set(named)].sort() : 'all'
+        if (options.stopAfterFailedGroup) stopped = true
       }
       executions.push(
         files === null
@@ -745,7 +753,9 @@ export function runGroups(
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
-  const { problems } = validateExecutedIdentities(groups, executions, { roots })
+  // A stopped run judges only the groups that ran: a group that never started is not a missing execution.
+  const judged = stopped ? groups.slice(0, ranCount) : groups
+  const { problems } = validateExecutedIdentities(judged, executions, { roots })
   return { failedRunners, problems, executions, failedTests, outcomes }
 }
 

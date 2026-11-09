@@ -20,6 +20,7 @@ import {
 } from './local-run'
 import { type GroupOutcome, type RunResult, runGroups } from './schedule'
 import { branchSideBase } from './repository-selection'
+import { runEnvironment } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store'
 import { leftOutByBranchSide } from '@attalabs/test-selection'
 import {
   computeVerificationContext,
@@ -761,7 +762,10 @@ describe('what a native run records', () => {
     return { dir, head }
   }
   const frozen = (dir: string, head: string, identities: string[]): SelectionNote => {
-    const context = nativeContext(computeVerificationContext(dir)?.digest ?? null, 'inventory-context') as string
+    const context = nativeContext(
+      computeVerificationContext(dir, runEnvironment())?.digest ?? null,
+      'inventory-context'
+    ) as string
     const groups = identities.length > 0 ? [{ ...GROUP, cwd: '.', tests: ['a.test.ts'], args: ['./a.test.ts'] }] : []
     return {
       version: 1,
@@ -848,6 +852,56 @@ describe('what a native run records', () => {
       context: note.native?.context
     })
     expect(await lookupGreenRun(note.native?.command as string, dir, cache)).toBeNull()
+  })
+
+  it('a run stopped after its first failing group credits no unrun test and names only the failing one', async () => {
+    const { dir, head } = repo()
+    const note = frozen(dir, head, ['a.test.ts@default', 'b.test.ts@default'])
+    const first: NativeGroup = { ...GROUP, cwd: '.', tests: ['a.test.ts'], args: ['./a.test.ts'] }
+    const second: NativeGroup = { ...first, id: 'second@default', tests: ['b.test.ts'], args: ['./b.test.ts'] }
+    const native = {
+      ...nativeOf([first, second], note.context),
+      identities: ['a.test.ts@default', 'b.test.ts@default']
+    }
+    const stoppedNote: SelectionNote = { ...note, native }
+    const startedGroups: string[] = []
+    const outcome = runFrozenPlan(dir, native, {
+      run: (groups, onGroupEnd) => {
+        startedGroups.push((groups[0] as NativeGroup).id)
+        const ended = groupOutcome(first, { failed: ['a.test.ts'], confirmed: [], obligations: ['a.test.ts'] })
+        onGroupEnd(ended)
+        return {
+          failedRunners: [first.id],
+          problems: [],
+          executions: [{ group: first.id, outcome: 'completed', files: ['a.test.ts'] }],
+          failedTests: { [first.id]: ['a.test.ts'] },
+          outcomes: [ended]
+        }
+      },
+      state: () => 'same',
+      context: () => note.context,
+      roots: [dir]
+    })
+    expect(outcome).toMatchObject({ passed: false, failed: ['a.test.ts'], stopped: { tests: 1, groups: 1 } })
+    expect(outcome.completion.problems).toEqual([])
+    const cache = memoryCache()
+    const { receipt } = await recordLocalRun({
+      repoRoot: dir,
+      note: stoppedNote,
+      outcome,
+      log: ' 1 fail',
+      elapsedSeconds: 1,
+      mode: 'default',
+      cache
+    })
+    expect(receipt).toBe(false)
+    const record = JSON.parse(readJsonUnderGit(dir, FAILED_TESTS_RECORD) as string)
+    expect(record).toMatchObject({ version: 1, failedHoldsUnconfirmed: true, confirmed: [] })
+    expect(record.kind).toBeUndefined()
+    expect([...record.failed].sort()).toEqual([join(dir, 'a.test.ts'), join(dir, 'b.test.ts')])
+    const last = JSON.parse(readJsonUnderGit(dir, LAST_PUSH_RESULT) as string)
+    expect(last).toMatchObject({ outcome: 'failed', selectionCompleted: false, failed: [join(dir, 'a.test.ts')] })
+    expect(await lookupGreenRun(native.command as string, dir, cache)).toBeNull()
   })
 
   it('a green run on an uncommitted tree leaves no passing record; drift leaves no proof at all', async () => {
@@ -1097,8 +1151,15 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     if (config.prePush?.alwaysRun?.length) {
       config.prePush.alwaysRun = []
       writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
-      git('commit', '-qam', 'fixture: no always-run tests')
     }
+    // For the same reason, no push here owes the build job's repository suite: that suite holds this scenario's own
+    // file, so each push in the clone would start the scenario again. The package-compatibility suite stays an
+    // obligation, the second runner group a failing push stops before.
+    const inventoryPath = join(dir, 'scripts/test-suites/inventory.json')
+    const inventory = JSON.parse(readFileSync(inventoryPath, 'utf8')) as { policies: { id: string }[] }
+    inventory.policies = inventory.policies.filter((policy) => policy.id !== 'inventory-gate')
+    writeFileSync(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`)
+    git('commit', '-qam', 'fixture: no always-run tests, no repository-suite obligation')
     git('update-ref', 'refs/remotes/origin/main', 'HEAD')
     git('checkout', '-q', '-b', 'task/x/1')
     // The clone shares this checkout's installed dependencies.
@@ -1170,9 +1231,19 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     const refused = step('run')
     expect(refused.status).toBe(1)
     expect(refused.out).toContain(`failing: ${BOUNDARY}`)
+    // The push stopped at the failing group: the unrun test stays an obligation but is never named as failing.
+    expect(refused.out).toContain('not run; the next push runs them')
     expect(json(dir, FAILED_TESTS_RECORD)).toMatchObject({
-      failed: [expect.stringMatching(/\/apps\/cli\/tests\/import-boundary\.test\.ts$/)],
+      failed: [
+        expect.stringMatching(/\/apps\/cli\/tests\/import-boundary\.test\.ts$/),
+        expect.stringMatching(/\/scripts\/package-compat\/package-compat\.test\.ts$/)
+      ],
+      failedHoldsUnconfirmed: true,
+      confirmed: [],
       selectionCompleted: true
+    })
+    expect(json(dir, LAST_PUSH_RESULT)).toMatchObject({
+      failed: [expect.stringMatching(/\/apps\/cli\/tests\/import-boundary\.test\.ts$/)]
     })
 
     // The repair: compared with the refused head, the failed test re-run as an obligation, green again.
