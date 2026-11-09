@@ -702,9 +702,11 @@ export function runGroups(
     options.onGroupEnd?.(outcome, index)
   }
   let stopped = false
+  let ranCount = 0
   try {
     groups.forEach((group, index) => {
       if (stopped) return
+      ranCount = index + 1
       const report = join(dir, `${index}.${group.runner === 'bun' ? 'xml' : 'json'}`)
       const command = runnerCommand(group, report)
       log(
@@ -771,7 +773,8 @@ export function runGroups(
     rmSync(dir, { recursive: true, force: true })
   }
   // A stopped run judges only the groups that ran: a group that never started is not a missing execution.
-  const { problems } = validateExecutedIdentities(groups.slice(0, executions.length), executions, { roots })
+  const judged = stopped ? groups.slice(0, ranCount) : groups
+  const { problems } = validateExecutedIdentities(judged, executions, { roots })
   return { failedRunners, problems, executions, failedTests, outcomes }
 }
 

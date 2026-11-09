@@ -523,6 +523,16 @@ describe('real runners execute exactly their group', () => {
     expect(whole.outcomes.map((o) => o.group)).toEqual(['bun@default', 'vt@default'])
   }, 120_000)
 
+  test('a killed group is reported either way; only the stop option leaves the next group unstarted', () => {
+    const plan = [...groupsFor(['pkg/bun/tests/kill.test.ts']), vitestGroup]
+    const whole = runGroups(root, plan, quiet)
+    expect(whole.outcomes.map((o) => o.group)).toEqual(['bun@default', 'vt@default'])
+    expect(whole.problems.map((p) => `${p.code} ${p.path}`)).toContain('interrupted bun@default')
+    const stopped = runGroups(root, plan, { ...quiet, stopAfterFailedGroup: true })
+    expect(stopped.outcomes.map((o) => o.group)).toEqual(['bun@default'])
+    expect(stopped.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['interrupted bun@default'])
+  }, 120_000)
+
   test('a runner frozen by a synchronous child is stopped at its limit and run once more', () => {
     const lines: string[] = []
     const result = runGroups(root, groupsFor(['pkg/bun/tests/freeze-once.test.ts']), {

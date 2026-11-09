@@ -743,7 +743,8 @@ export function runFrozenPlan(
       ? { failedRunners: [], problems: [], executions: [], failedTests: {}, outcomes: [] }
       : run(native.groups, onGroupEnd)
   // A run that stopped after a failing group never started the rest: those groups are unrun, not missing executions.
-  const started = new Set(result.executions.map((e) => e.group))
+  // A group ran when the scheduler heard its end (a signaled or interrupted one included) or recorded its execution.
+  const started = new Set([...(result.outcomes ?? []).map((o) => o.group), ...result.executions.map((e) => e.group)])
   const unrunGroups = native.groups.filter((g) => !started.has(g.id))
   const stopped = result.failedRunners.length > 0 && started.size > 0 && unrunGroups.length > 0
   const ranGroups = stopped ? native.groups.filter((g) => started.has(g.id)) : native.groups
