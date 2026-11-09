@@ -61,8 +61,9 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { dirname, isAbsolute, join } from 'node:path'
+import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TASK_TOOL_NAMES } from '../../../harness/kernel/tools/catalog/task-tools'
 import { trancheLabel } from '../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
@@ -377,6 +378,19 @@ const SURFACE_BODY = `Project: vinaya
 in: surface-fixture/**
 out: docs/**
 `
+
+/** A loopback port nothing is listening on right now. */
+function freeLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      server.close(() => resolve(port))
+    })
+  })
+}
 
 /** Waits for a spawned child to close, killing it at \`deadlineMs\` so a hung server cannot hang the run. */
 function collectUntilClosed(
@@ -1075,6 +1089,69 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     }
   },
 
+  studio: async ({ bin, fixtureDir, homeDir }) => {
+    // The shipped Studio, started from the packed tarball: the command is spawned (not run through the synchronous
+    // `run` helper, which blocks until the child exits), polled until Studio answers on loopback, then stopped. The
+    // browser opener is a stub earlier on PATH that records the address instead of opening anything.
+    const port = await freeLoopbackPort()
+    const stubDir = mkdtempSync(join(fixtureDir, '..', 'studio-opener-'))
+    const openedPath = join(stubDir, 'opened.txt')
+    for (const opener of ['open', 'xdg-open']) {
+      writeFileSync(join(stubDir, opener), `#!/bin/sh\necho "$1" >> "${openedPath}"\n`, { mode: 0o755 })
+    }
+    const env = isolatedEnv(homeDir)
+    env.PATH = `${stubDir}${delimiter}${env.PATH ?? ''}`
+    const child = spawn(bin, ['studio', '--port', String(port)], {
+      cwd: fixtureDir,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    let output = ''
+    child.stdout?.on('data', (d: Buffer) => {
+      output += d.toString()
+    })
+    child.stderr?.on('data', (d: Buffer) => {
+      output += d.toString()
+    })
+    const state: { exitCode: number | null } = { exitCode: null }
+    child.on('close', (code) => {
+      state.exitCode = code ?? 0
+    })
+    try {
+      let answered = false
+      const deadline = Date.now() + 120_000
+      while (!answered && state.exitCode === null && Date.now() < deadline) {
+        try {
+          await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(5_000) })
+          answered = true
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 500))
+        }
+      }
+      // The opener runs just after the port answers; give it a moment to record the address.
+      for (let i = 0; i < 20 && !existsSync(openedPath); i++) await new Promise((resolve) => setTimeout(resolve, 250))
+      const opened = existsSync(openedPath) ? readFileSync(openedPath, 'utf-8').trim() : ''
+      const ok = answered && opened === `http://127.0.0.1:${port}`
+      return {
+        status: ok ? 'pass' : 'fail',
+        detail: ok
+          ? `packed Studio answered on 127.0.0.1:${port} and the browser was asked to open ${opened}`
+          : `answered: ${answered}, opener received: "${opened}", exited early: ${state.exitCode ?? 'no'} — ${output.trim().slice(-300)}`
+      }
+    } finally {
+      child.kill('SIGTERM')
+      await new Promise<void>((resolve) => {
+        if (state.exitCode !== null) return resolve()
+        const killer = setTimeout(() => child.kill('SIGKILL'), 10_000)
+        child.once('close', () => {
+          clearTimeout(killer)
+          resolve()
+        })
+      })
+      rmSync(stubDir, { recursive: true, force: true })
+    }
+  },
+
   'vinaya-task-tools-serve': async ({ bin, fixtureDir, homeDir }) => {
     // The MCP lifecycle over stdio: initialize request, initialized
     // notification, tools/list request, then stdin is closed (the client's
@@ -1337,6 +1414,7 @@ export const RUN_ORDER = [
   'milestone edit',
   'issue surface',
   'vinaya-task-tools-serve',
+  'studio',
   'vinaya-log-emit',
   'vinaya-sync',
   'doctor',
