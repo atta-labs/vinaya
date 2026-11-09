@@ -6,15 +6,13 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { printJson } from '../../../harness/kernel/effects/envelope.js'
 import { ensureGhOnPath } from '../../../harness/kernel/adapters/code-host/github/gh-path.js'
-import { processHasLogDestination } from './lib/log-destination.js'
+import {
+  installServices,
+  registerOperationRecord
+} from '../../../harness/processes/vinaya-strict/integration/cli-services.js'
 import { printHelp } from './lib/output.js'
 import { packageRoot } from './lib/package-root.js'
 import { resolveAuthorRepoSourceEntry } from '../../../harness/processes/vinaya-strict/tools/self-host.js'
-
-type StartupModule = typeof import('../../../harness/processes/vinaya-strict/integration/cli-startup.js')
-type ConfigComposeModule = typeof import('../../../harness/processes/vinaya-strict/integration/config/compose.js')
-type LogSinkModule = typeof import('../../../harness/kernel/log/log-sink.js')
-type OperationLogModule = typeof import('../../../harness/kernel/log/client/cli-operation-log.js')
 
 // Each command's module loads only when that command runs, so a run, and a test that runs one command, reads
 // no other command's code.
@@ -69,25 +67,6 @@ function maybeDeferToAuthorRepoSource(): void {
 // in this process and in every child it spawns, resolves it.
 ensureGhOnPath()
 
-let servicesInstalled = false
-
-/**
- * The composition root: the Log sink factory, the configuration provider kernel code reads configuration through,
- * and the check registry. They install the first time something needs them, never at startup, so a start that
- * runs `version` or prints help loads none of them. The Log client builds its default sink from the installed
- * factory, never on its own.
- */
-function installServices(): void {
-  if (servicesInstalled) return
-  servicesInstalled = true
-  const startup = require('../../../harness/processes/vinaya-strict/integration/cli-startup.js') as StartupModule
-  const compose =
-    require('../../../harness/processes/vinaya-strict/integration/config/compose.js') as ConfigComposeModule
-  startup.installVinayaLogSinkFactory()
-  compose.installVinayaConfigProvider()
-  startup.installVinayaCheckRegistry()
-}
-
 maybeDeferToAuthorRepoSource()
 
 function readVersion(): string {
@@ -100,18 +79,7 @@ const [, , command, ...args] = process.argv
 // A taskless invocation's event lands in its own folder file, never the shared
 // `none.ndjson`, so a test run's real-runtime guard can exempt it alone. The Log client loads here, once, and only
 // when the process has a Log destination: a synchronous exit handler cannot await an import.
-if (processHasLogDestination(process.env)) {
-  const operationLog = require('../../../harness/kernel/log/client/cli-operation-log.js') as OperationLogModule
-  operationLog.recordCliOperationAtExit(process.argv.slice(2), {
-    on: (event, handler) => process.on(event, handler),
-    logSync: (event, options) => {
-      installServices()
-      ;(require('../../../harness/kernel/log/log-sink.js') as LogSinkModule).logSync(event, options)
-    },
-    now: Date.now,
-    unattributedStream: operationLog.CLI_OPERATION_STREAM
-  })
-}
+registerOperationRecord(command === undefined ? [] : [command, ...args])
 
 if (!command || command === 'help' || command === '--help' || command === '-h') {
   printHelp()
