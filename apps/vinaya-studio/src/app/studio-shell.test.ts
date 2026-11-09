@@ -58,7 +58,7 @@ describe('Studio root layout', () => {
     expect(readKeys).toEqual(['vinayaStudio'])
     expect(element.props.config).toBe(cmsResult.config)
     expect(html).toContain('<style id="vinaya-studio-theme">')
-    expect(html).toContain('--primary:')
+    expect(html).toContain(realCms.generateThemeCSSForScheme(theme, 'dark'))
     expect(html).toContain('data-theme="dark"')
   })
 
