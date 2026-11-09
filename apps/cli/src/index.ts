@@ -5,17 +5,16 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { printJson } from '../../../harness/kernel/effects/envelope.js'
-import {
-  installVinayaCheckRegistry,
-  installVinayaLogSinkFactory
-} from '../../../harness/processes/vinaya-strict/integration/cli-startup.js'
 import { ensureGhOnPath } from '../../../harness/kernel/adapters/code-host/github/gh-path.js'
-import { CLI_OPERATION_STREAM, recordCliOperationAtExit } from '../../../harness/kernel/log/client/cli-operation-log.js'
-type LogSinkModule = typeof import('../../../harness/kernel/log/log-sink.js')
+import { processHasLogDestination } from './lib/log-destination.js'
 import { printHelp } from './lib/output.js'
 import { packageRoot } from './lib/package-root.js'
 import { resolveAuthorRepoSourceEntry } from '../../../harness/processes/vinaya-strict/tools/self-host.js'
-import { installVinayaConfigProvider } from '../../../harness/processes/vinaya-strict/integration/config/compose.js'
+
+type StartupModule = typeof import('../../../harness/processes/vinaya-strict/integration/cli-startup.js')
+type ConfigComposeModule = typeof import('../../../harness/processes/vinaya-strict/integration/config/compose.js')
+type LogSinkModule = typeof import('../../../harness/kernel/log/log-sink.js')
+type OperationLogModule = typeof import('../../../harness/kernel/log/client/cli-operation-log.js')
 
 // Each command's module loads only when that command runs, so a run, and a test that runs one command, reads
 // no other command's code.
@@ -64,20 +63,30 @@ function maybeDeferToAuthorRepoSource(): void {
   process.exit(result.status ?? 1)
 }
 
-// The Log client builds its default sink from an installed factory, never on
-// its own: the process's factory, installed here before anything logs.
-installVinayaLogSinkFactory()
-
 // Before ANY command runs, and before the author-repo re-exec below (which
 // passes `env: process.env` to its child), make `gh` reachable when the
 // launching PATH lacked its install folder — so every `gh`-by-name call site,
 // in this process and in every child it spawns, resolves it.
 ensureGhOnPath()
 
-// The composition root: kernel code reads configuration through the provider
-// this installs, before any command runs.
-installVinayaConfigProvider()
-installVinayaCheckRegistry()
+let servicesInstalled = false
+
+/**
+ * The composition root: the Log sink factory, the configuration provider kernel code reads configuration through,
+ * and the check registry. They install the first time something needs them, never at startup, so a start that
+ * runs `version` or prints help loads none of them. The Log client builds its default sink from the installed
+ * factory, never on its own.
+ */
+function installServices(): void {
+  if (servicesInstalled) return
+  servicesInstalled = true
+  const startup = require('../../../harness/processes/vinaya-strict/integration/cli-startup.js') as StartupModule
+  const compose =
+    require('../../../harness/processes/vinaya-strict/integration/config/compose.js') as ConfigComposeModule
+  startup.installVinayaLogSinkFactory()
+  compose.installVinayaConfigProvider()
+  startup.installVinayaCheckRegistry()
+}
 
 maybeDeferToAuthorRepoSource()
 
@@ -89,20 +98,27 @@ function readVersion(): string {
 const [, , command, ...args] = process.argv
 
 // A taskless invocation's event lands in its own folder file, never the shared
-// `none.ndjson`, so a test run's real-runtime guard can exempt it alone.
-recordCliOperationAtExit(process.argv.slice(2), {
-  on: (event, handler) => process.on(event, handler),
-  // The Log sink loads only when an operation is recorded, so a start that records nothing never loads it.
-  logSync: (event, options) =>
-    (require('../../../harness/kernel/log/log-sink.js') as LogSinkModule).logSync(event, options),
-  now: Date.now,
-  unattributedStream: CLI_OPERATION_STREAM
-})
+// `none.ndjson`, so a test run's real-runtime guard can exempt it alone. The Log client loads here, once, and only
+// when the process has a Log destination: a synchronous exit handler cannot await an import.
+if (processHasLogDestination(process.env)) {
+  const operationLog = require('../../../harness/kernel/log/client/cli-operation-log.js') as OperationLogModule
+  operationLog.recordCliOperationAtExit(process.argv.slice(2), {
+    on: (event, handler) => process.on(event, handler),
+    logSync: (event, options) => {
+      installServices()
+      ;(require('../../../harness/kernel/log/log-sink.js') as LogSinkModule).logSync(event, options)
+    },
+    now: Date.now,
+    unattributedStream: operationLog.CLI_OPERATION_STREAM
+  })
+}
 
 if (!command || command === 'help' || command === '--help' || command === '-h') {
   printHelp()
   process.exit(0)
 }
+
+if (command !== 'version') installServices()
 
 try {
   switch (command) {
