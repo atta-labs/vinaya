@@ -1206,9 +1206,19 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     const refused = step('run')
     expect(refused.status).toBe(1)
     expect(refused.out).toContain(`failing: ${BOUNDARY}`)
+    // The push stopped at the failing group: the unrun test stays an obligation but is never named as failing.
+    expect(refused.out).toContain('not run; the next push runs them')
     expect(json(dir, FAILED_TESTS_RECORD)).toMatchObject({
-      failed: [expect.stringMatching(/\/apps\/cli\/tests\/import-boundary\.test\.ts$/)],
+      failed: [
+        expect.stringMatching(/\/apps\/cli\/tests\/import-boundary\.test\.ts$/),
+        expect.stringMatching(/\/scripts\/package-compat\/package-compat\.test\.ts$/)
+      ],
+      failedHoldsUnconfirmed: true,
+      confirmed: [],
       selectionCompleted: true
+    })
+    expect(json(dir, LAST_PUSH_RESULT)).toMatchObject({
+      failed: [expect.stringMatching(/\/apps\/cli\/tests\/import-boundary\.test\.ts$/)]
     })
 
     // The repair: compared with the refused head, the failed test re-run as an obligation, green again.
