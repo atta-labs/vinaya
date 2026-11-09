@@ -18,11 +18,12 @@ import {
   TableCell,
   TableHead,
   TableHeader,
-  TableRow
-} from '@vinaya/ui/components'
-import { NextLink } from '@vinaya/ui/lib/next-link'
-import { cn } from '@vinaya/ui/lib/utils'
-import { Heading, Text } from '@vinaya/ui/shared'
+  TableRow,
+  NextLink,
+  cn,
+  Heading,
+  Text
+} from '@vinaya/ui'
 import { iconForName, iconForPage } from '../../_components/icons'
 import { type DocsPage, HARNESS_KEYS, PROCESS_KEYS, sectionId } from '../_lib/portal-docs'
 import { CopyPageButton } from './CopyPageButton'

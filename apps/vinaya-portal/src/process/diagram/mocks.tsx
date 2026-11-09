@@ -1,7 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Badge } from '@vinaya/ui/components'
-import { cn } from '@vinaya/ui/lib/utils'
-import { Text } from '@vinaya/ui/shared'
+import { Badge, cn, Text } from '@vinaya/ui'
 import { BrandIcon } from '../components/BrandIcon'
 import { ChatWindow } from '../components/ChatWindow'
 import { useEnvironment } from '../environment-context'

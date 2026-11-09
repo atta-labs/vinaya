@@ -1,6 +1,6 @@
 import React from 'react'
-import { Slot } from '../../../../lib/slot'
-import { cn } from '../../../../lib/utils'
+import { Slot } from '../../lib/slot'
+import { cn } from '../../lib/utils'
 import { getFlexClasses } from './class-utils'
 import type { FlexProps } from './types'
 

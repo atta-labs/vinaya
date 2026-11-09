@@ -1,4 +1,4 @@
-import { clamp01 } from '@vinaya/ui/lib/math'
+import { clamp01 } from '@vinaya/ui'
 
 /** 0 when the section's top hits the viewport top, 1 when its bottom hits the viewport bottom. */
 export const pinProgress = (top: number, height: number, viewport: number) =>

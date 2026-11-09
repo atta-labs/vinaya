@@ -1,7 +1,5 @@
 import * as THREE from 'three'
-import { alphaAt, coverageMask } from '@vinaya/ui/lib/mask-canvas'
-import { clamp01 } from '@vinaya/ui/lib/math'
-import { tokenHex } from '@vinaya/ui/lib/theme-color'
+import { alphaAt, coverageMask, clamp01, tokenHex } from '@vinaya/ui'
 
 /**
  * Medium work as one scroll-driven descent: the one Epic on the tracker's board

@@ -1,5 +1,5 @@
-// The portal's component library, built on Ariakit with shadcn's CSS variables.
-// Same names and props as the library it replaces, so call sites don't change.
+// Every component in the library: the Ariakit-based interactive and display components under shadcn's names and
+// props, the typography and layout pieces, and the logo.
 export { Badge, type BadgeProps, type BadgeSize, type BadgeTone, type BadgeVariant } from './badge'
 export {
   Breadcrumb,
@@ -83,3 +83,15 @@ export {
 export { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs'
 export { TerminalCommand } from './terminal-command'
 export { Toggle, type ToggleProps, toggleVariants } from './toggle'
+export { Logo, type LogoProps } from './display/logo'
+export { Flex, type FlexProps } from './layout/flex'
+export { Heading } from './typography/heading'
+export {
+  closeNavigationMenus,
+  NavigationMenu,
+  NavigationMenuContent,
+  NavigationMenuLink,
+  NavigationMenuTrigger,
+  useAnyNavigationMenuOpen
+} from './navigation-menu'
+export { Text } from './typography/text'

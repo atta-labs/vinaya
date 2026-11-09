@@ -1,4 +1,4 @@
-import { smoothstep } from '@vinaya/ui/lib/math'
+import { smoothstep } from '@vinaya/ui'
 
 /* The infinity: a subtle current that leaves main with the shock wave, runs up the north-east
    column and traces a figure-eight around the harness. Outside the harness it is a few hairline

@@ -1,5 +1,5 @@
 import { Children, cloneElement, isValidElement, type ReactNode } from 'react'
-import { cn } from '@vinaya/ui/lib/utils'
+import { cn } from '@vinaya/ui'
 
 // The site's drawn icons: the outline in the text's ink (`currentColor`), and the one detail that carries the
 // meaning in the theme's accent, `--ring` (the site's orange), so they follow light and dark mode.

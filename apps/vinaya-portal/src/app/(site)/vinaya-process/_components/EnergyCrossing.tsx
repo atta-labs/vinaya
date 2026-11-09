@@ -2,7 +2,7 @@
 
 import '../../_components/hero-canvas/hero-core.css'
 import { type Ref, useEffect, useImperativeHandle, useRef } from 'react'
-import { cn } from '@vinaya/ui/lib/utils'
+import { cn } from '@vinaya/ui'
 import { useReducedMotion } from '../../_components/landing/LandingInteractions'
 
 // A gap on the track where the line crosses into or out of Vinaya's domain. The line is a pipe of energy: outside

@@ -3,8 +3,8 @@ import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 import { buildFaviconIcons } from '@vinaya/cms'
 import { getPortalCms } from '@/lib/portal-cms'
-import { NextWebShell } from '@vinaya/ui/lib/next-web-shell'
-import { PreviewThemeListener } from '@vinaya/ui/lib/preview-theme-listener'
+import { PreviewThemeListener } from '@vinaya/ui'
+import { NextWebShell } from '@vinaya/ui/server'
 import '@/ui/styles/site.css'
 
 export async function generateMetadata(): Promise<Metadata> {

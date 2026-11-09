@@ -1,5 +1,4 @@
-import { Code } from '@vinaya/ui/components'
-import { Text } from '@vinaya/ui/shared'
+import { Code, Text } from '@vinaya/ui'
 
 // A deliberately dumb splitter, not a markdown renderer: split on backticks,
 // odd-indexed runs are inline code. It handles exactly the one construct the

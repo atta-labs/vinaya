@@ -10,7 +10,7 @@ import { checkout1 } from '@/process/flows/complex/flow'
 import { replay } from '@/process/replay'
 import type { Step } from '@/process/types'
 import { defaultEnvironment } from '@/process/types'
-import { Heading } from '@vinaya/ui/shared'
+import { Heading } from '@vinaya/ui'
 import { Group, Row, SectionHeader } from '../shell'
 
 const feature = flows.feature
