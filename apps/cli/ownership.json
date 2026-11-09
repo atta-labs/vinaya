@@ -57,6 +57,7 @@
     ],
     "command-line": [
       "src/index.ts",
+      "src/lib/log-destination.ts",
       "src/lib/output.ts",
       "src/lib/package-root.ts",
       "scripts/build.ts",

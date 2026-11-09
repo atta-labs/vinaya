@@ -262,7 +262,7 @@ describe('real runtime directory guard', () => {
             // the very directory the preload's end-of-run check watches
             `const ROOT = (await import(${JSON.stringify(core)})).realRuntimeDir()`,
             "it('an independent producer appends beside the suite', () => {",
-            `  const r = Bun.spawnSync(${JSON.stringify(producer(work))}, { cwd: ${JSON.stringify(work)}, env: { ...process.env, HOME: ${JSON.stringify(home)}, VINAYA_RUNTIME_DIR: ROOT } })`,
+            `  const r = Bun.spawnSync(${JSON.stringify(producer(work))}, { cwd: ${JSON.stringify(work)}, env: { ...process.env, NODE_ENV: 'production', HOME: ${JSON.stringify(home)}, VINAYA_RUNTIME_DIR: ROOT } })`,
             "  if (r.exitCode !== 0) throw new Error('producer failed: ' + r.stderr.toString())",
             "  const folders = readdirSync(join(ROOT, 'logs'))",
             "  if (folders.length !== 1) throw new Error('expected one repository folder, found ' + folders.join(' '))",

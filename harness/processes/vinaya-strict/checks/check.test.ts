@@ -30,7 +30,8 @@ describe('vinaya check — global-config checks stripping (Part 3, non-plan path
 
     const proc = Bun.spawn(['bun', INDEX, 'check', '--all'], {
       cwd: repoDir,
-      env: { ...process.env, HOME: homeDir },
+      // Outside a test run the program records its exit, which reads the configuration the warning comes from.
+      env: { ...process.env, NODE_ENV: 'production', HOME: homeDir },
       stdout: 'pipe',
       stderr: 'pipe'
     })
@@ -53,7 +54,8 @@ describe('vinaya check — global-config checks stripping (Part 3, non-plan path
 
     const proc = Bun.spawn(['bun', INDEX, 'check', '--all'], {
       cwd: repoDir,
-      env: { ...process.env, HOME: homeDir },
+      // Outside a test run the program records its exit, which reads the configuration the warning comes from.
+      env: { ...process.env, NODE_ENV: 'production', HOME: homeDir },
       stdout: 'pipe',
       stderr: 'pipe'
     })
