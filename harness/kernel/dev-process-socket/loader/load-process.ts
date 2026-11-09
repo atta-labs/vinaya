@@ -16,6 +16,15 @@ import { z } from 'zod'
 // chooses its flow by key (`loadProcess(folder, { flow })`); a `flow`-only
 // process answers to the key `default`. The digest pins every declared Flow,
 // so two runs of one process version share one digest whichever flow they ran.
+//
+// A process may also declare `provides`: every role by name (its doctrine,
+// and for a launched role — one listed in `roles` — its grants and output
+// schema), plus the modules that supply its checks, policies, configuration
+// section and kernel integration. The loader resolves each path inside the
+// folder, refuses a launched role with no declaration
+// (`launched-role-undeclared`), and pins every declared file in the digest. It
+// never imports a declared module: the composition roots do, where the bundler
+// sees them.
 
 export const PROCESS_FILE = 'process.yaml'
 
@@ -23,6 +32,32 @@ const nonEmpty = z.string().min(1)
 
 /** A flow key: what a run names to choose its flow (`v1`, `v2`). */
 const flowKey = z.string().regex(/^[a-z0-9][a-z0-9-]*$/, 'a flow key is lower-case letters, digits and dashes')
+
+/** A role name: the last segment of a launched role's folder, and a `provides.roles` key. */
+const roleName = z.string().regex(/^[a-z0-9][a-z0-9-]*$/, 'a role name is lower-case letters, digits and dashes')
+
+/** One role's declaration: its doctrine always; its grants and output schema when the harness launches it. */
+export const providedRoleSchema = z
+  .object({
+    doctrine: nonEmpty,
+    grants: nonEmpty.optional(),
+    output_schema: nonEmpty.optional(),
+    tools: nonEmpty.optional()
+  })
+  .strict()
+
+/** Everything a process provides beyond its flows and launched role folders, each a path inside the folder. */
+export const providesSchema = z
+  .object({
+    roles: z
+      .record(roleName, providedRoleSchema)
+      .refine((roles) => Object.keys(roles).length > 0, 'provides.roles names at least one role'),
+    checks: nonEmpty,
+    policies: nonEmpty,
+    config_section: nonEmpty,
+    integration: nonEmpty
+  })
+  .strict()
 
 /** The process file's fields, before the cross-field rules. */
 export const processFields = z
@@ -36,7 +71,8 @@ export const processFields = z
       .refine((flows) => Object.keys(flows).length > 0, 'flows names at least one flow')
       .optional(),
     default_flow: flowKey.optional(),
-    roles: z.array(nonEmpty).min(1)
+    roles: z.array(nonEmpty).min(1),
+    provides: providesSchema.optional()
   })
   .strict()
 
@@ -61,6 +97,7 @@ export type ProcessLoadReason =
   | 'declared-path-missing'
   | 'declared-path-escapes'
   | 'unknown-flow'
+  | 'launched-role-undeclared'
 
 export class ProcessLoadError extends Error {
   constructor(
@@ -83,7 +120,83 @@ export interface LoadedProcess {
   /** Every declared flow's file, by key. */
   flowPaths: Record<string, string>
   rolePaths: string[]
+  /** `provides` resolved inside the folder; absent when the process declares none. */
+  provided?: ProvidedPaths
   digest: string
+}
+
+export interface ProvidedRolePaths {
+  doctrine: string
+  grants?: string
+  outputSchema?: string
+  tools?: string
+}
+
+export interface ProvidedPaths {
+  roles: Record<string, ProvidedRolePaths>
+  checks: string
+  policies: string
+  configSection: string
+  integration: string
+}
+
+/** A launched role's name: the last segment of its folder path. */
+export function launchedRoleName(declared: string): string {
+  const segments = declared.split('/').filter((segment) => segment !== '' && segment !== '.')
+  return segments[segments.length - 1] ?? declared
+}
+
+function resolveProvides(folder: string, identity: ProcessIdentity): ProvidedPaths | undefined {
+  const provides = identity.provides
+  if (!provides) return undefined
+  for (const declared of identity.roles) {
+    const name = launchedRoleName(declared)
+    const role = provides.roles[name]
+    if (!role) {
+      throw new ProcessLoadError(
+        'launched-role-undeclared',
+        `launched role "${declared}" has no declaration at provides.roles.${name}`,
+        `provides.roles.${name}`
+      )
+    }
+    for (const part of ['grants', 'output_schema'] as const) {
+      if (role[part] === undefined) {
+        const field = `provides.roles.${name}.${part}`
+        throw new ProcessLoadError(
+          'launched-role-undeclared',
+          `launched role "${declared}" declares no ${field}`,
+          field
+        )
+      }
+    }
+  }
+  const roles: Record<string, ProvidedRolePaths> = {}
+  for (const [name, role] of Object.entries(provides.roles)) {
+    const at = (part: string) => `provides.roles.${name}.${part}`
+    roles[name] = {
+      doctrine: resolveInside(folder, role.doctrine, at('doctrine')),
+      ...(role.grants !== undefined ? { grants: resolveInside(folder, role.grants, at('grants')) } : {}),
+      ...(role.output_schema !== undefined
+        ? { outputSchema: resolveInside(folder, role.output_schema, at('output_schema')) }
+        : {}),
+      ...(role.tools !== undefined ? { tools: resolveInside(folder, role.tools, at('tools')) } : {})
+    }
+  }
+  return {
+    roles,
+    checks: resolveInside(folder, provides.checks, 'provides.checks'),
+    policies: resolveInside(folder, provides.policies, 'provides.policies'),
+    configSection: resolveInside(folder, provides.config_section, 'provides.config_section'),
+    integration: resolveInside(folder, provides.integration, 'provides.integration')
+  }
+}
+
+function providedFiles(provided: ProvidedPaths | undefined): string[] {
+  if (!provided) return []
+  const roleFiles = Object.values(provided.roles).flatMap((role) =>
+    [role.doctrine, role.grants, role.outputSchema, role.tools].filter((path): path is string => path !== undefined)
+  )
+  return [...roleFiles, provided.checks, provided.policies, provided.configSection, provided.integration]
 }
 
 function resolveInside(folder: string, declared: string, field: string): string {
@@ -166,6 +279,7 @@ export function loadProcess(folderPath: string, options: LoadProcessOptions = {}
     )
   }
   const rolePaths = identity.roles.map((role, index) => resolveInside(folder, role, `roles.${index}`))
+  const provided = resolveProvides(folder, identity)
 
   return {
     folder,
@@ -174,6 +288,7 @@ export function loadProcess(folderPath: string, options: LoadProcessOptions = {}
     flowPath,
     flowPaths,
     rolePaths,
-    digest: pin(folder, processFile, [...Object.values(flowPaths), ...rolePaths])
+    ...(provided ? { provided } : {}),
+    digest: pin(folder, processFile, [...Object.values(flowPaths), ...rolePaths, ...providedFiles(provided)])
   }
 }
