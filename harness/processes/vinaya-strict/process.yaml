@@ -1,12 +1,43 @@
 id: vinaya
 name: Vinaya
-version: 0.3.4
+version: 0.4.0
 # A run chooses its flow by key (`task run --flow <key>`); a run that names none gets default_flow.
 flows:
   v1: executing/dev-review.flow.yaml
   v2: loops/dev-review/v2/dev-review-v2.flow.yaml
 default_flow: v2
+# The role folders the harness launches; each is declared by its folder name under provides.roles.
 roles:
   - executing/developer
   - executing/code-reviewer
   - executing/security-reviewer
+# Everything else Vinaya provides. The loader resolves and pins each path; the composition roots import the modules.
+provides:
+  roles:
+    developer:
+      doctrine: executing/developer/doctrine.md
+      grants: executing/developer/grants.yaml
+      output_schema: executing/developer/output.schema.json
+    code-reviewer:
+      doctrine: executing/code-reviewer/doctrine.md
+      grants: executing/code-reviewer/grants.yaml
+      output_schema: executing/code-reviewer/output.schema.json
+    security-reviewer:
+      doctrine: executing/security-reviewer/doctrine.md
+      grants: executing/security-reviewer/grants.yaml
+      output_schema: executing/security-reviewer/output.schema.json
+    operator:
+      doctrine: executing/operator/doctrine.md
+    planner:
+      doctrine: thinking/planner/doctrine.md
+      tools: thinking/planner/tools
+    architect:
+      doctrine: thinking/architect/doctrine.md
+    archivist:
+      doctrine: retrospecting/archivist/doctrine.md
+    tranche-archivist:
+      doctrine: retrospecting/tranche-archivist/doctrine.md
+  checks: checks/registry.ts
+  policies: integration/policies/vinaya-policies.ts
+  config_section: integration/config/vinaya-config-section.ts
+  integration: integration/process/process-integration.ts

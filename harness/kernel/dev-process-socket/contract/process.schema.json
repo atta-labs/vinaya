@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Process identity",
-  "description": "The identity file every process folder carries as process.yaml. Declared paths are relative to the process folder and must stay inside it. A process declares exactly one of flow (one Flow file) or flows (Flow files by key); a run chooses its flow by key, and default_flow names the one it gets when it chooses none.",
+  "title": "Process declaration",
+  "description": "The declaration every process folder carries as process.yaml: its identity, its flows, the role folders the harness launches, and, under provides, everything else the process provides. Declared paths are relative to the process folder and must stay inside it. A process declares exactly one of flow (one Flow file) or flows (Flow files by key); a run chooses its flow by key, and default_flow names the one it gets when it chooses none.",
   "type": "object",
   "required": ["id", "version", "roles"],
   "additionalProperties": false,
@@ -27,7 +27,64 @@
       "type": "array",
       "minItems": 1,
       "items": { "type": "string", "minLength": 1 },
-      "description": "Paths of the executing role folders."
+      "description": "Paths of the role folders the harness launches. A folder's last segment is the role's name; when provides is declared, provides.roles declares that name with its grants and output schema."
+    },
+    "provides": {
+      "type": "object",
+      "required": ["roles", "checks", "policies", "config_section", "integration"],
+      "additionalProperties": false,
+      "description": "Everything else the process provides, each a path inside the process folder. A process that declares no provides loads as it did before the field existed.",
+      "properties": {
+        "roles": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["doctrine"],
+            "additionalProperties": false,
+            "properties": {
+              "doctrine": { "type": "string", "minLength": 1, "description": "Path of the role's doctrine." },
+              "grants": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Path of the role's tool grants; required for a launched role."
+              },
+              "output_schema": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Path of the JSON schema of the role's turn result; required for a launched role."
+              },
+              "tools": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Path of the role's tools folder, when it has one."
+              }
+            }
+          },
+          "description": "Every role of the process by name. An interactive role declares its doctrine; a launched role (one listed in roles) also declares its grants and output schema."
+        },
+        "checks": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path of the module that supplies the process's check registry."
+        },
+        "policies": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path of the module that supplies the broker, worker-boundary, tool-grant and task-tool router policies."
+        },
+        "config_section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path of the module that supplies the process's configuration section."
+        },
+        "integration": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path of the one module that implements the kernel's process integration interface (process-integration.ts beside this schema)."
+        }
+      }
     }
   }
 }
