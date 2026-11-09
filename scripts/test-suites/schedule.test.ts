@@ -503,6 +503,26 @@ describe('real runners execute exactly their group', () => {
     expect(silent.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['unreadable bun@default'])
   }, 60_000)
 
+  test('with the stop option a failing group leaves the next one unstarted; without it both run', () => {
+    const failing = groupsFor(['pkg/bun/tests/fail.test.ts'])
+    const plan = [...failing, vitestGroup]
+    const heard: string[] = []
+    const stopped = runGroups(root, plan, {
+      ...quiet,
+      stopAfterFailedGroup: true,
+      onGroupEnd: (outcome) => heard.push(outcome.group)
+    })
+    expect(stopped.failedRunners).toEqual(['bun@default'])
+    expect(heard).toEqual(['bun@default'])
+    expect(stopped.outcomes.map((o) => o.group)).toEqual(['bun@default'])
+    expect(stopped.executions.map((e) => e.group)).toEqual(['bun@default'])
+    expect(stopped.problems).toEqual([])
+    const whole = runGroups(root, plan, quiet)
+    expect(whole.failedRunners).toEqual(['bun@default'])
+    expect(whole.executions.map((e) => e.group)).toEqual(['bun@default', 'vt@default'])
+    expect(whole.outcomes.map((o) => o.group)).toEqual(['bun@default', 'vt@default'])
+  }, 120_000)
+
   test('a runner frozen by a synchronous child is stopped at its limit and run once more', () => {
     const lines: string[] = []
     const result = runGroups(root, groupsFor(['pkg/bun/tests/freeze-once.test.ts']), {
