@@ -6,6 +6,7 @@ import { expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSyncBudgeted } from '../../../../harness/kernel/conformance/unit/process-fixture'
 
 const ENTRY = join(import.meta.dir, '../../src/index.ts')
 
@@ -20,11 +21,10 @@ function loadedBy(args: string[], extraEnv: Record<string, string> = {}, cwd?: s
       "import { writeFileSync } from 'node:fs'\n" +
         "process.on('exit', () => writeFileSync(process.env.LOADED_OUT as string, JSON.stringify(Object.keys(require.cache))))\n"
     )
-    Bun.spawnSync(['bun', '--preload', preload, ENTRY, ...args], {
+    spawnSyncBudgeted('bun', ['--preload', preload, ENTRY, ...args], {
       env: { ...process.env, NODE_ENV: 'test', VINAYA_NO_DEFER: '1', LOADED_OUT: out, ...extraEnv },
       ...(cwd === undefined ? {} : { cwd }),
-      stdout: 'pipe',
-      stderr: 'pipe'
+      encoding: 'utf8'
     })
     return JSON.parse(readFileSync(out, 'utf8')) as string[]
   } finally {
