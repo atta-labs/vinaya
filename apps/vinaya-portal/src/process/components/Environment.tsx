@@ -2,9 +2,18 @@
 
 import { ArrowRight, Check, ChevronDown, MessageSquare, SquareTerminal } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
-import { Button, Card, Popover, PopoverContent, PopoverTrigger, RadioGroup, RadioItem, Toggle } from '@/ui/components'
-import { cn } from '@/ui/lib/utils'
-import { Text } from '@/ui/shared'
+import {
+  Button,
+  Card,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  RadioGroup,
+  RadioItem,
+  Toggle
+} from '@vinaya/ui/components'
+import { cn } from '@vinaya/ui/lib/utils'
+import { Text } from '@vinaya/ui/shared'
 import type { Agent, Environment, LogServer, Mode, Os, Tracker } from '../types'
 import { logServerLabel, sandboxOf, trackerLabel } from '../types'
 import { type Brand, BrandIcon } from './BrandIcon'

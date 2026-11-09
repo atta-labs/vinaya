@@ -1,35 +1,39 @@
 ---
 paths:
   - "apps/vinaya-*/**"
+  - "packages/ui/**"
+  - "packages/cms/**"
 ---
 
-# UI components — the portal's web apps
+# UI components — Vinaya's web apps and shared packages
 
-These rules govern every web app under `apps/vinaya-*` (the portal, `apps/vinaya-portal`, today). They are one of three UI rule files, read together:
+These rules govern every web app under `apps/vinaya-*` (the portal, `apps/vinaya-portal`, today) and the two packages they share: the UI package, `@vinaya/ui`, under `packages/ui`, which holds the component library, and the CMS package, `@vinaya/cms`, under `packages/cms`. They are one of three UI rule files, read together:
 
 - `.claude/rules/ui-components.md` — this file: which components exist, what they are built on, and how app code uses them.
 - `.claude/rules/ui-theme-tokens.md` — the CSS variables, colours, radii, fonts, inline styles and icons UI code may use.
 - `.claude/rules/ui-cms-theme.md` — how the CMS theme reaches those variables, and why theme work never adds one.
 
-Claude Code loads all three whenever it reads or edits a file under `apps/vinaya-*`. Codex reads them because the app's own `AGENTS.md` points at them. The text is the same for both agents. The `atta-labs/ui-rules` check enforces them in CI on every pull request, whichever agent wrote the change.
+Claude Code loads all three whenever it reads or edits a file under `apps/vinaya-*`, `packages/ui` or `packages/cms`. Codex reads them because the app's own `AGENTS.md` points at them. The text is the same for both agents. The `atta-labs/ui-rules` check enforces them in CI on every pull request, whichever agent wrote the change.
 
 Adding a component to the library is a workflow of its own: the `ui-new-component` skill (`.agents/skills/ui-new-component/SKILL.md`) walks it step by step.
 
 ## Where components live
 
-The portal's component library is `apps/vinaya-portal/src/ui`. App code imports from it through the `@/ui` alias:
+The component library every Vinaya web app builds from is the private workspace package `@vinaya/ui`, under `packages/ui/src`. An app lists it in its dependencies and in its Next config's `transpilePackages`, because the package ships TypeScript source, and imports from it by package name:
 
 | Import | What it holds |
 | --- | --- |
-| `@/ui/components` | The interactive and display components: `Button`, `Badge`, `Card`, `Dialog`, `Sheet`, `Popover`, `Tabs`, `Toggle`, `RadioGroup`, `Collapsible`, `Command`, `Breadcrumb`, `Sidebar*`, `Table`, `Separator`, `Code`, `ChromeFrame`, `TerminalCommand`. `src/ui/components/index.ts` is the list. `NavigationMenu` (`src/ui/components/navigation-menu.tsx`) is used only inside the library, by the top bar. |
-| `@/ui/shared` | Typography and layout: `Heading`, `Text`, `Flex`, `Logo`. |
-| `@/ui/lib/next-link` | `NextLink`, the one link component, with its `variant` set (`prose`, `link`, `nav`, `subtle`, `card`, `destructive`, `unstyled`, `button`). |
-| `@/ui/topbar`, `@/ui/footer` | The site's chrome. |
-| `@/ui/lib/utils` | `cn`, which merges class names. |
+| `@vinaya/ui/components` | The interactive and display components: `Button`, `Badge`, `Card`, `Dialog`, `Sheet`, `Popover`, `Tabs`, `Toggle`, `RadioGroup`, `Collapsible`, `Command`, `Breadcrumb`, `Sidebar*`, `Table`, `Separator`, `Code`, `ChromeFrame`, `TerminalCommand`. `packages/ui/src/components/index.ts` is the list. `NavigationMenu` (`@vinaya/ui/components/navigation-menu`) is used only by the portal's top bar. |
+| `@vinaya/ui/shared` | Typography and layout: `Heading`, `Text`, `Flex`, `Logo`. |
+| `@vinaya/ui/lib/next-link` | `NextLink`, the one link component, with its `variant` set (`prose`, `link`, `nav`, `subtle`, `card`, `destructive`, `unstyled`, `button`). |
+| `@vinaya/ui/lib/utils` | `cn`, which merges class names. |
+| `@vinaya/ui/styles/globals.css` | The global stylesheet, imported once by each app's own stylesheet. |
+
+The package's `package.json` `exports` map lists every subpath. Each app keeps only its own chrome beside it: the portal's top bar and footer, `@/ui/topbar` and `@/ui/footer` in `apps/vinaya-portal/src/ui`, with its site stylesheet, `apps/vinaya-portal/src/ui/styles/site.css`. The chrome is app code that builds from the library; it is not part of it.
 
 ## Rule 1 — every component is built in the library, on an Ariakit primitive
 
-Every UI component lives in `apps/vinaya-portal/src/ui` and takes its behaviour from an [Ariakit](https://ariakit.org) primitive (`@ariakit/react`). Focus management, keyboard handling, ARIA state, dismissal and positioning come from Ariakit; a component never reimplements them by hand, and the library imports no other headless library (no Radix, Base UI, Headless UI or React Aria).
+Every UI component lives in `packages/ui/src` and takes its behaviour from an [Ariakit](https://ariakit.org) primitive (`@ariakit/react`). Focus management, keyboard handling, ARIA state, dismissal and positioning come from Ariakit; a component never reimplements them by hand, and the library imports no other headless library (no Radix, Base UI, Headless UI or React Aria).
 
 The library today pairs each shadcn component with its Ariakit primitive:
 
@@ -54,9 +58,9 @@ Each component keeps the name, the part names and the props of its [shadcn/ui](h
 
 - Part names follow shadcn: `DialogTrigger`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter`, `DialogClose`; `TabsList`, `TabsTrigger`, `TabsContent`; `CardHeader`, `CardTitle`, `CardContent`.
 - Props follow shadcn: `variant` and `size` (through `class-variance-authority`'s `cva`, typed with `VariantProps`), `className`, `asChild`, `open` / `defaultOpen` / `onOpenChange`, `value` / `defaultValue` / `onValueChange`.
-- A component translates shadcn's props to Ariakit's inside the library: `onOpenChange` becomes the provider's `setOpen`; `asChild` becomes Ariakit's `render` through `singleChild` and `resolveRender` in `src/ui/lib/slot.tsx`. Ariakit's own prop names (`setOpen`, `store`, `render`) never reach a call site.
+- A component translates shadcn's props to Ariakit's inside the library: `onOpenChange` becomes the provider's `setOpen`; `asChild` becomes Ariakit's `render` through `singleChild` and `resolveRender` in `packages/ui/src/lib/slot.tsx`. Ariakit's own prop names (`setOpen`, `store`, `render`) never reach a call site.
 - Each part carries `data-slot='<part-name>'`, as shadcn's do, and states as `data-*` attributes, so styling hooks onto state rather than onto markup.
-- Components are named exports, listed in `src/ui/components/index.ts`.
+- Components are named exports, listed in `packages/ui/src/components/index.ts`.
 
 ### Animated with `motion`
 
@@ -64,24 +68,24 @@ A component that animates — hover and tap scale, enter and exit, a moving indi
 
 ## Rule 2 — app code uses the components, never raw interactive HTML
 
-Outside `src/ui`, app code renders interactive UI only through the library's components. These raw elements never appear in a page or an app component:
+Outside the library, `packages/ui`, app code renders interactive UI only through the library's components. These raw elements never appear in a page or an app component:
 
 | Raw element | Use instead |
 | --- | --- |
 | `<button>` | `Button` (or `Toggle` for a pressed state) |
-| `<a>`, `next/link` used directly | `NextLink` from `@/ui/lib/next-link` |
+| `<a>`, `next/link` used directly | `NextLink` from `@vinaya/ui/lib/next-link` |
 | `<input>`, `<textarea>`, `<select>`, `<option>` | the library's field component; add it if it is missing (Rule 3) |
 | `<dialog>`, a hand-built overlay | `Dialog` or `Sheet` |
 | `<details>` / `<summary>` | `Collapsible` |
 | any element with `onClick`, `onKeyDown`, `tabIndex` or an interactive `role` | the component whose behaviour that is |
 
-Text goes through `Heading` and `Text` from `@/ui/shared`, set by their props (`variant`, `size`, `weight`, `family`, `tone`, `leading`) rather than by type classes.
+Text goes through `Heading` and `Text` from `@vinaya/ui/shared`, set by their props (`variant`, `size`, `weight`, `family`, `tone`, `leading`) rather than by type classes.
 
 Library components are used as the library ships them: their own `variant` and `size` pick the look. Tailwind classes passed to a library component at a call site are for layout only — grid, gap, margin, width, position. A look that every call site would want belongs in the component's variants, inside the library; a look that only one container wants goes on that container.
 
 ## Rule 3 — a missing component is added to the library, never hand-rolled in a page
 
-When the component a page needs does not exist in `src/ui` — a select, a tooltip, an accordion, a menu, a checkbox, a segmented control — it is added to the library, built on its Ariakit primitive, under shadcn's name and props, and then imported. It is never improvised in the page from a `Button` plus state, a `div` plus a click handler, or a hand-positioned box.
+When the component a page needs does not exist in `packages/ui` — a select, a tooltip, an accordion, a menu, a checkbox, a segmented control — it is added to the library, built on its Ariakit primitive, under shadcn's name and props, and then imported. It is never improvised in the page from a `Button` plus state, a `div` plus a click handler, or a hand-positioned box.
 
 These thoughts mean a hand-rolled component is about to be written; stop and add it to the library instead:
 

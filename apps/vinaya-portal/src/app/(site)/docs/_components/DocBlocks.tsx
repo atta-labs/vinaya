@@ -12,7 +12,7 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger
-} from '@/ui/components'
+} from '@vinaya/ui/components'
 
 /** Labelled panels, one shown at a time: the docs' "Using the CLI / Using the config file" switch. */
 export function DocTabs({ panels }: { panels: { label: string; body: ReactNode }[] }) {

@@ -3,9 +3,9 @@ import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 import { buildFaviconIcons } from '@vinaya/cms'
 import { getPortalCms } from '@/lib/portal-cms'
-import { NextWebShell } from '@/ui/lib/next-web-shell'
-import { PreviewThemeListener } from '@/ui/lib/preview-theme-listener'
-import '@/ui/styles/globals.css'
+import { NextWebShell } from '@vinaya/ui/lib/next-web-shell'
+import { PreviewThemeListener } from '@vinaya/ui/lib/preview-theme-listener'
+import '@/ui/styles/site.css'
 
 export async function generateMetadata(): Promise<Metadata> {
   const { branding } = await getPortalCms()

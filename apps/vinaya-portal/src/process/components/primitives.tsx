@@ -1,9 +1,9 @@
 'use client'
 
 import { type ComponentProps, type ReactNode, useLayoutEffect, useRef } from 'react'
-import { Badge, Card, CardContent, CardHeader, CardTitle } from '@/ui/components'
-import { cn } from '@/ui/lib/utils'
-import { Text } from '@/ui/shared'
+import { Badge, Card, CardContent, CardHeader, CardTitle } from '@vinaya/ui/components'
+import { cn } from '@vinaya/ui/lib/utils'
+import { Text } from '@vinaya/ui/shared'
 import { toneBorder, toneText, toneTint } from '../tone'
 import type { Tone } from '../types'
 

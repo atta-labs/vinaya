@@ -13,7 +13,7 @@ import {
   siLinux,
   siOpenai
 } from 'simple-icons'
-import { cn } from '@/ui/lib/utils'
+import { cn } from '@vinaya/ui/lib/utils'
 
 /**
  * Brand marks, the way the portal draws them: simple-icons paths painted in

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { cn } from '@/ui/lib/utils'
+import { cn } from '@vinaya/ui/lib/utils'
 import type { Stage } from '../types'
 import { DiagramFrame, Linked, MomentProvider } from './links'
 import type { Moment } from './moment'

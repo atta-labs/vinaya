@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Heading, Text } from '@/ui/shared'
+import { Heading, Text } from '@vinaya/ui/shared'
 import { ButtonLink } from './ButtonLink'
 import { FeatureSections } from './FeatureSections'
 import { LandingSection } from './LandingSection'

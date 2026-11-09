@@ -161,20 +161,20 @@ const SHARED_PACKAGE_DIRS = ['packages/ui/', 'packages/cms/']
 const SHARED_PACKAGE_RE = /^packages\/(?:ui|cms)\//
 
 // The component library, where Ariakit components are built from raw elements:
-// a web app's `src/ui` folder, and the shared UI package.
-const COMPONENT_LIBRARY_RES = [/^apps\/vinaya-[^/]+\/src\/ui\//, /^packages\/ui\//]
+// the shared UI package. A web app's own chrome builds from the library.
+const COMPONENT_LIBRARY_RES = [/^packages\/ui\//]
 
 // Files allowed to hold colour literals and variable declarations, and files
 // no rule applies to.
 const EXEMPT_RES = [
-  // The global stylesheet: its `@theme` block maps the CMS theme's variables.
+  // The global stylesheet, whose `@theme` block maps the CMS theme's variables,
+  // and a web app's own site stylesheet beside its chrome.
+  /^packages\/ui\/src\/styles\/globals\.css$/,
   /^apps\/vinaya-[^/]+\/src\/ui\/styles\//,
   // The preview-theme helper, which writes the theme's variables at runtime.
-  /^apps\/vinaya-[^/]+\/src\/ui\/lib\/preview-theme-utils\.[cm]?[jt]sx?$/,
-  // Verbatim upstream pastes and vendored three.js files root Biome ignores.
-  /^apps\/vinaya-[^/]+\/src\/ui\/components\/table\/installed\.tsx$/,
-  /^apps\/vinaya-[^/]+\/src\/ui\/libraries\/[^/]+\/installed\//,
-  // The same verbatim pastes inside the shared UI package.
+  /^packages\/ui\/src\/lib\/preview-theme-utils\.[cm]?[jt]sx?$/,
+  // Verbatim upstream pastes in the shared UI package, and vendored three.js
+  // files, all of which root Biome ignores.
   /^packages\/ui\/(?:.*\/)?components\/table\/installed\.tsx$/,
   /^packages\/ui\/(?:.*\/)?libraries\/[^/]+\/installed\//,
   /^apps\/vinaya-[^/]+\/src\/process\/lifecycle\/lifecycle-scene\.js$/,

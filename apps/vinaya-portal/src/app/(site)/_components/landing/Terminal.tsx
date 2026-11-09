@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { cn } from '@/ui/lib/utils'
+import { cn } from '@vinaya/ui/lib/utils'
 
 // The landing's one terminal box: a header strip over a fixed-height run of log lines. Studio's loop
 // monitor and section 04's event log both render through it, so there is one thing to maintain. It

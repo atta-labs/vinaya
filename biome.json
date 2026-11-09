@@ -17,8 +17,8 @@
       "!**/public",
       "!**/tsconfig*.json",
       "!.worktrees",
-      "!apps/vinaya-portal/src/ui/components/table/installed.tsx",
-      "!apps/vinaya-portal/src/ui/libraries/*/installed",
+      "!packages/ui/src/components/table/installed.tsx",
+      "!packages/ui/src/libraries/*/installed",
       "!apps/vinaya-portal/src/process/lifecycle/lifecycle-scene.js",
       "!apps/vinaya-portal/next-env.d.ts"
     ]

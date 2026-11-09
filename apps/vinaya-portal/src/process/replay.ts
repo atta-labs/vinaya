@@ -1,4 +1,4 @@
-import { clamp01 } from '@/ui/lib/math'
+import { clamp01 } from '@vinaya/ui/lib/math'
 import { flows, linesFor } from './fixtures'
 import { execScript } from './fixtures/scripts'
 import type { Agent, ChatLine, FlowKey, GateState, LogEvent, Stage, Step, Task, Tone } from './types'

@@ -1,5 +1,5 @@
-import { Code } from '@/ui/components'
-import { Text } from '@/ui/shared'
+import { Code } from '@vinaya/ui/components'
+import { Text } from '@vinaya/ui/shared'
 
 // A deliberately dumb splitter, not a markdown renderer: split on backticks,
 // odd-indexed runs are inline code. It handles exactly the one construct the

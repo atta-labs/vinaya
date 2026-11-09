@@ -1,11 +1,13 @@
 ---
 paths:
   - "apps/vinaya-*/**"
+  - "packages/ui/**"
+  - "packages/cms/**"
 ---
 
-# Theme variables, colours, styles and icons — the portal's web apps
+# Theme variables, colours, styles and icons — Vinaya's web apps and shared packages
 
-These rules govern every web app under `apps/vinaya-*`. They are one of three UI rule files, read together: `.claude/rules/ui-components.md` (components), this file (variables, colours, radii, fonts, inline styles, icons) and `.claude/rules/ui-cms-theme.md` (how the CMS theme reaches the variables). Claude Code loads them for any file under `apps/vinaya-*`; Codex is pointed at them by the app's `AGENTS.md`. The `atta-labs/ui-rules` check enforces them in CI on every pull request, whichever agent wrote the change.
+These rules govern every web app under `apps/vinaya-*` and the two packages they share: the UI package, `@vinaya/ui`, under `packages/ui`, and the CMS package, `@vinaya/cms`, under `packages/cms`. They are one of three UI rule files, read together: `.claude/rules/ui-components.md` (components), this file (variables, colours, radii, fonts, inline styles, icons) and `.claude/rules/ui-cms-theme.md` (how the CMS theme reaches the variables). Claude Code loads them for any file under `apps/vinaya-*`, `packages/ui` or `packages/cms`; Codex is pointed at them by the app's `AGENTS.md`. The `atta-labs/ui-rules` check enforces them in CI on every pull request, whichever agent wrote the change.
 
 ## The rule
 
@@ -15,11 +17,11 @@ If the colour you want is not in the list, pick the listed variable whose role f
 
 ## The variables the CMS theme renders
 
-`apps/vinaya-portal/src/cms/utils/theme.ts` turns a theme document into variables. A colour field's variable is its name in kebab case: a one-word field (`primary`) keeps its name, and a longer one is mapped by `FIELD_TO_CSS_VAR` in `apps/vinaya-portal/src/cms/types.ts` (`primaryForeground` becomes `--primary-foreground`). `colorFieldNames` in `apps/vinaya-portal/src/cms/utils/theme-corpus.fixture.json` is the set of colour fields every shipped theme document uses. Those are the variables below, and no others.
+`packages/cms/src/utils/theme.ts` turns a theme document into variables. A colour field's variable is its name in kebab case: a one-word field (`primary`) keeps its name, and a longer one is mapped by `FIELD_TO_CSS_VAR` in `packages/cms/src/types.ts` (`primaryForeground` becomes `--primary-foreground`). `colorFieldNames` in `packages/cms/src/utils/theme-corpus.fixture.json` is the set of colour fields every shipped theme document uses. Those are the variables below, and no others.
 
 ### Colours with a Tailwind class
 
-Each of these has a `--color-*` line in the `@theme inline` block of `apps/vinaya-portal/src/ui/styles/globals.css`, so `bg-*`, `text-*`, `border-*`, `ring-*`, `fill-*`, `stroke-*` and the other colour utilities reach it.
+Each of these has a `--color-*` line in the `@theme inline` block of `packages/ui/src/styles/globals.css`, so `bg-*`, `text-*`, `border-*`, `ring-*`, `fill-*`, `stroke-*` and the other colour utilities reach it.
 
 | Variable | Tailwind name | Role |
 | --- | --- | --- |
@@ -71,8 +73,8 @@ A font is never named in code: no font family in a class (`font-['DM_Mono']`), a
 
 Only two places declare CSS variables:
 
-1. **The CMS theme's renderer.** `generateThemeCSS` and `generateThemeCSSForScheme` in `apps/vinaya-portal/src/cms/utils/theme.ts`, written into the page by `NextWebShell`, and the preview-theme helper (`applyThemeToDOM` in `apps/vinaya-portal/src/ui/lib/preview-theme-utils.ts`), which writes the same theme's variables at runtime. They render the theme; they do not invent variables.
-2. **The `@theme inline` mappings of `apps/vinaya-portal/src/ui/styles/globals.css`**, which expose the rendered variables to Tailwind.
+1. **The CMS theme's renderer.** `generateThemeCSS` and `generateThemeCSSForScheme` in `packages/cms/src/utils/theme.ts`, written into the page by `NextWebShell`, and the preview-theme helper (`applyThemeToDOM` in `packages/ui/src/lib/preview-theme-utils.ts`), which writes the same theme's variables at runtime. They render the theme; they do not invent variables.
+2. **The `@theme inline` mappings of `packages/ui/src/styles/globals.css`**, which expose the rendered variables to Tailwind.
 
 No other code declares one: no `--x:` in a stylesheet, no `:root` or `.dark` block of defaults, no `style={{ '--x': value }}`, no `element.style.setProperty('--x', …)` outside the preview helper.
 
@@ -80,7 +82,7 @@ No other code declares one: no `--x:` in a stylesheet, no `:root` or `.dark` blo
 
 - **Palette classes.** `text-green-500`, `bg-zinc-900`, `border-amber-200/40`, `ring-blue-400` — any colour from Tailwind's default palette.
 - **Absolute colours.** `text-white`, `bg-black`, `text-white/80`, `fill-black`. `transparent`, `currentColor` and `inherit` are not colours and stay allowed.
-- **Colour literals.** Any hex (`#1a1610`), `oklch(…)`, `hsl(…)`/`hsla(…)` or `rgb(…)`/`rgba(…)` value, in a class (`bg-[#1a1610]`, `text-[oklch(65%_0.17_145)]`), in a style, in a stylesheet, in an SVG attribute or in a constant. The renderer's handling of the theme's own values (`src/cms/utils/oklch.ts`, `src/cms/utils/css-safety.ts`) and the theme corpus fixture are the theme itself, not UI code.
+- **Colour literals.** Any hex (`#1a1610`), `oklch(…)`, `hsl(…)`/`hsla(…)` or `rgb(…)`/`rgba(…)` value, in a class (`bg-[#1a1610]`, `text-[oklch(65%_0.17_145)]`), in a style, in a stylesheet, in an SVG attribute or in a constant. The renderer's handling of the theme's own values (`packages/cms/src/utils/oklch.ts`, `packages/cms/src/utils/css-safety.ts`) and the theme corpus fixture are the theme itself, not UI code.
 - **A colour of no listed variable.** `var(--brand-blue)` names nothing the theme renders.
 
 ## Inline styles
@@ -89,7 +91,7 @@ No other code declares one: no `--x:` in a stylesheet, no `:root` or `.dark` blo
 
 ## Canvas and three.js
 
-A canvas or three.js scene takes a colour as a number, not a CSS value. It reads the theme through `tokenHex('--primary')` or `colorHex(…)` from `apps/vinaya-portal/src/ui/lib/theme-color.ts`, which resolves the live variable; it never holds a colour number of its own. `tokenHex` throws on a variable the theme did not render, by design.
+A canvas or three.js scene takes a colour as a number, not a CSS value. It reads the theme through `tokenHex('--primary')` or `colorHex(…)` from `packages/ui/src/lib/theme-color.ts`, which resolves the live variable; it never holds a colour number of its own. `tokenHex` throws on a variable the theme did not render, by design.
 
 ## Icons
 

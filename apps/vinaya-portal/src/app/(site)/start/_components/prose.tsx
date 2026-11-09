@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Code } from '@/ui/components'
+import { Code } from '@vinaya/ui/components'
 
 /** Shared by every page in this section: prose is authored with backtick-
  * delimited spans (this site's doc convention) but these pages render no

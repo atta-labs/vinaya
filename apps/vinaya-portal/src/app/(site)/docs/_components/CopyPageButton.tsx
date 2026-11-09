@@ -2,7 +2,7 @@
 
 import { Check, Copy } from 'lucide-react'
 import { useState } from 'react'
-import { Button } from '@/ui/components'
+import { Button } from '@vinaya/ui/components'
 
 /** Copies the page's text, for pasting into an agent or a chat. */
 export function CopyPageButton() {

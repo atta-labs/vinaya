@@ -3,7 +3,7 @@
    Deliberately minimal: three elements, no rings, no rain, no mirrored world.
    Colours are design-system tokens only — the palette simply inverts below the membrane. */
 import * as THREE from 'three'
-import { alphaAt, coverageMask } from '@/ui/lib/mask-canvas'
+import { alphaAt, coverageMask } from '@vinaya/ui/lib/mask-canvas'
 
 /* a vertical gradient used as an alphaMap, so the shaft dissolves into the dark
    instead of ending on a cut */
