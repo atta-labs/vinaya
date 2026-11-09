@@ -597,9 +597,24 @@ describe('the push gate and CI run exactly the one entry point’s planned tests
         expect(ciRunList(dir, base, final, passes)).toEqual(unplanned)
         rmSync(join(passes, folder), { recursive: true, force: true })
       }
-      // The earlier head, whose one change is still in the change under review, is trusted.
+      // The earlier head, whose one change is still in the change under review, is trusted — but not whatever was
+      // written under it: entries minted for the head under review, filed under that trusted producer, are dropped.
       expect(trustedPassProducer(dir, base, final, head)).toBe(true)
       file(head)
+      expect(ciRunList(dir, base, final, passes)).toEqual(unplanned)
+      rmSync(join(passes, head), { recursive: true, force: true })
+      // So is an entry naming its producer under a key its test never had there.
+      git('checkout', '-q', head)
+      const atHead = passEntriesOfRun({ repoRoot: dir, view, reports: [{ cwd: '.', xml }], record: null, source: 'ci' })
+      git('checkout', '-q', 'task/x/1')
+      expect(atHead.map((e) => e.head)).toEqual([head])
+      mkdirSync(join(passes, head, '1'), { recursive: true })
+      const filed = (list: typeof atHead) =>
+        writeFileSync(join(passes, head, '1', 'shared.json'), JSON.stringify({ version: 1, entries: list }))
+      filed(atHead.map((e) => ({ ...e, key: `${e.key}x` })))
+      expect(ciRunList(dir, base, final, passes)).toEqual(unplanned)
+      // The entries that run really wrote at its own head are reused.
+      filed(atHead)
       expect(ciRunList(dir, base, final, passes)).toEqual(['packages/app/tests/add.test.ts'])
     } finally {
       rmSync(dir, { recursive: true, force: true })

@@ -59,9 +59,13 @@ console.log(JSON.stringify(plannedTests(plan))) // ["tests/greet.test.ts"]
 
 ### `selectTests(input): SelectionPlan`
 
-The one entry point. Pure: given the same input it returns the same plan, and
-it reads nothing but what `input.repo` serves for `input.base` and
-`input.head`.
+The one entry point. Given the same input it returns the same plan, and the
+library itself reads nothing but what `input.repo` serves for `input.base` and
+`input.head`. The one exception is a callback the caller passes: when
+`history.branchSide` is given, `selectTests` may call its `base()` to get the
+comparison commit for the branch's own changes, and that callback does
+whatever work the caller wrote into it (this repository's builds a commit in
+git). Pass no `branchSide` and nothing outside the reader runs.
 
 ```ts
 const plan = selectTests({

@@ -181,7 +181,7 @@ jobs:
       # `main` plans everything, and also a shadow pull-request plan for
       # `aggregate` to compare failures against.
       # The pass entries the test jobs of this pull request's earlier runs
-      # stored (`pass-entries-<head sha>-<place>`, below): each a test file
+      # stored (`pass-entries-<head sha>-<place>-<run attempt>`, below): each a test file
       # that passed completely, under the key of everything it reads
       # (`passEntryKey`). The plan reuses an entry whose key still matches, so
       # a required check never re-runs a file an earlier run of the same pull
@@ -503,7 +503,7 @@ jobs:
         if: github.event_name == 'pull_request' && !cancelled()
         uses: actions/upload-artifact@v4
         with:
-          name: pass-entries-${{ github.event.pull_request.head.sha }}-shared
+          name: pass-entries-${{ github.event.pull_request.head.sha }}-shared-${{ github.run_attempt }}
           path: ${{ runner.temp }}/pass-entries/shared.json
           if-no-files-found: ignore
           retention-days: 14
@@ -603,7 +603,7 @@ jobs:
         if: github.event_name == 'pull_request' && !cancelled()
         uses: actions/upload-artifact@v4
         with:
-          name: pass-entries-${{ github.event.pull_request.head.sha }}-shard-${{ matrix.shard }}
+          name: pass-entries-${{ github.event.pull_request.head.sha }}-shard-${{ matrix.shard }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/pass-entries/shard-${{ matrix.shard }}.json
           if-no-files-found: ignore
           retention-days: 14

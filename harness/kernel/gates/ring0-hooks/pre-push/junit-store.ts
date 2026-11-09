@@ -124,6 +124,45 @@ function prune(store: string, limit: number): void {
   }
 }
 
+/** The parent of `pid`, or `null` when it cannot be read. This process's own parent needs no `ps`. */
+function parentOf(pid: number): number | null {
+  if (pid === process.pid) return process.ppid > 0 ? process.ppid : null
+  try {
+    const out = execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5_000
+    }).trim()
+    const parent = Number(out)
+    return Number.isInteger(parent) && parent > 0 ? parent : null
+  } catch {
+    return null
+  }
+}
+
+/** Whether the process that last made a link (its `.owner` file) is a live ancestor of this one. */
+export function ownedByAncestor(ownerFile: string, pid: number = process.pid): boolean {
+  let owner: number
+  try {
+    owner = Number(readFileSync(ownerFile, 'utf8').trim())
+  } catch {
+    return false
+  }
+  if (!Number.isInteger(owner) || owner <= 1 || owner === pid) return false
+  try {
+    process.kill(owner, 0)
+  } catch (error) {
+    // Gone: an earlier run's mark. A live process this one may not signal is still checked.
+    if ((error as NodeJS.ErrnoException).code !== 'EPERM') return false
+  }
+  let current: number | null = pid
+  for (let step = 0; step < 16 && current !== null && current > 1; step++) {
+    current = parentOf(current)
+    if (current === owner) return true
+  }
+  return false
+}
+
 /**
  * Called by the test preload: points this run's fixed report path at the scheduler's report, or at a new stored
  * report with its run note. Once per process; never throws.
@@ -137,6 +176,10 @@ export function linkJunitReport(cwd: string = process.cwd(), env: NodeJS.Process
     const linkDir = join(repoRoot, JUNIT_LINK_DIR)
     mkdirSync(linkDir, { recursive: true })
     const link = join(linkDir, junitLinkName(relative(repoRoot, cwd)))
+    // A run a test starts in the same folder leaves the link to the run that started it: its report goes where the
+    // outer run's goes, and the outer run, which ends last, writes its own report over it.
+    const owner = `${link}.owner`
+    if (ownedByAncestor(owner)) return null
     let target = env[JUNIT_REPORT_ENV]
     // A test this run starts gets its own link, never the scheduler's report.
     delete env[JUNIT_REPORT_ENV]
@@ -155,6 +198,7 @@ export function linkJunitReport(cwd: string = process.cwd(), env: NodeJS.Process
     rmSync(temporary, { force: true })
     symlinkSync(target, temporary)
     renameSync(temporary, link)
+    writeFileSync(owner, `${process.pid}\n`)
     return target
   } catch {
     return null

@@ -399,12 +399,28 @@ export function trustedPassProducer(repoRoot: string, base: string, head: string
  * CI's downloaded pass entries, laid out `<dir>/<producer head sha>/…` by the workflow from the run list GitHub
  * reports — never from anything the producing run wrote. Only the entries of a trusted producer
  * ({@link trustedPassProducer}) are kept; a folder that names no commit is dropped whole.
+ *
+ * What an artifact says is checked too, since the code that wrote it is the pull request's: an entry is kept only
+ * when it names its producer as its head and its stored key is the key its test has at that producer, recomputed
+ * here under this run's context and record. An entry minted for a later head, or under a key its test never had at
+ * the commit that ran it, is dropped; with no context, no entry is kept.
  */
-export function trustedCiPassEntries(repoRoot: string, dir: string, base: string, head: string): PassEntry[] {
-  if (!existsSync(dir)) return []
-  return readdirSync(dir).flatMap((producer) =>
-    trustedPassProducer(repoRoot, base, head, producer) ? passEntriesUnder(join(dir, producer)) : []
-  )
+export function trustedCiPassEntries(
+  repoRoot: string,
+  dir: string,
+  base: string,
+  head: string,
+  verify: { repo: SelectTestsInput['repo']; context: string | null; records: SelectionRecords | null }
+): PassEntry[] {
+  if (!existsSync(dir) || verify.context === null) return []
+  const context = verify.context
+  return readdirSync(dir).flatMap((producer) => {
+    if (!trustedPassProducer(repoRoot, base, head, producer)) return []
+    const keyOf = passKeys({ repo: verify.repo, revision: producer, context, records: verify.records })
+    return passEntriesUnder(join(dir, producer)).filter(
+      (entry) => entry.head === producer && entry.key === keyOf(entry.test)
+    )
+  })
 }
 
 /**
@@ -524,7 +540,13 @@ export function loadSelectionInputs(options: LoadSelectionOptions): LoadedSelect
     const base = resolveCommit(repoRoot, options.base)
     const reached = reach(repoRoot, base)
     const change = repositorySelectionInput(repoRoot, { base, head, record: reached.record, platform })
-    const passes = options.passes ? trustedCiPassEntries(repoRoot, options.passes, base, head) : []
+    const passes = options.passes
+      ? trustedCiPassEntries(repoRoot, options.passes, base, head, {
+          repo,
+          context: usable,
+          records: change.records ?? null
+        })
+      : []
     const history: SelectionHistory = { context: usable, passes, failures: [] }
     return {
       ...change,
