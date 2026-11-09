@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
+import { packageRoot } from './package-root.js'
 
 /**
  * Shared between `scripts/bundle-studio.ts` (pack time) and `commands/studio.ts` (run time), so the two cannot
@@ -44,6 +45,18 @@ function renameAll(dir: string, from: string, to: string): void {
     if (entry.isDirectory()) renameAll(path, from, to)
     if (entry.name === from) renameSync(path, join(dir, to))
   }
+}
+
+/**
+ * Run time: the shipped Studio inside the installed package whose module is `moduleUrl`, with its packed dependencies
+ * folders already restored; null when the package carries no standalone server.
+ */
+export function prepareShippedStudio(moduleUrl: string): { bundleRoot: string; serverDir: string } | null {
+  const bundleRoot = join(packageRoot(moduleUrl), STUDIO_BUNDLE_DIRNAME)
+  const serverDir = studioServerDir(bundleRoot)
+  if (!existsSync(join(serverDir, 'server.js'))) return null
+  repairStudioNodeModules(bundleRoot)
+  return { bundleRoot, serverDir }
 }
 
 /** Pack time: hides every `node_modules` folder under the bundle from the packer. */

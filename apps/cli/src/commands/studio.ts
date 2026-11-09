@@ -2,14 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import net from 'node:net'
 import { dirname, join } from 'node:path'
-import { packageRoot } from '../lib/package-root.js'
-import {
-  repairStudioNodeModules,
-  STUDIO_APP_RELPATH,
-  STUDIO_BUNDLE_DIRNAME,
-  STUDIO_PACKAGE_NAME,
-  studioServerDir
-} from '../lib/studio-bundle.js'
+import { prepareShippedStudio, STUDIO_APP_RELPATH, STUDIO_PACKAGE_NAME } from '../lib/studio-bundle.js'
 
 /** Studio listens on the user's own machine only. */
 export const STUDIO_HOST = '127.0.0.1'
@@ -51,11 +44,8 @@ export function resolveStudioTarget(cwd: string, moduleUrl: string = import.meta
     dir = parent
   }
 
-  const bundleRoot = join(packageRoot(moduleUrl), STUDIO_BUNDLE_DIRNAME)
-  const serverDir = studioServerDir(bundleRoot)
-  if (existsSync(join(serverDir, 'server.js'))) return { kind: 'shipped', bundleRoot, serverDir }
-
-  return { kind: 'missing' }
+  const shipped = prepareShippedStudio(moduleUrl)
+  return shipped ? { kind: 'shipped', ...shipped } : { kind: 'missing' }
 }
 
 export type PortChoice = { ok: true; port: number } | { ok: false; message: string }
@@ -224,8 +214,6 @@ export async function launchStudio(
   if (flag.port === null && port !== ports.primary) {
     log(`[studio] port ${ports.primary} is taken — using ${port}`)
   }
-
-  if (target.kind === 'shipped') repairStudioNodeModules(target.bundleRoot)
 
   const plan = planLaunch(target, cwd, port, deps.env ?? process.env)
   const child = spawn(plan.command, plan.args, { cwd: plan.cwd, env: plan.env, stdio: 'inherit' })
