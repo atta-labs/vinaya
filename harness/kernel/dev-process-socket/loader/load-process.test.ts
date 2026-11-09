@@ -2,7 +2,14 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadProcess, ProcessLoadError, type ProcessLoadReason, processFields } from './load-process'
+import {
+  loadProcess,
+  ProcessLoadError,
+  type ProcessLoadReason,
+  processFields,
+  providedRoleSchema,
+  providesSchema
+} from './load-process'
 
 const processesRoot = join(import.meta.dir, '..', '..', '..', 'processes')
 const schemaPath = join(import.meta.dir, '..', 'contract', 'process.schema.json')
@@ -169,7 +176,185 @@ describe('two flows side by side', () => {
   })
 })
 
+describe('provides', () => {
+  const PROVIDES = [
+    'provides:',
+    '  roles:',
+    '    worker:',
+    '      doctrine: roles/worker/doctrine.md',
+    '      grants: roles/worker/grants.yaml',
+    '      output_schema: roles/worker/output.schema.json',
+    '    helper:',
+    '      doctrine: helper/doctrine.md',
+    '      tools: helper/tools',
+    '  checks: checks.ts',
+    '  policies: policies.ts',
+    '  config_section: config-section.ts',
+    '  integration: integration.ts',
+    ''
+  ].join('\n')
+  const DECLARED = `${VALID}${PROVIDES}`
+  const DECLARED_FILES: Record<string, string> = {
+    ...VALID_FILES,
+    'roles/worker/doctrine.md': 'worker doctrine\n',
+    'roles/worker/grants.yaml': 'tools: []\n',
+    'roles/worker/output.schema.json': '{}\n',
+    'helper/doctrine.md': 'helper doctrine\n',
+    'helper/tools/tool.ts': 'export {}\n',
+    'checks.ts': 'export {}\n',
+    'policies.ts': 'export {}\n',
+    'config-section.ts': 'export {}\n',
+    'integration.ts': 'export {}\n'
+  }
+
+  test('a process that declares provides loads with every declared path resolved inside the folder', () => {
+    const folder = processFolder(DECLARED, DECLARED_FILES)
+    const loaded = loadProcess(folder)
+    expect(loaded.provided).toEqual({
+      roles: {
+        worker: {
+          doctrine: join(folder, 'roles/worker/doctrine.md'),
+          grants: join(folder, 'roles/worker/grants.yaml'),
+          outputSchema: join(folder, 'roles/worker/output.schema.json')
+        },
+        helper: { doctrine: join(folder, 'helper/doctrine.md'), tools: join(folder, 'helper/tools') }
+      },
+      checks: join(folder, 'checks.ts'),
+      policies: join(folder, 'policies.ts'),
+      configSection: join(folder, 'config-section.ts'),
+      integration: join(folder, 'integration.ts')
+    })
+  })
+
+  test('a process that declares no provides loads as before, with no provided parts and the same digest rules', () => {
+    const folder = processFolder(VALID, VALID_FILES)
+    const loaded = loadProcess(folder)
+    expect(loaded.provided).toBeUndefined()
+    expect(loaded.flowKey).toBe('default')
+    // A file no declaration names stays out of the digest.
+    writeFileSync(join(folder, 'checks.ts'), 'export {}\n')
+    expect(loadProcess(folder).digest).toBe(loaded.digest)
+  })
+
+  test('the digest covers every declared file, a tools folder included', () => {
+    const folder = processFolder(DECLARED, DECLARED_FILES)
+    let previous = loadProcess(folder).digest
+    for (const file of [
+      'helper/doctrine.md',
+      'helper/tools/tool.ts',
+      'checks.ts',
+      'policies.ts',
+      'config-section.ts',
+      'integration.ts'
+    ]) {
+      writeFileSync(join(folder, file), `changed ${file}\n`)
+      const next = loadProcess(folder).digest
+      expect(next).not.toBe(previous)
+      previous = next
+    }
+  })
+
+  const drop = (line: string) => DECLARED.replace(`${line}\n`, '')
+  const provideRefusals: Array<[ProcessLoadReason, string, string, Record<string, string>, string]> = [
+    ['schema-violation', 'provides with no checks', drop('  checks: checks.ts'), DECLARED_FILES, 'provides.checks'],
+    [
+      'schema-violation',
+      'provides with no integration',
+      drop('  integration: integration.ts'),
+      DECLARED_FILES,
+      'provides.integration'
+    ],
+    [
+      'schema-violation',
+      'a role with no doctrine',
+      drop('      doctrine: helper/doctrine.md'),
+      DECLARED_FILES,
+      'provides.roles.helper.doctrine'
+    ],
+    [
+      'launched-role-undeclared',
+      'a launched role with no declaration',
+      DECLARED.replace('    worker:\n', '    other:\n'),
+      DECLARED_FILES,
+      'provides.roles.worker'
+    ],
+    [
+      'launched-role-undeclared',
+      'a launched role with no grants',
+      drop('      grants: roles/worker/grants.yaml'),
+      DECLARED_FILES,
+      'provides.roles.worker.grants'
+    ],
+    [
+      'launched-role-undeclared',
+      'a launched role with no output schema',
+      drop('      output_schema: roles/worker/output.schema.json'),
+      DECLARED_FILES,
+      'provides.roles.worker.output_schema'
+    ],
+    [
+      'declared-path-missing',
+      'a declared doctrine that does not exist',
+      DECLARED.replace('helper/doctrine.md', 'helper/missing.md'),
+      DECLARED_FILES,
+      'provides.roles.helper.doctrine'
+    ],
+    [
+      'declared-path-missing',
+      'a declared module that does not exist',
+      DECLARED.replace('policies: policies.ts', 'policies: missing.ts'),
+      DECLARED_FILES,
+      'provides.policies'
+    ],
+    [
+      'declared-path-escapes',
+      'a declared module that leaves the folder',
+      DECLARED.replace('config_section: config-section.ts', 'config_section: ../outside.ts'),
+      DECLARED_FILES,
+      'provides.config_section'
+    ],
+    [
+      'declared-path-escapes',
+      'an absolute tools folder',
+      DECLARED.replace('tools: helper/tools', 'tools: /etc'),
+      DECLARED_FILES,
+      'provides.roles.helper.tools'
+    ]
+  ]
+
+  for (const [reason, label, yaml, files, field] of provideRefusals) {
+    test(`refuses ${label} as ${reason}, naming ${field}`, () => {
+      const error = refusal(processFolder(yaml, files))
+      expect(error.reason).toBe(reason)
+      expect(error.field).toBe(field)
+      expect(error.message).toContain(field)
+    })
+  }
+})
+
 describe('process contract', () => {
+  test('the JSON schema and the validator declare the same provides parts', () => {
+    const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as {
+      properties: {
+        provides: {
+          required: string[]
+          properties: Record<string, { additionalProperties?: { required: string[]; properties: object } }>
+        }
+      }
+    }
+    const provides = schema.properties.provides
+    expect(Object.keys(provides.properties).sort()).toEqual(Object.keys(providesSchema.shape).sort())
+    expect([...provides.required].sort()).toEqual(
+      Object.entries(providesSchema.shape)
+        .filter(([, field]) => !field.isOptional())
+        .map(([key]) => key)
+        .sort()
+    )
+    const role = provides.properties.roles?.additionalProperties
+    expect(Object.keys(role?.properties ?? {}).sort()).toEqual(Object.keys(providedRoleSchema.shape).sort())
+    expect(role?.required).toEqual(['doctrine'])
+  })
+
   test('the JSON schema and the validator require the same fields', () => {
     const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as {
       required: string[]
