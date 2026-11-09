@@ -2,8 +2,7 @@
 
 import { useState } from 'react'
 import { CHECKS, type CheckRow } from '@/content/checks'
-import { Button, Code, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@vinaya/ui/components'
-import { NextLink } from '@vinaya/ui/lib/next-link'
+import { Button, Code, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, NextLink } from '@vinaya/ui'
 
 const STAGES: CheckRow['stage'][] = ['Commit', 'Push', 'Pull request', 'Issue write']
 const KINDS = ['Generic gate', 'Vinaya-specific'] as const

@@ -1,6 +1,5 @@
 import type { ConfigField } from '@attalabs/process-vinaya/config-reference'
-import { Badge, CodeBlock } from '@vinaya/ui/components'
-import { Heading } from '@vinaya/ui/shared'
+import { Badge, CodeBlock, Heading } from '@vinaya/ui'
 import { configFieldSlug } from './config-navigation'
 import { FieldProse } from './FieldProse'
 

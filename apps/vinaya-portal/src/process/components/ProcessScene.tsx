@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
-import { tokenHex } from '@vinaya/ui/lib/theme-color'
+import { tokenHex } from '@vinaya/ui'
 import type { SceneState, Stage } from '../types'
 
 /**

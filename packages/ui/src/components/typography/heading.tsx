@@ -1,6 +1,6 @@
 import * as React from 'react'
-import { cn } from '../../../../lib/utils'
-import type { HeadingLevel, HeadingProps, HeadingSize, HeadingVariant } from '../../../../types/typography/heading'
+import { cn } from '../../lib/utils'
+import type { HeadingLevel, HeadingProps, HeadingSize, HeadingVariant } from '../../types/typography/heading'
 import { familyClasses, leadingClasses, toneClasses, weightClasses } from './type-classes'
 
 const defaultSizeByLevel: Record<HeadingLevel, string> = {

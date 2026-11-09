@@ -19,17 +19,22 @@ Adding a component to the library is a workflow of its own: the `ui-new-componen
 
 ## Where components live
 
-The component library every Vinaya web app builds from is the private workspace package `@vinaya/ui`, under `packages/ui/src`. An app lists it in its dependencies and in its Next config's `transpilePackages`, because the package ships TypeScript source, and imports from it by package name:
+The component library every Vinaya web app builds from is the private workspace package `@vinaya/ui`, under `packages/ui/src`. An app lists it in its dependencies and in its Next config's `transpilePackages`, because the package ships TypeScript source.
+
+Every shared component is imported from the package name alone, whether it is atomic (`Button`, `Dialog`, `Sheet`, `Tabs`, built on one Ariakit primitive) or composite (`Sidebar*`, `Table`, `Command`, `NavigationMenu`), together with the typography and layout pieces (`Heading`, `Text`, `Flex`, `Logo`), `NextLink`, the class helper `cn`, and the colour-scheme, theme and drawing helpers:
+
+```ts
+import { Button, Heading, NextLink, Text, cn } from '@vinaya/ui'
+```
+
+`packages/ui/src/components/index.ts` lists the components; `packages/ui/src/index.ts` is the whole public surface. Two things have their own path, and nothing else does:
 
 | Import | What it holds |
 | --- | --- |
-| `@vinaya/ui/components` | The interactive and display components: `Button`, `Badge`, `Card`, `Dialog`, `Sheet`, `Popover`, `Tabs`, `Toggle`, `RadioGroup`, `Collapsible`, `Command`, `Breadcrumb`, `Sidebar*`, `Table`, `Separator`, `Code`, `ChromeFrame`, `TerminalCommand`. `packages/ui/src/components/index.ts` is the list. `NavigationMenu` (`@vinaya/ui/components/navigation-menu`) is used only by the portal's top bar. |
-| `@vinaya/ui/shared` | Typography and layout: `Heading`, `Text`, `Flex`, `Logo`. |
-| `@vinaya/ui/lib/next-link` | `NextLink`, the one link component, with its `variant` set (`prose`, `link`, `nav`, `subtle`, `card`, `destructive`, `unstyled`, `button`). |
-| `@vinaya/ui/lib/utils` | `cn`, which merges class names. |
+| `@vinaya/ui/server` | `NextWebShell`, the root layout's web shell. It reads request headers, so it is server-only and kept out of the package root a client bundle imports. |
 | `@vinaya/ui/styles/globals.css` | The global stylesheet, imported once by each app's own stylesheet. |
 
-The package's `package.json` `exports` map lists every subpath. Each app keeps only its own chrome beside it: the portal's top bar and footer, `@/ui/topbar` and `@/ui/footer` in `apps/vinaya-portal/src/ui`, with its site stylesheet, `apps/vinaya-portal/src/ui/styles/site.css`. The chrome is app code that builds from the library; it is not part of it.
+A component only one app needs is not shared: it lives in that app's own `src/ui` folder and is imported as `@/ui/<name>` — the portal's top bar and footer (`apps/vinaya-portal/src/ui/topbar`, `footer`, with its site stylesheet `src/ui/styles/site.css`), Studio's header (`apps/vinaya-studio/src/ui/header`). App UI builds from the library; it is not part of it. When a second app needs it, it moves into `@vinaya/ui`.
 
 ## Rule 1 — every component is built in the library, on an Ariakit primitive
 
@@ -73,13 +78,13 @@ Outside the library, `packages/ui`, app code renders interactive UI only through
 | Raw element | Use instead |
 | --- | --- |
 | `<button>` | `Button` (or `Toggle` for a pressed state) |
-| `<a>`, `next/link` used directly | `NextLink` from `@vinaya/ui/lib/next-link` |
+| `<a>`, `next/link` used directly | `NextLink` from `@vinaya/ui` |
 | `<input>`, `<textarea>`, `<select>`, `<option>` | the library's field component; add it if it is missing (Rule 3) |
 | `<dialog>`, a hand-built overlay | `Dialog` or `Sheet` |
 | `<details>` / `<summary>` | `Collapsible` |
 | any element with `onClick`, `onKeyDown`, `tabIndex` or an interactive `role` | the component whose behaviour that is |
 
-Text goes through `Heading` and `Text` from `@vinaya/ui/shared`, set by their props (`variant`, `size`, `weight`, `family`, `tone`, `leading`) rather than by type classes.
+Text goes through `Heading` and `Text` from `@vinaya/ui`, set by their props (`variant`, `size`, `weight`, `family`, `tone`, `leading`) rather than by type classes.
 
 Library components are used as the library ships them: their own `variant` and `size` pick the look. Tailwind classes passed to a library component at a call site are for layout only — grid, gap, margin, width, position. A look that every call site would want belongs in the component's variants, inside the library; a look that only one container wants goes on that container.
 

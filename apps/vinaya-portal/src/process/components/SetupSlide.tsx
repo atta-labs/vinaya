@@ -1,8 +1,7 @@
 'use client'
 
 import type { ReactNode, Ref } from 'react'
-import { cn } from '@vinaya/ui/lib/utils'
-import { Heading } from '@vinaya/ui/shared'
+import { cn, Heading } from '@vinaya/ui'
 import { Eyebrow } from './primitives'
 
 /** How many setup slides there are. */

@@ -1,7 +1,5 @@
 import type { ReactNode } from 'react'
-import { NextLink } from '@vinaya/ui/lib/next-link'
-import { cn } from '@vinaya/ui/lib/utils'
-import { Heading, Text } from '@vinaya/ui/shared'
+import { NextLink, cn, Heading, Text } from '@vinaya/ui'
 import { WRAP } from '../../vinaya-process/_components/process-styles'
 import { NamedIcon } from '../icons'
 import { ButtonLink } from '../landing/ButtonLink'

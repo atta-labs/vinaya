@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { cn } from '@vinaya/ui/lib/utils'
+import { cn } from '@vinaya/ui'
 import type { Stage } from '../types'
 import { DiagramCard, DiagramContainer } from './DiagramCard'
 import { Linked } from './links'

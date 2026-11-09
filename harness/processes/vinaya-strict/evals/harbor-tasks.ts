@@ -750,9 +750,9 @@ export interface ConvertedSuite {
 
 /** The held-out digest each family of suites opens with. */
 const HELD_OUT_FAMILY: Partial<Record<GenericSuiteKey, string>> = {
-  developer: DERIVED_FILE_DIGESTS.developer.heldOut,
-  codeReviewer: DERIVED_FILE_DIGESTS.reviewer.heldOut,
-  securityReviewer: DERIVED_FILE_DIGESTS.reviewer.heldOut,
+  developer: DERIVED_FILE_DIGESTS.change.heldOut,
+  codeReviewer: DERIVED_FILE_DIGESTS.review.heldOut,
+  securityReviewer: DERIVED_FILE_DIGESTS.review.heldOut,
   sourceCitation: DERIVED_FILE_DIGESTS.sourceCitation.heldOut
 }
 

@@ -39,11 +39,11 @@ export const GENERIC_SUITES_PROCESS_LAYER = 'G' as const
 
 /** The SHA-256 of each derived file's bytes, as the re-cut wrote it. */
 export const DERIVED_FILE_DIGESTS = {
-  developer: {
+  change: {
     development: 'c7fb13353ffccebdbf15c5a5194399ce2b3227d905fc1355d985ae5865398f84',
     heldOut: '64395254beb206b39e65bad747c1e64c85cb6324a1e5e45c8ac66ad2eb6e2d8b'
   },
-  reviewer: {
+  review: {
     development: '54bd4bed8cbaf739f263b758bb094eae965c3af3e46725941f3f0da30417970a',
     heldOut: '9f7c980ade34b6ccf4d6541b47c3805f8cd327608d41b0f070dab26158331cf7'
   },
@@ -142,9 +142,9 @@ export const HELD_OUT_IDS: Readonly<Record<GenericSuiteKey, readonly string[]>> 
 
 /** The derived file each suite's cases live in. */
 const FAMILY: Readonly<Record<GenericSuiteKey, keyof typeof DERIVED_FILE_DIGESTS>> = {
-  developer: 'developer',
-  codeReviewer: 'reviewer',
-  securityReviewer: 'reviewer',
+  developer: 'change',
+  codeReviewer: 'review',
+  securityReviewer: 'review',
   sourceCitation: 'sourceCitation',
   wholeLoop: 'wholeLoop'
 }
