@@ -36,16 +36,17 @@ function staticClosure(entry: string): string[] {
   return [...seen].map((file) => relative(REPO_ROOT, file)).sort()
 }
 
-/** Whether a command module only carries the process's startup installers to the entry point, which runs them before any command. */
-const forwardsStartupInstallers = (file: string): boolean =>
-  /\binstallVinayaLogSinkFactory\b/.test(readFileSync(join(REPO_ROOT, file), 'utf8'))
-
-it('the entry point imports no command module statically, except one that carries the startup installers', () => {
+it('the entry point imports no command module statically', () => {
   const closure = staticClosure(ENTRY)
   expect(closure).toContain('apps/cli/src/index.ts')
-  const commands = closure.filter((file) => file.startsWith('apps/cli/src/commands/'))
-  expect(commands.filter((file) => !forwardsStartupInstallers(file))).toEqual([])
-  expect(commands.length).toBeLessThanOrEqual(1)
+  expect(closure.filter((file) => file.startsWith('apps/cli/src/commands/'))).toEqual([])
+})
+
+it('the entry point loads only argument routing at startup: no Log file, no configuration provider, no check registry', () => {
+  const closure = staticClosure(ENTRY)
+  expect(closure.filter((file) => file.startsWith('harness/kernel/log/'))).toEqual([])
+  expect(closure.filter((file) => /config\/compose|config-provider|checks\/registry/.test(file))).toEqual([])
+  expect(closure.length).toBeLessThanOrEqual(25)
 })
 
 it('every command module the entry point names is one it loads on demand', () => {

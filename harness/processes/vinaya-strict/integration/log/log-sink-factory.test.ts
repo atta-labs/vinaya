@@ -173,7 +173,7 @@ const FACTORY_MODULE = 'harness/processes/vinaya-strict/integration/log/log-sink
 /** The entry points that install the process factory before any command or run starts. */
 const ENTRY_POINTS = [
   'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts',
-  'apps/cli/src/index.ts',
+  'harness/processes/vinaya-strict/integration/cli-services.ts',
   'harness/processes/vinaya-strict/bin/run-engine.ts',
   // The evaluation programs, each run on its own.
   ...['harbor-grade', 'harbor-results', 'harbor-tasks', 'harbor-trial', 'step-one', 'whole-loop'].map(
@@ -195,7 +195,7 @@ const SITES: Record<string, number> = {
   [`${FACTORY_MODULE} createLogSink code`]: 2,
   [`${FACTORY_MODULE} installDefaultLogSinkFactory code`]: 1,
   // The entry points.
-  'apps/cli/src/index.ts installVinayaLogSinkFactory code': 1,
+  'harness/processes/vinaya-strict/integration/cli-services.ts installVinayaLogSinkFactory code': 1,
   'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts installVinayaLogSinkFactory code': 1,
   'harness/processes/vinaya-strict/bin/run-engine.ts installVinayaLogSinkFactory code': 1,
   ...Object.fromEntries(
@@ -415,13 +415,16 @@ describe('every Log sink is built through the process factory', () => {
     for (const program of evalPrograms) expect(ENTRY_POINTS).toContain(program)
   })
 
-  it('the entry point installs the factory before it runs any command', () => {
+  it('the entry point installs the factory, with the other services, before any command but version runs', () => {
     const entry = readFileSync(join(REPOSITORY_ROOT, 'apps', 'cli', 'src', 'index.ts'), 'utf8')
-    const installedAt = entry.indexOf('\ninstallVinayaLogSinkFactory()')
+    const installedAt = entry.indexOf("\nif (command !== 'version') installServices()")
     expect(installedAt).toBeGreaterThan(-1)
-    for (const first of ['\nensureGhOnPath()', '\nmaybeDeferToAuthorRepoSource()', '\nrecordCliOperationAtExit(']) {
-      expect(entry.indexOf(first)).toBeGreaterThan(installedAt)
-    }
+    expect(entry.indexOf('\ntry {\n  switch (command)')).toBeGreaterThan(installedAt)
+    const services = readFileSync(
+      join(REPOSITORY_ROOT, 'harness', 'processes', 'vinaya-strict', 'integration', 'cli-services.ts'),
+      'utf8'
+    )
+    expect(services).toContain('startup.installVinayaLogSinkFactory()')
   })
 
   it('lists every construction site and installation in the repository', () => {
