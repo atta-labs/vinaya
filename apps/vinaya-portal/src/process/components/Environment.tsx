@@ -10,10 +10,10 @@ import {
   PopoverTrigger,
   RadioGroup,
   RadioItem,
-  Toggle
-} from '@vinaya/ui/components'
-import { cn } from '@vinaya/ui/lib/utils'
-import { Text } from '@vinaya/ui/shared'
+  Toggle,
+  cn,
+  Text
+} from '@vinaya/ui'
 import type { Agent, Environment, LogServer, Mode, Os, Tracker } from '../types'
 import { logServerLabel, sandboxOf, trackerLabel } from '../types'
 import { type Brand, BrandIcon } from './BrandIcon'

@@ -303,6 +303,8 @@ A case's grants also decide what its trial's agent can do, the same on Claude Co
 
 `harness/processes/vinaya-strict/evals/suites/recut-generic-cases.ts` derives the cases of five layer-`G` suites from the committed layer-`P` cases, field by field: `developer-capability-neutral.l5`, `code-reviewer-quality-neutral.l5`, `security-reviewer-quality-neutral.l5`, `source-delivery-neutral.l5` and `whole-loop.l6`. Re-running it on unchanged inputs reproduces every derived file byte for byte.
 
+The derived files are named by kind of task, never by role, and sit under `harness/kernel/evals/suites/`: the change cases in `change/change-generic-cases.json` and `change/change-generic-held-out.json`, the review cases (code and security reviewer) in `review/review-generic-cases.json` and `review/review-generic-held-out.json`, the source-citation cases in `citation/source-citation-generic-cases.json` and `citation/source-citation-generic-held-out.json`, and the whole-loop cases in `whole-loop/whole-loop-generic-cases.json` and `whole-loop/whole-loop-generic-held-out.json`. The re-cut's derived-file table and the digest pins in `generic-suites.ts` use the same kind keys (`change`, `review`, `sourceCitation`, `wholeLoop`). The suite identifiers recorded inside the files keep their names.
+
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/suites/recut-generic-cases.ts contains:export function recutDevelopment(git: Git = repositoryGit): Recut { -->
 <!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/suites/recut-generic-cases.ts contains:export const REVIEWER_CAPABILITIES: readonly string[] = ['read_file', 'run_commands'] -->
 

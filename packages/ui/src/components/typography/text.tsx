@@ -1,6 +1,6 @@
 import * as React from 'react'
-import { cn } from '../../../../lib/utils'
-import type { TextProps, TextSize, TextVariant } from '../../../../types'
+import { cn } from '../../lib/utils'
+import type { TextProps, TextSize, TextVariant } from '../../types'
 import { familyClasses, leadingClasses, toneClasses, weightClasses } from './type-classes'
 
 const sizeClasses: Record<TextSize, string> = {

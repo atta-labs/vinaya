@@ -3,7 +3,7 @@
    fabric.ts (radial fold + three travelling fronts + shimmer) — now displacing actual
    vertices in the same scene as the harness, so the wave passes under and around it. */
 import * as THREE from 'three'
-import { clamp01 } from '@vinaya/ui/lib/math'
+import { clamp01 } from '@vinaya/ui'
 
 export function buildField(THREE_ = THREE, opts = {}) {
   const R = opts.radius ?? 9 // world radius of the sheet

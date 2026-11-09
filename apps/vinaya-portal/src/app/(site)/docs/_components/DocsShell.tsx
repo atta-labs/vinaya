@@ -4,16 +4,7 @@ import { PanelLeft } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  Button,
-  ChromeFrame,
-  Sheet,
-  SheetContent,
-  SheetTitle,
-  SheetTrigger,
-  SidebarProvider
-} from '@vinaya/ui/components'
-import { Text } from '@vinaya/ui/shared'
+import { Button, ChromeFrame, Sheet, SheetContent, SheetTitle, SheetTrigger, SidebarProvider, Text } from '@vinaya/ui'
 import { useDocsChrome } from '../../_components/DocsChrome'
 
 type SidebarShellProps = {

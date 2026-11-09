@@ -13,9 +13,7 @@ import {
   Workflow
 } from 'lucide-react'
 import { type ReactNode, useMemo } from 'react'
-import { Button, Card, RadioGroup } from '@vinaya/ui/components'
-import { cn } from '@vinaya/ui/lib/utils'
-import { Heading, Text } from '@vinaya/ui/shared'
+import { Button, Card, RadioGroup, cn, Heading, Text } from '@vinaya/ui'
 import { ImproverCards } from '../diagram/stages'
 import { flows } from '../fixtures'
 import { checkoutProjects, type Product } from '../fixtures/lifecycle'

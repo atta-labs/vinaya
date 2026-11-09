@@ -1,4 +1,4 @@
-import { clamp01, rangeAt } from '@vinaya/ui/lib/math'
+import { clamp01, rangeAt } from '@vinaya/ui'
 import { shownAt } from '../replay'
 import type { Stage } from '../types'
 

@@ -2,8 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { type MouseEvent, useEffect, useState } from 'react'
-import { NextLink } from '@vinaya/ui/lib/next-link'
-import { cn } from '@vinaya/ui/lib/utils'
+import { NextLink, cn } from '@vinaya/ui'
 
 type Heading = { id: string; text: string }
 

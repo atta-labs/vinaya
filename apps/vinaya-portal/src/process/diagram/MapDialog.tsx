@@ -2,8 +2,7 @@
 
 import { flowList } from '@/process/fixtures'
 import type { FlowKey, GateState, Stage } from '@/process/types'
-import { Button, Dialog, DialogContent, DialogTitle, Tabs, TabsList, TabsTrigger } from '@vinaya/ui/components'
-import { cn } from '@vinaya/ui/lib/utils'
+import { Button, Dialog, DialogContent, DialogTitle, Tabs, TabsList, TabsTrigger, cn } from '@vinaya/ui'
 import type { Moment } from './moment'
 import { ProcessDiagram } from './ProcessDiagram'
 
