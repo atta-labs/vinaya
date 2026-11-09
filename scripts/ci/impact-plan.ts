@@ -49,9 +49,11 @@ import {
   DEFAULT_CONFIGURATION,
   type NativeProblem,
   type SelectionPlan,
+  type SelectionRecords,
+  plannedTests,
   selectTests,
   stableHash
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts'
+} from '@attalabs/test-selection'
 import {
   INVENTORY_PATH,
   type InventoryDeclarations,
@@ -60,15 +62,13 @@ import {
   revisionReader,
   type TreeReader
 } from '../test-suites/inventory-check.ts'
-import { nearestReachableRecord, type ReachedRecord } from '../test-suites/read-records.ts'
-import { repositorySelectionInput, resolveCommit } from '../test-suites/repository-selection.ts'
+import { loadSelectionInputs, type RecordReach, resolveCommit } from '../test-suites/repository-selection.ts'
 import { buildTestSchedule, checkSchedule, ciScheduleInput } from '../test-suites/schedule.ts'
 import { ADVISORY_JOBS, type CiJob, GOVERNANCE_OBLIGATIONS } from './governance-obligations.ts'
 
 export type CiEvent = 'pull_request' | 'push'
 
-/** Reaches the read record of a commit, or says why none can be reached. */
-export type RecordReach = (repoRoot: string, commit: string) => ReachedRecord
+export type { RecordReach }
 
 /** The base guard's answer, as `base-guard.ts` prints it. */
 export type GuardInput = { verdict: 'plan' | 'full'; reason: string; guarded: string[] }
@@ -159,6 +159,10 @@ export type CiPlanInput = {
   fetch?: (sha: string) => void
   /** Reaches the base commit's read record; the default fetches the commit's workflow artifact. */
   reachRecord?: RecordReach
+  /** A folder of pass-entry files earlier runs of the same pull request stored; none when absent. */
+  passes?: string
+  /** Hears the record the selection was decided with, so a test shard keys its passes with the same one. */
+  onRecords?: (records: SelectionRecords | null) => void
 }
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
@@ -400,24 +404,40 @@ export function scheduleCheck(
 // ── The plan ───────────────────────────────────────────────────────────────
 
 /**
- * The selection CI plans by: the same one a local push calls, with the same inputs. The record of the base commit is
- * fetched when one can be reached; a test without a valid one is decided by static selection, and the plan names why.
+ * The selection CI plans by: `selectTests` of the one adapter's inputs (`loadSelectionInputs`), exactly as a local
+ * push calls it. The record of the base commit is reached when it can be; a test without a valid one is decided by
+ * static selection, and the plan names why. Earlier runs of the same pull request's pass entries (`passes`) are
+ * reused under their keys.
  */
 export function ciSelection(
   repoRoot: string,
   base: string,
   head: string,
-  reach: RecordReach = (root, commit) => nearestReachableRecord(root, commit)
-): { plan: SelectionPlan; view: InventoryView; recordNote: string } {
-  const resolved = resolveCommit(repoRoot, base)
-  const reached = reach(repoRoot, resolved)
-  const input = repositorySelectionInput(repoRoot, { base, head, record: reached.record })
-  return { plan: selectTests(input), view: input.inventory.head, recordNote: reached.reason }
+  reach?: RecordReach,
+  passes?: string
+): { plan: SelectionPlan; view: InventoryView; recordNote: string; records: SelectionRecords | null } {
+  const input = loadSelectionInputs({
+    repoRoot,
+    caller: 'ci',
+    base,
+    head,
+    ...(reach ? { reach } : {}),
+    ...(passes ? { passes } : {})
+  })
+  return {
+    plan: selectTests(input),
+    view: input.inventory.head,
+    recordNote: input.account.recordNote,
+    records: input.records ?? null
+  }
 }
 
+/** Every test the plan runs (`plannedTests`), with why. */
 function plannedRuns(selection: SelectionPlan): PlannedRun[] {
+  const running = new Set(plannedTests(selection))
   const runs = new Map<string, PlannedRun>()
   const add = (test: string, suite: string, why: string) => {
+    if (!running.has(test)) return
     const run = runs.get(test) ?? { test, suite, why: [] }
     if (!run.why.includes(why)) run.why.push(why)
     runs.set(test, run)
@@ -426,6 +446,8 @@ function plannedRuns(selection: SelectionPlan): PlannedRun[] {
   for (const f of selection.fallbacks)
     for (const test of f.tests) add(test, '', `conservative-fallback ${f.id}: ${f.reason}`)
   for (const o of selection.obligations) add(o.test, o.suite, `obligation ${o.obligation}: ${o.reason}`)
+  for (const w of selection.wholeSuites)
+    for (const test of w.tests) add(test, w.suite, `whole-suite ${w.suite}: ${w.reason}`)
   return [...runs.values()].sort((a, b) => compare(a.test, b.test))
 }
 
@@ -533,8 +555,15 @@ function suiteRunners(view: InventoryView): string {
 }
 
 /** The narrowed part of a plan: the selection, its tests and what it decides. */
-function narrowed(repoRoot: string, event: CiEvent, base: string, tested: string, reach?: RecordReach) {
-  const { plan: selection, view, recordNote } = ciSelection(repoRoot, base, tested, reach)
+function narrowed(
+  repoRoot: string,
+  event: CiEvent,
+  base: string,
+  tested: string,
+  reach?: RecordReach,
+  passes?: string
+) {
+  const { plan: selection, view, recordNote, records } = ciSelection(repoRoot, base, tested, reach, passes)
   const tests = plannedRuns(selection)
   const byId = new Map(view.tests.map((t) => [t.id, t]))
   const unknown = tests.filter((t) => !byId.has(t.test)).map((t) => t.test)
@@ -544,10 +573,11 @@ function narrowed(repoRoot: string, event: CiEvent, base: string, tested: string
     selected: tests.filter((t) => byId.get(t.test)?.runner !== 'vitest').map((t) => t.test),
     native: tests.filter((t) => byId.get(t.test)?.runner === 'vitest').map((t) => t.test),
     changed,
-    recorded: selection.records.recorded
+    wholeSuites: selection.wholeSuites
   }
   return {
     selection,
+    records,
     recordNote,
     view,
     tests,
@@ -608,7 +638,8 @@ export function buildCiPlan(input: CiPlanInput): CiPlan {
   let narrow: ReturnType<typeof narrowed> | null = null
   if (!fullReason) {
     try {
-      narrow = narrowed(repoRoot, event, base, testedTree, input.reachRecord)
+      narrow = narrowed(repoRoot, event, base, testedTree, input.reachRecord, input.passes)
+      input.onRecords?.(narrow.records)
       if (narrow.unknown.length > 0) {
         fullReason = `the selection names ${narrow.unknown[0]}, which the inventory does not hold`
         narrow = null
@@ -809,7 +840,7 @@ function main(argv: readonly string[]): number {
   const tested = argValue(argv, '--tested') ?? 'HEAD'
   if ((event !== 'pull_request' && event !== 'push') || !base || !head) {
     process.stderr.write(
-      'usage: impact-plan.ts --event pull_request|push --base <sha> --head <sha> [--tested <sha>] [--guard <file>] [--shadow] [--out-dir <dir>] [--github-output <file>] [--summary <file>]\n'
+      'usage: impact-plan.ts --event pull_request|push --base <sha> --head <sha> [--tested <sha>] [--guard <file>] [--passes <dir>] [--shadow] [--out-dir <dir>] [--github-output <file>] [--summary <file>]\n'
     )
     return 2
   }
@@ -822,6 +853,7 @@ function main(argv: readonly string[]): number {
       : 'no base guard verdict was given',
     guarded: []
   }
+  let records: SelectionRecords | null = null
   const plan = buildCiPlan({
     repoRoot,
     event,
@@ -829,7 +861,11 @@ function main(argv: readonly string[]): number {
     approvedHead: head,
     testedTree: tested,
     guard,
-    shadow: argv.includes('--shadow')
+    shadow: argv.includes('--shadow'),
+    ...(argValue(argv, '--passes') ? { passes: argValue(argv, '--passes') as string } : {}),
+    onRecords: (reached) => {
+      records = reached
+    }
   })
   const outDir = argValue(argv, '--out-dir')
   if (outDir) {
@@ -837,6 +873,8 @@ function main(argv: readonly string[]): number {
     writeFileSync(join(outDir, 'plan.json'), `${JSON.stringify(plan, null, 2)}\n`)
     writeFileSync(join(outDir, 'lint-files.txt'), plan.steps.lint.items.map((f) => `${f}\n`).join(''))
     writeFileSync(join(outDir, 'typecheck-packages.txt'), plan.steps.typecheck.items.map((p) => `${p}\n`).join(''))
+    // The record the selection was decided with: each test shard keys the passes it stores with the same one.
+    if (records) writeFileSync(join(outDir, 'read-record.json'), JSON.stringify((records as SelectionRecords).record))
   } else process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`)
   const outputs = argValue(argv, '--github-output')
   if (outputs) writeFileSync(outputs, githubOutputs(plan), { flag: 'a' })

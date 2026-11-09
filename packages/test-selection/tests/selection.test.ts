@@ -7,6 +7,7 @@ import { posix } from 'node:path'
 import {
   lineDiffRanges,
   memoryRepository,
+  passEntryKey,
   parseHunkRanges,
   plannedTests,
   READ_RECORD_SCHEMA,
@@ -19,7 +20,7 @@ import {
   selectTests,
   stableHash,
   validateInventory
-} from '../index.js'
+} from '../src/index.js'
 import { FIXTURES, type Fixture, fixture, type Scenario, scenarioInput, TEST_NAME, viewOf } from './fixture-repos.js'
 
 const setup = (fx: Fixture, scenario: Scenario, overrides: { repo?: RepositoryReader } = {}) =>
@@ -509,5 +510,142 @@ describe('lineDiffRanges', () => {
     expect(lineDiffRanges('', 'a\nb\n')).toEqual(parseHunkRanges('@@ -0,0 +1,2 @@'))
     expect(lineDiffRanges('x\ny\n', 'x\ny\n')).toEqual({ beforeRanges: [], afterRanges: [] })
     expect(lineDiffRanges('a\nb\nc\nd\n', 'A\nb\nc\nD\n')).toEqual(parseHunkRanges('@@ -1 +1 @@\n@@ -4 +4 @@'))
+  })
+})
+
+// ── The entry point: every rule after the change plan ─────────────────────
+
+describe('selectTests holds every rule a caller used to apply', () => {
+  const decl = {
+    suites: [
+      { id: 'app', dir: 'app', runner: 'bun' as const, preload: null },
+      { id: 'site', dir: 'site', runner: 'bun' as const, preload: null }
+    ],
+    edges: [],
+    unknowns: [],
+    policies: []
+  }
+  const base: Record<string, string> = {
+    'package.json': '{ "name": "entry" }\n',
+    'app/package.json': '{ "name": "app" }\n',
+    'app/src/a.ts': 'export const a = 1\n',
+    'app/src/b.ts': 'export const b = 1\n',
+    'app/tests/a.test.ts': "import { a } from '../src/a'\n",
+    'app/tests/b.test.ts': "import { b } from '../src/b'\n",
+    'site/package.json': '{ "name": "site" }\n',
+    'site/style.css': 'a {}\n',
+    'site/tests/one.test.ts': 'export {}\n',
+    'site/tests/two.test.ts': 'export {}\n'
+  }
+  type Input = Parameters<typeof selectTests>[0]
+  const inputOf = (head: Record<string, string>, extra: Partial<Input> = {}): Input => ({
+    repo: memoryRepository({ base, head }),
+    base: 'base',
+    head: 'head',
+    inventory: { head: viewOf('head', head, decl), base: viewOf('base', base, decl) },
+    policy: { depth: 'one' },
+    ...extra
+  })
+  const changeA = { ...base, 'app/src/a.ts': 'export const a = 2\n' }
+  const recordOf = (tests: ReadRecord['tests']): ReadRecord => ({
+    schema: READ_RECORD_SCHEMA,
+    schemaVersion: 1,
+    commit: 'base',
+    platform: 'linux',
+    tests
+  })
+
+  it('re-runs the failed tests of the last refused run as obligations, whatever the change selects', () => {
+    const plan = selectTests(
+      inputOf(changeA, { history: { context: 'c', passes: [], failures: ['app/tests/b.test.ts', 'gone.test.ts'] } })
+    )
+    expect(plan.obligations.map((o) => `${o.obligation} ${o.test}`)).toEqual(['failed-test-rerun app/tests/b.test.ts'])
+    expect(plannedTests(plan)).toEqual(['app/tests/a.test.ts', 'app/tests/b.test.ts'])
+  })
+
+  it('runs a whole-suite policy suite whole on a change under its folder, for its tests with no record', () => {
+    const policy: Input['policy'] = {
+      depth: 'one',
+      wholeSuites: [{ suite: 'site', reason: 'its styles are not modeled' }]
+    }
+    const styled = { ...base, 'site/style.css': 'a { color: red }\n' }
+    const whole = selectTests(inputOf(styled, { policy }))
+    expect(whole.wholeSuites).toEqual([
+      {
+        suite: 'site',
+        reason: 'its styles are not modeled',
+        tests: ['site/tests/one.test.ts', 'site/tests/two.test.ts']
+      }
+    ])
+    expect(plannedTests(whole)).toContain('site/tests/two.test.ts')
+    // No change under the folder: no whole run.
+    expect(selectTests(inputOf(changeA, { policy })).wholeSuites).toEqual([])
+    // A recorded test is decided by its record, not run whole.
+    const record = recordOf({ 'site/tests/one.test.ts': { reads: ['site/tests/one.test.ts'], listed: [] } })
+    const recorded = selectTests(inputOf(styled, { policy, records: { record, platform: 'linux' } }))
+    expect(recorded.wholeSuites.map((w) => w.tests)).toEqual([['site/tests/two.test.ts']])
+  })
+
+  it('leaves out after a merge the tests only default-branch paths reached, unless the branch side reaches them', () => {
+    const merged = { ...base, 'app/src/a.ts': 'export const a = 2\n', 'app/src/b.ts': 'export const b = 2\n' }
+    const sideBase = { ...merged, 'app/src/b.ts': base['app/src/b.ts'] as string }
+    const repo = memoryRepository({ base, head: merged, side: sideBase })
+    const plan = selectTests({
+      ...inputOf(merged),
+      repo,
+      branchSide: {
+        paths: ['app/src/b.ts'],
+        base: () => ({ commit: 'side', inventory: viewOf('side', sideBase, decl) })
+      }
+    })
+    expect(plan.leftOut).toEqual(['app/tests/a.test.ts'])
+    expect(plannedTests(plan)).toEqual(['app/tests/b.test.ts'])
+    // A side base that cannot be built leaves nothing out.
+    const unbuilt = selectTests({ ...inputOf(merged), repo, branchSide: { paths: ['app/src/b.ts'], base: () => null } })
+    expect(unbuilt.leftOut).toEqual([])
+  })
+
+  it('reuses a planned test whose earlier pass carries the key at the head, and never a failed one', () => {
+    const repo = memoryRepository({ base, head: changeA })
+    const records = {
+      record: recordOf({ 'app/tests/b.test.ts': { reads: ['app/tests/b.test.ts', 'app/src/b.ts'], listed: [] } }),
+      platform: 'linux'
+    }
+    const key = passEntryKey({ repo, revision: 'head', context: 'ctx', records, test: 'app/tests/b.test.ts' })
+    expect(key).not.toBeNull()
+    const pass = { test: 'app/tests/b.test.ts', key: key as string, head: 'earlier', source: 'ci' }
+    const history = { context: 'ctx', passes: [pass], failures: [] }
+    // An obligation runs `b.test.ts` on every change; the reuse rule is what drops it.
+    const policy: Input['policy'] = {
+      depth: 'one',
+      obligations: [{ id: 'gate', kind: 'policy', reason: 'r', tests: ['app/tests/b.test.ts'] }]
+    }
+    const reused = selectTests({ ...inputOf(changeA), repo, records, history, policy })
+    expect(reused.reused).toEqual([{ test: 'app/tests/b.test.ts', head: 'earlier', source: 'ci' }])
+    expect(plannedTests(reused)).toEqual(['app/tests/a.test.ts'])
+    // Another context, no context, or a failure of the last refused run: no reuse.
+    const again = (h: Input['history']) => selectTests({ ...inputOf(changeA), repo, records, policy, history: h })
+    expect(again({ ...history, context: 'other' }).reused).toEqual([])
+    expect(again({ ...history, context: null }).reused).toEqual([])
+    const failed = again({ ...history, failures: ['app/tests/b.test.ts'] })
+    expect(failed.reused).toEqual([])
+    expect(plannedTests(failed)).toContain('app/tests/b.test.ts')
+  })
+
+  it('keys a pass by its recorded reads while they hold, and by the whole tree once one changed or with no record', () => {
+    const records = {
+      record: recordOf({ 'app/tests/a.test.ts': { reads: ['app/tests/a.test.ts', 'app/src/a.ts'], listed: [] } }),
+      platform: 'linux'
+    }
+    const unrelated = { ...base, 'app/src/b.ts': 'export const b = 9\n' }
+    const repo = memoryRepository({ base, unrelated, touched: changeA })
+    const key = (revision: string, recordsIn: typeof records | null = records) =>
+      passEntryKey({ repo, revision, context: 'ctx', records: recordsIn, test: 'app/tests/a.test.ts' })
+    // An unrelated change keeps the record-scoped key.
+    expect(key('unrelated')).toBe(key('base'))
+    // A change to a recorded path, or no record at all, keys by the whole tree: any change differs.
+    expect(key('touched')).not.toBe(key('base'))
+    expect(key('unrelated', null)).not.toBe(key('base', null))
+    expect(passEntryKey({ repo, revision: 'base', context: null, records, test: 'app/tests/a.test.ts' })).toBeNull()
   })
 })

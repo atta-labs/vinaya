@@ -12,13 +12,15 @@
  *
  * The recorded reads are the fixtures; the oracle is execution, so the check does not use the record it judges.
  */
-import { describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   bunLockIdentity,
+  type InventoryDeclarations as FixtureDeclarations,
+  inventoryViewOf as viewOf,
   memoryRepository,
   plannedTests,
   READ_RECORD_SCHEMA,
@@ -26,12 +28,11 @@ import {
   type RecordedTest,
   type SelectionPlan,
   selectTests
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
-import {
-  type FixtureDeclarations,
-  viewOf
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/tests/fixture-repos.js'
-import { localNativePlan } from './local-run.js'
+} from '@attalabs/test-selection'
+import { junitFileResults, marksOnly } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store.js'
+import { buildCiPlan } from '../ci/impact-plan.ts'
+import { freezeLocalPlan, localNativePlan } from './local-run.js'
+import { loadSelectionInputs, passEntriesOfRun, storePassEntries } from './repository-selection.js'
 
 const DECLARATIONS: FixtureDeclarations = {
   suites: [{ id: 'all', dir: '.', runner: 'bun', preload: null }],
@@ -43,7 +44,8 @@ const DECLARATIONS: FixtureDeclarations = {
 function selectionOf(
   base: Record<string, string>,
   head: Record<string, string>,
-  record: ReadRecord | null
+  record: ReadRecord | null,
+  failures: readonly string[] = []
 ): { plan: SelectionPlan; view: ReturnType<typeof viewOf> } {
   const view = viewOf('head', head, DECLARATIONS)
   const plan = selectTests({
@@ -52,7 +54,8 @@ function selectionOf(
     head: 'head',
     inventory: { head: view, base: viewOf('base', base, DECLARATIONS) },
     policy: { depth: 'transitive' },
-    records: record ? { record, platform: 'linux' } : null
+    records: record ? { record, platform: 'linux' } : null,
+    history: { context: null, passes: [], failures }
   })
   return { plan, view }
 }
@@ -270,9 +273,9 @@ describe('a branch that failed 27 of 210 test files and merged a default branch 
       reads[test] = [`${own}/src/index.ts`, `${own}/package.json`]
       if (base[test]?.includes('gone')) reads[test].push('packages/gone/src/index.ts', 'packages/gone/package.json')
     }
-    const { plan, view } = selectionOf(base, head, recordOf(reads))
+    const { plan, view } = selectionOf(base, head, recordOf(reads), failures)
     expect(plan.fallbacks).toEqual([])
-    const local = localNativePlan({ plan, view, obligations: failures })
+    const local = localNativePlan({ plan, view })
     expect(local.problems).toEqual([])
     const reached = Array.from({ length: 6 }, (_, t) => `packages/p3/tests/t${t}.test.ts`)
     const ran = local.identities.map((id) => id.replace(/@.*$/, '')).sort()
@@ -296,7 +299,7 @@ describe('no rule outside the static fallback names a path, folder, owner or ext
       .replace(/^\s*\/\/.*$/gm, '')
       .replace(/^import [^\n]*$/gm, '')
 
-  const SELECTOR = 'harness/kernel/gates/ring0-hooks/pre-push/verification/selector.ts'
+  const SELECTOR = 'packages/test-selection/src/selector.ts'
   const BANNED_IN_SELECTOR = [
     'PACKAGE_PROSE_FILE_NAMES',
     'PACKAGE_TEST_DATA_FOLDERS',
@@ -358,5 +361,223 @@ describe('a lockfile change reaches the tests that read a changed package', () =
 
   it('selects every package reader when the lockfile cannot be compared package by package', () => {
     expect(select({ ...base, 'bun.lock': lockOf('3.1.0') }, false)).toEqual([T.double, T.process, T.triple].sort())
+  })
+})
+
+// ── One entry point: the push gate and CI only call it ────────────────────
+
+/** A small git repository shaped like this one: a workspace suite, a repository suite and committed declarations. */
+function callersRepository(): { dir: string; git: (...args: string[]) => string; base: string; head: string } {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-callers-')))
+  const env: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(process.env)) if (!key.startsWith('GIT_')) env[key] = value
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+      cwd: dir,
+      encoding: 'utf8',
+      env
+    }).trim()
+  const inventory = {
+    schema: 'vinaya.test-inventory',
+    schemaVersion: 1,
+    declarationVersion: 1,
+    suites: [
+      { id: 'app', owner: '@fx/app', kind: 'workspace', dir: 'packages/app', runner: 'bun', preload: null },
+      {
+        id: 'repository',
+        owner: 'repository',
+        kind: 'repository',
+        dir: '.',
+        runner: 'bun',
+        preload: null,
+        tests: ['scripts/check.test.ts']
+      }
+    ],
+    typeInputs: [{ path: 'packages/core', role: 'the library the app tests import' }],
+    exclusions: [],
+    inputs: [],
+    providers: [],
+    policies: [
+      {
+        id: 'inventory-gate',
+        kind: 'mandatory',
+        inputs: ['scripts/test-suites/'],
+        duty: 'the repository suite runs on every change',
+        source: 'ci'
+      }
+    ],
+    unknowns: []
+  }
+  const files: Record<string, string> = {
+    'package.json': '{ "name": "callers", "private": true, "workspaces": ["packages/*"] }\n',
+    'packages/core/package.json': '{ "name": "@fx/core" }\n',
+    'packages/core/src/add.ts': 'export const add = (a: number, b: number) => a + b\n',
+    'packages/core/src/mul.ts': 'export const mul = (a: number, b: number) => a * b\n',
+    'packages/app/package.json': '{ "name": "@fx/app", "scripts": { "test": "bun test" } }\n',
+    'packages/app/tests/add.test.ts': "import { add } from '../../core/src/add.ts'\nexport const used = add\n",
+    'packages/app/tests/mul.test.ts': "import { mul } from '../../core/src/mul.ts'\nexport const used = mul\n",
+    'scripts/check.test.ts': "import { test } from 'bun:test'\ntest('check', () => {})\n",
+    'scripts/test-suites/inventory.json': `${JSON.stringify(inventory, null, 2)}\n`,
+    'vinaya.config.json': '{ "prePush": { "alwaysRun": [] } }\n'
+  }
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, path)), { recursive: true })
+    writeFileSync(join(dir, path), text)
+  }
+  git('init', '-q', '-b', 'main')
+  git('add', '-A')
+  git('commit', '-q', '-m', 'base')
+  const base = git('rev-parse', 'HEAD')
+  git('update-ref', 'refs/remotes/origin/main', base)
+  git('checkout', '-q', '-b', 'task/x/1')
+  writeFileSync(join(dir, 'packages/core/src/add.ts'), 'export const add = (a: number, b: number) => b + a\n')
+  git('commit', '-q', '-am', 'head')
+  return { dir, git, base, head: git('rev-parse', 'HEAD') }
+}
+
+const NO_RECORD = () => ({ record: null, reason: 'no record in this fixture' })
+
+/** The tests the push gate's frozen plan runs. */
+function pushRunList(dir: string): string[] {
+  const { note } = freezeLocalPlan(dir)
+  return [...new Set((note.native?.identities ?? []).map((id) => id.replace(/@[^@]*$/, '')))].sort()
+}
+
+/** The tests CI's plan runs for a pull request from `base` to `head`. */
+function ciRunList(dir: string, base: string, head: string, passes?: string): string[] {
+  const plan = buildCiPlan({
+    repoRoot: dir,
+    event: 'pull_request',
+    base,
+    approvedHead: head,
+    testedTree: head,
+    guard: { verdict: 'plan', reason: 'the fixture changes no planning input', guarded: [] },
+    reachRecord: NO_RECORD,
+    fetch: () => {},
+    ...(passes ? { passes } : {})
+  })
+  expect(plan.scope).toBe('selected')
+  return plan.tests.map((t) => t.test).sort()
+}
+
+describe('the push gate and CI run exactly the one entry point’s planned tests', () => {
+  let previous: string | undefined
+  beforeAll(() => {
+    previous = process.env.VINAYA_READ_RECORD
+    // No record anywhere: the push and CI see the same (absent) record without a network call.
+    process.env.VINAYA_READ_RECORD = 'off'
+  })
+  afterAll(() => {
+    if (previous === undefined) delete process.env.VINAYA_READ_RECORD
+    else process.env.VINAYA_READ_RECORD = previous
+  })
+
+  it('for one base, head, record and platform, the two run lists are the same set and equal plannedTests', () => {
+    const { dir, base, head } = callersRepository()
+    try {
+      const expected = plannedTests(
+        selectTests(loadSelectionInputs({ repoRoot: dir, caller: 'ci', base, head, reach: NO_RECORD }))
+      )
+      const viaPush = plannedTests(
+        selectTests(loadSelectionInputs({ repoRoot: dir, caller: 'push', reach: NO_RECORD }))
+      )
+      expect(expected).toEqual(['packages/app/tests/add.test.ts', 'scripts/check.test.ts'])
+      expect(viaPush).toEqual(expected)
+      expect(pushRunList(dir)).toEqual(expected)
+      expect(ciRunList(dir, base, head)).toEqual(expected)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('the push gate reuses a complete pass whose key matches at the pushed head, and only then', () => {
+    const { dir, git, head } = callersRepository()
+    try {
+      const view = loadSelectionInputs({ repoRoot: dir, caller: 'push', reach: NO_RECORD }).inventory.head
+      const report = (file: string, body: string) =>
+        `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="bun test">\n  <testsuite name="${file}" file="${file}" tests="1">\n${body}  </testsuite>\n</testsuites>\n`
+      const passed = '    <testcase name="t" file="x" />\n'
+      // A complete pass of `add.test.ts`, run in its suite's folder, and a skip-carrying run of `check.test.ts`.
+      const entries = passEntriesOfRun({
+        repoRoot: dir,
+        view,
+        reports: [
+          { cwd: 'packages/app', xml: report('tests/add.test.ts', passed) },
+          { cwd: '.', xml: report('scripts/check.test.ts', `${passed}    <testcase name="s"><skipped /></testcase>\n`) }
+        ],
+        record: null,
+        source: 'a hand run'
+      })
+      expect(entries.map((e) => [e.test, e.head])).toEqual([['packages/app/tests/add.test.ts', head]])
+      storePassEntries(dir, entries)
+      const reused = selectTests(loadSelectionInputs({ repoRoot: dir, caller: 'push', reach: NO_RECORD }))
+      expect(reused.reused.map((r) => r.test)).toEqual(['packages/app/tests/add.test.ts'])
+      expect(pushRunList(dir)).toEqual(['scripts/check.test.ts'])
+      // Any tracked change: with no record the key is the whole tree, so the pass no longer holds.
+      writeFileSync(join(dir, 'packages/core/src/mul.ts'), 'export const mul = (a: number, b: number) => b * a\n')
+      git('commit', '-q', '-am', 'later')
+      expect(pushRunList(dir)).toEqual([
+        'packages/app/tests/add.test.ts',
+        'packages/app/tests/mul.test.ts',
+        'scripts/check.test.ts'
+      ])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('CI reuses the pass entries an earlier run of the same pull request stored, unless their key changed', () => {
+    const { dir, git, base, head } = callersRepository()
+    const passes = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-ci-passes-')))
+    try {
+      const view = loadSelectionInputs({ repoRoot: dir, caller: 'ci', base, head, reach: NO_RECORD }).inventory.head
+      const xml =
+        '<testsuites name="bun test">\n  <testsuite name="scripts/check.test.ts" file="scripts/check.test.ts" tests="1">\n    <testcase name="check" />\n  </testsuite>\n</testsuites>\n'
+      const entries = passEntriesOfRun({
+        repoRoot: dir,
+        view,
+        reports: [{ cwd: '.', xml }],
+        record: null,
+        source: 'ci shared'
+      })
+      writeFileSync(join(passes, 'shared.json'), JSON.stringify({ version: 1, entries }))
+      expect(ciRunList(dir, base, head)).toEqual(['packages/app/tests/add.test.ts', 'scripts/check.test.ts'])
+      expect(ciRunList(dir, base, head, passes)).toEqual(['packages/app/tests/add.test.ts'])
+      // The next push to the pull request changes a tracked file: the stored pass no longer holds.
+      writeFileSync(join(dir, 'vinaya.config.json'), '{ "prePush": { "alwaysRun": [] }, "x": 1 }\n')
+      git('commit', '-q', '-am', 'next push')
+      expect(ciRunList(dir, base, git('rev-parse', 'HEAD'), passes)).toContain('scripts/check.test.ts')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(passes, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('a JUnit report counts a file passed only when every test in it ran and passed', () => {
+    const suite = (file: string, body: string, attrs = '') =>
+      `  <testsuite name="${file}" file="${file}"${attrs}>\n${body}  </testsuite>\n`
+    const xml = [
+      '<testsuites name="bun test">',
+      suite('a.test.ts', '    <testcase name="ok" />\n'),
+      suite('skip.test.ts', '    <testcase name="ok" />\n    <testcase name="s"><skipped /></testcase>\n'),
+      suite('todo.test.ts', '    <testcase name="t"><skipped message="TODO" /></testcase>\n'),
+      suite('fail.test.ts', '    <testcase name="f"><failure message="x">x</failure></testcase>\n', ' failures="1"'),
+      suite('empty.test.ts', ''),
+      '</testsuites>',
+      ''
+    ].join('\n')
+    expect(junitFileResults(xml)).toEqual([
+      { file: 'a.test.ts', passed: true },
+      { file: 'empty.test.ts', passed: false },
+      { file: 'fail.test.ts', passed: false },
+      { file: 'skip.test.ts', passed: false },
+      { file: 'todo.test.ts', passed: false }
+    ])
+    // A truncated report proves nothing.
+    expect(junitFileResults(xml.slice(0, xml.length - 20))).toBeNull()
+    // `.only` leaves the other tests out of the report: the file's source decides.
+    expect(marksOnly("test.only('a', () => {})")).toBe(true)
+    expect(marksOnly("describe . only ('a', () => {})")).toBe(true)
+    expect(marksOnly("test('only the start', () => {})")).toBe(false)
   })
 })

@@ -16,12 +16,7 @@ import {
   CI_SHARD_COUNT,
   CI_SHARD_LIST_OWNER
 } from '../../harness/processes/vinaya-strict/checks/ci-shard-membership.ts'
-import {
-  groupNativeTests,
-  type NativeGroup,
-  type NativeTestRequest,
-  type TestIdentity
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts'
+import { groupNativeTests, type NativeGroup, type NativeTestRequest, type TestIdentity } from '@attalabs/test-selection'
 import { type InventoryView, readTestInventory } from './inventory-check.ts'
 import {
   assignShards,
@@ -266,29 +261,29 @@ describe('what a CI run schedules', () => {
   const cliTest = view.tests.find((t) => t.owner === CI_SHARD_LIST_OWNER) as TestIdentity
   const forgeState = view.tests.find((t) => t.owner === '@attalabs/log-server') as TestIdentity
 
-  test('a selected run schedules the selected files, every root-suite test and the whole-run suite with its reason', () => {
+  test('a selected run schedules exactly the selection’s planned files, and adds none of its own', () => {
     const input = ciScheduleInput(view, { scope: 'selected', selected: [cliTest.id], native: [forgeState.id] })
     expect(input.reason).toBeNull()
-    expect(input.selected.map((t) => t.id).sort()).toEqual(
-      [cliTest.id, forgeState.id, ...view.tests.filter((t) => t.kind !== 'workspace').map((t) => t.id)].sort()
-    )
-    // The package-compatibility suite is never skipped, whatever the selection holds.
-    expect(input.selected.map((t) => t.id)).toContain('scripts/package-compat/package-compat.test.ts')
-    expect(input.wholeSuites.map((w) => [w.suite, w.reason.includes('whole repository')])).toEqual([])
+    expect(input.selected.map((t) => t.id).sort()).toEqual([cliTest.id, forgeState.id].sort())
+    // The root suites run because the selection's build-gate obligations plan them, never because the schedule adds them.
+    expect(input.selected.map((t) => t.id)).not.toContain('scripts/package-compat/package-compat.test.ts')
+    expect(input.wholeSuites).toEqual([])
   })
 
-  test('a non-TypeScript portal change runs the whole portal suite, which a selection there never narrows', () => {
+  test('a suite the selection runs whole is one whole-suite run in its place', () => {
     const portal = view.tests.filter((t) => t.owner === '@vinaya/portal').map((t) => t.id)
     expect(portal.length).toBeGreaterThan(0)
+    const reason = 'the change touches a path under its folder, and the selection does not model the portal inputs'
     const decision = {
       scope: 'selected' as const,
-      selected: [],
+      selected: portal,
       native: [],
-      changed: ['apps/vinaya-portal/src/cms/utils/theme-corpus.fixture.json']
+      changed: ['apps/vinaya-portal/src/cms/utils/theme-corpus.fixture.json'],
+      wholeSuites: [{ suite: 'portal', reason, tests: portal }]
     }
     const input = ciScheduleInput(view, decision)
     const whole = input.wholeSuites.find((w) => w.suite === 'portal')
-    expect(whole?.reason).toContain('changes a path under its folder')
+    expect(whole?.reason).toBe(reason)
     expect(whole?.identities.map((t) => t.id).sort()).toEqual([...portal].sort())
     const schedule = buildTestSchedule({ view, shardLists, ...input })
     expect(checkSchedule(schedule, expectedOf(input))).toEqual([])
@@ -296,11 +291,8 @@ describe('what a CI run schedules', () => {
     expect(schedule.accounting.filter((e) => portal.includes(e.test)).map((e) => e.placement)).toEqual(
       portal.map(() => 'shared')
     )
-    // A change outside the portal leaves it to the selection.
-    const elsewhere = ciScheduleInput(view, {
-      ...decision,
-      changed: ['harness/processes/vinaya-strict/integration/config/compose.ts']
-    })
+    // A plan that runs no suite whole gives the schedule none.
+    const elsewhere = ciScheduleInput(view, { ...decision, wholeSuites: [] })
     expect(elsewhere.wholeSuites.map((w) => w.suite)).toEqual([])
   })
 

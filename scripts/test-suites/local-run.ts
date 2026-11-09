@@ -1,22 +1,12 @@
 #!/usr/bin/env bun
 /**
- * This repository's local push adapter: the tests a push runs come from the
- * shared selection library, through the same adapter CI uses
- * (`repository-selection.ts`), and run once each under their own native
- * runner, one runner start after another.
- *
- * The adapter chooses only what is the push's own:
- *
- * - the base the selector compares the head with — the merge base with the
- *   push's remote base, or a verified incremental base: the head of the last
- *   passing run, or of the last refused one, on this branch, whose selection
- *   policy and environment are this push's (`chooseNativeBase`); a test that
- *   passed there is reused, listed with the head that proved it, unless the
- *   change since reaches it;
- * - the unresolved failed tests of the last refused push, added on top of the
- *   selection as obligations, never handed to the selector;
- * - the suites a runner cannot narrow to files, run whole and said so before
- *   anything starts (the schedule's own whole-suite reasons).
+ * This repository's push gate: the tests a push runs are exactly
+ * `plannedTests(selectTests(loadSelectionInputs({ caller: 'push' })))` — the one
+ * adapter (`repository-selection.ts`) reads the push's base, record, failed
+ * tests and earlier passes, the selection package holds every rule — and each
+ * runs once under its own native runner, one runner start after another. Every
+ * test file a run passes completely is kept as a pass entry the next selection
+ * may reuse. This file holds no selection rule and passes no selection option.
  *
  * Grouping, each runner's command and the check of what each runner executed
  * are the scheduler's (`schedule.ts`'s `runGroups`, over the library's
@@ -42,21 +32,15 @@
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  changedBetween,
-  newestMergeSince,
-  chooseNativeBase,
   clearRecordOfKind,
-  type ContextParts,
   computeVerificationContext,
   currentBranch,
   currentHead,
   FAILED_TESTS_RECORD,
   type FailedTestsRecord,
-  isAncestor,
   LAST_PUSH_RESULT,
   type LastPushResult,
   type NativeCompletion,
@@ -68,7 +52,6 @@ import {
   readPassingRecord,
   SELECTION_NOTE,
   type SelectionNote,
-  type TestRunnerFacts,
   verificationInputsDirty,
   writeJsonUnderGit
 } from '../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests.js'
@@ -80,30 +63,35 @@ import {
   nativeRunCommand,
   parseNativeRunCommand
 } from '../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
-import { cleanMergeOnto, resolveRemoteBase } from '../../harness/kernel/connectors/git/remote-base.js'
 import {
   DEFAULT_CONFIGURATION,
+  FAILED_RERUN_OBLIGATION,
   groupNativeTests,
   type InventoryView,
   type NativeGroup,
   type NativeProblem,
   type NativeTestRequest,
   plannedTests,
-  SELECTION_ENGINE,
   type SelectionPlan,
   selectTests,
-  stableHash,
   type TestIdentity,
   validateExecutedIdentities,
   type WholeSuiteRequest
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
+} from '@attalabs/test-selection'
 import { readTestInventory } from './inventory-check.js'
-import { nearestReachableRecord } from './read-records.js'
-import { repositorySelectionInput } from './repository-selection.js'
-import { type GroupOutcome, type RunResult, runGroups, WHOLE_ON_CHANGE_OWNERS, WHOLE_SUITE_OWNERS } from './schedule.js'
 
-/** The version of how this adapter executes a plan; part of every verification context it names. */
-export const LOCAL_RUN_EXECUTION = 'native-local-run@1'
+import {
+  LOCAL_RUN_EXECUTION,
+  loadSelectionInputs,
+  nativeContext,
+  passEntriesOfRun,
+  recordAt,
+  type SelectionAccount,
+  storePassEntries
+} from './repository-selection.js'
+
+export { LOCAL_RUN_EXECUTION, nativeContext }
+import { type GroupOutcome, type RunResult, runGroups } from './schedule.js'
 
 /** The most files one local runner start holds, so a push's runner memory is released between chunks. */
 export const LOCAL_GROUP_FILE_CAP = 40
@@ -130,18 +118,6 @@ function git(repoRoot: string, args: string[]): string | null {
   }
 }
 
-/**
- * The verification context a plan executes under: the push's own context
- * digest (selection policy, input declarations, lockfiles, runner
- * configuration, environment), the head inventory's runner facts, the
- * selection engine and this adapter's execution version. `null` when the
- * digest cannot be read — an unreadable context refuses every reuse.
- */
-export function nativeContext(verification: string | null, inventory: string): string | null {
-  if (verification === null) return null
-  return stableHash({ verification, inventory, engine: SELECTION_ENGINE, execution: LOCAL_RUN_EXECUTION })
-}
-
 /** The head, the tracked index and working-tree differences: what a run must leave as it found to prove anything. */
 export function trackedState(repoRoot: string): string | null {
   const head = git(repoRoot, ['rev-parse', 'HEAD'])
@@ -159,84 +135,6 @@ export type LocalPlanInput = {
   plan: SelectionPlan
   /** The head commit's inventory view. */
   view: InventoryView
-  /** Repository-relative unresolved failed tests the push adds on top of the selection. */
-  obligations: readonly string[]
-  /** Repository-relative planned tests the branch-side set left out ({@link leftOutByBranchSide}); never an obligation. */
-  leftOut?: readonly string[]
-}
-
-/**
- * The planned tests a branch-side change set leaves out: a test the plan requires, or a fallback scope runs, whose
- * every reason names a single changed path outside the set — a path only the default branch changed. A reason that
- * names no single changed path (a folder, an installed package, a glob) keeps its test, and so does any reason naming
- * a path in the set. The plan's own obligations (its duties) always stay.
- *
- * The selector records the first change a test's import walk reaches, not every one, so a test reached both by a
- * default-branch path and by a branch-side path may carry only the former. Such a candidate is kept only when the plan
- * of a comparison whose every changed path is in the branch-side set ({@link branchSideBase}) selects it — that is, when
- * a branch-side path reaches it; `fromBranchSide` computes that plan's tests, and only when some candidate needs it.
- */
-export function leftOutByBranchSide(
-  plan: SelectionPlan,
-  branchSide: readonly string[],
-  fromBranchSide: () => readonly string[]
-): string[] {
-  const changed = new Set(plan.changes.flatMap((c) => (c.from ? [c.path, c.from] : [c.path])))
-  const side = new Set(branchSide)
-  const duties = new Set(plan.obligations.map((o) => o.test))
-  const named = new Map<string, string[]>()
-  const name = (test: string, via: string) => named.set(test, [...(named.get(test) ?? []), via])
-  for (const t of plan.required) for (const reason of t.reasons) name(t.test, reason.via)
-  for (const scope of plan.fallbacks) for (const test of scope.tests) for (const path of scope.paths) name(test, path)
-  const candidates = plannedTests(plan).filter((test) => {
-    if (duties.has(test)) return false
-    const vias = named.get(test) ?? []
-    return vias.length > 0 && vias.every((via) => changed.has(via) && !side.has(via))
-  })
-  if (candidates.length === 0) return []
-  const reached = new Set(fromBranchSide())
-  return candidates.filter((test) => !reached.has(test))
-}
-
-/**
- * A commit whose tree is the head's with only the branch-side paths (repository-relative) as they were at the
- * recorded head — present with that content, or absent when the recorded head lacks them — so the comparison from it
- * to the head changes exactly those paths. Built in a temporary index; the commit is written to the object store
- * unreferenced. `null` when any git step fails.
- */
-export function branchSideBase(
-  repoRoot: string,
-  recordHead: string,
-  head: string,
-  paths: readonly string[]
-): string | null {
-  const dir = mkdtempSync(join(tmpdir(), 'vinaya-branch-side-'))
-  const env = {
-    ...cleanGitEnv(),
-    GIT_INDEX_FILE: join(dir, 'index'),
-    GIT_AUTHOR_NAME: 'vinaya',
-    GIT_AUTHOR_EMAIL: 'vinaya@localhost',
-    GIT_COMMITTER_NAME: 'vinaya',
-    GIT_COMMITTER_EMAIL: 'vinaya@localhost'
-  }
-  const run = (args: string[]): string =>
-    execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env }).trim()
-  try {
-    run(['read-tree', head])
-    for (const path of paths) {
-      const entry = run(['ls-tree', recordHead, '--', path])
-      const match = /^(\d+) blob ([0-9a-f]+)\t/.exec(entry)
-      if (match) run(['update-index', '--add', '--cacheinfo', `${match[1]},${match[2]},${path}`])
-      else if (entry === '') run(['update-index', '--force-remove', '--', path])
-      else return null
-    }
-    const tree = run(['write-tree'])
-    return run(['commit-tree', tree, '-p', recordHead, '-m', 'vinaya: the branch-side comparison base'])
-  } catch {
-    return null
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
 }
 
 export type LocalPlan = {
@@ -246,57 +144,33 @@ export type LocalPlan = {
   /** Suites run whole, with why. */
   expanded: { suite: string; reason: string }[]
   problems: NativeProblem[]
-  /** Planned tests the branch-side set left out that no whole-suite run holds either, sorted. */
-  leftOut: string[]
 }
 
 /**
- * The native groups one push runs: the plan's tests and the push's
- * obligations, each identity once, grouped by suite and configuration. A
- * suite whose owner the schedule runs whole — its tests read inputs the
- * selection does not model, or its folder changed and its inputs are not
- * modeled — expands to every test it holds before anything runs, with its
- * reason; any other request runs exactly its file. A test the head inventory
- * does not hold is a problem, never dropped.
+ * The native groups one push runs: exactly the plan's tests (`plannedTests`), each identity once, grouped by suite
+ * and configuration. A suite the plan runs whole is one whole-suite request with its reason; every other test runs
+ * exactly its file. A planned test the head inventory does not hold is a problem, never dropped.
  */
 export function localNativePlan(input: LocalPlanInput): LocalPlan {
   const { plan, view } = input
   const problems: NativeProblem[] = []
   const removed = new Set(plan.removedTests)
   const byId = new Map(view.tests.map((t) => [t.id, t]))
-  const wanted = [...new Set([...plannedTests(plan), ...input.obligations])].filter((id) => !removed.has(id)).sort()
-  // A test the branch-side set left out is still read for problems and whole-suite expansion, exactly as before; it
-  // is only not requested on its own. An obligation is never left out.
-  const leftOut = new Set((input.leftOut ?? []).filter((id) => !input.obligations.includes(id)))
+  const wanted = plannedTests(plan).filter((id) => !removed.has(id))
   const planned: TestIdentity[] = []
   for (const id of wanted) {
     const identity = byId.get(id)
     if (identity) planned.push(identity)
     else problems.push({ code: 'missing', path: id, detail: 'planned but not a test the head inventory holds' })
   }
-  const known = planned.filter((t) => !leftOut.has(t.id))
-  const changed = plan.changes.flatMap((c) => (c.from ? [c.path, c.from] : [c.path]))
-  const wholeSuites: WholeSuiteRequest[] = []
-  // static-fallback begin: a suite whose inputs the selection does not model runs whole — its tests with no
-  // record only; a record decides the others.
-  const recorded = new Set(plan.records.recorded)
-  for (const suite of view.suites) {
-    const prefix = suite.dir === '.' ? '' : `${suite.dir}/`
-    const selected = planned.some((t) => t.suite === suite.id)
-    const reason =
-      selected && suite.runner === 'vitest' && WHOLE_SUITE_OWNERS[suite.owner] !== undefined
-        ? WHOLE_SUITE_OWNERS[suite.owner]
-        : WHOLE_ON_CHANGE_OWNERS[suite.owner] !== undefined && changed.some((path) => path.startsWith(prefix))
-          ? WHOLE_ON_CHANGE_OWNERS[suite.owner]
-          : undefined
-    if (reason === undefined) continue
-    const identities = view.tests.filter((t) => t.suite === suite.id && !recorded.has(t.id))
-    if (identities.length > 0) wholeSuites.push({ suite: suite.id, reason, identities })
-  }
-  // static-fallback end
-  const whole = new Set(wholeSuites.map((w) => w.suite))
-  const tests: NativeTestRequest[] = known
-    .filter((t) => !whole.has(t.suite))
+  const running = new Set(planned.map((t) => t.id))
+  const wholeSuites: WholeSuiteRequest[] = plan.wholeSuites.flatMap((whole) => {
+    const identities = whole.tests.filter((id) => running.has(id)).map((id) => byId.get(id) as TestIdentity)
+    return identities.length > 0 ? [{ suite: whole.suite, reason: whole.reason, identities }] : []
+  })
+  const inWhole = new Set(wholeSuites.flatMap((w) => w.identities.map((t) => t.id)))
+  const tests: NativeTestRequest[] = planned
+    .filter((t) => !inWhole.has(t.id))
     .map((t) => ({ ...t, configuration: DEFAULT_CONFIGURATION }))
   const grouping = groupNativeTests({
     tests,
@@ -310,11 +184,7 @@ export function localNativePlan(input: LocalPlanInput): LocalPlan {
     groups: grouping.groups,
     identities,
     expanded: wholeSuites.map((w) => ({ suite: w.suite, reason: w.reason })),
-    problems,
-    leftOut: planned
-      .filter((t) => leftOut.has(t.id) && !whole.has(t.suite))
-      .map((t) => t.id)
-      .sort(compare)
+    problems
   }
 }
 
@@ -344,122 +214,29 @@ export type FrozenPlan = { note: SelectionNote; summary: string[] }
 
 /**
  * The push's plan for the current head, frozen into a selection note: the
- * base the push chose, the shared selector's plan from it, the obligations
- * and the native groups. Throws, with the reason, when no plan can be made —
- * an unreadable revision or inventory, or a planned test the inventory does
- * not hold — so the push refuses rather than running something else.
+ * adapter's inputs (`loadSelectionInputs`), the selection's plan of them, and
+ * the native groups of exactly its planned tests. Throws, with the reason,
+ * when no plan can be made — an unreadable revision or inventory, or a planned
+ * test the inventory does not hold — so the push refuses rather than running
+ * something else.
  */
 export function freezeLocalPlan(repoRoot: string): FrozenPlan {
   const started = performance.now()
-  const head = currentHead(repoRoot)
-  if (!head) throw new Error('the head commit could not be read')
-  const branch = currentBranch(repoRoot)
-  const remoteBase = resolveRemoteBase(repoRoot)
-  const mergeBase = git(repoRoot, ['merge-base', remoteBase, head])
-  if (!mergeBase) throw new Error(`no merge base between ${remoteBase} and ${head}`)
-  const headView = readTestInventory(repoRoot, { head }).head
-  const inputsClean = verificationInputsDirty(repoRoot) === false
-  const verificationContext = computeVerificationContext(repoRoot)
-  const verification = verificationContext?.digest ?? null
-  const context = nativeContext(verification, headView.contextIdentity)
-  const contextParts: ContextParts | null = verificationContext
-    ? { ...verificationContext.parts, inventory: headView.contextIdentity }
-    : null
-  const viewAt = (revision: string): InventoryView | null => {
-    try {
-      return readTestInventory(repoRoot, { head: revision }).head
-    } catch {
-      return null
-    }
-  }
-  const factsIn = (view: InventoryView | null, id: string): TestRunnerFacts | null => {
-    const test = view?.tests.find((t) => t.id === id)
-    return test ? test : null
-  }
-  const recordViews = new Map<string, InventoryView | null>()
-  const recordView = (revision: string) => {
-    if (!recordViews.has(revision)) recordViews.set(revision, viewAt(revision))
-    return recordViews.get(revision) ?? null
-  }
-  const choice = chooseNativeBase({
-    repoRoot,
-    head,
-    branch,
-    mergeBase,
-    failed: readFailedTestsRecord(repoRoot),
-    passing: readPassingRecord(repoRoot),
-    context,
-    contextParts,
-    inputsClean,
-    isAncestor: (ancestor) => isAncestor(repoRoot, ancestor, head),
-    exists: existsSync,
-    changedBetween: (from) => changedBetween(repoRoot, from, head),
-    mergeSince: (from) => newestMergeSince(repoRoot, from, head),
-    mergeAware: {
-      cleanMergeOnto: (recordHead) => cleanMergeOnto(repoRoot, recordHead),
-      contextAtRecord: (recordHead) => {
-        const view = recordView(recordHead)
-        return view ? nativeContext(verification, view.contextIdentity) : null
-      },
-      factsAtRecord: (recordHead, id) => factsIn(recordView(recordHead), id),
-      factsNow: (id) => factsIn(headView, id)
-    }
-  })
-  const relative = (path: string) => path.slice(repoRoot.length + 1)
-  const obligations = choice.obligations.map(relative)
-  // The record is the merge base's; the comparison base may be a later proven head, and the selection checks the
-  // record's own paths did not change between the two.
-  const reached = nearestReachableRecord(repoRoot, mergeBase)
-  const planFrom = (base: string) => {
-    const input = repositorySelectionInput(repoRoot, {
-      base,
-      head,
-      record: reached.record,
-      depth: 'one',
-      buildGates: false
-    })
-    return { plan: selectTests(input), view: input.inventory.head }
-  }
-  const { plan, view } = planFrom(choice.base)
-  // After a merge since the recorded head, only the tests the branch's own changes reach run besides the obligations.
-  // A branch-side comparison that cannot be built or planned leaves nothing out.
-  const branchSide = choice.branchSide
-  const sidePaths = branchSide ? branchSide.paths.map(relative) : []
-  const leftOut = branchSide
-    ? leftOutByBranchSide(plan, sidePaths, () => {
-        const sideBase = branchSideBase(repoRoot, choice.base, head, sidePaths)
-        if (!sideBase) return plannedTests(plan)
-        try {
-          return plannedTests(planFrom(sideBase).plan)
-        } catch {
-          return plannedTests(plan)
-        }
-      })
-    : []
-  const local = localNativePlan({ plan, view, obligations, leftOut })
+  const input = loadSelectionInputs({ repoRoot, caller: 'push' })
+  const plan = selectTests(input)
+  const { account } = input
+  const choice = account.choice as NonNullable<SelectionAccount['choice']>
+  const view = input.inventory.head
+  const head = input.head
+  const context = account.context
+  const local = localNativePlan({ plan, view })
   if (local.problems.length > 0)
     throw new Error(
       `the native plan is not runnable: ${local.problems.map((p) => `${p.code} ${p.path}${p.group ? ` (${p.group})` : ''}: ${p.detail}`).join('; ')}`
     )
   const selected = [...new Set(local.groups.flatMap((g) => g.tests))].sort().map((id) => join(repoRoot, id))
-  const usable = context !== null && inputsClean ? context : null
-  // Every test an earlier run on this branch proved that this plan leaves alone, with the head that proved it.
-  const planned = new Set(local.identities.map((id) => id.replace(/@[^@]*$/, '')))
-  const proofs = new Map<string, string>()
-  const passed = readPassingRecord(repoRoot)
-  if (passed && passed.branch === branch)
-    for (const [test, at] of Object.entries(passed.proven ?? {})) proofs.set(test, at)
-  const refused = readFailedTestsRecord(repoRoot)
-  if (refused && refused.branch === branch)
-    for (const test of refused.confirmed ?? []) if (!proofs.has(test)) proofs.set(test, refused.head)
-  const exists = new Set(view.tests.map((t) => t.id))
-  const reused =
-    choice.kind === 'merge-base'
-      ? []
-      : [...proofs]
-          .filter(([test]) => exists.has(test) && !planned.has(test))
-          .map(([test, provenAt]) => ({ test, provenAt }))
-          .sort((a, b) => compare(a.test, b.test))
+  const obligations = plan.obligations.filter((o) => o.obligation === FAILED_RERUN_OBLIGATION).map((o) => o.test)
+  const usable = context !== null && account.inputsClean ? context : null
   const native: NativeSelection = {
     version: 1,
     base: choice.base,
@@ -467,8 +244,8 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
     plan: plan.identity,
     inventory: view.contextIdentity,
     context: context ?? '',
-    ...(contextParts ? { contextParts } : {}),
-    reused,
+    ...(account.contextParts ? { contextParts: account.contextParts } : {}),
+    reused: plan.reused.map((r) => ({ test: r.test, provenAt: r.head })),
     records: {
       commit: plan.records.commit,
       recorded: plan.records.recorded.length,
@@ -484,13 +261,7 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
     version: 1,
     head,
     selected,
-    ...noteMode(
-      choice.kind,
-      choice.base,
-      selected,
-      choice.obligations,
-      () => localNativePlan({ ...planFrom(mergeBase), obligations }).identities.length
-    ),
+    ...noteMode(choice.kind, choice.base, selected, choice.obligations, account.fullCount),
     ...(usable ? { context: usable } : {}),
     native
   } as SelectionNote
@@ -500,14 +271,14 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
       `compared with ${choice.kind} ${choice.base.slice(0, 12)} (${choice.reason}) ` +
       `[${elapsed.toFixed(0)} ms selection, ${plan.profile.programMs.toFixed(0)} ms program]`,
     ...obligations.map((test) => `vinaya pre-push: re-running unresolved failed test ${test}`),
-    ...reused.map((r) => `vinaya pre-push: reusing ${r.test}, proven at ${r.provenAt.slice(0, 12)}`),
-    reached.record
-      ? `vinaya pre-push: ${plan.records.recorded.length} test(s) decided by the read record of ${reached.record.commit.slice(0, 12)}; ${plan.records.fallbacks.map((f) => `${f.tests.length} by static selection (${f.id})`).join(', ') || 'none left to static selection'}`
-      : `vinaya pre-push: every test decided by static selection (${reached.reason})`,
+    ...plan.reused.map((r) => `vinaya pre-push: reusing ${r.test}, passed at ${r.head.slice(0, 12)} (${r.source})`),
+    plan.records.commit
+      ? `vinaya pre-push: ${plan.records.recorded.length} test(s) decided by the read record of ${plan.records.commit.slice(0, 12)}; ${plan.records.fallbacks.map((f) => `${f.tests.length} by static selection (${f.id})`).join(', ') || 'none left to static selection'}`
+      : `vinaya pre-push: every test decided by static selection (${account.recordNote})`,
     ...local.expanded.map((e) => `vinaya pre-push: ${e.suite} runs whole: ${e.reason}`),
-    ...(branchSide
+    ...(choice.branchSide
       ? [
-          `vinaya pre-push: the branch-side set (${branchSide.paths.length} path(s) the branch itself changed since the merge of ${branchSide.brought.slice(0, 12)}) left out ${local.leftOut.length} planned test(s) only default-branch changes reached`
+          `vinaya pre-push: the branch-side set (${choice.branchSide.paths.length} path(s) the branch itself changed since the merge of ${choice.branchSide.brought.slice(0, 12)}) left out ${plan.leftOut.length} planned test(s) only default-branch changes reached`
         ]
       : []),
     ...(context === null
@@ -536,6 +307,8 @@ export type LocalRunOutcome = {
   unconfirmed?: string[]
   /** Why the run proves nothing even though every runner passed, or `null`. */
   drift: string | null
+  /** Each Bun runner group's JUnit report, as written, with the folder it ran in: the run's complete passes. */
+  reports?: { cwd: string; xml: string }[]
 }
 
 /** Where the run writes the record each finished runner group leaves, and what binds it to this run. */
@@ -732,8 +505,10 @@ export function runFrozenPlan(
         env: cleanGitEnv(),
         log: (line) => process.stderr.write(`${line}\n`),
         announce: true,
-        onGroupEnd: onEnd
+        onGroupEnd: onEnd,
+        onReport: (group, xml) => reports.push({ cwd: group.cwd, xml })
       }))
+  const reports: { cwd: string; xml: string }[] = []
   // An empty plan starts nothing.
   const result: RunResult =
     native.groups.length === 0
@@ -757,7 +532,8 @@ export function runFrozenPlan(
     failed,
     unreported: [...new Set((outcomes ?? []).flatMap((o) => o.unreported))].sort(compare),
     ...(outcomes !== undefined ? { unconfirmed: plan.filter((id) => !confirmed.has(id)) } : {}),
-    drift
+    drift,
+    reports
   }
 }
 
@@ -952,6 +728,21 @@ async function runCommand(repoRoot: string, logPath: string | undefined): Promis
       `vinaya pre-push: could not record this run (${error instanceof Error ? error.message : String(error)}).\n`
     )
   }
+  // Every test file this run passed completely counts as a pass the next selection may reuse.
+  if (outcome.drift === null && (outcome.reports ?? []).length > 0)
+    try {
+      const commit = note.native.records?.commit
+      storePassEntries(
+        repoRoot,
+        passEntriesOfRun({
+          repoRoot,
+          view: readTestInventory(repoRoot, { head }).head,
+          reports: outcome.reports ?? [],
+          record: commit ? recordAt(repoRoot, commit) : null,
+          source: `push ${head.slice(0, 12)}`
+        })
+      )
+    } catch {}
   const count = note.native.identities.length
   if (outcome.passed) {
     process.stdout.write(

@@ -23,7 +23,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
-import type { NativeGroup } from './verification/index.js'
+import type { NativeGroup } from '@attalabs/test-selection'
 
 /** File name of the record under the worktree's git directory. */
 export const FAILED_TESTS_RECORD = 'vinaya/pre-push-failed-tests.json'

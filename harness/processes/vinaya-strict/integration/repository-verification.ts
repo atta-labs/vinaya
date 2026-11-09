@@ -34,7 +34,7 @@ import {
   selectAffectedFiles,
   type WorkspacePackage,
   walkTree
-} from '../../../kernel/gates/ring0-hooks/pre-push/verification/index.js'
+} from '@attalabs/test-selection'
 
 export {
   extractImportRecords,
@@ -49,7 +49,7 @@ export {
   type TestRunner,
   testRunnerOf,
   type WorkspacePackage
-} from '../../../kernel/gates/ring0-hooks/pre-push/verification/index.js'
+} from '@attalabs/test-selection'
 
 /** Every regular file under `root` on disk, skipping dependency and build folders — absolute paths. */
 export function walkFiles(root: string): string[] {

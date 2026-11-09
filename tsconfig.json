@@ -19,6 +19,9 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "paths": {
+      "@attalabs/test-selection": ["packages/test-selection/src/index.ts"]
+    }
   }
 }

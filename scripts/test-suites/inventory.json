@@ -36,6 +36,14 @@
       "preload": null
     },
     {
+      "id": "test-selection",
+      "owner": "@attalabs/test-selection",
+      "kind": "workspace",
+      "dir": "packages/test-selection",
+      "runner": "bun",
+      "preload": null
+    },
+    {
       "id": "kernel",
       "owner": "@attalabs/harness",
       "kind": "workspace",
@@ -76,7 +84,8 @@
         "scripts/test-suites/local-run.test.ts",
         "scripts/test-suites/turbo-test-task-uncached.test.ts",
         "scripts/release/release.test.ts",
-        "scripts/ci/record-reads.test.ts"
+        "scripts/ci/record-reads.test.ts",
+        "scripts/test-suites/real-replay.test.ts"
       ]
     },
     {
@@ -126,7 +135,17 @@
       "readers": [
         {
           "kind": "semantic",
-          "suites": ["cli", "log-server", "portal", "cms", "kernel", "process-vinaya", "repository", "package-compat"]
+          "suites": [
+            "cli",
+            "log-server",
+            "portal",
+            "cms",
+            "test-selection",
+            "kernel",
+            "process-vinaya",
+            "repository",
+            "package-compat"
+          ]
         }
       ],
       "reason": "The lockfile decides every installed dependency every suite runs against; it is read as its dependency identity, so a workspace folder or local path move alone changes no installed dependency."
@@ -179,6 +198,21 @@
         }
       ],
       "reason": "The inventory test reads real lockfiles from before and after two workspace moves from disk, outside any import."
+    },
+    {
+      "id": "real-replay-fixtures",
+      "kind": "fixture",
+      "paths": [
+        "scripts/test-suites/fixtures/read-record-350fe961d.json.gz",
+        "scripts/test-suites/fixtures/real-replay-pins.json"
+      ],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": ["scripts/test-suites/real-replay.test.ts"]
+        }
+      ],
+      "reason": "The real-repository replay reads the default branch's committed read record and its pinned selected sets from disk."
     },
     {
       "id": "pull-request-body-fixture",
@@ -474,12 +508,13 @@
     {
       "id": "selection-library-fixtures",
       "kind": "fixture",
-      "paths": ["harness/kernel/gates/ring0-hooks/pre-push/verification/tests/fixtures/"],
+      "paths": ["packages/test-selection/tests/fixtures/"],
       "readers": [
         {
           "kind": "raw-bytes",
           "tests": [
-            "harness/kernel/gates/ring0-hooks/pre-push/verification/tests/selection.test.ts",
+            "packages/test-selection/tests/selection.test.ts",
+            "packages/test-selection/tests/git-revisions.test.ts",
             "harness/kernel/gates/ring0-hooks/pre-push/verification-portability.test.ts"
           ]
         }
@@ -1506,10 +1541,10 @@
       "kind": "oracle",
       "inputs": [
         "harness/processes/vinaya-strict/integration/repository-verification.ts",
-        "harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts",
+        "packages/test-selection/src/index.ts",
         "harness/processes/vinaya-strict/integration/verification-scanner-policy.ts",
         "harness/kernel/gates/ring0-hooks/pre-push/cli-spawn-tests.ts",
-        "harness/kernel/gates/ring0-hooks/pre-push/verification/",
+        "packages/test-selection/",
         "scripts/test-suites/inventory.json"
       ],
       "duty": "the bundler oracle in harness/processes/vinaya-strict/integration/test-selector-oracle.test.ts runs when the selection logic, its inputs or the inventory change, and on every default-branch run",
@@ -1528,6 +1563,13 @@
       "inputs": ["scripts/package-compat/"],
       "duty": "the build job runs the package-compatibility suite on every pull request, documentation-only ones included, whatever the change selects",
       "source": ".github/workflows/ci.yml"
+    },
+    {
+      "id": "portal-runs-whole",
+      "kind": "whole-suite",
+      "inputs": ["apps/vinaya-portal/"],
+      "duty": "the change touches a path under its folder, and the selection does not model the portal inputs (its JSON fixtures, styles, manifest and configuration), so it runs whole",
+      "source": "scripts/test-suites/inventory.json"
     }
   ],
   "unknowns": []

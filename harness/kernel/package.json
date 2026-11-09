@@ -10,6 +10,7 @@
   "dependencies": {
     "@atta/engine": "file:loops/runtimes/atta-engine/fixtures/atta-engine-0.0.1.tgz",
     "@atta/executor-agent-spawn": "file:loops/runtimes/atta-engine/fixtures/atta-executor-agent-spawn-0.1.1.tgz",
+    "@attalabs/test-selection": "workspace:*",
     "yaml": "2.9.0",
     "zod": "3.25.76",
     "gray-matter": "^4.0.3"

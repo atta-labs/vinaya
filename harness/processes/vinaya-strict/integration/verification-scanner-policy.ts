@@ -13,7 +13,7 @@
  * syntax as its folder-scanning provider. The library never imports it; a
  * repository adapter hands it to the library as policy.
  */
-import type { ScannerDeclaration } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index.js'
+import type { ScannerDeclaration } from '@attalabs/test-selection'
 
 export {
   type RepoScannerTest,
@@ -21,8 +21,8 @@ export {
   type ScannerTrigger,
   scannedRootsOf,
   startsProcessIn
-} from '../../../kernel/gates/ring0-hooks/pre-push/verification/index.js'
-export { underDeclaredRoot } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index.js'
+} from '@attalabs/test-selection'
+export { underDeclaredRoot } from '@attalabs/test-selection'
 
 /**
  * Every folder-scanning test in this repository, with what it reads and what
@@ -169,14 +169,17 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   {
     test: 'harness/kernel/gates/ring0-hooks/pre-push/verification-portability.test.ts',
     roots: [
-      'harness/kernel/gates/ring0-hooks/pre-push/verification/',
-      'apps/cli/LICENSE',
+      'packages/test-selection/',
       'scripts/test-suites/inventory.json',
       'scripts/test-suites/inventory-check.ts',
       'scripts/test-suites/repository-selection.ts'
     ],
     trigger: 'listed-files'
   },
+  // Reads every source file of the repository for its import specifiers.
+  { test: 'packages/test-selection/tests/isolation.test.ts', roots: ['.'], trigger: 'content' },
+  // Packs the package folder and installs the tarball: every file it ships is read.
+  { test: 'packages/test-selection/tests/consumer.test.ts', roots: ['packages/test-selection/'], trigger: 'content' },
   {
     test: 'harness/processes/vinaya-strict/integration/log/client/log-destination-isolation.test.ts',
     roots: ['apps/cli/src/', 'apps/cli/tests/'],

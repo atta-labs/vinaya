@@ -42,7 +42,7 @@
  *
  * What is generic about a view — its types, its shape validation, and which
  * readers a changed input reaches — is the selection library's, imported from
- * its public entrypoint (`harness/kernel/gates/ring0-hooks/pre-push/verification/index.ts`) and
+ * its public entrypoint (`packages/test-selection/src/index.ts`) and
  * re-exported here. What stays here is this repository's own: where the
  * declarations live, how each suite's runner is configured, and the tree.
  *
@@ -82,7 +82,7 @@ import {
   stableJson,
   type TestIdentity,
   type UnknownScope
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
+} from '@attalabs/test-selection'
 
 export {
   diffTestIdentities,
@@ -100,7 +100,7 @@ export {
   stableJson,
   type TestIdentity,
   type UnknownScope
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
+} from '@attalabs/test-selection'
 
 /** The schema this file reads and every view it produces declares. */
 export const INVENTORY_SCHEMA = 'vinaya.test-inventory'

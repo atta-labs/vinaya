@@ -4,7 +4,7 @@
  * file as its own process on Linux under
  * `strace -f -yy -e trace=%file,getdents64` (child processes included) and
  * stores, per test file, the repository paths it opened or probed and the
- * folders it listed (`harness/kernel/gates/ring0-hooks/pre-push/verification/recorded-reads.ts`
+ * folders it listed (`packages/test-selection/src/recorded-reads.ts`
  * turns the trace into repository-relative real paths).
  *
  * The record is the selection's input for later changes
@@ -52,7 +52,7 @@ import {
   type RecordedTest,
   recordReach,
   type TraceOptions
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
+} from '@attalabs/test-selection'
 import { readTestInventory, type TestIdentity } from '../test-suites/inventory-check.js'
 import { GROUP_TIME_LIMIT_MS, groupOutcomeOf, runnerCommand } from '../test-suites/schedule.js'
 import { RECORD_FILE } from '../test-suites/read-records.js'

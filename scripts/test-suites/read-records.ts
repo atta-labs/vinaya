@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isReadRecord, type ReadRecord } from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
+import { isReadRecord, type ReadRecord } from '@attalabs/test-selection'
 
 /** The file inside the artifact. */
 export const RECORD_FILE = 'read-record.json'

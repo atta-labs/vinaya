@@ -79,6 +79,7 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@attalabs/test-selection": "workspace:*",
     "@atta/adapter-langgraph": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-adapter-langgraph-0.0.1.tgz",
     "@atta/agents": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-agents-0.1.0.tgz",
     "@atta/engine": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-engine-0.0.1.tgz",
