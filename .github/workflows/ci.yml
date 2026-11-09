@@ -194,24 +194,6 @@ jobs:
       # plan then keeps only a head that is a commit of this branch and whose
       # every change is still in the change under review
       # (`trustedPassProducer` in scripts/test-suites/repository-selection.ts).
-      - name: Fetch the pass entries of this pull request's earlier runs
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-        run: |
-          PASSES="$RUNNER_TEMP/pass-entries"
-          mkdir -p "$PASSES"
-          RUNS=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" -f event=pull_request -f branch="$HEAD_REF" -f per_page=20 \
-            --jq '.workflow_runs[] | select(.head_repository.full_name == env.HEAD_REPO) | "\(.id) \(.head_sha)"' 2>/dev/null || true)
-          printf '%s\n' "$RUNS" | while read -r RUN SHA; do
-            if [ -z "$RUN" ] || [ "$RUN" = "$GITHUB_RUN_ID" ]; then continue; fi
-            case "$SHA" in *[!0-9a-f]*|'') continue ;; esac
-            gh run download "$RUN" --pattern 'pass-entries-*' --dir "$PASSES/$SHA/$RUN" 2>/dev/null || true
-          done
-          echo "Pass-entry files fetched: $(find "$PASSES" -name '*.json' | wc -l)" >&2
-
       - name: Build this pull request's CI plan
         id: plan
         env:
@@ -220,6 +202,8 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           TESTED_SHA: ${{ github.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           PLAN_DIR="$RUNNER_TEMP/ci-plan"
           mkdir -p "$PLAN_DIR"
@@ -227,7 +211,17 @@ jobs:
           SHADOW=""
           PASSES=""
           if [ "$EVENT" = "pull_request" ]; then
-            PASSES="--passes $RUNNER_TEMP/pass-entries"
+            PASS_DIR="$RUNNER_TEMP/pass-entries"
+            mkdir -p "$PASS_DIR"
+            RUNS=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" -f event=pull_request -f branch="$HEAD_REF" -f per_page=20 \
+              --jq '.workflow_runs[] | select(.head_repository.full_name == env.HEAD_REPO) | "\(.id) \(.head_sha)"' 2>/dev/null || true)
+            printf '%s\n' "$RUNS" | while read -r RUN SHA; do
+              if [ -z "$RUN" ] || [ "$RUN" = "$GITHUB_RUN_ID" ]; then continue; fi
+              case "$SHA" in *[!0-9a-f]*|'') continue ;; esac
+              gh run download "$RUN" --pattern 'pass-entries-*' --dir "$PASS_DIR/$SHA/$RUN" 2>/dev/null || true
+            done
+            echo "Pass-entry files fetched: $(find "$PASS_DIR" -name '*.json' | wc -l)" >&2
+            PASSES="--passes $PASS_DIR"
             if git show "$BASE_SHA:scripts/ci/base-guard.ts" > "$PLAN_DIR/base-guard.ts" 2>/dev/null; then
               # From its own folder, so no configuration the pull request commits
               # (a `bunfig.toml` preload) loads into the process that judges it.

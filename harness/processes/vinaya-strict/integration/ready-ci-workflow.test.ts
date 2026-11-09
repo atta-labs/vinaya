@@ -106,10 +106,9 @@ describe('the required CI check a deferred run waits on', () => {
   })
 
   it('both test jobs run what the build job planned on documentation-only pull requests too, and refuse without a plan', () => {
-    const steps = [
-      ...(workflow.jobs['test-cli']?.steps ?? []),
-      ...(workflow.jobs['test-shared-packages']?.steps ?? [])
-    ].filter((s) => s.if === "github.event_name == 'pull_request'")
+    const steps = [...(workflow.jobs['test-cli']?.steps ?? []), ...(workflow.jobs['test-shared-packages']?.steps ?? [])]
+      // The test steps; the steps that only fetch the plan's read record run no command.
+      .filter((s) => s.if === "github.event_name == 'pull_request'" && s.run !== undefined)
     expect(steps).toHaveLength(2)
     for (const step of steps) {
       expect(step.env?.CI_PLAN_DECISION).toBe(`${EXPR} needs.build.outputs.decision }}`)
