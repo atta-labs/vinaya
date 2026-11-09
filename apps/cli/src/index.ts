@@ -221,6 +221,10 @@ try {
       await (await import('./commands/quickstart.js')).quickstartCommand(args)
       break
     }
+    case 'studio': {
+      await (await import('./commands/studio.js')).studioCommand(args)
+      break
+    }
     default:
       console.error(`Unknown command: ${command}`)
       printHelp()

@@ -430,5 +430,16 @@ export const COMMANDS: readonly Command[] = [
       'Never reimplements or edits `init`/`init product`/`demo break`/`doctor` — it only calls their existing, unmodified entry points in sequence.'
     ],
     status: 'shipped'
+  },
+  {
+    name: 'studio',
+    needs: [],
+    description: "Build and open this repository's own Studio, with nothing downloaded",
+    details: [
+      "Inside a checkout of this repository it runs the Studio app from its source for development; from an installed CLI it runs the standalone Studio that `prepack` built from this repository's source and shipped in the package. When neither is present it refuses, saying the package is missing Studio.",
+      "Studio listens on the loopback address only, whatever `HOSTNAME` the caller sets. It uses port 3008, or 3108 when 3008 is taken; an explicit `--port` is used exactly or refused. Once the port answers, the command opens your browser on Studio's address, and prints that address once when the browser cannot be opened."
+    ],
+    flags: [{ flag: '--port <n>', description: 'Use exactly this port, or refuse when it is taken' }],
+    status: 'shipped'
   }
 ]

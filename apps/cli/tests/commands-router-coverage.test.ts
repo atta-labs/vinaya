@@ -81,7 +81,8 @@ describe('router -> COMMANDS coverage', () => {
         'milestone edit',
         'milestone close',
         'milestone status',
-        'quickstart'
+        'quickstart',
+        'studio'
       ])
     )
   })
