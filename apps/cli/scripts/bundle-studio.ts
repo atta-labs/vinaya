@@ -45,7 +45,10 @@ const env: NodeJS.ProcessEnv = { ...process.env }
 for (const name of AGENT_DETECTION_VARIABLES) delete env[name]
 
 console.log(`bundle-studio: building ${STUDIO_APP_RELPATH} (next build, output: standalone)...`)
-const build = spawnSync('bun', ['run', 'build'], { cwd: appRoot, stdio: 'inherit', env })
+// The webpack bundler, not the app's default one: Turbopack evaluates PostCSS in a child process that binds a local
+// port, which fails wherever local listening is refused (a sandboxed pack or CI step) and the standalone output is the
+// same layout either way.
+const build = spawnSync('bun', ['run', 'next', 'build', '--webpack'], { cwd: appRoot, stdio: 'inherit', env })
 if (build.status !== 0) {
   console.error(
     `bundle-studio: the Studio build failed (${build.error ? build.error.message : `exit ${build.status}`}).`
