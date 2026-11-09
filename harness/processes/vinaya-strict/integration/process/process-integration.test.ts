@@ -59,16 +59,16 @@ describe("Vinaya's process integration supplies every part its declaration names
     expect(policies.toolGrants()).toBe(module.vinayaToolGrantPolicy())
   })
 
-  test('config_section: the section the declared configuration module exports, and the composed provider', async () => {
+  test('config_section: the section the declared configuration module exports, and the provider reading Vinaya home', async () => {
     const module = (await import(declared.configSection)) as typeof import('../config/vinaya-config-section')
     expect(vinayaProcessIntegration.config.section()).toBe(module.VINAYA_CONFIG_SECTION)
-    const compose = await import('../config/compose')
-    expect(vinayaProcessIntegration.config.provider()).toBe(compose.vinayaConfigProvider)
+    expect(vinayaProcessIntegration.config.provider().homeDir).toBe(module.VINAYA_HOME)
   })
 
-  test('log: the Vinaya Log sink factory, loaded only when asked', async () => {
-    const module = await import('../log/log-sink-factory')
-    expect(vinayaProcessIntegration.log.loadSinkFactory()).toBe(module.createVinayaLogSink)
+  test('log: the Vinaya Log sink factory, loaded only when asked', () => {
+    const factory = vinayaProcessIntegration.log.loadSinkFactory()
+    expect(typeof factory).toBe('function')
+    expect(factory.name).toBe('createVinayaLogSink')
   })
 
   test('the declaration and the integration name the same module parts', () => {

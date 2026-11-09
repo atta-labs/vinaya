@@ -9,36 +9,38 @@
  * the Log sink factory (`integration/log/log-sink-factory.ts`) — and moves
  * none of them.
  *
- * Each member loads its module only when called, so importing this module
- * builds nothing: the configuration module installs its provider as it loads,
- * and the Log sink factory must stay deferred until something logs.
+ * Every member is a function, so importing this module builds no registry
+ * and no policy. The Log sink factory alone loads its module when called, the
+ * same deferred load the command line's startup uses, so the Log sink loads
+ * the first time something logs.
  */
 
 import type { ProcessIntegration } from '../../../../kernel/dev-process-socket/contract/process-integration.js'
+import { coreCheckRegistry } from '../../checks/registry.js'
+import { vinayaConfigProvider } from '../config/compose.js'
+import { VINAYA_CONFIG_SECTION } from '../config/vinaya-config-section.js'
+import {
+  vinayaBrokerPolicies,
+  vinayaRouterPolicies,
+  vinayaToolGrantPolicy,
+  vinayaWorkerBoundaryPolicies
+} from '../policies/vinaya-policies.js'
 
-type ChecksModule = typeof import('../../checks/registry.js')
-type PoliciesModule = typeof import('../policies/vinaya-policies.js')
-type ComposeModule = typeof import('../config/compose.js')
-type ConfigSectionModule = typeof import('../config/vinaya-config-section.js')
 type LogSinkFactoryModule = typeof import('../log/log-sink-factory.js')
 
-const checks = (): ChecksModule => require('../../checks/registry.js') as ChecksModule
-const policies = (): PoliciesModule => require('../policies/vinaya-policies.js') as PoliciesModule
-const compose = (): ComposeModule => require('../config/compose.js') as ComposeModule
-const configSection = (): ConfigSectionModule => require('../config/vinaya-config-section.js') as ConfigSectionModule
 const logSinkFactory = (): LogSinkFactoryModule => require('../log/log-sink-factory.js') as LogSinkFactoryModule
 
 export const vinayaProcessIntegration: ProcessIntegration = {
-  checks: () => checks().coreCheckRegistry(),
+  checks: () => coreCheckRegistry(),
   policies: {
-    broker: () => policies().vinayaBrokerPolicies(),
-    workerBoundary: () => policies().vinayaWorkerBoundaryPolicies(),
-    taskToolRouter: () => policies().vinayaRouterPolicies(),
-    toolGrants: () => policies().vinayaToolGrantPolicy()
+    broker: () => vinayaBrokerPolicies(),
+    workerBoundary: () => vinayaWorkerBoundaryPolicies(),
+    taskToolRouter: () => vinayaRouterPolicies(),
+    toolGrants: () => vinayaToolGrantPolicy()
   },
   config: {
-    provider: () => compose().vinayaConfigProvider,
-    section: () => configSection().VINAYA_CONFIG_SECTION
+    provider: () => vinayaConfigProvider,
+    section: () => VINAYA_CONFIG_SECTION
   },
   log: {
     loadSinkFactory: () => logSinkFactory().createVinayaLogSink
