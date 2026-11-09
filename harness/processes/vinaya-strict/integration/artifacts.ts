@@ -450,14 +450,14 @@ ${at === 'end' ? '        if: ${{ !cancelled() }}\n' : ''}        env:
  * \`closes-n\` with a body the workflow's own log later showed was correct,
  * green on the very next run with no code change. Every real task PR already
  * passed \`closes-n\` at WRITE time (\`runBodyChecks\`, O1) before it could
- * exist on the forge at all, so a missing/malformed \`AEG:CLOSES\` region here
+ * exist on the forge at all, so a missing/malformed \`CLOSES\` region here
  * is never a legitimate, permanent state for a task branch — it is this exact
  * race, and it is safe to wait a few seconds for it to resolve. Bounded — six
  * attempts, five seconds apart (thirty seconds total) — and loud on
  * exhaustion: names exactly what it waited for rather than quietly running
  * the check suite against a body it already knows may be stale.
  *
- * Never waits for the \`AEG:EVIDENCE\` block's \`Head:\` to catch up. The
+ * Never waits for the \`VINAYA:EVIDENCE\` block's \`Head:\` to catch up. The
  * checks and body-checks workflows trigger on \`opened\`/\`reopened\`/\`edited\`
  * only, never \`synchronize\` (see each workflow's own \`on:\` block), so a
  * push landing after their run started cannot race it. The review workflow's
@@ -476,9 +476,9 @@ function pullRequestReadStep(opts: { name: string; id?: string; prNumber: string
             BODY="$(jq -r '.body // ""' "$RAW/pull.json")"
             WAIT_FOR=""
             if [[ "$BRANCH" =~ ^task/[^/]+/[^/]+$ ]]; then
-              CLOSES_REGION="$(printf '%s\\n' "$BODY" | sed -n '/<!-- AEG:CLOSES:START -->/,/<!-- AEG:CLOSES:END -->/p')"
+              CLOSES_REGION="$(printf '%s\\n' "$BODY" | sed -n '/<!-- [A-Z]*:CLOSES:START -->/,/<!-- [A-Z]*:CLOSES:END -->/p')"
               if ! printf '%s\\n' "$CLOSES_REGION" | grep -qE '#[0-9]+'; then
-                WAIT_FOR="a real Closes #N inside the AEG:CLOSES region for task branch $BRANCH"
+                WAIT_FOR="a real Closes #N inside the CLOSES region for task branch $BRANCH"
               fi
             fi
             if [ -z "$WAIT_FOR" ]; then
@@ -661,7 +661,7 @@ ${pullRequestReadStep({ name: 'Read the pull request over REST', prNumber: '${{ 
 ${FORGE_SNAPSHOT_CHECK_ENV}          BRANCH: \${{ github.head_ref }}
           # The pull request's own head — never \`git rev-parse HEAD\`, which on
           # a pull_request run is the merge ref — at which \`test-plan\` demands
-          # a passed \`AEG:LIVE\` entry for each \`[live]\` line of the brief.
+          # a passed \`VINAYA:LIVE\` entry for each \`[live]\` line of the brief.
           PULL_REQUEST_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
           # BASE_SHA comes from the job environment \`Resolve the diff base\`
           # wrote — never set here, where a step-level entry would override it.
@@ -742,7 +742,7 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 #
 # Nothing re-runs this workflow when CI completes, and nothing needs to:
 # the review gate answers for the review verdicts, \`evidence-fresh\` for
-# the body's \`AEG:EVIDENCE\` block against the pushed head, and no other
+# the body's \`VINAYA:EVIDENCE\` block against the pushed head, and no other
 # check's result can change either answer, so a CI run finishing tells
 # neither anything.
 #

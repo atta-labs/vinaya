@@ -389,7 +389,7 @@ describe('A2: archived-without-provenance', () => {
     const r = checkA2(entries, map)
     expect(r.status).toBe('fail')
     expect(r.failures[0]!.task).toBe('1')
-    expect(r.failures[0]!.reason).toMatch(/AEG provenance/)
+    expect(r.failures[0]!.reason).toMatch(/Vinaya provenance/)
   })
 
   it('skip — open issue is not checked for provenance', () => {

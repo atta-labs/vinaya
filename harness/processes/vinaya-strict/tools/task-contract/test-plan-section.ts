@@ -26,6 +26,7 @@
  */
 
 import { anchoredRegion } from '../../../../kernel/gates/checks/anchored-region'
+import { REGION_PREFIXES } from '../legacy-markers'
 
 export type TestPlanSection = { found: true; section: string } | { found: false }
 
@@ -39,7 +40,7 @@ const NEXT_SECTION_RE = /\n(?:#{1,3}[ \t]|\*\*[A-Z][^*\n]*:\*\*)/
  * heading or `**Field:**`-style section boundary. Returns `{ found: false }`
  * when neither form is present anywhere in the body.
  *
- * When the body carries an `AEG:TEST-PLAN` anchor pair (`anchored-region.ts`,
+ * When the body carries an `VINAYA:TEST-PLAN` anchor pair (`anchored-region.ts`,
  * task 30), the pair IS the section: its whole content is returned verbatim,
  * with no heading/inline marker required inside it — requiring a second,
  * redundant in-region marker would reintroduce the unrecognized-heading
@@ -48,7 +49,7 @@ const NEXT_SECTION_RE = /\n(?:#{1,3}[ \t]|\*\*[A-Z][^*\n]*:\*\*)/
  * is ignored. Bodies without the pair parse exactly as before.
  */
 export function locateTestPlanSection(body: string): TestPlanSection {
-  const region = anchoredRegion(body, 'TEST-PLAN')
+  const region = anchoredRegion(body, 'TEST-PLAN', REGION_PREFIXES)
   if (region !== null) return { found: true, section: region }
 
   const headingMatch = HEADING_FORM_RE.exec(body)

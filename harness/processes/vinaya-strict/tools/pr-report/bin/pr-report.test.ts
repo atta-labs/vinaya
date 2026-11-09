@@ -113,8 +113,8 @@ describe('buildReport', () => {
       gateRunner: () => PASSING_GATES,
       body: 'a real PR body'
     })
-    expect(result.block).toStartWith('<!-- AEG:EVIDENCE:START -->')
-    expect(result.block).toEndWith('<!-- AEG:EVIDENCE:END -->')
+    expect(result.block).toStartWith('<!-- VINAYA:EVIDENCE:START -->')
+    expect(result.block).toEndWith('<!-- VINAYA:EVIDENCE:END -->')
     expect(result.block).toContain('### Group A — recomputable')
     expect(result.block).toContain('### Group B — attested')
     expect(result.block).toContain(`Head: ${FIXED_GROUP_A.head}`)
@@ -991,7 +991,7 @@ describe('pr report --write then pr create --validate-only — the written body 
     }
 
     const written = readFileSync(bodyPath, 'utf8')
-    expect(written).toContain('AEG:EVIDENCE:START')
+    expect(written).toContain('VINAYA:EVIDENCE:START')
     // The one shape the pre-fix template shipped by default and this fix
     // removes — a body this command wrote must never carry it.
     expect(written).not.toMatch(/^-\s*\[[ xX]\]\s*\*{2}\[agent\]\*{2}/im)
@@ -1606,8 +1606,8 @@ describe('replaceEvidenceBlock', () => {
 
   it('appends a fresh anchored pair when the body carries none yet', () => {
     const updated = replaceEvidenceBlock('## Summary\n\nwhy.', 'Head: deadbeef')
-    expect(updated).toContain('<!-- AEG:EVIDENCE:START -->')
-    expect(updated).toContain('<!-- AEG:EVIDENCE:END -->')
+    expect(updated).toContain('<!-- VINAYA:EVIDENCE:START -->')
+    expect(updated).toContain('<!-- VINAYA:EVIDENCE:END -->')
     expect(updated).toContain('Head: deadbeef')
   })
 
@@ -2014,7 +2014,7 @@ exit 1
       // forge fake whole, not only the regenerated Evidence content.
       expect(pushedBody).toContain('## Decisions')
       expect(pushedBody).toContain('chose `reviewPolicy.maxRounds`')
-      expect(pushedBody).toContain('AEG:EVIDENCE:START')
+      expect(pushedBody).toContain('VINAYA:EVIDENCE:START')
       expect(pushedBody).toContain('Head:')
     } finally {
       process.chdir(originalCwd)

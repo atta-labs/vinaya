@@ -64,6 +64,7 @@ import {
   type ReviewGateInput
 } from '../../tools/review-gate'
 import { extractIssue } from '../../../../kernel/adapters/code-host/github/extract-issue'
+import { REGION_PREFIXES } from '../../tools/legacy-markers'
 import {
   loadTrustAnchorConfig,
   PRINCIPALS_FIX,
@@ -239,7 +240,7 @@ export function resolveFrozenPauseBoundRuling(
  * reachable even though this fails closed (a MAJOR finding, reapplied here).
  */
 function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): Resolved<string | null> {
-  const { issue } = extractIssue(pr.body)
+  const { issue } = extractIssue(pr.body, REGION_PREFIXES)
   if (issue === null) return { ok: true, value: null }
   let comments: { body: string; author: string | null }[]
   try {
@@ -299,7 +300,7 @@ function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): Re
  * finding).
  */
 function resolveObjectivesVersion(pr: PrView, objectivesSinceIssue: number | null): Resolved<string | null> {
-  const { issue } = extractIssue(pr.body)
+  const { issue } = extractIssue(pr.body, REGION_PREFIXES)
   const source = resolveObjectivesSource(pr.body, issue, objectivesSinceIssue)
 
   if (source.kind === 'none') return { ok: true, value: null }

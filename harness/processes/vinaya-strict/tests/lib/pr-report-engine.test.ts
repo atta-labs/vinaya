@@ -13,6 +13,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
+import { REGION_PREFIX, REGION_PREFIXES } from '../../tools/legacy-markers'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -245,7 +246,7 @@ describe('runReportForOpenPr — an unticked [principal] Test Plan box never ref
 
 describe('a pushed evidence block survives the [principal] tick — evidence-fresh stays green (O2)', () => {
   function evidenceVerdict(body: string): 'pass' | 'fail' {
-    const resolved = resolveAnchoredRegion(ScanContext.from(body), 'EVIDENCE')
+    const resolved = resolveAnchoredRegion(ScanContext.from(body, REGION_PREFIXES), 'EVIDENCE')
     if (resolved === null || resolved === 'hidden') throw new Error('fixture body has no resolvable evidence region')
     return compareEvidenceBlock(
       resolved,
@@ -736,5 +737,30 @@ describe('a live report compares against one freshly verified immutable base', (
   it('an explicit base never falls back to a moving ref', async () => {
     const { clone } = staleClone()
     await expect(computeGroupA(clone, { base: 'does-not-exist' })).rejects.toBeInstanceOf(UnresolvableMergeBaseError)
+  })
+})
+
+describe('replaceEvidenceBlock across the two marker spellings', () => {
+  const legacyOpen = `<!-- ${REGION_PREFIX.old}:EVIDENCE:START -->`
+  const legacyClose = `<!-- ${REGION_PREFIX.old}:EVIDENCE:END -->`
+
+  it('converts an old-spelling region in place: exactly one region, written with the current prefix', async () => {
+    const { replaceEvidenceBlock } = await import('../../tools/pr-report/pr-report-engine')
+    const body = `## Summary\n\nx\n\n${legacyOpen}\nstale\n${legacyClose}\n\n## Tail\n`
+    const out = replaceEvidenceBlock(body, 'fresh')
+    expect(out.split(`${REGION_PREFIX.current}:EVIDENCE:START`).length - 1).toBe(1)
+    expect(out.includes(REGION_PREFIX.old)).toBe(false)
+    expect(out).toBe(
+      `## Summary\n\nx\n\n<!-- ${REGION_PREFIX.current}:EVIDENCE:START -->\nfresh\n<!-- ${REGION_PREFIX.current}:EVIDENCE:END -->\n\n## Tail\n`
+    )
+    expect(resolveAnchoredRegion(ScanContext.from(out, REGION_PREFIXES), 'EVIDENCE')).toEqual({
+      region: '\nfresh\n',
+      maskedRegion: '\nfresh\n'
+    })
+  })
+
+  it('appends a current-spelling region to a body that has none', async () => {
+    const { replaceEvidenceBlock } = await import('../../tools/pr-report/pr-report-engine')
+    expect(replaceEvidenceBlock('## Summary\n', 'fresh')).toContain(`<!-- ${REGION_PREFIX.current}:EVIDENCE:START -->`)
   })
 })

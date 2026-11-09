@@ -1,6 +1,6 @@
 /**
  * Provenance fetch — the single implementation of the "does this Issue's
- * closing PR carry an `### AEG provenance` block?" fact.
+ * closing PR carry an `### Vinaya provenance` block?" fact.
  *
  * Moved here from `harness/processes/vinaya-strict/checks/standalone/verify-coherence.ts` so Studio's
  * server components can call it without pulling
@@ -13,8 +13,13 @@
  */
 
 import { graphql } from '@octokit/graphql'
+import { PROVENANCE_HEADINGS } from '../../tools/legacy-markers'
 
-const PROVENANCE_PATTERN = /^###\s+AEG provenance\b/im
+// Both spellings of the heading, from the one module that holds the retired one.
+const PROVENANCE_PATTERN = new RegExp(
+  `^###\\s+(?:${PROVENANCE_HEADINGS.map((heading) => heading.replace(/^###\s+/, '')).join('|')})\\b`,
+  'im'
+)
 
 /**
  * True only when `text` carries a provenance block whose own `Issue:` field
@@ -126,7 +131,7 @@ async function fetchProvenanceViaCrossReferences(
 
 /**
  * Batch-fetch closing-PR bodies + comments for `issueNums` and return a map
- * of issue number → `true` when `### AEG provenance` is found in the PR body
+ * of issue number → `true` when `### Vinaya provenance` is found in the PR body
  * or any of its first 50 comments.
  *
  * Fetches the most recent `ClosedEvent` (`last: 1`, not `first: 1`) — a

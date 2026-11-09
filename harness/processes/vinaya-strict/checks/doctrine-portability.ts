@@ -24,7 +24,7 @@
  * even look at. `checkDoctrinePortability` now emits a SECOND finding kind
  * for exactly that: a fixed vendor-name word list, scanned against prose
  * (never against code — a masked, `maskCode`-blind scan, the identical
- * code-recognition grammar `anchored-region.ts` uses for the `AEG:*` PR/Issue
+ * code-recognition grammar `anchored-region.ts` uses for the `VINAYA:*` PR/Issue
  * body anchors, imported directly rather than re-implemented), with exactly
  * ONE standing exemption: text inside a `<!-- AEG:VENDOR-EXAMPLE:START -->` /
  * `<!-- AEG:VENDOR-EXAMPLE:END -->` pair — doctrine's one sanctioned, fenced
@@ -201,7 +201,7 @@ export const VENDOR_EXAMPLE_END = /<!--\s*AEG:VENDOR-EXAMPLE:END\s*-->/
  * pair in `masked` — doctrine's one sanctioned home for naming today's
  * shipped reference host by product name (`tranche-model.md` §12).
  * Markers are searched on already-`maskCode`d text, the same order
- * `anchoredRegionBounds` searches the `AEG:*` PR/Issue-body anchors, so a
+ * `anchoredRegionBounds` searches the `VINAYA:*` PR/Issue-body anchors, so a
  * decoy pair quoted inside a fenced example never wins. A START with no
  * following END is not a fence at all — the same "malformed half-pair is no
  * anchor" rule `anchored-region.ts` applies.

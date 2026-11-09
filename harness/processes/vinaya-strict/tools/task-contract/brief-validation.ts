@@ -13,6 +13,7 @@
  */
 
 import { type AnchorField, anchoredRegion, stripCode } from '../../../../kernel/gates/checks/anchored-region'
+import { REGION_PREFIXES } from '../legacy-markers'
 import { type Objective, objectivesVersion, objectivesOf } from './objectives'
 import { parsePremiseBlock, premiseBlockText } from './premise-check'
 import { locateTestPlanSection } from './test-plan-section'
@@ -46,7 +47,7 @@ export function headerRegion(prBody: string): string {
  * body is ignored. Bodies without the pair parse exactly as before.
  */
 function headerField(prBody: string, labelPattern: string, anchor?: AnchorField): string | null {
-  const anchored = anchor !== undefined ? anchoredRegion(prBody, anchor) : null
+  const anchored = anchor !== undefined ? anchoredRegion(prBody, anchor, REGION_PREFIXES) : null
   const region = anchored ?? headerRegion(prBody)
   const re = new RegExp(`^(?:\\*\\*)?\\s*${labelPattern}\\s*(?:\\*\\*)?\\s*:\\s*(?:\\*\\*)?\\s*([^\\n·]+)`, 'im')
   const m = region.match(re)
@@ -104,7 +105,7 @@ const TEST_PLAN_UNIT_TESTS_ONLY_RE = /(?:\*\*)?Test Plan(?:\*\*)?\s*:\s*(?:\*\*)
 /**
  * The Test Plan section text these three checks scan — never the raw body.
  * Delegates to `locateTestPlanSection` (the same locator `test-plan.ts`'s
- * merge-gate check uses) so an `AEG:TEST-PLAN` anchor pair is authoritative
+ * merge-gate check uses) so an `VINAYA:TEST-PLAN` anchor pair is authoritative
  * here exactly as it already is there. Without this, a body that anchors its
  * real Test Plan AND carries a pasted verbatim reference copy of the brief
  * (the template's own instruction) has its checkbox lines double-counted:
@@ -350,7 +351,7 @@ export function checkForField(prBody: string): BriefSectionResult {
  * path (a security-review finding). A constant bound makes the work per start
  * position constant, so the scan is linear in body length. Eight is far past
  * any real separator; a body needing more is malformed by the brief's own
- * convention (a bare ref inside the `AEG:CLOSES` anchor) and fails with an
+ * convention (a bare ref inside the `VINAYA:CLOSES` anchor) and fails with an
  * actionable message rather than silently stranding its Issue.
  */
 export function checkClosesNPresence(prBody: string): BriefSectionResult {
@@ -363,7 +364,7 @@ export function checkClosesNPresence(prBody: string): BriefSectionResult {
     return {
       status: 'fail',
       errors: [
-        "brief-validation Closes #N: `Closes #N` found only inside a code span — GitHub won't auto-close it. Put a bare `Closes #N` on its own line inside the `AEG:CLOSES` anchor."
+        "brief-validation Closes #N: `Closes #N` found only inside a code span — GitHub won't auto-close it. Put a bare `Closes #N` on its own line inside the `VINAYA:CLOSES` anchor."
       ]
     }
   }
@@ -603,7 +604,7 @@ export function checkNoAgentBoxes(prBody: string): BriefSectionResult {
   return {
     status: 'fail',
     errors: [
-      'brief-validation no agent boxes: the Test Plan carries a checkbox `[agent]` item — an agent never ticks a box or edits a PR body (Principal ruling, 2026-09-03, after PR #395). Render the `[agent]` half as a fenced command list instead; `vinaya-pr-report` runs each command from the PR head and writes its actual output into the AEG:EVIDENCE block. `[principal]` checkboxes are unaffected.'
+      'brief-validation no agent boxes: the Test Plan carries a checkbox `[agent]` item — an agent never ticks a box or edits a PR body (Principal ruling, 2026-09-03, after PR #395). Render the `[agent]` half as a fenced command list instead; `vinaya-pr-report` runs each command from the PR head and writes its actual output into the VINAYA:EVIDENCE block. `[principal]` checkboxes are unaffected.'
     ]
   }
 }

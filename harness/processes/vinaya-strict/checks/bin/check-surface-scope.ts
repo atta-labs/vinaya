@@ -5,7 +5,7 @@
  * own Issue's declared `## Surface` — one crossing an `out:` glob, or
  * matching no `in:` glob — only when the pull request body records it: the
  * review-loop driver writes every such path into the body's
- * `AEG:BEYOND-SURFACE` block on each body write, and this check fails
+ * `VINAYA:BEYOND-SURFACE` block on each body write, and this check fails
  * naming the first changed path that is beyond the Surface and not listed
  * there. A beyond-Surface change is therefore never hidden: the body names
  * it, the reviewers review it, and an unrecorded one is caught here.
@@ -247,7 +247,7 @@ async function checkAgainstIssue(issue: number): Promise<void> {
         schema: CHECK_SCHEMA_VERSION,
         check: CHECK_NAME,
         severity: 'error',
-        message: `surface-scope: \`${v.path}\` is a protected administrative path and no \`in:\` glob of Issue #${issue}'s \`## Surface\` covers it — the task's Surface must name it; the pull request body's \`AEG:BEYOND-SURFACE\` record does not excuse it.`,
+        message: `surface-scope: \`${v.path}\` is a protected administrative path and no \`in:\` glob of Issue #${issue}'s \`## Surface\` covers it — the task's Surface must name it; the pull request body's \`VINAYA:BEYOND-SURFACE\` record does not excuse it.`,
         agent_recovery_prompt:
           "Drop the change to that protected path from this PR, or have the Planner add the path to the task's `## Surface` `in:` list via `vinaya issue edit` — then re-run `vinaya-check surface-scope`.",
         file: v.path
@@ -262,7 +262,7 @@ async function checkAgainstIssue(issue: number): Promise<void> {
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
       severity: 'error',
-      message: `surface-scope: \`${v.path}\` ${beyond}, and the pull request body's \`AEG:BEYOND-SURFACE\` block does not record it.`,
+      message: `surface-scope: \`${v.path}\` ${beyond}, and the pull request body's \`VINAYA:BEYOND-SURFACE\` block does not record it.`,
       agent_recovery_prompt:
         "Under the review loop the driver rewrites that block on every body write — call `refresh_evidence` or `update_pull_request_body` so it records the branch's current changes. Otherwise drop the change from this PR, or fix the Issue's own `## Surface` via `vinaya issue edit` — then re-run `vinaya-check surface-scope`.",
       file: v.path

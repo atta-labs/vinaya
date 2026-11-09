@@ -9,6 +9,7 @@
 import { parseRationaleDeps } from '../tools/task-contract/forge/parse-rationale-deps'
 import { trancheLabel, label } from '../tools/task-contract/forge/labels'
 import { anchoredRegion, stripCode } from '../../../kernel/gates/checks/anchored-region'
+import { PROVENANCE_HEADING, REGION_PREFIXES } from '../tools/legacy-markers'
 import {
   checkIssueObjectives,
   checkIssueRationale,
@@ -185,7 +186,7 @@ export function checkA1(entries: TaskEntry[], principalAllowlist: string[]): Che
  * Terminal event date: `prMergedAt` — grandfathered when before `COHERENCE_ENFORCED_FROM`.
  *
  * `hasProvenanceByKey`: Map keyed by `${trancheSlug}/${taskId}` → true when the
- * closing PR has a comment containing `### AEG provenance`.
+ * closing PR has a comment containing `### Vinaya provenance`.
  */
 export function checkA2(entries: TaskEntry[], hasProvenanceByKey: Map<string, boolean>): CheckResult {
   const failures: CheckFailure[] = []
@@ -203,7 +204,7 @@ export function checkA2(entries: TaskEntry[], hasProvenanceByKey: Map<string, bo
         issue: e.task.issue,
         tranche: e.trancheSlug,
         task: e.task.id,
-        reason: 'Closing PR has no `### AEG provenance` comment (Archivist close-out missing)',
+        reason: `Closing PR has no \`${PROVENANCE_HEADING.current}\` comment (Archivist close-out missing)`,
         grandfathered: isGrandfathered(e.facts.mergedAt)
       })
     }
@@ -864,7 +865,7 @@ export function checkL5(activeTrancheSlugs: string[], entriesBySlug: Map<string,
  * reverse directions, and by the CI wiring script that must resolve each
  * referenced Issue's task identity *before* calling `checkClosesNTopology` — one
  * grammar, not a second copy of the pattern (discipline). Honors the
- * AEG:CLOSES anchor pair (`anchored-region.ts`, task 30) when present: only
+ * VINAYA:CLOSES anchor pair (`anchored-region.ts`, task 30) when present: only
  * references inside the pair count, so a Closes-shaped line in a pasted
  * reference brief elsewhere in the PR body isn't picked up. The searched region
  * is additionally `stripCode`d before matching, for parity with GitHub's
@@ -885,7 +886,7 @@ export function extractClosesReferences(prBody: string): Set<number> {
   // this parser silently disagreed with the whole-body path in the same call
   // (a MAJOR review finding). See `archive-task.ts`'s `extractIssue`.
   const stripped = stripCode(prBody)
-  const searchIn = anchoredRegion(stripped, 'CLOSES') ?? stripped
+  const searchIn = anchoredRegion(stripped, 'CLOSES', REGION_PREFIXES) ?? stripped
   const referenced = new Set<number>()
   for (const hit of searchIn.matchAll(closesPattern)) {
     referenced.add(Number(hit[1]))

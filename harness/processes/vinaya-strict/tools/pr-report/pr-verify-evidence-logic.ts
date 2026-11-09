@@ -194,18 +194,18 @@ function subtractOnce(a: string[], b: string[]): string[] {
 /** Human-readable report. Exported so the bin stays a thin I/O shim. */
 export function renderVerdict(verdict: EvidenceVerdict): string {
   if (verdict.status === 'match') {
-    return 'pr verify-evidence: MATCH — every line of the published AEG:EVIDENCE region is reproduced by a fresh run at this head, and vice versa (compared as a multiset of repo-relative, control-stripped lines: order and whitespace are not compared).'
+    return 'pr verify-evidence: MATCH — every line of the published VINAYA:EVIDENCE region is reproduced by a fresh run at this head, and vice versa (compared as a multiset of repo-relative, control-stripped lines: order and whitespace are not compared).'
   }
   if (verdict.status === 'no-block') {
-    return 'pr verify-evidence: NO BLOCK — this pull request body carries no AEG:EVIDENCE anchors. Run `vinaya-pr-report --write <body-file>` to generate one.'
+    return 'pr verify-evidence: NO BLOCK — this pull request body carries no VINAYA:EVIDENCE anchors. Run `vinaya-pr-report --write <body-file>` to generate one.'
   }
   if (verdict.status === 'hidden') {
     return [
-      'pr verify-evidence: HIDDEN — the AEG:EVIDENCE pair sits inside a collapsed `<details>` block.',
+      'pr verify-evidence: HIDDEN — the VINAYA:EVIDENCE pair sits inside a collapsed `<details>` block.',
       '`body-bare-digits` blanks every digit in there, so nothing can verify what it claims. Move the block out of `<details>` and regenerate it with `vinaya-pr-report --write <body-file>`.'
     ].join('\n')
   }
-  const lines = ['pr verify-evidence: DIFFERS — the published AEG:EVIDENCE region does not reproduce at this head.']
+  const lines = ['pr verify-evidence: DIFFERS — the published VINAYA:EVIDENCE region does not reproduce at this head.']
   if (verdict.baseDrift) {
     lines.push(
       '',

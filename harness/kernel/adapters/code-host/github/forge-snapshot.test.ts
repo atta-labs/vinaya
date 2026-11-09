@@ -85,7 +85,7 @@ function writtenSnapshot(c: FixtureCase, runner: ForgeRunner = fixtureRunner(c, 
   mkdirSync(join(dir, 'raw'))
   writeFileSync(join(dir, RAW_PULL_FILE), JSON.stringify(c.rest.pull))
   writeFileSync(join(dir, RAW_PULL_COMMENTS_FILE), JSON.stringify(c.rest.pullComments))
-  writeForgeSnapshot(dir, runner)
+  writeForgeSnapshot(dir, ['VINAYA'], runner)
   return dir
 }
 

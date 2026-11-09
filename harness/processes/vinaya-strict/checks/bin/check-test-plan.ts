@@ -11,7 +11,7 @@
  * lines (`parseLiveTestPlanItems`), and hands them to the gate with the pull
  * request's head SHA (`PULL_REQUEST_HEAD_SHA` — the pull request's own head, never the
  * merge ref a `pull_request` run checks out), so each `[live]` line with no
- * passed `AEG:LIVE` entry at that head fails the check. It fails closed: a
+ * passed `VINAYA:LIVE` entry at that head fails the check. It fails closed: a
  * brief it cannot read — any fetch error, a not-found Issue included — fails
  * the check, since the lines the merge must wait for are then unknown, and
  * so does a pull request head with no body. `principal-test-plan-wait`,

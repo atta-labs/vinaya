@@ -83,7 +83,7 @@ describe('refresh_evidence on a head whose tests are deferred to required CI', (
       const output = `${result.stdout}${result.stderr}`
       expect(result.status).toBe(1)
       expect(output).toContain('no deferred-tests record names head')
-      expect(output).not.toContain('Pushed AEG:EVIDENCE block to PR 7')
+      expect(output).not.toContain('Pushed VINAYA:EVIDENCE block to PR 7')
       expect(existsSync(sentinel)).toBe(false)
     } finally {
       rmSync(dir, { recursive: true, force: true })

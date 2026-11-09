@@ -19,19 +19,23 @@ const deps = (stdout: string, status: number, calls: unknown[] = []): RefreshEvi
 describe('refreshPrEvidence', () => {
   test('runs the pr report program with --push <pr> in the worktree', () => {
     const calls: unknown[] = []
-    const result = refreshPrEvidence(deps('Pushed AEG:EVIDENCE block to PR 42\n', 0, calls))
+    const result = refreshPrEvidence(deps('Pushed VINAYA:EVIDENCE block to PR 42\n', 0, calls))
     expect(calls).toEqual([[programFile('pr-report'), '/wt', ['--push', '42']]])
-    expect(result).toEqual({ head: 'abc123', checksPassed: true, evidence: 'Pushed AEG:EVIDENCE block to PR 42\nerr' })
+    expect(result).toEqual({
+      head: 'abc123',
+      checksPassed: true,
+      evidence: 'Pushed VINAYA:EVIDENCE block to PR 42\nerr'
+    })
   })
 
   test('a red gate that still pushed returns checksPassed false', () => {
-    expect(refreshPrEvidence(deps('Pushed AEG:EVIDENCE block to PR 42\n', 1)).checksPassed).toBe(false)
+    expect(refreshPrEvidence(deps('Pushed VINAYA:EVIDENCE block to PR 42\n', 1)).checksPassed).toBe(false)
   })
 
   test('no push marker throws with the output', () => {
     expect(() => refreshPrEvidence(deps('refused', 1))).toThrow('pr report --push 42 failed:\nrefusederr')
     // A marker for another pull request is not this one's push.
-    expect(() => refreshPrEvidence(deps('Pushed AEG:EVIDENCE block to PR 4\n', 0))).toThrow('failed')
+    expect(() => refreshPrEvidence(deps('Pushed VINAYA:EVIDENCE block to PR 4\n', 0))).toThrow('failed')
   })
 })
 
@@ -98,7 +102,7 @@ describe('the Evidence refresh step on a resumed round', () => {
 describe('the push marker', () => {
   test("is the line the CLI's pr report source prints after a push", () => {
     const source = readFileSync(resolve(import.meta.dir, '../tools/pr-report/bin/pr-report.ts'), 'utf8')
-    const printed = [...source.matchAll(/process\.stdout\.write\(`(Pushed AEG:EVIDENCE[^`]*?)\$\{(\w+)\}\\n`\)/g)]
+    const printed = [...source.matchAll(/process\.stdout\.write\(`(Pushed VINAYA:EVIDENCE[^`]*?)\$\{(\w+)\}\\n`\)/g)]
     expect(printed.length).toBe(1)
     const [, prefix] = printed[0] as RegExpMatchArray
     expect(`${prefix}42`).toBe(pushedEvidenceMarker(42))

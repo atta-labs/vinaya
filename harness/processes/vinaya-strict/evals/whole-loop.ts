@@ -37,6 +37,7 @@
  */
 
 import { PUBLISHED_MARKER_LINE } from '../tools/dev-review-policy/journal-reconstruction'
+import { REGION_PREFIXES } from '../tools/legacy-markers'
 import { installVinayaLogSinkFactory } from './step-one'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -432,7 +433,9 @@ export function readyGateOf(pullRequest: ForgePullRequest | null, published: boo
   if (pullRequest === null || !published) return 'not-reached'
   const body = pullRequest.body
   if (body.includes(NO_LOCAL_TESTS_MARKER) || /No local tests ran\./.test(body)) return 'no-local-tests'
-  return /<!--\s*AEG:EVIDENCE:START\s*-->/.test(body) ? 'local-tests' : 'not-reached'
+  return REGION_PREFIXES.some((prefix) => new RegExp(`<!--\\s*${prefix}:EVIDENCE:START\\s*-->`).test(body))
+    ? 'local-tests'
+    : 'not-reached'
 }
 
 /** The highest Developer round the comments' round markers show; `null` with no marker. */

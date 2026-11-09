@@ -204,14 +204,18 @@ export type ForgeSnapshotWritten = { pullRequest: number; issue: number | null }
  * for itself what an Issue that does not resolve means, as it does live.
  * Every other failed read throws.
  */
-export function writeForgeSnapshot(dir: string, runner: ForgeRunner = ghRunner): ForgeSnapshotWritten {
+export function writeForgeSnapshot(
+  dir: string,
+  prefixes: readonly string[],
+  runner: ForgeRunner = ghRunner
+): ForgeSnapshotWritten {
   const pull = pullRequestFromRest(JSON.parse(readFileSync(join(dir, RAW_PULL_FILE), 'utf8')) as RestPull)
   const comments = commentsFromRest(flattenPages(JSON.parse(readFileSync(join(dir, RAW_PULL_COMMENTS_FILE), 'utf8'))))
   writeJson(dir, PULL_FILE, pull)
   writeJson(dir, PULL_COMMENTS_FILE, { number: pull.number, comments } satisfies SnapshotComments)
   writeFileSync(join(dir, BODY_FILE), pull.body)
 
-  const { issue } = extractIssue(pull.body)
+  const { issue } = extractIssue(pull.body, prefixes)
   if (issue === null) {
     writeJson(dir, ISSUE_FILE, { number: null } satisfies SnapshotIssueFile)
     return { pullRequest: pull.number, issue: null }
@@ -259,7 +263,11 @@ export function describeTokenBudgets(runner: ForgeRunner = ghRunner): string {
  * `raw/` files into the snapshot. Exits 1, naming what it could not read and
  * both token budgets, on any failed read; 2 on a usage error.
  */
-export function forgeSnapshotCommand(args: string[], runner: ForgeRunner = ghRunner): void {
+export function forgeSnapshotCommand(
+  args: string[],
+  prefixes: readonly string[],
+  runner: ForgeRunner = ghRunner
+): void {
   const at = args.indexOf('--dir')
   const dir = at === -1 ? undefined : args[at + 1]
   if (!dir) {
@@ -267,7 +275,7 @@ export function forgeSnapshotCommand(args: string[], runner: ForgeRunner = ghRun
     process.exit(2)
   }
   try {
-    const written = writeForgeSnapshot(dir, runner)
+    const written = writeForgeSnapshot(dir, prefixes, runner)
     process.stdout.write(
       `pr snapshot: wrote ${dir} for pull request #${written.pullRequest}${written.issue === null ? ' (its body closes no Issue)' : ` and task Issue #${written.issue}`}\n`
     )

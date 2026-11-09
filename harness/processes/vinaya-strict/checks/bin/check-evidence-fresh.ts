@@ -2,7 +2,7 @@
 
 /**
  * Core check: evidence-fresh (fix/pr-report-emitter). Refuses a PR body whose
- * `AEG:EVIDENCE` block does not match the head it is attached to.
+ * `VINAYA:EVIDENCE` block does not match the head it is attached to.
  *
  * Three groups, two of them compared exactly — see `evidence-fresh-logic.ts`'s
  * module doc for the fabrication-vs-staleness boundary this closes:
@@ -66,6 +66,7 @@ import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/ker
 import { compareEvidenceBlock, EVIDENCE_PLACEHOLDER_TEXT } from '../evidence-fresh-logic'
 import { refuseUnresolvedPrincipals } from '../principals-refusal'
 import { ScanContext, resolveAnchoredRegion } from '../../../../../harness/kernel/gates/checks/scan-context'
+import { REGION_PREFIXES } from '../../tools/legacy-markers'
 
 /** The exact marker `developerRoundMarker` (`dev-review-loop/round-assess.ts`) renders into every round's own comment — posted the first time this PR's gate ever goes green, the SAME moment the driver's automatic evidence report first runs. */
 const DEVELOPER_ROUND_MARKER = /<!--\s*aeg:developer:round-\d+\s*-->/i
@@ -75,7 +76,7 @@ const DEVELOPER_ROUND_MARKER = /<!--\s*aeg:developer:round-\d+\s*-->/i
  * happened" signal — matching the marker text alone, regardless of who
  * posted it, let EITHER attack
  * through. HIGH: an actor with branch-push access deletes or edits the
- * driver's own round-marker comment, then hand-edits `AEG:EVIDENCE` back to
+ * driver's own round-marker comment, then hand-edits `VINAYA:EVIDENCE` back to
  * the literal placeholder — with no marker left to find, this function said
  * "no round happened" forever, exempting a stale block permanently. LOW: any
  * account able to comment posts a marker-shaped comment of their own,
@@ -222,7 +223,7 @@ function main(): void {
   // this side see no anchor at all while the other side saw a real evidence
   // block and exempted every digit in it. Both green, nothing verified. The
   // resolver takes a `ScanContext`, so this cannot drift back.
-  const resolved = resolveAnchoredRegion(ScanContext.from(body), 'EVIDENCE')
+  const resolved = resolveAnchoredRegion(ScanContext.from(body, REGION_PREFIXES), 'EVIDENCE')
 
   if (resolved === null) {
     // The anchor is opt-in, like every other AEG anchor — a body that
@@ -240,9 +241,9 @@ function main(): void {
       check: CHECK_NAME,
       severity: 'error',
       message:
-        'evidence-fresh: the AEG:EVIDENCE block sits inside a `<details>` block, where its digits are exempt from `body-bare-digits` and nothing can verify what it claims. Move the block out of the collapsed section.',
+        'evidence-fresh: the VINAYA:EVIDENCE block sits inside a `<details>` block, where its digits are exempt from `body-bare-digits` and nothing can verify what it claims. Move the block out of the collapsed section.',
       agent_recovery_prompt:
-        'Move the AEG:EVIDENCE anchor pair out of the `<details>` block (the canonical home is its own `## Evidence` section), then re-run `vinaya-pr-report --write <body-file>`.'
+        'Move the VINAYA:EVIDENCE anchor pair out of the `<details>` block (the canonical home is its own `## Evidence` section), then re-run `vinaya-pr-report --write <body-file>`.'
     })
     process.exit(1)
   }

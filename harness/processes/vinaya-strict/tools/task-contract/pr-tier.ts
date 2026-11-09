@@ -8,6 +8,7 @@
 
 import { hasLabel, label } from './forge/labels'
 import { anchoredRegion } from '../../../../kernel/gates/checks/anchored-region'
+import { REGION_PREFIXES } from '../legacy-markers'
 import { isDocFile, isSpecFile } from '../file-classify'
 
 /**
@@ -39,7 +40,7 @@ export function deriveTierFromDiff(changed: string[]): 0 | 1 {
  * decides what a missing tier means (PR mode treats it as an explicit error,
  * NOT a silent default).
  *
- * When the body carries an `AEG:TIER` anchor pair (`anchored-region.ts`,
+ * When the body carries an `VINAYA:TIER` anchor pair (`anchored-region.ts`,
  * task 30), the same regex runs exclusively inside that pair — a `Tier:`
  * mention anywhere else (a pasted reference brief, a quoted example) is
  * ignored. Bodies without the pair parse exactly as before.
@@ -56,7 +57,7 @@ export function deriveTierFromDiff(changed: string[]): 0 | 1 {
 export const TIER_FIELD = /(\*\*)?\s*Tier\s*(\*\*)?\s*:\s*(\*\*)?\s*([013])\b/i
 
 export function readTierFromPrBody(prBody: string): 0 | 1 | 3 | null {
-  const searchIn = anchoredRegion(prBody, 'TIER') ?? prBody
+  const searchIn = anchoredRegion(prBody, 'TIER', REGION_PREFIXES) ?? prBody
   const m = searchIn.match(TIER_FIELD)
   if (!m) return null
   const t = Number(m[4])

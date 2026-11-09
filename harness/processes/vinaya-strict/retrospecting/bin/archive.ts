@@ -26,6 +26,7 @@ import { parseDeveloperRoundMarker } from '../../tools/task-contract/review-stat
 import { resolveNewestFrozenBrief } from '../../tools/task-contract/brief-validation'
 import { trancheLabel, trancheSlugOf } from '../../tools/task-contract/forge/labels'
 import { extractIssue } from '../../../../kernel/adapters/code-host/github/extract-issue'
+import { REGION_PREFIXES } from '../../tools/legacy-markers'
 import {
   resolveMeteringCapability,
   type MeteringCapability
@@ -246,7 +247,7 @@ export async function runArchive(args: string[], deps: ArchiveDeps): Promise<num
   // `vinaya/tranche:*` label — branch-name-only detection silently skips a
   // real task closure otherwise.
   const ref = taskRefFromBranch(pr.headRefName)
-  const { issue: candidateIssue } = extractIssue(pr.body)
+  const { issue: candidateIssue } = extractIssue(pr.body, REGION_PREFIXES)
   let issueLabels: string[] = []
   if (ref === null) {
     if (candidateIssue !== null) {

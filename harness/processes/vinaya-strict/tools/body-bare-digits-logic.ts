@@ -8,7 +8,7 @@
  * The rule, collapsed to one sentence (Principal redesign, after round 6
  * confirmed the original per-shape exemption list would never converge): **a
  * digit is exempt iff it sits inside an inline code span, a fenced/indented
- * code block, or an `AEG:*` anchored region. Nowhere else.**
+ * code block, or an `VINAYA:*` anchored region. Nowhere else.**
  *
  * What this replaced: five security review rounds plus three proactive
  * self-audit fixes each found a new way a digit could escape a growing list
@@ -46,7 +46,7 @@
  *
  * **Layers 0–2 are no longer this module's to perform.** They live on
  * `ScanContext` (`scan-context.ts`), which is also what `check-evidence-fresh`
- * reads, because the two checks resolving the `AEG:EVIDENCE` region from
+ * reads, because the two checks resolving the `VINAYA:EVIDENCE` region from
  * different text is exactly the defect a real regression exposed: this side exempted the
  * region's digits while the other side, reading un-normalised text, never
  * verified it. `buildScanMask` takes the context, so no caller here can
@@ -59,13 +59,13 @@
  *      `maskDetailsBlocks`: a `<details>` tag quoted in a code span must
  *      already be inert filler before the details-scanner sees it, or a
  *      decoy tag could open/close a fake region (`anchoredRegionBounds`'s
- *      own fix closed the identical decoy class for the `AEG:*`
+ *      own fix closed the identical decoy class for the `VINAYA:*`
  *      anchors).
  *   2. `maskDetailsBlocks` — blind the collapsed `<details>` block that
  *      carries the frozen, verbatim reference-brief copy
  *      (`harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md`: "the gates read the
  *      anchored fields above, never this block").
- *   3. Blank each present `AEG:*` anchor region (`anchoredRegionBounds`) —
+ *   3. Blank each present `VINAYA:*` anchor region (`anchoredRegionBounds`) —
  *      the one region kind this task's own rule names explicitly.
  *   4. Blank the `## Token report` section (heading to next heading or
  *      end-of-body) — a mandatory, un-anchored table on every PR
@@ -74,7 +74,7 @@
  *      under review; exempting it by heading was its own separate,
  *      Principal-approved decision, not a digit-shape classifier.
  *   5. Blank `**For:**` / `**Tier:**` / `**Project:**` header lines when not
- *      already inside their `AEG:*` anchor — the anchor-optional fallback
+ *      already inside their `VINAYA:*` anchor — the anchor-optional fallback
  *      for a body's own mandatory metadata fields, same reasoning as layer
  *      4.
  *   6. Blank each `O<n>.` list-marker PREFIX (id only, never the sentence
@@ -101,6 +101,7 @@
  */
 
 import { anchoredRegionBounds } from '../../../kernel/gates/checks/anchored-region'
+import { REGION_PREFIXES } from './legacy-markers'
 import { objectivesSectionBounds } from './task-contract/objectives'
 import { TIER_FIELD } from './task-contract/pr-tier'
 import { PROJECT_SLUG, unwrapValue } from './task-contract/forge/list-tasks'
@@ -116,7 +117,7 @@ function blankRange(text: string, start: number, end: number): string {
 }
 
 /**
- * The six `AEG:*` fields, split into two groups by Principal direction
+ * The six `VINAYA:*` fields, split into two groups by Principal direction
  * (this task's final round): `EXEMPT_ANCHOR_FIELDS` get a real, bounded,
  * mechanical exemption reusing each field's own already-hardened grammar —
  * `PREMISE`/`TEST-PLAN` get NONE at all, the identical treatment `For:`
@@ -149,7 +150,7 @@ type ExemptAnchorField = (typeof EXEMPT_ANCHOR_FIELDS)[number]
  * under their own named heading.
  *
  * Round 6 security review, HIGH: `anchoredRegionBounds` trusts ANY
- * well-formed `<!-- AEG:<FIELD>:START -->…<!-- AEG:<FIELD>:END -->` pair
+ * well-formed `<!-- VINAYA:<FIELD>:START -->…<!-- VINAYA:<FIELD>:END -->` pair
  * anywhere in the body — correct and safe for its own designed purpose
  * (`harness/kernel/gates/checks/anchored-region.ts`'s own doc: value resolution,
  * "when a pair is present, it is authoritative"), because every other
@@ -160,8 +161,8 @@ type ExemptAnchorField = (typeof EXEMPT_ANCHOR_FIELDS)[number]
  * different, security-relevant purpose (exempting content from a
  * false-claim scan), a trust model `anchoredRegionBounds` was never
  * validated against. Reproduced: a decoy
- * `<!-- AEG:PROJECT:START -->\nWe actually observed 4500 regressions in
- * this pass.\n<!-- AEG:PROJECT:END -->` — for a field the body doesn't
+ * `<!-- VINAYA:PROJECT:START -->\nWe actually observed 4500 regressions in
+ * this pass.\n<!-- VINAYA:PROJECT:END -->` — for a field the body doesn't
  * otherwise anchor, placed anywhere in ordinary prose — scored zero
  * violations.
  *
@@ -234,8 +235,8 @@ function isInCanonicalSection(body: string, field: ExemptAnchorField, outerStart
  * narrowed the precondition: an attacker only has to make their decoy the
  * FIRST anchor pair for that field INSIDE its own legitimate section, since
  * every one of these sections is itself a legitimate free-text zone.
- * Reproduced fresh: a decoy `AEG:PROJECT`/`AEG:CLOSES` pair in the header
- * block, a decoy `AEG:TIER` pair under `## Scope`, a decoy `AEG:EVIDENCE`
+ * Reproduced fresh: a decoy `VINAYA:PROJECT`/`VINAYA:CLOSES` pair in the header
+ * block, a decoy `VINAYA:TIER` pair under `## Scope`, a decoy `VINAYA:EVIDENCE`
  * pair under `## Evidence`, each wrapping a fabricated quantitative claim
  * with no trace of the field's own real declaration inside it — all scored
  * zero violations.
@@ -290,7 +291,7 @@ const FIELD_CONTENT_SIGNATURE: Record<ExemptAnchorField, RegExp> = {
  * (`premise-check.ts`'s `PREMISE_LINE` — that grammar isn't exported, so
  * it's mirrored here exactly rather than duplicated loosely), sitting
  * inside a real `Premise:` block located the identical way
- * `parsePremiseBlock` locates it (inside an `AEG:PREMISE` anchor pair when
+ * `parsePremiseBlock` locates it (inside an `VINAYA:PREMISE` anchor pair when
  * one is present, the whole body otherwise). It does not touch the pin's
  * own path, and it stops at the first blank or non-bullet line exactly as
  * the real parser does — nothing outside a genuine premise bullet's own
@@ -316,7 +317,7 @@ const PREMISE_BULLET = /^\s*[-*]\s*(\S+)\s+(contains|absent|sha256)\s*:\s*(.+)$/
 
 /** Mirrors `anchored-region.ts`'s `AnchorField` literal — not imported to keep this file's premise grammar self-contained per the doc above. */
 function premiseBlockBounds(body: string): { start: number; end: number } {
-  const bounds = anchoredRegionBounds(body, 'PREMISE')
+  const bounds = anchoredRegionBounds(body, 'PREMISE', REGION_PREFIXES)
   return bounds ? { start: bounds.innerStart, end: bounds.innerEnd } : { start: 0, end: body.length }
 }
 
@@ -364,7 +365,7 @@ function blankAnchoredRegions(body: string): string {
     // positions never drift, so re-deriving against the immutable original
     // is simpler than threading offset corrections, and can never
     // mis-locate a later anchor because an earlier blank moved something.
-    const bounds = anchoredRegionBounds(body, field)
+    const bounds = anchoredRegionBounds(body, field, REGION_PREFIXES)
     if (!bounds || !isInCanonicalSection(body, field, bounds.outerStart)) continue
     const content = body.slice(bounds.innerStart, bounds.innerEnd)
     if (!FIELD_CONTENT_SIGNATURE[field].test(content)) continue
@@ -382,7 +383,7 @@ function blankAnchoredRegions(body: string): string {
  * text match is case-insensitive and tolerant of `#`-level (this repo uses
  * `##`, but the check does not hard-code a level a future template edit
  * would silently break). Absent section → no-op, same additive-only
- * discipline as the `AEG:*` anchors.
+ * discipline as the `VINAYA:*` anchors.
  */
 function blankTokenReportSection(body: string): string {
   const lines = body.split('\n')
@@ -434,7 +435,7 @@ function blankTokenReportSection(body: string): string {
  * "name") stays unmasked and gets scanned like anything else.
  *
  * `For:` used to get the same whole-line treatment `Tier:`/`Project:` had
- * before round 6. It has no `AEG:*` anchor to fall back to at all
+ * before round 6. It has no `VINAYA:*` anchor to fall back to at all
  * (`ANCHOR_FIELDS` has no `FOR` entry) and no existing hardened grammar to
  * reuse the way `Tier:`/`Project:` now do (no gate reads or validates it),
  * so a bounded-value fix isn't available for it the way it was for the
@@ -554,8 +555,8 @@ function blankObjectiveMarkers(body: string): string {
  * checking a signature is merely PRESENT inside an anchor's content is not
  * the same as the content BEING just that value — a "trojan" anchor can
  * carry a real, valid signature alongside a smuggled claim in the same
- * pair (`<!-- AEG:TIER:START -->\n**Tier:** 1 and also 500 known
- * regressions remain untriaged\n<!-- AEG:TIER:END -->`), and blanking the
+ * pair (`<!-- VINAYA:TIER:START -->\n**Tier:** 1 and also 500 known
+ * regressions remain untriaged\n<!-- VINAYA:TIER:END -->`), and blanking the
  * WHOLE span once the signature is found would hide the smuggled digit
  * too — the identical class of gap `FIELD_CONTENT_SIGNATURE` closed for a
  * bare decoy, reopened one level in.
@@ -694,7 +695,7 @@ export function checkBareDigits(rawBody: string): BareDigitScanResult {
   // normalisation or masking stage, and nothing here can: `ScanContext.from`
   // is the only constructor and `buildScanMask` takes the context. This is
   // closed by the type, not by a test asserting the absence of a wrapper.
-  const ctx = ScanContext.from(rawBody)
+  const ctx = ScanContext.from(rawBody, REGION_PREFIXES)
   const body = ctx.normalised
   const masked = buildScanMask(ctx)
   const maskedLines = masked.split('\n')

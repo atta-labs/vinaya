@@ -13,6 +13,7 @@ import { extractIssue } from '../../../kernel/adapters/code-host/github/extract-
  */
 
 import { hasLabel } from './task-contract/forge/labels'
+import { PROVENANCE_HEADING, PROVENANCE_HEADINGS, REGION_PREFIXES } from './legacy-markers'
 import { type AnchorField, anchoredRegion, stripCode } from '../../../kernel/gates/checks/anchored-region'
 import { headerRegion } from './task-contract/brief-validation'
 import { readTierFromPrBody } from './task-contract/pr-tier'
@@ -85,11 +86,9 @@ export function isEligibleForProvenance(
   return hasLabel('tranche', issueLabels)
 }
 
-const PROVENANCE_HEADING = '### AEG provenance'
-
 /** true when any comment already carries the provenance heading (idempotency, scoped to this PR). */
 export function hasProvenance(comments: string[]): boolean {
-  return comments.some((c) => c.includes(PROVENANCE_HEADING))
+  return comments.some((c) => PROVENANCE_HEADINGS.some((heading) => c.includes(heading)))
 }
 
 /**
@@ -106,7 +105,7 @@ export function hasProvenance(comments: string[]): boolean {
  * (`checkProjectField`) uses, preserving gate/archivist parity.
  */
 function extractField(body: string, labelPattern: string, anchor?: AnchorField): string | null {
-  const anchored = anchor !== undefined ? anchoredRegion(body, anchor) : null
+  const anchored = anchor !== undefined ? anchoredRegion(body, anchor, REGION_PREFIXES) : null
   const region = anchored ?? headerRegion(body)
   const re = new RegExp(`^(?:\\*\\*)?\\s*${labelPattern}\\s*(?:\\*\\*)?\\s*:\\s*(?:\\*\\*)?\\s*([^\\n·]+)`, 'im')
   const m = region.match(re)
@@ -124,7 +123,7 @@ export function buildProvenanceBlock(facts: MergedPrFacts): {
   const ref = taskRefFromBranch(facts.headRefName)
   const dangling: string[] = []
 
-  const { issue, extraIssues, outsideHeader } = extractIssue(facts.body)
+  const { issue, extraIssues, outsideHeader } = extractIssue(facts.body, REGION_PREFIXES)
   if (issue === null) {
     dangling.push('no `Closes #N` found in PR body — Issue field is DANGLING, no Issue will be closed')
   }
@@ -167,7 +166,7 @@ export function buildProvenanceBlock(facts: MergedPrFacts): {
     : `task (branch ${facts.headRefName})`
 
   const lines = [
-    `${PROVENANCE_HEADING} — ${taskLabel}`,
+    `${PROVENANCE_HEADING.current} — ${taskLabel}`,
     `- Issue:        ${issue !== null ? `#${issue}  (closed by merge)` : 'DANGLING — no Closes #N in PR body'}`,
     `- Tier:         ${tier !== null ? tier : 'DANGLING — no Tier field in PR body'}`,
     `- Brief:        ${facts.briefCommentUrl ?? 'DANGLING — no aeg:brief:v1 comment resolved for this task'}`,

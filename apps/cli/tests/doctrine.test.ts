@@ -89,7 +89,7 @@ describe('vinaya doctrine', () => {
     // from — not a path, and not the file's frontmatter.
     expect(printed).not.toContain('sidebar_title:')
     expect(printed).toContain("# Template — Developer's PR report")
-    expect(printed).toContain('<!-- AEG:CLOSES:START -->')
+    expect(printed).toContain('<!-- VINAYA:CLOSES:START -->')
   })
 
   it('--role <name> --json emits the envelope with a coherent root/entry pair', async () => {

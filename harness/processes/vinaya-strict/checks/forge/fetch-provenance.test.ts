@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test'
+import { PROVENANCE_HEADING } from '../../tools/legacy-markers'
 
 /**
  * `fetchProvenance`'s primary path (closing PR body/comments), the
@@ -22,6 +23,7 @@ mock.module('@octokit/graphql', () => ({
 const { fetchProvenance } = await import('./fetch-provenance')
 
 const PROVENANCE_BODY = '### AEG provenance\n- Issue:        #42\n'
+const CURRENT_PROVENANCE_BODY = `${PROVENANCE_HEADING.current}\n- Issue:        #42\n`
 
 describe('fetchProvenance', () => {
   it('returns an empty map without querying when issueNums is empty', async () => {
@@ -37,6 +39,22 @@ describe('fetchProvenance', () => {
         i_42: {
           timelineItems: {
             nodes: [{ closer: { number: 100, body: PROVENANCE_BODY, comments: { nodes: [] } } }]
+          }
+        }
+      }
+    })
+
+    const result = await fetchProvenance([42], 'acme', 'widgets', 'token')
+
+    expect(result.get(42)).toBe(true)
+  })
+
+  it('finds a provenance block that carries the current heading', async () => {
+    graphqlClient.mockResolvedValueOnce({
+      repository: {
+        i_42: {
+          timelineItems: {
+            nodes: [{ closer: { number: 100, body: CURRENT_PROVENANCE_BODY, comments: { nodes: [] } } }]
           }
         }
       }

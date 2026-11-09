@@ -8,7 +8,7 @@
  * to hold exactly one blank-line-delimited block — narrative root-cause
  * detail belongs in a section of its own below the canonical four, a commit
  * message, or the changeset, never padded into the report itself and never
- * hand-typed into the AEG:EVIDENCE block. Nothing enforced that rule
+ * hand-typed into the VINAYA:EVIDENCE block. Nothing enforced that rule
  * mechanically:
  * confirmed live, three real PRs
  * shipped multi-paragraph Summary/Scope sections and nothing caught it,
@@ -53,6 +53,7 @@
  */
 
 import { ANCHOR_FIELDS, anchoredRegionBounds, stripCode } from '../../../kernel/gates/checks/anchored-region'
+import { REGION_PREFIXES } from '../tools/legacy-markers'
 
 export type DensityResult = { status: 'pass' | 'fail'; errors: string[] }
 
@@ -73,10 +74,10 @@ function headingSectionBody(prBody: string, heading: string): string | null {
 }
 
 /**
- * `headingSectionBody`'s text with every well-formed `AEG:*` anchor block removed
+ * `headingSectionBody`'s text with every well-formed `VINAYA:*` anchor block removed
  * outright (not just unwrapped) — an anchored field (Scope's trailing
- * `AEG:TIER` block, in the canonical template, or the driver-written
- * `AEG:BEYOND-SURFACE` block beside it) is a field, not a second prose
+ * `VINAYA:TIER` block, in the canonical template, or the driver-written
+ * `VINAYA:BEYOND-SURFACE` block beside it) is a field, not a second prose
  * paragraph, and must not count as one. Every field in `ANCHOR_FIELDS`, so an
  * anchor added there is never a paragraph here. Reuses `anchoredRegionBounds`
  * (the same span `vinaya pr report --write` targets) rather than a second,
@@ -86,7 +87,7 @@ function stripAnchorBlocks(sectionText: string): string {
   let result = sectionText
   for (const field of ANCHOR_FIELDS) {
     for (;;) {
-      const bounds = anchoredRegionBounds(result, field)
+      const bounds = anchoredRegionBounds(result, field, REGION_PREFIXES)
       if (!bounds) break
       result = result.slice(0, bounds.outerStart) + result.slice(bounds.outerEnd)
     }
@@ -112,7 +113,7 @@ function checkSectionDensity(prBody: string, heading: string): DensityResult {
   return {
     status: 'fail',
     errors: [
-      `pr-report-density ${heading}: "## ${heading}" holds ${count} paragraphs — the canonical PR-report form (harness/processes/vinaya-strict/executing/developer/doctrine.md § PR body) requires exactly one. Collapse it to one paragraph; move the rest into a section of your own below the canonical four ("Add anything you want beneath the four sections", developer.md), a commit message, or the changeset — never into the AEG:EVIDENCE block, which is emitted only, never hand-typed.`
+      `pr-report-density ${heading}: "## ${heading}" holds ${count} paragraphs — the canonical PR-report form (harness/processes/vinaya-strict/executing/developer/doctrine.md § PR body) requires exactly one. Collapse it to one paragraph; move the rest into a section of your own below the canonical four ("Add anything you want beneath the four sections", developer.md), a commit message, or the changeset — never into the VINAYA:EVIDENCE block, which is emitted only, never hand-typed.`
     ]
   }
 }

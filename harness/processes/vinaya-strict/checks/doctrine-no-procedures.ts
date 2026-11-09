@@ -23,7 +23,7 @@ export type DoctrineProcedureFinding = { file: string; line: number; message: st
  * (`tranche-model.md` §12's `AEG:VENDOR-EXAMPLE` pair) — same markers
  * `doctrine-portability.ts` exempts from its own vendor-name scan, exported
  * from there rather than re-declared here. First pair wins, same rule as
- * every other `AEG:*` anchor consumer.
+ * every other `VINAYA:*` anchor consumer.
  */
 function vendorExampleSpan(content: string): { start: number; end: number } | null {
   const start = VENDOR_EXAMPLE_START.exec(content)

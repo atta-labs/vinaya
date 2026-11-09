@@ -11,14 +11,17 @@ function closesRefs(text: string): number[] {
  * flagged — but always fence-stripped, so example text like a Test Plan's
  * `Closes #NNN` fixture never counts (a real regression).
  *
- * When the body carries an `AEG:CLOSES` anchor pair (`anchored-region.ts`,
+ * When the body carries a `CLOSES` anchor pair (`anchored-region.ts`,
  * task 30), the pair replaces the header block as the canonical placement:
  * the primary Issue is the first `Closes #N` inside the pair (never flagged
  * `outsideHeader` — anchored IS canonical), and extras are still scanned
  * body-wide so stray closing references stay flagged. Bodies without the
  * pair parse exactly as before.
  */
-export function extractIssue(body: string): { issue: number | null; extraIssues: number[]; outsideHeader: boolean } {
+export function extractIssue(
+  body: string,
+  prefixes: readonly string[]
+): { issue: number | null; extraIssues: number[]; outsideHeader: boolean } {
   // Strip ONCE over the whole body, then slice — never strip a slice. The
   // strip's block rules read context a fragment no longer carries: an anchor
   // indented inside a list item is list content in the full body (kept, and
@@ -27,12 +30,12 @@ export function extractIssue(body: string): { issue: number | null; extraIssues:
   // returned `issue: null` — the Issue then goes unclosed on merge, the exact
   // stranding this exists to eliminate, reintroduced along the over-strip
   // axis (a MAJOR review finding). Stripping first also subsumes the decoy
-  // protection rather than trading against it: `AEG:*` markers are HTML
+  // protection rather than trading against it: region markers are HTML
   // comments and survive the strip, while a decoy anchor inside code does not
   // survive to be sliced in the first place.
   const stripped = stripCode(body)
   const bodyNums = closesRefs(stripped)
-  const anchored = anchoredRegion(stripped, 'CLOSES')
+  const anchored = anchoredRegion(stripped, 'CLOSES', prefixes)
   if (anchored !== null) {
     const anchorNums = closesRefs(anchored)
     if (anchorNums.length === 0) return { issue: null, extraIssues: bodyNums, outsideHeader: false }

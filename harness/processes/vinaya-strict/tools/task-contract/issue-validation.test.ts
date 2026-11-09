@@ -2334,7 +2334,7 @@ describe('checkSurfaceScope — a beyond-Surface path passes only when the body 
   })
 })
 
-describe('the AEG:BEYOND-SURFACE body block', () => {
+describe('the VINAYA:BEYOND-SURFACE body block', () => {
   const body = [
     'Closes #1',
     '',
@@ -2360,7 +2360,9 @@ describe('the AEG:BEYOND-SURFACE body block', () => {
   })
 
   it('is empty when no path is beyond the Surface', () => {
-    expect(renderBeyondSurfaceBlock([])).toBe('<!-- AEG:BEYOND-SURFACE:START -->\n<!-- AEG:BEYOND-SURFACE:END -->')
+    expect(renderBeyondSurfaceBlock([])).toBe(
+      '<!-- VINAYA:BEYOND-SURFACE:START -->\n<!-- VINAYA:BEYOND-SURFACE:END -->'
+    )
     expect(recordedBeyondSurfacePaths(withBeyondSurfaceBlock(body, []))).toEqual([])
   })
 
@@ -2369,8 +2371,10 @@ describe('the AEG:BEYOND-SURFACE body block', () => {
       { path: 'docs/c.md', reason: 'in', glob: null },
       { path: 'src/gen/b.ts', reason: 'out', glob: 'src/gen' }
     ])
-    expect(written.indexOf('<!-- AEG:BEYOND-SURFACE:START -->')).toBeGreaterThan(written.indexOf('## Scope'))
-    expect(written.indexOf('<!-- AEG:BEYOND-SURFACE:END -->')).toBeLessThan(written.indexOf('<!-- AEG:TIER:START -->'))
+    expect(written.indexOf('<!-- VINAYA:BEYOND-SURFACE:START -->')).toBeGreaterThan(written.indexOf('## Scope'))
+    expect(written.indexOf('<!-- VINAYA:BEYOND-SURFACE:END -->')).toBeLessThan(
+      written.indexOf('<!-- AEG:TIER:START -->')
+    )
     expect(written).toContain('- `src/gen/b.ts` crosses the `out:` glob `src/gen`')
     expect(recordedBeyondSurfacePaths(written)).toEqual(['docs/c.md', 'src/gen/b.ts'])
   })
@@ -2387,7 +2391,7 @@ describe('the AEG:BEYOND-SURFACE body block', () => {
 
   it('appends a Scope section to a body that has none', () => {
     const written = withBeyondSurfaceBlock('Closes #1\n', [{ path: 'x.ts', reason: 'in', glob: null }])
-    expect(written).toMatch(/## Scope\n\n<!-- AEG:BEYOND-SURFACE:START -->/)
+    expect(written).toMatch(/## Scope\n\n<!-- VINAYA:BEYOND-SURFACE:START -->/)
     expect(recordedBeyondSurfacePaths(written)).toEqual(['x.ts'])
   })
 

@@ -851,13 +851,14 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
       head = ''
     }
     const r = run(programBin(bin, 'vinaya-pr-report'), [], fixtureDir)
-    const hasBlock = r.stdout.includes('<!-- AEG:EVIDENCE:START -->') && r.stdout.includes('<!-- AEG:EVIDENCE:END -->')
+    const hasBlock =
+      r.stdout.includes('<!-- VINAYA:EVIDENCE:START -->') && r.stdout.includes('<!-- VINAYA:EVIDENCE:END -->')
     const bindsHead = head.length > 0 && r.stdout.includes(head)
     const ok = hasBlock && bindsHead
     return {
       status: ok ? 'pass' : 'fail',
       detail: ok
-        ? `exit ${r.status}, AEG:EVIDENCE block emitted and bound to fixture head ${head.slice(0, 7)}`
+        ? `exit ${r.status}, VINAYA:EVIDENCE block emitted and bound to fixture head ${head.slice(0, 7)}`
         : `exit ${r.status}, block delimiters: ${hasBlock}, bound to head ${head.slice(0, 7) || '<unresolved>'}: ${bindsHead} — ${(r.stdout.trim() || r.stderr.trim()).slice(0, 200)}`
     }
   },

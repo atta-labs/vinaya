@@ -596,7 +596,7 @@ export function createLiveDeveloperContext(params: LiveDeveloperContextParams): 
           )
         }
       }
-      // The `AEG:LIVE` record is the driver's: the live body's record is
+      // The `VINAYA:LIVE` record is the driver's: the live body's record is
       // carried over, so an agent edit to it never survives. A live body
       // that cannot be read keeps none — the next live run writes it.
       let currentBody: string | null
@@ -668,7 +668,7 @@ export function createLiveDeveloperContext(params: LiveDeveloperContextParams): 
   return createDeveloperDevToolContext(deps)
 }
 
-/** `body` with its `AEG:BEYOND-SURFACE` block rewritten to list every path the task branch changed (from its merge base, the same three-dot diff the `surface-scope` check reads) that the task's Surface does not cover — the driver's own marked region, replaced on every body write the way the `**For:**` line is, so an agent edit to it never survives. The block is written empty when the Surface, the head or the merge base cannot be read, so a list the agent wrote never survives a read failure. */
+/** `body` with its `VINAYA:BEYOND-SURFACE` block rewritten to list every path the task branch changed (from its merge base, the same three-dot diff the `surface-scope` check reads) that the task's Surface does not cover — the driver's own marked region, replaced on every body write the way the `**For:**` line is, so an agent edit to it never survives. The block is written empty when the Surface, the head or the merge base cannot be read, so a list the agent wrote never survives a read failure. */
 export async function withBeyondSurfaceRecord(scope: LivePublicationScope, body: string): Promise<string> {
   const { d, task, worktree } = scope
   const surface = d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
@@ -683,7 +683,7 @@ export async function withBeyondSurfaceRecord(scope: LivePublicationScope, body:
   }
 }
 
-/** Rewrite the open pull request's `AEG:BEYOND-SURFACE` block after the branch moved — a no-op with no open pull request or no change to the block. Never throws: a failed write is logged, and the next body write records it. */
+/** Rewrite the open pull request's `VINAYA:BEYOND-SURFACE` block after the branch moved — a no-op with no open pull request or no change to the block. Never throws: a failed write is logged, and the next body write records it. */
 export async function syncBeyondSurfaceRecord(scope: LivePublicationScope, pr: number | null): Promise<void> {
   const { d, repo, loopLogPath } = scope
   if (pr === null) return

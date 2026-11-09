@@ -27,6 +27,7 @@ import { hasLabel, LABELS } from './forge/labels'
 import { projectFieldFromBody, projectsFromBody } from './forge/list-tasks'
 import { maskCode } from '../../../../kernel/adapters/code-host/github/strip-code'
 import { anchoredRegion, anchoredRegionBounds, stripCode } from '../../../../kernel/gates/checks/anchored-region'
+import { REGION_PREFIX_CURRENT, REGION_PREFIXES } from '../legacy-markers'
 import { checkTestPlan, extractFencedBlocks } from './brief-validation'
 import { type ClaimBinding, type ClaimVoice, evaluateClaimBindings } from '../doc-claim'
 import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from '../doc-owners'
@@ -448,22 +449,22 @@ function beyondSurfaceLine(entry: BeyondSurfacePath): string {
     : `- \`${entry.path}\` matches no \`in:\` glob`
 }
 
-/** The whole marked block — the `AEG:BEYOND-SURFACE` pair around the lead line and one line per entry, or around nothing when there is none. */
+/** The whole marked block — the `VINAYA:BEYOND-SURFACE` pair around the lead line and one line per entry, or around nothing when there is none. */
 export function renderBeyondSurfaceBlock(entries: readonly BeyondSurfacePath[]): string {
   const inner = entries.length === 0 ? '' : `${[BEYOND_SURFACE_LEAD, ...entries.map(beyondSurfaceLine)].join('\n')}\n`
-  return `<!-- AEG:BEYOND-SURFACE:START -->\n${inner}<!-- AEG:BEYOND-SURFACE:END -->`
+  return `<!-- ${REGION_PREFIX_CURRENT}:BEYOND-SURFACE:START -->\n${inner}<!-- ${REGION_PREFIX_CURRENT}:BEYOND-SURFACE:END -->`
 }
 
 /**
- * `body` with its `AEG:BEYOND-SURFACE` block rewritten to list `entries` —
+ * `body` with its `VINAYA:BEYOND-SURFACE` block rewritten to list `entries` —
  * only that marked region is replaced, whatever it held. A body with no such
- * block gets one in its `## Scope` section, just before the `AEG:TIER` pair
+ * block gets one in its `## Scope` section, just before the `VINAYA:TIER` pair
  * when that pair sits there, else at the section's end; a body with no
  * `## Scope` section gets one appended. Pure.
  */
 export function withBeyondSurfaceBlock(body: string, entries: readonly BeyondSurfacePath[]): string {
   const block = renderBeyondSurfaceBlock(entries)
-  const existing = anchoredRegionBounds(body, 'BEYOND-SURFACE')
+  const existing = anchoredRegionBounds(body, 'BEYOND-SURFACE', REGION_PREFIXES)
   if (existing) return body.slice(0, existing.outerStart) + block + body.slice(existing.outerEnd)
   const masked = maskCode(body)
   const scope = /^##[ \t]+Scope[ \t]*$/m.exec(masked)
@@ -471,7 +472,7 @@ export function withBeyondSurfaceBlock(body: string, entries: readonly BeyondSur
   const sectionStart = scope.index + scope[0].length
   const nextHeading = /^##?[ \t]/m.exec(masked.slice(sectionStart))
   const sectionEnd = nextHeading ? sectionStart + nextHeading.index : body.length
-  const tier = anchoredRegionBounds(body, 'TIER')
+  const tier = anchoredRegionBounds(body, 'TIER', REGION_PREFIXES)
   if (tier && tier.outerStart >= sectionStart && tier.outerStart < sectionEnd) {
     return `${body.slice(0, tier.outerStart)}${block}\n\n${body.slice(tier.outerStart)}`
   }
@@ -481,11 +482,11 @@ export function withBeyondSurfaceBlock(body: string, entries: readonly BeyondSur
 }
 
 /**
- * The paths the body's `AEG:BEYOND-SURFACE` block lists, or `[]` when the
+ * The paths the body's `VINAYA:BEYOND-SURFACE` block lists, or `[]` when the
  * body carries no such block — an absent record lists nothing.
  */
 export function recordedBeyondSurfacePaths(body: string): string[] {
-  const region = anchoredRegion(body, 'BEYOND-SURFACE')
+  const region = anchoredRegion(body, 'BEYOND-SURFACE', REGION_PREFIXES)
   if (region === null) return []
   const paths: string[] = []
   for (const line of region.split(/\r?\n/)) {
@@ -506,7 +507,7 @@ export type SurfaceScopeResult =
 /**
  * **A task-branch PR's changed files outside its Issue's Surface must be
  * recorded, never hidden.** `changedFiles` is the branch's own diff;
- * `recorded` is the pull request body's `AEG:BEYOND-SURFACE` list. Passes
+ * `recorded` is the pull request body's `VINAYA:BEYOND-SURFACE` list. Passes
  * when every changed path beyond the Surface (`beyondSurfacePaths`) is
  * recorded; otherwise fails naming the FIRST changed path that is beyond the
  * Surface and not recorded, with the `out:` glob it crosses or the `in:` list

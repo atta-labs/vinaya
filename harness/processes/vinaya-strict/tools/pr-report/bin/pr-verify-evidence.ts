@@ -1,5 +1,5 @@
 /**
- * `vinaya pr verify-evidence` — proves the published `AEG:EVIDENCE` region was
+ * `vinaya pr verify-evidence` — proves the published `VINAYA:EVIDENCE` region was
  * machine-generated, by regenerating it and comparing.
  *
  * **Deliberately a command, not a check.** `evidence-fresh` is registered in
@@ -18,6 +18,7 @@
 import { isEntryPoint } from '../../../../../kernel/gates/checks/entry-point.js'
 import { execFileSync } from 'node:child_process'
 import { ScanContext, resolveAnchoredRegion } from '../../../../../kernel/gates/checks/scan-context.js'
+import { REGION_PREFIXES } from '../../legacy-markers.js'
 import { buildReport } from './pr-report.js'
 import { compareEvidence, renderVerdict } from '../pr-verify-evidence-logic.js'
 
@@ -203,7 +204,7 @@ export async function prVerifyEvidenceCommand(args: string[]): Promise<void> {
   // "found live, in this task's own PR body". A raw scan here would have let
   // this command certify a decoy pair inside a fence or a `<details>` block
   // while `body-bare-digits` and `evidence-fresh` both read the real one.
-  const resolved = resolveAnchoredRegion(ScanContext.from(body), 'EVIDENCE')
+  const resolved = resolveAnchoredRegion(ScanContext.from(body, REGION_PREFIXES), 'EVIDENCE')
   const verdict = compareEvidence(
     resolved === null || resolved === 'hidden' ? resolved : { region: resolved.region },
     fresh.blockInner,
