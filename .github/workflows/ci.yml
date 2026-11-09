@@ -754,8 +754,18 @@ jobs:
       # The tools this repository's own checks need (`ci.setup`, today
       # gitleaks), as a Developer's machine has them — so `check --all`
       # inside a sandbox fails only on what the sandbox denies.
+      # The tools' downloads are cached, so a GitHub release-download outage
+      # fails only a job whose cache misses; `ci.setup` checks each file's
+      # checksum and downloads only when the cached copy is missing or wrong.
+      - name: Restore the checks' own tool downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vinaya-tools
+          key: vinaya-tools-${{ runner.os }}-${{ hashFiles('vinaya.config.json') }}
+          restore-keys: |
+            vinaya-tools-${{ runner.os }}-
       - name: Install the checks' own tools
-        run: bun -e 'process.stdout.write(require("./vinaya.config.json").ci.setup)' | bash
+        run: bun -e 'process.stdout.write(require("./vinaya.config.json").ci.setup)' | VINAYA_TOOLS_CACHE="$HOME/.cache/vinaya-tools" bash
       - name: Run the suite under both sandboxes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
