@@ -243,6 +243,7 @@ const checkNames = [
   'issue-surface-globs',
   'issue-milestone-attach',
   'atta-labs/secret-scan',
+  'atta-labs/no-aeg-token',
   'atta-labs/ui-rules',
   'atta-labs/process-version-bump'
 ] as const
