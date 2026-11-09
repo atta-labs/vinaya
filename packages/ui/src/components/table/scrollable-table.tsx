@@ -13,7 +13,7 @@ export type ScrollableTableProps = ComponentProps<'table'> & {
    * the nearest scrolling ancestor and leaves when the table scrolls out. No
    * fixed height. **OFF by default — opt in per call site.**
    *
-   * Default-off is deliberate: this is a shared `@atta/ui` primitive used by every
+   * Default-off is deliberate: this is a shared `@vinaya/ui` primitive used by every
    * product (Vāda, Herald, Atta, Vinaya), and pinning is only correct where the
    * table sits inside a scrolling ancestor to pin against. A consumer that has
    * browser-verified the behavior opts in explicitly (`<Table stickyHeader>`);

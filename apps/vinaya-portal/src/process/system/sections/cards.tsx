@@ -6,7 +6,7 @@ import { Banner, StatTiles } from '@/process/components/primitives'
 import { flowList, flows } from '@/process/fixtures'
 import { checkout1 } from '@/process/flows/complex/flow'
 import type { GateState, Step, Tone } from '@/process/types'
-import { RadioGroup } from '@/ui/components'
+import { RadioGroup } from '@vinaya/ui/components'
 import { Group, Row, SectionHeader } from '../shell'
 
 const improveStep = flows.feature.steps[flows.feature.steps.length - 1] as Step

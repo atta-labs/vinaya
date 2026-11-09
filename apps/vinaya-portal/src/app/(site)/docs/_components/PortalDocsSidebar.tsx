@@ -10,9 +10,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem
-} from '@/ui/components'
-import { NextLink } from '@/ui/lib/next-link'
-import { cn } from '@/ui/lib/utils'
+} from '@vinaya/ui/components'
+import { NextLink } from '@vinaya/ui/lib/next-link'
+import { cn } from '@vinaya/ui/lib/utils'
 import { iconForName, SMALL_ICON } from '../../_components/icons'
 import { DOCS_NAV, type DocsPage, groupForPath } from '../_lib/portal-docs'
 

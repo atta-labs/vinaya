@@ -14,7 +14,7 @@ import {
   Dialog,
   DialogContent,
   DialogTitle
-} from '@/ui/components'
+} from '@vinaya/ui/components'
 import type { SearchGroup } from '../_lib/search-index'
 
 /** The docs search: a button in the bar and ⌘K (Ctrl K) anywhere, over pages, commands and config keys. */

@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { MapDialog, MomentPicker, momentOf } from '@/process/diagram/MapDialog'
 import { ProcessDiagram } from '@/process/diagram/ProcessDiagram'
 import type { FlowKey, Stage } from '@/process/types'
-import { Button } from '@/ui/components'
+import { Button } from '@vinaya/ui/components'
 import { SectionHeader } from '../shell'
 
 /** The full diagram with a moment picker; Full screen opens the same `MapDialog` the process page's Map opens. */

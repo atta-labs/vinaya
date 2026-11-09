@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
-import { NextLink } from '@/ui/lib/next-link'
-import { Logo } from '@/ui/shared'
+import { NextLink } from '@vinaya/ui/lib/next-link'
+import { Logo } from '@vinaya/ui/shared'
 import { TopBar } from '@/ui/topbar'
 import { SITE_LINKS } from './site-nav'
 

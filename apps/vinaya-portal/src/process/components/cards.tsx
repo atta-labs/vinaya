@@ -14,9 +14,9 @@ import {
   PopoverContent,
   PopoverTrigger,
   RadioItem
-} from '@/ui/components'
-import { cn } from '@/ui/lib/utils'
-import { Text } from '@/ui/shared'
+} from '@vinaya/ui/components'
+import { cn } from '@vinaya/ui/lib/utils'
+import { Text } from '@vinaya/ui/shared'
 import { flows } from '../fixtures'
 import { toneBg, toneBorder, toneMarker, toneText } from '../tone'
 import type { Flow, FlowKey, GateState, LogEvent, OutputCard as OutputCardData, Tone } from '../types'

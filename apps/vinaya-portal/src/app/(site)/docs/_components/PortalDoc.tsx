@@ -9,9 +9,9 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
   Code
-} from '@/ui/components'
-import { NextLink } from '@/ui/lib/next-link'
-import { Heading, Text } from '@/ui/shared'
+} from '@vinaya/ui/components'
+import { NextLink } from '@vinaya/ui/lib/next-link'
+import { Heading, Text } from '@vinaya/ui/shared'
 import { iconForPage } from '../../_components/icons'
 import { DOCS_NAV, type DocsGroup, sectionId, topKey } from '../_lib/portal-docs'
 import { CommandBlock } from '../(standalone)/cli/_components/CommandBlock'

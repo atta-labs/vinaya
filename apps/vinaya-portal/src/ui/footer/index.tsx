@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import { NextLink } from '@vinaya/ui/lib/next-link'
 import type * as React from 'react'
 import { AttaMark } from './marks/atta-mark'
 import { AttalabsMark } from './marks/attalabs-mark'
@@ -70,21 +70,23 @@ export function Footer({ product, tagline, links = [], logo }: FooterProps) {
                     </span>
                   )}
                   {link.external ? (
-                    <a
+                    <NextLink
+                      variant='unstyled'
                       href={link.href}
                       target='_blank'
                       rel='noreferrer'
                       className='font-mono text-xs uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground'
                     >
                       {link.label}
-                    </a>
+                    </NextLink>
                   ) : (
-                    <Link
+                    <NextLink
+                      variant='unstyled'
                       href={link.href}
                       className='font-mono text-xs uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground'
                     >
                       {link.label}
-                    </Link>
+                    </NextLink>
                   )}
                 </span>
               ))}
@@ -98,11 +100,16 @@ export function Footer({ product, tagline, links = [], logo }: FooterProps) {
           <div className='flex flex-col items-end gap-1 leading-tight'>
             <span className='text-xs text-muted-foreground/60'>
               © {currentYear} AttaLabs ·{' '}
-              <a href='https://attalabs.dev' className='transition-colors hover:text-muted-foreground'>
+              <NextLink
+                variant='unstyled'
+                href='https://attalabs.dev'
+                className='transition-colors hover:text-muted-foreground'
+              >
                 attalabs.dev
-              </a>
+              </NextLink>
             </span>
-            <a
+            <NextLink
+              variant='unstyled'
               href='https://github.com/atta-labs'
               target='_blank'
               rel='noreferrer'
@@ -110,7 +117,7 @@ export function Footer({ product, tagline, links = [], logo }: FooterProps) {
             >
               <GithubMark className='size-3.5' />
               github.com/atta-labs
-            </a>
+            </NextLink>
           </div>
         </div>
       </div>

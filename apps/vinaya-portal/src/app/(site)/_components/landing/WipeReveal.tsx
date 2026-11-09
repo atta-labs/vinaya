@@ -1,7 +1,7 @@
 'use client'
 
 import { type ReactNode, useRef } from 'react'
-import { cn } from '@/ui/lib/utils'
+import { cn } from '@vinaya/ui/lib/utils'
 import { useSeen } from './LandingInteractions'
 
 // The title reveal: a clip-path wipe, left to right, over 1100ms, once the section title's

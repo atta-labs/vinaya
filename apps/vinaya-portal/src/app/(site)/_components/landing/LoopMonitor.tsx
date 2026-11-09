@@ -2,7 +2,7 @@
 
 import { GitPullRequest } from 'lucide-react'
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { cn } from '@/ui/lib/utils'
+import { cn } from '@vinaya/ui/lib/utils'
 import { ELEMENT_ICONS } from '../icons'
 import { Terminal, type TerminalLine, type TerminalMark } from './Terminal'
 

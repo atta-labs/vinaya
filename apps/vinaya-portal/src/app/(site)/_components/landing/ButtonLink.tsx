@@ -2,8 +2,8 @@
 
 import Link from 'next/link'
 import type { ComponentProps } from 'react'
-import { buttonVariants } from '@/ui/components'
-import { cn } from '@/ui/lib/utils'
+import { buttonVariants } from '@vinaya/ui/components'
+import { cn } from '@vinaya/ui/lib/utils'
 
 // buttonVariants() is exported alongside a 'use client' component (animate's Button), so
 // it can only be CALLED from client code — a Server Component may render <Button> but not

@@ -4,8 +4,7 @@ import { Menu, X } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import type { ReactNode, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { Button } from '../components/button'
-import { ChromeFrame } from '../components/chrome-frame'
+import { Button, ChromeFrame, Sheet, SheetClose, SheetContent, SheetTrigger } from '@vinaya/ui/components'
 import {
   closeNavigationMenus,
   NavigationMenu,
@@ -13,12 +12,11 @@ import {
   NavigationMenuLink,
   NavigationMenuTrigger,
   useAnyNavigationMenuOpen
-} from '../components/navigation-menu'
-import { Sheet, SheetClose, SheetContent, SheetTrigger } from '../components/sheet'
-import { ColorSchemeToggle } from '../lib/color-scheme-toggle'
-import { NextLink } from '../lib/next-link'
-import { cn } from '../lib/utils'
-import { Logo } from '../libraries/shared/components/display/logo'
+} from '@vinaya/ui/components/navigation-menu'
+import { ColorSchemeToggle } from '@vinaya/ui/lib/color-scheme-toggle'
+import { NextLink } from '@vinaya/ui/lib/next-link'
+import { cn } from '@vinaya/ui/lib/utils'
+import { Logo } from '@vinaya/ui/shared'
 
 export interface TopBarLink {
   /**
