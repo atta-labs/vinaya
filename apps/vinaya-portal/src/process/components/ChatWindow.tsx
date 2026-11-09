@@ -1,8 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useRef } from 'react'
-import { Card } from '@vinaya/ui/components'
-import { cn } from '@vinaya/ui/lib/utils'
+import { Card, cn } from '@vinaya/ui'
 import { toneBefore, toneText } from '../tone'
 import type { ChatLine, Environment, Surface, Tone } from '../types'
 import { defaultEnvironment } from '../types'

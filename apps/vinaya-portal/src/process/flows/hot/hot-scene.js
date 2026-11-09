@@ -1,7 +1,5 @@
 import * as THREE from 'three'
-import { alphaAt, coverageMask, drawnMask } from '@vinaya/ui/lib/mask-canvas'
-import { clamp01 } from '@vinaya/ui/lib/math'
-import { tokenHex } from '@vinaya/ui/lib/theme-color'
+import { alphaAt, coverageMask, drawnMask, clamp01, tokenHex } from '@vinaya/ui'
 
 /**
  * Hot issue as one scroll-driven descent: main, red, one CI run in five

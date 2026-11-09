@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { lerp, progressBetween } from '@vinaya/ui/lib/math'
+import { lerp, progressBetween } from '@vinaya/ui'
 import { brandPath } from '../../components/BrandIcon'
 import { shownAt, stepLines } from '../../replay'
 import { useProcess } from '../../store'

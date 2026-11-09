@@ -3,9 +3,7 @@
 import { Eyebrow, Pill } from '@/process/components/primitives'
 import { toneBg, toneText } from '@/process/tone'
 import type { Tone } from '@/process/types'
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '@vinaya/ui/components'
-import { cn } from '@vinaya/ui/lib/utils'
-import { Text } from '@vinaya/ui/shared'
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle, cn, Text } from '@vinaya/ui'
 import { Group, Row, SectionHeader } from '../shell'
 
 const tones: Tone[] = ['product', 'think', 'exec', 'retro', 'hot', 'log']

@@ -14,7 +14,7 @@ This workflow follows the three UI rule files at the repository root. Read all t
 
 ## 1. Confirm the component is missing
 
-Read `packages/ui/src/components/index.ts` and `packages/ui/src/libraries/shared/components/index.ts`. If the component is there under its shadcn name, use it. If what the page needs is a composite (a banner, a choice card, a rail), compose it in the app from existing components (`Card`, `Button`, `Text`); it is not a library component. Continue only for a real primitive the library lacks.
+Read `packages/ui/src/components/index.ts`, the list of every component the library holds. If the component is there under its shadcn name, use it. If what the page needs is a composite (a banner, a choice card, a rail), compose it in the app from existing components (`Card`, `Button`, `Text`); it is not a library component. Continue only for a real primitive the library lacks.
 
 ## 2. Find its two references
 
@@ -51,11 +51,11 @@ Create `packages/ui/src/components/<shadcn-name-in-kebab-case>.tsx`:
 
 ## 4. Add it to the library's index
 
-Add the exports to `packages/ui/src/components/index.ts`, in the file's alphabetical order, so app code imports it from `@vinaya/ui/components`. A new runtime dependency of the component goes in `packages/ui/package.json`.
+Add the exports to `packages/ui/src/components/index.ts`, in the file's alphabetical order, so app code imports it from `@vinaya/ui`. A new runtime dependency of the component goes in `packages/ui/package.json`.
 
 ## 5. Use it
 
-Import it in the page from `@vinaya/ui/components` and pass only shadcn's props: its `variant` and `size` for the look, Tailwind classes for layout only. If the page held a hand-rolled version, delete that version in the same change.
+Import it in the page from `@vinaya/ui` and pass only shadcn's props: its `variant` and `size` for the look, Tailwind classes for layout only. If the page held a hand-rolled version, delete that version in the same change.
 
 ## 6. Check it
 

@@ -2,7 +2,7 @@
 
 import { ArrowRight } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { Button } from '@vinaya/ui/components'
+import { Button } from '@vinaya/ui'
 import type { Environment, FlowKey } from '../types'
 import { EnvironmentCards } from './Environment'
 import { SetupSlide } from './SetupSlide'

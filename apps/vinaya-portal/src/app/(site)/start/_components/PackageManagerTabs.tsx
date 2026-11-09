@@ -1,6 +1,6 @@
 'use client'
 
-import { CodeBlock, Tabs, TabsContent, TabsList, TabsTrigger } from '@vinaya/ui/components'
+import { CodeBlock, Tabs, TabsContent, TabsList, TabsTrigger } from '@vinaya/ui'
 
 const PACKAGE_MANAGERS = ['npm', 'pnpm', 'yarn', 'bun'] as const
 type PackageManager = (typeof PACKAGE_MANAGERS)[number]

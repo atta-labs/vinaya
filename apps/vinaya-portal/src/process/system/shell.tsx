@@ -17,10 +17,7 @@ import {
 } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import { type ReactNode, useEffect, useState } from 'react'
-import { Button, Separator } from '@vinaya/ui/components'
-import { NextLink } from '@vinaya/ui/lib/next-link'
-import { cn } from '@vinaya/ui/lib/utils'
-import { Heading, Text } from '@vinaya/ui/shared'
+import { Button, Separator, NextLink, cn, Heading, Text } from '@vinaya/ui'
 
 /** The design system's sections, one page each. Order is the reading order. */
 const sections = [

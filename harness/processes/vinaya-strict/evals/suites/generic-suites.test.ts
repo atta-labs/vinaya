@@ -45,12 +45,12 @@ const HELD_OUT_KEYS: GenericSuiteKey[] = [
 ]
 const heldOutApproval = (key: GenericSuiteKey) =>
   key === 'developer'
-    ? DERIVED_FILE_DIGESTS.developer.heldOut
+    ? DERIVED_FILE_DIGESTS.change.heldOut
     : key === 'sourceCitation'
       ? DERIVED_FILE_DIGESTS.sourceCitation.heldOut
       : key === 'wholeLoop'
         ? DERIVED_FILE_DIGESTS.wholeLoop.heldOut
-        : DERIVED_FILE_DIGESTS.reviewer.heldOut
+        : DERIVED_FILE_DIGESTS.review.heldOut
 const referenceCases = (key: GenericSuiteKey, split: 'development' | 'held-out') =>
   DEVELOPER_DERIVED.includes(key) ? developerReferenceCases(split) : []
 
@@ -73,10 +73,10 @@ const developmentOnly = (path: string) => {
 describe('the derived files', () => {
   it('match their pinned digests', () => {
     const files: [string, string][] = [
-      [DERIVED_FILES.developer.development, DERIVED_FILE_DIGESTS.developer.development],
-      [DERIVED_FILES.developer.heldOut, DERIVED_FILE_DIGESTS.developer.heldOut],
-      [DERIVED_FILES.reviewer.development, DERIVED_FILE_DIGESTS.reviewer.development],
-      [DERIVED_FILES.reviewer.heldOut, DERIVED_FILE_DIGESTS.reviewer.heldOut],
+      [DERIVED_FILES.change.development, DERIVED_FILE_DIGESTS.change.development],
+      [DERIVED_FILES.change.heldOut, DERIVED_FILE_DIGESTS.change.heldOut],
+      [DERIVED_FILES.review.development, DERIVED_FILE_DIGESTS.review.development],
+      [DERIVED_FILES.review.heldOut, DERIVED_FILE_DIGESTS.review.heldOut],
       [DERIVED_FILES.sourceCitation.development, DERIVED_FILE_DIGESTS.sourceCitation.development],
       [DERIVED_FILES.sourceCitation.heldOut, DERIVED_FILE_DIGESTS.sourceCitation.heldOut],
       [DERIVED_FILES.wholeLoop.development, DERIVED_FILE_DIGESTS.wholeLoop.development],
@@ -114,9 +114,9 @@ describe('development loading', () => {
   it('makes the whole-loop suite a layer-L6 suite with its own files and held-out index', () => {
     expect(genericSuite('wholeLoop', developmentOnly).layer).toBe('L6')
     expect(genericSuite('developer', developmentOnly).layer).toBe('L5')
-    expect(DERIVED_FILES.wholeLoop.development).not.toBe(DERIVED_FILES.developer.development)
-    expect(DERIVED_FILES.wholeLoop.heldOut).not.toBe(DERIVED_FILES.developer.heldOut)
-    expect(DERIVED_FILE_DIGESTS.wholeLoop.heldOut).not.toBe(DERIVED_FILE_DIGESTS.developer.heldOut)
+    expect(DERIVED_FILES.wholeLoop.development).not.toBe(DERIVED_FILES.change.development)
+    expect(DERIVED_FILES.wholeLoop.heldOut).not.toBe(DERIVED_FILES.change.heldOut)
+    expect(DERIVED_FILE_DIGESTS.wholeLoop.heldOut).not.toBe(DERIVED_FILE_DIGESTS.change.heldOut)
     expect(HELD_OUT_IDS.wholeLoop).not.toBe(HELD_OUT_IDS.developer)
   })
 
@@ -147,7 +147,7 @@ describe('held-out loading', () => {
       DerivedFileRefused
     )
     // The whole-loop held-out file opens for its own digest, never the developer suite's.
-    expect(() => heldOutCases('wholeLoop', DERIVED_FILE_DIGESTS.developer.heldOut)).toThrow(DerivedFileRefused)
+    expect(() => heldOutCases('wholeLoop', DERIVED_FILE_DIGESTS.change.heldOut)).toThrow(DerivedFileRefused)
     expect(() => heldOutVariants('wholeLoop', 'f'.repeat(64))).toThrow(DerivedFileRefused)
   })
 
