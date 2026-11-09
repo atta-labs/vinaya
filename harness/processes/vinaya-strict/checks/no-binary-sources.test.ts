@@ -45,6 +45,8 @@ const EXEMPT: Readonly<Record<string, string>> = {
   'harness/kernel/loops/runtimes/atta-engine/fixtures/atta-executor-agent-spawn-0.1.1.tgz':
     'packed test-only runtime tarball',
   'harness/kernel/loops/runtimes/atta-engine/fixtures/atta-models-0.1.0.tgz': 'packed test-only runtime tarball',
+  'scripts/test-suites/fixtures/read-record-350fe961d.json.gz':
+    'gzipped read-record artifact the real-repository selection replay reads',
   'apps/vinaya-portal/public/studio/backlog-light.png': 'portal Studio screenshot',
   'apps/vinaya-portal/public/studio/backlog.png': 'portal Studio screenshot',
   'apps/vinaya-portal/public/studio/dashboard-light.png': 'portal Studio screenshot',

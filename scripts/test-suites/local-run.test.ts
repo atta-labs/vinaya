@@ -13,14 +13,15 @@ import {
   LOCAL_GROUP_FILE_CAP,
   LOCAL_RUN_EXECUTION,
   type LocalRunOutcome,
-  branchSideBase,
-  leftOutByBranchSide,
   localNativePlan,
   nativeContext,
   recordLocalRun,
   runFrozenPlan
 } from './local-run'
 import { type GroupOutcome, type RunResult, runGroups } from './schedule'
+import { branchSideBase } from './repository-selection'
+import { runEnvironment } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store'
+import { leftOutByBranchSide } from '@attalabs/test-selection'
 import {
   computeVerificationContext,
   FAILED_TESTS_RECORD,
@@ -40,12 +41,7 @@ import {
   parseNativeRunCommand,
   REPOSITORY_LOCAL_RUN
 } from '../../harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
-import type {
-  InventoryView,
-  NativeGroup,
-  SelectionPlan,
-  TestIdentity
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index'
+import type { InventoryView, NativeGroup, SelectionPlan, TestIdentity } from '@attalabs/test-selection'
 import { stripVinayaEnv } from '../../harness/kernel/conformance/unit/process-fixture'
 import { fixtureDir } from '../../harness/kernel/conformance/unit/test-temp-fixture'
 
@@ -106,17 +102,32 @@ const plan = (over: Partial<SelectionPlan> = {}): SelectionPlan =>
     obligations: [],
     records: { commit: null, recorded: [], fallbacks: [] },
     removedTests: [],
+    wholeSuites: [],
+    leftOut: [],
+    reused: [],
     ...over
   }) as unknown as SelectionPlan
+
+/** The obligation the selection adds for a failed test of the last refused run. */
+const failedRerun = (test: string) => ({
+  test,
+  suite: 'cli',
+  runner: 'bun' as const,
+  obligation: 'failed-test-rerun',
+  kind: 'policy' as const,
+  reason: 'the last refused run on this branch failed it or did not confirm it'
+})
 
 const required = (test: string) => ({ test, suite: 'cli', runner: 'bun' as const, reasons: [] })
 
 describe('the plan a push freezes', () => {
   it('runs each planned test and each unresolved failed test once, grouped by its own runner', () => {
     const local = localNativePlan({
-      plan: plan({ required: [required('apps/cli/tests/a.test.ts')] }),
-      view: VIEW,
-      obligations: ['apps/cli/tests/failed.test.ts', 'apps/cli/tests/a.test.ts']
+      plan: plan({
+        required: [required('apps/cli/tests/a.test.ts')],
+        obligations: [failedRerun('apps/cli/tests/failed.test.ts'), failedRerun('apps/cli/tests/a.test.ts')]
+      }),
+      view: VIEW
     })
     expect(local.problems).toEqual([])
     expect(local.groups.map((g) => [g.id, g.scope, g.tests])).toEqual([
@@ -128,8 +139,7 @@ describe('the plan a push freezes', () => {
   it('a selected Vitest suite without a whole-suite owner runs only its planned files', () => {
     const local = localNativePlan({
       plan: plan({ required: [{ ...required('packages/aeg-core/src/x.test.ts'), suite: 'aeg-core' }] }),
-      view: VIEW,
-      obligations: []
+      view: VIEW
     })
     expect(local.groups.map((g) => [g.id, g.scope, g.tests])).toEqual([
       ['aeg-core@default', 'files', ['packages/aeg-core/src/x.test.ts']]
@@ -137,22 +147,23 @@ describe('the plan a push freezes', () => {
     expect(local.expanded).toEqual([])
   })
 
-  it('a change under a suite whose inputs the selection does not model runs that suite whole', () => {
+  it('a suite the plan runs whole is one whole-suite runner start', () => {
     const local = localNativePlan({
-      plan: plan({ changes: [{ path: 'apps/vinaya-portal/src/page.tsx', status: 'modified', accountedBy: [] }] }),
-      view: VIEW,
-      obligations: []
+      plan: plan({
+        changes: [{ path: 'apps/vinaya-portal/src/page.tsx', status: 'modified', accountedBy: [] }],
+        wholeSuites: [{ suite: 'portal', reason: 'not modeled', tests: ['apps/vinaya-portal/src/p.test.ts'] }]
+      }),
+      view: VIEW
     })
     expect(local.groups.map((g) => [g.id, g.scope])).toEqual([['portal@default', 'suite']])
   })
 
   it('an empty plan starts nothing, and a removed test is never run', () => {
-    expect(localNativePlan({ plan: plan(), view: VIEW, obligations: [] })).toMatchObject({ groups: [], identities: [] })
+    expect(localNativePlan({ plan: plan(), view: VIEW })).toMatchObject({ groups: [], identities: [] })
     expect(
       localNativePlan({
         plan: plan({ required: [required('apps/cli/tests/a.test.ts')], removedTests: ['apps/cli/tests/a.test.ts'] }),
-        view: VIEW,
-        obligations: []
+        view: VIEW
       }).groups
     ).toEqual([])
   })
@@ -160,8 +171,7 @@ describe('the plan a push freezes', () => {
   it('a planned test the head inventory does not hold is a problem, never dropped', () => {
     const local = localNativePlan({
       plan: plan({ required: [required('apps/cli/tests/gone.test.ts')] }),
-      view: VIEW,
-      obligations: []
+      view: VIEW
     })
     expect(local.problems).toEqual([expect.objectContaining({ code: 'missing', path: 'apps/cli/tests/gone.test.ts' })])
   })
@@ -292,11 +302,13 @@ describe('the plan a push freezes from a branch-side set', () => {
       changes,
       required: [because('apps/cli/tests/a.test.ts', MAIN_ONLY), because('apps/cli/tests/failed.test.ts', MAIN_ONLY)]
     })
-    const leftOut = leftOutByBranchSide(p, [], () => [])
-    expect(leftOut).toEqual(['apps/cli/tests/a.test.ts', 'apps/cli/tests/failed.test.ts'])
-    const local = localNativePlan({ plan: p, view: VIEW, obligations: ['apps/cli/tests/failed.test.ts'], leftOut })
+    expect(leftOutByBranchSide(p, [], () => [])).toEqual(['apps/cli/tests/a.test.ts', 'apps/cli/tests/failed.test.ts'])
+    // The failed test is an obligation of the selection: never left out.
+    const withDuty = { ...p, obligations: [failedRerun('apps/cli/tests/failed.test.ts')] }
+    const leftOut = leftOutByBranchSide(withDuty, [], () => [])
+    expect(leftOut).toEqual(['apps/cli/tests/a.test.ts'])
+    const local = localNativePlan({ plan: { ...withDuty, leftOut }, view: VIEW })
     expect(local.identities).toEqual(['apps/cli/tests/failed.test.ts@default'])
-    expect(local.leftOut).toEqual(['apps/cli/tests/a.test.ts'])
   })
 
   it('a whole-suite expansion runs as before, its left-out tests inside it', () => {
@@ -304,18 +316,21 @@ describe('the plan a push freezes from a branch-side set', () => {
       changes: [{ path: 'apps/vinaya-portal/src/page.tsx', status: 'modified', accountedBy: [] }],
       required: [{ ...because('apps/vinaya-portal/src/p.test.ts', 'apps/vinaya-portal/src/page.tsx'), suite: 'portal' }]
     })
-    const leftOut = leftOutByBranchSide(p, [], () => [])
-    const local = localNativePlan({ plan: p, view: VIEW, obligations: [], leftOut })
+    const whole = {
+      ...p,
+      wholeSuites: [{ suite: 'portal', reason: 'not modeled', tests: ['apps/vinaya-portal/src/p.test.ts'] }]
+    }
+    const leftOut = leftOutByBranchSide(whole, [], () => [])
+    expect(leftOut).toEqual([])
+    const local = localNativePlan({ plan: { ...whole, leftOut }, view: VIEW })
     expect(local.groups.map((g) => [g.id, g.scope])).toEqual([['portal@default', 'suite']])
-    expect(local.leftOut).toEqual([])
   })
 })
 
 describe('a plan over the local file cap', () => {
   const files = Array.from({ length: 300 }, (_, i) => `apps/cli/tests/t${String(i).padStart(3, '0')}.test.ts`)
   const view = { ...VIEW, tests: files.map((f) => identity(f, 'cli')) } as unknown as InventoryView
-  const local = () =>
-    localNativePlan({ plan: plan({ required: files.map((f) => required(f)) }), view, obligations: [] })
+  const local = () => localNativePlan({ plan: plan({ required: files.map((f) => required(f)) }), view })
 
   it('holds 300 files in 8 chunks of at most the cap, every file once, under the unchanged execution version', () => {
     const { groups, identities, problems } = local()
@@ -747,7 +762,10 @@ describe('what a native run records', () => {
     return { dir, head }
   }
   const frozen = (dir: string, head: string, identities: string[]): SelectionNote => {
-    const context = nativeContext(computeVerificationContext(dir)?.digest ?? null, 'inventory-context') as string
+    const context = nativeContext(
+      computeVerificationContext(dir, runEnvironment())?.digest ?? null,
+      'inventory-context'
+    ) as string
     const groups = identities.length > 0 ? [{ ...GROUP, cwd: '.', tests: ['a.test.ts'], args: ['./a.test.ts'] }] : []
     return {
       version: 1,
@@ -1133,8 +1151,15 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     if (config.prePush?.alwaysRun?.length) {
       config.prePush.alwaysRun = []
       writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
-      git('commit', '-qam', 'fixture: no always-run tests')
     }
+    // For the same reason, no push here owes the build job's repository suite: that suite holds this scenario's own
+    // file, so each push in the clone would start the scenario again. The package-compatibility suite stays an
+    // obligation, the second runner group a failing push stops before.
+    const inventoryPath = join(dir, 'scripts/test-suites/inventory.json')
+    const inventory = JSON.parse(readFileSync(inventoryPath, 'utf8')) as { policies: { id: string }[] }
+    inventory.policies = inventory.policies.filter((policy) => policy.id !== 'inventory-gate')
+    writeFileSync(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`)
+    git('commit', '-qam', 'fixture: no always-run tests, no repository-suite obligation')
     git('update-ref', 'refs/remotes/origin/main', 'HEAD')
     git('checkout', '-q', '-b', 'task/x/1')
     // The clone shares this checkout's installed dependencies.

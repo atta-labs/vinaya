@@ -58,6 +58,7 @@
         "@atta/executor-agent-spawn": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-executor-agent-spawn-0.1.1.tgz",
         "@atta/models": "file:../../harness/kernel/loops/runtimes/atta-engine/fixtures/atta-models-0.1.0.tgz",
         "@atta/typescript-config": "workspace:*",
+        "@attalabs/test-selection": "workspace:*",
         "@types/bun": "latest",
         "@types/react": "^19.0.0",
         "typescript": "^5.5.0",
@@ -145,6 +146,7 @@
       "dependencies": {
         "@atta/engine": "file:loops/runtimes/atta-engine/fixtures/atta-engine-0.0.1.tgz",
         "@atta/executor-agent-spawn": "file:loops/runtimes/atta-engine/fixtures/atta-executor-agent-spawn-0.1.1.tgz",
+        "@attalabs/test-selection": "workspace:*",
         "gray-matter": "^4.0.3",
         "yaml": "2.9.0",
         "zod": "3.25.76",
@@ -165,6 +167,7 @@
         "@atta/executor-agent-spawn": "file:../../kernel/loops/runtimes/atta-engine/fixtures/atta-executor-agent-spawn-0.1.1.tgz",
         "@atta/typescript-config": "workspace:*",
         "@attalabs/harness": "workspace:*",
+        "@attalabs/test-selection": "workspace:*",
         "@attalabs/vinaya": "workspace:*",
         "@langchain/langgraph": "0.2.74",
         "@octokit/graphql": "^8.1.1",
@@ -188,6 +191,20 @@
         "@types/culori": "^4.0.0",
         "typescript": "^5.7.0",
       },
+    },
+    "packages/test-selection": {
+      "name": "@attalabs/test-selection",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/bun": "^1.4.4",
+        "typescript": "^5.7.0",
+      },
+      "peerDependencies": {
+        "typescript": ">=5.0.0",
+      },
+      "optionalPeers": [
+        "typescript",
+      ],
     },
     "packages/typescript-config": {
       "name": "@atta/typescript-config",
@@ -279,6 +296,8 @@
     "@attalabs/log-server": ["@attalabs/log-server@workspace:apps/log-server"],
 
     "@attalabs/process-vinaya": ["@attalabs/process-vinaya@workspace:harness/processes/vinaya-strict"],
+
+    "@attalabs/test-selection": ["@attalabs/test-selection@workspace:packages/test-selection"],
 
     "@attalabs/vinaya": ["@attalabs/vinaya@workspace:apps/cli"],
 

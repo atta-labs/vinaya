@@ -50,6 +50,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { releaseFixtureRun, sweepAbandonedFixtureRuns } from './test-temp-fixture'
 import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
+import { linkJunitReport } from '../../gates/ring0-hooks/pre-push/junit-store'
+
+// This run's JUnit report (each `bunfig.toml`'s `[test.reporter] junit`): to the scheduler's own report path, or
+// to a new stored report in the worktree's git directory that a later selection reads as earlier passes.
+linkJunitReport()
 
 /**
  * `VINAYA_LOG_TOKEN`/`VINAYA_LOG_READ_TOKEN` — the log server's write and read

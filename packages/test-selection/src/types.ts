@@ -42,7 +42,7 @@ export type InputFormat = 'json' | 'toml' | 'bun-lock' | 'text'
 /** Governance policy: what must run or hold whatever changed — never a dependency. */
 export type PolicyDeclaration = {
   id: string
-  kind: 'always-run' | 'mandatory' | 'security' | 'oracle'
+  kind: 'always-run' | 'mandatory' | 'security' | 'oracle' | 'whole-suite'
   /** Repository paths, folders ending in `/`, or `path#key.path` configuration domains. */
   inputs: string[]
   duty: string
@@ -209,12 +209,58 @@ export type SelectionPolicy = {
   dataFolders?: readonly string[]
   /** Additions on top of the dependency-required set. */
   obligations?: readonly SelectionObligation[]
+  /**
+   * Suites that run whole when the change touches any path under their folder: the selection does not model
+   * every input such a suite reads. Only the suite's tests with no valid record run whole; a record decides the rest.
+   */
+  wholeSuites?: readonly WholeSuitePolicy[]
   /** Parsers for input formats beyond JSON and text. */
   parsers?: FormatParsers
   /** Force the text-scan graph. */
   resolver?: 'compiler' | 'text-scan'
   /** The compiler, when the caller supplies one; absent, it is resolved from this library's own installation, `null` forces the text scan. */
   typescript?: TypeScriptApi | null
+}
+
+/** A suite that runs whole on a change under its folder, and why. */
+export type WholeSuitePolicy = { suite: string; reason: string }
+
+/**
+ * A test file that ran completely and passed — every test in it ran and passed, none skipped, filtered, focused or
+ * todo — under the key {@link passEntryKey} computed at the commit it ran on.
+ */
+export type PassEntry = {
+  /** Repository-relative test file. */
+  test: string
+  /** The verification context plus the content of every path the test reads; see {@link passEntryKey}. */
+  key: string
+  /** The commit the test passed on — when it ran on a merge of that commit onto `base`, the merged commit. */
+  head: string
+  /** When the test ran on `head` merged onto another commit (a pull request's merge commit), that commit. */
+  base?: string
+  /** Who ran it: a local push, a CI shard, a hand run — for the plan's account only. */
+  source: string
+}
+
+/** What earlier runs of the same branch or pull request proved and failed. */
+export type SelectionHistory = {
+  /** The verification context digest of the run being planned; `null` refuses every reuse. */
+  context: string | null
+  /** Earlier complete passes; a planned test whose key at the head matches one is reused instead of run. */
+  passes: readonly PassEntry[]
+  /** Tests the last refused run failed or never confirmed: re-run whatever the change selects. */
+  failures: readonly string[]
+}
+
+/**
+ * After the default branch was merged into a branch, the paths the branch itself changed since its last proven
+ * head. A planned test whose every reason names a changed path outside this set — a path only the default branch
+ * changed — is left out, unless a selection from a commit that changes only these paths reaches it. `base` builds
+ * that commit and its inventory view when the selection needs it; `null` when it cannot, which leaves nothing out.
+ */
+export type BranchSideInput = {
+  paths: readonly string[]
+  base: () => { commit: string; inventory: InventoryView } | null
 }
 
 /**
@@ -237,6 +283,10 @@ export type SelectTestsInput = {
   policy: SelectionPolicy
   /** The recorded reads, when the caller could reach the record of the comparison's commit; absent, static selection decides every test. */
   records?: SelectionRecords | null
+  /** Earlier passes and failures of the same branch; absent, nothing is reused and nothing is re-run on its account. */
+  history?: SelectionHistory | null
+  /** The branch's own changes after a default-branch merge; absent, nothing is left out. */
+  branchSide?: BranchSideInput | null
 }
 
 /** A test decided by static selection instead of a record, and why. */
@@ -321,6 +371,12 @@ export type SelectionPlan = {
   removedTests: string[]
   renamedTests: { from: string; to: string }[]
   configurations: SuiteConfiguration[]
+  /** Suites that run whole, each with why and the tests it runs. */
+  wholeSuites: { suite: string; reason: string; tests: string[] }[]
+  /** Planned tests only default-branch changes reached after a merge ({@link BranchSideInput}); not run. */
+  leftOut: string[]
+  /** Planned tests an earlier complete pass under the same key covers; not run. */
+  reused: { test: string; head: string; source: string }[]
   /** Timings — never part of the identity. */
   profile: { programMs: number; totalMs: number }
 }

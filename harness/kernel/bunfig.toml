@@ -3,3 +3,8 @@ timeout = 30000
 # The same private runtime directory and environment hygiene the CLI and process suites give their own test runs:
 # the kernel preload installs no process code.
 preload = "./conformance/unit/test-env-preload.ts"
+
+# Every run writes a JUnit report; the test preload points this fixed path at the run's own report file
+# (`gates/ring0-hooks/pre-push/junit-store.ts`), which a later selection reads as earlier passes.
+[test.reporter]
+junit = "../../node_modules/.vinaya-junit/harness-kernel.xml"

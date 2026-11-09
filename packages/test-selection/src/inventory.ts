@@ -58,7 +58,7 @@ const EDGE_KINDS: ReadonlySet<string> = new Set([
   'scan',
   'provider'
 ])
-const POLICY_KINDS: ReadonlySet<string> = new Set(['always-run', 'mandatory', 'security', 'oracle'])
+const POLICY_KINDS: ReadonlySet<string> = new Set(['always-run', 'mandatory', 'security', 'oracle', 'whole-suite'])
 const RUNNERS: ReadonlySet<string> = new Set(['bun', 'vitest'])
 
 /** The declaration lists an inventory carries; each must be a list. */

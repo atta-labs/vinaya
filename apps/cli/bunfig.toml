@@ -1,2 +1,7 @@
 [test]
 preload = "../../harness/processes/vinaya-strict/integration/test-preload.ts"
+
+# Every run writes a JUnit report; the test preload points this fixed path at the run's own report file
+# (`harness/kernel/gates/ring0-hooks/pre-push/junit-store.ts`), which a later selection reads as earlier passes.
+[test.reporter]
+junit = "../../node_modules/.vinaya-junit/apps-cli.xml"

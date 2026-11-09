@@ -8,12 +8,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import {
-  ALL_NAMES,
-  affectedNamesForFile,
-  type LineRange,
-  parseHunkRanges
-} from '../../../kernel/gates/ring0-hooks/pre-push/verification/index'
+import { ALL_NAMES, affectedNamesForFile, type LineRange, parseHunkRanges } from '@attalabs/test-selection'
 import { loadConfig } from './config/compose'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
 import {
@@ -27,9 +22,9 @@ import {
   walkFiles
 } from './repository-verification'
 import { cliSpawnEdgeOf } from '../../../kernel/gates/ring0-hooks/pre-push/cli-spawn-tests'
-import { spawnEdgeOf, startedScriptsOf } from '../../../kernel/gates/ring0-hooks/pre-push/verification/spawn-inputs'
+import { spawnEdgeOf, startedScriptsOf } from '@attalabs/test-selection'
 import { scannedRootsOf } from './verification-scanner-policy'
-import { loadTypeScript } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index'
+import { loadTypeScript } from '@attalabs/test-selection'
 import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 
 function fixtureRepo(): string {
@@ -248,6 +243,11 @@ function bundlerOracle(root: string, testFiles: readonly string[]) {
     // listed 98 modules built alone and 148 built alongside 172 siblings. A
     // contaminated oracle reports violations that are not real, which is just a
     // different way of proving nothing.
+    //
+    // The build resolves with the `bun` export condition, as `bun test` does. A
+    // workspace package whose `exports` send `bun` to `src/` and `import` to an
+    // unbuilt `dist/` (`@attalabs/test-selection`) is otherwise unresolvable,
+    // and every test that reaches it lands in `unbuildable`.
     const script = join(workdir, 'oracle.ts')
     writeFileSync(
       script,
@@ -255,7 +255,7 @@ function bundlerOracle(root: string, testFiles: readonly string[]) {
         'const entries = JSON.parse(await Bun.file(Bun.argv[2] as string).text()) as string[]',
         'const out: Record<string, string[]> = {}',
         'for (const entry of entries) {',
-        "  const built = await Bun.build({ entrypoints: [entry], target: 'node', sourcemap: 'external', throw: false })",
+        "  const built = await Bun.build({ entrypoints: [entry], target: 'node', conditions: ['bun'], sourcemap: 'external', throw: false })",
         '  const sources: string[] = []',
         '  if (built.success) {',
         '    for (const output of built.outputs) {',
@@ -426,7 +426,7 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
     // Guard the guard: an oracle that found nothing would pass the assertion
     // above while proving nothing at all.
     expect(checkedNonEmpty).toBe(sample.length)
-  }, 180_000)
+  }, 300_000)
 
   it('across a package barrel, every divergence is the barrel — never a relative edge the selector lost', () => {
     const testFiles = realRepoTestFiles()
@@ -453,7 +453,7 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
       ).toEqual([])
     }
     expect(checkedNonEmpty).toBe(sample.length)
-  }, 180_000)
+  }, 300_000)
 
   it('over a constructed workspace whose imports are ALL written with .js specifiers, the bundler finds nothing the selector drops', () => {
     const { root, dir } = mkWorkspace([

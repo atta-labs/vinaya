@@ -350,10 +350,13 @@ describe('real runtime directory guard', () => {
       const mutatedCore = core.replace('root === START_ROOT ? LIVE_AT_START : []', '[]')
       expect(mutatedCore).not.toBe(core)
       writeFileSync(join(work, 'real-runtime-guard-core.ts'), mutatedCore)
-      const preload = readFileSync(join(lib, 'test-env-preload.ts'), 'utf-8').replace(
-        /from '\.\/test-temp-fixture'/,
-        `from ${JSON.stringify(join(lib, 'test-temp-fixture.ts'))}`
-      )
+      const preload = readFileSync(join(lib, 'test-env-preload.ts'), 'utf-8')
+        .replace(/from '\.\/test-temp-fixture'/, `from ${JSON.stringify(join(lib, 'test-temp-fixture.ts'))}`)
+        .replace(
+          /from '\.\.\/\.\.\/gates\/ring0-hooks\/pre-push\/junit-store'/,
+          `from ${JSON.stringify(join(lib, '..', '..', 'gates', 'ring0-hooks', 'pre-push', 'junit-store.ts'))}`
+        )
+      expect(preload).not.toContain("'../../gates/")
       writeFileSync(join(work, 'test-env-preload.ts'), preload)
       const kernelImport = "import '../../../kernel/conformance/unit/test-env-preload.ts'"
       const processPreload = readFileSync(join(integration, 'test-preload.ts'), 'utf-8')

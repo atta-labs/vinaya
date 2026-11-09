@@ -7,12 +7,12 @@
       "id": "cli-source",
       "category": "build",
       "about": "A CLI module with its own test: the build job's mandatory duties stay, the CLI package is typechecked, the file is linted and its test runs.",
-      "changes": { "apps/cli/src/lib/push-progress-observer.ts": { "append": "// replay: a source edit" } },
+      "changes": { "apps/cli/src/lib/push-progress.ts": { "append": "// replay: a source edit" } },
       "expect": {
         "scope": "selected",
         "jobs": { "build": true, "test-cli": true, "test-shared-packages": true, "test-cli-config-anchor": false },
         "typecheck": ["@attalabs/vinaya"],
-        "lint": ["apps/cli/src/lib/push-progress-observer.ts"],
+        "lint": ["apps/cli/src/lib/push-progress.ts"],
         "tests": ["apps/cli/tests/lib/push-progress-observer.test.ts"],
         "obligations": ["managed-files-match-generator", "architecture-ratchet", "inventory-gate", "required-check"]
       },
@@ -20,7 +20,7 @@
         "job:build",
         "job:test-cli",
         "typecheck:@attalabs/vinaya",
-        "lint:apps/cli/src/lib/push-progress-observer.ts",
+        "lint:apps/cli/src/lib/push-progress.ts",
         "test:apps/cli/tests/lib/push-progress-observer.test.ts",
         "obligation:managed-files-match-generator"
       ]

@@ -37,9 +37,9 @@
  *     or reports a file it was not given or misses one it was.
  */
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, posix } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import {
   CI_SHARD_COUNT,
   CI_SHARD_LIST_OWNER,
@@ -50,13 +50,16 @@ import {
   DEFAULT_CONFIGURATION,
   type ExecutionFacts,
   groupNativeTests,
+  isReadRecord,
   type NativeGroup,
   type NativeProblem,
   type NativeTestRequest,
   validateExecutedIdentities,
   type WholeSuiteRequest
-} from '../../harness/kernel/gates/ring0-hooks/pre-push/verification/index.js'
+} from '@attalabs/test-selection'
 import { testGroupEndLine, testGroupStartLine } from '../../harness/kernel/gates/ring0-hooks/pre-push/push-progress.js'
+import { JUNIT_REPORT_ENV } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store.js'
+import { passEntriesOfRun } from './repository-selection.js'
 import { type InventoryView, readTestInventory, type TestIdentity } from './inventory-check.js'
 
 export type Placement = 'build' | 'shared' | `shard-${number}`
@@ -67,24 +70,6 @@ export type Placement = 'build' | 'shared' | `shard-${number}`
  * shard lists name (`CI_SHARD_LIST_OWNER`), the kernel and the process.
  */
 export const SHARD_OWNERS: readonly string[] = [CI_SHARD_LIST_OWNER, '@attalabs/harness', '@attalabs/process-vinaya']
-
-/** Suites that run whole on every pull request, by owner, and why. */
-export const WHOLE_SUITE_OWNERS: Readonly<Record<string, string>> = {}
-
-// static-fallback begin
-/**
- * Suites that run whole on a pull request that changes any path under their
- * folder, by owner, and why: the selection narrows every portal path without
- * modeling the portal's non-TypeScript inputs (its JSON fixtures, styles,
- * manifest and configuration), so a portal change runs the portal's whole
- * suite, as `turbo --affected` did before this schedule. It applies only to a
- * test with no valid record: a record decides every other test.
- */
-export const WHOLE_ON_CHANGE_OWNERS: Readonly<Record<string, string>> = {
-  '@vinaya/portal':
-    'the pull request changes a path under its folder, and the selection does not model the portal inputs, so it runs whole'
-}
-// static-fallback end
 
 export type ScheduleEntry = { test: string; configuration: string; placement: Placement }
 
@@ -271,23 +256,28 @@ export function readShardLists(repoRoot: string, view: InventoryView): string[][
 }
 
 /**
- * What a CI run schedules: every test under a run-everything decision, the
- * selected ones otherwise — with every repository-owned test, which the build
- * job runs on every run, and every whole-run suite. A selected path the
- * inventory does not know runs everything, with that reason.
+ * What a CI run schedules: every test under a run-everything decision — a
+ * Vitest suite as one whole run, since its runner starts once per suite — and
+ * otherwise exactly the selection's planned tests, the suites it runs whole as
+ * whole-suite runs. A selected path the inventory does not know runs
+ * everything, with that reason. No selection rule lives here.
  */
 export function ciScheduleInput(
   view: InventoryView,
   decision: CiDecision
 ): { selected: NativeTestRequest[]; wholeSuites: WholeSuiteRequest[]; reason: string | null } {
-  const wholeSuites = (reason: (owner: string) => string | undefined): WholeSuiteRequest[] =>
-    view.suites.flatMap((suite) => {
-      const why = reason(suite.owner)
-      if (why === undefined || suite.runner !== 'vitest') return []
-      return [{ suite: suite.id, reason: why, identities: view.tests.filter((t) => t.suite === suite.id) }]
-    })
   const everything = (reason: string) => {
-    const whole = wholeSuites((owner) => WHOLE_SUITE_OWNERS[owner] ?? `every test runs: ${reason}`)
+    const whole: WholeSuiteRequest[] = view.suites.flatMap((suite) =>
+      suite.runner === 'vitest'
+        ? [
+            {
+              suite: suite.id,
+              reason: `every test runs: ${reason}`,
+              identities: view.tests.filter((t) => t.suite === suite.id)
+            }
+          ]
+        : []
+    )
     const wholeIds = new Set(whole.flatMap((w) => w.identities.map((t) => t.id)))
     return { selected: view.tests.filter((t) => !wholeIds.has(t.id)), wholeSuites: whole, reason }
   }
@@ -296,27 +286,13 @@ export function ciScheduleInput(
   const ids = [...new Set([...decision.selected, ...(decision.native ?? [])])].sort()
   const unknown = ids.find((id) => !byId.has(id))
   if (unknown) return everything(`the selection names ${unknown}, which the test inventory does not hold`)
-  const changed = decision.changed ?? []
-  // static-fallback begin: a suite whose inputs the selection does not model runs whole on a change under its
-  // folder — for its tests with no record only; a record decides the others.
-  const recorded = new Set(decision.recorded ?? [])
-  const whole = [
-    ...wholeSuites((owner) => WHOLE_SUITE_OWNERS[owner]),
-    ...view.suites.flatMap((suite) => {
-      const why = WHOLE_ON_CHANGE_OWNERS[suite.owner]
-      const prefix = suite.dir === '.' ? '' : `${suite.dir}/`
-      if (why === undefined || !changed.some((path) => path.startsWith(prefix))) return []
-      const identities = view.tests.filter((t) => t.suite === suite.id && !recorded.has(t.id))
-      return identities.length === 0 ? [] : [{ suite: suite.id, reason: why, identities }]
-    })
-  ]
-  // static-fallback end
+  const planned = new Set(ids)
+  const whole: WholeSuiteRequest[] = (decision.wholeSuites ?? []).flatMap((w) => {
+    const identities = w.tests.filter((id) => planned.has(id)).map((id) => byId.get(id) as TestIdentity)
+    return identities.length === 0 ? [] : [{ suite: w.suite, reason: w.reason, identities }]
+  })
   const wholeIds = new Set(whole.flatMap((w) => w.identities.map((t) => t.id)))
-  // Root suites — the repository suite and the package-compatibility suite — run whatever the change selects.
-  const roots = view.tests.filter((t) => t.kind !== 'workspace')
-  const selected = [...new Set([...ids.map((id) => byId.get(id) as TestIdentity), ...roots])].filter(
-    (t) => !wholeIds.has(t.id)
-  )
+  const selected = ids.filter((id) => !wholeIds.has(id)).map((id) => byId.get(id) as TestIdentity)
   return { selected, wholeSuites: whole, reason: null }
 }
 
@@ -681,6 +657,8 @@ export function runGroups(
     env?: NodeJS.ProcessEnv
     announce?: boolean
     onGroupEnd?: (outcome: GroupOutcome, index: number) => void
+    /** Hears each Bun group's readable JUnit report, as written, right after it is read. */
+    onReport?: (group: NativeGroup, xml: string) => void
     /** How long one runner may take before it is stopped and run once more; none when absent. */
     groupTimeLimitMs?: number
     /** Start no later group once a group's runner did not exit zero (failed, signaled or interrupted); off when absent. */
@@ -720,7 +698,9 @@ export function runGroups(
           cwd: join(repoRoot, group.cwd),
           stdio: 'inherit',
           ...(limit !== undefined ? { timeout: limit, killSignal: 'SIGKILL' as const } : {}),
-          ...(options.env ? { env: options.env } : {})
+          // Bun writes the report its `bunfig.toml` names even when `--reporter-outfile` names another; the test
+          // preload points that path at this report (`junit-store.ts`).
+          env: { ...(options.env ?? process.env), [JUNIT_REPORT_ENV]: report }
         })
       let run = start()
       // A runner stopped at the limit is started once more: a test whose synchronous child never returns freezes its
@@ -746,6 +726,7 @@ export function runGroups(
       } catch {
         text = null
       }
+      if (text !== null && group.runner === 'bun') options.onReport?.(group, text)
       ended(group, index, { status: run.status, signal: null, report: text })
       const files =
         text === null
@@ -800,7 +781,7 @@ function main(argv: readonly string[]): number {
   const decisionPath = argValue(argv, '--decision')
   if (!full && !decisionPath) {
     process.stderr.write(
-      'usage: schedule.ts (--dry-run | --json | --run --placement <shard-N|shared> [--summary <file>]) (--full [--reason <text>] | --decision <file>)\n'
+      'usage: schedule.ts (--dry-run | --json | --run --placement <shard-N|shared> [--summary <file>] [--pass-entries <file> [--record <file>] [--approved-head <sha>]]) (--full [--reason <text>] | --decision <file>)\n'
     )
     return 2
   }
@@ -858,7 +839,29 @@ function main(argv: readonly string[]): number {
         `- ${g.owner} (${g.runner}, in \`${g.cwd}\`): ${g.tests.length} file(s)${g.scope === 'suite' ? ` — whole suite: ${g.reason}` : ''}`
     )
   ])
-  const result = runGroups(repoRoot, groups, { groupTimeLimitMs: GROUP_TIME_LIMIT_MS })
+  // Each Bun group's report, kept as the pass entries a later run of the same pull request reuses.
+  const reports: { cwd: string; xml: string }[] = []
+  const result = runGroups(repoRoot, groups, {
+    groupTimeLimitMs: GROUP_TIME_LIMIT_MS,
+    onReport: (group, xml) => reports.push({ cwd: group.cwd, xml })
+  })
+  const passesFile = argValue(argv, '--pass-entries')
+  if (passesFile) {
+    const recordFile = argValue(argv, '--record')
+    const parsed =
+      recordFile && existsSync(recordFile) ? (JSON.parse(readFileSync(recordFile, 'utf8')) as unknown) : null
+    const entries = passEntriesOfRun({
+      repoRoot,
+      view,
+      reports,
+      record: isReadRecord(parsed) ? parsed : null,
+      source: `ci ${placement}`,
+      approvedHead: argValue(argv, '--approved-head')
+    })
+    mkdirSync(dirname(passesFile), { recursive: true })
+    writeFileSync(passesFile, `${JSON.stringify({ version: 1, entries })}\n`)
+    process.stderr.write(`vinaya schedule: kept ${entries.length} pass entr(ies) in ${passesFile}\n`)
+  }
   for (const p of result.problems)
     process.stderr.write(`vinaya schedule: ${p.code} ${p.path}${p.group ? ` (${p.group})` : ''}: ${p.detail}\n`)
   if (result.failedRunners.length > 0)

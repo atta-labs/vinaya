@@ -17,6 +17,7 @@
     "@atta/executor-agent-spawn": "file:../../kernel/loops/runtimes/atta-engine/fixtures/atta-executor-agent-spawn-0.1.1.tgz",
     "@atta/typescript-config": "workspace:*",
     "@attalabs/harness": "workspace:*",
+    "@attalabs/test-selection": "workspace:*",
     "@attalabs/vinaya": "workspace:*",
     "@langchain/langgraph": "0.2.74",
     "@types/bun": "latest",

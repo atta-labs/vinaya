@@ -92,7 +92,7 @@ const KERNEL_LIBRARY_FILES = [
   'gates/ring0-hooks/pre-push/pre-push-test-runner.ts',
   'gates/ring1-ci/workflows/managed-workflow-paths.ts'
 ].map((file) => `/harness/kernel/${file}`)
-const KERNEL_LIBRARY_FOLDERS = ['/harness/kernel/gates/ring0-hooks/pre-push/verification/']
+const KERNEL_LIBRARY_FOLDERS = ['/packages/test-selection/']
 /** Relocated policy modules retain their original unrestricted classification. */
 const MOVED_POLICY_FILES = [
   '/harness/processes/vinaya-strict/checks/forge/fetch-provenance.ts',

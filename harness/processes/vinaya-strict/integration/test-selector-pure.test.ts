@@ -8,12 +8,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import {
-  ALL_NAMES,
-  affectedNamesForFile,
-  type LineRange,
-  parseHunkRanges
-} from '../../../kernel/gates/ring0-hooks/pre-push/verification/index'
+import { ALL_NAMES, affectedNamesForFile, type LineRange, parseHunkRanges } from '@attalabs/test-selection'
 import { loadConfig } from './config/compose'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
 import {
@@ -27,9 +22,9 @@ import {
   walkFiles
 } from './repository-verification'
 import { cliSpawnEdgeOf } from '../../../kernel/gates/ring0-hooks/pre-push/cli-spawn-tests'
-import { spawnEdgeOf, startedScriptsOf } from '../../../kernel/gates/ring0-hooks/pre-push/verification/spawn-inputs'
+import { spawnEdgeOf, startedScriptsOf } from '@attalabs/test-selection'
 import { scannedRootsOf } from './verification-scanner-policy'
-import { loadTypeScript } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index'
+import { loadTypeScript } from '@attalabs/test-selection'
 import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 
 function fixtureRepo(): string {

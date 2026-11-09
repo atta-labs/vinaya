@@ -285,7 +285,7 @@ const MOVED_SRC_FOLDERS = [
   'loops/dev-review/actions'
 ].map((folder) => `harness/processes/vinaya-strict/${folder}`)
 /** The verification library, moved out of `apps/cli/src/lib/` whole. */
-const VERIFICATION_LIBRARY = 'harness/kernel/gates/ring0-hooks/pre-push/verification'
+const VERIFICATION_LIBRARY = 'packages/test-selection'
 const MOVED_SRC_FILES = ['loops/dev-review/flow-v2-events.ts', 'loops/dev-review/review-gate-input.ts'].map(
   (file) => `harness/processes/vinaya-strict/${file}`
 )

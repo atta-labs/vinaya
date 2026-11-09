@@ -20,7 +20,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { type FileDiff, parseHunkRanges } from '../../gates/ring0-hooks/pre-push/verification/index.js'
+import { type FileDiff, parseHunkRanges } from '@attalabs/test-selection'
 
 /**
  * `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` (and the rest of the `GIT_*`

@@ -150,6 +150,7 @@ import {
   indexRecordedTest,
   recordReach
 } from './recorded-reads.js'
+import { passKeys } from './pass-entries.js'
 import { type ScannerDeclaration, scannedRootsOf, scannerTriggered } from './scanner-inputs.js'
 import { type SpawnProgram, spawnEdgeOf, startedScriptsOf } from './spawn-inputs.js'
 import type {
@@ -1979,7 +1980,7 @@ function reaches(
 // ── The immutable selection ─────────────────────────────────────────────────
 
 /** The selection engine's own version, part of every plan's reproduction context. */
-export const SELECTION_ENGINE = 'test-selection@1'
+export const SELECTION_ENGINE = 'test-selection@2'
 
 /** Where each revision's snapshot is rooted. A name, not a place: nothing on disk under it is ever read. */
 const SNAPSHOT_ROOT = { base: '/selection-snapshot/base', head: '/selection-snapshot/head' } as const
@@ -1991,15 +1992,28 @@ export class SelectionInputError extends Error {
   }
 }
 
-/** Every test a plan asks to run: the required tests, every fallback scope's tests and every obligation's, once each, sorted. */
-export function plannedTests(plan: SelectionPlan): string[] {
+/** Every test the change, its fallbacks, the obligations and the whole-suite runs reach, before anything is left out or reused. */
+function reachedTests(
+  plan: Pick<SelectionPlan, 'required' | 'fallbacks' | 'obligations'> & { wholeSuites?: SelectionPlan['wholeSuites'] }
+): string[] {
   return [
     ...new Set([
       ...plan.required.map((t) => t.test),
       ...plan.fallbacks.flatMap((f) => f.tests),
-      ...plan.obligations.map((o) => o.test)
+      ...plan.obligations.map((o) => o.test),
+      ...(plan.wholeSuites ?? []).flatMap((w) => w.tests)
     ])
   ].sort()
+}
+
+/**
+ * Every test a plan asks to run, once each, sorted: the required tests, every fallback scope's tests, every
+ * obligation's and every whole-suite run's — less the tests left to the default branch after a merge and the tests an
+ * earlier complete pass under the same key covers. This is exactly what a caller runs.
+ */
+export function plannedTests(plan: SelectionPlan): string[] {
+  const skipped = new Set([...(plan.leftOut ?? []), ...(plan.reused ?? []).map((r) => r.test)])
+  return reachedTests(plan).filter((test) => !skipped.has(test))
 }
 
 /**
@@ -2050,7 +2064,7 @@ function changesBetween(repo: RepositoryReader, from: string, to: string): PathC
  * Throws {@link SelectionInputError} when the inventory does not validate, was
  * built for other revisions, or a revision cannot be listed.
  */
-export function selectTests(input: SelectTestsInput): SelectionPlan {
+function selectChange(input: SelectTestsInput): ChangePlan {
   const started = performance.now()
   const { repo, base, head, inventory, policy } = input
   const problems: { path: string; detail: string }[] = []
@@ -2556,6 +2570,7 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
         spawnPrograms: policy.spawnPrograms ?? [],
         dataFolders,
         obligations: policy.obligations ?? [],
+        wholeSuites: policy.wholeSuites ?? [],
         parsers: Object.keys(policy.parsers ?? {}).sort(),
         resolver: policy.resolver ?? null
       }),
@@ -2580,6 +2595,190 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
     identity: stableHash(semantic),
     profile: { programMs, totalMs: performance.now() - started }
   }
+}
+
+/** The plan of the change alone: what {@link selectTests} decides before its whole-suite, merge and history rules. */
+type ChangePlan = Omit<SelectionPlan, 'wholeSuites' | 'leftOut' | 'reused'>
+
+/** The obligation a failed or unconfirmed test of the last refused run carries. */
+export const FAILED_RERUN_OBLIGATION = 'failed-test-rerun'
+
+/**
+ * The tests a change between two committed revisions requires, and exactly
+ * which of them a caller runs — the one entry point every caller calls, and
+ * the only place a selection rule lives:
+ *
+ * - the change graph, the recorded reads, the static fallbacks and the
+ *   policy's obligations (the change plan);
+ * - every test the last refused run failed or did not confirm, re-run as an
+ *   obligation whatever the change selects (`history.failures`);
+ * - the suites the policy runs whole on a change under their folder
+ *   (`policy.wholeSuites`), for their tests with no valid record;
+ * - after a default-branch merge, the planned tests only default-branch
+ *   changes reached, left out (`branchSide`);
+ * - every planned test an earlier complete pass under the same key covers,
+ *   reused instead of run (`history.passes`) — never a test the last refused
+ *   run failed.
+ *
+ * Read-only and immutable: every file comes from `repo` for exactly the
+ * revisions given; nothing is executed, written or fetched. {@link plannedTests}
+ * of the result is exactly what a caller runs.
+ *
+ * Throws {@link SelectionInputError} when the inventory does not validate, was
+ * built for other revisions, or a revision cannot be listed.
+ */
+export function selectTests(input: SelectTestsInput): SelectionPlan {
+  const started = performance.now()
+  const change = selectChange(input)
+  const headView = input.inventory.head
+  const headTests = new Map(headView.tests.map((t) => [t.id, t]))
+
+  // ── Failed-test reruns: obligations, never dependencies.
+  const failures = [...new Set(input.history?.failures ?? [])].filter((test) => headTests.has(test)).sort()
+  const failureSet = new Set(failures)
+  const obligations: PlannedObligation[] = [
+    ...change.obligations,
+    ...failures.map((test) => {
+      const identity = headTests.get(test) as InventoryView['tests'][number]
+      return {
+        test,
+        suite: identity.suite,
+        runner: identity.runner,
+        obligation: FAILED_RERUN_OBLIGATION,
+        kind: 'policy' as const,
+        reason: 'the last refused run on this branch failed it or did not confirm it'
+      }
+    })
+  ].sort((a, b) => a.obligation.localeCompare(b.obligation) || a.test.localeCompare(b.test))
+
+  // static-fallback begin: a suite whose inputs the selection does not model runs whole on a change under its
+  // folder — its tests with no record only; a record decides the others.
+  const changed = change.changes.flatMap((c) => (c.from ? [c.path, c.from] : [c.path]))
+  const recorded = new Set(change.records.recorded)
+  const wholeSuites: SelectionPlan['wholeSuites'] = []
+  for (const rule of input.policy.wholeSuites ?? []) {
+    const suite = headView.suites.find((s) => s.id === rule.suite)
+    if (!suite) continue
+    const prefix = suite.dir === '.' ? '' : `${suite.dir}/`
+    if (!changed.some((path) => path.startsWith(prefix))) continue
+    const tests = headView.tests
+      .filter((t) => t.suite === suite.id && !recorded.has(t.id))
+      .map((t) => t.id)
+      .sort()
+    if (tests.length > 0) wholeSuites.push({ suite: suite.id, reason: rule.reason, tests })
+  }
+  wholeSuites.sort((a, b) => a.suite.localeCompare(b.suite))
+  // static-fallback end
+
+  const reached = reachedTests({ ...change, obligations, wholeSuites })
+
+  // ── After a default-branch merge: the tests only default-branch changes reached are left out.
+  const leftOut = input.branchSide
+    ? leftOutByBranchSide({ ...change, obligations, wholeSuites }, input.branchSide.paths, () => {
+        const side = input.branchSide?.base()
+        if (!side) return null
+        try {
+          return reachedTests(
+            selectTests({
+              ...input,
+              base: side.commit,
+              inventory: { head: headView, base: side.inventory },
+              branchSide: null,
+              history: null
+            })
+          )
+        } catch {
+          return null
+        }
+      })
+    : []
+
+  // ── Earlier complete passes: a planned test whose key at the head matches one is reused.
+  const history = input.history
+  const reused: SelectionPlan['reused'] = []
+  if (history && history.passes.length > 0) {
+    const left = new Set(leftOut)
+    const keyOf = passKeys({
+      repo: input.repo,
+      revision: input.head,
+      context: history.context,
+      records: input.records ?? null
+    })
+    const byTest = new Map<string, PassEntryLike[]>()
+    for (const pass of history.passes) byTest.set(pass.test, [...(byTest.get(pass.test) ?? []), pass])
+    for (const test of reached) {
+      if (left.has(test) || failureSet.has(test)) continue
+      const passes = byTest.get(test)
+      if (!passes) continue
+      const key = keyOf(test)
+      if (key === null) continue
+      const match = passes
+        .filter((pass) => pass.key === key)
+        .sort((a, b) => a.head.localeCompare(b.head) || a.source.localeCompare(b.source))[0]
+      if (match) reused.push({ test, head: match.head, source: match.source })
+    }
+  }
+
+  const running = new Set(reached)
+  const suitesReached = new Set(headView.tests.filter((t) => running.has(t.id)).map((t) => t.suite))
+  const configurations = headView.suites
+    .filter((s) => suitesReached.has(s.id))
+    .map(({ id, runner, cwd, preload, environment, configFiles }) => ({
+      id,
+      runner,
+      cwd,
+      preload,
+      environment,
+      configFiles
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id))
+
+  const { identity: _changeIdentity, profile, ...changeSemantic } = change
+  const semantic = { ...changeSemantic, obligations, configurations, wholeSuites, leftOut, reused }
+  return {
+    ...semantic,
+    identity: stableHash(semantic),
+    profile: { programMs: profile.programMs, totalMs: performance.now() - started }
+  }
+}
+
+type PassEntryLike = { test: string; key: string; head: string; source: string }
+
+/**
+ * The candidates a branch-side change set leaves out: a test whose every reason names a single changed path outside
+ * the set — a path only the default branch changed. A reason that names no single changed path (a folder, an
+ * installed package, a glob) keeps its test, and so does any reason naming a path in the set.
+ *
+ * The walk records the first change a test's import walk reaches, not every one, so a test reached both by a
+ * default-branch path and by a branch-side path may carry only the former. Such a candidate is kept only when the
+ * selection from a commit whose every changed path is in the set reaches it; `fromBranchSide` computes that
+ * selection's tests, and only when some candidate needs it. `null` from it leaves nothing out.
+ */
+export function leftOutByBranchSide(
+  plan: Pick<SelectionPlan, 'changes' | 'required' | 'fallbacks' | 'obligations'> & {
+    wholeSuites?: SelectionPlan['wholeSuites']
+  },
+  branchSide: readonly string[],
+  fromBranchSide: () => readonly string[] | null
+): string[] {
+  const changed = new Set(plan.changes.flatMap((c) => (c.from ? [c.path, c.from] : [c.path])))
+  const side = new Set(branchSide)
+  const named = new Map<string, string[]>()
+  const name = (test: string, via: string) => named.set(test, [...(named.get(test) ?? []), via])
+  for (const t of plan.required) for (const reason of t.reasons) name(t.test, reason.via)
+  for (const scope of plan.fallbacks) for (const test of scope.tests) for (const path of scope.paths) name(test, path)
+  // Every reached test but the duties and the whole-suite runs, which always run.
+  const kept = new Set([...plan.obligations.map((o) => o.test), ...(plan.wholeSuites ?? []).flatMap((w) => w.tests)])
+  const candidates = reachedTests(plan).filter((test) => !kept.has(test))
+  const left = candidates.filter((test) => {
+    const vias = named.get(test) ?? []
+    return vias.length > 0 && vias.every((via) => changed.has(via) && !side.has(via))
+  })
+  if (left.length === 0) return []
+  const reachedFromSide = fromBranchSide()
+  if (reachedFromSide === null) return []
+  const reached = new Set(reachedFromSide)
+  return left.filter((test) => !reached.has(test)).sort()
 }
 
 /**

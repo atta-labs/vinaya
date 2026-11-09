@@ -10,8 +10,8 @@
  * fixes the binary to `bun`, the one this repository's tests spawn the CLI
  * with, and keeps the name every existing caller imports.
  */
-import type { TypeScriptApi } from './verification/index.js'
-import { type SpawnClassification, spawnEdgeOf } from './verification/index.js'
+import type { TypeScriptApi } from '@attalabs/test-selection'
+import { type SpawnClassification, spawnEdgeOf } from '@attalabs/test-selection'
 
 export type CliSpawnClassification = SpawnClassification
 

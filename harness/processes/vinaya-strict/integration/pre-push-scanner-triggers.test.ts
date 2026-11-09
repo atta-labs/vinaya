@@ -15,7 +15,7 @@ import {
   startsProcessIn
 } from './verification-scanner-policy'
 import { discoverWorkspacePackages, isTestFile, selectAffectedTestFiles } from './repository-verification'
-import { loadTypeScript } from '../../../kernel/gates/ring0-hooks/pre-push/verification/index'
+import { loadTypeScript } from '@attalabs/test-selection'
 
 const REPO_ROOT = join(import.meta.dir, '../../../..')
 

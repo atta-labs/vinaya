@@ -7,7 +7,7 @@ import {
   type NativeTestRequest,
   type TestIdentity,
   validateExecutedIdentities
-} from '../index.js'
+} from '../src/index.js'
 
 const ROOT = '/work/repo'
 
