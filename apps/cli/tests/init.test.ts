@@ -2780,7 +2780,7 @@ describe('generated workflows — PR-body heredoc delimiter is real randomness (
 // edit` still landing on the forge (measured live: #485/#520/#523 went red
 // on closes-n, then green on the very next run with no code change).
 describe('generated workflows — verified PR-body fetch, bounded backoff (O3)', () => {
-  it('both vinaya-checks.yml and vinaya-body-checks.yml wait for a real AEG:CLOSES region, and fail loudly on exhaustion', () => {
+  it('both vinaya-checks.yml and vinaya-body-checks.yml wait for a real CLOSES region, and fail loudly on exhaustion', () => {
     const ops = buildInitOps({
       owner: 'acme',
       repo: 'widget',
@@ -2796,9 +2796,9 @@ describe('generated workflows — verified PR-body fetch, bounded backoff (O3)',
       // Retries, bounded — never an infinite wait.
       expect(op.content).toContain('MAX_ATTEMPTS=6')
       expect(op.content).toContain('sleep "$SLEEP_SECONDS"')
-      // Waits only for a TASK branch's AEG:CLOSES region, never a non-task one.
+      // Waits only for a TASK branch's CLOSES region, never a non-task one.
       expect(op.content).toContain('^task/[^/]+/[^/]+$')
-      expect(op.content).toContain('AEG:CLOSES:START')
+      expect(op.content).toContain(':CLOSES:START')
       // Fails loudly, naming what it waited for, on exhaustion — never a
       // silent pass-through to the check suite with a body it knows may be stale.
       expect(op.content).toContain('::error::Gave up after')
@@ -2818,7 +2818,7 @@ describe('generated workflows — verified PR-body fetch, bounded backoff (O3)',
     const bodyChecks = ops.find((op) => op.kind === 'create-file' && op.path === BODY_CHECKS_WORKFLOW_PATH)
     for (const op of [checks, bodyChecks]) {
       if (op?.kind !== 'create-file') continue
-      expect(op.content).not.toContain('AEG:EVIDENCE:START')
+      expect(op.content).not.toContain('EVIDENCE:START')
       expect(op.content).not.toContain('PR_HEAD_SHA')
       expect(op.content).not.toContain('catch up')
     }

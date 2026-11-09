@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { amendRationaleDeps } from '../../thinking/planner/tools/amend-rationale-deps'
 import { projectsFromBody } from './forge/list-tasks'
+import { REGION_PREFIX } from '../legacy-markers'
 import { describe, expect, it } from 'vitest'
 import { fenceShapes } from '../../tests/fixtures/fence-shapes'
 import {
@@ -2346,9 +2347,9 @@ describe('the VINAYA:BEYOND-SURFACE body block', () => {
     '',
     'One paragraph.',
     '',
-    '<!-- AEG:TIER:START -->',
+    `<!-- ${REGION_PREFIX.old}:TIER:START -->`,
     '**Tier:** 1',
-    '<!-- AEG:TIER:END -->',
+    `<!-- ${REGION_PREFIX.old}:TIER:END -->`,
     ''
   ].join('\n')
 
@@ -2373,7 +2374,7 @@ describe('the VINAYA:BEYOND-SURFACE body block', () => {
     ])
     expect(written.indexOf('<!-- VINAYA:BEYOND-SURFACE:START -->')).toBeGreaterThan(written.indexOf('## Scope'))
     expect(written.indexOf('<!-- VINAYA:BEYOND-SURFACE:END -->')).toBeLessThan(
-      written.indexOf('<!-- AEG:TIER:START -->')
+      written.indexOf(`<!-- ${REGION_PREFIX.old}:TIER:START -->`)
     )
     expect(written).toContain('- `src/gen/b.ts` crosses the `out:` glob `src/gen`')
     expect(recordedBeyondSurfacePaths(written)).toEqual(['docs/c.md', 'src/gen/b.ts'])
