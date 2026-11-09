@@ -28,6 +28,14 @@
       "preload": null
     },
     {
+      "id": "studio",
+      "owner": "@vinaya/studio",
+      "kind": "workspace",
+      "dir": "apps/vinaya-studio",
+      "runner": "bun",
+      "preload": null
+    },
+    {
       "id": "cms",
       "owner": "@vinaya/cms",
       "kind": "workspace",
@@ -130,7 +138,17 @@
       "readers": [
         {
           "kind": "semantic",
-          "suites": ["cli", "log-server", "portal", "cms", "kernel", "process-vinaya", "repository", "package-compat"]
+          "suites": [
+            "cli",
+            "log-server",
+            "portal",
+            "studio",
+            "cms",
+            "kernel",
+            "process-vinaya",
+            "repository",
+            "package-compat"
+          ]
         }
       ],
       "reason": "The lockfile decides every installed dependency every suite runs against; it is read as its dependency identity, so a workspace folder or local path move alone changes no installed dependency."
