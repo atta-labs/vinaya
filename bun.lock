@@ -119,6 +119,26 @@
         "typescript": "^5.7.0",
       },
     },
+    "apps/vinaya-studio": {
+      "name": "@vinaya/studio",
+      "version": "0.0.1",
+      "dependencies": {
+        "@tailwindcss/postcss": "^4.0.0",
+        "@vinaya/cms": "workspace:*",
+        "@vinaya/ui": "workspace:*",
+        "next": "^16.2.1",
+        "react": "^19.2.4",
+        "react-dom": "^19.2.4",
+        "server-only": "^0.0.1",
+        "tailwindcss": "^4.0.0",
+      },
+      "devDependencies": {
+        "@types/node": "^26.0.0",
+        "@types/react": "^19.0.0",
+        "@types/react-dom": "^19.0.0",
+        "typescript": "^5.7.0",
+      },
+    },
     "harness/kernel": {
       "name": "@attalabs/harness",
       "version": "0.0.1",
@@ -701,6 +721,8 @@
     "@vinaya/cms": ["@vinaya/cms@workspace:packages/cms"],
 
     "@vinaya/portal": ["@vinaya/portal@workspace:apps/vinaya-portal"],
+
+    "@vinaya/studio": ["@vinaya/studio@workspace:apps/vinaya-studio"],
 
     "@vinaya/ui": ["@vinaya/ui@workspace:packages/ui"],
 
