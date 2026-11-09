@@ -13,10 +13,17 @@
  * `gh` itself and passes them in.
  */
 
+import { COMMENT_MARKER_PREFIX_CURRENT, COMMENT_MARKER_PREFIX_PATTERN } from '../legacy-markers'
 import { isPrincipal } from './waiver-label'
 
-/** The marker `apps/cli/src/commands/pr-rule.ts` posts: `<!-- aeg:principal:ruling:<pr>-<k> -->`, one line, nothing else on it. */
-const RULING_MARKER_ORDINAL = /^<!-- aeg:principal:ruling:\d+-(\d+) -->$/
+/**
+ * The marker `apps/cli/src/commands/pr-rule.ts` posts: `<!-- vinaya:principal:ruling:<pr>-<k> -->`,
+ * one line, nothing else on it — matched in either spelling, so a ruling posted
+ * before the rename keeps its ordinal and the next one counts on from it.
+ */
+export const RULING_MARKER_ORDINAL: RegExp = new RegExp(
+  `^<!-- ${COMMENT_MARKER_PREFIX_PATTERN}:principal:ruling:\\d+-(\\d+) -->$`
+)
 
 /**
  * The marker line a principal ruling carries, built from the two numbers it
@@ -31,7 +38,7 @@ const RULING_MARKER_ORDINAL = /^<!-- aeg:principal:ruling:\d+-(\d+) -->$/
  * interpolating its own template.
  */
 export function principalRulingMarker(ref: number, ordinal: number): string {
-  return `<!-- aeg:principal:ruling:${ref}-${ordinal} -->`
+  return `<!-- ${COMMENT_MARKER_PREFIX_CURRENT}:principal:ruling:${ref}-${ordinal} -->`
 }
 
 export type RulingComment = {

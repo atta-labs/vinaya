@@ -18,6 +18,7 @@ import {
   type NormalizedOutcome,
   type OutcomeSignals
 } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
+import { COMMENT_MARKER_PREFIX_PATTERN } from '../../../../tools/legacy-markers'
 import { isPrincipal } from '../../../../tools/task-contract/waiver-label'
 import { issueBranchName, parseTaskBranchIdentity } from '../../../../tools/task-contract/task-branch-identity'
 import {
@@ -71,7 +72,8 @@ import {
   readIssueComments
 } from '../../../../../../kernel/adapters/code-host/github/forge-read.js'
 
-const RULING_MARKER = /^<!-- aeg:principal:ruling:\d+-\d+ -->$/
+/** A ruling marker line in either spelling — a ruling posted before the rename still reaches the Developer. */
+const RULING_MARKER = new RegExp(`^<!-- ${COMMENT_MARKER_PREFIX_PATTERN}:principal:ruling:\\d+-\\d+ -->$`)
 
 /**
  * `postMarkedComment('pr', ...)` composes a ruling comment as exactly
@@ -112,8 +114,8 @@ export function markerComments(raw: string): MarkerComment[] {
 /**
  * A security-review HIGH finding: `fetchRulings`/`fetchFrozenBrief`
  * trusted ANY comment matching their marker regex, author unchecked — a
- * non-principal PR/Issue commenter could post a fake `aeg:principal:ruling`-
- * or `aeg:brief:v1`-shaped comment and have its content concatenated
+ * non-principal PR/Issue commenter could post a fake `vinaya:principal:ruling`-
+ * or `vinaya:brief:v1`-shaped comment and have its content concatenated
  * straight into the resumed developer's prompt every round, in this fully
  * unattended, commit-pushing loop. Both now require the matching comment's
  * author to resolve as a principal — the SAME `isPrincipal`/
@@ -215,7 +217,8 @@ export function filterPrincipalRulings(comments: readonly MarkerComment[], allow
     .map((c) => contentAfterOneLine(c.body).trim())
 }
 
-const DEVELOPER_STOP_MARKER = /^<!-- aeg:developer:stop -->$/
+/** The Developer stop marker line in either spelling. */
+const DEVELOPER_STOP_MARKER = new RegExp(`^<!-- ${COMMENT_MARKER_PREFIX_PATTERN}:developer:stop -->$`)
 
 /**
  * O9: a developer that refuses to start (entry
@@ -250,7 +253,7 @@ export function fetchDeveloperStop(issueNumber: number): { body: string; identit
 }
 
 /**
- * Pure: the NEWEST principal-authored `aeg:brief:v<k>` comment among
+ * Pure: the NEWEST principal-authored `vinaya:brief:v<k>` comment among
  * `comments`, or `null` — unit-testable with no `gh` call. task
  * 4 widened this from a `v1`-only lookup to
  * `@attalabs/aeg-core`'s `resolveNewestFrozenBrief`, the single resolver
@@ -352,7 +355,7 @@ export function fetchNewestRulingAuthor(prNumber: number): string | null {
  * IDENTICAL `principalAllowlist()` its pull-request sibling uses — never a
  * second parser and never a wider trust boundary, so an Issue comment
  * authenticates a resume or a cancel on exactly the terms a pull-request one
- * does: principal-authored, and carrying the `aeg:principal:ruling:<k>-<n>`
+ * does: principal-authored, and carrying the `vinaya:principal:ruling:<k>-<n>`
  * marker on its own first line. A non-principal Issue commenter is refused
  * here for the same reason `filterDeveloperStops` refuses one.
  */
@@ -415,7 +418,7 @@ function toMarkerComment(c: ForgeComment): MarkerComment {
 
 /**
  * The Issue's frozen brief comment's text — the NEWEST principal-authored
- * `aeg:brief:v<k>` version, content already stripped of its header lines
+ * `vinaya:brief:v<k>` version, content already stripped of its header lines
  * (`resolveNewestFrozenBrief`'s own `.content`). Refuses (throws) rather
  * than inventing a brief when none
  * exists yet.
@@ -424,7 +427,7 @@ export function fetchFrozenBrief(issueNumber: number): string {
   const found = resolveNewestFrozenBrief(fetchIssueComments(issueNumber, 'fetchFrozenBrief'), principalAllowlist())
   if (!found) {
     throw new Error(
-      `fetchFrozenBrief: Issue #${issueNumber} carries no principal-authored, frozen \`aeg:brief:v<k>\` comment — \`vinaya-task-brief\` must post the brief before this loop can start.`
+      `fetchFrozenBrief: Issue #${issueNumber} carries no principal-authored, frozen \`vinaya:brief:v<k>\` comment — \`vinaya-task-brief\` must post the brief before this loop can start.`
     )
   }
   return found.content
@@ -484,7 +487,7 @@ export function extractObjectivesSection(body: string): string {
 }
 
 /**
- * `<!-- aeg:objectives:v<k> -->` — the marker `issue-objectives.ts`'s
+ * `<!-- vinaya:objectives:v<k> -->` — the marker `issue-objectives.ts`'s
  * `issueObjectivesEditCommand` posts on every edit-audit comment (`MARKER_PREFIX`
  * there). Duplicated here as a literal, not imported, the same way that
  * file's own `HEADING_RE` duplicates `objectives.ts`'s internal heading
@@ -492,9 +495,9 @@ export function extractObjectivesSection(body: string): string {
  * surface (the shape every edit comment carries), never the command's
  * internals.
  */
-const OBJECTIVES_EDIT_MARKER_RE = /^<!--\s*aeg:objectives:v(\d+)\s*-->$/
+const OBJECTIVES_EDIT_MARKER_RE = new RegExp(`^<!--\\s*${COMMENT_MARKER_PREFIX_PATTERN}:objectives:v(\\d+)\\s*-->$`)
 
-/** Pure: the newest principal-authored `<!-- aeg:objectives:v<k> -->` comment among `comments` — "newest" by marker index `k`, which `issueObjectivesEditCommand` assigns strictly increasing — or `null` when none exists. */
+/** Pure: the newest principal-authored `<!-- vinaya:objectives:v<k> -->` comment among `comments` — "newest" by marker index `k`, which `issueObjectivesEditCommand` assigns strictly increasing — or `null` when none exists. */
 export function findLatestPrincipalObjectivesEdit(
   comments: readonly MarkerComment[],
   allowlist: readonly string[]
@@ -602,7 +605,7 @@ export function resolveIssueObjectives(issueNumber: number): ObjectivesResolutio
   const brief = findPrincipalFrozenBrief(comments, allowlist)
   if (!brief) {
     throw new Error(
-      `resolveIssueObjectives: Issue #${issueNumber} carries no principal-authored, frozen \`aeg:brief:v1\` comment — \`vinaya-task-brief\` must post the brief before this loop can start.`
+      `resolveIssueObjectives: Issue #${issueNumber} carries no principal-authored, frozen \`vinaya:brief:v1\` comment — \`vinaya-task-brief\` must post the brief before this loop can start.`
     )
   }
   const text = extractObjectivesSection(brief.content)
@@ -1178,7 +1181,7 @@ export function renderDeveloperDoctrineBlock(doctrine: string): string {
 
 /**
  * Dispatches the developer through `dispatchRole`, with the brief text read
- * from the Issue's frozen `aeg:brief:v1` comment, waits for the PR the
+ * from the Issue's frozen `vinaya:brief:v1` comment, waits for the PR the
  * developer opens, then runs rounds by calling `assessRound` with
  * observations read from the forge and from held reviewer outcomes, until
  * a `publish` or `pause` decision.

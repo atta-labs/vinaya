@@ -58,7 +58,7 @@ describe('devReviewLoop — a base that moves past this driver’s own code paus
     // The pause is the ONLY comment posted — no round marker precedes it,
     // since dispatch_reviewers (which posts that marker) never ran.
     expect(world.postedComments).toHaveLength(1)
-    expect(world.postedComments[0]!.marker).toBe('<!-- aeg:loop:paused:stale_driver -->')
+    expect(world.postedComments[0]!.marker).toBe('<!-- vinaya:loop:paused:stale_driver -->')
     expect(world.postedComments[0]!.body).toMatch(new RegExp(`base moved from ${world.base} to ${sha('c')}`))
   })
 })
@@ -89,7 +89,7 @@ describe('devReviewLoop — a base that moves past this driver’s own code WHIL
     // The round marker (posted before either reviewer dispatches) is
     // comment 1; the pause is comment 2.
     expect(world.postedComments).toHaveLength(2)
-    expect(world.postedComments[1]!.marker).toBe('<!-- aeg:loop:paused:stale_driver -->')
+    expect(world.postedComments[1]!.marker).toBe('<!-- vinaya:loop:paused:stale_driver -->')
   })
 })
 
@@ -209,7 +209,7 @@ describe('devReviewLoop — an objectives edit lands between reviewer dispatch a
     // even detected) and the pause — never a reviewer or security verdict:
     // nothing was ever held for round 1 to publish.
     expect(world.postedComments).toHaveLength(2)
-    expect(world.postedComments[1]!.marker).toBe('<!-- aeg:loop:paused:objectives_changed -->')
+    expect(world.postedComments[1]!.marker).toBe('<!-- vinaya:loop:paused:objectives_changed -->')
     expect(world.postedComments[1]!.body).not.toMatch(/^VERDICT:/m)
 
     expect(existsSync(join(ipRoundDir(world, 1), 'reviewer.md'))).toBe(false)
@@ -233,7 +233,7 @@ describe('devReviewLoop — a ruling lands between reviewer dispatch and assessm
     expect(detail).toMatch(new RegExp(`ruling ${world.prNumber}-1`))
 
     expect(world.postedComments).toHaveLength(2)
-    expect(world.postedComments[1]!.marker).toBe('<!-- aeg:loop:paused:ruling_posted -->')
+    expect(world.postedComments[1]!.marker).toBe('<!-- vinaya:loop:paused:ruling_posted -->')
     expect(world.postedComments[1]!.body).not.toMatch(/^VERDICT:/m)
 
     expect(existsSync(join(ipRoundDir(world, 1), 'reviewer.md'))).toBe(false)
@@ -260,7 +260,7 @@ describe('devReviewLoop — a frozen-brief supersede lands between reviewer disp
     expect(detail).toMatch(/brief hash moved from [0-9a-f]+ to [0-9a-f]+/)
 
     expect(world.postedComments).toHaveLength(2)
-    expect(world.postedComments[1]!.marker).toBe('<!-- aeg:loop:paused:brief_superseded -->')
+    expect(world.postedComments[1]!.marker).toBe('<!-- vinaya:loop:paused:brief_superseded -->')
     expect(world.postedComments[1]!.body).not.toMatch(/^VERDICT:/m)
 
     expect(existsSync(join(ipRoundDir(world, 1), 'reviewer.md'))).toBe(false)

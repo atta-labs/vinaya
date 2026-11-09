@@ -55,7 +55,7 @@ function escalationRecordPath(world: LoopWorld, round: number, head: string): st
 
 /** The ruling marker a pause comment prints, read back through the SAME parser `task_resume`/`task_cancel` authenticate with — so a marker whose slots disagree with that parser cannot pass. */
 function parsedMarkerOrdinal(body: string): number {
-  const marker = body.split('\n').find((l) => l.startsWith('<!-- aeg:principal:ruling:')) ?? ''
+  const marker = body.split('\n').find((l) => l.startsWith('<!-- vinaya:principal:ruling:')) ?? ''
   return newestPrincipalRulingOrdinal([{ body: marker, author: 'principal-1' }], ['principal-1'])
 }
 
@@ -263,7 +263,7 @@ describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a 
     >
     expect(pauseState.reason).toBe('repeat_failure')
 
-    const pauseComment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:repeat_failure -->')
+    const pauseComment = world.postedComments.find((c) => c.marker === '<!-- vinaya:loop:paused:repeat_failure -->')
     expect(pauseComment).toBeDefined()
     expect((pauseComment as { body: string }).body).toMatch(/dispatch-gate premise:/)
   })
@@ -304,7 +304,7 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     expect(pauseState.detail).toMatch(/smoke\.ts/)
 
     // The resume itself is recorded, once, as a marked PR comment.
-    const resumeComment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:unpushed-work-resume -->')
+    const resumeComment = world.postedComments.find((c) => c.marker === '<!-- vinaya:loop:unpushed-work-resume -->')
     expect(resumeComment).toBeDefined()
     expect((resumeComment as { body: string }).body).toMatch(/unpushed_work_resume/)
     expect((resumeComment as { body: string }).body).toMatch(/smoke\.ts/)
@@ -442,7 +442,7 @@ describe("devReviewLoop — O2 (task-files-v1 2, #649): the loop's two OLD workt
     expect(pauseState.detail).toMatch(/\.vinaya-confidence/)
     expect(pauseState.detail).toMatch(/\.vinaya-round-response/)
 
-    expect(world.postedComments.some((c) => c.marker === '<!-- aeg:loop:unpushed-work-resume -->')).toBe(true)
+    expect(world.postedComments.some((c) => c.marker === '<!-- vinaya:loop:unpushed-work-resume -->')).toBe(true)
   })
 
   it('one dirty file alongside the two old control-file names reads as unpushed too — no_push, naming all three', async () => {
@@ -514,7 +514,7 @@ describe('devReviewLoop — finding identities are computed by the controller, n
     expect((result.finalDecision as { reason: string }).reason).not.toBe('no_progress')
     // One code-reviewer dispatch for round 1 — never a resend asking for ids.
     expect(world.dispatches.filter((d) => d.role === 'code-reviewer' && d.round === 1)).toHaveLength(1)
-    expect(world.postedComments.some((c) => c.marker === '<!-- aeg:loop:report-uncitable -->')).toBe(false)
+    expect(world.postedComments.some((c) => c.marker === '<!-- vinaya:loop:report-uncitable -->')).toBe(false)
     // The round's finding reaches the developer under the controller's own id.
     expect(developerPrompts.some((prompt) => prompt.includes('R1-CR-1'))).toBe(true)
   })
@@ -755,7 +755,7 @@ describe("devReviewLoop — the driver composes the round comment from the Devel
     // The FIRST posted comment is the driver's own round-2 marker, carrying
     // the citation from the accepted result.
     const roundComment = world.postedComments[0] as { marker: string; body: string }
-    expect(roundComment.marker).toBe('<!-- aeg:developer:round-2 -->')
+    expect(roundComment.marker).toBe('<!-- vinaya:developer:round-2 -->')
     expect(roundComment.body).toMatch(/^FINDING_IDS: R1-CR-1,R1-SEC-1$/m)
 
     // The record is the driver's own, written once — never cleared.
@@ -936,7 +936,7 @@ describe('devReviewLoop — the pull-request poll gives up naming what it waited
 
     // The PUBLIC PR comment gets a SEPARATELY sanitized detail — first line
     // only. The full multi-line breakdown above is a local-only fact.
-    const pauseComment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:infrastructure -->')
+    const pauseComment = world.postedComments.find((c) => c.marker === '<!-- vinaya:loop:paused:infrastructure -->')
     expect(pauseComment).toBeDefined()
     const body = (pauseComment as { body: string }).body
     expect(body).toContain('no open PR appeared within the poll budget')
@@ -994,10 +994,10 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     // short-circuits before O2's own resume-once logic ever runs.
     expect(prompts).toHaveLength(1)
 
-    const pauseFiles = world.postedComments.filter((c) => c.body.includes('aeg:loop:paused:escalation'))
+    const pauseFiles = world.postedComments.filter((c) => c.body.includes('vinaya:loop:paused:escalation'))
     expect(pauseFiles).toHaveLength(1)
     const body = pauseFiles[0]!.body
-    expect(body).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
+    expect(body).toMatch(/^<!-- vinaya:loop:paused:escalation -->$/m)
     expect(body).toMatch(/brief is missing tier\/scope\/stop-conditions/)
     // The one continuation this pause has, named in the address form that
     // actually works for it — this is a tranche task, whose Issue carries a
@@ -1059,7 +1059,7 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     // And the comment tells the Principal which ordinal to beat, since that is
     // now a real number rather than always zero — read back through the gates'
     // own parser, so the marker it prints is one they would accept.
-    const pauseBody = world.postedComments.find((c) => c.body.includes('aeg:loop:paused:escalation'))?.body ?? ''
+    const pauseBody = world.postedComments.find((c) => c.body.includes('vinaya:loop:paused:escalation'))?.body ?? ''
     expect(parsedMarkerOrdinal(pauseBody)).toBeGreaterThan(4)
   })
 
@@ -1247,7 +1247,7 @@ describe('devReviewLoop — the no-push-stop escalation comment is sanitized too
     expect(result.finalDecision.type).toBe('pause')
     expect((result.finalDecision as { reason: string }).reason).toBe('escalation')
 
-    const pauseFiles = world.postedComments.filter((c) => c.body.includes('aeg:loop:paused:escalation'))
+    const pauseFiles = world.postedComments.filter((c) => c.body.includes('vinaya:loop:paused:escalation'))
     expect(pauseFiles).toHaveLength(1)
     const body = pauseFiles[0]!.body
 
@@ -1296,7 +1296,7 @@ describe('devReviewLoop — a conflicting head is sent back to the developer, ne
     expect(conflictPrompt).toContain('git merge --no-commit origin/main')
     expect(conflictPrompt).toContain('publish_changes tool makes the merge commit')
 
-    const pauseComment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:repeat_failure -->')
+    const pauseComment = world.postedComments.find((c) => c.marker === '<!-- vinaya:loop:paused:repeat_failure -->')
     expect(pauseComment).toBeDefined()
     const body = (pauseComment as { body: string }).body
     expect(body).toMatch(/conflict never resolved/)

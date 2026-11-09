@@ -1,7 +1,7 @@
 /**
  * `prepareTask` — renders the brief from the Issue and the tree
  * (`assembleAndRenderBrief`, `lib/brief-assembly.ts`), refuses on any gap,
- * and posts it as a frozen `aeg:brief:v<k>` Issue comment. Starts no agent —
+ * and posts it as a frozen `vinaya:brief:v<k>` Issue comment. Starts no agent —
  * see its own doc comment.
  *
  * `dispatchTask` composes `prepareTask` with the existing developer-start
@@ -30,7 +30,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AEG_BRIEF_V1_MARKER, briefMarkerFor, resolveNewestFrozenBrief } from './brief-validation'
+import { FROZEN_BRIEF_V1_MARKER, briefMarkerFor, resolveNewestFrozenBrief } from './brief-validation'
 import { briefHash } from './review-input-manifest'
 import { isPrincipal } from './waiver-label'
 import { parseIssueSurface } from './issue-validation'
@@ -48,7 +48,7 @@ import { collectTaskIssueErrors, currentGhLogin, postMarkedComment } from './for
 import { isForgeReadOversize, readIssueComments } from '../../../../kernel/adapters/code-host/github/forge-read.js'
 import { emitCheckError } from '../../../../kernel/gates/checks/contract'
 
-export { AEG_BRIEF_V1_MARKER, contentAfterTwoLines } from './brief-validation'
+export { FROZEN_BRIEF_V1_MARKER, contentAfterTwoLines } from './brief-validation'
 export { briefHash } from './review-input-manifest'
 
 /**
@@ -618,7 +618,7 @@ const defaultPrepareTaskDeps: PrepareTaskDeps = {
 /**
  * O1 — the preparation half extracted from what used to be all of
  * `dispatchTask`: resolves the task's Issue, renders the brief, refuses on
- * any gap, and posts the brief as a frozen `aeg:brief:v<k>` Issue comment —
+ * any gap, and posts the brief as a frozen `vinaya:brief:v<k>` Issue comment —
  * `v1` on a first post, or `predecessor.version + 1` under `--supersede`.
  * Starts no agent under any circumstances — that is `dispatchTask`'s
  * developer-start job, composed from this function plus the
@@ -719,7 +719,7 @@ export async function prepareTask(
       throw new DispatchTaskError(`Task ${n} in tranche \`${tranche}\` is already dispatched — see ${existing.url}`)
     }
     version = 1
-    marker = AEG_BRIEF_V1_MARKER
+    marker = FROZEN_BRIEF_V1_MARKER
     commentBody = `Brief hash: ${briefHash(brief)}\n${brief}`
   }
 
@@ -761,7 +761,7 @@ const defaultPrepareIssueTaskDeps: PrepareIssueTaskDeps = {
 /**
  * `prepareTask`'s tranche-less twin — renders the
  * brief from a backlog Issue's own body (`assembleAndRenderBriefForIssue`)
- * and posts it as the same frozen `aeg:brief:v<k>` Issue comment, with the
+ * and posts it as the same frozen `vinaya:brief:v<k>` Issue comment, with the
  * same authorization, existing-brief and supersede rules. Starts no agent,
  * same as `prepareTask`.
  */
@@ -832,7 +832,7 @@ export async function prepareIssueTask(
       throw new DispatchTaskError(`Issue #${n} is already dispatched — see ${existing.url}`)
     }
     version = 1
-    marker = AEG_BRIEF_V1_MARKER
+    marker = FROZEN_BRIEF_V1_MARKER
     commentBody = `Brief hash: ${briefHash(brief)}\n${brief}`
   }
 

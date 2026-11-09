@@ -12,6 +12,11 @@ import {
   refuse,
   refuseUnlessPrincipal
 } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
+import {
+  PRINCIPAL_RULING_MARKER,
+  markerSpellings
+} from '../../../../harness/processes/vinaya-strict/tools/legacy-markers'
+import { principalRulingMarker } from '../../../../harness/processes/vinaya-strict/tools/task-contract/ruling-ordinal'
 
 const RETRY = 'vinaya pr rule <pr> --file <ruling.md>'
 
@@ -101,7 +106,7 @@ export function prRuleCommand(args: string[]): void {
     ])
   }
   // Bare digits only: `prRef` is spliced verbatim into the marker's HTML
-  // comment (`<!-- aeg:principal:ruling:<pr>-<k> -->`) and into `gh`'s own
+  // comment (`<!-- vinaya:principal:ruling:<pr>-<k> -->`) and into `gh`'s own
   // argv — a URL or crafted ref could otherwise terminate the comment early
   // or forge a differently-shaped marker (a MEDIUM security-review finding).
   if (!/^\d+$/.test(prRef)) {
@@ -143,9 +148,11 @@ export function prRuleCommand(args: string[]): void {
 
   refuseIfCastsAVerdict(body, filePath)
 
-  const prefix = `<!-- aeg:principal:ruling:${prRef}-`
-  const k = countMarkerComments(fetchPrCommentBodies(prRef), prefix) + 1
-  const marker = `<!-- aeg:principal:ruling:${prRef}-${k} -->`
+  // Rulings posted before the rename carry the retired spelling; counting both
+  // keeps `k` strictly increasing across the rename.
+  const prefixes = markerSpellings(PRINCIPAL_RULING_MARKER).map((m) => `<!-- ${m}:${prRef}-`)
+  const k = countMarkerComments(fetchPrCommentBodies(prRef), prefixes) + 1
+  const marker = principalRulingMarker(Number(prRef), k)
   const url = postMarkedComment('pr', prRef, marker, body)
 
   if (json) printJson({ posted: true, url })

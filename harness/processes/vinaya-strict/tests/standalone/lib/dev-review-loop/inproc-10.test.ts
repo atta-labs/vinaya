@@ -865,7 +865,7 @@ describe('the repeat rule needs a finished Developer attempt between two red gat
 
     expect(result.finalDecision).toEqual({ type: 'publish' })
     expect(world.dispatchCountByRole.developer).toBe(2)
-    expect(world.postedComments.some((c) => c.marker === '<!-- aeg:loop:paused:repeat_failure -->')).toBe(false)
+    expect(world.postedComments.some((c) => c.marker === '<!-- vinaya:loop:paused:repeat_failure -->')).toBe(false)
   })
 })
 

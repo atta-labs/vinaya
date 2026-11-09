@@ -436,7 +436,7 @@ describe('devReviewLoop — O1 (`[task-operator-v1]`/Issue #662): the pause comm
 
     // The missing pause comment was posted first, exactly once — never
     // duplicated on a later idempotent re-check within the same run.
-    const pausedComments = world.postedComments.filter((c) => c.marker === '<!-- aeg:loop:paused:escalation -->')
+    const pausedComments = world.postedComments.filter((c) => c.marker === '<!-- vinaya:loop:paused:escalation -->')
     expect(pausedComments).toHaveLength(1)
   })
 })

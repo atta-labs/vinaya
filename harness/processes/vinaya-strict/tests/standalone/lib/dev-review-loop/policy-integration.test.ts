@@ -580,7 +580,7 @@ describe('devReviewLoop — a failed policy read pauses infrastructure and casts
     >
     expect(pauseState.reason).toBe('infrastructure')
     expect(String(pauseState.detail)).toMatch(/review policy/)
-    const pauseComment = world.postedComments.find((c) => /aeg:loop:paused:infrastructure/.test(c.body))
+    const pauseComment = world.postedComments.find((c) => /vinaya:loop:paused:infrastructure/.test(c.body))
     expect(pauseComment).toBeDefined()
     expect(pauseComment!.body).toMatch(/review policy/)
     // Nothing resembling a verdict was ever posted.

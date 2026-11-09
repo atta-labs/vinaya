@@ -30,10 +30,16 @@ import {
   resolvePrincipalsOrRefuse,
   writeValidatedIssueEdit
 } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
+import {
+  OBJECTIVES_VERSION_MARKER,
+  markerSpellings
+} from '../../../../harness/processes/vinaya-strict/tools/legacy-markers'
 
 const RETRY =
   'vinaya issue objectives edit <n> --add "<sentence>" | --drop O<k> | --replace O<k> "<sentence>" --reason "<text>"'
-const MARKER_PREFIX = '<!-- aeg:objectives:v'
+/** The objectives-version marker's opening, in every spelling, the current one first — the writer posts the first; `k` counts them all, so a version posted before the rename is never reused. */
+const MARKER_PREFIXES = markerSpellings(OBJECTIVES_VERSION_MARKER).map((m) => `<!-- ${m}:v`)
+const MARKER_PREFIX = MARKER_PREFIXES[0] as string
 
 type EditOp =
   | { kind: 'add'; sentence: string }
@@ -422,7 +428,7 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
       // This command IS the sanctioned Objectives-change path O3 names as
       // its own escape hatch — `## Parts` is also rewritten here, in the
       // same edit, per O5 above — and it posts its own superseding
-      // `aeg:brief:v<k+1>` comment below rather than being refused by
+      // `vinaya:brief:v<k+1>` comment below rather than being refused by
       // the gate it is the sanctioned alternative to.
       skipFrozenSectionsCheck: true
     })
@@ -461,7 +467,7 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
   const k =
     countMarkerComments(
       comments.map((c) => c.body),
-      MARKER_PREFIX
+      MARKER_PREFIXES
     ) + 1
   const marker = `${MARKER_PREFIX}${k} -->`
   const commentBody = [

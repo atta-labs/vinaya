@@ -35,8 +35,10 @@ import {
   isTaskBranch,
   parseBriefMarkerVersion,
   partitionBriefErrorsByRollout,
+  FROZEN_BRIEF_V1_MARKER,
   resolveNewestFrozenBrief
 } from './brief-validation'
+import { FROZEN_BRIEF_MARKER } from '../legacy-markers'
 import { type Objective, objectivesOf } from './objectives'
 import { EOLS, FENCE_DELIMS, fenceShapes } from '../../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
@@ -1165,8 +1167,8 @@ describe('checkObjectivesCoverage', () => {
 
 describe('briefMarkerFor / parseBriefMarkerVersion (task-run-v1 task 4, #483, O3)', () => {
   it('round-trips version numbers through the marker line', () => {
-    expect(briefMarkerFor(1)).toBe('<!-- aeg:brief:v1 -->')
-    expect(briefMarkerFor(2)).toBe('<!-- aeg:brief:v2 -->')
+    expect(briefMarkerFor(1)).toBe('<!-- vinaya:brief:v1 -->')
+    expect(briefMarkerFor(2)).toBe('<!-- vinaya:brief:v2 -->')
     expect(parseBriefMarkerVersion('<!-- aeg:brief:v1 -->')).toBe(1)
     expect(parseBriefMarkerVersion('<!-- aeg:brief:v2 -->')).toBe(2)
     expect(parseBriefMarkerVersion('<!-- aeg:brief:v12 -->')).toBe(12)
@@ -1176,6 +1178,29 @@ describe('briefMarkerFor / parseBriefMarkerVersion (task-run-v1 task 4, #483, O3
     expect(parseBriefMarkerVersion('<!-- aeg:brief:v0 -->')).toBeNull()
     expect(parseBriefMarkerVersion('not a marker')).toBeNull()
     expect(parseBriefMarkerVersion('<!-- aeg:principal:ruling -->')).toBeNull()
+    expect(parseBriefMarkerVersion('<!-- other:brief:v1 -->')).toBeNull()
+  })
+
+  it('reads the current spelling, and the v1 marker is written in it', () => {
+    expect(FROZEN_BRIEF_V1_MARKER).toBe(`<!-- ${FROZEN_BRIEF_MARKER.current}:v1 -->`)
+    expect(parseBriefMarkerVersion(briefMarkerFor(7))).toBe(7)
+    expect(parseBriefMarkerVersion(`<!-- ${FROZEN_BRIEF_MARKER.old}:v3 -->`)).toBe(3)
+  })
+
+  it('counts old-spelling and new-spelling briefs together: the newest version wins across the rename', () => {
+    const comments = [
+      { body: `<!-- ${FROZEN_BRIEF_MARKER.old}:v1 -->\nBrief hash: a\nfirst`, author: 'daniboomerang' },
+      {
+        body: `<!-- ${FROZEN_BRIEF_MARKER.old}:v2 -->\nBrief hash: b\nSupersedes: u — r\nsecond`,
+        author: 'daniboomerang'
+      },
+      { body: `${briefMarkerFor(3)}\nBrief hash: c\nSupersedes: u — r\nthird`, author: 'daniboomerang' }
+    ]
+    const newest = resolveNewestFrozenBrief(comments, ['daniboomerang'])
+    expect(newest?.version).toBe(3)
+    expect(newest?.content).toBe('third')
+    // Only old-spelling briefs on the Issue: the next supersession is v3, never a reused v1.
+    expect(resolveNewestFrozenBrief(comments.slice(0, 2), ['daniboomerang'])?.version).toBe(2)
   })
 })
 

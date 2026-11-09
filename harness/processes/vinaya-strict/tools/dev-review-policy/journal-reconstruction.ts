@@ -24,7 +24,7 @@
  * — see `reconstructRounds`.
  *
  * Honest about what the forge markers carry: a developer round marker
- * (`<!-- aeg:developer:round-<n> -->`) names only the round's own number and
+ * (`<!-- vinaya:developer:round-<n> -->`) names only the round's own number and
  * head — never a per-severity finding breakdown, a confidence value, or the
  * round's wall time / files changed. Those had a source only in the log
  * events this rebuild no longer reads, so a reconstructed round carries an
@@ -35,19 +35,23 @@
  * what the numbering and the "already published?" decision need.
  */
 
+import { COMMENT_MARKER_PREFIX_PATTERN } from '../legacy-markers'
 import type { RoundRecord } from './types'
 
 /**
- * The published marker line — `<!-- aeg:loop:published head=<sha>
+ * The published marker line — `<!-- vinaya:loop:published head=<sha>
  * confidence=<round>:<cell>,… -->`, as `render-summary.ts` emits it. A
  * principal-authored comment carrying this line is the ready-for-merge
  * publication itself: the one honest "the loop actually published" signal,
  * distinct from a round merely deciding `publish` (the control store's own
  * `loop_state.phase === 'publish'` is written before `publishRound` runs, so
- * it can never stand in for this). Group 1 is the published head, group 2 the
+ * it can never stand in for this). Either spelling matches, so a pull request
+ * published before the rename still reads as published. Group 1 is the published head, group 2 the
  * confidence entries.
  */
-export const PUBLISHED_MARKER_LINE = /^<!-- aeg:loop:published head=([0-9a-f]{7,64}) confidence=([^\s]*) -->$/
+export const PUBLISHED_MARKER_LINE: RegExp = new RegExp(
+  `^<!-- ${COMMENT_MARKER_PREFIX_PATTERN}:loop:published head=([0-9a-f]{7,64}) confidence=([^\\s]*) -->$`
+)
 
 /** True when `body` carries the published marker verbatim on its own line — the caller has already confirmed the comment is principal-authored. */
 export function isPublishedSummaryComment(body: string): boolean {

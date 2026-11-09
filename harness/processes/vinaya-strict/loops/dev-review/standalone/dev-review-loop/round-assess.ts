@@ -31,12 +31,13 @@ import type { PauseBoundRuling } from '../../../../tools/task-contract/review-in
 import type { AgentVendor, DispatchHandle, SandboxProbeRefusal, UsageLimit } from '../../dispatch/dispatch.js'
 import { controlStoreRoot } from '../../../../../../kernel/effects/effects.js'
 import { isControlCharacter } from './turn-result.js'
+import { COMMENT_MARKER_PREFIX_CURRENT } from '../../../../tools/legacy-markers'
 
 // --- round marker comment ---------------------------------------------------
 
-/** The round marker itself, `<!-- aeg:developer:round-<n> -->` — `@attalabs/aeg-core`'s `parseDeveloperRoundMarker` matches it anywhere in a comment body; posted first by `postMarkedComment` (`dev-review-loop.ts`'s `postDeveloperRoundComment`), the same convention every other driver-posted marked comment in this file already uses. */
+/** The round marker itself, `<!-- vinaya:developer:round-<n> -->` — `review-status.ts`'s `parseDeveloperRoundMarker` matches it, or its retired spelling, anywhere in a comment body; posted first by `postMarkedComment` (`dev-review-loop.ts`'s `postDeveloperRoundComment`), the same convention every other driver-posted marked comment in this file already uses. */
 export function developerRoundMarker(roundNum: number): string {
-  return `<!-- aeg:developer:round-${roundNum} -->`
+  return `<!-- ${COMMENT_MARKER_PREFIX_CURRENT}:developer:round-${roundNum} -->`
 }
 
 /** The `Pause-bound ruling:` value every driver-rendered comment carries: `<ruling>|<pause>|<digest>`, or `(none)`. */
@@ -81,7 +82,7 @@ export function renderDeveloperRoundComment(
  * second layer, applied to whatever reaches the renderer: every control
  * character becomes a space, so the command stays one line inside its code
  * span; a backtick becomes a quote, so it cannot close that span; an HTML
- * comment opener is escaped, so no `<!-- aeg:… -->` marker parser can match
+ * comment opener is escaped, so no `<!-- vinaya:… -->` marker parser can match
  * it; and a `VERDICT:` label is split from its colon, the same defanging
  * forge text gets (`task-tools/pr-facts.ts`), so no verdict extractor reads it.
  */

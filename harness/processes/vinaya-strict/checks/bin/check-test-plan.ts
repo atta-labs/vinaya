@@ -87,7 +87,7 @@ export function runTestPlanCheck(inputs: LiveCheckInputs, deps: LiveCheckDeps = 
         severity: 'error',
         message: `test-plan: ${resolved.message} The \`[live]\` lines this pull request must have passed are unknown, so the check fails closed.`,
         agent_recovery_prompt:
-          'Check `gh auth status` and network, and that the task Issue carries its frozen `aeg:brief:v<k>` comment, then re-run `vinaya-check test-plan`.'
+          'Check `gh auth status` and network, and that the task Issue carries its frozen `vinaya:brief:v<k>` comment, then re-run `vinaya-check test-plan`.'
       }
     ]
   }

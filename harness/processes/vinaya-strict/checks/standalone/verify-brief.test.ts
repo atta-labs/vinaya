@@ -247,7 +247,7 @@ describe('verify-brief — grades the dispatched Issue comment, not PR_BODY, on 
     const path = fakeGhWithComments('some other unrelated comment, no marker line')
     const { code, output } = runCli([], { BRANCH: 'task/iter/12', PR_BODY: 'Closes #12\n', PATH: path })
     expect(code).toBe(1)
-    expect(output).toMatch(/not dispatched.*no `aeg:brief:v<k>` comment on Issue #12/)
+    expect(output).toMatch(/not dispatched.*no `vinaya:brief:v<k>` comment on Issue #12/)
   })
 
   it('fails before ever attempting to fetch the Issue when `Closes #N` is missing on a task branch', () => {

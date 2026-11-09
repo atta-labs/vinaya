@@ -20,7 +20,7 @@ export type IssueComment = { body: string; author?: { login?: string } | null }
 export type FrozenBriefResolution = { ok: true; content: string } | { ok: false; notFound: boolean; message: string }
 
 /**
- * The task Issue's newest frozen `aeg:brief:v<k>` comment — the Issue named
+ * The task Issue's newest frozen `vinaya:brief:v<k>` comment — the Issue named
  * by the body's `Closes #N`, its comments read through `fetchComments`, the
  * newest principal-authored version picked by `@attalabs/aeg-core`'s
  * `resolveNewestFrozenBrief`, the same single resolver the review loop uses,
@@ -70,7 +70,11 @@ export function resolveTaskFrozenBrief(
     principals
   )
   if (!resolved) {
-    return { ok: false, notFound: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issue}.` }
+    return {
+      ok: false,
+      notFound: false,
+      message: `not dispatched — no \`vinaya:brief:v<k>\` comment on Issue #${issue}.`
+    }
   }
   return { ok: true, content: resolved.content }
 }
