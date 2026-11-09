@@ -887,6 +887,7 @@ export const MAPPING_SOURCE_PATHS: readonly string[] = [
   'harness/kernel/log/schema.ts',
   'harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts',
   'harness/kernel/gates/checks/anchored-region.ts',
+  'harness/processes/vinaya-strict/tools/legacy-markers.ts',
   'harness/kernel/adapters/code-host/github/strip-code.ts'
 ]
 
