@@ -20,6 +20,9 @@ is derived from the folder tree.
 | log-server | `apps/log-server` | `apps/log-server/specs/` | (state tracked globally for now) |
 | vinaya | `.` | `specs/` | (state tracked globally) |
 | vinaya-portal | `apps/vinaya-portal` | `apps/vinaya-portal/specs/` | (state tracked globally) |
+| vinaya-studio | `apps/vinaya-studio` | `apps/vinaya-studio/specs/` | (state tracked globally) |
+| ui | `packages/ui` | `packages/ui/specs/` | (state tracked globally) |
+| cms | `packages/cms` | `packages/cms/specs/` | (state tracked globally) |
 
 Each workspace package that is a work surface gets its own row, so a task's
 `Project:` names the package it actually touches rather than the repository
@@ -34,8 +37,8 @@ package, so this is the intent rather than a universal.
 > (`harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.ts:43`) deliberately does not
 > read, so a remap-only pass would leave it resolving to nothing.
 
-> **The `Specs` paths are declared, not yet real** — only `apps/cli/specs/`
-> exists. Where a package's specs belong is unsettled: `isSpecFile`
+> **Most `Specs` paths are declared, not yet real** — only `apps/cli/specs/`,
+> `apps/log-server/specs/` and `apps/vinaya-studio/specs/` exist. Where a package's specs belong is unsettled: `isSpecFile`
 > (`harness/processes/vinaya-strict/tools/file-classify.ts:50`) and `isDocFile` (`:35`) both
 > match `apps/**/specs/**` only, so a spec at `packages/<name>/specs/` is
 > invisible to `verify-docs` and to tier derivation
