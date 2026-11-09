@@ -283,7 +283,8 @@ export function parsePassEntryFile(text: string | null): PassEntry[] {
         typeof e?.test === 'string' &&
         typeof e.key === 'string' &&
         typeof e.head === 'string' &&
-        typeof e.source === 'string'
+        typeof e.source === 'string' &&
+        (e.base === undefined || typeof e.base === 'string')
     )
   } catch {
     return []
@@ -305,6 +306,8 @@ export function passEntriesOfReport(input: {
   records: SelectionRecords | null
   tests: ReadonlySet<string>
   source: string
+  /** What the entry names as the commit that passed, when the run tested a merge of it; `revision` otherwise. */
+  stamp?: { head: string; base: string }
 }): PassEntry[] {
   const results = junitFileResults(input.xml)
   if (!results || input.context === null) return []
@@ -317,7 +320,12 @@ export function passEntriesOfReport(input: {
     const source = input.repo.read(input.revision, test)
     if (source === null || marksOnly(source)) continue
     const key = keyOf(test)
-    if (key !== null) entries.push({ test, key, head: input.revision, source: input.source })
+    if (key !== null)
+      entries.push(
+        input.stamp
+          ? { test, key, head: input.stamp.head, base: input.stamp.base, source: input.source }
+          : { test, key, head: input.revision, source: input.source }
+      )
   }
   return entries
 }
@@ -326,6 +334,11 @@ export function passEntriesOfReport(input: {
  * The pass entries a scheduled run's own Bun reports prove at the checked-out commit, keyed under this checkout's
  * verification context and `record`: none when the tracked tree differs from the commit or a verification input
  * carries an uncommitted change, since then the run proved nothing about the commit.
+ *
+ * A pull request's CI tests its merge commit, which no later run can fetch. Given the pull request's head
+ * (`approvedHead`), each entry names that head and the merge's first parent as its `base`, and keeps the key the
+ * merge commit gave it: a later run rebuilds the same merge from those two and checks the key there
+ * ({@link trustedCiPassEntries}). A checkout that is neither the head nor a two-parent merge of it gives no entry.
  */
 export function passEntriesOfRun(input: {
   repoRoot: string
@@ -334,12 +347,22 @@ export function passEntriesOfRun(input: {
   record: ReadRecord | null
   platform?: string
   source: string
+  /** The pull request head this run tested a merge of; absent when the checkout is the commit under test. */
+  approvedHead?: string
 }): PassEntry[] {
   const { repoRoot, view } = input
   if (input.reports.length === 0) return []
   if (git(repoRoot, ['status', '--porcelain', '-uno']) !== '' || verificationInputsDirty(repoRoot) !== false) return []
   const head = git(repoRoot, ['rev-parse', 'HEAD'])
   if (!head) return []
+  let stamp: { head: string; base: string } | undefined
+  if (input.approvedHead && input.approvedHead !== head) {
+    const first = git(repoRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^1'])
+    const second = git(repoRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^2'])
+    const third = git(repoRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^3'])
+    if (!first || second !== input.approvedHead || third) return []
+    stamp = { head: second, base: first }
+  }
   const context = nativeContext(
     computeVerificationContext(repoRoot, runEnvironment())?.digest ?? null,
     view.contextIdentity
@@ -348,7 +371,7 @@ export function passEntriesOfRun(input: {
   const records = input.record ? { record: input.record, platform: input.platform ?? process.platform } : null
   const tests = new Set(view.tests.map((t) => t.id))
   return input.reports.flatMap((report) =>
-    passEntriesOfReport({ ...report, repo, revision: head, context, records, tests, source: input.source })
+    passEntriesOfReport({ ...report, repo, revision: head, context, records, tests, source: input.source, stamp })
   )
 }
 
@@ -401,9 +424,13 @@ export function trustedPassProducer(repoRoot: string, base: string, head: string
  * ({@link trustedPassProducer}) are kept; a folder that names no commit is dropped whole.
  *
  * What an artifact says is checked too, since the code that wrote it is the pull request's: an entry is kept only
- * when it names its producer as its head and its stored key is the key its test has at that producer, recomputed
- * here under this run's context and record. An entry minted for a later head, or under a key its test never had at
- * the commit that ran it, is dropped; with no context, no entry is kept.
+ * when it names its producer as its head and its stored key is the key its test had where it ran, recomputed here
+ * under this run's context and record. An entry that ran on the producer itself is keyed at the producer. One that
+ * ran on the pull request's merge commit names that merge's first parent as its `base`: the base must be a commit
+ * of the branch this pull request merges into (an ancestor of `base`), and the key is recomputed at the merge of it
+ * and the producer, rebuilt here, since the merge commit that ran cannot be fetched later. An entry minted for a
+ * later head, under a key its test never had where it ran, or on a merge that cannot be rebuilt cleanly, is dropped;
+ * with no context, no entry is kept.
  */
 export function trustedCiPassEntries(
   repoRoot: string,
@@ -414,13 +441,57 @@ export function trustedCiPassEntries(
 ): PassEntry[] {
   if (!existsSync(dir) || verify.context === null) return []
   const context = verify.context
+  const keyers = new Map<string, ((test: string) => string | null) | null>()
+  const keyerAt = (producer: string, mergedOnto: string | undefined) => {
+    const slot = `${producer} ${mergedOnto ?? ''}`
+    if (!keyers.has(slot)) {
+      const revision = mergedOnto === undefined ? producer : rebuiltMerge(repoRoot, mergedOnto, producer, base)
+      keyers.set(
+        slot,
+        revision === null ? null : passKeys({ repo: verify.repo, revision, context, records: verify.records })
+      )
+    }
+    return keyers.get(slot) ?? null
+  }
   return readdirSync(dir).flatMap((producer) => {
     if (!trustedPassProducer(repoRoot, base, head, producer)) return []
-    const keyOf = passKeys({ repo: verify.repo, revision: producer, context, records: verify.records })
-    return passEntriesUnder(join(dir, producer)).filter(
-      (entry) => entry.head === producer && entry.key === keyOf(entry.test)
-    )
+    return passEntriesUnder(join(dir, producer)).filter((entry) => {
+      if (entry.head !== producer) return false
+      const keyOf = keyerAt(producer, entry.base)
+      return keyOf !== null && entry.key === keyOf(entry.test)
+    })
   })
+}
+
+/**
+ * The commit an earlier pull-request run tested: `producer` merged onto `mergedOnto`, rebuilt as a local commit
+ * whose tree is git's own merge of the two. `null` when `mergedOnto` is not a commit of the branch `base` belongs
+ * to, or the two do not merge cleanly. A rebuilt tree that differs from the one GitHub tested only makes the keys
+ * disagree, so its entries are dropped, never trusted.
+ */
+function rebuiltMerge(repoRoot: string, mergedOnto: string, producer: string, base: string): string | null {
+  if (!/^[0-9a-f]{40}$/.test(mergedOnto) || !isAncestor(repoRoot, mergedOnto, base)) return null
+  const tree = git(repoRoot, ['merge-tree', '--write-tree', '--no-messages', mergedOnto, producer])
+  if (!tree || !/^[0-9a-f]{40}$/.test(tree)) return null
+  const fixed = { name: 'vinaya', email: 'vinaya@localhost', date: '1970-01-01T00:00:00Z' }
+  try {
+    return execFileSync('git', ['commit-tree', tree, '-p', mergedOnto, '-p', producer, '-m', 'rebuilt merge'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: {
+        ...cleanGitEnv(),
+        GIT_AUTHOR_NAME: fixed.name,
+        GIT_AUTHOR_EMAIL: fixed.email,
+        GIT_AUTHOR_DATE: fixed.date,
+        GIT_COMMITTER_NAME: fixed.name,
+        GIT_COMMITTER_EMAIL: fixed.email,
+        GIT_COMMITTER_DATE: fixed.date
+      }
+    }).trim()
+  } catch {
+    return null
+  }
 }
 
 /**

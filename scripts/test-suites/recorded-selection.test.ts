@@ -443,14 +443,14 @@ function pushRunList(dir: string): string[] {
   return [...new Set((note.native?.identities ?? []).map((id) => id.replace(/@[^@]*$/, '')))].sort()
 }
 
-/** The tests CI's plan runs for a pull request from `base` to `head`. */
-function ciRunList(dir: string, base: string, head: string, passes?: string): string[] {
+/** The tests CI's plan runs for a pull request from `base` to `head`, testing `tested` (the head itself by default). */
+function ciRunList(dir: string, base: string, head: string, passes?: string, tested = head): string[] {
   const plan = buildCiPlan({
     repoRoot: dir,
     event: 'pull_request',
     base,
     approvedHead: head,
-    testedTree: head,
+    testedTree: tested,
     guard: { verdict: 'plan', reason: 'the fixture changes no planning input', guarded: [] },
     reachRecord: NO_RECORD,
     fetch: () => {},
@@ -526,29 +526,66 @@ describe('the push gate and CI run exactly the one entry point’s planned tests
     }
   }, 120_000)
 
-  it('CI reuses the pass entries an earlier run of the same pull request stored, unless their key changed', () => {
+  it('CI reuses the pass entries an earlier run of the same pull request stored on its merge commit, unless their key changed', () => {
     const { dir, git, base, head } = callersRepository()
     const passes = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-ci-passes-')))
     try {
-      const view = loadSelectionInputs({ repoRoot: dir, caller: 'ci', base, head, reach: NO_RECORD }).inventory.head
+      // The default branch moves on, so the pull request's merge commit is a real merge, not its head.
+      git('checkout', '-q', 'main')
+      writeFileSync(join(dir, 'packages/core/src/mul.ts'), 'export const mul = (a: number, b: number) => b * a\n')
+      git('commit', '-q', '-am', 'main moves')
+      const onto = git('rev-parse', 'HEAD')
+      // GitHub tests a fresh merge commit of the base and the head on each run; the next run cannot fetch this one.
+      const mergeCommit = (message: string) => {
+        git('checkout', '-q', '--detach', onto)
+        git('merge', '-q', '--no-ff', '-m', message, head)
+        return git('rev-parse', 'HEAD')
+      }
+      const firstRun = mergeCommit('run 1')
+      const view = loadSelectionInputs({ repoRoot: dir, caller: 'ci', base: onto, head: firstRun, reach: NO_RECORD })
+        .inventory.head
       const xml =
         '<testsuites name="bun test">\n  <testsuite name="scripts/check.test.ts" file="scripts/check.test.ts" tests="1">\n    <testcase name="check" />\n  </testsuite>\n</testsuites>\n'
-      const entries = passEntriesOfRun({
-        repoRoot: dir,
-        view,
-        reports: [{ cwd: '.', xml }],
-        record: null,
-        source: 'ci shared'
-      })
+      const run = (approvedHead?: string) =>
+        passEntriesOfRun({
+          repoRoot: dir,
+          view,
+          reports: [{ cwd: '.', xml }],
+          record: null,
+          source: 'ci shared',
+          approvedHead
+        })
+      const entries = run(head)
+      expect(entries.map((e) => [e.test, e.head, e.base])).toEqual([['scripts/check.test.ts', head, onto]])
+      // A shard handed a head its checkout does not merge writes nothing.
+      expect(run(base)).toEqual([])
+      const secondRun = mergeCommit('run 2')
+      expect(secondRun).not.toBe(firstRun)
+      git('checkout', '-q', 'task/x/1')
       // The workflow files each run's artifacts under the head commit GitHub reports for that run.
-      mkdirSync(join(passes, head, '1'), { recursive: true })
-      writeFileSync(join(passes, head, '1', 'shared.json'), JSON.stringify({ version: 1, entries }))
-      expect(ciRunList(dir, base, head)).toEqual(['packages/app/tests/add.test.ts', 'scripts/check.test.ts'])
-      expect(ciRunList(dir, base, head, passes)).toEqual(['packages/app/tests/add.test.ts'])
+      const file = (list: typeof entries) => {
+        mkdirSync(join(passes, head, '1'), { recursive: true })
+        writeFileSync(join(passes, head, '1', 'shared.json'), JSON.stringify({ version: 1, entries: list }))
+      }
+      file(entries)
+      const all = ['packages/app/tests/add.test.ts', 'scripts/check.test.ts']
+      expect(ciRunList(dir, onto, head, undefined, secondRun)).toEqual(all)
+      expect(ciRunList(dir, onto, head, passes, secondRun)).toEqual(['packages/app/tests/add.test.ts'])
+      // An entry naming the merge commit that ran, or a base off the branch the pull request merges into, is dropped.
+      file(entries.map((e) => ({ ...e, head: firstRun })))
+      expect(ciRunList(dir, onto, head, passes, secondRun)).toEqual(all)
+      file(entries.map((e) => ({ ...e, base: head })))
+      expect(ciRunList(dir, onto, head, passes, secondRun)).toEqual(all)
+      file(entries)
       // The next push to the pull request changes a tracked file: the stored pass no longer holds.
       writeFileSync(join(dir, 'vinaya.config.json'), '{ "prePush": { "alwaysRun": [] }, "x": 1 }\n')
       git('commit', '-q', '-am', 'next push')
-      expect(ciRunList(dir, base, git('rev-parse', 'HEAD'), passes)).toContain('scripts/check.test.ts')
+      const next = git('rev-parse', 'HEAD')
+      git('checkout', '-q', '--detach', onto)
+      git('merge', '-q', '--no-ff', '-m', 'run 3', next)
+      const thirdRun = git('rev-parse', 'HEAD')
+      git('checkout', '-q', 'task/x/1')
+      expect(ciRunList(dir, onto, next, passes, thirdRun)).toContain('scripts/check.test.ts')
     } finally {
       rmSync(dir, { recursive: true, force: true })
       rmSync(passes, { recursive: true, force: true })

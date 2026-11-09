@@ -234,8 +234,10 @@ export type PassEntry = {
   test: string
   /** The verification context plus the content of every path the test reads; see {@link passEntryKey}. */
   key: string
-  /** The commit the test passed on. */
+  /** The commit the test passed on — when it ran on a merge of that commit onto `base`, the merged commit. */
   head: string
+  /** When the test ran on `head` merged onto another commit (a pull request's merge commit), that commit. */
+  base?: string
   /** Who ran it: a local push, a CI shard, a hand run — for the plan's account only. */
   source: string
 }

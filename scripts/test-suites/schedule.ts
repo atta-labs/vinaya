@@ -781,7 +781,7 @@ function main(argv: readonly string[]): number {
   const decisionPath = argValue(argv, '--decision')
   if (!full && !decisionPath) {
     process.stderr.write(
-      'usage: schedule.ts (--dry-run | --json | --run --placement <shard-N|shared> [--summary <file>] [--pass-entries <file> [--record <file>]]) (--full [--reason <text>] | --decision <file>)\n'
+      'usage: schedule.ts (--dry-run | --json | --run --placement <shard-N|shared> [--summary <file>] [--pass-entries <file> [--record <file>] [--approved-head <sha>]]) (--full [--reason <text>] | --decision <file>)\n'
     )
     return 2
   }
@@ -855,7 +855,8 @@ function main(argv: readonly string[]): number {
       view,
       reports,
       record: isReadRecord(parsed) ? parsed : null,
-      source: `ci ${placement}`
+      source: `ci ${placement}`,
+      approvedHead: argValue(argv, '--approved-head')
     })
     mkdirSync(dirname(passesFile), { recursive: true })
     writeFileSync(passesFile, `${JSON.stringify({ version: 1, entries })}\n`)

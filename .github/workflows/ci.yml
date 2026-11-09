@@ -488,6 +488,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_PLAN_DECISION: ${{ needs.build.outputs.decision }}
           CI_PLAN_TESTED: ${{ needs.build.outputs.plan_tested }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           DECISION="$RUNNER_TEMP/decision.json"
           if [ -z "$CI_PLAN_DECISION" ] || [ "$CI_PLAN_TESTED" != "$(git rev-parse HEAD)" ]; then
@@ -496,7 +497,7 @@ jobs:
           fi
           printf '%s\n' "$CI_PLAN_DECISION" > "$DECISION"
           unset CI_PLAN_DECISION CI_PLAN_TESTED
-          bun scripts/test-suites/schedule.ts --run --placement shared --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY" --pass-entries "$RUNNER_TEMP/pass-entries/shared.json" --record "$RUNNER_TEMP/ci-plan-record/read-record.json"
+          bun scripts/test-suites/schedule.ts --run --placement shared --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY" --pass-entries "$RUNNER_TEMP/pass-entries/shared.json" --record "$RUNNER_TEMP/ci-plan-record/read-record.json" --approved-head "$PR_HEAD"
       # Every test file this job passed completely, for the next run of this
       # pull request to reuse — kept when other files failed too.
       - name: Store this job's pass entries
@@ -586,6 +587,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_PLAN_DECISION: ${{ needs.build.outputs.decision }}
           CI_PLAN_TESTED: ${{ needs.build.outputs.plan_tested }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           DECISION="$RUNNER_TEMP/decision.json"
           if [ -z "$CI_PLAN_DECISION" ] || [ "$CI_PLAN_TESTED" != "$(git rev-parse HEAD)" ]; then
@@ -596,7 +598,7 @@ jobs:
           # The tests run under the same environment as on `main`, the job
           # token included; the plan's own variable never reaches them.
           unset CI_PLAN_DECISION CI_PLAN_TESTED
-          bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY" --pass-entries "$RUNNER_TEMP/pass-entries/shard-${{ matrix.shard }}.json" --record "$RUNNER_TEMP/ci-plan-record/read-record.json"
+          bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY" --pass-entries "$RUNNER_TEMP/pass-entries/shard-${{ matrix.shard }}.json" --record "$RUNNER_TEMP/ci-plan-record/read-record.json" --approved-head "$PR_HEAD"
       # Every test file this shard passed completely, for the next run of this
       # pull request to reuse — kept when other files failed too.
       - name: Store this shard's pass entries

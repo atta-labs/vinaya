@@ -110,6 +110,38 @@ describe('five real changes replayed onto the record’s commit', () => {
     expect(Object.keys(PINS).sort()).toEqual([...CHANGES].sort())
   })
 
+  // The fixture is compressed, so no text scan reads it: this is its only check that it holds the recorder's
+  // output — test ids, paths and markers — and nothing else.
+  it('the record fixture holds only the recorder’s fields, and only paths in them', () => {
+    expect(Object.keys(RECORD).sort()).toEqual(['commit', 'platform', 'schema', 'schemaVersion', 'tests'])
+    const fields = new Set(['reads', 'listed', 'fallback', 'gitReaders', 'branchesOnPlatform'])
+    const secretShape =
+      /ghp_|gho_|ghs_|github_pat_|xox[abpr]-|AKIA[0-9A-Z]{12}|sk-[A-Za-z0-9]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10}/
+    const strange: string[] = []
+    for (const [id, test] of Object.entries(RECORD.tests)) {
+      if (!/^[\w@.\-/+[\]()]+\.test\.tsx?$/.test(id)) strange.push(id)
+      for (const [field, value] of Object.entries(test)) {
+        if (!fields.has(field)) strange.push(`${id}: field ${field}`)
+        else if (field === 'fallback') {
+          if (value !== 'git-read') strange.push(`${id}: fallback ${String(value)}`)
+        } else if (field === 'branchesOnPlatform') {
+          if (value !== true) strange.push(`${id}: branchesOnPlatform ${String(value)}`)
+        } else if (!Array.isArray(value)) strange.push(`${id}: ${field} is not a list`)
+        else
+          for (const item of value as unknown[])
+            if (
+              typeof item !== 'string' ||
+              secretShape.test(item) ||
+              (field === 'gitReaders'
+                ? !/^(\/usr\/lib\/git-core\/)?git[ -]/.test(item) && item !== 'the test process'
+                : item.length > 400)
+            )
+              strange.push(`${id}: ${field} ${String(item).slice(0, 80)}`)
+      }
+    }
+    expect(strange).toEqual([])
+  })
+
   for (const change of CHANGES)
     it(`${change}: the pinned set, from the CI caller and the push caller alike`, () => {
       const head = replayCommit(change)
