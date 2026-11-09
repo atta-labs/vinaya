@@ -140,15 +140,25 @@ function parentOf(pid: number): number | null {
   }
 }
 
-/** Whether the process that last made a link (its `.owner` file) is a live ancestor of this one. */
-export function ownedByAncestor(ownerFile: string, pid: number = process.pid): boolean {
+/**
+ * Whether the process that last made a link (its `.owner` file: its id, then its repository root) is a live
+ * ancestor of this one, running in the same repository (`repoRoot`, when given). A repository that shares another
+ * checkout's `node_modules` — a fixture clone a test runs a scheduler in — shares its links too; an ancestor in the
+ * other checkout does not hold this repository's run. The outer run then loses its report (Bun says it could not
+ * write it and exits as it would have), so it proves no pass: never one it did not make.
+ */
+export function ownedByAncestor(ownerFile: string, pid: number = process.pid, repoRoot?: string): boolean {
   let owner: number
+  let ownerRoot: string | undefined
   try {
-    owner = Number(readFileSync(ownerFile, 'utf8').trim())
+    const [id, root] = readFileSync(ownerFile, 'utf8').split('\n')
+    owner = Number(id?.trim())
+    ownerRoot = root?.trim() || undefined
   } catch {
     return false
   }
   if (!Number.isInteger(owner) || owner <= 1 || owner === pid) return false
+  if (repoRoot !== undefined && ownerRoot !== repoRoot) return false
   try {
     process.kill(owner, 0)
   } catch (error) {
@@ -179,7 +189,7 @@ export function linkJunitReport(cwd: string = process.cwd(), env: NodeJS.Process
     // A run a test starts in the same folder leaves the link to the run that started it: its report goes where the
     // outer run's goes, and the outer run, which ends last, writes its own report over it.
     const owner = `${link}.owner`
-    if (ownedByAncestor(owner)) return null
+    if (ownedByAncestor(owner, process.pid, repoRoot)) return null
     let target = env[JUNIT_REPORT_ENV]
     // A test this run starts gets its own link, never the scheduler's report.
     delete env[JUNIT_REPORT_ENV]
@@ -198,7 +208,7 @@ export function linkJunitReport(cwd: string = process.cwd(), env: NodeJS.Process
     rmSync(temporary, { force: true })
     symlinkSync(target, temporary)
     renameSync(temporary, link)
-    writeFileSync(owner, `${process.pid}\n`)
+    writeFileSync(owner, `${process.pid}\n${repoRoot}\n`)
     return target
   } catch {
     return null

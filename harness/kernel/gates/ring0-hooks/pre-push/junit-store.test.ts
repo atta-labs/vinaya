@@ -2,7 +2,16 @@
 // a new stored report with its run note; stored reports are read back with their notes.
 import { describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -76,7 +85,7 @@ describe('the JUnit report link', () => {
       const report = join(dir, 'outer.xml')
       expect(linkJunitReport(dir, { [JUNIT_REPORT_ENV]: report } as NodeJS.ProcessEnv)).toBe(report)
       const owner = join(dir, JUNIT_LINK_DIR, 'root.xml.owner')
-      expect(readFileSync(owner, 'utf8').trim()).toBe(String(process.pid))
+      expect(readFileSync(owner, 'utf8')).toBe(`${process.pid}\n${dir}\n`)
       // A real nested process: its parent (this test process) owns the link, so it links nothing.
       const nested = Bun.spawnSync([
         'bun',
@@ -85,6 +94,23 @@ describe('the JUnit report link', () => {
       ])
       expect(nested.stdout.toString().trim()).toBe('null')
       expect(readlinkSync(join(dir, JUNIT_LINK_DIR, 'root.xml'))).toBe(report)
+      // A nested run in another repository that shares this one's `node_modules` (a fixture clone) takes the link:
+      // its scheduler reads its own report, so the ancestor here does not hold it.
+      const clone = repository()
+      try {
+        symlinkSync(join(dir, 'node_modules'), join(clone, 'node_modules'))
+        const inner = join(clone, 'inner.xml')
+        const taken = Bun.spawnSync([
+          'bun',
+          '-e',
+          `const m = await import(${JSON.stringify(join(import.meta.dir, 'junit-store.ts'))}); console.log(JSON.stringify(m.linkJunitReport(${JSON.stringify(clone)}, { ${JUNIT_REPORT_ENV}: ${JSON.stringify(inner)} })))`
+        ])
+        expect(taken.stdout.toString().trim()).toBe(JSON.stringify(inner))
+        expect(readlinkSync(join(dir, JUNIT_LINK_DIR, 'root.xml'))).toBe(inner)
+        expect(ownedByAncestor(owner, process.pid, dir)).toBe(false)
+      } finally {
+        rmSync(clone, { recursive: true, force: true })
+      }
       // A live process that is no ancestor of this one does not hold the link.
       const other = Bun.spawn(['sleep', '30'])
       try {
