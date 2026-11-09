@@ -88,16 +88,13 @@ export const GENERIC_SUITE_IDS = {
 
 /** Each derived file, by the split it holds. */
 export const DERIVED_FILES = {
-  developer: {
-    development: join(
-      import.meta.dir,
-      '../../../../kernel/evals/suites/change/developer-capability-generic-cases.json'
-    ),
-    heldOut: join(import.meta.dir, '../../../../kernel/evals/suites/change/developer-capability-generic-held-out.json')
+  change: {
+    development: join(import.meta.dir, '../../../../kernel/evals/suites/change/change-generic-cases.json'),
+    heldOut: join(import.meta.dir, '../../../../kernel/evals/suites/change/change-generic-held-out.json')
   },
-  reviewer: {
-    development: join(import.meta.dir, '../../../../kernel/evals/suites/review/reviewer-quality-generic-cases.json'),
-    heldOut: join(import.meta.dir, '../../../../kernel/evals/suites/review/reviewer-quality-generic-held-out.json')
+  review: {
+    development: join(import.meta.dir, '../../../../kernel/evals/suites/review/review-generic-cases.json'),
+    heldOut: join(import.meta.dir, '../../../../kernel/evals/suites/review/review-generic-held-out.json')
   },
   sourceCitation: {
     development: join(import.meta.dir, '../../../../kernel/evals/suites/citation/source-citation-generic-cases.json'),
@@ -1581,14 +1578,14 @@ export function recutDevelopment(git: Git = repositoryGit): Recut {
     return derived.case
   })
   const developer = derivedFile(
-    DERIVED_FILES.developer.development,
+    DERIVED_FILES.change.development,
     'development',
     [DEVELOPER_CASES_PATH, STATEMENTS_PATH],
     [{ suite: GENERIC_SUITE_IDS.developer, cases: developerCases, layerPOnly: [] }],
     undeliverable
   )
   const reviewers = derivedFile(
-    DERIVED_FILES.reviewer.development,
+    DERIVED_FILES.review.development,
     'development',
     [REVIEWER_CASES_PATHS['code-reviewer'], REVIEWER_CASES_PATHS['security-reviewer'], STATEMENTS_PATH],
     reviewerSuites(
@@ -1677,7 +1674,7 @@ export function recutHeldOut(
     return derived.case
   })
   const developer = derivedFile(
-    DERIVED_FILES.developer.heldOut,
+    DERIVED_FILES.change.heldOut,
     'held-out',
     [join(import.meta.dir, '../../executing/developer/evals', developerFile.splits.heldOut.file)],
     [{ suite: GENERIC_SUITE_IDS.developer, cases: developerCases, layerPOnly: [] }],
@@ -1700,7 +1697,7 @@ export function recutHeldOut(
     generatedReviewerStatement
   )
   const reviewers = derivedFile(
-    DERIVED_FILES.reviewer.heldOut,
+    DERIVED_FILES.review.heldOut,
     'held-out',
     [join(import.meta.dir, '../../executing/evals/reviewer-quality-held-out.json')],
     reviewerSuitesHeld,

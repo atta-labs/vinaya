@@ -2,7 +2,7 @@
 
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { usePathname } from 'next/navigation'
-import { NextLink } from '@vinaya/ui/lib/next-link'
+import { NextLink } from '@vinaya/ui'
 import { pageNeighbours } from '../_lib/portal-docs'
 
 /** The previous and next page in reading order, at the end of every docs page. */

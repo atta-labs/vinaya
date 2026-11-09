@@ -10,7 +10,7 @@
      rivets 1.8k · feet 2k · main = coreRadius = (0.3·size)/2 − 3 = 0.284c
 */
 import * as THREE from 'three'
-import { clamp01, easeOutCubic } from '@vinaya/ui/lib/math'
+import { clamp01, easeOutCubic } from '@vinaya/ui'
 
 /* ── tokens ──────────────────────────────────────────────────────────────── */
 function oklchToHex(str) {

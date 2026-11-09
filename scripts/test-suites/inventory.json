@@ -28,6 +28,14 @@
       "preload": null
     },
     {
+      "id": "studio",
+      "owner": "@vinaya/studio",
+      "kind": "workspace",
+      "dir": "apps/vinaya-studio",
+      "runner": "bun",
+      "preload": null
+    },
+    {
       "id": "cms",
       "owner": "@vinaya/cms",
       "kind": "workspace",
@@ -143,6 +151,7 @@
             "cli",
             "log-server",
             "portal",
+            "studio",
             "cms",
             "test-selection",
             "kernel",

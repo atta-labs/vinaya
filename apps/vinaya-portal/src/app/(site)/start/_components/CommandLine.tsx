@@ -1,4 +1,4 @@
-import { CodeBlock } from '@vinaya/ui/components'
+import { CodeBlock } from '@vinaya/ui'
 
 /** A single-command display, local to this section. */
 export function CommandLine({ command }: { command: string }) {

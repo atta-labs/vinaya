@@ -74,7 +74,7 @@ describe('allowed', () => {
     "import { ELEMENT_ICONS } from '@/app/(site)/_components/icons/registry'",
     "import { Mark } from './icons/react-icons-like'",
     "import { Mark } from '../marks'",
-    "import { NextLink } from '@vinaya/ui/lib/next-link'",
+    "import { NextLink } from '@vinaya/ui'",
     '<Button variant="primary">',
     '<NextLink href="/x">',
     '// text-white is explained here',

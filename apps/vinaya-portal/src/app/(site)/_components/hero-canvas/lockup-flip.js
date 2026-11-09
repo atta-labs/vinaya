@@ -1,4 +1,4 @@
-import { clamp01, easeInOutCubic, smoothstep } from '@vinaya/ui/lib/math'
+import { clamp01, easeInOutCubic, smoothstep } from '@vinaya/ui'
 /**
  * The complete FLIP loop — this is the whole mechanism, nothing omitted.
  *

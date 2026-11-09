@@ -81,7 +81,7 @@ const RECUT_BUDGET_MS = 300_000
  * that only the held-out re-cut, run under the three approvals, may rewrite.
  */
 const HELD_OUT_AWAITING_RECUT: readonly string[] = [
-  DERIVED_FILES.developer.heldOut,
+  DERIVED_FILES.change.heldOut,
   DERIVED_FILES.sourceCitation.heldOut,
   DERIVED_FILES.wholeLoop.heldOut
 ]
@@ -455,7 +455,7 @@ export function exitReport(code: number): ExitReport {
   })
 
   it('names the pass field of ExitReport in the pr-1320 statement', () => {
-    const derived = JSON.parse(readFileSync(DERIVED_FILES.developer.development, 'utf8')) as {
+    const derived = JSON.parse(readFileSync(DERIVED_FILES.change.development, 'utf8')) as {
       suites: { cases: { id: string; taskStatement: string }[] }[]
     }
     const statement = derived.suites[0]?.cases.find((c) => c.id === 'pr-1320')?.taskStatement ?? ''
@@ -480,7 +480,7 @@ export function exitReport(code: number): ExitReport {
   })
 
   it('names the error the pr-1091 tests import from the module they import it from', () => {
-    const derived = JSON.parse(readFileSync(DERIVED_FILES.developer.development, 'utf8')) as {
+    const derived = JSON.parse(readFileSync(DERIVED_FILES.change.development, 'utf8')) as {
       suites: { cases: { id: string; taskStatement: string }[] }[]
     }
     const statement = derived.suites[0]?.cases.find((c) => c.id === 'pr-1091')?.taskStatement ?? ''
@@ -687,8 +687,8 @@ describe('re-running the re-cut', () => {
     () => {
       const recut = recutDevelopment()
       expect(recut.files.map((f) => f.path)).toEqual([
-        DERIVED_FILES.developer.development,
-        DERIVED_FILES.reviewer.development,
+        DERIVED_FILES.change.development,
+        DERIVED_FILES.review.development,
         DERIVED_FILES.sourceCitation.development,
         DERIVED_FILES.wholeLoop.development
       ])
@@ -719,8 +719,8 @@ describe('re-running the re-cut', () => {
     () => {
       const recut = recutHeldOut(approvals)
       expect(recut.files.map((f) => f.path)).toEqual([
-        DERIVED_FILES.developer.heldOut,
-        DERIVED_FILES.reviewer.heldOut,
+        DERIVED_FILES.change.heldOut,
+        DERIVED_FILES.review.heldOut,
         DERIVED_FILES.sourceCitation.heldOut,
         DERIVED_FILES.wholeLoop.heldOut
       ])

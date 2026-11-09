@@ -1,4 +1,4 @@
-import { Heading, Text } from '@vinaya/ui/shared'
+import { Heading, Text } from '@vinaya/ui'
 import { RevealGrid } from './LandingInteractions'
 import { LandingSection } from './LandingSection'
 import { HOME_FRAME, HomeHead } from './PortalSections'
