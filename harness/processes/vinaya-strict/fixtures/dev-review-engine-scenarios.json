@@ -14,11 +14,11 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "sha256": "55b19925085589c7646e0635d5dae444c810768cc2d2d559bce621ef8d22a710"
+        "sha256": "17e82ed3cff0cfe929c61deff6e06596327fc8f3e679df7384dd45409ebf90a4"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.ts",
-        "sha256": "45c74b2b00bc722fe520ef55cbcc58f051a656eb2afb9655f9fce286a69b98cd"
+        "sha256": "35344591b8a32c8fce0b5386449cc534bc79db2f7d6f103b4ef3648edd9b4c03"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-publication.ts",
@@ -34,7 +34,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/journal-history.ts",
-        "sha256": "fa808e98649de786630d13c76f2fc20f432d4bfd119cbe6c4d08927a40500f5d"
+        "sha256": "88c260c3e4d8022a39e66a5be75a04a3d71ec43aba0c580a4d47de7d09cb006d"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/live-check.ts",
@@ -42,7 +42,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts",
-        "sha256": "75a965923a32c7c9b2b975da18d6413e5a9b570b2f62f77780b4984ad01b92c7"
+        "sha256": "0a6b8bba78560a76455752095e803fe3e9f43a8f163273e8d73a42723d1e34c0"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts",
@@ -58,7 +58,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.ts",
-        "sha256": "9eae2c21b5c6f51ba58abe63cef14ce8265a76e12be43dd15c261dd0ffdbff45"
+        "sha256": "79bd5d8e4a9f945656cf5b3d042fa24a6bc5fa469bab8554137975676e500561"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/security-scan-command.ts",
@@ -82,11 +82,11 @@
       },
       {
         "path": "harness/processes/vinaya-strict/tools/dev-review-policy/journal-reconstruction.ts",
-        "sha256": "d016a7bdca59dab562f671d18aa31525b089c6370c2256b953694bc60e209a3f"
+        "sha256": "43909832295e80e4230dfed2055d5c13fb7f4a28a5c65273265edff1fbb98dee"
       },
       {
         "path": "harness/processes/vinaya-strict/tools/dev-review-policy/render-summary.ts",
-        "sha256": "6affa48c042e3322aaf9d8d9ee1f292d9bf9aeecdeef971def4a6dff7b87e9fe"
+        "sha256": "edd482eeea3e142fd91940a7f1f8ecba268efdbb78ef5d499a2f53cae54cbdae"
       },
       {
         "path": "harness/processes/vinaya-strict/tools/dev-review-policy/types.ts",
