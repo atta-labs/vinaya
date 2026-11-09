@@ -1,0 +1,3 @@
+/* Studio's stylesheet: the shared global stylesheet, so Studio's classes pass through Tailwind in one build. No
+   colour tokens here: every colour is a theme variable the CMS renders. */
+@import "@vinaya/ui/styles/globals.css";
