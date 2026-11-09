@@ -187,18 +187,28 @@ jobs:
       # a required check never re-runs a file an earlier run of the same pull
       # request passed when nothing in its key changed. None can be read: none
       # is reused.
+      # An artifact is written by the code the run tested, which the pull
+      # request controls, so it is trusted only by where it came from: runs
+      # of this workflow from this pull request's own head repository and
+      # branch, each filed under the head commit GitHub reports for it. The
+      # plan then keeps only a head that is a commit of this branch and whose
+      # every change is still in the change under review
+      # (`trustedPassProducer` in scripts/test-suites/repository-selection.ts).
       - name: Fetch the pass entries of this pull request's earlier runs
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           PASSES="$RUNNER_TEMP/pass-entries"
           mkdir -p "$PASSES"
-          RUNS=$(gh run list --workflow ci.yml --branch "$HEAD_REF" --event pull_request --json databaseId --jq '.[].databaseId' --limit 10 2>/dev/null || true)
-          for RUN in $RUNS; do
-            if [ "$RUN" = "$GITHUB_RUN_ID" ]; then continue; fi
-            gh run download "$RUN" --pattern 'pass-entries-*' --dir "$PASSES/$RUN" 2>/dev/null || true
+          RUNS=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" -f event=pull_request -f branch="$HEAD_REF" -f per_page=20 \
+            --jq '.workflow_runs[] | select(.head_repository.full_name == env.HEAD_REPO) | "\(.id) \(.head_sha)"' 2>/dev/null || true)
+          printf '%s\n' "$RUNS" | while read -r RUN SHA; do
+            if [ -z "$RUN" ] || [ "$RUN" = "$GITHUB_RUN_ID" ]; then continue; fi
+            case "$SHA" in *[!0-9a-f]*|'') continue ;; esac
+            gh run download "$RUN" --pattern 'pass-entries-*' --dir "$PASSES/$SHA/$RUN" 2>/dev/null || true
           done
           echo "Pass-entry files fetched: $(find "$PASSES" -name '*.json' | wc -l)" >&2
 

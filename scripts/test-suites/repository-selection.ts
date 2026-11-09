@@ -360,7 +360,7 @@ export function storePassEntries(repoRoot: string, entries: readonly PassEntry[]
   writeJsonUnderGit(repoRoot, PASS_ENTRIES_FILE, { version: 1, entries: all.slice(-PASS_ENTRIES_LIMIT) })
 }
 
-/** Every pass entry in the `*.json` pass-entry files under `dir` (CI's downloaded artifacts). */
+/** Every pass entry in the `*.json` pass-entry files under `dir`. */
 export function passEntriesUnder(dir: string): PassEntry[] {
   if (!existsSync(dir)) return []
   return readdirSync(dir, { recursive: true, encoding: 'utf8' })
@@ -372,6 +372,39 @@ export function passEntriesUnder(dir: string): PassEntry[] {
         return []
       }
     })
+}
+
+/**
+ * Whether the pass entries an earlier CI run stored at `producer` may be reused at `head`. That run executed the code
+ * of `producer` merged onto its base, so whatever the pull request had changed at `producer` decided what it wrote:
+ * its planner, its schedule, its preloads, its tests. The entries are trusted only when `producer` is a commit of
+ * this branch's history (an ancestor of `head`) and every path the pull request changed at `producer` holds the same
+ * content at `head` — so nothing that ran there is gone from the change now under review, and a change to a planning
+ * input that is still there runs everything under the base guard.
+ */
+export function trustedPassProducer(repoRoot: string, base: string, head: string, producer: string): boolean {
+  if (!/^[0-9a-f]{40}$/.test(producer) || !isAncestor(repoRoot, producer, head)) return false
+  const forkPoint = git(repoRoot, ['merge-base', producer, base])
+  if (!forkPoint) return false
+  const changed = git(repoRoot, ['diff', '--name-only', '--no-renames', forkPoint, producer])
+  if (changed === null) return false
+  const paths = changed.split('\n').filter(Boolean)
+  if (paths.length === 0) return true
+  const blobs = (revision: string) => git(repoRoot, ['ls-tree', '-r', revision, '--', ...paths])
+  const before = blobs(producer)
+  return before !== null && before === blobs(head)
+}
+
+/**
+ * CI's downloaded pass entries, laid out `<dir>/<producer head sha>/…` by the workflow from the run list GitHub
+ * reports — never from anything the producing run wrote. Only the entries of a trusted producer
+ * ({@link trustedPassProducer}) are kept; a folder that names no commit is dropped whole.
+ */
+export function trustedCiPassEntries(repoRoot: string, dir: string, base: string, head: string): PassEntry[] {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir).flatMap((producer) =>
+    trustedPassProducer(repoRoot, base, head, producer) ? passEntriesUnder(join(dir, producer)) : []
+  )
 }
 
 /**
@@ -491,7 +524,7 @@ export function loadSelectionInputs(options: LoadSelectionOptions): LoadedSelect
     const base = resolveCommit(repoRoot, options.base)
     const reached = reach(repoRoot, base)
     const change = repositorySelectionInput(repoRoot, { base, head, record: reached.record, platform })
-    const passes = options.passes ? passEntriesUnder(options.passes) : []
+    const passes = options.passes ? trustedCiPassEntries(repoRoot, options.passes, base, head) : []
     const history: SelectionHistory = { context: usable, passes, failures: [] }
     return {
       ...change,

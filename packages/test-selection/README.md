@@ -75,7 +75,7 @@ const plan = selectTests({
   branchSide: { paths, base } // optional: after a default-branch merge, the branch's own changes
 })
 
-plannedTests(plan) // every test to run: required, fallback scopes and obligations, less what an earlier pass covers
+plannedTests(plan) // every test to run: required, fallback scopes, obligations and whole-suite runs, less the branch-side tests left to the default branch and what an earlier pass covers
 plan.identity // equal for equal inputs
 ```
 

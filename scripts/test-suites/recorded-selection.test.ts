@@ -32,7 +32,7 @@ import {
 import { junitFileResults, marksOnly } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store.js'
 import { buildCiPlan } from '../ci/impact-plan.ts'
 import { freezeLocalPlan, localNativePlan } from './local-run.js'
-import { loadSelectionInputs, passEntriesOfRun, storePassEntries } from './repository-selection.js'
+import { loadSelectionInputs, passEntriesOfRun, storePassEntries, trustedPassProducer } from './repository-selection.js'
 
 const DECLARATIONS: FixtureDeclarations = {
   suites: [{ id: 'all', dir: '.', runner: 'bun', preload: null }],
@@ -540,13 +540,67 @@ describe('the push gate and CI run exactly the one entry point’s planned tests
         record: null,
         source: 'ci shared'
       })
-      writeFileSync(join(passes, 'shared.json'), JSON.stringify({ version: 1, entries }))
+      // The workflow files each run's artifacts under the head commit GitHub reports for that run.
+      mkdirSync(join(passes, head, '1'), { recursive: true })
+      writeFileSync(join(passes, head, '1', 'shared.json'), JSON.stringify({ version: 1, entries }))
       expect(ciRunList(dir, base, head)).toEqual(['packages/app/tests/add.test.ts', 'scripts/check.test.ts'])
       expect(ciRunList(dir, base, head, passes)).toEqual(['packages/app/tests/add.test.ts'])
       // The next push to the pull request changes a tracked file: the stored pass no longer holds.
       writeFileSync(join(dir, 'vinaya.config.json'), '{ "prePush": { "alwaysRun": [] }, "x": 1 }\n')
       git('commit', '-q', '-am', 'next push')
       expect(ciRunList(dir, base, git('rev-parse', 'HEAD'), passes)).toContain('scripts/check.test.ts')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(passes, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('CI reuses only entries filed under a commit of this branch whose every change is still under review', () => {
+    const { dir, git, base, head } = callersRepository()
+    const passes = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-ci-passes-')))
+    try {
+      // Another pull request's branch of the same name: a commit outside this branch's history.
+      git('checkout', '-q', '-b', 'fork/x/1', base)
+      writeFileSync(join(dir, 'packages/core/src/mul.ts'), 'export const mul = (a: number, b: number) => b * a\n')
+      git('commit', '-q', '-am', 'a fork')
+      const fork = git('rev-parse', 'HEAD')
+      // This branch: a commit whose change is reverted before the head under review.
+      git('checkout', '-q', 'task/x/1')
+      writeFileSync(join(dir, 'scripts/forge.ts'), 'export const forged = true\n')
+      git('add', '-A')
+      git('commit', '-q', '-m', 'forge')
+      const reverted = git('rev-parse', 'HEAD')
+      git('rm', '-q', 'scripts/forge.ts')
+      git('commit', '-q', '-m', 'revert')
+      const final = git('rev-parse', 'HEAD')
+      // Entries whose key matches the head under review, as a run that wrote whatever it liked could produce them.
+      const view = loadSelectionInputs({ repoRoot: dir, caller: 'ci', base, head: final, reach: NO_RECORD }).inventory
+        .head
+      const xml =
+        '<testsuites name="bun test">\n  <testsuite name="scripts/check.test.ts" file="scripts/check.test.ts" tests="1">\n    <testcase name="check" />\n  </testsuite>\n</testsuites>\n'
+      const entries = passEntriesOfRun({
+        repoRoot: dir,
+        view,
+        reports: [{ cwd: '.', xml }],
+        record: null,
+        source: 'ci'
+      })
+      expect(entries.map((e) => e.test)).toEqual(['scripts/check.test.ts'])
+      const file = (folder: string) => {
+        mkdirSync(join(passes, folder, '1'), { recursive: true })
+        writeFileSync(join(passes, folder, '1', 'shared.json'), JSON.stringify({ version: 1, entries }))
+      }
+      const unplanned = ['packages/app/tests/add.test.ts', 'scripts/check.test.ts']
+      for (const folder of [fork, reverted, 'not-a-commit']) {
+        file(folder)
+        expect(trustedPassProducer(dir, base, final, folder)).toBe(false)
+        expect(ciRunList(dir, base, final, passes)).toEqual(unplanned)
+        rmSync(join(passes, folder), { recursive: true, force: true })
+      }
+      // The earlier head, whose one change is still in the change under review, is trusted.
+      expect(trustedPassProducer(dir, base, final, head)).toBe(true)
+      file(head)
+      expect(ciRunList(dir, base, final, passes)).toEqual(['packages/app/tests/add.test.ts'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
       rmSync(passes, { recursive: true, force: true })
