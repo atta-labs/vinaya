@@ -3,7 +3,7 @@
  * loads no Log client; with one, the invocation's operation is still recorded at exit.
  */
 import { expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -45,9 +45,7 @@ it('`check --plan` loads no Log client', () => {
 })
 
 function filesUnder(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
-    entry.isDirectory() ? filesUnder(join(dir, entry.name)) : [join(dir, entry.name)]
-  )
+  return [...new Bun.Glob('**/*.ndjson').scanSync({ cwd: dir, absolute: true })]
 }
 
 it('with a `logs.folder` in the working directory config, `version` still records its operation at exit', () => {
