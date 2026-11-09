@@ -16,6 +16,11 @@
       "harness/processes/vinaya-strict/integration/log/client/log-callers.test.ts",
       "harness/processes/vinaya-strict/tests/commands/task-status.test.ts"
     ],
+    "readyTests": {
+      "mode": "ci",
+      "workflow": ".github/workflows/ci.yml",
+      "check": "Vinaya CI"
+    },
     "requiredCi": {
       "workflow": ".github/workflows/ci.yml",
       "check": "Vinaya CI"
