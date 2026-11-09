@@ -1194,7 +1194,7 @@ describe('the Engine builds its Developer context from the shared live context',
     await live.beginTurn()
     await live.context.publishChanges(HEADER)
     await live.context.openPullRequest('[t] 8 — Title', PR_BODY)
-    expect(world.opened[0]?.body).toContain('AEG:BEYOND-SURFACE')
+    expect(world.opened[0]?.body).toContain('VINAYA:BEYOND-SURFACE')
     expect(world.opened[0]?.body).toContain(OUTSIDE)
   })
 

@@ -1600,7 +1600,7 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
         expect(opened).toContain('- `packages/widgets/y.ts` crosses the `out:` glob `packages/widgets`')
         expect(opened).toContain('- `docs/z.md` matches no `in:` glob')
         expect(recordedBeyondSurfacePaths(opened)).toEqual(['packages/widgets/y.ts', 'docs/z.md'])
-        expect(opened.indexOf('<!-- AEG:BEYOND-SURFACE:START -->')).toBeGreaterThan(opened.indexOf('## Scope'))
+        expect(opened.indexOf('<!-- VINAYA:BEYOND-SURFACE:START -->')).toBeGreaterThan(opened.indexOf('## Scope'))
       })
 
       it(`${agent} writes an empty block when every changed path is inside the Surface`, async () => {
@@ -1612,7 +1612,7 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
         const seen = await publishAndOpen(world, '## Scope\n\nScope.\n\n**Tier:** 3\n')
         expect(seen.beyondSurface).toEqual([])
         const opened = world.prOpens[0]?.body ?? ''
-        expect(opened).toContain('<!-- AEG:BEYOND-SURFACE:START -->\n<!-- AEG:BEYOND-SURFACE:END -->')
+        expect(opened).toContain('<!-- VINAYA:BEYOND-SURFACE:START -->\n<!-- VINAYA:BEYOND-SURFACE:END -->')
         expect(recordedBeyondSurfacePaths(opened)).toEqual([])
       })
 
