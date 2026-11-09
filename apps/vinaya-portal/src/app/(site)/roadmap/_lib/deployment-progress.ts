@@ -1,4 +1,4 @@
-import { clamp01 } from '@vinaya/ui/lib/math'
+import { clamp01 } from '@vinaya/ui'
 
 // Pure math extracted from `DeploymentTrack.tsx`'s scroll effect — the two formulas that
 // actually drive the whole scroll-linked animation (how far the beam has deployed, and how

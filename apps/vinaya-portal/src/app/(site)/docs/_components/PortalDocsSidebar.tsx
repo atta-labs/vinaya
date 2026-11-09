@@ -9,10 +9,10 @@ import {
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
-  SidebarMenuItem
-} from '@vinaya/ui/components'
-import { NextLink } from '@vinaya/ui/lib/next-link'
-import { cn } from '@vinaya/ui/lib/utils'
+  SidebarMenuItem,
+  NextLink,
+  cn
+} from '@vinaya/ui'
 import { iconForName, SMALL_ICON } from '../../_components/icons'
 import { DOCS_NAV, type DocsPage, groupForPath } from '../_lib/portal-docs'
 

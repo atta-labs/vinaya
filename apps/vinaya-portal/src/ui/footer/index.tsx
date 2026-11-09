@@ -1,4 +1,4 @@
-import { NextLink } from '@vinaya/ui/lib/next-link'
+import { NextLink } from '@vinaya/ui'
 import type * as React from 'react'
 import { AttaMark } from './marks/atta-mark'
 import { AttalabsMark } from './marks/attalabs-mark'

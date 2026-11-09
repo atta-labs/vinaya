@@ -3,7 +3,7 @@
 import './hero-core.css'
 
 import { type ReactNode, useEffect, useLayoutEffect, useRef } from 'react'
-import { Heading, Text } from '@vinaya/ui/shared'
+import { Heading, Text } from '@vinaya/ui'
 import { useHeroLockupNodes } from '../hero-lockup-context'
 import { attachLockupFlip, dockImmediately, resetLockup } from './lockup-flip'
 

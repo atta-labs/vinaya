@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { clamp01 } from '@vinaya/ui/lib/math'
+import { clamp01 } from '@vinaya/ui'
 import {
   ConfigFile,
   HOME_LOOP,

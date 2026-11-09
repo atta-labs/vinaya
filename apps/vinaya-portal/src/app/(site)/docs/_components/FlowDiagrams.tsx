@@ -4,7 +4,7 @@ import { Maximize2, Network } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { FLOW_NAMES, FlowOnlyDiagram, WholeProcessDiagram } from '@/process/diagram/ProcessFlows'
 import type { FlowKey } from '@/process/types'
-import { Button, Dialog, DialogContent, DialogTitle } from '@vinaya/ui/components'
+import { Button, Dialog, DialogContent, DialogTitle } from '@vinaya/ui'
 
 // The docs show the process diagram as a picture, never as the interactive walk: no flow tabs, no stage buttons,
 // nothing to pick. A guide shows its own flow's part only; the whole-process view draws every flow at once. Both

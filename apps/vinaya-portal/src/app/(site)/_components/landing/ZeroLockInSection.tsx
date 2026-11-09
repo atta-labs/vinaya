@@ -1,5 +1,4 @@
-import { NextLink } from '@vinaya/ui/lib/next-link'
-import { Heading, Text } from '@vinaya/ui/shared'
+import { NextLink, Heading, Text } from '@vinaya/ui'
 import { LabeledCommandCopy } from './LandingInteractions'
 import { LandingSection } from './LandingSection'
 import { WipeReveal } from './WipeReveal'

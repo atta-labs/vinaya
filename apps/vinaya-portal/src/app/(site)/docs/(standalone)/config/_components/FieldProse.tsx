@@ -1,5 +1,4 @@
-import { Code } from '@vinaya/ui/components'
-import { Text } from '@vinaya/ui/shared'
+import { Code, Text } from '@vinaya/ui'
 
 // Route-private companion to the CLI detail renderer: inline code stays
 // semantic while config prose remains authored in the shared registry.

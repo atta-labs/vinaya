@@ -1,5 +1,5 @@
 import type { ReactNode, Ref } from 'react'
-import { cn } from '@vinaya/ui/lib/utils'
+import { cn } from '@vinaya/ui'
 
 // The one shell every non-scroll-pinned landing section shares: a full-bleed
 // <section> for the background token, a centered max-width container for the

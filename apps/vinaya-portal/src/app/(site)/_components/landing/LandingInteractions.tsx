@@ -2,8 +2,7 @@
 
 import { ArrowUpRight } from 'lucide-react'
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from 'react'
-import { TerminalCommand } from '@vinaya/ui/components'
-import { NextLink } from '@vinaya/ui/lib/next-link'
+import { TerminalCommand, NextLink } from '@vinaya/ui'
 import { enterProgress, pinProgress } from './pin-math'
 
 function scrollParent(element: HTMLElement): HTMLElement | Window {

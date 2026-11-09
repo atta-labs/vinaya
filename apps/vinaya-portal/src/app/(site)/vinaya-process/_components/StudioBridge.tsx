@@ -2,10 +2,7 @@
 
 import { ArrowUpRight } from 'lucide-react'
 import { type ReactNode, useRef } from 'react'
-import { easeInOutQuad, progressBetween } from '@vinaya/ui/lib/math'
-import { NextLink } from '@vinaya/ui/lib/next-link'
-import { cn } from '@vinaya/ui/lib/utils'
-import { Heading, Text } from '@vinaya/ui/shared'
+import { easeInOutQuad, progressBetween, NextLink, cn, Heading, Text } from '@vinaya/ui'
 import { NamedIcon } from '../../_components/icons'
 import { HOME_LOOP } from '../../_components/landing/FeatureSections'
 import { useEnterProgress, useNarrow, useReducedMotion } from '../../_components/landing/LandingInteractions'
