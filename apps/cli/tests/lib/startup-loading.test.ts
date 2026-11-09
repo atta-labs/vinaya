@@ -10,7 +10,7 @@ import { join } from 'node:path'
 const ENTRY = join(import.meta.dir, '../../src/index.ts')
 
 /** Starts the program with a preload that writes `Object.keys(require.cache)` at exit; returns the loaded paths. */
-function loadedBy(args: string[], extraEnv: Record<string, string> = {}): string[] {
+function loadedBy(args: string[], extraEnv: Record<string, string> = {}, cwd?: string): string[] {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-startup-loading-'))
   try {
     const out = join(dir, 'loaded.json')
@@ -22,6 +22,7 @@ function loadedBy(args: string[], extraEnv: Record<string, string> = {}): string
     )
     Bun.spawnSync(['bun', '--preload', preload, ENTRY, ...args], {
       env: { ...process.env, NODE_ENV: 'test', VINAYA_NO_DEFER: '1', LOADED_OUT: out, ...extraEnv },
+      ...(cwd === undefined ? {} : { cwd }),
       stdout: 'pipe',
       stderr: 'pipe'
     })
@@ -48,6 +49,21 @@ function filesUnder(dir: string): string[] {
     entry.isDirectory() ? filesUnder(join(dir, entry.name)) : [join(dir, entry.name)]
   )
 }
+
+it('with a `logs.folder` in the working directory config, `version` still records its operation at exit', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vinaya-startup-folder-'))
+  try {
+    const cwd = join(root, 'workspace')
+    const folder = join(root, 'logs')
+    mkdirSync(cwd, { recursive: true })
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logs: { folder } }))
+    loadedBy(['version'], { VINAYA_RUNTIME_DIR: join(root, 'runtime'), HOME: root }, cwd)
+    const lines = filesUnder(folder).flatMap((file) => readFileSync(file, 'utf8').split('\n'))
+    expect(lines.filter((line) => line.includes('"cli_command"')).length).toBe(1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 it('with a Log destination, `version` still records its operation at exit', () => {
   const spool = mkdtempSync(join(tmpdir(), 'vinaya-startup-spool-'))
