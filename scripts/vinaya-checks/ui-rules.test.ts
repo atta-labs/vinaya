@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { isScanned, parseAddedLines, scanAddedLines, scanLine } from './ui-rules'
 
 const PAGE = 'apps/vinaya-portal/src/app/page.tsx'
-const LIB = 'apps/vinaya-portal/src/ui/components/button.tsx'
+const LIB = 'packages/ui/src/components/button.tsx'
 const rules = (text: string, file = PAGE) => scanLine(file, 1, text).map((f) => f.rule)
 
 describe('forbidden', () => {
@@ -74,7 +74,7 @@ describe('allowed', () => {
     "import { ELEMENT_ICONS } from '@/app/(site)/_components/icons/registry'",
     "import { Mark } from './icons/react-icons-like'",
     "import { Mark } from '../marks'",
-    "import { NextLink } from '@/ui/lib/next-link'",
+    "import { NextLink } from '@vinaya/ui/lib/next-link'",
     '<Button variant="primary">',
     '<NextLink href="/x">',
     '// text-white is explained here',
@@ -91,8 +91,9 @@ describe('allowed', () => {
 
   test('exempt files hold colour literals and variable declarations', () => {
     for (const file of [
-      'apps/vinaya-portal/src/ui/styles/globals.css',
-      'apps/vinaya-portal/src/ui/lib/preview-theme-utils.ts',
+      'packages/ui/src/styles/globals.css',
+      'apps/vinaya-portal/src/ui/styles/site.css',
+      'packages/ui/src/lib/preview-theme-utils.ts',
       'apps/vinaya-portal/src/process/lifecycle/lifecycle-scene.js'
     ]) {
       expect(rules(':root { --x: #fff; color: oklch(1 0 0) } text-white', file)).toEqual([])
@@ -142,6 +143,14 @@ describe('the shared packages', () => {
       expect(isScanned(file)).toBe(false)
     }
     expect(isScanned('packages/ui/src/libraries/retro/button.tsx')).toBe(true)
+  })
+
+  test('the library lives only in the UI package: an app’s own chrome and pastes are app code', () => {
+    expect(rules('<button type="button">', 'apps/vinaya-portal/src/ui/topbar/index.tsx')).toContain(
+      'raw interactive HTML element outside the component library'
+    )
+    expect(isScanned('apps/vinaya-portal/src/ui/components/table/installed.tsx')).toBe(true)
+    expect(isScanned('apps/vinaya-portal/src/ui/lib/preview-theme-utils.ts')).toBe(true)
   })
 })
 

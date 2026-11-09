@@ -20,10 +20,29 @@ const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboo
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..', '..', 'apps', 'cli')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
 const HEAD = 'b'.repeat(40)
+const BASE = 'a'.repeat(40)
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+/**
+ * Runs `review post` the way a hand reviewer does: the judged manifest is
+ * exported first (`--export-manifest`, no forge write) and passed to the post as
+ * `--manifest-file`. A call that already carries one of those flags, names no
+ * `--pr`, or whose export is refused runs exactly as given.
+ */
 function runCli(args: string[], cwd: string, env: Record<string, string | undefined>): CliResult {
+  const prIndex = args.indexOf('--pr')
+  if (prIndex === -1 || args.includes('--manifest-file') || args.includes('--export-manifest')) {
+    return runCliRaw(args, cwd, env)
+  }
+  const exported = runCliRaw(['review', 'post', '--export-manifest', '--pr', String(args[prIndex + 1])], cwd, env)
+  if (exported.status !== 0) return runCliRaw(args, cwd, env)
+  const file = join(mkdtempSync(join(tmpdir(), 'judged-manifest-')), 'manifest.json')
+  writeFileSync(file, exported.stdout)
+  return runCliRaw([...args, '--manifest-file', file], cwd, env)
+}
+
+function runCliRaw(args: string[], cwd: string, env: Record<string, string | undefined>): CliResult {
   try {
     const stdout = execFileSync('bun', programCommandLine(args) ?? [INDEX, ...args], {
       cwd,
@@ -65,6 +84,7 @@ function stubGhNoPost(headSha: string): { dir: string; env: Record<string, strin
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   case "$*" in
+    *baseRefName*) echo "main"; exit 0 ;;
     *headRefName*) echo "stub-branch"; exit 0 ;;
     *headRefOid*) echo "${headSha}"; exit 0 ;;
     *comments*) echo '{"comments": []}'; exit 0 ;;
@@ -74,6 +94,7 @@ fi
 if [ "$1" = "api" ]; then
   case "$*" in
     *git/ref/heads/stub-branch*) echo "${headSha}"; exit 0 ;;
+    *git/ref/heads/main*) echo "${BASE}"; exit 0 ;;
   esac
 fi
 if [ "$1" = "api" ]; then
@@ -278,5 +299,184 @@ describe('vinaya review post --print-only (task 6, #397)', () => {
     // Refused for an unrelated reason (bad --role), never "unrecognised flag".
     expect(r.stderr).not.toContain('unrecognised flag')
     expect(r.stderr).not.toContain('--print-only')
+  })
+})
+
+// The judged manifest snapshot (#1853): a hand reviewer exports the review
+// input before reading it and the post echoes that snapshot, succeeding only
+// while every current binding still matches.
+describe('vinaya review post — the judged manifest snapshot', () => {
+  const OTHER_HEAD = 'c'.repeat(40)
+
+  function postArgs(role: 'code-reviewer' | 'security', findingsFile: string, extra: string[]): string[] {
+    const common = ['--task-id', 'fix', '--model', 'x', '--tokens-in', '-', '--tokens-out', '-', '--cost', '-']
+    const roleArgs =
+      role === 'code-reviewer'
+        ? ['--brief-conformance', 'x', '--spec-conformance', 'x', '--scope', 'x', '--tests', 'x', '--docs', 'x']
+        : ['--config-scan', 'not-applicable', '--secrets', 'x']
+    return [
+      'review',
+      'post',
+      '--print-only',
+      '--role',
+      role,
+      '--pr',
+      '1',
+      '--findings-file',
+      findingsFile,
+      ...roleArgs,
+      ...common,
+      ...extra
+    ]
+  }
+
+  function exportSnapshot(cwd: string, env: Record<string, string | undefined>): { file: string; text: string } {
+    const exported = runCliRaw(['review', 'post', '--export-manifest', '--pr', '1'], cwd, env)
+    expect(exported.status).toBe(0)
+    const file = join(cwd, 'judged-manifest.json')
+    writeFileSync(file, exported.stdout)
+    return { file, text: exported.stdout }
+  }
+
+  it('--export-manifest prints the canonical manifest and writes nothing', () => {
+    const cwd = tempDir('review-post-export-')
+    const { dir, env } = stubGhNoPost(HEAD)
+    try {
+      const { text } = exportSnapshot(cwd, env)
+      const manifest = JSON.parse(text)
+      expect(manifest.manifestVersion).toBe(2)
+      expect(manifest.headSha).toBe(HEAD)
+      expect(manifest.baseSha).toBe(BASE)
+      expect(manifest.briefHash).toBeNull()
+      expect(manifest.rulingOrdinal).toBe(0)
+      expect(manifest.pauseBoundRuling).toBeNull()
+      expect(manifest.policyDigest).toMatch(/^[0-9a-f]{64}$/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  for (const role of ['code-reviewer', 'security'] as const) {
+    it(`${role}: a post without --manifest-file is refused before any forge contact`, () => {
+      const cwd = tempDir('review-post-no-manifest-')
+      const { dir, env } = stubGhNoPost(HEAD)
+      const findings = join(cwd, 'findings.txt')
+      writeFileSync(findings, '')
+      try {
+        const r = runCliRaw(postArgs(role, findings, ['--verdict', role === 'security' ? 'PASS' : 'APPROVE']), cwd, env)
+        expect(r.status).not.toBe(0)
+        expect(r.stderr).toContain('--manifest-file')
+        expect(r.stderr).not.toContain('must never post')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it(`${role}: a snapshot of an older head is refused — current values are never stamped onto it`, () => {
+      const cwd = tempDir('review-post-stale-head-')
+      const first = stubGhNoPost(HEAD)
+      const second = stubGhNoPost(OTHER_HEAD)
+      const findings = join(cwd, 'findings.txt')
+      writeFileSync(findings, '')
+      try {
+        const { file } = exportSnapshot(cwd, first.env)
+        const r = runCliRaw(postArgs(role, findings, ['--manifest-file', file]), cwd, second.env)
+        expect(r.status).not.toBe(0)
+        expect(r.stderr).toContain('no longer matches')
+        expect(r.stderr).toContain('head')
+        expect(r.stdout).not.toContain('VERDICT')
+        expect(r.stderr).not.toContain('must never post')
+      } finally {
+        rmSync(first.dir, { recursive: true, force: true })
+        rmSync(second.dir, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('a snapshot whose pause-bound ruling differs from the current one is refused', () => {
+    const cwd = tempDir('review-post-stale-pause-')
+    const { dir, env } = stubGhNoPost(HEAD)
+    const findings = join(cwd, 'findings.txt')
+    writeFileSync(findings, '')
+    try {
+      const { text } = exportSnapshot(cwd, env)
+      const edited = {
+        ...JSON.parse(text),
+        pauseBoundRuling: { rulingId: 'pr:1:ruling:1', pauseId: 'p1', contentDigest: 'd'.repeat(64) }
+      }
+      const file = join(cwd, 'edited.json')
+      writeFileSync(file, JSON.stringify(edited))
+      const r = runCliRaw(postArgs('code-reviewer', findings, ['--manifest-file', file]), cwd, env)
+      expect(r.status).not.toBe(0)
+      expect(r.stderr).toContain('pauseBoundRuling')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  const BAD_SNAPSHOTS: ReadonlyArray<[string, (m: Record<string, unknown>) => Record<string, unknown>, string]> = [
+    ['an unsupported manifest version', (m) => ({ ...m, manifestVersion: 3 }), 'unsupported'],
+    [
+      'a missing binding',
+      (m) => {
+        const { baseSha: _omitted, ...rest } = m
+        return rest
+      },
+      'missing `baseSha`'
+    ],
+    ['an unknown field', (m) => ({ ...m, protocol: 1 }), 'unsupported field'],
+    ['an abbreviated head', (m) => ({ ...m, headSha: 'bbbbbbb' }), 'full 40-hex'],
+    ['a malformed policy digest', (m) => ({ ...m, policyDigest: 'x' }), 'policyDigest']
+  ]
+  for (const [name, mutate, expected] of BAD_SNAPSHOTS) {
+    it(`${name} is refused before any forge contact`, () => {
+      const cwd = tempDir('review-post-bad-manifest-')
+      const { dir, env } = stubGhNoPost(HEAD)
+      const findings = join(cwd, 'findings.txt')
+      writeFileSync(findings, '')
+      try {
+        const { text } = exportSnapshot(cwd, env)
+        const file = join(cwd, 'bad.json')
+        writeFileSync(file, JSON.stringify(mutate(JSON.parse(text))))
+        const r = runCliRaw(postArgs('code-reviewer', findings, ['--manifest-file', file]), cwd, env)
+        expect(r.status).not.toBe(0)
+        expect(r.stderr).toContain(expected)
+        expect(r.stderr).not.toContain('must never post')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+  }
+
+  for (const role of ['code-reviewer', 'security'] as const) {
+    it(`${role}: a current snapshot is echoed — version, pause-bound ruling and base render from it`, () => {
+      const cwd = tempDir('review-post-echo-')
+      const { dir, env } = stubGhNoPost(HEAD)
+      const findings = join(cwd, 'findings.txt')
+      writeFileSync(findings, '')
+      try {
+        const { file } = exportSnapshot(cwd, env)
+        const r = runCliRaw(postArgs(role, findings, ['--manifest-file', file]), cwd, env)
+        expect(r.status).toBe(0)
+        expect(r.stdout).toContain(`Judged head: ${HEAD}`)
+        expect(r.stdout).toContain(`Judged base: ${BASE}`)
+        expect(r.stdout).toContain('Manifest version: 2')
+        expect(r.stdout).toContain('Pause-bound ruling: (none)')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('--export-manifest refuses to run beside a verdict or a snapshot', () => {
+    const cwd = tempDir('review-post-export-alone-')
+    const { dir, env } = stubGhNoPost(HEAD)
+    try {
+      const r = runCliRaw(['review', 'post', '--export-manifest', '--pr', '1', '--verdict', 'APPROVE'], cwd, env)
+      expect(r.status).not.toBe(0)
+      expect(r.stderr).toContain('--export-manifest')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

@@ -17,8 +17,10 @@ import {
   computeVerificationContext,
   isAncestor,
   type MergeAwareReads,
+  branchSideSince,
   type NativeBaseInputs,
   nativePassingRecord,
+  newestMergeSince,
   type TestRunnerFacts,
   decideSelection,
   type FailedTestsRecord,
@@ -1081,7 +1083,18 @@ describe('merge-aware base', () => {
 
   // A branch with a recorded commit, a default-branch commit editing the suite declarations merged into it, and one
   // branch commit after the merge.
-  function fixture(options: { main?: Record<string, string>; extraMerge?: boolean } = {}) {
+  function fixture(
+    options: {
+      main?: Record<string, string>
+      extraMerge?: boolean
+      /** Branch commits after the recorded commit, before the merge. */
+      branch?: Record<string, string>
+      /** Files the merge commit itself edits (its resolution). */
+      resolution?: Record<string, string>
+      /** Whether one branch commit follows the merge (default yes). */
+      after?: boolean
+    } = {}
+  ) {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-merge-aware-')))
     run(dir, ['init', '--quiet', '--initial-branch=main'])
     run(dir, ['config', 'user.email', 'test@example.com'])
@@ -1093,6 +1106,8 @@ describe('merge-aware base', () => {
     commitFile(dir, 'shared.txt', 'ONE\ntwo\nthree\n', 'Branch edit of the shared file')
     commitFile(dir, 'apps/cli/src/recorded.ts', 'recorded\n', 'Recorded branch commit')
     const recordHead = run(dir, ['rev-parse', 'HEAD'])
+    for (const [file, content] of Object.entries(options.branch ?? {}))
+      commitFile(dir, file, content, `Branch edit of ${file} after the record`)
     run(dir, ['checkout', '--quiet', 'main'])
     for (const [file, content] of Object.entries(
       options.main ?? {
@@ -1102,7 +1117,15 @@ describe('merge-aware base', () => {
     ))
       commitFile(dir, file, content, `Default-branch edit of ${file}`)
     run(dir, ['checkout', '--quiet', 'task/x/1'])
-    run(dir, ['merge', '--quiet', '--no-ff', '--no-edit', 'main'])
+    if (options.resolution) {
+      run(dir, ['merge', '--quiet', '--no-ff', '--no-commit', 'main'])
+      for (const [file, content] of Object.entries(options.resolution)) {
+        mkdirSync(dirname(join(dir, file)), { recursive: true })
+        writeFileSync(join(dir, file), content)
+        run(dir, ['add', '--', file])
+      }
+      run(dir, ['commit', '--quiet', '--no-edit'])
+    } else run(dir, ['merge', '--quiet', '--no-ff', '--no-edit', 'main'])
     const merge = run(dir, ['rev-parse', 'HEAD'])
     if (options.extraMerge) {
       run(dir, ['checkout', '--quiet', 'main'])
@@ -1110,7 +1133,7 @@ describe('merge-aware base', () => {
       run(dir, ['checkout', '--quiet', 'task/x/1'])
       run(dir, ['merge', '--quiet', '--no-ff', '--no-edit', 'main'])
     }
-    commitFile(dir, 'apps/cli/src/after.ts', 'after\n', 'Branch commit after the merge')
+    if (options.after !== false) commitFile(dir, 'apps/cli/src/after.ts', 'after\n', 'Branch commit after the merge')
     return { dir, mergeBase, recordHead, merge, test: join(dir, 'apps/cli/tests/a.test.ts') }
   }
 
@@ -1157,6 +1180,7 @@ describe('merge-aware base', () => {
       exists: () => true,
       changedBetween: (from) => changedBetween(f.dir, from, 'HEAD'),
       mergeAware: reads(f),
+      mergeSince: (from) => newestMergeSince(f.dir, from, 'HEAD'),
       ...over
     })
   const widened = (f: Fixture, choice: ReturnType<typeof choose>) => {
@@ -1333,12 +1357,131 @@ describe('merge-aware base', () => {
     }
   })
 
-  it('a merge where both sides edited one file widens', () => {
-    const f = fixture({ main: { 'shared.txt': 'one\ntwo\nTHREE\n' } })
+  it('a merge where both sides edited one file reruns at the refused head, its branch-side set that file', () => {
+    const f = fixture({ main: { 'shared.txt': 'one\ntwo\nTHREE\n' }, after: false })
     try {
       expect(run(f.dir, ['show', `${f.merge}:shared.txt`])).toBe('ONE\ntwo\nTHREE')
+      // Under the same context: the merge is not a clean union, so the comparison stays at the refused head.
+      const choice = choose(f, { failed: failedRecord(f, { context: NOW }) })
+      expect(choice).toMatchObject({
+        base: f.recordHead,
+        kind: 'rerun',
+        obligations: [f.test],
+        branchSide: { brought: run(f.dir, ['rev-parse', `${f.merge}^2`]), paths: [join(f.dir, 'shared.txt')] }
+      })
+      expect(choose(f, { passing: passingRecord(f, { context: NOW }) })).toMatchObject({
+        base: f.recordHead,
+        kind: 'since-green',
+        branchSide: { paths: [join(f.dir, 'shared.txt')] }
+      })
+      // Under another context nothing changed: the refused push still widens.
       widened(f, choose(f, { failed: failedRecord(f) }))
       widened(f, choose(f, { passing: passingRecord(f) }))
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('the branch-side set holds a shared file, a resolution edit and a later branch commit, never a default-branch-only file', () => {
+    const f = fixture({
+      main: { 'shared.txt': 'one\ntwo\nTHREE\n', 'apps/cli/src/brought.ts': 'x\n' },
+      resolution: { 'apps/cli/src/resolved.ts': 'edited in the merge\n' }
+    })
+    try {
+      const choice = choose(f, { failed: failedRecord(f, { context: NOW }) })
+      expect(choice).toMatchObject({ base: f.recordHead, kind: 'rerun', obligations: [f.test] })
+      expect(choice.branchSide?.paths).toEqual(
+        ['apps/cli/src/after.ts', 'apps/cli/src/resolved.ts', 'shared.txt'].map((p) => join(f.dir, p))
+      )
+      expect(changedBetween(f.dir, f.recordHead, 'HEAD')).toContain(join(f.dir, 'apps/cli/src/brought.ts'))
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a default-branch configuration change beside a shared file reruns at the refused head; a branch one widens', () => {
+    const mainConfig = fixture({
+      main: { 'shared.txt': 'one\ntwo\nTHREE\n', [ROOT_CONFIG_FILENAME]: '{}\n' },
+      after: false
+    })
+    try {
+      expect(choose(mainConfig, { failed: failedRecord(mainConfig, { context: NOW }) })).toMatchObject({
+        base: mainConfig.recordHead,
+        kind: 'rerun',
+        obligations: [mainConfig.test],
+        branchSide: { paths: [join(mainConfig.dir, 'shared.txt')] }
+      })
+      expect(choose(mainConfig, { passing: passingRecord(mainConfig, { context: NOW }) })).toMatchObject({
+        base: mainConfig.recordHead,
+        kind: 'since-green',
+        branchSide: { paths: [join(mainConfig.dir, 'shared.txt')] }
+      })
+    } finally {
+      rmSync(mainConfig.dir, { recursive: true, force: true })
+    }
+    const branchConfig = fixture({
+      main: { 'shared.txt': 'one\ntwo\nTHREE\n' },
+      branch: { [ROOT_CONFIG_FILENAME]: '{}\n' },
+      after: false
+    })
+    try {
+      const refused = widened(
+        branchConfig,
+        choose(branchConfig, { failed: failedRecord(branchConfig, { context: NOW }) })
+      )
+      expect(refused).toMatchObject({
+        obligations: [branchConfig.test],
+        reason: 'the changes since the refused push could not be narrowed'
+      })
+      expect(
+        widened(branchConfig, choose(branchConfig, { passing: passingRecord(branchConfig, { context: NOW }) })).reason
+      ).toBe('the changes since the passing run could not be narrowed')
+    } finally {
+      rmSync(branchConfig.dir, { recursive: true, force: true })
+    }
+    const resolvedConfig = fixture({
+      main: { 'shared.txt': 'one\ntwo\nTHREE\n' },
+      resolution: { [ROOT_CONFIG_FILENAME]: '{"edited":"in the merge"}\n' },
+      after: false
+    })
+    try {
+      expect(choose(resolvedConfig, { failed: failedRecord(resolvedConfig, { context: NOW }) })).toMatchObject({
+        kind: 'merge-base',
+        reason: 'the changes since the refused push could not be narrowed'
+      })
+    } finally {
+      rmSync(resolvedConfig.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a failed read of the merge or of either diff widens', () => {
+    const f = fixture({ main: { 'shared.txt': 'one\ntwo\nTHREE\n' }, after: false })
+    try {
+      const brought = run(f.dir, ['rev-parse', `${f.merge}^2`])
+      const unreadable = (bad: string) => (from: string) => (from === bad ? null : changedBetween(f.dir, from, 'HEAD'))
+      for (const over of [
+        { mergeSince: () => null },
+        { changedBetween: unreadable(brought) },
+        { changedBetween: unreadable(f.recordHead) }
+      ])
+        widened(f, choose(f, { failed: failedRecord(f, { context: NOW }), ...over }))
+      expect(branchSideSince(f.recordHead, { changedBetween: () => [], mergeSince: () => null })).toBeNull()
+      expect(branchSideSince(f.recordHead, { changedBetween: () => [] })).toBe('none')
+      expect(newestMergeSince(f.dir, f.merge, 'HEAD')).toBe('none')
+      expect(newestMergeSince(f.dir, 'no-such-commit', 'HEAD')).toBeNull()
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('with no merge since the refused head the choice carries no branch-side set', () => {
+    const f = fixture()
+    try {
+      commitFile(f.dir, 'apps/cli/src/next.ts', 'next\n', 'Another branch commit')
+      const choice = choose(f, { failed: failedRecord(f, { head: run(f.dir, ['rev-parse', 'HEAD~1']), context: NOW }) })
+      expect(choice).toMatchObject({ kind: 'rerun' })
+      expect(choice.branchSide).toBeUndefined()
+      expect(choice.reason).toBe(`re-running what failed at ${run(f.dir, ['rev-parse', 'HEAD~1'])}`)
     } finally {
       rmSync(f.dir, { recursive: true, force: true })
     }
@@ -1352,12 +1495,16 @@ describe('merge-aware base', () => {
     } finally {
       rmSync(second.dir, { recursive: true, force: true })
     }
+    // A configuration change only the default branch brought in no longer widens: the clean merge is built on.
     const config = fixture({ main: { [ROOT_CONFIG_FILENAME]: '{}\n' } })
     try {
-      expect(choose(config, { failed: failedRecord(config) }).reason).toBe(
-        'the changes since the refused push could not be narrowed'
-      )
-      widened(config, choose(config, { failed: failedRecord(config) }))
+      const choice = choose(config, { failed: failedRecord(config) })
+      expect(choice).toMatchObject({ base: config.merge, kind: 'rerun', obligations: [config.test] })
+      expect(choice.reason).not.toBe('the changes since the refused push could not be narrowed')
+      expect(choose(config, { passing: passingRecord(config) })).toMatchObject({
+        base: config.merge,
+        kind: 'since-green'
+      })
     } finally {
       rmSync(config.dir, { recursive: true, force: true })
     }

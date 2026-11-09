@@ -15,6 +15,8 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -26,6 +28,7 @@ import {
   fetchIssueStateAsync,
   IssueNotFoundError,
   parseWorktreeList,
+  removeTree,
   removeWorktreeAsync,
   runTaskSweep,
   sweepLegacyLayout,
@@ -979,5 +982,185 @@ describe("the forge's not-found answer for an Issue — the one read failure tha
       })
     )
     expect(unreadable.kind).toBe('unknown')
+  })
+})
+
+describe('removing a folder that holds a read-only reviewer snapshot', () => {
+  function readOnlySnapshot(folder: string): void {
+    const snapshot = join(folder, 'reviewer-candidate', 'src')
+    mkdirSync(snapshot, { recursive: true })
+    writeFileSync(join(snapshot, 'a.ts'), 'export {}\n')
+    chmodSync(join(snapshot, 'a.ts'), 0o444)
+    chmodSync(snapshot, 0o555)
+    chmodSync(join(folder, 'reviewer-candidate'), 0o555)
+  }
+
+  it('removeTree removes the tree, and changes no permission outside it', () => {
+    const outer = tempDir('vinaya-sweep-ro-')
+    const sibling = join(outer, 'sibling')
+    mkdirSync(sibling)
+    chmodSync(sibling, 0o750)
+    const folder = join(outer, 'task')
+    mkdirSync(folder)
+    readOnlySnapshot(folder)
+    removeTree(folder)
+    expect(existsSync(folder)).toBe(false)
+    expect(statSync(sibling).mode & 0o777).toBe(0o750)
+  })
+
+  it('never follows a symlink inside the tree', () => {
+    const outer = tempDir('vinaya-sweep-ro-link-')
+    const elsewhere = join(outer, 'elsewhere')
+    mkdirSync(elsewhere)
+    chmodSync(elsewhere, 0o500)
+    const folder = join(outer, 'task')
+    mkdirSync(folder)
+    symlinkSync(elsewhere, join(folder, 'link'))
+    removeTree(folder)
+    expect(existsSync(folder)).toBe(false)
+    expect(statSync(elsewhere).mode & 0o777).toBe(0o500)
+    chmodSync(elsewhere, 0o700)
+  })
+
+  it('both sweeps remove a finished task folder with a read-only snapshot', async () => {
+    const root = tempDir('vinaya-sweep-ro-default-')
+    const syncFolder = runPath(root, 1, { area: 'task' })
+    const asyncFolder = runPath(root, 2, { area: 'task' })
+    for (const folder of [syncFolder, asyncFolder]) {
+      mkdirSync(folder, { recursive: true })
+      readOnlySnapshot(folder)
+    }
+    const syncReport = sweepModernTasks(baseDeps(root, { fetchIssueState: () => 'CLOSED', rm: removeTree }), 2)
+    expect(syncReport.removed.map((r) => r.folder)).toEqual(['Issue #1'])
+    expect(existsSync(syncFolder)).toBe(false)
+    const { deps } = engineAsyncDeps(root, { rm: removeTree, fetchIssueState: async () => 'CLOSED' })
+    const asyncReport = await sweepModernTasksAsync(1, () => {}, deps)
+    expect(asyncReport.removed.map((r) => r.folder)).toEqual(['Issue #2'])
+    expect(existsSync(asyncFolder)).toBe(false)
+  })
+})
+
+function engineAsyncDeps(root: string, overrides: Partial<TaskSweepAsyncDeps> = {}) {
+  const rmPaths: string[] = []
+  const deps: TaskSweepAsyncDeps = {
+    runtimeDir: () => root,
+    isDriverPidAlive: () => false,
+    readDriverLockForScope: () => null,
+    readPauseStateForScope: () => null,
+    fetchIssueState: async () => 'OPEN',
+    resolveRepo: () => ({ owner: 'atta-labs', repo: 'vinaya' }),
+    developerBranchFor: async (issue) => `task/issue-${issue}`,
+    fetchPrForBranch: async () => null,
+    fetchPrBody: async () => '',
+    taskFromPrBody: () => null,
+    rm: (path) => {
+      rmPaths.push(path)
+    },
+    listWorktrees: async () => ({ main: '/repo', entries: [] }),
+    worktreeHasUncommitted: async () => false,
+    worktreeHasUnpushedCommits: async () => false,
+    removeWorktree: async () => {},
+    ...overrides
+  }
+  return { deps, rmPaths }
+}
+
+describe('sweepModernTasksAsync — Engine run folders under engine-runs/', () => {
+  function engineRun(root: string, task: number): string {
+    const folder = join(root, 'engine-runs', String(task))
+    mkdirSync(folder, { recursive: true })
+    return folder
+  }
+
+  it('removes a finished task’s Engine run folder, reads it twice, and keeps the run’s own task', async () => {
+    const root = tempDir('vinaya-sweep-engine-')
+    const finished = engineRun(root, 5)
+    engineRun(root, 6)
+    const reads: number[] = []
+    const { deps, rmPaths } = engineAsyncDeps(root, {
+      fetchIssueState: async (issue) => {
+        reads.push(issue)
+        return 'CLOSED'
+      }
+    })
+    const report = await sweepModernTasksAsync(6, () => {}, deps)
+    expect(rmPaths).toEqual([finished])
+    expect(reads).toEqual([5, 5])
+    expect(report.removed.map((r) => r.folder)).toEqual(['engine run Issue #5'])
+    expect(report.kept.map((r) => r.folder)).toEqual(['engine run Issue #6'])
+  })
+
+  it('keeps an Engine run folder whose task has a live driver, an open pull request, a pause, or an unreadable forge', async () => {
+    const root = tempDir('vinaya-sweep-engine-keep-')
+    for (const task of [1, 2, 3, 4]) engineRun(root, task)
+    const { deps, rmPaths } = engineAsyncDeps(root, {
+      isDriverPidAlive: () => true,
+      readDriverLockForScope: (_root, scope) => (scope === 1 ? { pid: 99, startedAt: 'now' } : null),
+      readPauseStateForScope: (_root, scope) => (scope === 3 ? { reason: 'round cap' } : null),
+      fetchIssueState: async (issue) => {
+        if (issue === 4) throw new Error('forge down')
+        return 'OPEN'
+      },
+      fetchPrForBranch: async (branch) => (branch.endsWith('2') ? { number: 20, state: 'OPEN' } : null)
+    })
+    const report = await sweepModernTasksAsync(undefined, () => {}, deps)
+    expect(rmPaths).toEqual([])
+    expect(report.removed).toEqual([])
+    const kinds = new Map(report.kept.map((k) => [k.folder, k.reason.split(' — ')[0]]))
+    expect(Object.fromEntries(kinds)).toEqual({
+      'engine run Issue #1': 'live',
+      'engine run Issue #2': 'open',
+      'engine run Issue #3': 'paused',
+      'engine run Issue #4': 'unknown'
+    })
+  })
+
+  it('keeps the folder when the second read no longer says finished', async () => {
+    const root = tempDir('vinaya-sweep-engine-recheck-')
+    engineRun(root, 8)
+    let reads = 0
+    const { deps, rmPaths } = engineAsyncDeps(root, {
+      fetchIssueState: async () => (++reads === 1 ? 'CLOSED' : 'OPEN')
+    })
+    const report = await sweepModernTasksAsync(undefined, () => {}, deps)
+    expect(rmPaths).toEqual([])
+    expect(report.kept[0]?.reason.startsWith('open')).toBe(true)
+  })
+
+  it('reports a finished Engine run folder whose removal threw as failed', async () => {
+    const root = tempDir('vinaya-sweep-engine-fail-')
+    engineRun(root, 9)
+    const { deps } = engineAsyncDeps(root, {
+      fetchIssueState: async () => 'CLOSED',
+      rm: () => {
+        throw new Error('EACCES')
+      }
+    })
+    const decisions: { failed?: boolean; removed: boolean }[] = []
+    await sweepModernTasksAsync(undefined, (d) => decisions.push(d), deps)
+    expect(decisions).toEqual([expect.objectContaining({ removed: false, failed: true })])
+  })
+
+  it('removes a finished task’s worktree, task folder and Engine run folder in one sweep', async () => {
+    const root = tempDir('vinaya-sweep-engine-all-')
+    const taskFolder = runPath(root, 5, { area: 'task' })
+    mkdirSync(taskFolder, { recursive: true })
+    const runFolder = engineRun(root, 5)
+    const worktrees: string[] = []
+    const { deps, rmPaths } = engineAsyncDeps(root, {
+      fetchIssueState: async () => 'CLOSED',
+      fetchPrForBranch: async () => ({ number: 9, state: 'MERGED' }),
+      listWorktrees: async () => ({
+        main: '/repo',
+        entries: [{ path: '/repo/.worktrees/task/issue-5', branch: 'task/issue-5', locked: false }]
+      }),
+      removeWorktree: async (_main, path) => {
+        worktrees.push(path)
+      }
+    })
+    const report = await sweepModernTasksAsync(undefined, () => {}, deps)
+    expect(worktrees).toEqual(['/repo/.worktrees/task/issue-5'])
+    expect([...rmPaths].sort()).toEqual([runFolder, taskFolder].sort())
+    expect(report.removed).toHaveLength(3)
   })
 })

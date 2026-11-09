@@ -2,11 +2,11 @@
 
 The public site that explains Vinaya as a development process: an interactive walk through the four stages, driven by one of four choices. Dark first, light supported. The CMS theme (shadcn tokens) is the base; the site adds one layer: a stage palette.
 
-Files: `src/ui/styles/site.css` (tokens), `src/process/types.ts` (the model), `src/process/fixtures/` (the only data), `src/process/components/` (the components), `src/process/diagram/` (the diagram), `src/process/system/` (the design system: a sidebar shell and one section page each under `/system`), `/` (the process page assembled from them).
+Files: `src/ui/styles/site.css` (tokens; the portal's stylesheet, which imports the shared global stylesheet `@vinaya/ui/styles/globals.css`), `packages/ui/src` at the repository root (the component library, `@vinaya/ui`, shared by every Vinaya web app), `src/ui/topbar` and `src/ui/footer` (the portal's own chrome), `src/process/types.ts` (the model), `src/process/fixtures/` (the only data), `src/process/components/` (the components), `src/process/diagram/` (the diagram), `src/process/system/` (the design system: a sidebar shell and one section page each under `/system`), `/` (the process page assembled from them).
 
 Rules inherited from the attalabs UI package, applied in full: components over raw primitives, theme tokens only (no palette classes, no hex, no `text-white`), no inline styles except computed numbers, named exports. The `animate` library is the one in use; `installed/` files are upstream pastes and are never edited.
 
-**`installed/` is attalabs, byte for byte.** `src/ui/libraries/*/installed/` are exact copies of attalabs `packages/ui/libraries/*/installed/`: never edited, never reformatted (excluded from Biome in `biome.json`), never invented. Their `@atta/ui/*` imports resolve through a `tsconfig` alias to `src/ui/*`, so the files need no rewriting. Any change in behaviour goes in the wrapper layer (`libraries/*/components/`). Not every file in `installed/` is a real animate-ui paste: only `installed/animate-ui/primitives/` is; `card.tsx`, `badge.tsx`, `dropdown-menu.tsx`, `popover.tsx`, `select.tsx` and `table.tsx` were hand-written in attalabs.
+**`installed/` is attalabs, byte for byte.** The library's installed pastes — `packages/ui/src/libraries/*/installed/` and `packages/ui/src/components/table/installed.tsx` in the shared `@vinaya/ui` package — are exact copies of their attalabs originals: never edited, never reformatted (excluded from Biome in `biome.json`, exempt from the UI rules check), never invented; they moved into the package unchanged. Any change in behaviour goes in the wrapper layer (`libraries/*/components/`). Not every file in `installed/` is a real animate-ui paste: only `installed/animate-ui/primitives/` is; `card.tsx`, `badge.tsx`, `dropdown-menu.tsx`, `popover.tsx`, `select.tsx` and `table.tsx` were hand-written in attalabs.
 
 **Cards do not move.** The animate library's `Card` is written in the wrapper (`libraries/animate/components/card.tsx`): same markup, no hover lift. It does not import the hand-written `installed/card.tsx`, which lifts every card 2px on hover.
 
@@ -38,7 +38,7 @@ The repo root for the docs loaders is wherever the installed doctrine sits (`nod
 
 ## 1. Tokens
 
-**Base.** The CMS is the source of truth: the only theme variables are the ones the CMS theme renders (`src/cms/utils/theme.ts`, field names mapped in `src/cms/types.ts`). Local CSS only maps them into Tailwind (`--color-x: var(--x)` in `globals.css`); it never defines a value or a variable of its own. The rendered set today:
+**Base.** The CMS is the source of truth: the only theme variables are the ones the CMS theme renders (`packages/cms/src/utils/theme.ts`, field names mapped in `packages/cms/src/types.ts`). Local CSS only maps them into Tailwind (`--color-x: var(--x)` in the shared global stylesheet, `packages/ui/src/styles/globals.css`); it never defines a value or a variable of its own. The rendered set today:
 
 - shadcn: `background`, `foreground`, `card(-foreground)`, `popover(-foreground)`, `primary(-foreground)`, `secondary(-foreground)`, `muted(-foreground)`, `accent(-foreground)`, `destructive(-foreground)`, `border`, `input`, `ring`, `chart-1`…`chart-5`, `sidebar-*`, `radius`, `font-sans`, `font-serif`, `font-mono`
 - CMS extras: `success(-foreground)`, `warning(-foreground)`, `primary-hover`, `secondary-hover`, `shadow-color`, `shadow-2xs`…`shadow-2xl`, `header-background`, `gradient-primary`, `gradient-background`, `gradient-card`, `spacing`, `tracking-normal`

@@ -433,23 +433,24 @@ describe('log-cache-sqlite — the lazy import (O7)', () => {
         "cache.setCursor('x', 'cursor-1')",
         'const rows = cache.dataset().rows()',
         'cache.close()',
-        'console.log(JSON.stringify({ outcome, rowCount: rows.length, payload: rows[0] && rows[0].payload }))'
+        "console.log(JSON.stringify({ outcome, rowCount: rows.length, payload: rows[0] && rows[0].payload, runtime: process.release.name, bun: typeof Bun !== 'undefined' }))"
       ].join('\n')
     )
 
     const result = spawnSyncBudgeted('node', [driverScript], { encoding: 'utf8', env: stripVinayaEnv() })
     expect(result.status).toBe(0)
-    // The module's own experimental warning is never silenced (traps,
-    // `harness/kernel/log/log-sync.md`) — proof the load genuinely reached
-    // real `node:sqlite`, not bun's.
-    expect(result.stderr.toLowerCase()).toContain('sqlite')
+    // Proof the load genuinely ran under real Node and its `node:sqlite`, not bun's: the driver reports its own
+    // runtime. (Node's experimental warning for `node:sqlite` is not that proof: newer Node releases no longer print it.)
 
     const lastLine = result.stdout.trim().split('\n').pop() as string
     const parsed = JSON.parse(lastLine) as {
       outcome: { type: string; result: string }
       rowCount: number
       payload: { a: number }
+      runtime: string
+      bun: boolean
     }
+    expect({ runtime: parsed.runtime, bun: parsed.bun }).toEqual({ runtime: 'node', bun: false })
     expect(parsed.outcome).toEqual({ type: 'row', result: 'inserted' })
     expect(parsed.rowCount).toBe(1)
     expect(parsed.payload).toEqual({ a: 1 })

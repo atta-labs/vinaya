@@ -28,6 +28,7 @@ import { printJson } from '../../../../kernel/effects/envelope.js'
 import {
   appendHardenedLine,
   describeFolderFallback,
+  isUnattributedStreamName,
   LOG_DESTINATION_ANCHOR_DEADLINE_MS,
   outboxPathFor,
   resolveLogDestinationFrom,
@@ -44,9 +45,9 @@ function repoSegment(repo: RepoRef): string {
   return repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
 }
 
-/** `subject.issue` for a file token, or `null` for the unattributed `none` bucket — the inverse of `outboxPathFor`'s own `${issue ?? 'none'}` naming. A non-`none`, non-numeric token is not one this delivery path ever wrote, so it is skipped. */
+/** `subject.issue` for a file token, or `null` for the unattributed `none` bucket and for a caller-named unattributed stream (`none-<label>`, `isUnattributedStreamName`) — the inverse of `outboxPathFor`'s own naming. Any other token is not one this delivery path ever wrote, so it is skipped. A folder's unattributed stream is moved into the one `none` retry queue, the queue a drain reads for unattributed events. */
 function issueFromToken(token: string): number | null | undefined {
-  if (token === 'none') return null
+  if (token === 'none' || isUnattributedStreamName(token)) return null
   return /^\d+$/.test(token) ? Number(token) : undefined
 }
 
@@ -61,7 +62,7 @@ function deliverableTokens(dir: string): Set<string> {
   const tokens = new Set<string>()
   if (!existsSync(dir)) return tokens
   for (const name of readdirSync(dir)) {
-    const match = /^(none|\d+)(?:\.1|\.draining)?\.ndjson$/.exec(name)
+    const match = /^(none(?:-[a-z0-9]+)*|\d+)(?:\.1|\.draining)?\.ndjson$/.exec(name)
     if (match) tokens.add(match[1] as string)
   }
   return tokens

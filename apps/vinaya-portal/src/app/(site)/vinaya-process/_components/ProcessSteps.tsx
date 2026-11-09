@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
 import { toneBg } from '@/process/tone'
 import type { Tone } from '@/process/types'
-import { clamp01 } from '@/ui/lib/math'
-import { cn } from '@/ui/lib/utils'
+import { clamp01 } from '@vinaya/ui/lib/math'
+import { cn } from '@vinaya/ui/lib/utils'
 
 // Home's Gates vocabulary at the boards' large size: a circle, a line down to the next one, a title, a grey line
 // and an outlined mono chip. With `progress` it moves the way Home's Gates does: the line fills, and each step

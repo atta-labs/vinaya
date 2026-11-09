@@ -18,7 +18,7 @@ import {
   writeDriverLock
 } from '../standalone/dev-review-loop/pause-resume'
 import { engineRunNote, runnerReadingFor } from './task-status'
-import { runTask, type RunTaskDeps } from './task-run'
+import { cancelledCheckpointIn, runTask, type RunTaskDeps } from './task-run'
 import {
   crossRunnerRefusalReason,
   engineRunDirectory,
@@ -238,6 +238,90 @@ describe('task_start', () => {
       'recorded on the atta-engine runner'
     )
     expect([standaloneStarts, engineStarts]).toEqual([1, 1])
+  })
+})
+
+describe('a cancelled Engine checkpoint', () => {
+  const CANCELLED_AT = '2026-03-04T05:06:07.000Z'
+  const engineDeps = (starts: number[], cancelledCheckpoint: RunTaskDeps['cancelledCheckpoint'], assigned: number[]) =>
+    fixtureDeps({
+      cancelledCheckpoint,
+      assignIssue: (issue) => void assigned.push(issue),
+      engine: {
+        scriptPath: () => '/runner.ts',
+        exists: () => true,
+        spawn: async () => {
+          starts.push(1)
+          return 0
+        },
+        notice: () => {}
+      }
+    })
+  const runDirWith = (...entries: string[]) => {
+    const dir = join(root(), 'engine-runs', '42')
+    mkdirSync(dir, { recursive: true })
+    for (const entry of entries) {
+      if (entry.startsWith('switched-')) mkdirSync(join(dir, entry))
+      else writeFileSync(join(dir, entry), '')
+    }
+    return dir
+  }
+  const cancel = { decision: 'cancel', consumedAt: CANCELLED_AT }
+
+  it('refuses before assigning the Issue or starting the Engine, naming the switch command', async () => {
+    const starts: number[] = []
+    const assigned: number[] = []
+    const deps = engineDeps(starts, async () => ({ consumedAt: CANCELLED_AT }), assigned)
+    await expect(runTask({ issue: 42, agent: 'codex', runner: 'atta-engine' }, deps)).rejects.toThrow(
+      'task switch --issue 42 --agent codex'
+    )
+    await expect(runTask({ issue: 42, agent: 'codex', runner: 'atta-engine' }, deps)).rejects.toThrow(
+      'cancelled at 2026-03-04T05:06:07.000Z and its Engine checkpoint is kept'
+    )
+    expect([starts, assigned]).toEqual([[], []])
+  })
+
+  it('reads the cancel, the checkpoint file and the switched folders from the run directory', () => {
+    const refused = { consumedAt: CANCELLED_AT }
+    expect(cancelledCheckpointIn(cancel, runDirWith('checkpoints.sqlite'))).toEqual(refused)
+    // A folder stamped before the cancel is an older switch: still refused.
+    expect(
+      cancelledCheckpointIn(cancel, runDirWith('checkpoints.sqlite', 'switched-2026-03-04T05-06-06.000Z'))
+    ).toEqual(refused)
+    // Set aside after the cancel — also when a new checkpoint exists since.
+    expect(
+      cancelledCheckpointIn(cancel, runDirWith('checkpoints.sqlite', 'switched-2026-03-04T05-06-08.000Z'))
+    ).toBeNull()
+    expect(
+      cancelledCheckpointIn(cancel, runDirWith('checkpoints.sqlite', 'switched-2026-03-04T05-06-08.000Z-2'))
+    ).toBeNull()
+    // No checkpoint file, a resume resolution, no pause: nothing to refuse.
+    expect(cancelledCheckpointIn(cancel, runDirWith())).toBeNull()
+    expect(cancelledCheckpointIn({ ...cancel, decision: 'resume' }, runDirWith('checkpoints.sqlite'))).toBeNull()
+    expect(cancelledCheckpointIn(null, runDirWith('checkpoints.sqlite'))).toBeNull()
+  })
+
+  it('starts the Engine when nothing of the cancelled run is left, and never gates the standalone runner', async () => {
+    const starts: number[] = []
+    const assigned: number[] = []
+    await runTask(
+      { issue: 42, agent: 'claude', runner: 'atta-engine' },
+      engineDeps(starts, async () => null, assigned)
+    )
+    expect([starts.length, assigned]).toEqual([1, [42]])
+    let read = 0
+    await runTask(
+      { issue: 42, agent: 'claude', runner: 'standalone' },
+      engineDeps(
+        starts,
+        async () => {
+          read += 1
+          return { consumedAt: CANCELLED_AT }
+        },
+        assigned
+      )
+    )
+    expect(read).toBe(0)
   })
 })
 

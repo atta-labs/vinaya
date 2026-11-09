@@ -91,6 +91,10 @@
   ],
   "typeInputs": [
     {
+      "path": "packages/ui",
+      "role": "shared component library package with no tests of its own; the web apps that import it run its code in their suites"
+    },
+    {
       "path": "packages/typescript-config",
       "role": "shared TypeScript configuration package with no tests"
     },
@@ -256,44 +260,6 @@
         "harness/processes/vinaya-strict/artifacts/docs/nav-helpers.test.ts",
         "harness/processes/vinaya-strict/artifacts/docs/node-route.ts",
         "harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts",
-        "harness/processes/vinaya-strict/doctrine/manual-flow.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/architect-planner.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/archivist-tranche-archivist.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/developer-reviewer.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/planner-developer.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/planner-operator.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/principal-operator.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/reviewer-archivist.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/security-archivist.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/tranche-archivist-planner.md",
-        "harness/processes/vinaya-strict/doctrine/documentation-coherence.md",
-        "harness/processes/vinaya-strict/doctrine/enforcement.md",
-        "harness/processes/vinaya-strict/doctrine/glossary.md",
-        "harness/processes/vinaya-strict/doctrine/milestone-model.md",
-        "harness/processes/vinaya-strict/doctrine/process.md",
-        "harness/processes/vinaya-strict/thinking/reviewer-prompt.md",
-        "harness/processes/vinaya-strict/thinking/architect/doctrine.md",
-        "harness/processes/vinaya-strict/retrospecting/archivist/doctrine.md",
-        "harness/processes/vinaya-strict/executing/developer/doctrine.md",
-        "harness/processes/vinaya-strict/executing/developer/reference.md",
-        "harness/processes/vinaya-strict/executing/operator/doctrine.md",
-        "harness/processes/vinaya-strict/thinking/planner/doctrine.md",
-        "harness/processes/vinaya-strict/thinking/planner/reference.md",
-        "harness/processes/vinaya-strict/doctrine/roles/principal.md",
-        "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
-        "harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md",
-        "harness/processes/vinaya-strict/retrospecting/tranche-archivist/doctrine.md",
-        "harness/processes/vinaya-strict/doctrine/skills/context-packets/SKILL.md",
-        "harness/processes/vinaya-strict/doctrine/skills/context-packets/examples/operator-start.md",
-        "harness/processes/vinaya-strict/doctrine/skills/roles/SKILL.md",
-        "harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md",
-        "harness/processes/vinaya-strict/doctrine/state-machine.md",
-        "harness/processes/vinaya-strict/doctrine/task-model.md",
-        "harness/processes/vinaya-strict/artifacts/templates/brief-template.md",
-        "harness/processes/vinaya-strict/artifacts/templates/decision-record-template.md",
-        "harness/processes/vinaya-strict/artifacts/templates/issue-rationale-template.md",
-        "harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md",
-        "harness/processes/vinaya-strict/doctrine/tranche-model.md",
         "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts",
         "harness/processes/vinaya-strict/evals/freeze-record.ts",
         "harness/processes/vinaya-strict/evals/harbor-grade.ts",
@@ -953,136 +919,6 @@
       "reason": "The symbol-collision test preserves its pre-move source census and logical identities while reading relocated implementations at their destinations."
     },
     {
-      "id": "doc-navigation-doctrine",
-      "kind": "fixture",
-      "paths": [
-        "harness/processes/vinaya-strict/doctrine/manual-flow.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/architect-planner.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/archivist-tranche-archivist.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/developer-reviewer.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/planner-developer.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/planner-operator.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/principal-operator.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/reviewer-archivist.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/security-archivist.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/tranche-archivist-planner.md",
-        "harness/processes/vinaya-strict/doctrine/documentation-coherence.md",
-        "harness/processes/vinaya-strict/doctrine/enforcement.md",
-        "harness/processes/vinaya-strict/doctrine/glossary.md",
-        "harness/processes/vinaya-strict/doctrine/milestone-model.md",
-        "harness/processes/vinaya-strict/doctrine/process.md",
-        "harness/processes/vinaya-strict/thinking/reviewer-prompt.md",
-        "harness/processes/vinaya-strict/thinking/architect/doctrine.md",
-        "harness/processes/vinaya-strict/retrospecting/archivist/doctrine.md",
-        "harness/processes/vinaya-strict/executing/developer/doctrine.md",
-        "harness/processes/vinaya-strict/executing/developer/reference.md",
-        "harness/processes/vinaya-strict/executing/operator/doctrine.md",
-        "harness/processes/vinaya-strict/thinking/planner/doctrine.md",
-        "harness/processes/vinaya-strict/thinking/planner/reference.md",
-        "harness/processes/vinaya-strict/doctrine/roles/principal.md",
-        "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
-        "harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md",
-        "harness/processes/vinaya-strict/retrospecting/tranche-archivist/doctrine.md",
-        "harness/processes/vinaya-strict/doctrine/skills/context-packets/SKILL.md",
-        "harness/processes/vinaya-strict/doctrine/skills/context-packets/examples/operator-start.md",
-        "harness/processes/vinaya-strict/doctrine/skills/roles/SKILL.md",
-        "harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md",
-        "harness/processes/vinaya-strict/doctrine/state-machine.md",
-        "harness/processes/vinaya-strict/doctrine/task-model.md",
-        "harness/processes/vinaya-strict/artifacts/templates/brief-template.md",
-        "harness/processes/vinaya-strict/artifacts/templates/decision-record-template.md",
-        "harness/processes/vinaya-strict/artifacts/templates/issue-rationale-template.md",
-        "harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md",
-        "harness/processes/vinaya-strict/doctrine/tranche-model.md",
-        "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts"
-      ],
-      "readers": [
-        {
-          "kind": "raw-bytes",
-          "tests": ["harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts"]
-        }
-      ],
-      "reason": "The navigation test reads doctrine pages and their enforcement anchors from disk."
-    },
-    {
-      "id": "process-doctrine-map",
-      "kind": "fixture",
-      "paths": [
-        "harness/processes/vinaya-strict/doctrine/manual-flow.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/architect-planner.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/archivist-tranche-archivist.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/developer-reviewer.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/planner-developer.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/planner-operator.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/principal-operator.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/reviewer-archivist.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/security-archivist.md",
-        "harness/processes/vinaya-strict/doctrine/contracts/tranche-archivist-planner.md",
-        "harness/processes/vinaya-strict/doctrine/documentation-coherence.md",
-        "harness/processes/vinaya-strict/doctrine/enforcement.md",
-        "harness/processes/vinaya-strict/doctrine/glossary.md",
-        "harness/processes/vinaya-strict/doctrine/milestone-model.md",
-        "harness/processes/vinaya-strict/doctrine/process.md",
-        "harness/processes/vinaya-strict/thinking/reviewer-prompt.md",
-        "harness/processes/vinaya-strict/thinking/architect/doctrine.md",
-        "harness/processes/vinaya-strict/retrospecting/archivist/doctrine.md",
-        "harness/processes/vinaya-strict/executing/developer/doctrine.md",
-        "harness/processes/vinaya-strict/executing/developer/reference.md",
-        "harness/processes/vinaya-strict/executing/operator/doctrine.md",
-        "harness/processes/vinaya-strict/thinking/planner/doctrine.md",
-        "harness/processes/vinaya-strict/thinking/planner/reference.md",
-        "harness/processes/vinaya-strict/doctrine/roles/principal.md",
-        "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
-        "harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md",
-        "harness/processes/vinaya-strict/retrospecting/tranche-archivist/doctrine.md",
-        "harness/processes/vinaya-strict/doctrine/skills/context-packets/SKILL.md",
-        "harness/processes/vinaya-strict/doctrine/skills/context-packets/examples/operator-start.md",
-        "harness/processes/vinaya-strict/doctrine/skills/roles/SKILL.md",
-        "harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md",
-        "harness/processes/vinaya-strict/doctrine/state-machine.md",
-        "harness/processes/vinaya-strict/doctrine/task-model.md",
-        "harness/processes/vinaya-strict/artifacts/templates/brief-template.md",
-        "harness/processes/vinaya-strict/artifacts/templates/decision-record-template.md",
-        "harness/processes/vinaya-strict/artifacts/templates/issue-rationale-template.md",
-        "harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md",
-        "harness/processes/vinaya-strict/doctrine/tranche-model.md",
-        "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts"
-      ],
-      "readers": [
-        {
-          "kind": "raw-bytes",
-          "tests": [
-            "harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.test.ts",
-            "harness/processes/vinaya-strict/tools/doctrine/doctrine-map-readers.test.ts",
-            "harness/processes/vinaya-strict/integration/doctrine-pointer.test.ts",
-            "harness/processes/vinaya-strict/integration/log/doctrine-version.test.ts",
-            "harness/processes/vinaya-strict/doctrine/no-brief-author.test.ts",
-            "harness/processes/vinaya-strict/tools/actions.test.ts",
-            "harness/processes/vinaya-strict/tools/diagram-model.test.ts",
-            "harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts",
-            "apps/cli/tests/doctrine.test.ts",
-            "apps/cli/scripts/bundle-doctrine.test.ts"
-          ]
-        }
-      ],
-      "reason": "The doctrine resolution, the doctrine map's readers, the AGENTS.md pointer, the Log's doctrine version, the retired-role sweep, the action and diagram-model cross-checks, the node routes, the doctrine command's tests and the bundler's test read the doctrine files at the source paths the doctrine map names, so a moved or renamed doctrine file selects them even when its text is unchanged."
-    },
-    {
-      "id": "developer-doctrine-pages",
-      "kind": "fixture",
-      "paths": [
-        "harness/processes/vinaya-strict/executing/developer/doctrine.md",
-        "harness/processes/vinaya-strict/executing/developer/reference.md"
-      ],
-      "readers": [
-        {
-          "kind": "raw-bytes",
-          "tests": ["harness/processes/vinaya-strict/executing/developer/developer-doctrine-shape.test.ts"]
-        }
-      ],
-      "reason": "The doctrine-shape test reads the developer role and its reference through the resolved doctrine root."
-    },
-    {
       "id": "runner-repository-config",
       "kind": "config",
       "paths": ["vinaya.config.json"],
@@ -1119,6 +955,528 @@
       "export": "SCANNER_DECLARATIONS",
       "shape": "scanner-declarations",
       "reason": "Each folder-scanning test reads the roots it declares from disk."
+    },
+    {
+      "id": "doctrine-direct-reads",
+      "kind": "fixture",
+      "file": "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts",
+      "export": "DOCTRINE_MAP",
+      "root": "DOCTRINE_TREE",
+      "shape": "doctrine-map",
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": [
+            "harness/processes/vinaya-strict/integration/log/doctrine-version.test.ts",
+            "harness/processes/vinaya-strict/doctrine/no-brief-author.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["enforcement.md"],
+          "tests": [
+            "harness/processes/vinaya-strict/checks/check-pr-premise-reassert-own-body.test.ts",
+            "harness/processes/vinaya-strict/checks/registry-checks.test.ts",
+            "harness/processes/vinaya-strict/integration/gates/checks/markdown-table.test.ts",
+            "harness/processes/vinaya-strict/tools/registry-parse.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["skills/aeg/SKILL.md", "templates/issue-rationale-template.md"],
+          "tests": ["harness/processes/vinaya-strict/checks/issue-rationale-template-gate.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["roles/developer.md", "roles/developer/reference.md", "templates/brief-template.md"],
+          "tests": [
+            "harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/sandbox-conformance.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["templates/brief-template.md"],
+          "tests": [
+            "harness/processes/vinaya-strict/tests/lib/brief-assembly.test.ts",
+            "harness/processes/vinaya-strict/tests/lib/dispatch-task.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["skills/aeg-context-packets/examples/operator-start.md"],
+          "tests": ["harness/processes/vinaya-strict/tests/lib/context-packet.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["glossary.md"],
+          "tests": ["harness/processes/vinaya-strict/tools/reader-resolvable-prose.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["templates/brief-template.md", "templates/pr-report-template.md"],
+          "tests": ["harness/processes/vinaya-strict/tools/task-contract/brief-render.test.ts"]
+        }
+      ],
+      "reason": "Each test reads these doctrine files from disk at the source paths the doctrine map names, directly or through the doctrine source and resolver, and asserts on their text."
+    },
+    {
+      "id": "doctrine-role-resolution",
+      "kind": "fixture",
+      "file": "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts",
+      "export": "DOCTRINE_MAP",
+      "root": "DOCTRINE_TREE",
+      "shape": "doctrine-map",
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "roles/architect.md",
+            "roles/archivist.md",
+            "roles/developer.md",
+            "roles/operator.md",
+            "roles/planner.md",
+            "roles/principal.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "roles/tranche-archivist.md",
+            "skills/aeg/SKILL.md"
+          ],
+          "tests": [
+            "apps/cli/tests/commands/upgrade-stop-hook.test.ts",
+            "apps/cli/tests/doctor.test.ts",
+            "apps/cli/tests/init.test.ts",
+            "apps/cli/tests/upgrade.test.ts",
+            "harness/processes/vinaya-strict/integration/agent-config-locations.test.ts",
+            "harness/processes/vinaya-strict/integration/connectors/git/detect.test.ts",
+            "harness/processes/vinaya-strict/integration/doctrine-pointer.test.ts",
+            "harness/processes/vinaya-strict/integration/gates/ring0-hooks/pre-push/pre-push-test-runner.test.ts",
+            "harness/processes/vinaya-strict/integration/workflow.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "contracts/",
+            "enforcement.md",
+            "roles/architect.md",
+            "roles/archivist.md",
+            "roles/developer.md",
+            "roles/operator.md",
+            "roles/planner.md",
+            "roles/principal.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "roles/tranche-archivist.md"
+          ],
+          "tests": [
+            "harness/processes/vinaya-strict/artifacts/docs/node-route.test.ts",
+            "harness/processes/vinaya-strict/tools/diagram-model.test.ts",
+            "harness/processes/vinaya-strict/tools/sources/doctrine-file-adapter.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "contracts/",
+            "enforcement.md",
+            "roles/architect.md",
+            "roles/archivist.md",
+            "roles/developer.md",
+            "roles/developer/reference.md",
+            "roles/operator.md",
+            "roles/planner.md",
+            "roles/principal.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "roles/tranche-archivist.md",
+            "skills/aeg/SKILL.md"
+          ],
+          "tests": [
+            "harness/processes/vinaya-strict/evals/dev-review-engine-fault-rows.test.ts",
+            "harness/processes/vinaya-strict/integration/conformance/unit/dev-review-log-parity.test.ts",
+            "harness/processes/vinaya-strict/loops/dev-review/dev-review-engine-shadow.test.ts",
+            "harness/processes/vinaya-strict/loops/dev-review/v2/v2-flow.eval.test.ts",
+            "harness/processes/vinaya-strict/loops/dev-review/v2/v2-round-flow.test.ts",
+            "harness/processes/vinaya-strict/tests/completion.test.ts",
+            "harness/processes/vinaya-strict/tests/fault-injection.test.ts",
+            "harness/processes/vinaya-strict/tests/forge-gates.test.ts",
+            "harness/processes/vinaya-strict/tests/replay.test.ts",
+            "harness/processes/vinaya-strict/tests/round-decisions.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["roles/developer.md", "roles/developer/reference.md", "roles/reviewer.md", "roles/security.md"],
+          "tests": [
+            "harness/processes/vinaya-strict/evals/structure-proof/pre-move-checkpoint.test.ts",
+            "harness/processes/vinaya-strict/integration/log/client/loop-log.test.ts",
+            "harness/processes/vinaya-strict/loops/dev-review/developer-ci-failure-detail.test.ts",
+            "harness/processes/vinaya-strict/loops/dev-review/run-control/runner-repo-default.test.ts",
+            "harness/processes/vinaya-strict/loops/dev-review/standalone/after-turn-attribution.test.ts",
+            "harness/processes/vinaya-strict/tests/developer-session.test.ts",
+            "harness/processes/vinaya-strict/tests/engine-log-identity.test.ts",
+            "harness/processes/vinaya-strict/tests/flow-compiles.test.ts",
+            "harness/processes/vinaya-strict/tests/lib/dev-review-loop/developer-turn-result.test.ts",
+            "harness/processes/vinaya-strict/tests/log-events.test.ts",
+            "harness/processes/vinaya-strict/tests/recovery/ci-and-tool-hosts.test.ts",
+            "harness/processes/vinaya-strict/tests/recovery/cross-cutting.test.ts",
+            "harness/processes/vinaya-strict/tests/recovery/round-and-provenance.test.ts",
+            "harness/processes/vinaya-strict/tests/resume.test.ts",
+            "harness/processes/vinaya-strict/tests/round-assessment.test.ts",
+            "harness/processes/vinaya-strict/tests/run-flow.test.ts",
+            "harness/processes/vinaya-strict/tests/run-lifecycle.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/developer-publication.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-1.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-10.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-11.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-2.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-3.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-4.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-5.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-6.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-7.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-8.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-9.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/live-check.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/live-gate-fail-closed.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/pause-resume.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/policy-integration.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/pre-pr-pause-continuation.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/rate-limit-red-gate.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/refused-publication-wait.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/reviewer-redispatch.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/runner-version.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/stall-current-head.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/takeover-phase.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/task-worktree-install.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["roles/developer.md", "roles/developer/reference.md", "skills/aeg/SKILL.md"],
+          "tests": ["harness/processes/vinaya-strict/executing/developer/developer-doctrine-shape.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["skills/aeg/SKILL.md"],
+          "tests": [
+            "harness/processes/vinaya-strict/integration/gates/checks/no-privileged-api.test.ts",
+            "harness/processes/vinaya-strict/tests/forge-write.test.ts",
+            "harness/processes/vinaya-strict/tests/lib/task-tools/resume.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "contracts/",
+            "enforcement.md",
+            "roles/architect.md",
+            "roles/archivist.md",
+            "roles/developer.md",
+            "roles/operator.md",
+            "roles/planner.md",
+            "roles/principal.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "roles/tranche-archivist.md",
+            "skills/aeg/SKILL.md"
+          ],
+          "tests": [
+            "harness/processes/vinaya-strict/integration/roles/bin/operator-role.test.ts",
+            "harness/processes/vinaya-strict/tests/claude-command-emitter.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "roles/architect.md",
+            "roles/archivist.md",
+            "roles/developer.md",
+            "roles/operator.md",
+            "roles/planner.md",
+            "roles/principal.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "roles/tranche-archivist.md"
+          ],
+          "tests": [
+            "harness/processes/vinaya-strict/integration/tools/host/operator-grant.test.ts",
+            "harness/processes/vinaya-strict/tests/agents-skills-emitter.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["roles/operator.md"],
+          "tests": ["harness/processes/vinaya-strict/loops/dev-review/run-control/operator-state-actions.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["roles/developer/reference.md"],
+          "tests": ["harness/processes/vinaya-strict/tests/lib/dispatch/dispatch-vinaya-policy.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "contracts/developer-reviewer.md",
+            "roles/developer.md",
+            "roles/developer/reference.md",
+            "roles/reviewer.md",
+            "roles/security.md"
+          ],
+          "tests": ["harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/reviewer-dispatch.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "enforcement.md",
+            "roles/architect.md",
+            "roles/archivist.md",
+            "roles/developer.md",
+            "roles/operator.md",
+            "roles/planner.md",
+            "roles/principal.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "roles/tranche-archivist.md"
+          ],
+          "tests": ["harness/processes/vinaya-strict/tools/actions.test.ts"]
+        }
+      ],
+      "reason": "Each test resolves role doctrine the way the review loop, the role plan and the skill emitters do — through the process's role files and the doctrine root's front door — and reads the files it resolves."
+    },
+    {
+      "id": "doctrine-spawned-programs",
+      "kind": "fixture",
+      "file": "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts",
+      "export": "DOCTRINE_MAP",
+      "root": "DOCTRINE_TREE",
+      "shape": "doctrine-map",
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "rows": ["templates/brief-template.md"],
+          "tests": [
+            "apps/cli/tests/commands/issue-objectives.test.ts",
+            "apps/cli/tests/commands/issue.test.ts",
+            "harness/processes/vinaya-strict/tests/lib/forge-write.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["contracts/", "roles/", "templates/", "enforcement.md", "skills/aeg/SKILL.md"],
+          "tests": ["apps/cli/tests/doctrine.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["skills/aeg/SKILL.md"],
+          "tests": [
+            "apps/cli/tests/new-check.test.ts",
+            "apps/cli/tests/new-noop-check.test.ts",
+            "apps/cli/tests/package-root.test.ts",
+            "harness/kernel/adapters/code-host/github/gh-path.test.ts",
+            "harness/processes/vinaya-strict/checks/body-bare-digits-changeset-exempt.test.ts",
+            "harness/processes/vinaya-strict/integration/gates/checks/runner-launch.test.ts",
+            "harness/processes/vinaya-strict/tools/pull-request/bin/pr.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "roles/architect.md",
+            "roles/archivist.md",
+            "roles/developer.md",
+            "roles/operator.md",
+            "roles/planner.md",
+            "roles/principal.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "roles/tranche-archivist.md",
+            "skills/aeg/SKILL.md"
+          ],
+          "tests": ["apps/cli/tests/tracked-hooks.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "contracts/",
+            "enforcement.md",
+            "roles/architect.md",
+            "roles/archivist.md",
+            "roles/developer.md",
+            "roles/operator.md",
+            "roles/planner.md",
+            "roles/principal.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "roles/tranche-archivist.md",
+            "skills/aeg/SKILL.md"
+          ],
+          "tests": [
+            "harness/processes/vinaya-strict/checks/check-roles-plan.test.ts",
+            "harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["skills/aeg/SKILL.md", "templates/brief-template.md"],
+          "tests": ["harness/processes/vinaya-strict/checks/issue-checks.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "contracts/",
+            "enforcement.md",
+            "roles/architect.md",
+            "roles/archivist.md",
+            "roles/developer.md",
+            "roles/developer/reference.md",
+            "roles/operator.md",
+            "roles/planner.md",
+            "roles/principal.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "roles/tranche-archivist.md",
+            "skills/aeg/SKILL.md"
+          ],
+          "tests": [
+            "harness/processes/vinaya-strict/evals/suites/step-one.test.ts",
+            "harness/processes/vinaya-strict/integration/conformance/unit/dev-review-backend-selection.test.ts",
+            "harness/processes/vinaya-strict/loops/dev-review/run-control/engine-runner-routing.test.ts",
+            "harness/processes/vinaya-strict/tests/driver-log-narration.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["roles/developer.md", "roles/developer/reference.md", "roles/reviewer.md", "roles/security.md"],
+          "tests": [
+            "harness/processes/vinaya-strict/integration/tools/fetch-documentation-tool.test.ts",
+            "harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.test.ts"
+          ]
+        }
+      ],
+      "reason": "Each test starts the command line or one of its programs as its own process, and that process reads these doctrine files: the doctrine, issue and brief commands, init, doctor and upgrade installing skills and hooks."
+    },
+    {
+      "id": "doctrine-packaging",
+      "kind": "fixture",
+      "file": "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts",
+      "export": "DOCTRINE_MAP",
+      "root": "DOCTRINE_TREE",
+      "shape": "doctrine-map",
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "ships": true,
+          "tests": ["apps/cli/scripts/bundle-doctrine.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "tests": ["scripts/package-compat/package-compat.test.ts"]
+        }
+      ],
+      "reason": "The bundler test copies the shipped rows into the command-line package, and the compatibility suite packs that package with its doctrine and installs the tarball."
+    },
+    {
+      "id": "doctrine-content-scanning",
+      "kind": "fixture",
+      "file": "harness/processes/vinaya-strict/tools/doctrine/doctrine-map.ts",
+      "export": "DOCTRINE_MAP",
+      "root": "DOCTRINE_TREE",
+      "shape": "doctrine-map",
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": [
+            "apps/cli/tests/demo.test.ts",
+            "apps/cli/tests/quickstart.test.ts",
+            "harness/processes/vinaya-strict/checks/bin-permissions.test.ts",
+            "harness/processes/vinaya-strict/checks/check-flip.test.ts",
+            "harness/processes/vinaya-strict/checks/no-binary-sources.test.ts",
+            "harness/processes/vinaya-strict/checks/prose-gates-doctrine-root.test.ts",
+            "harness/processes/vinaya-strict/checks/registry-gates.test.ts",
+            "harness/processes/vinaya-strict/checks/retired-vocabulary.test.ts",
+            "harness/processes/vinaya-strict/integration/adapters/code-host/github/ci-graphql-calls.test.ts",
+            "harness/processes/vinaya-strict/integration/config/config.test.ts",
+            "harness/processes/vinaya-strict/integration/gates/checks/repo-root-resolution.test.ts",
+            "harness/processes/vinaya-strict/integration/pre-push-scanner-triggers.test.ts",
+            "harness/processes/vinaya-strict/integration/test-selector-graph.test.ts",
+            "harness/processes/vinaya-strict/integration/test-selector-oracle.test.ts",
+            "harness/processes/vinaya-strict/integration/test-selector-repository-policy.test.ts",
+            "harness/processes/vinaya-strict/tests/lib/pr-report-engine.test.ts",
+            "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/readiness-gate-adopter.test.ts",
+            "harness/processes/vinaya-strict/tools/doctrine/doctrine-map-readers.test.ts",
+            "harness/processes/vinaya-strict/tools/pr-report/bin/pr-report.test.ts",
+            "harness/processes/vinaya-strict/tools/pr-report/bin/pr-verify-evidence-cwd.test.ts",
+            "harness/processes/vinaya-strict/tools/quoted-command.test.ts",
+            "scripts/test-suites/inventory-check.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": ["roles/developer.md", "roles/developer/reference.md", "roles/reviewer.md", "roles/security.md"],
+          "tests": [
+            "harness/kernel/dev-process-socket/loader/load-process.test.ts",
+            "harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "contracts/",
+            "enforcement.md",
+            "roles/architect.md",
+            "roles/archivist.md",
+            "roles/developer.md",
+            "roles/developer/reference.md",
+            "roles/operator.md",
+            "roles/planner.md",
+            "roles/principal.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "roles/tranche-archivist.md",
+            "skills/aeg/SKILL.md"
+          ],
+          "tests": [
+            "harness/processes/vinaya-strict/integration/conformance/unit/dev-review-engine-architecture-exit.test.ts",
+            "harness/processes/vinaya-strict/tests/run-engine.test.ts"
+          ]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "roles/architect.md",
+            "roles/archivist.md",
+            "roles/developer.md",
+            "roles/operator.md",
+            "roles/planner.md",
+            "roles/principal.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "roles/tranche-archivist.md",
+            "skills/aeg/SKILL.md"
+          ],
+          "tests": ["harness/processes/vinaya-strict/integration/log/client/no-log-forge-writes.test.ts"]
+        },
+        {
+          "kind": "raw-bytes",
+          "rows": [
+            "documentation-coherence.md",
+            "enforcement.md",
+            "roles/developer.md",
+            "roles/developer/reference.md",
+            "roles/planner.md",
+            "roles/planner/reference.md",
+            "roles/reviewer.md",
+            "roles/security.md",
+            "templates/brief-template.md"
+          ],
+          "tests": [
+            "harness/processes/vinaya-strict/tests/standalone/conformance/dev-review-invariant-coverage.test.ts"
+          ]
+        }
+      ],
+      "reason": "Each test scans file contents across the tree, or across the doctrine the map names, and so reads these doctrine files whatever their text."
     }
   ],
   "policies": [
@@ -1176,158 +1534,5 @@
       "source": ".github/workflows/ci.yml"
     }
   ],
-  "unknowns": [
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/manual-flow.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/contracts/architect-planner.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/contracts/archivist-tranche-archivist.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/contracts/developer-reviewer.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/contracts/planner-developer.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/contracts/planner-operator.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/contracts/principal-operator.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/contracts/reviewer-archivist.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/contracts/security-archivist.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/contracts/tranche-archivist-planner.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/documentation-coherence.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/enforcement.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/glossary.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/milestone-model.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/process.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/thinking/reviewer-prompt.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/thinking/architect/doctrine.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/retrospecting/archivist/doctrine.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/executing/developer/doctrine.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/executing/developer/reference.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/executing/operator/doctrine.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/thinking/planner/doctrine.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/thinking/planner/reference.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/roles/principal.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/executing/code-reviewer/doctrine.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/executing/security-reviewer/doctrine.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/retrospecting/tranche-archivist/doctrine.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/skills/context-packets/SKILL.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/skills/context-packets/examples/operator-start.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/skills/roles/SKILL.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/state-machine.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/task-model.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/artifacts/templates/brief-template.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/artifacts/templates/decision-record-template.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/artifacts/templates/issue-rationale-template.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    },
-    {
-      "scope": "harness/processes/vinaya-strict/doctrine/tranche-model.md",
-      "reason": "Doctrine, contracts and templates are read by the CLI commands many tests start; their readers are not enumerated, so a change here keeps the full run."
-    }
-  ]
+  "unknowns": []
 }

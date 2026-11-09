@@ -82,11 +82,11 @@ describe('the trusted opt-in', () => {
     ).toThrow('could not read')
   })
 
-  it("this repository's own configuration tests its ready and repair pushes locally and still owes the required check", () => {
+  it("this repository's own configuration defers its ready and repair pushes' tests to the required check it owes", () => {
     const config = JSON.parse(readFileSync(join(REPO_ROOT, 'vinaya.config.json'), 'utf8')) as Parameters<
       typeof readyTestsPolicyOf
     >[0]
-    expect(readyTestsPolicyOf(config)).toEqual({ mode: 'local' })
+    expect(readyTestsPolicyOf(config)).toEqual({ mode: 'ci', workflow: READY_TESTS_WORKFLOW, check: READY_TESTS_CHECK })
     expect(requiredCiPolicyOf(config)).toEqual({ workflow: READY_TESTS_WORKFLOW, check: READY_TESTS_CHECK })
   })
 })

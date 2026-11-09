@@ -537,6 +537,7 @@ describe('re-running a task', () => {
       'run-mechanical-gates',
       'check-mergeability',
       'classify-mergeability',
+      'refresh-evidence',
       'read-forge-ci',
       'check-premise',
       'assess-gate',

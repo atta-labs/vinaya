@@ -92,6 +92,7 @@
       "tests/import-boundary.test.ts",
       "tests/init.test.ts",
       "tests/lib/command-loading.test.ts",
+      "tests/lib/startup-loading.test.ts",
       "tests/milestone.test.ts",
       "tests/new-check.test.ts",
       "tests/new-noop-check.test.ts",

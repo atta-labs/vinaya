@@ -8,7 +8,10 @@ import {
   EXECUTION_CEILING_MS,
   judgeRequiredCi,
   latestWorkflowRun,
-  QUEUE_BOUND_MS
+  QUEUE_BOUND_MS,
+  readStepLog,
+  SANDBOX_SETUP_DIAGNOSTICS,
+  sliceStepLog
 } from './ci-recovery'
 
 const HEAD = 'a'.repeat(40)
@@ -284,6 +287,36 @@ describe('the recovery classification of a failing job', () => {
     expect(classifyFailedJob(testJob, { stepLog: `error: "${diagnostic}"` }).kind).toBe('code')
   })
 
+  test.each([
+    "bwrap: Can't remount readonly on /newroot/tmp: Unable to remount destination /newroot/tmp with correct flags: Invalid argument",
+    "bwrap: Can't mount tmpfs on /newroot/tmp: Operation not permitted"
+  ])('a failed sandbox suite step whose text carries "%s" is infrastructure naming that line', (line) => {
+    const sandbox = job('Sandbox conformance (Linux)', {
+      conclusion: 'failure',
+      steps: [testStep('failure', 'Run the suite under both sandboxes')]
+    })
+    expect(classifyFailedJob(sandbox, { stepLog: `noise\n${line}\n1 fail` })).toMatchObject({
+      kind: 'infrastructure',
+      diagnostic: line
+    })
+    expect(classifyFailedJob(sandbox, { stepLog: `error: "${line}"` }).kind).toBe('code')
+  })
+
+  test.each([
+    "bwrap: Can't remount readonly on /newroot/tmp: Unable to remount destination /newroot/tmp with correct flags: Invalid argument",
+    "bwrap: Can't mount tmpfs on /newroot/tmp: Operation not permitted"
+  ])('a failed sandbox suite step whose text carries "%s" is infrastructure naming that line', (line) => {
+    const sandbox = job('Sandbox conformance (Linux)', {
+      conclusion: 'failure',
+      steps: [testStep('failure', 'Run the suite under both sandboxes')]
+    })
+    expect(classifyFailedJob(sandbox, { stepLog: `noise\n${line}\n1 fail` })).toMatchObject({
+      kind: 'infrastructure',
+      diagnostic: line
+    })
+    expect(classifyFailedJob(sandbox, { stepLog: `error: "${line}"` }).kind).toBe('code')
+  })
+
   test('a timed-out, cancelled or unnamed failure is unclassified, never code', () => {
     expect(classifyFailedJob(job('j', { conclusion: 'failure', steps: [testStep('timed_out')] })).kind).toBe('unknown')
     expect(classifyFailedJob(job('j', { conclusion: 'cancelled', steps: [testStep('cancelled')] })).kind).toBe(
@@ -310,5 +343,98 @@ describe('the recovery classification of a failing job', () => {
     })
     expect(reads).toEqual([`${failing.id}/5`, `${failing.id}/6`])
     expect(failure.kind).toBe('infrastructure')
+  })
+})
+
+// An excerpt around the step-8/step-9 boundary of a real failed Linux sandbox job: step 8 completed 06:04:18Z and
+// step 9 started 06:04:18Z, so the 06:04:18 lines mix the failure summary with the budget step's opening group.
+const BOUNDARY_LOG = [
+  '2026-11-07T06:03:02.1000000Z ##[group]Run bun run test:sandbox',
+  '2026-11-07T06:03:02.1100000Z bun run test:sandbox',
+  "2026-11-07T06:04:17.5000000Z bwrap: Can't remount readonly on /newroot/tmp: Unable to remount destination /newroot/tmp with correct flags: Invalid argument",
+  '2026-11-07T06:04:18.0100000Z  1 fail',
+  '2026-11-07T06:04:18.0200000Z ##[error]Process completed with exit code 1.',
+  '    at stack frame without a timestamp',
+  '2026-11-07T06:04:18.0900000Z ##[group]Run gh api rate_limit',
+  '2026-11-07T06:04:18.1000000Z vinaya-budget: exhausted=core core_remaining=0',
+  '2026-11-07T06:04:19.2000000Z Post job cleanup.',
+  '2026-11-07T06:04:19.3000000Z git config cleanup'
+].join('\n')
+const SANDBOX_TIMES = {
+  name: 'Run the suite under both sandboxes',
+  started_at: '2026-11-07T06:03:02Z',
+  completed_at: '2026-11-07T06:04:18Z'
+}
+const BUDGET_TIMES = { name: BUDGET_STEP, started_at: '2026-11-07T06:04:18Z', completed_at: '2026-11-07T06:04:19Z' }
+
+describe('slicing one step out of a whole job log', () => {
+  test('the failed step comes back without prefixes and never holds the next step’s lines, even in a shared second', () => {
+    const text = sliceStepLog(BOUNDARY_LOG, SANDBOX_TIMES) as string
+    expect(text.split('\n')[0]).toBe('##[group]Run bun run test:sandbox')
+    expect(text).toContain("bwrap: Can't remount readonly on /newroot/tmp")
+    expect(text).toContain('    at stack frame without a timestamp')
+    expect(text).not.toContain('2026-11-07')
+    expect(text).not.toContain('vinaya-budget')
+    expect(text).not.toContain('rate_limit')
+    expect(SANDBOX_SETUP_DIAGNOSTICS.some((pattern) => pattern.test(text))).toBe(true)
+  })
+
+  test('the next step’s lines come back without the failed step’s lines', () => {
+    const text = sliceStepLog(BOUNDARY_LOG, BUDGET_TIMES) as string
+    expect(text).toContain('vinaya-budget: exhausted=core')
+    expect(text).not.toContain('bwrap')
+    expect(text).not.toContain('1 fail')
+  })
+
+  test('a post step begins at the post-job cleanup line', () => {
+    const text = sliceStepLog(BOUNDARY_LOG, {
+      name: 'Post Run actions/checkout',
+      started_at: '2026-11-07T06:04:19Z',
+      completed_at: '2026-11-07T06:04:19Z'
+    })
+    expect(text).toBe('Post job cleanup.\ngit config cleanup')
+  })
+
+  test('a step with no times, or one the log never opened, is null', () => {
+    expect(sliceStepLog(BOUNDARY_LOG, { name: 'x', started_at: null, completed_at: null })).toBeNull()
+    expect(sliceStepLog('no stamps here', SANDBOX_TIMES)).toBeNull()
+  })
+})
+
+describe('the default step-log reader', () => {
+  const record = JSON.stringify({
+    steps: [
+      { number: 8, ...SANDBOX_TIMES },
+      { number: 9, ...BUDGET_TIMES }
+    ]
+  })
+
+  test('reads the job and its whole log, never the per-step endpoint, and returns the slice', () => {
+    const calls: string[][] = []
+    const text = readStepLog(42, 8, (args) => {
+      calls.push(args)
+      return args[1]?.endsWith('/logs') ? BOUNDARY_LOG : record
+    })
+    expect(calls).toEqual([
+      ['api', 'repos/{owner}/{repo}/actions/jobs/42'],
+      ['api', 'repos/{owner}/{repo}/actions/jobs/42/logs', '--allow-escape-sequences']
+    ])
+    expect(text).toContain("bwrap: Can't remount readonly on")
+  })
+
+  test('retries the log without the escape flag, and is null when a read fails', () => {
+    const seen: string[][] = []
+    readStepLog(42, 9, (args) => {
+      seen.push(args)
+      if (args.includes('--allow-escape-sequences')) throw new Error('unknown flag')
+      return args[1]?.endsWith('/logs') ? BOUNDARY_LOG : record
+    })
+    expect(seen).toHaveLength(3)
+    expect(
+      readStepLog(42, 8, () => {
+        throw new Error('404')
+      })
+    ).toBeNull()
+    expect(readStepLog(42, 99, () => record)).toBeNull()
   })
 })

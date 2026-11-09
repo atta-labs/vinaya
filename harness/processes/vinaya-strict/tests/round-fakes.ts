@@ -77,6 +77,7 @@ export function keepLogLocal(): void {
 export const PASSING_FORGE_GATES: ActionRegistry = {
   'vinaya.check-mergeability': () => ({ exitCode: 0 }),
   'vinaya.classify-mergeability': () => ({ exitCode: 0 }),
+  'vinaya.refresh-evidence': () => ({ exitCode: 0 }),
   'vinaya.read-forge-ci': () => ({ exitCode: 0 }),
   'vinaya.check-premise': () => ({ exitCode: 0 }),
   'vinaya.check-publish-mergeability': () => ({ exitCode: 0 }),
@@ -93,6 +94,7 @@ export const QUIET_FORGE_GATES: Pick<
   | 'fetchFailedCheckWorkflowRunIds'
   | 'rerunFailedWorkflowJobs'
   | 'postMarkedComment'
+  | 'refreshPrEvidence'
 > = {
   fetchMergeableState: () => 'MERGEABLE',
   fetchSettledCiConclusion: () => 'green',
@@ -100,5 +102,6 @@ export const QUIET_FORGE_GATES: Pick<
   fetchFailingCheckRuns: () => [],
   fetchFailedCheckWorkflowRunIds: () => [],
   rerunFailedWorkflowJobs: () => {},
-  postMarkedComment: () => 'https://example.invalid/comment'
+  postMarkedComment: () => 'https://example.invalid/comment',
+  refreshPrEvidence: () => ({ head: 'fake-head', checksPassed: true })
 }

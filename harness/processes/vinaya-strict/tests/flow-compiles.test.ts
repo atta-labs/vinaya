@@ -32,7 +32,7 @@ describe('Vinaya process packed runtime boundary', () => {
     const steps = flow.steps as Array<{ type: string; role?: string; permission?: string }>
     const agents = steps.filter((step) => step.type === 'agent')
     expect(plan.graph.nodes).toBeDefined()
-    expect(Object.keys(plan.graph.nodes)).toHaveLength(27)
+    expect(Object.keys(plan.graph.nodes)).toHaveLength(28)
     for (const step of agents) {
       expect(step.permission).toBe(`${step.role}/grants.yaml`)
       const roleFolder = join(dirname(loaded.flowPath), step.role!)
@@ -51,7 +51,14 @@ describe('Vinaya process packed runtime boundary', () => {
     const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
     const flow = camelize(parse(readFileSync(loaded.flowPath, 'utf8'))) as StepsFlow
     const ids = (flow.steps as Array<{ id: string }>).map((step) => step.id)
-    const order = ['run-mechanical-gates', 'check-mergeability', 'read-forge-ci', 'check-premise', 'assess-gate']
+    const order = [
+      'run-mechanical-gates',
+      'check-mergeability',
+      'refresh-evidence',
+      'read-forge-ci',
+      'check-premise',
+      'assess-gate'
+    ]
     expect(ids.filter((id) => order.includes(id))).toEqual(order)
     expect(ids.indexOf('check-premise')).toBeLessThan(ids.indexOf('dispatch-reviewers'))
     // A conflicting head goes back to the Developer before any CI wait; a mergeable one goes on to the CI read.
@@ -61,7 +68,7 @@ describe('Vinaya process packed runtime boundary', () => {
     expect(classify?.decision).toMatchObject({
       examine: 'check-mergeability',
       ifTrue: 'develop',
-      ifFalse: 'read-forge-ci'
+      ifFalse: 'refresh-evidence'
     })
     expect(ids.indexOf('classify-mergeability')).toBe(ids.indexOf('check-mergeability') + 1)
     const plan = compileFlow(flow, 'Compile the Vinaya process')

@@ -2,7 +2,7 @@
 
 import { createContext, type ReactNode, use, useEffect, useMemo, useState } from 'react'
 import { ArcherContainer, ArcherElement } from 'react-archer'
-import { cn } from '@/ui/lib/utils'
+import { cn } from '@vinaya/ui/lib/utils'
 import type { Tone } from '../types'
 import { edgeVisible, type Moment, type NodeState, nodeState, stageState } from './moment'
 import { bandById, type DiagramEdge, type DiagramTone, edges, nodes, stageAt } from './nodes'

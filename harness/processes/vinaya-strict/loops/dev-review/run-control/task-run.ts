@@ -10,6 +10,8 @@
  * resolution performed once here.
  */
 
+import { existsSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   defaultControlStoreDeps,
   readResolution,
@@ -43,6 +45,7 @@ import {
   crossRunnerInFlightText,
   crossRunnerRefusalReason,
   crossRunnerRefusalText,
+  engineRunDirectory,
   engineRunInFlight,
   readTaskRunner,
   recordTaskRunner,
@@ -270,6 +273,43 @@ export type RunTaskDeps = {
   ) => Promise<RollbackRehearsalRecord>
   /** The widen-surface continuation's own seams, read only when `RunTaskInput.widenSurface` is given; absent, the real ones. */
   widen?: WidenSurfaceDeps
+  /**
+   * The cancel whose Engine checkpoint is still in place: `null` unless the task's held pause was resolved as
+   * cancel, its Engine run directory holds a checkpoint file, and no `switched-*` folder there is stamped later
+   * than the cancel. Absent, nothing is refused.
+   */
+  cancelledCheckpoint?: (issue: number) => Promise<{ consumedAt: string } | null>
+}
+
+/** A `switched-<ISO time with ':' as '-'>[-<n>]` folder name read back as its time, or null when it is not one. */
+export function switchedFolderTime(name: string): number | null {
+  const match = /^switched-(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2}\.\d{3}Z)(?:-\d+)?$/.exec(name)
+  if (match === null) return null
+  const time = Date.parse(`${match[1]}${match[2]}:${match[3]}:${match[4]}`)
+  return Number.isFinite(time) ? time : null
+}
+
+/** The cancel when `runDirectory` still holds the cancelled run's checkpoint file (existence only, the database is never opened) and no `switched-*` folder is stamped later than the cancel; otherwise null. */
+export function cancelledCheckpointIn(
+  resolution: { decision: string; consumedAt: string } | null,
+  runDirectory: string
+): { consumedAt: string } | null {
+  if (resolution === null || resolution.decision !== 'cancel') return null
+  const cancelledAt = Date.parse(resolution.consumedAt)
+  if (!Number.isFinite(cancelledAt)) return null
+  if (!existsSync(join(runDirectory, 'checkpoints.sqlite'))) return null
+  const setAside = readdirSync(runDirectory).some((name) => {
+    const at = switchedFolderTime(name)
+    return at !== null && at > cancelledAt
+  })
+  return setAside ? null : { consumedAt: resolution.consumedAt }
+}
+
+/** The real read: the shared held-pause resolution, then the task's Engine run directory. */
+async function realCancelledCheckpoint(issue: number): Promise<{ consumedAt: string } | null> {
+  // Loaded here: start.ts imports modules that import this one.
+  const { heldPauseResolution } = await import('./start.js')
+  return cancelledCheckpointIn(heldPauseResolution(issue), engineRunDirectory(issue))
 }
 
 /**
@@ -367,7 +407,8 @@ export const defaultRunTaskDeps: RunTaskDeps = {
   crossRunnerRefusalReason: (issue, runner) => crossRunnerRefusalReason(issue, runner),
   engineRunInFlight: (issue) => engineRunInFlight(issue),
   backendRollback: liveBackendRollback,
-  widen: defaultWidenSurfaceDeps
+  widen: defaultWidenSurfaceDeps,
+  cancelledCheckpoint: realCancelledCheckpoint
 }
 
 /** The procedure over this repository's runtime directory, its forge and the shared cancel the Operator uses. */
@@ -573,6 +614,17 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   }
   const refusedBy = heldByAnother(runner)
   if (refusedBy !== null) throw refusedBy
+  // A cancelled Engine run is terminal: its checkpoint is never resumed, only set aside by the switch.
+  if (runner === 'atta-engine') {
+    const cancelled = await deps.cancelledCheckpoint?.(issue)
+    if (cancelled) {
+      // Loaded here: this module statically loads neither the Engine runner nor its agent packages.
+      const { taskSwitchCommand } = await import('../../../bin/run-lifecycle.js')
+      throw new RunTaskError(
+        `runTask: ${taskLabel} was cancelled at ${cancelled.consumedAt} and its Engine checkpoint is kept — a cancelled run is never resumed. To set that checkpoint aside and start the task anew on ${agent}, run \`${taskSwitchCommand(issue, agent)}\`.`
+      )
+    }
+  }
   // Every start path reaches this one call: the foreground command, the
   // detached child a `--background` start launches, and the Operator's
   // `task_start` tool all run `runTask` itself.

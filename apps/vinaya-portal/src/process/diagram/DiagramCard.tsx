@@ -2,8 +2,8 @@
 
 import { Laptop } from 'lucide-react'
 import type { HTMLAttributes, ReactNode } from 'react'
-import { cn } from '@/ui/lib/utils'
-import { Text } from '@/ui/shared'
+import { cn } from '@vinaya/ui/lib/utils'
+import { Text } from '@vinaya/ui/shared'
 import { BrandIcon } from '../components/BrandIcon'
 import { useEnvironment } from '../environment-context'
 import { fillEnv } from '../types'

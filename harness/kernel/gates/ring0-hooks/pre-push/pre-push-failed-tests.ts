@@ -505,6 +505,38 @@ export type NativeBaseInputs = {
   changedBetween: (from: string) => string[] | null
   /** The reads that let a default-branch merge since the recorded head keep the recorded proof; absent: no merge-aware base. */
   mergeAware?: MergeAwareReads
+  /** The newest first-parent merge since `from` (see {@link newestMergeSince}); absent: no branch-side set. */
+  mergeSince?: (from: string) => MergeSince
+}
+
+/**
+ * The newest merge on the head's first-parent history since a recorded head: the merge and the commit it brought in
+ * (its second parent); `'none'` when that history holds no merge; `null` when git could not read it.
+ */
+export type MergeSince = { merge: string; brought: string } | 'none' | null
+
+/** The branch's own changes since a recorded head after a merge, `'none'` with no merge since it, `null` on a failed read. */
+export type BranchSide = { brought: string; paths: string[] } | 'none' | null
+
+/**
+ * The branch's own changes since a recorded head after a merge: the paths changed between the recorded head and the
+ * head that also differ between the commit the newest merge brought in and the head. A path only the merged side
+ * changed holds that side's copy at the head and drops out; a path both sides changed, one edited in the merge
+ * resolution and one a branch commit after the merge changed stay. `'none'` when no merge lies since `from`; `null`
+ * when any read failed.
+ */
+export function branchSideSince(
+  from: string,
+  reads: Pick<NativeBaseInputs, 'changedBetween' | 'mergeSince'>
+): BranchSide {
+  if (!reads.mergeSince) return 'none'
+  const merge = reads.mergeSince(from)
+  if (merge === 'none' || merge === null) return merge
+  const since = reads.changedBetween(from)
+  const fromBrought = reads.changedBetween(merge.brought)
+  if (since === null || fromBrought === null) return null
+  const differs = new Set(fromBrought)
+  return { brought: merge.brought, paths: [...new Set(since.filter((path) => differs.has(path)))].sort() }
 }
 
 /** What a recorded test needs from its runner: the facts the inventory holds for it at one revision. */
@@ -574,6 +606,11 @@ export type NativeBaseChoice = {
   /** Absolute paths of the unresolved failed tests the push runs on top of the selection. */
   obligations: string[]
   reason: string
+  /**
+   * Present when the base is a recorded head with a merge since it: the branch's own changed paths (absolute) since that
+   * head ({@link branchSideSince}) and the commit the merge brought in. The plan keeps only the tests these reach.
+   */
+  branchSide?: { brought: string; paths: string[] }
 }
 
 /**
@@ -582,7 +619,9 @@ export type NativeBaseChoice = {
  * base to the refused head only when that run completed under this very context. Otherwise a verified passing head
  * under this context narrows the base to it. Anything else — another branch, a rewritten history, an unnamed failure,
  * another or unreadable context, dirty inputs, an unreadable diff, a changed root configuration — compares with the
- * merge base: the wider answer.
+ * merge base: the wider answer. When a merge lies since the recorded head, the default branch's own changes never widen
+ * the push: the root configuration veto reads only the branch-side set ({@link branchSideSince}), and a base at the
+ * recorded head carries that set so the plan runs only the tests the branch's own changes reach.
  */
 export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
   const otherContext = 'the last refused push ran under another or unreadable verification context'
@@ -593,10 +632,28 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
     obligations,
     reason
   })
+  const rootConfig = join(inputs.repoRoot, SELECTION_POLICY.rootConfigFile)
   const narrowable = (from: string): boolean => {
     const changed = inputs.changedBetween(from)
-    return changed !== null && !changed.includes(join(inputs.repoRoot, SELECTION_POLICY.rootConfigFile))
+    return changed !== null && !changed.includes(rootConfig)
   }
+  // The changes since a recorded head narrow only when the root configuration file is not among them. After a merge,
+  // only the branch's own changes count, so a configuration change the default branch alone brought in vetoes nothing.
+  // A base past the recorded head (a clean merge) is still read whole: everything since that merge is the branch's.
+  const sinceRecorded = (recorded: string, from: string): { narrowable: boolean; side: BranchSide } => {
+    const side = branchSideSince(recorded, inputs)
+    if (side === 'none') return { narrowable: narrowable(recorded) && narrowable(from), side }
+    if (side === null || side.paths.includes(rootConfig)) return { narrowable: false, side }
+    return { narrowable: from === recorded || narrowable(from), side }
+  }
+  // The set rides with the choice only when the base is the recorded head itself; a clean-merge base already compares
+  // with the merge, past everything the default branch brought in.
+  const branchSideOf = (side: BranchSide, recorded: string, from: string) =>
+    side !== null && side !== 'none' && from === recorded ? side : null
+  const narrowedBy = (side: { brought: string; paths: string[] } | null) =>
+    side
+      ? `; only the branch's own ${side.paths.length} changed path(s) since the merge of ${side.brought} reach tests`
+      : ''
   const record = inputs.failed
   if (record && record.branch === inputs.branch && inputs.isAncestor(record.head)) {
     if (record.failed === 'all') return full('the last refused push named no failing file')
@@ -619,11 +676,18 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
     // the refused head, so the merge's own changes are read like any other and re-run only the tests they reach.
     if (merged === null && record.context !== context && !compatible) return full(otherContext, obligations)
     const from = merged ?? record.head
-    if (!narrowable(record.head) || !narrowable(from))
-      return full('the changes since the refused push could not be narrowed', obligations)
+    const since = sinceRecorded(record.head, from)
+    if (!since.narrowable) return full('the changes since the refused push could not be narrowed', obligations)
     const what = record.failedHoldsUnconfirmed === true ? 'what it did not confirm' : 'what failed'
     const onto = merged === null ? '' : `, building on the merge ${merged}`
-    return { base: from, kind: 'rerun', obligations, reason: `re-running ${what} at ${record.head}${onto}` }
+    const branchSide = branchSideOf(since.side, record.head, from)
+    return {
+      base: from,
+      kind: 'rerun',
+      obligations,
+      reason: `re-running ${what} at ${record.head}${onto}${narrowedBy(branchSide)}`,
+      ...(branchSide ? { branchSide } : {})
+    }
   }
   const passing = inputs.passing
   if (passing?.selectionCompleted !== true || passing.branch !== inputs.branch)
@@ -644,10 +708,17 @@ export function chooseNativeBase(inputs: NativeBaseInputs): NativeBaseChoice {
     return full('the passing run had another verification context')
   if (!inputs.isAncestor(passing.head)) return full('the passing head is not in this branch history')
   const from = merged ?? passing.head
-  if (!narrowable(passing.head) || !narrowable(from))
-    return full('the changes since the passing run could not be narrowed')
+  const since = sinceRecorded(passing.head, from)
+  if (!since.narrowable) return full('the changes since the passing run could not be narrowed')
   const onto = merged === null ? '' : `, building on the merge ${merged}`
-  return { base: from, kind: 'since-green', obligations: [], reason: `building on the pass at ${passing.head}${onto}` }
+  const branchSide = branchSideOf(since.side, passing.head, from)
+  return {
+    base: from,
+    kind: 'since-green',
+    obligations: [],
+    reason: `building on the pass at ${passing.head}${onto}${narrowedBy(branchSide)}`,
+    ...(branchSide ? { branchSide } : {})
+  }
 }
 
 /**
@@ -850,6 +921,18 @@ export function changedBetween(repoRoot: string, from: string, to: string): stri
     .map((s) => s.trim())
     .filter(Boolean)
     .map((f) => join(repoRoot, f))
+}
+
+/**
+ * The newest merge on `head`'s first-parent history after `from`, with the commit it brought in (its second parent);
+ * `'none'` when there is none; `null` when git could not read either.
+ */
+export function newestMergeSince(repoRoot: string, from: string, head: string): MergeSince {
+  const merge = git(repoRoot, ['rev-list', '--first-parent', '--merges', '-n', '1', `${from}..${head}`])
+  if (merge === null) return null
+  if (merge === '') return 'none'
+  const brought = git(repoRoot, ['rev-parse', '--verify', '--quiet', `${merge}^2`])
+  return brought ? { merge, brought } : null
 }
 
 export function readJsonUnderGit(repoRoot: string, name: string): string | null {

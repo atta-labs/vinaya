@@ -42,10 +42,12 @@
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   changedBetween,
+  newestMergeSince,
   chooseNativeBase,
   clearRecordOfKind,
   type ContextParts,
@@ -159,6 +161,82 @@ export type LocalPlanInput = {
   view: InventoryView
   /** Repository-relative unresolved failed tests the push adds on top of the selection. */
   obligations: readonly string[]
+  /** Repository-relative planned tests the branch-side set left out ({@link leftOutByBranchSide}); never an obligation. */
+  leftOut?: readonly string[]
+}
+
+/**
+ * The planned tests a branch-side change set leaves out: a test the plan requires, or a fallback scope runs, whose
+ * every reason names a single changed path outside the set — a path only the default branch changed. A reason that
+ * names no single changed path (a folder, an installed package, a glob) keeps its test, and so does any reason naming
+ * a path in the set. The plan's own obligations (its duties) always stay.
+ *
+ * The selector records the first change a test's import walk reaches, not every one, so a test reached both by a
+ * default-branch path and by a branch-side path may carry only the former. Such a candidate is kept only when the plan
+ * of a comparison whose every changed path is in the branch-side set ({@link branchSideBase}) selects it — that is, when
+ * a branch-side path reaches it; `fromBranchSide` computes that plan's tests, and only when some candidate needs it.
+ */
+export function leftOutByBranchSide(
+  plan: SelectionPlan,
+  branchSide: readonly string[],
+  fromBranchSide: () => readonly string[]
+): string[] {
+  const changed = new Set(plan.changes.flatMap((c) => (c.from ? [c.path, c.from] : [c.path])))
+  const side = new Set(branchSide)
+  const duties = new Set(plan.obligations.map((o) => o.test))
+  const named = new Map<string, string[]>()
+  const name = (test: string, via: string) => named.set(test, [...(named.get(test) ?? []), via])
+  for (const t of plan.required) for (const reason of t.reasons) name(t.test, reason.via)
+  for (const scope of plan.fallbacks) for (const test of scope.tests) for (const path of scope.paths) name(test, path)
+  const candidates = plannedTests(plan).filter((test) => {
+    if (duties.has(test)) return false
+    const vias = named.get(test) ?? []
+    return vias.length > 0 && vias.every((via) => changed.has(via) && !side.has(via))
+  })
+  if (candidates.length === 0) return []
+  const reached = new Set(fromBranchSide())
+  return candidates.filter((test) => !reached.has(test))
+}
+
+/**
+ * A commit whose tree is the head's with only the branch-side paths (repository-relative) as they were at the
+ * recorded head — present with that content, or absent when the recorded head lacks them — so the comparison from it
+ * to the head changes exactly those paths. Built in a temporary index; the commit is written to the object store
+ * unreferenced. `null` when any git step fails.
+ */
+export function branchSideBase(
+  repoRoot: string,
+  recordHead: string,
+  head: string,
+  paths: readonly string[]
+): string | null {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-branch-side-'))
+  const env = {
+    ...cleanGitEnv(),
+    GIT_INDEX_FILE: join(dir, 'index'),
+    GIT_AUTHOR_NAME: 'vinaya',
+    GIT_AUTHOR_EMAIL: 'vinaya@localhost',
+    GIT_COMMITTER_NAME: 'vinaya',
+    GIT_COMMITTER_EMAIL: 'vinaya@localhost'
+  }
+  const run = (args: string[]): string =>
+    execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env }).trim()
+  try {
+    run(['read-tree', head])
+    for (const path of paths) {
+      const entry = run(['ls-tree', recordHead, '--', path])
+      const match = /^(\d+) blob ([0-9a-f]+)\t/.exec(entry)
+      if (match) run(['update-index', '--add', '--cacheinfo', `${match[1]},${match[2]},${path}`])
+      else if (entry === '') run(['update-index', '--force-remove', '--', path])
+      else return null
+    }
+    const tree = run(['write-tree'])
+    return run(['commit-tree', tree, '-p', recordHead, '-m', 'vinaya: the branch-side comparison base'])
+  } catch {
+    return null
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 export type LocalPlan = {
@@ -168,6 +246,8 @@ export type LocalPlan = {
   /** Suites run whole, with why. */
   expanded: { suite: string; reason: string }[]
   problems: NativeProblem[]
+  /** Planned tests the branch-side set left out that no whole-suite run holds either, sorted. */
+  leftOut: string[]
 }
 
 /**
@@ -185,12 +265,16 @@ export function localNativePlan(input: LocalPlanInput): LocalPlan {
   const removed = new Set(plan.removedTests)
   const byId = new Map(view.tests.map((t) => [t.id, t]))
   const wanted = [...new Set([...plannedTests(plan), ...input.obligations])].filter((id) => !removed.has(id)).sort()
-  const known: TestIdentity[] = []
+  // A test the branch-side set left out is still read for problems and whole-suite expansion, exactly as before; it
+  // is only not requested on its own. An obligation is never left out.
+  const leftOut = new Set((input.leftOut ?? []).filter((id) => !input.obligations.includes(id)))
+  const planned: TestIdentity[] = []
   for (const id of wanted) {
     const identity = byId.get(id)
-    if (identity) known.push(identity)
+    if (identity) planned.push(identity)
     else problems.push({ code: 'missing', path: id, detail: 'planned but not a test the head inventory holds' })
   }
+  const known = planned.filter((t) => !leftOut.has(t.id))
   const changed = plan.changes.flatMap((c) => (c.from ? [c.path, c.from] : [c.path]))
   const wholeSuites: WholeSuiteRequest[] = []
   // static-fallback begin: a suite whose inputs the selection does not model runs whole — its tests with no
@@ -198,7 +282,7 @@ export function localNativePlan(input: LocalPlanInput): LocalPlan {
   const recorded = new Set(plan.records.recorded)
   for (const suite of view.suites) {
     const prefix = suite.dir === '.' ? '' : `${suite.dir}/`
-    const selected = known.some((t) => t.suite === suite.id)
+    const selected = planned.some((t) => t.suite === suite.id)
     const reason =
       selected && suite.runner === 'vitest' && WHOLE_SUITE_OWNERS[suite.owner] !== undefined
         ? WHOLE_SUITE_OWNERS[suite.owner]
@@ -226,7 +310,11 @@ export function localNativePlan(input: LocalPlanInput): LocalPlan {
     groups: grouping.groups,
     identities,
     expanded: wholeSuites.map((w) => ({ suite: w.suite, reason: w.reason })),
-    problems
+    problems,
+    leftOut: planned
+      .filter((t) => leftOut.has(t.id) && !whole.has(t.suite))
+      .map((t) => t.id)
+      .sort(compare)
   }
 }
 
@@ -306,6 +394,7 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
     isAncestor: (ancestor) => isAncestor(repoRoot, ancestor, head),
     exists: existsSync,
     changedBetween: (from) => changedBetween(repoRoot, from, head),
+    mergeSince: (from) => newestMergeSince(repoRoot, from, head),
     mergeAware: {
       cleanMergeOnto: (recordHead) => cleanMergeOnto(repoRoot, recordHead),
       contextAtRecord: (recordHead) => {
@@ -332,7 +421,22 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
     return { plan: selectTests(input), view: input.inventory.head }
   }
   const { plan, view } = planFrom(choice.base)
-  const local = localNativePlan({ plan, view, obligations })
+  // After a merge since the recorded head, only the tests the branch's own changes reach run besides the obligations.
+  // A branch-side comparison that cannot be built or planned leaves nothing out.
+  const branchSide = choice.branchSide
+  const sidePaths = branchSide ? branchSide.paths.map(relative) : []
+  const leftOut = branchSide
+    ? leftOutByBranchSide(plan, sidePaths, () => {
+        const sideBase = branchSideBase(repoRoot, choice.base, head, sidePaths)
+        if (!sideBase) return plannedTests(plan)
+        try {
+          return plannedTests(planFrom(sideBase).plan)
+        } catch {
+          return plannedTests(plan)
+        }
+      })
+    : []
+  const local = localNativePlan({ plan, view, obligations, leftOut })
   if (local.problems.length > 0)
     throw new Error(
       `the native plan is not runnable: ${local.problems.map((p) => `${p.code} ${p.path}${p.group ? ` (${p.group})` : ''}: ${p.detail}`).join('; ')}`
@@ -401,6 +505,11 @@ export function freezeLocalPlan(repoRoot: string): FrozenPlan {
       ? `vinaya pre-push: ${plan.records.recorded.length} test(s) decided by the read record of ${reached.record.commit.slice(0, 12)}; ${plan.records.fallbacks.map((f) => `${f.tests.length} by static selection (${f.id})`).join(', ') || 'none left to static selection'}`
       : `vinaya pre-push: every test decided by static selection (${reached.reason})`,
     ...local.expanded.map((e) => `vinaya pre-push: ${e.suite} runs whole: ${e.reason}`),
+    ...(branchSide
+      ? [
+          `vinaya pre-push: the branch-side set (${branchSide.paths.length} path(s) the branch itself changed since the merge of ${branchSide.brought.slice(0, 12)}) left out ${local.leftOut.length} planned test(s) only default-branch changes reached`
+        ]
+      : []),
     ...(context === null
       ? ['vinaya pre-push: the verification context is unreadable; the run will be refused even if every runner passes']
       : [])
@@ -427,6 +536,8 @@ export type LocalRunOutcome = {
   unconfirmed?: string[]
   /** Why the run proves nothing even though every runner passed, or `null`. */
   drift: string | null
+  /** Present when the run stopped after a failing runner group: what it left unrun, for the next push to run. */
+  stopped?: { tests: number; groups: number }
 }
 
 /** Where the run writes the record each finished runner group leaves, and what binds it to this run. */
@@ -623,14 +734,23 @@ export function runFrozenPlan(
         env: cleanGitEnv(),
         log: (line) => process.stderr.write(`${line}\n`),
         announce: true,
-        onGroupEnd: onEnd
+        onGroupEnd: onEnd,
+        stopAfterFailedGroup: true
       }))
   // An empty plan starts nothing.
   const result: RunResult =
     native.groups.length === 0
       ? { failedRunners: [], problems: [], executions: [], failedTests: {}, outcomes: [] }
       : run(native.groups, onGroupEnd)
-  const completion = completionOf(native.groups, result, roots)
+  // A run that stopped after a failing group never started the rest: those groups are unrun, not missing executions.
+  // A group ran when the scheduler heard its end (a signaled or interrupted one included) or recorded its execution.
+  const started = new Set([...(result.outcomes ?? []).map((o) => o.group), ...result.executions.map((e) => e.group)])
+  const unrunGroups = native.groups.filter((g) => !started.has(g.id))
+  const stopped = result.failedRunners.length > 0 && started.size > 0 && unrunGroups.length > 0
+  const ranGroups = stopped ? native.groups.filter((g) => started.has(g.id)) : native.groups
+  const ranTests = new Set(ranGroups.flatMap((g) => g.tests))
+  const base = completionOf(ranGroups, result, roots)
+  const completion: NativeCompletion = stopped ? { ...base, completed: false } : base
   const failed = failedOf(result, completion)
   const after = state()
   const contextAfter = contextNow()
@@ -648,7 +768,15 @@ export function runFrozenPlan(
     failed,
     unreported: [...new Set((outcomes ?? []).flatMap((o) => o.unreported))].sort(compare),
     ...(outcomes !== undefined ? { unconfirmed: plan.filter((id) => !confirmed.has(id)) } : {}),
-    drift
+    drift,
+    ...(stopped
+      ? {
+          stopped: {
+            tests: new Set(unrunGroups.flatMap((g) => g.tests).filter((t) => !ranTests.has(t))).size,
+            groups: unrunGroups.length
+          }
+        }
+      : {})
   }
 }
 
@@ -710,8 +838,9 @@ export async function recordLocalRun(input: {
     // Every runner passed, but what it ran is no longer the head under test: no proof either way.
     clearRecordOfKind(repoRoot, 'passed')
   } else if (unconfirmed !== undefined) {
+    // A stopped run always leaves the unconfirmed record: it names its unrun tests as unconfirmed, never as proven.
     const record =
-      unconfirmed.length === 0 || unconfirmed.length === planTests(native).length
+      outcome.stopped === undefined && (unconfirmed.length === 0 || unconfirmed.length === planTests(native).length)
         ? unprovenRecord({ repoRoot, native, head, branch, now })
         : unconfirmedRecord({
             repoRoot,
@@ -853,6 +982,10 @@ async function runCommand(repoRoot: string, logPath: string | undefined): Promis
     return 0
   }
   process.stdout.write(`\nvinaya pre-push: refused — selected ${count} test(s), ${elapsed}s:\n`)
+  if (outcome.stopped)
+    process.stdout.write(
+      `  stopped after the first failing runner group: ${outcome.stopped.tests} test(s) in ${outcome.stopped.groups} runner group(s) not run; the next push runs them\n`
+    )
   if (outcome.failed === 'all') process.stdout.write('  a runner failed without naming its failing tests\n')
   else {
     const unreported = new Set(outcome.unreported ?? [])

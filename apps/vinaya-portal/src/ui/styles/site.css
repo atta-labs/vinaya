@@ -1,3 +1,7 @@
+/* The portal's stylesheet: the shared global stylesheet first, then the site's own styles, so both pass through
+   Tailwind in one build. */
+@import "@vinaya/ui/styles/globals.css";
+
 /* Site styles. No colour tokens here: every colour is a shadcn theme token the CMS renders. The stage palette
    is a class map in code (src/process/tone.ts). */
 

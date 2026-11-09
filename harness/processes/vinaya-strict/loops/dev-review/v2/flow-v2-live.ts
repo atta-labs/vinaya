@@ -1257,6 +1257,8 @@ export async function readyGateEvidence(input: {
   head: string
   resultPath: string
   worktreePath: string
+  /** The one immutable comparison (a freshly verified default-branch tip) the whole report uses; absent, the local resolution applies. */
+  base?: string
   /** Where the driver's receipts are read; the repository's own test-run cache when absent. */
   cache?: TestRunCache
   /** The deferred-head reads, for a test that injects them. */
@@ -1265,7 +1267,7 @@ export async function readyGateEvidence(input: {
   const record = JSON.parse(readFileSync(input.resultPath, 'utf8')) as { head: string; gate: ReadyGateResult }
   if (record.head !== input.head || record.gate?.passed !== true)
     throw new Error('no successful ready-gate result for the approved head')
-  const groupA = await computeGroupA(input.worktreePath)
+  const groupA = await computeGroupA(input.worktreePath, input.base ? { base: input.base } : {})
   if (groupA.head !== input.head) throw new Error('worktree changed after the ready gate')
   const gate = record.gate
   if (gate.localTests === 'deferred') {
