@@ -1,5 +1,5 @@
 /**
- * state-machine-model.ts — the canonical, code-owned model of AEG's execution
+ * state-machine-model.ts — the canonical, code-owned model of Vinaya's execution
  * state machine: what it reads, what it can conclude, and the ordered rules
  * that get from one to the other. Pure data, zero I/O — the same discipline as
  * `actions.ts` and `waiver-label.ts` (one pure-data list, read by both
@@ -77,7 +77,8 @@ export const FORGE_FACT_INPUTS: ForgeFactInput[] = [
   {
     fact: 'prState',
     readsFrom: 'PullRequest.state (OPEN | CLOSED | MERGED)',
-    meaning: 'Whether work is proposed or landed. CLOSED-without-merge collapses to none — AEG models open/merged/none.'
+    meaning:
+      'Whether work is proposed or landed. CLOSED-without-merge collapses to none — Vinaya models open/merged/none.'
   },
   {
     fact: 'reviewDecision',

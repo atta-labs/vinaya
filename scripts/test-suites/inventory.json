@@ -1029,7 +1029,7 @@
         },
         {
           "kind": "raw-bytes",
-          "rows": ["skills/aeg/SKILL.md", "templates/issue-rationale-template.md"],
+          "rows": ["skills/vinaya/SKILL.md", "templates/issue-rationale-template.md"],
           "tests": ["harness/processes/vinaya-strict/checks/issue-rationale-template-gate.test.ts"]
         },
         {
@@ -1049,7 +1049,7 @@
         },
         {
           "kind": "raw-bytes",
-          "rows": ["skills/aeg-context-packets/examples/operator-start.md"],
+          "rows": ["skills/context-packets/examples/operator-start.md"],
           "tests": ["harness/processes/vinaya-strict/tests/lib/context-packet.test.ts"]
         },
         {
@@ -1085,7 +1085,7 @@
             "roles/reviewer.md",
             "roles/security.md",
             "roles/tranche-archivist.md",
-            "skills/aeg/SKILL.md"
+            "skills/vinaya/SKILL.md"
           ],
           "tests": [
             "apps/cli/tests/commands/upgrade-stop-hook.test.ts",
@@ -1135,7 +1135,7 @@
             "roles/reviewer.md",
             "roles/security.md",
             "roles/tranche-archivist.md",
-            "skills/aeg/SKILL.md"
+            "skills/vinaya/SKILL.md"
           ],
           "tests": [
             "harness/processes/vinaya-strict/evals/dev-review-engine-fault-rows.test.ts",
@@ -1200,12 +1200,12 @@
         },
         {
           "kind": "raw-bytes",
-          "rows": ["roles/developer.md", "roles/developer/reference.md", "skills/aeg/SKILL.md"],
+          "rows": ["roles/developer.md", "roles/developer/reference.md", "skills/vinaya/SKILL.md"],
           "tests": ["harness/processes/vinaya-strict/executing/developer/developer-doctrine-shape.test.ts"]
         },
         {
           "kind": "raw-bytes",
-          "rows": ["skills/aeg/SKILL.md"],
+          "rows": ["skills/vinaya/SKILL.md"],
           "tests": [
             "harness/processes/vinaya-strict/integration/gates/checks/no-privileged-api.test.ts",
             "harness/processes/vinaya-strict/tests/forge-write.test.ts",
@@ -1226,7 +1226,7 @@
             "roles/reviewer.md",
             "roles/security.md",
             "roles/tranche-archivist.md",
-            "skills/aeg/SKILL.md"
+            "skills/vinaya/SKILL.md"
           ],
           "tests": [
             "harness/processes/vinaya-strict/integration/roles/bin/operator-role.test.ts",
@@ -1310,12 +1310,12 @@
         },
         {
           "kind": "raw-bytes",
-          "rows": ["contracts/", "roles/", "templates/", "enforcement.md", "skills/aeg/SKILL.md"],
+          "rows": ["contracts/", "roles/", "templates/", "enforcement.md", "skills/vinaya/SKILL.md"],
           "tests": ["apps/cli/tests/doctrine.test.ts"]
         },
         {
           "kind": "raw-bytes",
-          "rows": ["skills/aeg/SKILL.md"],
+          "rows": ["skills/vinaya/SKILL.md"],
           "tests": [
             "apps/cli/tests/new-check.test.ts",
             "apps/cli/tests/new-noop-check.test.ts",
@@ -1338,7 +1338,7 @@
             "roles/reviewer.md",
             "roles/security.md",
             "roles/tranche-archivist.md",
-            "skills/aeg/SKILL.md"
+            "skills/vinaya/SKILL.md"
           ],
           "tests": ["apps/cli/tests/tracked-hooks.test.ts"]
         },
@@ -1356,7 +1356,7 @@
             "roles/reviewer.md",
             "roles/security.md",
             "roles/tranche-archivist.md",
-            "skills/aeg/SKILL.md"
+            "skills/vinaya/SKILL.md"
           ],
           "tests": [
             "harness/processes/vinaya-strict/checks/check-roles-plan.test.ts",
@@ -1365,7 +1365,7 @@
         },
         {
           "kind": "raw-bytes",
-          "rows": ["skills/aeg/SKILL.md", "templates/brief-template.md"],
+          "rows": ["skills/vinaya/SKILL.md", "templates/brief-template.md"],
           "tests": ["harness/processes/vinaya-strict/checks/issue-checks.test.ts"]
         },
         {
@@ -1383,7 +1383,7 @@
             "roles/reviewer.md",
             "roles/security.md",
             "roles/tranche-archivist.md",
-            "skills/aeg/SKILL.md"
+            "skills/vinaya/SKILL.md"
           ],
           "tests": [
             "harness/processes/vinaya-strict/evals/suites/step-one.test.ts",
@@ -1481,7 +1481,7 @@
             "roles/reviewer.md",
             "roles/security.md",
             "roles/tranche-archivist.md",
-            "skills/aeg/SKILL.md"
+            "skills/vinaya/SKILL.md"
           ],
           "tests": [
             "harness/processes/vinaya-strict/integration/conformance/unit/dev-review-engine-architecture-exit.test.ts",
@@ -1500,7 +1500,7 @@
             "roles/reviewer.md",
             "roles/security.md",
             "roles/tranche-archivist.md",
-            "skills/aeg/SKILL.md"
+            "skills/vinaya/SKILL.md"
           ],
           "tests": ["harness/processes/vinaya-strict/integration/log/client/no-log-forge-writes.test.ts"]
         },

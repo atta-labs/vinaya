@@ -74,11 +74,11 @@ describe('isSurfacedDoc: model-backed rule', () => {
       'state-machine.md',
       'task-model.md',
       'process.md',
-      'aeg-manual-flow.md',
+      'manual-flow.md',
       'reviewer-prompt.md',
       'documentation-coherence.md',
       'tranche-model.md',
-      'skills/aeg/SKILL.md',
+      'skills/vinaya/SKILL.md',
       'templates/brief-template.md'
     ]) {
       expect(isSurfacedDoc(relPath, {}, SURFACED)).toBe(false)

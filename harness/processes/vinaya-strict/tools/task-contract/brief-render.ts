@@ -420,7 +420,7 @@ function withCliInvocation(text: string, invocation: string): string {
 }
 
 function renderHeader(facts: BriefFacts, template: string): string {
-  const introMatch = template.match(/^You are the AEG Developer\.[^\n]*$/m)
+  const introMatch = template.match(/^You are the Vinaya Developer\.[^\n]*$/m)
   // Left as the template's own bare `vinaya`: `renderBrief` runs
   // `withCliInvocation` over this whole section once every section is composed,
   // so rewriting here too would be a second application point to keep in sync.
@@ -429,7 +429,7 @@ function renderHeader(facts: BriefFacts, template: string): string {
         .replace(/\s*\[[^\]]*\]/g, '')
         .replace(/\bBoth mandatory\.$/, 'Mandatory.')
         .trim()
-    : 'You are the AEG Developer. Run `vinaya doctrine --role developer --print` and read its output first. Mandatory.'
+    : 'You are the Vinaya Developer. Run `vinaya doctrine --role developer --print` and read its output first. Mandatory.'
 
   const reason = facts.rationale.suggestedAgentClass ?? ''
   // The declared tier is a floor, not a default: raised to the mechanical

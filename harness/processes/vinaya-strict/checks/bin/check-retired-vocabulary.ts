@@ -223,7 +223,7 @@ function main(): void {
         ? "This text matches one of this repository's own writing rules (proseGates.rules.custom in " +
           'vinaya.config.json); the finding names the rule and what it means. Rewrite the text so it no longer ' +
           "matches, or, where the rule should not read this file, add the path to that rule's exempt list."
-        : 'This doctrine page claims a mechanism AEG itself retired is still live (a decision-log entry, the lock, ' +
+        : 'This doctrine page claims a mechanism Vinaya itself retired is still live (a decision-log entry, the lock, ' +
           'the `team-leader` role, the tranche topology file, …). Rewrite it to describe the CURRENT mechanism, or remove the claim — never ' +
           'describe a retired concept as something a reader can still do today.'
     })

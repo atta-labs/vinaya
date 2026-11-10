@@ -150,6 +150,21 @@ describe('extractBoundaryFilePaths (task 5, Issue #447, O3)', () => {
 })
 
 describe('renderBrief', () => {
+  it("carries the template's own Developer intro line, not the hard-coded fallback", () => {
+    const templateLine = TEMPLATE.match(/^You are the Vinaya Developer\.[^\n]*$/m)?.[0] ?? ''
+    expect(templateLine).not.toBe('')
+    const result = renderBrief(baseFacts(), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The template's line, with its bracketed host-repo hint dropped and "Both mandatory." made "Mandatory."
+    const expected = templateLine
+      .replace(/\s*\[[^\]]*\]/g, '')
+      .replace(/\bBoth mandatory\.$/, 'Mandatory.')
+      .trim()
+      .replaceAll('`vinaya ', '`bun apps/cli/src/index.ts ')
+    expect(result.brief).toContain(expected)
+  })
+
   it('names controller-run verification without rendering hand-run static gates (O4)', () => {
     const result = renderBrief(baseFacts(), TEMPLATE)
     expect(result.ok).toBe(true)
