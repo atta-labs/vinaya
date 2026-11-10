@@ -127,6 +127,24 @@ describe('decideStop — driver errors', () => {
   })
 })
 
+describe('decideStop — an earlier Developer launch that bound no session', () => {
+  test('an ended launch dispatches one fresh session, bounded to a single attempt', () => {
+    expect(decideStop({ kind: 'unbound_launch', attempt: 2, ended: true })).toEqual({
+      type: 'dispatch_fresh',
+      bound: { kind: 'attempts', used: 1, max: 1 }
+    })
+  })
+
+  test("a launch whose process may still run keeps today's pause", () => {
+    expect(decideStop({ kind: 'unbound_launch', attempt: 2, ended: false })).toEqual({
+      type: 'pause',
+      reason: 'infrastructure',
+      detail:
+        "the developer's prior launch (attempt 2) bound no vendor session and its process may still be running — refusing to start a second worker beside it"
+    })
+  })
+})
+
 describe('classifyDriverError', () => {
   test('uses the existing classifiers', () => {
     expect(classifyDriverError(timeout())).toBe('forge_connection')

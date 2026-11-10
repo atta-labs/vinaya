@@ -308,6 +308,45 @@ describe('devReviewLoop — a Developer continuation packet is built from the du
   })
 })
 
+describe("devReviewLoop — a restarted driver's Developer turn is launched with the round's handed-over finding ids", () => {
+  it("the turn schema's finding-id list is the recovered loop_state record's, which no earlier process of this run set", async () => {
+    const world = makeWorld({ gate: 'red', failingCheckRuns: [failingCheckRun(1, 'Vinaya CI')] })
+    mkdirSync(controlDir(world), { recursive: true })
+    writeFileSync(
+      join(controlDir(world), 'loop-state.json'),
+      JSON.stringify({
+        version: 1,
+        kind: 'loop_state',
+        task: world.task,
+        round: 1,
+        phase: 'dispatch_developer',
+        pauseReason: null,
+        budgets: { mechanicalRetries: 0, reviewRounds: 1, infrastructureRetries: 0 },
+        heldResult: null,
+        deliveredFindings: null,
+        developerHandoff: {
+          findings: [{ id: 'R1-CR-7', description: '[MAJOR] src/a.ts:3' }],
+          failingChecks: []
+        },
+        recordedAt: new Date().toISOString()
+      }),
+      'utf8'
+    )
+    const base = makeInProcessDeps(world)
+    const knownIds: Array<readonly string[] | undefined> = []
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      if (role === 'developer') knownIds.push(opts?.turnResultKnownFindingIds)
+      return base.dispatchRole!(role, agent, prompt, opts)
+    }
+
+    await runLoopInProcess(world, { task: world.task, agent: 'claude' }, { dispatchRole })
+
+    expect(knownIds.length).toBeGreaterThan(1)
+    // The first dispatch is the round's fresh entry; every turn after the restart carries the handed-over id.
+    for (const ids of knownIds) expect(ids).toEqual(['R1-CR-7'])
+  })
+})
+
 describe("devReviewLoop — O2 (`[task-operator-v1]`/Issue #662): a developer dispatch classified 'connection-failed' is waited-and-re-dispatched, never an immediate decided stop", () => {
   it('recovers on the second attempt: the SAME session resumes, the round completes and publishes, and one recovered infrastructure_retry event is logged', async () => {
     const world = makeWorld()

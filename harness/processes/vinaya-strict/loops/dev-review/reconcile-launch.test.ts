@@ -123,7 +123,8 @@ function deps(
     isPidAlive: () => isAlive,
     hostname: () => host,
     getProcessSnapshot: () => (isAlive ? snapshot : null),
-    terminateChild: () => {}
+    terminateChild: () => {},
+    selfPid: () => 4242
   }
 }
 
@@ -189,6 +190,38 @@ describe('reconcileLaunch (O3) — a live launch is found by identity', () => {
   })
 })
 
+describe('reconcileLaunch — an unbound launch recorded by this very controller has ended', () => {
+  const unbound = (dispatcherPid: number): ParsedLaunch => ({
+    status: 'ok',
+    record: record({
+      status: 'launched',
+      resumeId: null,
+      boundAt: null,
+      finishedAt: null,
+      childPid: null,
+      dispatcherPid
+    })
+  })
+  const selfDeps = (selfPid: number): ReconcileLaunchDeps => ({ ...deps(true), selfPid: () => selfPid })
+
+  it('a dispatcher that is this controller, whose pid always answers, reconciles to a fresh session', () => {
+    const out = reconcileLaunch(unbound(777), { requireContinuity: true }, selfDeps(777))
+    expect(out.kind).toBe('fresh')
+  })
+
+  it('another live dispatcher on this host still pauses, naming the second worker it would race', () => {
+    const out = reconcileLaunch(unbound(1000), { requireContinuity: true }, selfDeps(777))
+    expect(out).toMatchObject({ kind: 'pause', reason: 'infrastructure' })
+    if (out.kind === 'pause') expect(out.detail).toContain('refusing to start a second worker beside it')
+  })
+
+  it('a dispatcher that is some other live process is never taken for this controller', () => {
+    // Liveness answers true for 1000; only the exact own pid reads as ended.
+    const out = reconcileLaunch(unbound(1000), { requireContinuity: true }, selfDeps(1001))
+    expect(out.kind).toBe('pause')
+  })
+})
+
 describe('reconcileLaunch (O2, Issue #605) — an orphaned child is a takeover, never live', () => {
   it('a live pid whose PPID is 1 (reparented to init) never reads live — the driver that spawned it is gone', () => {
     const parsed: ParsedLaunch = {
@@ -229,7 +262,8 @@ describe('reconcileLaunch (O2, Issue #605) — an orphaned child is a takeover, 
         isPidAlive: () => false,
         hostname: () => THIS_HOST,
         getProcessSnapshot: () => ({ ppid: 1000, startedAt: null, command: null }),
-        terminateChild: () => {}
+        terminateChild: () => {},
+        selfPid: () => 4242
       }
     )
     expect(out.kind).not.toBe('live')
@@ -538,7 +572,8 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
           '  isPidAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } },',
           '  hostname: () => hostname(),',
           '  getProcessSnapshot,',
-          '  terminateChild: (pid) => { spyCalledWith = pid }',
+          '  terminateChild: (pid) => { spyCalledWith = pid },',
+          '  selfPid: () => process.pid',
           '}',
           `const out = recoverDeveloperLaunch(44, 'claude', null, {}, deps)`,
           'let stillAlive = false',

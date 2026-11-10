@@ -2675,18 +2675,24 @@ export function sandboxProbePlanFor(
   }
 }
 
+/**
+ * The finding ids the next Developer turn may name, read from the step results alone: the send-back's own list for a
+ * correction, the newest revision handoff's for a review send-back, none otherwise. A restarted run reads the same
+ * results back from its checkpoint, so the ids are the round's as they were.
+ */
+export function knownFindingIdsOf(results: Results): string[] {
+  const answered = latestRecord(results)?.sendBack
+  return answered?.kind === 'correction'
+    ? (answered.knownFindingIds ?? [])
+    : answered?.kind === 'review'
+      ? handedOverIds(results)
+      : []
+}
+
 /** Prepare the next launch from the same send-back and handoff its validation reads. */
 export function withDeveloperContext(task: TaskInput, action: ProcessAction): ProcessAction {
   return (context) => {
-    const results = context.results ?? {}
-    const answered = latestRecord(results)?.sendBack
-    const knownFindingIds =
-      answered?.kind === 'correction'
-        ? (answered.knownFindingIds ?? [])
-        : answered?.kind === 'review'
-          ? handedOverIds(results)
-          : []
-    task.developerContext = { ...task.developerContext, knownFindingIds }
+    task.developerContext = { ...task.developerContext, knownFindingIds: knownFindingIdsOf(context.results ?? {}) }
     return action(context)
   }
 }
