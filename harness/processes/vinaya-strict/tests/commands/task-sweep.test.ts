@@ -119,7 +119,7 @@ function setUp(): { home: string; env: Record<string, string> } {
   const forgeDir = stubGh(home)
   return {
     home,
-    env: { HOME: home, PATH: `${forgeDir}:${process.env.PATH ?? ''}`, AEG_REPO: 'acme/widget' }
+    env: { HOME: home, PATH: `${forgeDir}:${process.env.PATH ?? ''}`, VINAYA_REPO: 'acme/widget' }
   }
 }
 

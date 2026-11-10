@@ -44,7 +44,7 @@ if (import.meta.main) {
   const repo = await resolveRepo()
   if (!repo) {
     console.error(
-      '✖ pre-push: check-branch-topology could not resolve a GitHub repo (set AEG_REPO or check `git remote`) — cannot evaluate the branch↔topology gate.'
+      '✖ pre-push: check-branch-topology could not resolve a GitHub repo (set VINAYA_REPO or check `git remote`) — cannot evaluate the branch↔topology gate.'
     )
     process.exit(1)
   }

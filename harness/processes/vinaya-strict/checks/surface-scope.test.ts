@@ -81,7 +81,7 @@ function runIssueBranch(fixture: { root: string; binDir: string }, prBody: strin
       PATH: `${fixture.binDir}:${process.env.PATH}`,
       BRANCH: 'task/issue-541',
       BASE_SHA: 'main',
-      AEG_REPO: '',
+      VINAYA_REPO: '',
       PR_BODY: prBody,
       PR_BODY_FILE: ''
     }
@@ -240,7 +240,7 @@ describe('surface-scope check-bin — dormancy is narrowed to ONE reason: not a 
 })
 
 describe('surface-scope check-bin — a backlog Issue branch (task/issue-<n>) resolves directly, no topology lookup (task-run-v1 21, #541, O2, round 2 review MAJOR)', () => {
-  it('a task/issue-<n> branch with no AEG_REPO and no origin remote still checks scope — the Issue number IS the branch, no forge/topology resolution needed', () => {
+  it('a task/issue-<n> branch with no VINAYA_REPO and no origin remote still checks scope — the Issue number IS the branch, no forge/topology resolution needed', () => {
     const root = join(tmpdir(), `vinaya-surface-scope-issue-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     const binDir = join(tmpdir(), `vinaya-surface-scope-issue-bin-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     mkdirSync(root, { recursive: true })
@@ -272,10 +272,10 @@ describe('surface-scope check-bin — a backlog Issue branch (task/issue-<n>) re
           PATH: `${binDir}:${process.env.PATH}`,
           BRANCH: 'task/issue-541',
           BASE_SHA: 'main',
-          // No AEG_REPO, no origin remote — the tranche path would refuse
+          // No VINAYA_REPO, no origin remote — the tranche path would refuse
           // here (as the sibling describe block below proves); the
           // issue-mode path must never even attempt that resolution.
-          AEG_REPO: '',
+          VINAYA_REPO: '',
           PR_BODY: '',
           PR_BODY_FILE: ''
         }
@@ -329,7 +329,7 @@ describe('surface-scope check-bin — a backlog Issue branch (task/issue-<n>) re
           PATH: `${binDir}:${process.env.PATH}`,
           BRANCH: 'task/issue-541',
           BASE_SHA: 'main',
-          AEG_REPO: ''
+          VINAYA_REPO: ''
         }
       })
       expect(result.exitCode).toBe(0)
@@ -351,11 +351,11 @@ describe('surface-scope check-bin — every OTHER resolution failure now REFUSES
       writeFileSync(join(root, 'README.md'), '# fixture\n')
       execFileSync('git', ['add', 'README.md'], { cwd: root })
       execFileSync('git', ['commit', '-q', '-m', 'Chore: initial commit'], { cwd: root })
-      // No `origin` remote and no AEG_REPO — resolveRepo() returns null.
+      // No `origin` remote and no VINAYA_REPO — resolveRepo() returns null.
 
       const result = Bun.spawnSync(['bun', BIN_PATH], {
         cwd: root,
-        env: { ...process.env, BRANCH: 'task/fixture-tranche/1', AEG_REPO: '' }
+        env: { ...process.env, BRANCH: 'task/fixture-tranche/1', VINAYA_REPO: '' }
       })
       expect(result.exitCode).toBe(1)
       const line = result.stderr.toString().trim()
@@ -384,7 +384,7 @@ describe('surface-scope check-bin — every OTHER resolution failure now REFUSES
         env: {
           ...process.env,
           BRANCH: 'task/fixture-tranche/1',
-          AEG_REPO: 'attalabs-fixture-nonexistent/vinaya-fixture-nonexistent'
+          VINAYA_REPO: 'attalabs-fixture-nonexistent/vinaya-fixture-nonexistent'
         }
       })
       expect(result.exitCode).toBe(1)

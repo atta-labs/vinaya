@@ -26,7 +26,7 @@ type PrincipalRead = 'not-configured' | 'read-failed'
 
 /** Env a parent run (a hook, a CI step) may carry that would steer a spawned check off this fixture. */
 const STEERING_ENV = [
-  'AEG_REPO',
+  'VINAYA_REPO',
   'BASE_SHA',
   'BRANCH',
   'GITHUB_REPOSITORY',
@@ -47,7 +47,7 @@ afterEach(() => {
 /**
  * A repository with a `main` base commit and a `work` branch one commit
  * ahead. `origin` is a GitHub URL for the checks that resolve their
- * repository only from `AEG_REPO` or `origin`; the review gate needs a local
+ * repository only from `VINAYA_REPO` or `origin`; the review gate needs a local
  * `origin` instead, so `git ls-remote` resolves the head and base it reads
  * before the Principal list. `origin: 'none'` resolves no repository at all.
  */

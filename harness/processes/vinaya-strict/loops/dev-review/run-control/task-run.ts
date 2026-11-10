@@ -163,7 +163,7 @@ export type WidenSurfaceRequest = { globs: string[]; reason: string }
  * exits zero printing the PR URL"). Neither `LoopResult` nor `DriverResult`
  * carries a URL field of its own, so it is constructed here from
  * `resolveRepo()` plus the loop's own `prNumber`. `null` only when the repo
- * genuinely cannot be resolved (no git remote, an unparseable `AEG_REPO`) —
+ * genuinely cannot be resolved (no git remote, an unparseable `VINAYA_REPO`) —
  * the same tolerance `dev-review-loop.ts`'s own `resolveRepo().catch(() =>
  * null)` already extends to this exact failure, never a thrown error over a
  * display-only nicety.

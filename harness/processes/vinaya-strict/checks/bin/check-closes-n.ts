@@ -44,7 +44,7 @@ function git(args: string[]): string {
 }
 
 function resolveRepo(): { owner: string; repo: string } | null {
-  const fromEnv = process.env.AEG_REPO
+  const fromEnv = process.env.VINAYA_REPO
   if (fromEnv) {
     const m = fromEnv.match(/^([^/]+)\/(.+)$/)
     if (m?.[1] && m[2]) return { owner: m[1], repo: m[2] }

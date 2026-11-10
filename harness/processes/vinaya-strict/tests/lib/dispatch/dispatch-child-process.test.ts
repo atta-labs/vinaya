@@ -1708,7 +1708,7 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
       `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthIdA}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
     )
     runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '9'], cwd, home, path, {
-      AEG_REPO: 'acme/tranche-a'
+      VINAYA_REPO: 'acme/tranche-a'
     })
 
     writeFakeBinary(
@@ -1717,7 +1717,7 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
       `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthIdB}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
     )
     runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '9'], cwd, home, path, {
-      AEG_REPO: 'acme/tranche-b'
+      VINAYA_REPO: 'acme/tranche-b'
     })
 
     // Same tranche-local-looking task number (9), two different repos —
@@ -1739,7 +1739,7 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     expect(recordB.resumeId).toBe(synthIdB)
   })
 
-  it('an unsafe AEG_REPO value falls back to the unresolved bucket rather than escaping it (O5, #456)', () => {
+  it('an unsafe VINAYA_REPO value falls back to the unresolved bucket rather than escaping it (O5, #456)', () => {
     const synthId = '77777777-7777-7777-7777-777777777777'
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
@@ -1754,7 +1754,7 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
       `#!/bin/sh\ncat > /dev/null\nprintf '%s' '{"session_id":"${synthId}","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
     )
     runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '9'], cwd, home, path, {
-      AEG_REPO: 'acme/../../../etc'
+      VINAYA_REPO: 'acme/../../../etc'
     })
 
     const recordPath = join(

@@ -452,7 +452,7 @@ export async function main(): Promise<void> {
 
   const repo = await resolveRepo()
   if (!repo) {
-    console.error('[eval-agent-compliance] could not resolve a GitHub repo (set AEG_REPO or check `git remote`).')
+    console.error('[eval-agent-compliance] could not resolve a GitHub repo (set VINAYA_REPO or check `git remote`).')
     process.exit(1)
   }
   const repoFlag = `${repo.owner}/${repo.repo}`

@@ -37,7 +37,7 @@ import { join } from 'node:path'
  * (this process's real `GITHUB_ACTIONS` leaking into the child) while
  * passing on a laptop. The same leak #721 fixed for the in-process loop
  * harness's `withWorldEnv`, here for every real-subprocess fixture that
- * shares this helper. `AEG_REPO`/`GITHUB_REPOSITORY` are deliberately left
+ * shares this helper. `VINAYA_REPO`/`GITHUB_REPOSITORY` are deliberately left
  * alone — unlike the in-process harness, these subprocess fixtures run with
  * a real `cwd` and depend on the real repo-identity short-circuit those two
  * still provide.
@@ -137,7 +137,7 @@ export type ConfigIsolatedFixture = {
   runtimeDir: string
   /** `<home>/.vinaya/runtime/<segment>/logs/<segment>` — the folder the child's own `log()` writes its `<task>.ndjson` into. The fixture configuration DECLARES it, and it is also the default folder that configuration falls back to when the child is classified unattended, so both classifications write here. */
   logsDir: string
-  /** `{ ...stripVinayaEnv(), HOME, AEG_REPO }` — merge a `VINAYA_TASK` (or anything else the case needs) on top. */
+  /** `{ ...stripVinayaEnv(), HOME, VINAYA_REPO }` — merge a `VINAYA_TASK` (or anything else the case needs) on top. */
   env: NodeJS.ProcessEnv
 }
 
@@ -156,7 +156,7 @@ export type ConfigIsolatedFixture = {
  *
  * This gives the child a working directory of its own, which is where that
  * walk stops, plus the `$HOME` its destination hangs off and an explicit
- * `AEG_REPO` so the path is known up front rather than discovered by listing
+ * `VINAYA_REPO` so the path is known up front rather than discovered by listing
  * the runtime root.
  *
  * **That configuration DECLARES its own `logs.folder`; an empty one is not
@@ -191,6 +191,6 @@ export function isolatedConfigFixture(prefix: string): ConfigIsolatedFixture {
     cwd,
     runtimeDir,
     logsDir: join(logsFolder, FIXTURE_REPO_SEGMENT),
-    env: { ...stripVinayaEnv(), HOME: home, AEG_REPO: FIXTURE_REPO }
+    env: { ...stripVinayaEnv(), HOME: home, VINAYA_REPO: FIXTURE_REPO }
   }
 }

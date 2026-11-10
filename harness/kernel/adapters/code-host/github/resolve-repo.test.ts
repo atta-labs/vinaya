@@ -2,17 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:te
 import { resetResolveRepoCache, resolveRepo } from './resolve-repo'
 
 describe('resolveRepo — transient vs deterministic caching', () => {
-  const originalRepo = process.env.AEG_REPO
+  const originalRepo = process.env.VINAYA_REPO
 
   beforeEach(() => {
     resetResolveRepoCache()
-    process.env.AEG_REPO = undefined
-    delete process.env.AEG_REPO
+    process.env.VINAYA_REPO = undefined
+    delete process.env.VINAYA_REPO
   })
 
   afterEach(() => {
-    if (originalRepo === undefined) delete process.env.AEG_REPO
-    else process.env.AEG_REPO = originalRepo
+    if (originalRepo === undefined) delete process.env.VINAYA_REPO
+    else process.env.VINAYA_REPO = originalRepo
     mock.restore()
   })
 
@@ -46,8 +46,8 @@ describe('resolveRepo — transient vs deterministic caching', () => {
     expect(unparseable).toHaveBeenCalledTimes(1)
   })
 
-  it('uses AEG_REPO when set and never calls exec', async () => {
-    process.env.AEG_REPO = 'octo/repo'
+  it('uses VINAYA_REPO when set and never calls exec', async () => {
+    process.env.VINAYA_REPO = 'octo/repo'
     const exec = mock(async () => ({ stdout: 'git@github.com:acme/widgets.git\n' }))
     expect(await resolveRepo(exec)).toEqual({ owner: 'octo', repo: 'repo' })
     expect(exec).not.toHaveBeenCalled()

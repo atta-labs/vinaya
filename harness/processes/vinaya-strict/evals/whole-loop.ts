@@ -16,7 +16,7 @@
  *     holding any other ref or commit is refused before the Issue opens. The
  *     trial's Issue is the renderer's brief plus the fields the Issue grammar
  *     needs, and one `task run --issue <n>` starts in the clone with this
- *     tree's CLI, `AEG_REPO` and `GH_REPO` naming the sandbox, and a fresh
+ *     tree's CLI, `VINAYA_REPO` and `GH_REPO` naming the sandbox, and a fresh
  *     runtime directory whose Log goes to a folder. A run that pauses for a
  *     ruling is stopped and recorded, never passed.
  *  3. **The record.** Built from the forge and the clone alone: the pull
@@ -345,8 +345,8 @@ export function taskRunArgv(input: {
 }
 
 /**
- * The task run's environment: the caller's, with `AEG_REPO` and `GH_REPO`
- * naming the sandbox (`AEG_REPO` wins over the `origin` remote when the CLI
+ * The task run's environment: the caller's, with `VINAYA_REPO` and `GH_REPO`
+ * naming the sandbox (`VINAYA_REPO` wins over the `origin` remote when the CLI
  * resolves its repository), a fresh runtime directory, and the Log written to
  * a folder there, never to a server.
  */
@@ -359,7 +359,7 @@ export function taskRunEnvironment(
   for (const [key, value] of Object.entries(base)) if (value !== undefined) env[key] = value
   return {
     ...env,
-    AEG_REPO: sandbox,
+    VINAYA_REPO: sandbox,
     GH_REPO: sandbox,
     VINAYA_RUNTIME_DIR: runtimeDirectory,
     VINAYA_LOG_FOLDER_ONLY: '1'

@@ -220,7 +220,7 @@ export function logDestinationTargetFrom(input: {
  * Two things are deliberately taken from the sink rather than reimplemented,
  * because a doctor that reports a destination the sink would not use is worse
  * than no finding at all. The repository identity comes from the same
- * `resolveRepo` the sink's own default dep uses — which prefers `AEG_REPO`
+ * `resolveRepo` the sink's own default dep uses — which prefers `VINAYA_REPO`
  * over the origin remote, the shape every dispatched role's child runs in, so
  * the default folder cannot differ between the two. And the trust-anchor read
  * is bounded by the same deadline the sink bounds it with: past it the sink

@@ -106,7 +106,7 @@ function pathsDifferingFromBase(base: string): Set<string> | null {
 
 /** Same shape every other check-bin adapter here resolves the repo with — see `check-branch-topology.ts`'s identical helper. */
 function resolveRepo(): { owner: string; repo: string } | null {
-  const fromEnv = process.env.AEG_REPO
+  const fromEnv = process.env.VINAYA_REPO
   if (fromEnv) {
     const m = fromEnv.match(/^([^/]+)\/(.+)$/)
     if (m?.[1] && m[2]) return { owner: m[1], repo: m[2] }
@@ -178,8 +178,8 @@ async function main(): Promise<void> {
   const repo = resolveRepo()
   if (!repo) {
     refuse(
-      `branch \`${branch}\` names a task, but this repository's owner/repo could not be resolved from \`AEG_REPO\` or \`git remote get-url origin\` — cannot look up which Issue's Surface bounds this PR.`,
-      'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya-check surface-scope`.'
+      `branch \`${branch}\` names a task, but this repository's owner/repo could not be resolved from \`VINAYA_REPO\` or \`git remote get-url origin\` — cannot look up which Issue's Surface bounds this PR.`,
+      'Set VINAYA_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya-check surface-scope`.'
     )
   }
 

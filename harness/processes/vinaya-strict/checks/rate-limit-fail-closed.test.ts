@@ -195,7 +195,7 @@ describe('dispatch-readiness (Issue mode): a dependency that cannot be read is u
       REPO_ROOT,
       childEnv(binDir, {
         BRANCH: `task/issue-${TASK_ISSUE}`,
-        AEG_REPO: 'atta-labs/vinaya-fixture',
+        VINAYA_REPO: 'atta-labs/vinaya-fixture',
         GITHUB_REPOSITORY: 'atta-labs/vinaya-fixture'
       })
     )
@@ -217,7 +217,7 @@ describe('dispatch-readiness (Issue mode): a dependency that cannot be read is u
       REPO_ROOT,
       childEnv(binDir, {
         BRANCH: `task/issue-${TASK_ISSUE}`,
-        AEG_REPO: 'atta-labs/vinaya-fixture',
+        VINAYA_REPO: 'atta-labs/vinaya-fixture',
         GITHUB_REPOSITORY: 'atta-labs/vinaya-fixture'
       })
     )

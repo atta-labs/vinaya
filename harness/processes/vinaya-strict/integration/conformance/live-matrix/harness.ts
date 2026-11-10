@@ -306,7 +306,7 @@ fi
     ...stripVinayaEnv(process.env),
     HOME: home,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    AEG_REPO: 'attalabs/vinaya',
+    VINAYA_REPO: 'attalabs/vinaya',
     GITHUB_REPOSITORY: 'attalabs/vinaya',
     VINAYA_MCP_CALLER: 'operator-1',
     VINAYA_RUNTIME_DIR: runtimeDir,
