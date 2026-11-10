@@ -126,6 +126,7 @@ export function phaseOfStep(step: string): FlowPhase {
     case 'run-live-checks':
     case 'classify-live-result':
     case 'run-security-scan':
+    case 'run-round-tests':
       return 'local_checks'
     case 'dispatch-reviewers':
     case 'code-review':

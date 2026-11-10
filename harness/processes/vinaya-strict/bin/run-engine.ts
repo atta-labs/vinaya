@@ -795,6 +795,7 @@ export const V2_NODE_STAGES: Readonly<Record<string, Stage>> = {
   'dispatch-reviewers': 'review',
   'code-review': 'review',
   'security-review': 'review',
+  'run-round-tests': 'review',
   'validate-reviewer-outputs': 'review',
   'classify-reviewer-outputs': 'review',
   'assess-round': 'review',

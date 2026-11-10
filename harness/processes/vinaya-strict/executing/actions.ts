@@ -118,6 +118,7 @@ import {
   buildManifestRecord,
   decideSecurityScan,
   discardHeldVerdicts,
+  findingFingerprint,
   persistManifestRecord,
   ReviewerInfrastructureFailure,
   ReviewerResultRejected,
@@ -837,6 +838,97 @@ function recordedReviews(results: Results): RecordedReviews | null {
   }
 }
 
+// --- the round's selected tests ----------------------------------------------
+
+/** The id of the blocking finding a red round test adds to the code reviewer's findings. */
+export const ROUND_TEST_FINDING_ID = 'T1'
+
+/** What the round-test step recorded: the round and head it ran for, and the sanitized result of its run. */
+export interface RecordedRoundTests {
+  round: number
+  head: string
+  result: {
+    outcome: 'passed' | 'failed' | 'none' | 'timed_out' | 'unavailable'
+    /** Set with `failed`: the first failing test, its `file:line` and its failure lines, all sanitized. */
+    firstFailure?: { test: string; location: string; excerpt: string }
+    detail?: string
+    wallMs?: number
+  }
+}
+
+/** The round-test step's recorded result, or null before it ran or when its record cannot be read. */
+export function recordedRoundTests(results: Results): RecordedRoundTests | null {
+  const stdout = stdoutOf(results['run-round-tests'])
+  if (!stdout) return null
+  try {
+    const parsed = JSON.parse(stdout) as Partial<RecordedRoundTests>
+    return typeof parsed.round === 'number' &&
+      typeof parsed.head === 'string' &&
+      typeof parsed.result?.outcome === 'string'
+      ? (parsed as RecordedRoundTests)
+      : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The red test the judged head carries: the round-test result when it is `failed` and was recorded for the head and
+ * round the newest reviewer dispatch took its inputs at. A result for another head or round is absent.
+ */
+export function failedRoundTest(results: Results): { test: string; location: string; excerpt: string } | null {
+  const recorded = recordedRoundTests(results)
+  const dispatch = recordedDispatch(results)
+  const judged = dispatch?.inputs?.manifest.headSha
+  if (recorded === null || dispatch === null || judged === undefined) return null
+  if (recorded.round !== dispatch.round || recorded.head !== judged) return null
+  const failure = recorded.result.outcome === 'failed' ? recorded.result.firstFailure : undefined
+  return failure ?? null
+}
+
+/** The first line of a failure excerpt that is not blank. */
+const firstFailureLine = (excerpt: string): string =>
+  excerpt
+    .split('\n')
+    .find((line) => line.trim().length > 0)
+    ?.trim() ?? ''
+
+/**
+ * Folds a red round test into the round's verdicts: the code reviewer's `APPROVE` becomes `REQUEST CHANGES` and one
+ * blocking finding names the first failing test at its `file:line`. An escalation from either reviewer is left as it
+ * is, so the pause comes first; the reviewers' own findings stay beside the new one.
+ */
+function foldRoundTestFailure(
+  verdicts: VerdictObservation[],
+  failure: { test: string; location: string; excerpt: string }
+): VerdictObservation[] {
+  if (verdicts.some((verdict) => verdict.verdict === 'ESCALATE')) return verdicts
+  const line = firstFailureLine(failure.excerpt)
+  const description = `The selected test ${failure.test} fails${line ? `: ${line}` : ''}`
+  return verdicts.map((verdict) =>
+    verdict.role !== 'reviewer'
+      ? verdict
+      : {
+          ...verdict,
+          verdict: verdict.verdict === 'APPROVE' ? 'REQUEST CHANGES' : verdict.verdict,
+          findings: [
+            ...verdict.findings,
+            {
+              id: ROUND_TEST_FINDING_ID,
+              severity: 'BLOCKER',
+              location: failure.location,
+              description,
+              // The same failing test is the same finding in the next round, whatever its failure line says.
+              fingerprint: findingFingerprint(`selected test ${failure.test}`),
+              state: null,
+              severityScale: 'code-review',
+              policyTreatment: 'blocking'
+            }
+          ]
+        }
+  )
+}
+
 /** The verdict observations the reviewer-output step held for the round; throws when it held none. */
 export function recordedVerdicts(results: Results): VerdictObservation[] {
   const reviews = recordedReviews(results)
@@ -844,7 +936,9 @@ export function recordedVerdicts(results: Results): VerdictObservation[] {
   const security = reviews?.accepted.security
   if (reviews?.next !== 'hold' || reviewer === undefined || security === undefined)
     throw new Error('no verdicts were held for the round: the reviewer-output step recorded none')
-  return [reviewer.observation, security.observation]
+  const held = [reviewer.observation, security.observation]
+  const red = failedRoundTest(results)
+  return red === null ? held : foldRoundTestFailure(held, red)
 }
 
 /**
