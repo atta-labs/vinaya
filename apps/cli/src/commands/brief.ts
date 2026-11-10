@@ -56,7 +56,9 @@ export async function briefRenderCommand(args: string[]): Promise<void> {
   const outPath = outIdx !== -1 ? args[outIdx + 1] : undefined
 
   const result = await renderBrief({ trancheSlug, taskId, globs })
-  if (!result.ok) refuse(result.message)
+  if (!result.ok) {
+    refuse(`cannot render — missing fact(s):\n${result.missing.map((m) => `  - ${m}`).join('\n')}`)
+  }
 
   if (outPath) {
     writeFileSync(outPath, result.brief.endsWith('\n') ? result.brief : `${result.brief}\n`)

@@ -194,7 +194,7 @@ describe('renderBrief', () => {
   it('returns the missing facts as a refusal for a task that does not exist', async () => {
     const out = await renderBrief({ trancheSlug: 'no-such-tranche-planner-ops', taskId: '1' })
     expect(out.ok).toBe(false)
-    if (!out.ok) expect(out.message).toContain('cannot render — missing fact(s):')
+    if (!out.ok) expect(out.missing.length).toBeGreaterThan(0)
   })
 })
 

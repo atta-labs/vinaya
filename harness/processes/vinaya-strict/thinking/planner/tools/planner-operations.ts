@@ -313,21 +313,16 @@ export function printIssueSurface(args: string[]): SurfaceOutcome {
 
 // --- brief -------------------------------------------------------------------
 
-export type BriefOutcome = { ok: true; brief: string } | { ok: false; message: string }
+export type BriefOutcome = { ok: true; brief: string } | { ok: false; missing: string[] }
 
-/** Renders a task's brief; the message of a refusal names the missing facts. */
+/** Renders a task's brief; a refusal lists the facts it could not find. */
 export async function renderBrief(input: {
   trancheSlug: string
   taskId: string
   globs?: string[]
 }): Promise<BriefOutcome> {
   const result = await assembleAndRenderBrief(input.trancheSlug, input.taskId, input.globs)
-  if (!result.ok) {
-    return {
-      ok: false,
-      message: `cannot render — missing fact(s):\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
-    }
-  }
+  if (!result.ok) return { ok: false, missing: result.missing }
   return { ok: true, brief: result.brief }
 }
 
@@ -346,7 +341,7 @@ type EditOp =
 
 /**
  * The same `## Objectives` heading/next-heading boundary `objectivesOf`
- * itself locates (that scanner is internal to `packages/aeg-core`, never
+ * itself locates (that scanner is internal to the objectives package, never
  * exported — the parsed `Objective[]` list is the public surface, not the
  * raw span). Re-deriving the SAME regex here only decides where to splice
  * text back in; it never re-implements the grammar `objectivesOf` already
