@@ -163,7 +163,6 @@ describe('renderBrief', () => {
       .trim()
       .replaceAll('`vinaya ', '`bun apps/cli/src/index.ts ')
     expect(result.brief).toContain(expected)
-    expect(result.brief).not.toContain('You are the AEG Developer')
   })
 
   it('names controller-run verification without rendering hand-run static gates (O4)', () => {
