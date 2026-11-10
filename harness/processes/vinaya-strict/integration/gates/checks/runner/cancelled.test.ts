@@ -57,7 +57,7 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
     // The default `logs` destination is a folder under the fixture's own
     // `runtimeDir` — `<runtimeDir>/logs/<repo>/<task>.ndjson`. Both the
     // `runtimeDir` and the inner `logs/` folder are named by the same repo
-    // segment, the one the fixture's own `AEG_REPO` declares.
+    // segment, the one the fixture's own `VINAYA_REPO` declares.
     const lines = readFileSync(join(fixture.logsDir, '905.ndjson'), 'utf8')
       .trim()
       .split('\n')
@@ -92,7 +92,7 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
     // The default `logs` destination is a folder under the fixture's own
     // `runtimeDir` — `<runtimeDir>/logs/<repo>/<task>.ndjson`. Both the
     // `runtimeDir` and the inner `logs/` folder are named by the same repo
-    // segment, the one the fixture's own `AEG_REPO` declares.
+    // segment, the one the fixture's own `VINAYA_REPO` declares.
     const lines = readFileSync(join(fixture.logsDir, '905.ndjson'), 'utf8')
       .trim()
       .split('\n')

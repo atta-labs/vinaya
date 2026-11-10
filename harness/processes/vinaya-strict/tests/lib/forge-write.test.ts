@@ -480,8 +480,8 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
     execFileSync('git', ['add', '.'], { cwd })
     execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
 
-    originalAegRepo = process.env.AEG_REPO
-    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalAegRepo = process.env.VINAYA_REPO
+    process.env.VINAYA_REPO = 'test-owner/test-repo'
     originalCwd = process.cwd()
     process.chdir(cwd)
     restorePrincipals = servePrincipalsConfig()
@@ -490,7 +490,7 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
   afterEach(() => {
     restorePrincipals()
     process.chdir(originalCwd)
-    process.env.AEG_REPO = originalAegRepo
+    process.env.VINAYA_REPO = originalAegRepo
     rmSync(cwd, { recursive: true, force: true })
   })
 
@@ -612,8 +612,8 @@ describe('the plan-time gate renders as dispatch does — adopter with no aeg-ro
     execFileSync('git', ['add', '.'], { cwd })
     execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
 
-    originalAegRepo = process.env.AEG_REPO
-    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalAegRepo = process.env.VINAYA_REPO
+    process.env.VINAYA_REPO = 'test-owner/test-repo'
     originalCwd = process.cwd()
     process.chdir(cwd)
     restorePrincipals = servePrincipalsConfig()
@@ -622,8 +622,8 @@ describe('the plan-time gate renders as dispatch does — adopter with no aeg-ro
   afterEach(() => {
     restorePrincipals()
     process.chdir(originalCwd)
-    if (originalAegRepo === undefined) delete process.env.AEG_REPO
-    else process.env.AEG_REPO = originalAegRepo
+    if (originalAegRepo === undefined) delete process.env.VINAYA_REPO
+    else process.env.VINAYA_REPO = originalAegRepo
     rmSync(cwd, { recursive: true, force: true })
   })
 
@@ -671,7 +671,7 @@ describe('the plan-time gate renders as dispatch does — adopter with no aeg-ro
   }, 60000)
 
   it('when the render cannot run (no resolvable repo), reports the skip reason and no brief-render finding (O3)', async () => {
-    delete process.env.AEG_REPO // this fixture's origin is unresolvable, so the repo no longer resolves
+    delete process.env.VINAYA_REPO // this fixture's origin is unresolvable, so the repo no longer resolves
     const { errors, renderSkipped } = await collectTaskIssueErrors(
       incidentBody,
       '[demo] 1 — the incident',
@@ -830,8 +830,8 @@ exit 1
     )
     execFileSync('chmod', ['+x', gh])
 
-    originalAegRepo = process.env.AEG_REPO
-    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalAegRepo = process.env.VINAYA_REPO
+    process.env.VINAYA_REPO = 'test-owner/test-repo'
     originalRepository = process.env.GITHUB_REPOSITORY
     process.env.GITHUB_REPOSITORY = 'test-owner/test-repo'
     originalPath = process.env.PATH
@@ -842,7 +842,7 @@ exit 1
 
   afterEach(() => {
     process.chdir(originalCwd)
-    process.env.AEG_REPO = originalAegRepo
+    process.env.VINAYA_REPO = originalAegRepo
     if (originalRepository === undefined) delete process.env.GITHUB_REPOSITORY
     else process.env.GITHUB_REPOSITORY = originalRepository
     process.env.PATH = originalPath

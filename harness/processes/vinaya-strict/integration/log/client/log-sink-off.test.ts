@@ -144,7 +144,7 @@ describe('Log recording restrictions', () => {
       )
       const result = await spawnBudgetedAsync([process.execPath, script], {
         cwd: root,
-        env: { ...stripVinayaEnv(), HOME: root, AEG_REPO: 'example/test' }
+        env: { ...stripVinayaEnv(), HOME: root, VINAYA_REPO: 'example/test' }
       })
       expect(result.status).toBe(0)
       expect(requests.join('\n')).toContain('"effect_id":"test"')

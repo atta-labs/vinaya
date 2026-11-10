@@ -289,13 +289,13 @@ function isDriverPidAlive(pid: number): boolean {
  * two command-facing entry points are called synchronously today by
  * `commands/task-status.ts`, out of this task's Surface; making them
  * `async` would force an edit there too). Same resolution order and same
- * URL shapes `resolve-repo.ts` parses — `AEG_REPO` first, then `git remote
+ * URL shapes `resolve-repo.ts` parses — `VINAYA_REPO` first, then `git remote
  * get-url origin` — duplicated in miniature rather than shared, since the
  * shared version is the one thing here that can't be reused without an
  * out-of-surface ripple.
  */
 function resolveRepoSync(): LoopLogRepo {
-  const fromEnv = process.env.AEG_REPO
+  const fromEnv = process.env.VINAYA_REPO
   if (fromEnv) {
     const m = /^([^/]+)\/(.+)$/.exec(fromEnv)
     if (m?.[1] && m[2]) return { owner: m[1], repo: m[2] }

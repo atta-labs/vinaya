@@ -103,7 +103,8 @@ merge parent nearest the head that qualifies), read from the merge itself and
 never taken from a local default-branch ref by name. What qualifies is decided
 by the remote, which the Developer cannot forge: at publication the driver reads
 the default branch's head with `git ls-remote <repository URL> refs/heads/main`,
-the URL built from the repository the driver resolved
+the URL built from the repository the driver resolved (from `VINAYA_REPO` when
+set, else the git remote)
 (`https://github.com/<owner>/<repo>.git`) and never taken from the worktree's
 `origin`, which the Developer can repoint, fetching that one ref from the same
 URL itself when the object is missing locally (the Developer never fetches), and a merge parent qualifies only when `git merge-base --is-ancestor`

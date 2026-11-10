@@ -333,7 +333,7 @@ function setUp(): { home: string; env: Record<string, string> } {
     env: {
       HOME: home,
       PATH: `${forgeDir}:${process.env.PATH ?? ''}`,
-      AEG_REPO: 'acme/widget',
+      VINAYA_REPO: 'acme/widget',
       GITHUB_REPOSITORY: 'acme/widget'
     }
   }

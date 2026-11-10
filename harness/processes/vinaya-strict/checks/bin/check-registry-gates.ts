@@ -193,7 +193,7 @@ function makeResolveFn(repoFlag: string): (n: number) => boolean {
 }
 
 function resolveRepo(): { owner: string; repo: string } | null {
-  const fromEnv = process.env.AEG_REPO
+  const fromEnv = process.env.VINAYA_REPO
   if (fromEnv) {
     const m = fromEnv.match(/^([^/]+)\/(.+)$/)
     if (m?.[1] && m[2]) return { owner: m[1], repo: m[2] }
@@ -270,7 +270,7 @@ async function main(): Promise<void> {
         findings: [
           {
             reason:
-              "severity:infra — could not resolve a GitHub repo (AEG_REPO / git remote) or `gh` is unreachable (`gh auth status` failed). G4 skipped — cannot evaluate whether enforcement.md's cited forge numbers resolve."
+              "severity:infra — could not resolve a GitHub repo (VINAYA_REPO / git remote) or `gh` is unreachable (`gh auth status` failed). G4 skipped — cannot evaluate whether enforcement.md's cited forge numbers resolve."
           }
         ]
       }

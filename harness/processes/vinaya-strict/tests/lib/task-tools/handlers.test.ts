@@ -169,7 +169,7 @@ process.stdout.write('O3_RESULT:' + JSON.stringify({ status, frozen, planned }) 
           ...stripVinayaEnv(process.env),
           HOME: home,
           PATH: `${binDir}:${process.env.PATH ?? ''}`,
-          AEG_REPO: 'attalabs/vinaya',
+          VINAYA_REPO: 'attalabs/vinaya',
           GITHUB_REPOSITORY: 'attalabs/vinaya'
         }
       })
@@ -1077,7 +1077,7 @@ process.stdout.write('F1_RESULT:' + JSON.stringify({ listing, named, escalation 
           ...stripVinayaEnv(process.env),
           HOME: home,
           PATH: `${binDir}:${process.env.PATH ?? ''}`,
-          AEG_REPO: 'attalabs/vinaya',
+          VINAYA_REPO: 'attalabs/vinaya',
           GITHUB_REPOSITORY: 'attalabs/vinaya',
           VINAYA_TEST_COUNT_FILE: countFile
         }

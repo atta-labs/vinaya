@@ -17,7 +17,7 @@ import { TASK_TOOLS_MCP_SERVER_NAME } from './server.js'
  * run, a duplicate start, and a tool not in the catalog. A separate scenario
  * proves a disconnect leaves no second run.
  *
- * Hermetic: a fake `gh` (a configuration naming `principals`, an issue list), `AEG_REPO`, an isolated `HOME` (the
+ * Hermetic: a fake `gh` (a configuration naming `principals`, an issue list), `VINAYA_REPO`, an isolated `HOME` (the
  * durable task-start store), an authenticated caller in the environment, and a
  * recording launcher in place of a real detached `vinaya task run` — so the
  * transport, discovery, dispatch, validation, idempotency and disconnect are
@@ -139,7 +139,7 @@ fi
     ...stripVinayaEnv(process.env),
     HOME: home,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    AEG_REPO: 'attalabs/vinaya',
+    VINAYA_REPO: 'attalabs/vinaya',
     VINAYA_MCP_CALLER: CALLER,
     VINAYA_TASK_RUN_COMMAND: launcher,
     VINAYA_TEST_LAUNCH_FILE: launchFile

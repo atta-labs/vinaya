@@ -826,7 +826,7 @@ describe('CheckEntrySchema env field', () => {
   const base = { run: './check.ts', scope: 'diff' as const }
 
   it('accepts the `true` form', () => {
-    const parsed = VinayaConfigSchema.safeParse({ checks: { c: { ...base, env: { AEG_REPO: true } } } })
+    const parsed = VinayaConfigSchema.safeParse({ checks: { c: { ...base, env: { VINAYA_REPO: true } } } })
     expect(parsed.success).toBe(true)
   })
 
@@ -901,7 +901,7 @@ describe('lintEnvDeclarations', () => {
 
   it('does not warn on `true` or `{ optional: true }` forms', () => {
     const warnings = lintEnvDeclarations({
-      c: { run: './c.ts', scope: 'diff', env: { AEG_REPO: true, PR_BODY: { optional: true } } }
+      c: { run: './c.ts', scope: 'diff', env: { VINAYA_REPO: true, PR_BODY: { optional: true } } }
     })
     expect(warnings).toEqual([])
   })

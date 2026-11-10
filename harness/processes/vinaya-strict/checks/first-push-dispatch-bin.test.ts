@@ -8,7 +8,7 @@ import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/
 
 /**
  * `check-first-push-dispatch.ts` spawned with a fake `gh` first on `PATH`. The
- * scratch repository has no `origin` and the run no `AEG_REPO`, so a readiness
+ * scratch repository has no `origin` and the run no `VINAYA_REPO`, so a readiness
  * classification resolves `UNKNOWN` without any network call.
  */
 const BIN = join(import.meta.dir, 'bin/check-first-push-dispatch.ts')
@@ -33,7 +33,7 @@ async function run(branch: string, forge: Forge): Promise<{ exitCode: number; er
   writeFileSync(join(ghDir, 'gh'), `#!/usr/bin/env bun\n${body}\n`)
   chmodSync(join(ghDir, 'gh'), 0o755)
   const env = { ...stripVinayaEnv(), PATH: `${ghDir}:${process.env.PATH}`, BRANCH: branch }
-  delete (env as Record<string, string | undefined>).AEG_REPO
+  delete (env as Record<string, string | undefined>).VINAYA_REPO
   const { status, stderr } = await spawnBudgetedAsync(['bun', BIN], { cwd: dir, env })
   const errors = stderr
     .split('\n')

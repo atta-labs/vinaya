@@ -607,7 +607,7 @@ describe('vinaya issue objectives edit --part (task-run-v1 task 15, O5)', () => 
  * validated-write path every edit in this file already goes through) and
  * posts only when it validates. Needs a real git+template fixture (this
  * file's other tests never reach that gate: their fixture has no
- * `AEG_REPO`/real forge remote, so `canRenderBriefFromHere()` is false and
+ * `VINAYA_REPO`/real forge remote, so `canRenderBriefFromHere()` is false and
  * the whole render stays dormant — see `validateRenderedBriefForIssue`'s own
  * doc comment). A BACKLOG (unlabeled) Issue is required to actually
  * exercise it here, without also standing up a real tranche fixture.
@@ -786,7 +786,7 @@ exit 1
         'exercising O4'
       ],
       localDir,
-      { ...path, AEG_REPO: 'test-owner/test-repo' }
+      { ...path, VINAYA_REPO: 'test-owner/test-repo' }
     )
 
     expect(r.status).toBe(1)
@@ -975,7 +975,7 @@ process.exit(1)
         'scope grew on a backlog issue'
       ],
       localDir,
-      { ...path, AEG_REPO: 'test-owner/test-repo' }
+      { ...path, VINAYA_REPO: 'test-owner/test-repo' }
     )
 
     expect(r.status).toBe(0)

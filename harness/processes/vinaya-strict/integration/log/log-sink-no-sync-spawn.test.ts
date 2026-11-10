@@ -106,7 +106,7 @@ describe('log() never makes a synchronous spawn', () => {
   it('the default destination (no `logs` setting, attended caller) resolves and writes without one', () => {
     const cwd = tempDir('vinaya-no-sync-spawn-')
     execFileSync('git', ['init', '--quiet'], { cwd })
-    const r = runProbe(cwd, { HOME: cwd, AEG_REPO: 'example/example' })
+    const r = runProbe(cwd, { HOME: cwd, VINAYA_REPO: 'example/example' })
     expect(r.syncCalls).toEqual([])
     expect(landedIn(join(cwd, '.vinaya'))).toBe(true)
   }, 30000)
@@ -126,7 +126,7 @@ describe('log() never makes a synchronous spawn', () => {
     writeFileSync(join(bin, 'gh'), `#!/bin/sh\necho '${content}'\n`, { mode: 0o755 })
     const r = runProbe(cwd, {
       HOME: cwd,
-      AEG_REPO: 'example/example',
+      VINAYA_REPO: 'example/example',
       GITHUB_REPOSITORY: 'example/example',
       VINAYA_ROLE: 'developer',
       PATH: `${bin}:${process.env.PATH}`
@@ -190,7 +190,7 @@ function setUpAnchorFixture(ghMode: 'answers' | 'fails' | 'never-answers'): {
     ghCalls,
     env: {
       HOME: cwd,
-      AEG_REPO: 'example/example',
+      VINAYA_REPO: 'example/example',
       GITHUB_REPOSITORY: 'example/example',
       PATH: `${bin}:${process.env.PATH}`
     }
@@ -301,7 +301,7 @@ describe('a broken destination warns once per process, not once per sink', () =>
     const r = spawnSyncBudgeted(
       'bun',
       [probe],
-      { cwd, encoding: 'utf8', env: { ...stripVinayaEnv(), HOME: cwd, AEG_REPO: 'example/example' } },
+      { cwd, encoding: 'utf8', env: { ...stripVinayaEnv(), HOME: cwd, VINAYA_REPO: 'example/example' } },
       20_000,
       'log-sink warn-once probe'
     )

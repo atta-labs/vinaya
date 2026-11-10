@@ -345,7 +345,7 @@ describe('fastForwardToRemoteIfSafe (Issue #839)', () => {
  * live network call — `assembleAndRenderBriefForIssue` shells out to real
  * `git`, so a fixture repo with a local `origin` remote is the same
  * network-free discipline `checkStaleAgainstRemote`'s own tests above already
- * use. `AEG_REPO` substitutes for a real GitHub remote (this fixture's origin
+ * use. `VINAYA_REPO` substitutes for a real GitHub remote (this fixture's origin
  * is a local file path, which `resolveRepo`'s GitHub-URL patterns don't
  * match) — the same env-var escape hatch production code already reads.
  */
@@ -380,17 +380,17 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     git(localDir, ['config', 'user.name', 'A'])
 
     originalCwd = process.cwd()
-    originalAegRepo = process.env.AEG_REPO
+    originalAegRepo = process.env.VINAYA_REPO
     process.chdir(localDir)
-    process.env.AEG_REPO = 'test-owner/test-repo'
+    process.env.VINAYA_REPO = 'test-owner/test-repo'
     restorePrincipals = servePrincipalsConfig()
   })
 
   afterEach(() => {
     restorePrincipals()
     process.chdir(originalCwd)
-    if (originalAegRepo === undefined) delete process.env.AEG_REPO
-    else process.env.AEG_REPO = originalAegRepo
+    if (originalAegRepo === undefined) delete process.env.VINAYA_REPO
+    else process.env.VINAYA_REPO = originalAegRepo
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
@@ -411,7 +411,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
   })
 
   it('is not renderable, naming the reason, with no resolvable repo even with the template present', () => {
-    delete process.env.AEG_REPO
+    delete process.env.VINAYA_REPO
     const result = canRenderBriefFromHere()
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toMatch(/owner\/repo/)
@@ -646,8 +646,8 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
  */
 describe('resolveTrancheTaskId', () => {
   it('returns null when the repo cannot be resolved at all', () => {
-    const originalAegRepo = process.env.AEG_REPO
-    delete process.env.AEG_REPO
+    const originalAegRepo = process.env.VINAYA_REPO
+    delete process.env.VINAYA_REPO
     const dir = mkdtempSync(join(tmpdir(), 'vinaya-no-repo-'))
     const originalCwd = process.cwd()
     process.chdir(dir)
@@ -658,8 +658,8 @@ describe('resolveTrancheTaskId', () => {
       .finally(() => {
         process.chdir(originalCwd)
         rmSync(dir, { recursive: true, force: true })
-        if (originalAegRepo === undefined) delete process.env.AEG_REPO
-        else process.env.AEG_REPO = originalAegRepo
+        if (originalAegRepo === undefined) delete process.env.VINAYA_REPO
+        else process.env.VINAYA_REPO = originalAegRepo
       })
   })
 })

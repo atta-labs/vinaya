@@ -129,7 +129,7 @@ function readRegisteredProjectNames(): string[] {
 }
 
 function resolveRepo(): { owner: string; repo: string } | null {
-  const fromEnv = process.env.AEG_REPO
+  const fromEnv = process.env.VINAYA_REPO
   if (fromEnv) {
     const m = fromEnv.match(/^([^/]+)\/(.+)$/)
     if (m?.[1] && m[2]) return { owner: m[1], repo: m[2] }
@@ -485,7 +485,7 @@ async function main(): Promise<void> {
       severity: 'error',
       message: 'coherence severity:infra — could not resolve owner/repo.',
       agent_recovery_prompt:
-        'Set AEG_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya-check coherence`.'
+        'Set VINAYA_REPO=owner/repo, or confirm `git remote get-url origin` resolves to a GitHub URL, then re-run `vinaya-check coherence`.'
     })
     process.exit(1)
   }
