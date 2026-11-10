@@ -933,7 +933,7 @@ export function checkClosesNTopology(
       if (branch !== expectedBranch) {
         return {
           ok: false,
-          message: `closes-n-reverse: branch "${branch}" closes #${n} (task ${ref.taskId} of tranche "${ref.trancheSlug}") but is not named "${expectedBranch}" — rename the branch and re-push, or if this work is intentionally outside AEG's dispatch flow, remove the Closes reference.`
+          message: `closes-n-reverse: branch "${branch}" closes #${n} (task ${ref.taskId} of tranche "${ref.trancheSlug}") but is not named "${expectedBranch}" — rename the branch and re-push, or if this work is intentionally outside Vinaya's dispatch flow, remove the Closes reference.`
         }
       }
     }

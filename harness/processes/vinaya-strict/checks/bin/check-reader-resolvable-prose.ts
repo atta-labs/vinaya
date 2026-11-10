@@ -628,7 +628,7 @@ function main(): void {
         : finding.rule === DECISION_RECORD_CITATION_ID
           ? DECISION_RECORD_RECOVERY
           : finding.message.includes('coined term')
-            ? 'This page uses AEG/Vinaya-internal vocabulary a first-time reader cannot resolve. Either define the term ' +
+            ? 'This page uses Vinaya-internal vocabulary a first-time reader cannot resolve. Either define the term ' +
               'inline (the same "Term — one-sentence definition" shape the glossary uses) at its first use on this page, ' +
               'or link to the glossary. Do not simply delete the word if the sentence needs it.'
             : // A product-code finding names itself in its own message; every

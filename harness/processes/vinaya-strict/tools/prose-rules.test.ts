@@ -200,7 +200,7 @@ describe('configured rule set', () => {
       custom: [{ id: 'acme/widget', pattern: 'legacy widget', means: 'retired product name', scopes: ['repository'] }]
     })
     expect(scanRetiredVocabulary(files, configured).map((f) => [f.rule, f.line, f.blocking, f.message])).toEqual([
-      ['retired-vocabulary-15', 2, false, 'claims a retired AEG mechanism is still live (matches /Lock: ?YES/)'],
+      ['retired-vocabulary-15', 2, false, 'claims a retired Vinaya mechanism is still live (matches /Lock: ?YES/)'],
       ['acme/widget', 3, true, 'acme/widget: retired product name (matches /legacy widget/)']
     ])
     expect(scanRetiredVocabulary(files, resolveProseRules({ defaults: { 'retired-vocabulary-15': 'off' } }))).toEqual(

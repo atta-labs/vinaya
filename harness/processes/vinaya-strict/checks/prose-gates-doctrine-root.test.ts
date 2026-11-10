@@ -176,7 +176,7 @@ for (const check of [
     mention: `See D-${100 + 23} for the historical rationale.\n`,
     // The message states the offending pattern's SOURCE regex, not a
     // literal echo of the matched substring.
-    findingContains: ['retired-vocabulary', 'retired AEG mechanism']
+    findingContains: ['retired-vocabulary', 'retired Vinaya mechanism']
   },
   {
     name: 'reader-resolvable-prose',
@@ -589,7 +589,7 @@ describe('explicit proseGates.doctrineRoot still wins — retired-vocabulary (Is
       // Positive proof it read the CONFIGURED root, not the repo-root
       // aeg-root/: the real retired-decision-id finding in aeg-root/note.md
       // (the same pattern `mention` above writes there) never surfaces.
-      expect(result.stderr.toString()).not.toContain('retired AEG mechanism')
+      expect(result.stderr.toString()).not.toContain('retired Vinaya mechanism')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

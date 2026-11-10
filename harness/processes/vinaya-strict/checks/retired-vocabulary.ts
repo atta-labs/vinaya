@@ -112,7 +112,7 @@ export function scanRetiredVocabulary(
           pattern,
           message: rule.custom
             ? `${rule.id}: ${rule.message} (matches /${pattern}/)`
-            : `claims a retired AEG mechanism is still live (matches /${pattern}/)`,
+            : `claims a retired Vinaya mechanism is still live (matches /${pattern}/)`,
           rule: rule.id,
           blocking: rule.severity.repository === 'error'
         })

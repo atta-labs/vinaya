@@ -238,9 +238,9 @@ async function main(): Promise<void> {
       schema: CHECK_SCHEMA_VERSION,
       check: `${CHECK_NAME}.dormant`,
       severity: 'warning',
-      message: `${CHECK_NAME}: dormant — no ${ENFORCEMENT_PATH} in this repository. This check validates the AEG doctrine-authoring tree's own internal coherence (enforcement rows against role/contract frontmatter); it has no adopter-facing form and does not run outside the repo that authors that doctrine.`,
+      message: `${CHECK_NAME}: dormant — no ${ENFORCEMENT_PATH} in this repository. This check validates the Vinaya doctrine-authoring tree's own internal coherence (enforcement rows against role/contract frontmatter); it has no adopter-facing form and does not run outside the repo that authors that doctrine.`,
       agent_recovery_prompt:
-        'No action needed — this check only applies inside the repository that authors the AEG doctrine tree (the role doctrine, the contracts and the enforcement page the doctrine map names under harness/processes/vinaya-strict). An adopter repo installing @attalabs/vinaya never carries that tree and is not expected to.'
+        'No action needed — this check only applies inside the repository that authors the Vinaya doctrine tree (the role doctrine, the contracts and the enforcement page the doctrine map names under harness/processes/vinaya-strict). An adopter repo installing @attalabs/vinaya never carries that tree and is not expected to.'
     })
     process.exit(0)
   }
