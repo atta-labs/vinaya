@@ -66,6 +66,7 @@ import { hookRoutingRepairLine, repairLocalGateControl } from '../../../../../..
 import { appendDriverLine, loopLogPathFor } from '../../../../../../kernel/log/client/loop-log.js'
 import { ensureRunDir, runPath } from '../../../../../../kernel/run-paths.js'
 import { sh } from './gate-reading.js'
+import { decideStop } from './stop-decision.js'
 import {
   type ForgeComment,
   isForgeReadOversize,
@@ -1245,6 +1246,8 @@ export type ReconcileLaunchDeps = {
   getProcessSnapshot: (pid: number) => ProcessSnapshot | null
   /** O2 (found by code review, MAJOR): terminates an abandoned child by pid — `recoverDeveloperLaunch`'s reap step calls THIS, never `dispatch.ts`'s `terminateChildWithGrace` directly, so the reap step itself has a test seam: a test can inject a spy here and assert the orphan was actually reaped, without sending a real OS signal. */
   terminateChild: (pid: number) => void
+  /** This controller's own process id. A launch whose recorded dispatcher is this very process, with no child pid on record, is not still running: the process that would be running it is the one now reconciling it. Injected so the pure reconciler stays testable; compared exactly, never against "some live pid". */
+  selfPid: () => number
 }
 
 /**
@@ -1343,12 +1346,18 @@ function outcomeSignalsFor(record: LaunchRecord, artifactsPresent: boolean): Out
  *     all): the dispatcher is the only probe left — ended once its pid no
  *     longer answers on this host. A launch recorded on another host can
  *     never be probed here and is read as ended, as `classifyChildLiveness`
- *     already reads it.
+ *     already reads it. A dispatcher pid that is this controller's own
+ *     (`deps.selfPid()`, on this host) has ended too: that pid always
+ *     answers, yet the controller now reconciling the launch is not running
+ *     it, so reading it as alive would refuse to replace its own ended
+ *     launch as if a second worker ran beside it.
  */
 export function launchEnded(record: LaunchRecord, deps: ReconcileLaunchDeps): boolean {
   if (record.childPid !== null) return classifyChildLiveness(record, deps) === 'not-ours'
   if (record.status !== 'launched') return true
-  return record.host !== deps.hostname() || !deps.isPidAlive(record.dispatcherPid)
+  if (record.host !== deps.hostname()) return true
+  if (record.dispatcherPid === deps.selfPid()) return true
+  return !deps.isPidAlive(record.dispatcherPid)
 }
 
 /** The run-log line a `fresh` disposition is narrated with — which attempt ended, how, and why — before a fresh developer session is dispatched. Shared by the dev-review loop and the Engine runner. */
@@ -1415,14 +1424,12 @@ export function reconcileLaunch(
   // exited on a sign-in failure) it is dispatched fresh. A launch that ended
   // this way used to block its task forever behind a continuity rule with no
   // continuity to protect.
-  if (launchEnded(record, deps)) return { kind: 'fresh', record, outcome }
-  return {
-    kind: 'pause',
-    reason: 'infrastructure',
-    detail:
-      `the developer's prior launch (attempt ${record.attempt}) bound no vendor session and its process may still ` +
-      'be running — refusing to start a second worker beside it'
-  }
+  // The stop-decision function's row decides it: an ended launch dispatches
+  // fresh; any other keeps today's pause.
+  const decision = decideStop({ kind: 'unbound_launch', attempt: record.attempt, ended: launchEnded(record, deps) })
+  if (decision.type === 'dispatch_fresh') return { kind: 'fresh', record, outcome }
+  if (decision.type !== 'pause') throw new Error(`reconcileLaunch: unexpected stop decision '${decision.type}'`)
+  return { kind: 'pause', reason: 'infrastructure', detail: decision.detail }
 }
 
 /** Thrown by the driver's resume seam when `recoverDeveloperLaunch` returns a `pause` (a required session is gone) or a `live` prior launch (a second worker must never race the first) — caught by the loop's own outer handler and turned into the decided `pause{reason:'infrastructure'}` every thrown driver-path failure already becomes (`harness/processes/vinaya-strict/loops/dev-review/loop.md`), so no new pause plumbing is added. */
@@ -1439,7 +1446,8 @@ function defaultReconcileLaunchDeps(): ReconcileLaunchDeps {
     isPidAlive: defaultIsPidAlive,
     hostname: () => osHostname(),
     getProcessSnapshot,
-    terminateChild: terminateChildWithGrace
+    terminateChild: terminateChildWithGrace,
+    selfPid: () => process.pid
   }
 }
 

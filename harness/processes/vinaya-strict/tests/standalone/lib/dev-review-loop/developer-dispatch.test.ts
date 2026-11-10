@@ -189,7 +189,8 @@ const noProcess: ReconcileLaunchDeps = {
   isPidAlive: () => false,
   hostname: () => RECOVERY_HOST,
   getProcessSnapshot: () => null,
-  terminateChild: () => {}
+  terminateChild: () => {},
+  selfPid: () => 4242
 }
 
 /** Deps under which `record`'s child still answers at its pid, parented to `ppid`, with only the pids in `alive` alive. */
@@ -199,7 +200,8 @@ function processAt(record: LaunchRecord, ppid: number, alive: number[]): Reconci
     hostname: () => RECOVERY_HOST,
     getProcessSnapshot: (pid) =>
       pid === record.childPid ? { ppid, startedAt: record.childStartedAt, command: record.childCommand } : null,
-    terminateChild: () => {}
+    terminateChild: () => {},
+    selfPid: () => 4242
   }
 }
 
