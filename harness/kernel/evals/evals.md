@@ -12,6 +12,9 @@ The harness is internal tooling. No CLI entry, command or other library module i
 
 Each program of the harness run on its own (`step-one.ts`, `whole-loop.ts`, `harbor-trial.ts`, `harbor-tasks.ts`, `harbor-grade.ts`, `harbor-results.ts`) is an entry point to the Log as the CLI is: before its command starts it installs the Vinaya process's Log sink factory through the kernel's one install call on the integration `process.yaml` declares (`installProcess(vinayaProcessIntegration, ['log'])`), so a Log event any code it reaches records goes to the sink the product builds, never refused for want of one (`harness/kernel/log/log.md`, "The process supplies the reader").
 
+A program of the harness that runs `bun test` and reads its JUnit report back (the structure proof's `run-proof.ts`) names that report through `VINAYA_JUNIT_REPORT`: each `bunfig.toml` writes JUnit to one fixed path that the test preload links to the file this variable names, so a `--reporter-outfile` alone is never written and every case would read back as missing.
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/structure-proof/run-proof.ts contains:[JUNIT_REPORT_ENV]: report -->
+
 ## Contracts
 
 Every value crossing a port is plain data. Each has a validator returning either `{ ok: true, value }` or `{ ok: false, refusal }`, where the refusal carries a typed `code`, the dotted `path` of the offending field, and a one-line `detail`.
