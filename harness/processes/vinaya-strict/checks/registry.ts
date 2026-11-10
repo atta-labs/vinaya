@@ -929,7 +929,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'full',
       timeoutMs: 15_000,
       // Local-only: sweeps `<doctrineRoot>/**` (and any configured
-      // reader-facing pages) for `AEG:QUOTES-FILE` markers, then reads each
+      // reader-facing pages) for `VINAYA:QUOTES-FILE` markers, then reads each
       // marker's cited file straight off the already-checked-out working
       // tree — no forge call, no PR content. Report-only (severity: warning,
       // exit 0 always — see the bin's own module doc), same rollout

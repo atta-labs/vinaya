@@ -16,7 +16,7 @@ import {
 const RETRY = 'vinaya pr rule <pr> --file <ruling.md>'
 
 /**
- * AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` treat "no
  * candidate line anywhere in the body" as the ONE case where `danglingNote`
  * carries this exact sentinel text — every other outcome (a clean verdict

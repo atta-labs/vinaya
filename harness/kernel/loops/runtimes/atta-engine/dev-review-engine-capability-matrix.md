@@ -23,7 +23,7 @@ do not hold.
 
 ## The decision
 
-<!-- AEG:CLAIM: harness/kernel/loops/runtimes/atta-engine/fixtures/dev-review-engine-capability-matrix.json contains:"id": "packed-public-runtime+injected-executor", -->
+<!-- VINAYA:CLAIM: harness/kernel/loops/runtimes/atta-engine/fixtures/dev-review-engine-capability-matrix.json contains:"id": "packed-public-runtime+injected-executor", -->
 Vinaya consumes Atta's packed public runtime through its injected-executor
 seam: the `@atta/agents`, `@atta/engine` and `@atta/executor-agent-spawn`
 artifacts as built and packed at Atta commit
@@ -154,7 +154,7 @@ guarantees and named defects it bears on, or says why it has none.
 
 ## Declared differences in the adapter conformance suite
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.ts contains:export const ADAPTER_CONTRACT_CASES: readonly AdapterContractCase[] = [ -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.ts contains:export const ADAPTER_CONTRACT_CASES: readonly AdapterContractCase[] = [ -->
 The shared adapter-conformance suite,
 `harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.ts`, runs one case list on
 Claude Code and on Codex. Where the two adapters meet a case differently,

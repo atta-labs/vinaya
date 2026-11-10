@@ -7,8 +7,8 @@
  * present fact goes stale silently once the thing it quotes changes.
  *
  * **Marker-based only (Principal decision, 2026-08-30) — no inference.**
- * This bin evaluates ONLY spans wrapped in the `AEG:QUOTES-FILE:START:<path>`
- * / `AEG:QUOTES-FILE:END` marker pair (`quoted-command.ts`'s own module doc
+ * This bin evaluates ONLY spans wrapped in the `VINAYA:QUOTES-FILE:START:<path>`
+ * / `VINAYA:QUOTES-FILE:END` marker pair (`quoted-command.ts`'s own module doc
  * has the full grammar). It never guesses at a command-looking span: an
  * adopter-facing `npx @attalabs/vinaya init` in a README is instruction, not
  * a claim, and flagging it unmarked is the false-positive shape that gets a
@@ -177,7 +177,7 @@ function main(): void {
       message: finding.message,
       file: finding.file,
       line: finding.line,
-      agent_recovery_prompt: `This doc marks a quote of \`${finding.citedFile}\` (AEG:QUOTES-FILE marker) that no longer matches that file verbatim. Either update the quoted text in the doc to match \`${finding.citedFile}\`'s current content, or update \`${finding.citedFile}\` if the doc's claim is what should be true. Do not simply remove the marker to silence this — the doc would still be making an unverified claim.`
+      agent_recovery_prompt: `This doc marks a quote of \`${finding.citedFile}\` (VINAYA:QUOTES-FILE marker) that no longer matches that file verbatim. Either update the quoted text in the doc to match \`${finding.citedFile}\`'s current content, or update \`${finding.citedFile}\` if the doc's claim is what should be true. Do not simply remove the marker to silence this — the doc would still be making an unverified claim.`
     })
   }
 

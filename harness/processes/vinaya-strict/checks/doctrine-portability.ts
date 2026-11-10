@@ -26,8 +26,8 @@
  * (never against code — a masked, `maskCode`-blind scan, the identical
  * code-recognition grammar `anchored-region.ts` uses for the `VINAYA:*` PR/Issue
  * body anchors, imported directly rather than re-implemented), with exactly
- * ONE standing exemption: text inside a `<!-- AEG:VENDOR-EXAMPLE:START -->` /
- * `<!-- AEG:VENDOR-EXAMPLE:END -->` pair — doctrine's one sanctioned, fenced
+ * ONE standing exemption: text inside a `<!-- VINAYA:VENDOR-EXAMPLE:START -->` /
+ * `<!-- VINAYA:VENDOR-EXAMPLE:END -->` pair — doctrine's one sanctioned, fenced
  * home for naming today's shipped reference host by product name
  * (`tranche-model.md` §12). A vendor word that is itself part of an
  * already-portable path citation (`` `.claude/hooks/x.sh` ``, `` `CLAUDE.md` ``)
@@ -41,6 +41,7 @@
  */
 
 import { maskCode } from '../../../kernel/adapters/code-host/github/strip-code'
+import { anchorAlternation, VENDOR_EXAMPLE_ANCHORS } from '../tools/legacy-markers'
 import {
   BUNDLED_DOCTRINE_DIR,
   DOCTRINE_MAP,
@@ -191,13 +192,14 @@ const VENDOR_NAME_SOURCE =
  * pattern — to exempt a fenced block that sits inside it, the same way this
  * file exempts the region from its own vendor-name word scan.
  */
-export const VENDOR_EXAMPLE_START = /<!--\s*AEG:VENDOR-EXAMPLE:START\s*-->/
-export const VENDOR_EXAMPLE_END = /<!--\s*AEG:VENDOR-EXAMPLE:END\s*-->/
+const VENDOR_EXAMPLE_ANCHOR_ALTERNATION = anchorAlternation(VENDOR_EXAMPLE_ANCHORS)
+export const VENDOR_EXAMPLE_START = new RegExp(`<!--\\s*${VENDOR_EXAMPLE_ANCHOR_ALTERNATION}:START\\s*-->`)
+export const VENDOR_EXAMPLE_END = new RegExp(`<!--\\s*${VENDOR_EXAMPLE_ANCHOR_ALTERNATION}:END\\s*-->`)
 
 /**
  * Blanks (same-length, index-preserving — same discipline as `maskCode`
  * itself) the region between the first well-formed
- * `<!-- AEG:VENDOR-EXAMPLE:START -->` … `<!-- AEG:VENDOR-EXAMPLE:END -->`
+ * `<!-- VINAYA:VENDOR-EXAMPLE:START -->` … `<!-- VINAYA:VENDOR-EXAMPLE:END -->`
  * pair in `masked` — doctrine's one sanctioned home for naming today's
  * shipped reference host by product name (`tranche-model.md` §12).
  * Markers are searched on already-`maskCode`d text, the same order
@@ -229,7 +231,7 @@ function maskVendorExampleRegion(masked: string): string {
 /**
  * Every vendor-name-list match in `content`, code-blind (`maskCode`, the
  * same grammar `anchored-region.ts` uses) and blind to the one fenced
- * `AEG:VENDOR-EXAMPLE` home. A vendor word that is only part of an
+ * `VINAYA:VENDOR-EXAMPLE` home. A vendor word that is only part of an
  * already-portable inline-code path citation (`` `.claude/hooks/x.sh` ``,
  * `` `CLAUDE.md` ``) never reaches this scan at all — it is masked before
  * the word list ever runs, the same way a fenced worked example is blind to
@@ -290,7 +292,7 @@ function isPortable(cited: string, shipsPrefix: string): boolean {
  * Sweeps every file under `shipsPrefix` for two independent finding kinds:
  * a cited path whose top segment is not allow-listed portable (`'path'`),
  * and a vendor-name-list word used in prose outside the one fenced
- * `AEG:VENDOR-EXAMPLE` home (`'vendor-name'`, Issue #298). Files outside
+ * `VINAYA:VENDOR-EXAMPLE` home (`'vendor-name'`, Issue #298). Files outside
  * `shipsPrefix` are out of scope entirely — this check only judges what the
  * shipped doctrine tree itself cites/names, never a repo's other source.
  */
@@ -320,7 +322,7 @@ export function checkDoctrinePortability(
         file: file.path,
         line: lineAtIndex(file.content, index),
         cited: name,
-        message: `names "${name}" outside the one fenced vendor-example home (an <!-- AEG:VENDOR-EXAMPLE:START --> … <!-- AEG:VENDOR-EXAMPLE:END --> pair) — portable doctrine refers to a host generically everywhere else`,
+        message: `names "${name}" outside the one fenced vendor-example home (an <!-- VINAYA:VENDOR-EXAMPLE:START --> … <!-- VINAYA:VENDOR-EXAMPLE:END --> pair) — portable doctrine refers to a host generically everywhere else`,
         kind: 'vendor-name'
       })
     }

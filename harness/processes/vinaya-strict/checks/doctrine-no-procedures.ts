@@ -20,7 +20,7 @@ export type DoctrineProcedureFinding = { file: string; line: number; message: st
 
 /**
  * The one sanctioned fenced home for a real command sequence in doctrine
- * (`tranche-model.md` §12's `AEG:VENDOR-EXAMPLE` pair) — same markers
+ * (`tranche-model.md` §12's `VINAYA:VENDOR-EXAMPLE` pair) — same markers
  * `doctrine-portability.ts` exempts from its own vendor-name scan, exported
  * from there rather than re-declared here. First pair wins, same rule as
  * every other `VINAYA:*` anchor consumer.
@@ -65,7 +65,7 @@ function isTemplatePath(path: string): boolean {
  * A fenced block containing two or more lines that each start with a shell
  * command word is a command sequence, not an illustration — the failure
  * names it: "this sequence is a `vinaya` command, name it." Exempt: a block
- * inside the `AEG:VENDOR-EXAMPLE` anchor pair, and any file under a
+ * inside the `VINAYA:VENDOR-EXAMPLE` anchor pair, and any file under a
  * `templates/` directory.
  */
 export function checkDoctrineNoProcedures(files: DoctrineFile[]): DoctrineProcedureFinding[] {
@@ -84,7 +84,7 @@ export function checkDoctrineNoProcedures(files: DoctrineFile[]): DoctrineProced
         findings.push({
           file: file.path,
           line: procedureLineNumberAt(file.content, block.start),
-          message: `this fenced block has ${commandLineCount} shell-command lines — this sequence is a \`vinaya\` command, name it (or move it inside the \`AEG:VENDOR-EXAMPLE\` anchor / a \`templates/\` file).`
+          message: `this fenced block has ${commandLineCount} shell-command lines — this sequence is a \`vinaya\` command, name it (or move it inside the \`VINAYA:VENDOR-EXAMPLE\` anchor / a \`templates/\` file).`
         })
       }
     }
