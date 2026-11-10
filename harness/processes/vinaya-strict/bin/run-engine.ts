@@ -241,6 +241,12 @@ import {
   reviewPolicyForLoop,
   freshDispatchLogLine
 } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import {
+  ENGINE_FORGE_RETRY_MAX_ATTEMPTS,
+  classifyDriverError,
+  decideStop,
+  uncaughtErrorDetail
+} from '../loops/dev-review/standalone/dev-review-loop/stop-decision'
 import { fetchLoopHistory } from '../loops/dev-review/standalone/dev-review-loop/journal-history'
 import {
   buildVerdictFromReview,
@@ -1721,9 +1727,19 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   /** An error the run could not absorb is a pause for the infrastructure, never a failed run. */
   const handOffError = (message: string): LegOutcome => {
     const round = taskForHandoff?.reviewRound?.() ?? 1
+    // The decision function names the pause. A forge connection failure was already retried where the forge was
+    // read (`retryingForge`), so its bound is spent by the time an error reaches here.
+    const stop = decideStop({
+      kind: 'driver_error',
+      runner: 'engine',
+      errorClass: classifyDriverError(new Error(message)),
+      message,
+      round,
+      attempts: ENGINE_FORGE_RETRY_MAX_ATTEMPTS
+    })
     handoff.pause({
-      reason: 'infrastructure',
-      detail: `an uncaught error ended round ${round}'s own processing: ${message}`,
+      reason: stop.type === 'pause' ? stop.reason : 'infrastructure',
+      detail: stop.type === 'pause' ? stop.detail : uncaughtErrorDetail(round, message),
       error: new Error(message)
     })
     return { reason: 'paused', haltReason: handoffHaltReason('infrastructure') }
@@ -2588,6 +2604,50 @@ export interface EngineForge {
   refreshPrEvidence: BoundFunctions['refreshPrEvidence']
 }
 
+/**
+ * Blocks the calling thread for `ms`. The forge reads the round makes are synchronous, so the retry wait is too; it
+ * only runs inside the retry bound (three minutes in all), and only the two newest-ruling reads use it — every other
+ * forge read and push pauses at once, as before.
+ */
+export function blockingSleep(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * Runs one forge read, retrying a connection failure (`isGitHubConnectionFailure`, through the decision function)
+ * after the decided wait until the decided bound is spent; then the last error is thrown, which the runner pauses on
+ * as before. Any other error is thrown at once.
+ */
+export function retryForgeRead<T>(read: () => T, sleep: (ms: number) => void = blockingSleep): T {
+  let attempts = 0
+  for (;;) {
+    try {
+      return read()
+    } catch (err) {
+      const stop = decideStop({
+        kind: 'driver_error',
+        runner: 'engine',
+        errorClass: classifyDriverError(err),
+        message: err instanceof Error ? err.message : String(err),
+        round: 0,
+        attempts
+      })
+      if (stop.type !== 'retry') throw err
+      sleep(stop.waitMs)
+      attempts = stop.bound.kind === 'attempts' ? stop.bound.used : attempts + 1
+    }
+  }
+}
+
+/** The forge with its newest-ruling reads retried across a connection failure — the first read every round makes. */
+export function retryingForge(forge: EngineForge, sleep?: (ms: number) => void): EngineForge {
+  return {
+    ...forge,
+    fetchNewestRulingOrdinal: (prNumber) => retryForgeRead(() => forge.fetchNewestRulingOrdinal(prNumber), sleep),
+    fetchNewestIssueRulingOrdinal: (issue) => retryForgeRead(() => forge.fetchNewestIssueRulingOrdinal(issue), sleep)
+  }
+}
+
 export const liveForge: EngineForge = {
   findOpenPrForBranch,
   fetchFrozenBrief,
@@ -2629,6 +2689,8 @@ export async function liveTaskInput(
     policy?: typeof reviewPolicyForLoop
     /** Replaces forge reads and writes, for a run that must not reach the forge. */
     forge?: Partial<EngineForge>
+    /** Replaces the wait between retries of a forge connection failure, so a test never sleeps. */
+    forgeRetrySleep?: (ms: number) => void
     /** Replaces the role doctrine resolver the reviewer prompts take their doctrine from. */
     resolveReviewerDoctrine?: (role: 'reviewer' | 'security') => Promise<string | null>
     /** Replaces the functions the security scan, live check and deferred-findings Issue call, for a run that must not reach them. */
@@ -2642,7 +2704,7 @@ export async function liveTaskInput(
     >
   } = {}
 ): Promise<TaskInput & { stageReviewInput: (round: number) => VinayaStagedReviewInput | null }> {
-  const forge: EngineForge = { ...liveForge, ...lookups.forge }
+  const forge: EngineForge = retryingForge({ ...liveForge, ...lookups.forge }, lookups.forgeRetrySleep)
   // Tranche tasks live on `task/<tranche>/<n>`, backlog tasks on `task/issue-<n>`.
   // The same Issue read hands back the task's title, which `loop_started` records; absent when no title was read.
   const { branch, title: taskTitle } = developerBranchAndTitleFor(args.task, lookups.fetchTitle, lookups.fetchLabels)
@@ -2952,7 +3014,7 @@ export function liveDeveloperFacts(input: {
   takeRulingsOwed?: () => boolean
 }): () => Promise<DeveloperPromptFacts> {
   const { task, repoRoot, runtimeDir, branch, worktreePath } = input
-  const forge: EngineForge = { ...liveForge, ...input.forge }
+  const forge: EngineForge = retryingForge({ ...liveForge, ...input.forge })
   return async () => {
     const policy = (input.policy ?? reviewPolicyForLoop)()
     const brief = forge.fetchFrozenBrief(task)
@@ -3070,7 +3132,7 @@ export function liveRecovery(input: {
   forge?: Partial<EngineForge>
   repo?: { owner: string; repo: string } | null
 }): RecoveryDeps {
-  const forge: EngineForge = { ...liveForge, ...input.forge }
+  const forge: EngineForge = retryingForge({ ...liveForge, ...input.forge })
   const { args, runtimeDir, taskInput } = input
   return {
     prNumber: () => forge.findOpenPrForBranch(taskInput.branch)?.number ?? null,

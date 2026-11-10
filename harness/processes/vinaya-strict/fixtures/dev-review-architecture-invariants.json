@@ -76,6 +76,16 @@
     ],
     "addedSinceBaseline": [
       {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stop-decision.ts",
+        "kind": "implementation",
+        "reason": "The one pure decision function every loop stop goes through, with its typed events, so the standalone loop and the Engine runner take their pauses and retries from the same rows."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/stop-decision.test.ts",
+        "kind": "test",
+        "reason": "The table-driven unit tests of stop-decision.ts, landed in the same change."
+      },
+      {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts",
         "kind": "implementation",
         "reason": "The driver heartbeat, the single driver exit record, the keep-or-clear rule for the driver lock and the seeding of the round journal, lifted out of the loop so the standalone loop and the Engine runner call the same functions."
@@ -208,6 +218,16 @@
     ]
   },
   "exclusions": [
+    {
+      "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stop-decision.ts",
+      "kind": "implementation",
+      "reason": "The pure stop-decision table both runners read; every row it holds returns the pause, wait or retry that an existing invariant in this map already guarantees, so it adds no behaviour of its own for a new invariant to describe."
+    },
+    {
+      "path": "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/stop-decision.test.ts",
+      "kind": "test",
+      "reason": "The table-driven tests of the stop-decision function; each row restates a pause or wait that an existing invariant in this map already guarantees, so none describes a behaviour of its own."
+    },
     {
       "path": "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/runner-version.test.ts",
       "kind": "test",
