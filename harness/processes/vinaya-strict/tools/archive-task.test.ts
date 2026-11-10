@@ -199,8 +199,8 @@ describe('buildProvenanceBlock', () => {
 
   it('flags a missing aeg:brief:v1 comment resolution as DANGLING (plan-brief-v1 task 2, #427)', () => {
     const { block, dangling } = buildProvenanceBlock(facts({ body: FULL_BODY }))
-    expect(block).toContain('- Brief:        DANGLING — no aeg:brief:v1 comment resolved for this task')
-    expect(dangling).toContain('no `aeg:brief:v1` comment resolved for Issue #309 — Brief field is DANGLING')
+    expect(block).toContain('- Brief:        DANGLING — no vinaya:brief:v1 comment resolved for this task')
+    expect(dangling).toContain('no `vinaya:brief:v1` comment resolved for Issue #309 — Brief field is DANGLING')
   })
 
   it('flags a missing For: field as DANGLING, does not fabricate a value', () => {

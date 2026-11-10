@@ -13,7 +13,7 @@
  */
 
 import { type AnchorField, anchoredRegion, stripCode } from '../../../../kernel/gates/checks/anchored-region'
-import { REGION_PREFIXES } from '../legacy-markers'
+import { COMMENT_MARKER_PREFIX_CURRENT, COMMENT_MARKER_PREFIX_PATTERN, REGION_PREFIXES } from '../legacy-markers'
 import { type Objective, objectivesVersion, objectivesOf } from './objectives'
 import { parsePremiseBlock, premiseBlockText } from './premise-check'
 import { locateTestPlanSection } from './test-plan-section'
@@ -1136,7 +1136,7 @@ export function checkBriefSections(
 }
 
 /**
- * The marker line a dispatched task's frozen `aeg:brief:v1` Issue comment
+ * The marker line a dispatched task's frozen `vinaya:brief:v1` Issue comment
  * starts with (`dispatch-task.ts`'s `dispatchTask`, `apps/cli`). Promoted
  * here so the comment-resolution logic that
  * needs it — `harness/processes/vinaya-strict/checks/standalone/verify-brief.ts` (this package, cannot
@@ -1144,7 +1144,7 @@ export function checkBriefSections(
  * `check-brief-shape.ts` — read the SAME constant rather than four copies of
  * the same string that could quietly drift out of agreement.
  */
-export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
+export const FROZEN_BRIEF_V1_MARKER = `<!-- ${COMMENT_MARKER_PREFIX_CURRENT}:brief:v1 -->`
 
 /**
  * Everything in a posted comment after its first `n` lines, as a raw
@@ -1168,7 +1168,7 @@ export function contentAfterNLines(body: string, n: number): string {
 }
 
 /**
- * A frozen `aeg:brief:v1` comment's header is exactly two lines (the marker,
+ * A frozen `vinaya:brief:v1` comment's header is exactly two lines (the marker,
  * then `Brief hash: …`) — `contentAfterNLines(body, 2)`, kept as its own name
  * because every existing caller already spells it this way and a v1 comment's
  * shape is permanent (superseding never edits it). A superseding `v2`+
@@ -1179,14 +1179,15 @@ export function contentAfterTwoLines(body: string): string {
   return contentAfterNLines(body, 2)
 }
 
-/** The marker line a dispatched task's `k`th frozen brief comment starts with — `k=1` is `AEG_BRIEF_V1_MARKER` itself. */
+/** The marker line a dispatched task's `k`th frozen brief comment starts with — `k=1` is `FROZEN_BRIEF_V1_MARKER` itself. Always the current spelling. */
 export function briefMarkerFor(version: number): string {
-  return `<!-- aeg:brief:v${version} -->`
+  return `<!-- ${COMMENT_MARKER_PREFIX_CURRENT}:brief:v${version} -->`
 }
 
-const BRIEF_MARKER_LINE_RE = /^<!-- aeg:brief:v(\d+) -->$/
+/** A frozen brief's marker line in either spelling, so a brief posted before the rename keeps its version and the next one counts on from it. */
+const BRIEF_MARKER_LINE_RE = new RegExp(`^<!-- ${COMMENT_MARKER_PREFIX_PATTERN}:brief:v(\\d+) -->$`)
 
-/** Parses a comment's first line as an `aeg:brief:v<k>` marker — the version `k`, or `null` when the line isn't shaped like one (including `v0` or non-numeric). */
+/** Parses a comment's first line as a `vinaya:brief:v<k>` marker, or the retired spelling of one — the version `k`, or `null` when the line isn't shaped like one (including `v0` or non-numeric). */
 export function parseBriefMarkerVersion(firstLine: string): number | null {
   const m = BRIEF_MARKER_LINE_RE.exec(firstLine.trim())
   if (!m) return null
@@ -1216,7 +1217,7 @@ export type ResolvedFrozenBrief<C extends FrozenBriefCandidate> = C & { version:
  * each independently re-deriving "which comment is the frozen brief" — a
  * supersession is an APPENDED comment, never an edit to the one it replaces
  * (`dispatch-task.ts`'s `prepareTask`, `--supersede`), so "the frozen brief"
- * is always the highest `aeg:brief:v<k>` version found here among
+ * is always the highest `vinaya:brief:v<k>` version (either spelling) found here among
  * principal-authored comments, never the first one posted. `null` when no
  * candidate qualifies (unauthored by a principal, or not marker-shaped).
  */

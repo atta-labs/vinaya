@@ -724,16 +724,16 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
     const result = resolvePremiseBriefText(comments, 483, [PRINCIPAL])
     expect(result.ok).toBe(false)
     if (result.ok) return
-    expect(result.message).toMatch(/not dispatched.*no `aeg:brief:v<k>` comment on Issue #483/)
+    expect(result.message).toMatch(/not dispatched.*no `vinaya:brief:v<k>` comment on Issue #483/)
   })
 
   it('refuses naming the Issue number when there is no frozen brief at all', () => {
     const result = resolvePremiseBriefText([], 999, [PRINCIPAL])
-    expect(result).toEqual({ ok: false, message: 'not dispatched — no `aeg:brief:v<k>` comment on Issue #999.' })
+    expect(result).toEqual({ ok: false, message: 'not dispatched — no `vinaya:brief:v<k>` comment on Issue #999.' })
   })
 
   it('a missing `author` field (a bot-posted comment) is treated as unauthored, never as principal', () => {
-    const comments = [{ body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nBot-posted.' }]
+    const comments = [{ body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nBot-posted.' }]
     const result = resolvePremiseBriefText(comments, 483, [PRINCIPAL])
     expect(result.ok).toBe(false)
   })

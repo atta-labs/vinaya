@@ -72,7 +72,7 @@ type PrView = {
  * `gh issue view --json comments` payload, or `null` — extracted so this
  * resolution is unit-testable without a spawned `gh` (security review, PR
  * #503 round 2, BLOCKER: this previously matched only the literal
- * `aeg:brief:v1` marker, so a task corrected via `--supersede` archived a
+ * `vinaya:brief:v1` marker, so a task corrected via `--supersede` archived a
  * link to the superseded, non-authoritative version instead of the newest).
  * `principalAllowlist` is the caller's resolved Principal list — no built-in
  * fallback.

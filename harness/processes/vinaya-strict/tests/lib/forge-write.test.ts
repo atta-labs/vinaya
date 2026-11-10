@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { programCommandLine } from '../../tools/programs.js'
+import { DEFERRED_FINDINGS_MARKER } from '../../tools/legacy-markers'
 import { execFileSync } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -1824,6 +1825,21 @@ describe('upsertDeferredFindingsIssue — one tracking Issue per pull request (#
     // The republish edited the one Issue to the new deferred set.
     expect(forge.calls.some((a) => a[0] === 'issue' && a[1] === 'edit')).toBe(true)
     expect(forge.issues[0]!.body).toContain('y.ts:2')
+  })
+
+  it('a tracker opened under the retired marker spelling stays the one tracker — rewritten, never a second', () => {
+    const forge = fakeForge()
+    forge.issues.push({
+      number: 7001,
+      body: `<!-- ${DEFERRED_FINDINGS_MARKER.old}:pr-55 -->\n\n- round 1 — reviewer — MAJOR x.ts:1 — old`,
+      state: 'OPEN'
+    })
+    const ref = upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    expect(ref.issue).toBe(7001)
+    expect(forge.issues).toHaveLength(1)
+    expect(forge.calls.filter((a) => a[0] === 'issue' && a[1] === 'create')).toHaveLength(0)
+    expect(forge.issues[0]!.body.split('\n')[0]).toBe(deferredFindingsMarker(55))
+    expect(deferredFindingsMarker(55)).toBe(`<!-- ${DEFERRED_FINDINGS_MARKER.current}:pr-55 -->`)
   })
 
   it('finds its Issue by marker, not title — a different PR opens its own (O2)', () => {

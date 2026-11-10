@@ -45,7 +45,7 @@ The failure mode this prevents: a Reviewer who begins reviewing a diff without r
 
 ## The hand-off carrier
 
-The **open PR**, plus the task Issue's frozen `aeg:brief:v1` comment — the diff plus the brief. The PR is the Reviewer's primary artifact for the diff; the frozen Issue comment is the brief's permanent home. The brief is the intent document; the diff is the execution; the Reviewer's job is to judge whether the execution matched the intent, safely and correctly.
+The **open PR**, plus the task Issue's frozen `vinaya:brief:v1` comment — the diff plus the brief. The PR is the Reviewer's primary artifact for the diff; the frozen Issue comment is the brief's permanent home. The brief is the intent document; the diff is the execution; the Reviewer's job is to judge whether the execution matched the intent, safely and correctly.
 
 ---
 
@@ -57,7 +57,7 @@ Every item the Developer produces in the open PR (left) has exactly one obligati
 
 | Developer produces in the PR | Reviewer consumes at | What the consumption means |
 |---|---|---|
-| **Frozen `aeg:brief:v1` comment on the task Issue** (the brief, posted verbatim by the dispatch act) | Entry — read before looking at the diff | The Reviewer reads the brief first to understand intent, boundary, surface map, and traps. Reviewing a diff without the brief is not a valid review pass. |
+| **Frozen `vinaya:brief:v1` comment on the task Issue** (the brief, posted verbatim by the dispatch act) | Entry — read before looking at the diff | The Reviewer reads the brief first to understand intent, boundary, surface map, and traps. Reviewing a diff without the brief is not a valid review pass. |
 | **Tier:** field in PR body | Determines review depth | Tier 0 → light pass; Tier 1 → standard including spec-conformance; Tier 3 → full including spec and state doc verification. |
 | **CI green** (typecheck, lint, tests, `verify-docs`) | Entry gate | The Reviewer does not start if CI is red. A red CI is a Developer problem, not a Reviewer finding. |
 | **Surface map** | Scope judgment | The Reviewer reports drift at its real severity; repository policy classifies whether it is actionable this round. |
@@ -76,14 +76,14 @@ Every item the Developer produces in the open PR (left) has exactly one obligati
 - **Documentation-update list honored.** Every doc named in the list must be updated in the diff before opening the PR. A PR with list items outstanding is not ready for review; do not open it and expect the Reviewer to discover the gap.
 - **`.vinaya/doc-owners` coverage satisfied.** For every binding fired by the diff: update the bound doc in this PR; or, for URL bindings, add `Doc-ack: <pointer> — <note>`; or have a principal apply the actor-verified `vinaya/waiver:docs` label — you cannot self-serve it, and there is no body-field waiver grammar anymore. `verify-docs` C5 enforces this mechanically — if it fails CI, do not request review.
 - CI must be green before requesting review. Do not request review with a red CI and expect the Reviewer to begin.
-- The brief is already frozen, unmodified, on the task Issue's `aeg:brief:v1` comment before the Developer's worktree exists — the PR body carries only the Developer's report (optionally with a reference copy of the brief in a collapsed `<details>` block). The whole body is authored once, at open. After open the Developer changes nothing outside the `VINAYA:EVIDENCE` anchor. The body carries no token table for either role to read: a dispatched turn's token use is recorded as the Vinaya log's own `usage` event. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. Re-run evidence is recorded by the controller (`refresh_evidence` writes it into `VINAYA:EVIDENCE`); a review round's response is the turn result the loop posts, not a body edit.
+- The brief is already frozen, unmodified, on the task Issue's `vinaya:brief:v1` comment before the Developer's worktree exists — the PR body carries only the Developer's report (optionally with a reference copy of the brief in a collapsed `<details>` block). The whole body is authored once, at open. After open the Developer changes nothing outside the `VINAYA:EVIDENCE` anchor. The body carries no token table for either role to read: a dispatched turn's token use is recorded as the Vinaya log's own `usage` event. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. Re-run evidence is recorded by the controller (`refresh_evidence` writes it into `VINAYA:EVIDENCE`); a review round's response is the turn result the loop posts, not a body edit.
 - The diff stays within the brief's Technical Surface Map. A file outside it is no stop: the driver records it in the pull request body's beyond-Surface block, and the Reviewer judges it like any change.
 - Every `[agent]` Test Plan item must have its actual command output recorded as evidence — by the controller (`refresh_evidence`, or `vinaya-pr-report --write` working manually) into `VINAYA:EVIDENCE`, never a paraphrase. A re-run after fixes refreshes that block.
 - One row appended to the tranche's token ledger before opening the PR.
 
 ## Consumer obligations (the Reviewer)
 
-- Read the brief — the task Issue's frozen `aeg:brief:v1` comment — before the diff. This is not optional — the brief is the intent document; the diff without the brief is just code.
+- Read the brief — the task Issue's frozen `vinaya:brief:v1` comment — before the diff. This is not optional — the brief is the intent document; the diff without the brief is just code.
 - Do not start if CI is red. Post a comment: *"CI is red — returning to Developer. Start review once CI is green."*
 - Check the staged diff against the surface map and report drift at its real severity.
 - **Verify documentation-update-list compliance as a BLOCKER gate.** For every doc named in the list, confirm it appears in the diff AND is correct (not just present — `verify-docs` already checks presence). A named doc absent from the diff or present but wrong is a BLOCKER finding before reviewing logic. This is a hard gate, not an advisory; the list is a DoD commitment.

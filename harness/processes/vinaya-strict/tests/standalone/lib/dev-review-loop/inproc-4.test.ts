@@ -65,7 +65,7 @@ describe('devReviewLoop — an unbacked clean secrets claim is an infrastructure
 
     expect(world.postedComments).toHaveLength(2)
     const pauseComment = world.postedComments[1]!.body
-    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/^<!-- vinaya:loop:paused:infrastructure -->$/m)
     expect(pauseComment).toMatch(/ReviewResult summary was rejected/)
     expect(pauseComment).toMatch(/sec-session-no-secrets/)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
@@ -105,7 +105,7 @@ describe('devReviewLoop — the reviewer prompt asks for one objective result pe
     expect(world.dispatchCountByRole.security).toBe(2)
 
     const pauseComment = world.postedComments[1]!.body
-    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/^<!-- vinaya:loop:paused:infrastructure -->$/m)
     expect(pauseComment).toMatch(/security/)
     expect(pauseComment).toMatch(/ReviewResult objectiveResults was rejected/)
 
@@ -168,7 +168,7 @@ describe('devReviewLoop — issue-711 O6: a reviewer whose objective results do 
 
     // Nothing paused — the retry's own recovery means this round never
     // reaches the pause path at all.
-    expect(world.postedComments.some((c) => /^<!-- aeg:loop:paused:/m.test(c.body))).toBe(false)
+    expect(world.postedComments.some((c) => /^<!-- vinaya:loop:paused:/m.test(c.body))).toBe(false)
   })
 
   it('an under-reporting reviewer that never recovers pauses as infrastructure, naming its objective results — never a silently-accepted partial report', async () => {
@@ -202,7 +202,7 @@ describe('devReviewLoop — issue-711 O6: a reviewer whose objective results do 
     expect(world.dispatchCountByRole['code-reviewer']).toBe(2)
 
     const pauseComment = world.postedComments[1]!.body
-    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/^<!-- vinaya:loop:paused:infrastructure -->$/m)
     expect(pauseComment).toMatch(/reviewer/)
     expect(pauseComment).toMatch(/objectiveResults/)
   })
@@ -227,7 +227,7 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     // O3: the developer was told which check-run actually failed, never a
     // bare "CI is red" and never the review gate's own name.
     const pauseComment = world.postedComments[0]!.body
-    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:repeat_failure -->$/m)
+    expect(pauseComment).toMatch(/^<!-- vinaya:loop:paused:repeat_failure -->$/m)
     expect(pauseComment).toMatch(/Vinaya CI/)
     expect(pauseComment).not.toMatch(/review gate/i)
     expect(pauseComment).toMatch(/Vinaya CI \(run 1\)/)
@@ -345,7 +345,7 @@ describe("devReviewLoop — O2 (`[task-operator-v1]`/Issue #662): a developer di
     expect(retryEvent?.attempts).toBe(2)
     expect(retryEvent?.outcome).toBe('recovered')
     // Never a decided stop the developer itself never made.
-    for (const c of world.postedComments) expect(c.body).not.toMatch(/aeg:loop:paused/)
+    for (const c of world.postedComments) expect(c.body).not.toMatch(/vinaya:loop:paused/)
   })
 
   it('exhausts the shared infrastructure-retry bound, then pauses infrastructure — never a crash, never blamed on the developer', async () => {
@@ -382,7 +382,7 @@ describe("devReviewLoop — O2 (`[task-operator-v1]`/Issue #662): a developer di
     expect(retryEvent?.attempts).toBe(MAX_INFRASTRUCTURE_RETRIES + 1)
     expect(retryEvent?.outcome).toBe('exhausted')
 
-    expect(world.postedComments.some((c) => /^<!-- aeg:loop:paused:infrastructure -->$/m.test(c.body))).toBe(true)
+    expect(world.postedComments.some((c) => /^<!-- vinaya:loop:paused:infrastructure -->$/m.test(c.body))).toBe(true)
   })
 })
 
@@ -535,7 +535,7 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, round 2 review, BLOCK
     expect(world.dispatchCountByRole.developer).toBeUndefined()
 
     // A real pause comment landed on the task Issue (no PR exists yet).
-    const pauseFiles = world.postedComments.filter((c) => c.body.includes('aeg:loop:paused:infrastructure'))
+    const pauseFiles = world.postedComments.filter((c) => c.body.includes('vinaya:loop:paused:infrastructure'))
     expect(pauseFiles).toHaveLength(1)
     expect(pauseFiles[0]!.kind).toBe('issue')
     expect(pauseFiles[0]!.body).toMatch(/control-store loop-state record is corrupt/)
@@ -556,7 +556,7 @@ describe('devReviewLoop — control-store-v1 task 4 (round 3 review, BLOCKER): a
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
     expect(world.dispatchCountByRole.developer).toBeUndefined()
 
-    const pauseFiles = world.postedComments.filter((c) => c.body.includes('aeg:loop:paused:infrastructure'))
+    const pauseFiles = world.postedComments.filter((c) => c.body.includes('vinaya:loop:paused:infrastructure'))
     expect(pauseFiles).toHaveLength(1)
     expect(pauseFiles[0]!.body).toMatch(/control-store loop-state record is corrupt/)
   })

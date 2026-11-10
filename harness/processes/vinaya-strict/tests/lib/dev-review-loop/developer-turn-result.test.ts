@@ -527,7 +527,7 @@ describe('devReviewLoop — the Developer turn result in a real round (O1–O4)'
 
     expect(recordsOnDisk(world, 2).map((r) => [r.attempt, r.outcome])).toEqual([[1, 'accepted']])
     // O4: the round marker comment cites the addressed ids.
-    const marker = world.postedComments.find((c) => c.marker === '<!-- aeg:developer:round-2 -->')
+    const marker = world.postedComments.find((c) => c.marker === '<!-- vinaya:developer:round-2 -->')
     expect(marker?.body).toMatch(/^FINDING_IDS: R1-CR-1$/m)
   })
 

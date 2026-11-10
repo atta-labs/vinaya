@@ -48,7 +48,7 @@ type GradedBodyResolution = { ok: true; body: string } | { ok: false; message: s
 
 /**
  * The body `checkBriefSections` actually grades. On a task branch, the
- * brief lives on the task Issue's frozen `aeg:brief:v<k>` comment, posted by
+ * brief lives on the task Issue's frozen `vinaya:brief:v<k>` comment, posted by
  * `vinaya task brief`/`dispatchTask` — never in the PR body — so that
  * comment, not `PR_BODY`, is what this check grades. A non-task (standalone
  * `fix/*`) branch is unchanged: its brief, if any, is still authored
@@ -208,7 +208,7 @@ function main(): void {
       severity: 'error',
       message: `brief-shape: ${gradedBodyResolution.message}`,
       agent_recovery_prompt:
-        'Dispatch this task with `vinaya-task-brief <tranche> <n>` (posts the `aeg:brief:v1` Issue comment), or check `gh auth status`/network, then re-run `vinaya-check brief-shape`. ' +
+        'Dispatch this task with `vinaya-task-brief <tranche> <n>` (posts the `vinaya:brief:v1` Issue comment), or check `gh auth status`/network, then re-run `vinaya-check brief-shape`. ' +
         'When the message says no Principal is configured, apply the fix it names instead.'
     })
     process.exit(1)

@@ -92,7 +92,7 @@ export function runPrincipalTestPlanWait(
         severity: 'error',
         message: `principal-test-plan-wait: ${resolved.message} The \`[live]\` lines this pull request must have passed are unknown, so the merge holds.`,
         agent_recovery_prompt:
-          'Check `gh auth status` and network, and that the task Issue carries its frozen `aeg:brief:v<k>` comment, then re-run `vinaya-check principal-test-plan-wait`.'
+          'Check `gh auth status` and network, and that the task Issue carries its frozen `vinaya:brief:v<k>` comment, then re-run `vinaya-check principal-test-plan-wait`.'
       }
     ]
   }

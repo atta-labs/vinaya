@@ -820,7 +820,7 @@ describe('task_start handler', () => {
       if (!result.ok) {
         expect(result.error.message).toContain('PR #517')
         expect(result.error.message).toContain('vinaya pr rule 517 --file')
-        expect(result.error.message).toContain('<!-- aeg:principal:ruling:517-4 -->')
+        expect(result.error.message).toContain('<!-- vinaya:principal:ruling:517-4 -->')
         expect(result.error.message).toContain('task_resume')
       }
     })
@@ -835,7 +835,7 @@ describe('task_start handler', () => {
       expect(result.ok).toBe(false)
       if (!result.ok) {
         expect(result.error.message).toContain('Issue #729')
-        expect(result.error.message).toContain('<!-- aeg:principal:ruling:729-1 -->')
+        expect(result.error.message).toContain('<!-- vinaya:principal:ruling:729-1 -->')
       }
     })
 

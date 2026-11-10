@@ -1218,7 +1218,7 @@ describe('devReviewLoop — a confinement pause raised while the sibling reviewe
     expect(result.finalDecision.type).toBe('publish')
 
     // The pause named the security violation; the sibling's verdict is kept.
-    const pause = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:infrastructure -->')
+    const pause = world.postedComments.find((c) => c.marker === '<!-- vinaya:loop:paused:infrastructure -->')
     expect(pause?.body).toContain("security's turn failed the after-turn confinement check")
     const kept = readFileSync(join(roundDir(world, 1), 'reviewer-kept-on-pause.md'), 'utf8')
     expect(kept).toContain('the sibling reviewer finding')

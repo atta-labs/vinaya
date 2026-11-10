@@ -128,7 +128,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     // the world's own (always-healthy) `postPauseComment` fake, lands
     // normally — the real marked pipeline (`pauseMarker` → `renderPauseComment`
     // → `markedCommentBody`), asserted on its exact marker line.
-    expect(world.postedComments.some((c) => /^<!-- aeg:loop:paused:infrastructure -->$/m.test(c.body))).toBe(true)
+    expect(world.postedComments.some((c) => /^<!-- vinaya:loop:paused:infrastructure -->$/m.test(c.body))).toBe(true)
   })
 })
 

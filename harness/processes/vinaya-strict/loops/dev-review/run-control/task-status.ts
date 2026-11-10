@@ -1,7 +1,7 @@
 /**
  * `vinaya task status` — the reader (`commands/task-status.ts` does argv
  * parsing and rendering only). One read-only pass over the forge (open task
- * Issues carrying a frozen `aeg:brief:v<k>` comment, the open pull request
+ * Issues carrying a frozen `vinaya:brief:v<k>` comment (or its retired spelling), the open pull request
  * per branch) and the outbox (`<outboxRoot>/dev-review-loop/<task>/`'s
  * driver pid record, pause record, and publish effect markers) — never a
  * `ps` scan (Traps to avoid), never a re-parse of posted verdict comments to
@@ -25,6 +25,7 @@
 import { isPublishedSummaryComment } from '../../../tools/dev-review-policy/journal-reconstruction'
 import { parseSummaryConfidenceRows } from '../../../tools/dev-review-policy/render-summary'
 import type { PauseReason } from '../../../tools/dev-review-policy/types'
+import { FROZEN_BRIEF_MARKER, markerSpellings } from '../../../tools/legacy-markers'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { hostname } from 'node:os'
@@ -187,6 +188,18 @@ function hasOutboxDir(root: string, task: number): boolean {
 }
 
 /**
+ * The one search phrase set behind `listBriefCandidateIssues`: every spelling of
+ * the frozen-brief marker joined by `OR` and restricted by a single
+ * `in:comments`, which applies to every term of the query — so a brief posted
+ * before the rename is still found, and an Issue carrying both spellings is one
+ * result, never counted twice the way two separate searches added together
+ * would count it.
+ */
+export const BRIEF_CANDIDATE_SEARCH: string = `${markerSpellings(FROZEN_BRIEF_MARKER)
+  .map((spelling) => `"${spelling}"`)
+  .join(' OR ')} in:comments`
+
+/**
  * The open Issues whose comments mention a frozen brief's marker — ONE forge
  * query however many there are, so a listing finds the planned backlog tasks
  * without reading the comments of every open Issue. A candidate list, not a
@@ -202,7 +215,7 @@ function listBriefCandidateIssues(): Set<number> {
       '--state',
       'open',
       '--search',
-      '"aeg:brief" in:comments',
+      BRIEF_CANDIDATE_SEARCH,
       '--json',
       'number',
       '--limit',
@@ -227,7 +240,7 @@ function principalAllowlist(): string[] {
   return resolveTrustedPrincipals()
 }
 
-/** True iff the Issue carries a principal-authored, frozen `aeg:brief:v<k>` comment — the same resolver `dev-review-loop.ts`'s own `fetchFrozenBrief` uses, read here for its presence rather than its content. */
+/** True iff the Issue carries a principal-authored, frozen `vinaya:brief:v<k>` comment (either spelling) — the same resolver `dev-review-loop.ts`'s own `fetchFrozenBrief` uses, read here for its presence rather than its content. */
 function hasFrozenBrief(issue: number, allowlist: readonly string[]): boolean {
   return resolveNewestFrozenBrief(fetchIssueComments(issue), allowlist as string[]) !== null
 }

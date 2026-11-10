@@ -412,7 +412,7 @@ for (const agent of AGENTS) {
       expect(observed.spawns).toEqual({ developer: 1, 'code-reviewer': 1, 'security-reviewer': 1 })
       expect(JSON.parse(stepsNamed(observed, 'read-forge-ci')[0]!.stdout)).toMatchObject({ conclusion: 'green' })
       // The round marker precedes the reviewers, as the standalone loop posts it.
-      expect(observed.markers).toEqual(['<!-- aeg:developer:round-1 -->'])
+      expect(observed.markers).toEqual(['<!-- vinaya:developer:round-1 -->'])
     })
 
     test('a pending CI read is waited on until it resolves green', async () => {
