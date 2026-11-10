@@ -101,6 +101,7 @@ const CODE_STEP = [
   /^Typecheck$/,
   /^Build /,
   /^Test/,
+  /^Check the test inventory/,
   /^Run the suite under both sandboxes$/,
   /^vinaya doctor/,
   /^Detect docs-only diff$/,

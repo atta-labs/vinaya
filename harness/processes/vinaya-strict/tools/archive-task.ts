@@ -86,9 +86,16 @@ export function isEligibleForProvenance(
   return hasLabel('tranche', issueLabels)
 }
 
-/** true when any comment already carries the provenance heading (idempotency, scoped to this PR). */
+/**
+ * true when any comment already carries the provenance heading at the start of
+ * a line (idempotency, scoped to this PR). A comment that only quotes the
+ * heading inside a sentence — a ruling explaining a missing close-out — is not
+ * a provenance block, so it must not make the post skip.
+ */
 export function hasProvenance(comments: string[]): boolean {
-  return comments.some((c) => PROVENANCE_HEADINGS.some((heading) => c.includes(heading)))
+  return comments.some((c) =>
+    c.split('\n').some((line) => PROVENANCE_HEADINGS.some((heading) => line.trimEnd().startsWith(heading)))
+  )
 }
 
 /**

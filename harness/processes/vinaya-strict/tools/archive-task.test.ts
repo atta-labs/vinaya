@@ -170,6 +170,16 @@ describe('hasProvenance', () => {
     expect(PROVENANCE_HEADINGS[0]).toBe(PROVENANCE_HEADING.current)
   })
 
+  it('is false for a comment that only quotes the heading inside a sentence', () => {
+    expect(hasProvenance([`Ruling: the \`${PROVENANCE_HEADING.current}\` comment is now posted on another PR.`])).toBe(
+      false
+    )
+  })
+
+  it('is true when the heading starts a later line of a comment', () => {
+    expect(hasProvenance([`<!-- marker -->\n${PROVENANCE_HEADING.current} — task 1 (tranche x)`])).toBe(true)
+  })
+
   it('is true when a later comment carries the heading', () => {
     expect(hasProvenance(['unrelated', 'also unrelated', `${PROVENANCE_HEADING.current} — task 1 (tranche x)`])).toBe(
       true

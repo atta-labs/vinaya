@@ -228,14 +228,15 @@ describe('the strict required-CI read', () => {
 })
 
 describe('the recovery classification of a failing job', () => {
-  test.each(['Lint and format', 'Typecheck', 'Test shard 3', 'vinaya doctor — managed files match their generator'])(
-    'a failure in "%s" is a code failure the Developer repairs',
-    (step) => {
-      expect(classifyFailedJob(job('j', { conclusion: 'failure', steps: [testStep('failure', step)] })).kind).toBe(
-        'code'
-      )
-    }
-  )
+  test.each([
+    'Lint and format',
+    'Typecheck',
+    'Test shard 3',
+    'vinaya doctor — managed files match their generator',
+    'Check the test inventory and run the repository suite'
+  ])('a failure in "%s" is a code failure the Developer repairs', (step) => {
+    expect(classifyFailedJob(job('j', { conclusion: 'failure', steps: [testStep('failure', step)] })).kind).toBe('code')
+  })
 
   test.each(['Set up job', 'Install dependencies', 'Restore Bun install cache', 'Install the Linux sandbox tools'])(
     'a failed setup step "%s" is an infrastructure pause candidate naming the step',
