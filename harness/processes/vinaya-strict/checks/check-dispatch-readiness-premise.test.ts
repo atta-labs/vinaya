@@ -137,7 +137,7 @@ describe('check-dispatch-readiness: runIssueMode (task-run-v1 21, #541, O2, roun
         body: 'An Issue body with no rationale fields at all.',
         labels: []
       })
-      const result = await runBin(binDir, { BRANCH: 'task/issue-541', AEG_REPO: 'atta-labs/vinaya-fixture' })
+      const result = await runBin(binDir, { BRANCH: 'task/issue-541', VINAYA_REPO: 'atta-labs/vinaya-fixture' })
       expect(result.exitCode).toBe(1)
       const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
       const error = JSON.parse(jsonLine ?? '')
@@ -180,7 +180,7 @@ describe('check-dispatch-readiness: <tranche> <n> argument path (issue-661, O2)'
     // evaluated" bypass — it reaches past it toward the real (here,
     // network-dependent) tranche lookup, which fails for an infra reason
     // distinct from the bypass's own message.
-    const result = await run({ BRANCH: 'main', AEG_REPO: 'atta-labs/vinaya-fixture' }, ['fixture-tranche', '1'])
+    const result = await run({ BRANCH: 'main', VINAYA_REPO: 'atta-labs/vinaya-fixture' }, ['fixture-tranche', '1'])
     const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
     expect(jsonLine).toBeDefined()
     const error = JSON.parse(jsonLine ?? '')

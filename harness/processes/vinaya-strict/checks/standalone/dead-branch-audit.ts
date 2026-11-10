@@ -167,7 +167,7 @@ function flagDeadBranchPush(finding: DeadBranchPush, repo: { owner: string; repo
 async function main(): Promise<void> {
   const repo = await resolveRepo()
   if (!repo) {
-    console.log('[dead-branch-audit] could not resolve a GitHub repo (set AEG_REPO or check `git remote`) — skip.')
+    console.log('[dead-branch-audit] could not resolve a GitHub repo (set VINAYA_REPO or check `git remote`) — skip.')
     console.log('[dead-branch-audit] never-red: exiting 0.')
     process.exit(0)
   }

@@ -574,7 +574,7 @@ describe('log-sink — the append path spends nothing when nothing is recorded (
       }
     })
     // `meta.repo` and the outbox directory come from the resolved repository
-    // (whose first source is `AEG_REPO`), so a number confirmed against some
+    // (whose first source is `VINAYA_REPO`), so a number confirmed against some
     // other repository — whatever this directory's git remote happens to name
     // — would be filed where it was never confirmed.
     expect(asked).toEqual(['atta-labs/vinaya'])
@@ -651,7 +651,7 @@ describe('log-sink — the trust-anchor config is cached per repository (O1, O3)
     // repository from ITS OWN git remote, not one process-wide slug.
     const probeEnv: NodeJS.ProcessEnv = { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` }
     delete probeEnv.GITHUB_REPOSITORY
-    delete probeEnv.AEG_REPO
+    delete probeEnv.VINAYA_REPO
     delete probeEnv.GH_TOKEN
     delete probeEnv.GITHUB_TOKEN
     const run = spawnSyncBudgeted(

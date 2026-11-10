@@ -238,9 +238,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // then a `gh auth token` subprocess) means neither var is ever
       // hard-required — the subprocess path is the documented reason zero
       // pre-spawn env coverage is the correct outcome here, not a gap.
-      // AEG_REPO/BRANCH each fall back to `git remote`/`git rev-parse`.
+      // VINAYA_REPO/BRANCH each fall back to `git remote`/`git rev-parse`.
       env: {
-        AEG_REPO: { optional: true },
+        VINAYA_REPO: { optional: true },
         BRANCH: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
@@ -284,7 +284,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
       // `brief-shape` above.
       env: {
-        AEG_REPO: { optional: true },
+        VINAYA_REPO: { optional: true },
         BRANCH: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true },
@@ -306,7 +306,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // See `CheckSpec.requiresOpenPr`'s doc comment for why the local hooks
       // skip this rather than running it against nothing.
       requiresOpenPr: true,
-      // `process.env.PR_BODY ?? ''`; BRANCH/AEG_REPO both fall back to git
+      // `process.env.PR_BODY ?? ''`; BRANCH/VINAYA_REPO both fall back to git
       // (`rev-parse --abbrev-ref HEAD` / `remote get-url origin`). Tokens
       // forwarded because the bin reaches the forge through
       // `createForgeSource` — same as `branch-topology`'s identical
@@ -319,7 +319,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       env: {
         BRANCH: { optional: true },
         PR_BODY: { optional: true },
-        AEG_REPO: { optional: true },
+        VINAYA_REPO: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
       }
@@ -358,7 +358,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // See `CheckSpec.requiresOpenPr`'s doc comment.
       requiresOpenPr: true,
       // BASE_SHA defaults to `'origin/main'`; BRANCH defaults to
-      // `git rev-parse --abbrev-ref HEAD`. AEG_REPO/GITHUB_TOKEN/GH_TOKEN
+      // `git rev-parse --abbrev-ref HEAD`. VINAYA_REPO/GITHUB_TOKEN/GH_TOKEN
       // feed the live forge read (topology + Issue body) `gh`/
       // `createForgeSource` need on a CI runner. PR_BODY/PR_BODY_FILE carry
       // the pull request body whose beyond-Surface record this check reads;
@@ -366,7 +366,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
       // `brief-shape` above.
       env: {
-        AEG_REPO: { optional: true },
+        VINAYA_REPO: { optional: true },
         BASE_SHA: { optional: true },
         BRANCH: { optional: true },
         PR_BODY: { optional: true },
@@ -557,7 +557,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `ghReachable()` reports false there and the forge-number
       // resolution degrades, exactly like the execFileSync siblings).
       env: {
-        AEG_REPO: { optional: true },
+        VINAYA_REPO: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
       }
@@ -619,7 +619,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-branch-topology'),
       scope: 'full',
       timeoutMs: 30_000,
-      // BRANCH falls back to git; AEG_REPO falls back to `git remote`.
+      // BRANCH falls back to git; VINAYA_REPO falls back to `git remote`.
       // Tokens forwarded because the bin reaches the forge through
       // `createForgeSource` → `@attalabs/aeg-forge-state`'s token resolution
       // (GITHUB_TOKEN, then GH_TOKEN, then a `gh auth token` subprocess)
@@ -628,7 +628,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `coherence`/`dispatch-readiness` above.
       env: {
         BRANCH: { optional: true },
-        AEG_REPO: { optional: true },
+        VINAYA_REPO: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
       }
@@ -660,14 +660,14 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-first-push-dispatch'),
       scope: 'full',
       timeoutMs: 30_000,
-      // BRANCH/AEG_REPO fall back to git; GITHUB_TOKEN/GH_TOKEN read as
+      // BRANCH/VINAYA_REPO fall back to git; GITHUB_TOKEN/GH_TOKEN read as
       // `process.env.GITHUB_TOKEN || process.env.GH_TOKEN || ''` inside
       // `classifyReadiness` — absence degrades to an empty token, which
       // `fetchOpenIssuesByLabel` tolerates (fail-open, per the bin's own
       // module comment on forge-reachability failures).
       env: {
         BRANCH: { optional: true },
-        AEG_REPO: { optional: true },
+        VINAYA_REPO: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
       }

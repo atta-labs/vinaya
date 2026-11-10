@@ -6,20 +6,12 @@
  * Purity contract identical to `registry-checks.ts`'s: no fs/git/gh here.
  * The caller (`bin/verify-registry.ts`) supplies the parsed rows, the
  * already-globbed candidate files, and the raw `enforcement.md` content to
- * rewrite; this module only ever reads `GATE_AUDIENCE` (a same-package,
- * aeg-core-local data table — see its own doc comment for why aeg-core
- * cannot instead import `apps/cli`'s `CORE_CHECK_RING` directly).
+ * rewrite; this module only ever reads `CLI_CHECK_RING`.
  *
- * Three derivation classes, per a Principal decision (extended
- * later for the second registry-backed location):
- *   - a `packages/aeg-core/bin/*.ts` candidate that IS a registered check
- *     (its basename resolves in `GATE_AUDIENCE` to a `ShippedGate`) gets a
- *     stub in the ring `GATE_AUDIENCE` names for it;
+ * Two derivation classes:
  *   - an `harness/processes/vinaya-strict/checks/bin/*.ts` candidate that IS a registered check
  *     (its `check-`-stripped basename resolves in `CLI_CHECK_RING`) gets a
- *     stub in the ring `CLI_CHECK_RING` names for it — most core check bins
- *     live here, not under `packages/aeg-core/bin/` (the large majority did,
- *     at the time this was filed);
+ *     stub in the ring `CLI_CHECK_RING` names for it;
  *   - a `.husky/*` or `.claude/hooks/*.sh` candidate is a managed hook by
  *     construction — ring 0, no registry lookup needed.
  * Anything else (a bin with no registry entry — `internal`, `NON_GATE_BINS`,
@@ -45,7 +37,7 @@
  * on every stub this module ever produces.
  */
 
-import { CLI_CHECK_RING, GATE_AUDIENCE, isShipped } from './gate-audience'
+import { CLI_CHECK_RING } from './gate-audience'
 import { findHeadingLine, findTable } from '../../../kernel/gates/checks/markdown-table'
 import type { GateRing, GateRow } from '../tools/registry-parse'
 
@@ -56,7 +48,6 @@ export const PLACEHOLDER = '[undocumented — fill in why]'
 
 const HUSKY_PREFIX = '.husky/'
 const CLAUDE_HOOKS_PREFIX = '.claude/hooks/'
-const AEG_CORE_BIN_PREFIX = 'packages/aeg-core/bin/'
 const CLI_BIN_PREFIX = 'harness/processes/vinaya-strict/checks/bin/'
 
 const RING_CATEGORY: Record<GateRing, string> = { ring0: 'hook', ring1: 'ci', ring2: 'event' }
@@ -93,15 +84,6 @@ function ringFromNumber(n: 0 | 1 | 2): GateRing {
 function classify(path: string): { ring: GateRing; checkName?: string } | null {
   if (path.startsWith(HUSKY_PREFIX) || path.startsWith(CLAUDE_HOOKS_PREFIX)) {
     return { ring: 'ring0' }
-  }
-  if (path.startsWith(AEG_CORE_BIN_PREFIX) && path.endsWith('.ts')) {
-    const base = path.slice(AEG_CORE_BIN_PREFIX.length, -'.ts'.length)
-    const audience = GATE_AUDIENCE[base]
-    if (audience && isShipped(audience)) {
-      const checkName = Array.isArray(audience.shippedAs) ? audience.shippedAs[0] : audience.shippedAs
-      return { ring: ringFromNumber(audience.ring), checkName }
-    }
-    return null
   }
   if (path.startsWith(CLI_BIN_PREFIX) && path.endsWith('.ts')) {
     const base = path.slice(CLI_BIN_PREFIX.length, -'.ts'.length)

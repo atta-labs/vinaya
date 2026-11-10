@@ -426,7 +426,7 @@ describe('task_cancel handler', () => {
  * `log()`'s own default `resolveRepo` (unlike `cancelDeps.resolveRepo`
  * above, which only affects `cancelDevReviewLoop`'s own repo lookups) reads
  * the repo identity of whatever `cwd` the fixture script runs in — here the
- * isolated fixture's own declared `AEG_REPO` — so a test asserting on the
+ * isolated fixture's own declared `VINAYA_REPO` — so a test asserting on the
  * outbox layout searches for the file by name instead of assuming a fixed
  * directory.
  */
@@ -538,9 +538,9 @@ try {
     try {
       // `stripVinayaEnv` (below) supersedes `hermeticSpawnEnv`'s narrower
       // `VINAYA_RUNTIME_DIR`-only delete — merged from origin/main's
-      // independent issue-657 O5 fix, same root cause. Both agree `AEG_REPO`
+      // independent issue-657 O5 fix, same root cause. Both agree `VINAYA_REPO`
       // must survive: `stripVinayaEnv` only ever strips `VINAYA_*`-prefixed
-      // keys, so the fixture's own declared `AEG_REPO` — spread in last —
+      // keys, so the fixture's own declared `VINAYA_REPO` — spread in last —
       // is the repo identity these subprocesses resolve.
       const output = runFixtureScript(scriptPath, fixture.cwd, stripVinayaEnv({ ...process.env, ...fixture.env }))
       expect(output).toContain('FIRST_OK')

@@ -147,7 +147,7 @@ async function main(): Promise<void> {
     await new Promise((r) => setTimeout(r, 3000))
     client.close()
 
-    // `buildSandbox()`'s own `AEG_REPO` fixture value (`attalabs/vinaya`, no
+    // `buildSandbox()`'s own `VINAYA_REPO` fixture value (`attalabs/vinaya`, no
     // hyphen — `resolveRepo`'s own env-first precedence, `resolve-repo.ts`)
     // wins over the real git remote, so the destination's own repo segment
     // is whatever that fixture resolves to, not this repo's real

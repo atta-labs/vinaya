@@ -1123,7 +1123,7 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     if (runtimeDir) out.VINAYA_RUNTIME_DIR = runtimeDir
     // The clone has no forge remote, so without a name of its own its tests would watch the machine-wide
     // "unresolved" runtime directory, which any other process may write to; this name is the fixture's alone.
-    out.AEG_REPO = `native-fixture-${process.pid}/repo`
+    out.VINAYA_REPO = `native-fixture-${process.pid}/repo`
     return out
   }
   // A test the shared selector always plans, so every push here runs the same small native group.

@@ -19,7 +19,7 @@ const ISSUE_CONFIG = {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
-// `AEG_REPO` short-circuits `@attalabs/aeg-forge-state`'s `resolveRepo` (read
+// `VINAYA_REPO` short-circuits `@attalabs/aeg-forge-state`'s `resolveRepo` (read
 // first, before it ever touches git) — every registered check run through
 // `runIssueChecks` now emits its own `gate` observation via the real Vinaya
 // Log sink, which resolves a repo identity for its envelope on every call.
@@ -43,7 +43,7 @@ function runCli(args: string[], cwd: string, env?: Record<string, string>): CliR
     // (`log-sink.ts`'s `resolveLogDestinationFrom`) and print its own
     // "not recording" line onto this process's stderr the first time it
     // fires per process — exactly the same stream every assertion below
-    // parses as pure `CheckError` JSON, same class of leak as `AEG_REPO`'s
+    // parses as pure `CheckError` JSON, same class of leak as `VINAYA_REPO`'s
     // own doc comment above describes for `resolveRepo`'s retry line.
     const baseEnv = { ...process.env }
     delete baseEnv.GITHUB_ACTIONS
@@ -51,7 +51,7 @@ function runCli(args: string[], cwd: string, env?: Record<string, string>): CliR
       cwd,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...baseEnv, AEG_REPO: 'example/example', HOME: cwd, ...env }
+      env: { ...baseEnv, VINAYA_REPO: 'example/example', HOME: cwd, ...env }
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {

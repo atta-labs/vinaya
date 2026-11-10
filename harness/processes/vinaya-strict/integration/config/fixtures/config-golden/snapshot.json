@@ -3062,7 +3062,7 @@
             "run": "./check.ts",
             "scope": "diff",
             "env": {
-              "AEG_REPO": true
+              "VINAYA_REPO": true
             }
           }
         }
@@ -3074,7 +3074,7 @@
             "run": "./check.ts",
             "scope": "diff",
             "env": {
-              "AEG_REPO": true
+              "VINAYA_REPO": true
             }
           }
         }
@@ -3149,7 +3149,7 @@
                   "run": "./check.ts",
                   "scope": "diff",
                   "env": {
-                    "AEG_REPO": true
+                    "VINAYA_REPO": true
                   }
                 }
               }

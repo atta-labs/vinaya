@@ -193,7 +193,7 @@ function findCrossingFiles(candidateFiles: string[]): string[] {
 /**
  * Cheap reachability probe, same pattern `check-first-push-dispatch.ts` uses
  * before trusting any `gh`-shelling script's output: `resolveRepo()` alone
- * can still succeed (e.g. `AEG_REPO` set, or a git remote parses) even when
+ * can still succeed (e.g. `VINAYA_REPO` set, or a git remote parses) even when
  * `gh` itself cannot reach a host or resolve credentials — that gap is what
  * silently turned every G4 call into a false "does not resolve" before this
  * fix. Checked once, upfront, before any `gh issue view`/`gh pr view` call.
@@ -354,7 +354,7 @@ if (import.meta.main) {
         findings: [
           {
             reason:
-              "severity:infra — could not resolve a GitHub repo (AEG_REPO / git remote) or `gh` is unreachable (`gh auth status` failed). G4 skipped — cannot evaluate whether enforcement.md's cited forge numbers resolve."
+              "severity:infra — could not resolve a GitHub repo (VINAYA_REPO / git remote) or `gh` is unreachable (`gh auth status` failed). G4 skipped — cannot evaluate whether enforcement.md's cited forge numbers resolve."
           }
         ]
       }

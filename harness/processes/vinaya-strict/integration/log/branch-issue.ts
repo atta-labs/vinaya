@@ -145,7 +145,7 @@ async function issueForTrancheTask(
  *
  * `--repo` is passed from the ALREADY-RESOLVED repository, never left to the
  * directory's git remote: `meta.repo` and the outbox file come from
- * `resolveRepo()`, whose first source is `AEG_REPO`, so asking a different
+ * `resolveRepo()`, whose first source is `VINAYA_REPO`, so asking a different
  * repository would confirm a number in one place and file it in another
  * (round 5 review, MINOR). With no resolved repository to name, `gh`'s own
  * directory-derived default is all there is.

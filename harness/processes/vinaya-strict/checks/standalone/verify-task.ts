@@ -24,7 +24,7 @@
  * non-task branch).
  *
  * Scoped to `@attalabs/aeg-core`: `turbo typecheck`/`turbo test`/`turbo build`
- * run with `--filter=@attalabs/aeg-core` — a full monorepo application build is
+ * run with `--filter=@attalabs/vinaya` — a full monorepo application build is
  * the deployment pipeline's job, not this gate's (`harness/processes/vinaya-strict/doctrine/enforcement.md`
  * Ring 1: "application builds are verified by the deployment pipeline").
  * `aeg-core` itself has no bundler build step (source-only package), so the
@@ -125,10 +125,10 @@ if (import.meta.main) {
   const prBody = resolvePrBody()
 
   const steps: StepResult[] = []
-  steps.push(runStep('typecheck', 'turbo typecheck --filter=@attalabs/aeg-core'))
+  steps.push(runStep('typecheck', 'turbo typecheck --filter=@attalabs/vinaya'))
   steps.push(runStep('lint (biome check .)', 'biome check .'))
-  steps.push(runStep('test', 'turbo test --filter=@attalabs/aeg-core'))
-  steps.push(runStep('build', 'turbo build --filter=@attalabs/aeg-core'))
+  steps.push(runStep('test', 'turbo test --filter=@attalabs/vinaya'))
+  steps.push(runStep('build', 'turbo build --filter=@attalabs/vinaya'))
   steps.push(
     runStep('verify-docs --pr', 'bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts --pr', {
       PR_BODY: prBody

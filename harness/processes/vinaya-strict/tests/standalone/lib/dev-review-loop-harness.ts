@@ -1185,7 +1185,7 @@ export class InProcessExit extends Error {
  * session into the loop's own resolution.
  *
  * `withWorldEnv` SETS the three in `WORLD_ENV_SET_KEYS` to this world's own
- * isolated values and CLEARS the rest for the duration of the call. `AEG_REPO`
+ * isolated values and CLEARS the rest for the duration of the call. `VINAYA_REPO`
  * is set (Issue #833) rather than cleared: pinned to `FIXTURE_REPO`, it gives
  * the log sink a deterministic repo segment and keeps the trust-anchor read off
  * any real repository, alongside the isolated `$HOME` (see `withWorldEnv`).
@@ -1196,7 +1196,7 @@ export const OWNED_ENV_KEYS = [
   'VINAYA_ROUND',
   'VINAYA_RUN',
   'VINAYA_RUN_ID',
-  'AEG_REPO',
+  'VINAYA_REPO',
   'GITHUB_REPOSITORY',
   // What the log path reads to decide where a line goes and whose it is: a
   // CI runner sets `GITHUB_ACTIONS`, a dispatched session sets the rest. Left
@@ -1224,7 +1224,7 @@ export const OWNED_ENV_KEYS = [
 ] as const
 
 /** The `OWNED_ENV_KEYS` `withWorldEnv` SETS to this world's own values; every other owned key is cleared. */
-const WORLD_ENV_SET_KEYS = new Set<string>(['VINAYA_RUNTIME_DIR', 'VINAYA_TASK', 'AEG_REPO'])
+const WORLD_ENV_SET_KEYS = new Set<string>(['VINAYA_RUNTIME_DIR', 'VINAYA_TASK', 'VINAYA_REPO'])
 
 /**
  * Run `devReviewLoop` in-process against `world`. Defaults to a `--task`
@@ -1315,7 +1315,7 @@ export async function runDriverLoopInProcess(
  *    caller with NO local `logs` setting still honours whatever the default
  *    branch declares, so before this the harness delivered fake round events to
  *    the real server under the checked-out task's own Issue number.
- *  - **Identity/`$HOME`** — `AEG_REPO` is pinned to `FIXTURE_REPO` and `$HOME`
+ *  - **Identity/`$HOME`** — `VINAYA_REPO` is pinned to `FIXTURE_REPO` and `$HOME`
  *    to `world.home` (the fixture's own), so the log sink's repo segment, its
  *    default folder and its retry queue all resolve under this world's own
  *    tree, never the real machine's `~/.vinaya`. `VINAYA_RUNTIME_DIR` is the
@@ -1335,7 +1335,7 @@ export async function withWorldEnv<T>(world: LoopWorld, fn: () => Promise<T> | T
   const savedCwd = process.cwd()
   process.env.VINAYA_RUNTIME_DIR = world.runtimeDir
   process.env.VINAYA_TASK = String(world.task)
-  process.env.AEG_REPO = FIXTURE_REPO
+  process.env.VINAYA_REPO = FIXTURE_REPO
   process.env.HOME = world.home
   for (const key of OWNED_ENV_KEYS) {
     if (!WORLD_ENV_SET_KEYS.has(key)) delete process.env[key]
@@ -1391,7 +1391,7 @@ export async function withWorldEnv<T>(world: LoopWorld, fn: () => Promise<T> | T
  * cwd `runLoopInProcess` sets), but `resolveRepo`'s module-level cache is
  * process-wide and does NOT clear on the env/cwd this harness controls: a
  * prior test in the same runner process that resolved a real repo (a CI
- * runner sets `GITHUB_REPOSITORY`/`AEG_REPO`) leaves that segment cached, so
+ * runner sets `GITHUB_REPOSITORY`/`VINAYA_REPO`) leaves that segment cached, so
  * `log()` writes under `logs/<owner>-<repo>/` instead. Found live in CI: the
  * hardcoded `unresolved` path read empty there while the file sat under the
  * real repo segment. So this searches every segment under `logs/` for THIS

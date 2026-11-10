@@ -718,13 +718,13 @@ export function runCancel(home: string, cwd: string, path: string, pr: number): 
  * Same discipline `remote-base.ts`'s `cleanGitEnv` already applies to `GIT_*`
  * for an analogous inherited-env collision.
  *
- * `AEG_REPO` is stripped alongside every `VINAYA_*` key for the same root
+ * `VINAYA_REPO` is stripped alongside every `VINAYA_*` key for the same root
  * cause, merged from origin/main's independent issue-657 O5 fix: every
  * fixture in this file relies on the driver resolving its runtime directory
  * under the `unresolved` repo segment (the fake `git` binary answers no real
  * remote, so `resolveRepoSync` finds none) — `writeFakeClaude`'s own
  * `$HOME/.vinaya/runtime/unresolved/tasks-execution/…` path, and this file's
- * own `taskRunDir` helper, both hardcode that assumption. A real `AEG_REPO`
+ * own `taskRunDir` helper, both hardcode that assumption. A real `VINAYA_REPO`
  * inherited from the calling shell's own environment (set when this file's
  * own suite runs inside a real dispatched session) silently resolves a REAL
  * repo segment instead, the same class of collision `VINAYA_RUNTIME_DIR`
@@ -748,7 +748,7 @@ export const DEFAULT_FAST_POLL_ENV: Record<string, string> = {
   VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
   VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5',
   // Every fixture in this file carries no real forge
-  // identity by design (`AEG_REPO` deleted above, the fake `git` binary
+  // identity by design (`VINAYA_REPO` deleted above, the fake `git` binary
   // answers no remote) — the driver's own dispatch-readiness gate
   // (`dev-review-loop.ts`'s `checkTaskDispatchReadiness`) shells out to
   // `check-dispatch-readiness.ts`/`verify-dispatch.ts`, which read the live
@@ -766,7 +766,7 @@ export function fixtureChildEnv(home: string, path: string, extraEnv: Record<str
   for (const key of Object.keys(env)) {
     if (key.startsWith('VINAYA_')) delete env[key]
   }
-  delete env.AEG_REPO
+  delete env.VINAYA_REPO
   // Left in place, a leaked GITHUB_ACTIONS (an Actions runner sets one for
   // the whole job) makes the child's own log() resolve its destination to
   // 'none' (log-sink.ts's resolveLogDestinationFrom's CI branch — no
@@ -791,7 +791,7 @@ export function fixtureChildEnv(home: string, path: string, extraEnv: Record<str
  * a deterministic, fake identity, without going anywhere near the fake
  * `git` binary's own `remote get-url origin` (unanswered, on purpose: every
  * fixture in this file relies on THAT call finding no remote, so
- * `resolveRepoSync` — a SEPARATE reader, `AEG_REPO` then `git remote`,
+ * `resolveRepoSync` — a SEPARATE reader, `VINAYA_REPO` then `git remote`,
  * never `GITHUB_REPOSITORY` — keeps resolving the `unresolved` repo
  * segment every fixture's own `$HOME/.vinaya/runtime/unresolved/…` path
  * hardcodes). A real `GITHUB_REPOSITORY` leaking in from whatever host
@@ -2153,7 +2153,7 @@ exit 1
 // the interval is never deleted on a stale answer.
 /**
  * The sweep reads each Issue in the repository its folder belongs to and keeps the folder when none resolves, so the
- * two sweep fixtures below give the loop a resolvable repository (`AEG_REPO`) — and so a run directory under that
+ * two sweep fixtures below give the loop a resolvable repository (`VINAYA_REPO`) — and so a run directory under that
  * repository's own segment, not the `unresolved` one every other fixture here hardcodes.
  */
 export const SWEEP_FIXTURE_REPO = 'sweep-owner/sweep-repo'
@@ -2183,7 +2183,7 @@ export function runLoopWithRepo(
     cwd,
     path,
     ['--task', String(TASK), '--agent', 'claude'],
-    { AEG_REPO: SWEEP_FIXTURE_REPO },
+    { VINAYA_REPO: SWEEP_FIXTURE_REPO },
     budgetMs
   )
 }

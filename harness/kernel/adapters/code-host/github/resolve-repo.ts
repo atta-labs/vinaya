@@ -2,7 +2,7 @@
  * Discovers the `{ owner, repo }` for the current Studio repository.
  *
  * Resolution order:
- *   1. `AEG_REPO` env (`owner/repo`).
+ *   1. `VINAYA_REPO` env (`owner/repo`).
  *   2. `git remote get-url origin`, parsed against common GitHub URL shapes.
  *
  * Returns `null` when discovery fails — callers degrade gracefully (no PR
@@ -10,7 +10,7 @@
  * forge adapter (`fetchForgeFacts`). Never throws.
  *
  * Caching distinguishes *deterministic* from *transient* outcomes: a parsed
- * `AEG_REPO`, and any outcome of a git-remote lookup that *succeeded* (even a
+ * `VINAYA_REPO`, and any outcome of a git-remote lookup that *succeeded* (even a
  * parsed `null` from an unrecognizable URL — deterministic, same every call),
  * are cached for the process lifetime. A git-remote lookup that *throws*
  * (timeout, spawn failure) is NOT cached — it returns `null` and warns, and
@@ -52,7 +52,7 @@ export function resetResolveRepoCache(): void {
 export async function resolveRepo(exec: ResolveRepoExec = defaultExec): Promise<RepoRef | null> {
   if (cached !== undefined) return cached
 
-  const fromEnv = process.env.AEG_REPO
+  const fromEnv = process.env.VINAYA_REPO
   if (fromEnv) {
     const parsed = parseOwnerRepo(fromEnv)
     if (parsed) {

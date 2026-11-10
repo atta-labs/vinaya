@@ -420,12 +420,12 @@ describe('each grader reads the forge and clone facts it judges', () => {
 })
 
 describe('nothing a trial does writes to atta-labs/vinaya', () => {
-  it('starts the task run in the clone with AEG_REPO and GH_REPO naming the sandbox, and a fresh runtime directory', async () => {
+  it('starts the task run in the clone with VINAYA_REPO and GH_REPO naming the sandbox, and a fresh runtime directory', async () => {
     const { deps, started } = harness()
     const outcome = await runWholeLoopTrial(options(), deps)
     expect(outcome.ok).toBe(true)
     const [run] = started
-    expect(run?.env.AEG_REPO).toBe(SANDBOX)
+    expect(run?.env.VINAYA_REPO).toBe(SANDBOX)
     expect(run?.env.GH_REPO).toBe(SANDBOX)
     expect(run?.env.VINAYA_LOG_FOLDER_ONLY).toBe('1')
     expect(dirname(run?.env.VINAYA_RUNTIME_DIR as string)).toBe(dirname(run?.cwd as string))

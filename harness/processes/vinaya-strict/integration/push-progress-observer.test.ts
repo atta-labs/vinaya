@@ -413,7 +413,7 @@ describe('the progress helper is a composition root of its own', () => {
       const out = spawnSyncBudgeted('bun', [HELPER, 'dir'], {
         cwd: work,
         encoding: 'utf8',
-        env: { ...env, HOME: home, AEG_REPO: 'o/r' }
+        env: { ...env, HOME: home, VINAYA_REPO: 'o/r' }
       })
       expect(out.stdout).toBe('on\n')
       expect(out.status).toBe(0)

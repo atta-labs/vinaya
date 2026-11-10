@@ -110,7 +110,7 @@ describe('golden comparison: forge-derived vs file-derived id/issue (aeg-forge-s
     const repo = await resolveRepo()
     if (!repo) {
       console.warn(
-        '[golden-comparison] no repo resolved (no `git remote`/AEG_REPO) — skipping, nothing to compare against.'
+        '[golden-comparison] no repo resolved (no `git remote`/VINAYA_REPO) — skipping, nothing to compare against.'
       )
       return
     }

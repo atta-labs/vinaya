@@ -417,7 +417,7 @@ export async function runEngineScenario(
   delete process.env.VINAYA_LOG_SPOOL_DIR
   for (const key of OWNED_ENV_KEYS) if (key !== RUNTIME_DIR_ENV_KEY) delete process.env[key]
   process.env.VINAYA_TASK = String(TASK)
-  process.env.AEG_REPO = FIXTURE_REPO
+  process.env.VINAYA_REPO = FIXTURE_REPO
   // The run names its producer as the live Engine runner does before its first event.
   setEngineLogIdentity(PROCESS, agent)
   resetRuntimeDirCache()

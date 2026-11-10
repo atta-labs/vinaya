@@ -1135,8 +1135,8 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
     // with no network and no second checkout.
     execFileSync('git', ['remote', 'add', 'origin', cwd], { cwd })
 
-    originalAegRepo = process.env.AEG_REPO
-    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalAegRepo = process.env.VINAYA_REPO
+    process.env.VINAYA_REPO = 'test-owner/test-repo'
     originalCwd = process.cwd()
     process.chdir(cwd)
     restorePrincipals = servePrincipalsConfig()
@@ -1145,7 +1145,7 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
   afterEach(() => {
     restorePrincipals()
     process.chdir(originalCwd)
-    process.env.AEG_REPO = originalAegRepo
+    process.env.VINAYA_REPO = originalAegRepo
     rmSync(cwd, { recursive: true, force: true })
   })
 

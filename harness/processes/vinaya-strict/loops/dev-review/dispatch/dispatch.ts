@@ -2789,7 +2789,7 @@ export function parseCodexResumeId(stdout: string): string | null {
  * Same guard `log-sink.ts`'s private `isSafeRepoSegment` applies before
  * splicing a `resolveRepo()` result into its own outbox path — duplicated
  * here rather than imported, since `log-sink.ts` is out of this task's
- * `## Surface`. `resolveRepo()` can return an `AEG_REPO` env value parsed by
+ * `## Surface`. `resolveRepo()` can return an `VINAYA_REPO` env value parsed by
  * `parseOwnerRepo` (`@attalabs/aeg-forge-state`), which accepts anything
  * shaped `owner/repo` — including a `repo` half containing `../` — so a
  * segment failing this check is treated exactly like a null `resolveRepo()`
@@ -4336,7 +4336,7 @@ export async function dispatchRole(
   // Mirrors `log()`'s own repo resolution so this file knows where to poll
   // for its own lines. Primes `resolveRepo()`'s process-wide cache, so
   // `log()`'s own internal call below resolves the identical value — the
-  // one case that could still diverge is an `AEG_REPO`/remote value that
+  // one case that could still diverge is an `VINAYA_REPO`/remote value that
   // fails `log-sink.ts`'s private `isSafeRepoSegment` guard (an
   // intentionally malicious value), where the wait below simply times out
   // harmlessly rather than mis-locating the file.

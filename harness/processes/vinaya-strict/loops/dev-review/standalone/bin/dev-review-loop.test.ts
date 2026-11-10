@@ -40,7 +40,7 @@ type CliResult = { status: number; stdout: string; stderr: string }
  * `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-test-support.ts` (`fixtureChildEnv`) was left
  * unfixed here even though this file exercises the same call path.
  *
- * `AEG_REPO` is stripped alongside every `VINAYA_*` key (round 5, security
+ * `VINAYA_REPO` is stripped alongside every `VINAYA_*` key (round 5, security
  * LOW) for the same reason `fixtureChildEnv` strips it there: a real value
  * inherited from a dispatched session's own environment would steer this
  * fixture's repo-segment resolution away from the `unresolved` bucket this
@@ -54,7 +54,7 @@ function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   for (const key of Object.keys(out)) {
     if (key.startsWith('VINAYA_')) delete out[key]
   }
-  delete out.AEG_REPO
+  delete out.VINAYA_REPO
   // Left in place, a leaked GITHUB_ACTIONS makes a spawned child's own
   // log() resolve its destination to 'none' (log-sink.ts's
   // resolveLogDestinationFrom) instead of the folder/server a test expects

@@ -761,7 +761,7 @@ export async function runCoherenceChecks(
       check: 'FORGE',
       status: 'fail',
       failures: [],
-      note: 'severity:infra — Could not resolve GitHub repository (set AEG_REPO=owner/repo). All forge-dependent checks skipped.'
+      note: 'severity:infra — Could not resolve GitHub repository (set VINAYA_REPO=owner/repo). All forge-dependent checks skipped.'
     })
     results.push(...checkM1M2M3())
     return { results, forgeUnavailable: true }

@@ -103,7 +103,7 @@ export type RunFileLocation =
 /**
  * Same guard every path builder in this repository already applies before
  * splicing a resolved repo into a filesystem path: `resolveRepo()` can
- * return an `AEG_REPO` env value parsed by `parseOwnerRepo`, which accepts
+ * return an `VINAYA_REPO` env value parsed by `parseOwnerRepo`, which accepts
  * anything shaped `owner/repo` — including a `repo` half containing `../`.
  */
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
@@ -436,11 +436,11 @@ export function repoRootSync(start: string = process.cwd()): string | null {
  * production seams that resolve a run path are synchronous all the way down
  * to a `writeFileSync` — making them `async` would ripple into the command
  * files this task's Surface excludes. Same resolution order and the same
- * URL shapes that resolver parses: `AEG_REPO` first, then `git remote
+ * URL shapes that resolver parses: `VINAYA_REPO` first, then `git remote
  * get-url origin`.
  */
 export function resolveRepoSync(): RunPathsRepo {
-  const fromEnv = process.env.AEG_REPO
+  const fromEnv = process.env.VINAYA_REPO
   if (fromEnv) {
     const m = /^([^/]+)\/(.+)$/.exec(fromEnv)
     if (m?.[1] && m[2]) return { owner: m[1], repo: m[2] }

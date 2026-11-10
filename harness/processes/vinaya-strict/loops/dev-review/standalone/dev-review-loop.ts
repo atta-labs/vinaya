@@ -2661,7 +2661,7 @@ export function defaultDeps(): LoopDeps {
     developerBranchFor: (n, fetchTitle) => developerBranchFor(n, fetchTitle),
     // `VINAYA_DEV_REVIEW_LOOP_FAKE_DISPATCH_READINESS=1` exists only so a
     // real subprocess test (`dev-review-loop.test.ts`'s own fixtures, which
-    // carry no real forge identity by design — AEG_REPO deleted, the fake
+    // carry no real forge identity by design — VINAYA_REPO deleted, the fake
     // `git` binary answers no remote) can skip the real forge-dependent
     // shell-out `checkTaskDispatchReadiness` makes, the same "test env
     // escape hatch, unset in every real invocation" posture
@@ -3619,7 +3619,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /**
      * Awaits EACH event's own landing before firing the next `log()` call —
      * not just the batch's last one. `resolveRepo()` only caches a
-     * DETERMINISTIC outcome (a parsed `AEG_REPO`, or a successful git-remote
+     * DETERMINISTIC outcome (a parsed `VINAYA_REPO`, or a successful git-remote
      * lookup); on an unresolvable repo (no remote, or the lookup itself
      * throws) it caches nothing (`resolve-repo.ts`'s own doc comment) — every
      * `log()` call in that case races an independent, uncached async

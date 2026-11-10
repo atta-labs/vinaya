@@ -48,26 +48,7 @@ describe('computeScaffoldPlan', () => {
     expect(plan.stubs[0]?.ring).toBe('ring0')
   })
 
-  it('registry-backed class: an aeg-core bin resolving via GATE_AUDIENCE to a ring-0 check gets a ring-0 stub naming the check', () => {
-    const rows = parseEnforcementRegistry(fixtureContent())
-    // `check-branch-topology` -> `branch-topology`, ring 0 (GATE_AUDIENCE).
-    const plan = computeScaffoldPlan(rows, ['packages/aeg-core/bin/check-branch-topology.ts'])
-    expect(plan.stubs).toHaveLength(1)
-    expect(plan.stubs[0]?.ring).toBe('ring0')
-    expect(plan.stubs[0]?.checkName).toBe('branch-topology')
-    expect(plan.stubs[0]?.cells[0]).toBe('branch-topology')
-  })
-
-  it('registry-backed class: a ring-1 check (test-plan, requiresOpenPr) gets a ring-1 stub', () => {
-    const rows = parseEnforcementRegistry(fixtureContent())
-    // `verify-test-plan` -> `test-plan`, ring 1 (GATE_AUDIENCE).
-    const plan = computeScaffoldPlan(rows, ['packages/aeg-core/bin/verify-test-plan.ts'])
-    expect(plan.stubs).toHaveLength(1)
-    expect(plan.stubs[0]?.ring).toBe('ring1')
-    expect(plan.stubs[0]?.checkName).toBe('test-plan')
-  })
-
-  it('the no-guess class: an aeg-core bin with no registry entry gets NO stub, and is reported skipped', () => {
+  it('the no-guess class: a retired aeg-core bin with no registry entry gets NO stub, and is reported skipped', () => {
     const rows = parseEnforcementRegistry(fixtureContent())
     const plan = computeScaffoldPlan(rows, ['packages/aeg-core/bin/some-brand-new-tool.ts'])
     expect(plan.stubs).toHaveLength(0)
@@ -127,7 +108,7 @@ describe('computeScaffoldPlan', () => {
 
   it('only mechanical cells are filled; every other cell is the exact placeholder marker', () => {
     const rows = parseEnforcementRegistry(fixtureContent())
-    const plan = computeScaffoldPlan(rows, ['packages/aeg-core/bin/check-branch-topology.ts'])
+    const plan = computeScaffoldPlan(rows, ['harness/processes/vinaya-strict/checks/bin/check-branch-topology.ts'])
     const cells = plan.stubs[0]?.cells ?? []
     // ring0 shape: [action, summary, category, description, gate, what-must-be-true, audience, implementation]
     expect(cells[0]).toBe('branch-topology')
@@ -137,7 +118,7 @@ describe('computeScaffoldPlan', () => {
     expect(cells[4]).toContain('branch-topology')
     expect(cells[5]).toBe(PLACEHOLDER)
     expect(cells[6]).toBe('product')
-    expect(cells[7]).toBe('`packages/aeg-core/bin/check-branch-topology.ts`')
+    expect(cells[7]).toBe('`harness/processes/vinaya-strict/checks/bin/check-branch-topology.ts`')
   })
 })
 
@@ -145,13 +126,15 @@ describe('applyScaffoldPlan + round-trip', () => {
   it('inserts a stub row into the correct ring table, re-parseable, without disturbing existing rows', () => {
     const content = fixtureContent()
     const rows = parseEnforcementRegistry(content)
-    const plan = computeScaffoldPlan(rows, ['packages/aeg-core/bin/check-branch-topology.ts'])
+    const plan = computeScaffoldPlan(rows, ['harness/processes/vinaya-strict/checks/bin/check-branch-topology.ts'])
     const rewritten = applyScaffoldPlan(content, plan)
 
     const reparsed = parseEnforcementRegistry(rewritten)
     expect(reparsed).toHaveLength(rows.length + 1)
 
-    const inserted = reparsed.find((r) => r.implementation === 'packages/aeg-core/bin/check-branch-topology.ts')
+    const inserted = reparsed.find(
+      (r) => r.implementation === 'harness/processes/vinaya-strict/checks/bin/check-branch-topology.ts'
+    )
     expect(inserted).toBeDefined()
     expect(inserted?.ring).toBe('ring0')
     expect(inserted?.summary).toBe(PLACEHOLDER)
@@ -170,7 +153,7 @@ describe('applyScaffoldPlan + round-trip', () => {
   it('is idempotent: computing a plan against the rewritten content finds nothing left to insert', () => {
     const content = fixtureContent()
     const rows = parseEnforcementRegistry(content)
-    const candidateFiles = ['packages/aeg-core/bin/check-branch-topology.ts']
+    const candidateFiles = ['harness/processes/vinaya-strict/checks/bin/check-branch-topology.ts']
 
     const firstPlan = computeScaffoldPlan(rows, candidateFiles)
     const rewritten = applyScaffoldPlan(content, firstPlan)
@@ -189,8 +172,8 @@ describe('applyScaffoldPlan + round-trip', () => {
     const content = fixtureContent()
     const rows = parseEnforcementRegistry(content)
     const plan = computeScaffoldPlan(rows, [
-      'packages/aeg-core/bin/check-branch-topology.ts', // ring0
-      'packages/aeg-core/bin/verify-test-plan.ts', // ring1
+      'harness/processes/vinaya-strict/checks/bin/check-branch-topology.ts', // ring0
+      'harness/processes/vinaya-strict/checks/bin/check-closes-n.ts', // ring1
       '.husky/pre-push' // ring0
     ])
     expect(plan.stubs).toHaveLength(3)
@@ -221,7 +204,7 @@ describe('checkG2 + scaffold integration: a stub-bearing table stays loud', () =
     const { checkG2 } = await import('./registry-checks')
     const content = fixtureContent()
     const rows = parseEnforcementRegistry(content)
-    const candidateFiles = ['packages/aeg-core/bin/check-branch-topology.ts']
+    const candidateFiles = ['harness/processes/vinaya-strict/checks/bin/check-branch-topology.ts']
     const plan = computeScaffoldPlan(rows, candidateFiles)
     const rewritten = applyScaffoldPlan(content, plan)
     const reparsed = parseEnforcementRegistry(rewritten)
