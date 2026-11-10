@@ -176,7 +176,7 @@
         },
         "effects": {
           "publishedRounds": [2],
-          "markersInclude": ["<!-- aeg:developer:round-2 -->"],
+          "markersInclude": ["<!-- vinaya:developer:round-2 -->"],
           "developerDispatches": 2,
           "codeReviewerDispatches": 2
         },
@@ -205,7 +205,7 @@
           "codeReviewerDispatches": 0,
           "securityDispatches": 0,
           "publishedRounds": [],
-          "markersInclude": ["<!-- aeg:loop:paused:repeat_failure -->"]
+          "markersInclude": ["<!-- vinaya:loop:paused:repeat_failure -->"]
         },
         "events": {
           "include": ["stop_condition_met", "paused", "handoff:raised"],
@@ -389,7 +389,7 @@
         "effects": {
           "codeReviewerDispatches": 0,
           "publishedRounds": [],
-          "markersInclude": ["<!-- aeg:loop:paused:time_budget -->"]
+          "markersInclude": ["<!-- vinaya:loop:paused:time_budget -->"]
         },
         "events": {
           "include": ["stop_condition_met", "paused", "round_ended"],
@@ -412,7 +412,7 @@
         "effects": {
           "developerDispatches": 1,
           "publishedRounds": [],
-          "markersInclude": ["<!-- aeg:loop:paused:max_rounds -->"]
+          "markersInclude": ["<!-- vinaya:loop:paused:max_rounds -->"]
         },
         "events": {
           "journalResults": ["stopped"]
@@ -433,7 +433,7 @@
         },
         "effects": {
           "publishedRounds": [],
-          "markersInclude": ["<!-- aeg:loop:paused:escalation -->"]
+          "markersInclude": ["<!-- vinaya:loop:paused:escalation -->"]
         },
         "events": {
           "include": ["handoff:raised"],
@@ -531,7 +531,7 @@
         },
         "effects": {
           "publishedRounds": [],
-          "markersInclude": ["<!-- aeg:loop:paused:objectives_changed -->"],
+          "markersInclude": ["<!-- vinaya:loop:paused:objectives_changed -->"],
           "markersExclude": ["reviewer-verdict", "security-verdict"]
         },
         "events": {

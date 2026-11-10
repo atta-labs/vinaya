@@ -3157,13 +3157,17 @@ export function countMarkerComments(bodies: string[], prefix: string | readonly 
   return bodies.filter((b) => prefixes.some((p) => b.startsWith(p))).length
 }
 
-/** The opening of a ruling marker on pull request `prRef`, in every spelling, the current one first — what `pr rule` counts before choosing its ordinal. */
-export function rulingMarkerPrefixes(prRef: string): readonly string[] {
-  return markerSpellings(PRINCIPAL_RULING_MARKER).map((m) => `<!-- ${m}:${prRef}-`)
+/**
+ * The marker the next ruling on pull request `prRef` carries, always in the
+ * current spelling: `k` is one more than the ruling comments already on it,
+ * counted in every spelling, so a ruling posted before the rename keeps its
+ * number and none is reused. `bodies` are the pull request's comment bodies,
+ * read on the forge at post time.
+ */
+export function nextRulingMarker(prRef: string, bodies: string[]): string {
+  const prefixes = markerSpellings(PRINCIPAL_RULING_MARKER).map((m) => `<!-- ${m}:${prRef}-`)
+  return principalRulingMarker(Number(prRef), countMarkerComments(bodies, prefixes) + 1)
 }
-
-/** The ruling marker `pr rule` posts — always the current spelling. */
-export { principalRulingMarker as rulingMarker }
 
 /** The opening of an objectives-version marker, in every spelling, the current one first — the writer posts the first; `k` counts them all. */
 export function objectivesVersionMarkerPrefixes(): readonly string[] {

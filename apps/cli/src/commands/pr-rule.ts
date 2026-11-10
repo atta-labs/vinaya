@@ -6,11 +6,9 @@ import {
 } from '../../../../harness/processes/vinaya-strict/tools/task-contract/verdict-extraction'
 import { printJson } from '../../../../harness/kernel/effects/envelope'
 import {
-  countMarkerComments,
   makeCheckError,
   postMarkedComment,
-  rulingMarker,
-  rulingMarkerPrefixes,
+  nextRulingMarker,
   refuse,
   refuseUnlessPrincipal
 } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
@@ -147,9 +145,7 @@ export function prRuleCommand(args: string[]): void {
 
   // Rulings posted before the rename carry the retired spelling; counting both
   // keeps `k` strictly increasing across the rename.
-  const prefixes = rulingMarkerPrefixes(prRef)
-  const k = countMarkerComments(fetchPrCommentBodies(prRef), prefixes) + 1
-  const marker = rulingMarker(Number(prRef), k)
+  const marker = nextRulingMarker(prRef, fetchPrCommentBodies(prRef))
   const url = postMarkedComment('pr', prRef, marker, body)
 
   if (json) printJson({ posted: true, url })
