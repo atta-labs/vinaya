@@ -32,9 +32,12 @@ import {
   setBranchIssueFallback,
   unresolvedLogDestination,
   type LogSinkDeps,
+  type LogSinkFactory,
   type LogSink,
   type LogSinkOverrides
 } from '../../../../kernel/log/log-sink.js'
+import { registerDeferredLogSinkFactory } from '../../../../kernel/log/deferred-sink-factory.js'
+import { vinayaProcessIntegration } from '../process/process-integration.js'
 
 // `resolveDoctrine`'s `git` calls run inside `log()`'s `.then()` chain; in a
 // non-repo temp dir the first call fails (fast, but not instant), and a
@@ -1583,9 +1586,15 @@ describe('log-sink — the default sink is built lazily from an installed factor
   })
 
   it('refuses the default sink with an error naming the missing factory, and builds nothing', () => {
-    const slot = createDefaultLogSinkSlot('run-a')
-    expect(() => slot.sink()).toThrow(/installDefaultLogSinkFactory/)
-    expect(slot.built()).toBeUndefined()
+    // The test preload registers the process's factory deferred; a process that installs none has nothing registered.
+    registerDeferredLogSinkFactory(() => undefined as unknown as LogSinkFactory)
+    try {
+      const slot = createDefaultLogSinkSlot('run-a')
+      expect(() => slot.sink()).toThrow(/installDefaultLogSinkFactory/)
+      expect(slot.built()).toBeUndefined()
+    } finally {
+      registerDeferredLogSinkFactory(vinayaProcessIntegration.log.loadSinkFactory)
+    }
   })
 
   it('builds the default sink once, on first use, with the run identity fixed when the slot was made', () => {
