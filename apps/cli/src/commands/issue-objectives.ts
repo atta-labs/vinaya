@@ -27,9 +27,3 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
     if (outcome.supersedeUrl) process.stdout.write(`${outcome.supersedeUrl}\n`)
   }
 }
-
-import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
-
-export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'issue objectives edit': { date: '2026-09-14', callsToday: 12, retiresVia: 'forgeWrite' }
-}

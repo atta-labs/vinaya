@@ -88,10 +88,3 @@ export function issueSurfaceCommand(args: string[]): void {
   if (outcome.json) printJson(outcome.set)
   else process.stdout.write(outcome.text)
 }
-
-import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
-
-export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'issue create': { date: '2026-09-11', callsToday: 9, retiresVia: 'forgeWrite' },
-  'issue edit': { date: '2026-09-11', callsToday: 10, retiresVia: 'forgeWrite' }
-}

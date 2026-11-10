@@ -316,12 +316,15 @@ export function printIssueSurface(args: string[]): SurfaceOutcome {
 export type BriefOutcome = { ok: true; brief: string } | { ok: false; missing: string[] }
 
 /** Renders a task's brief; a refusal lists the facts it could not find. */
-export async function renderBrief(input: {
-  trancheSlug: string
-  taskId: string
-  globs?: string[]
-}): Promise<BriefOutcome> {
-  const result = await assembleAndRenderBrief(input.trancheSlug, input.taskId, input.globs)
+export async function renderBrief(
+  input: {
+    trancheSlug: string
+    taskId: string
+    globs?: string[]
+  },
+  assemble: typeof assembleAndRenderBrief = assembleAndRenderBrief
+): Promise<BriefOutcome> {
+  const result = await assemble(input.trancheSlug, input.taskId, input.globs)
   if (!result.ok) return { ok: false, missing: result.missing }
   return { ok: true, brief: result.brief }
 }
@@ -662,19 +665,42 @@ export type ObjectivesOutcome =
  * argument, the Principal gate, a parse, a gate, a forge call — comes back as
  * findings.
  */
-export async function editObjectives(args: string[], io: PlannerIo = {}): Promise<ObjectivesOutcome> {
-  const r = await captureRefusal(() => editObjectivesOrRefuse(args, io))
+export async function editObjectives(
+  args: string[],
+  io: PlannerIo = {},
+  deps: ObjectivesDeps = realObjectivesDeps
+): Promise<ObjectivesOutcome> {
+  const r = await captureRefusal(() => editObjectivesOrRefuse(args, io, deps))
   return r.ok ? r.value : { ok: false, findings: r.errors }
 }
 
-async function editObjectivesOrRefuse(args: string[], io: PlannerIo): Promise<ObjectivesOutcome> {
-  const { issueRef, op, reason, part } = parseArgs(args)
-  refuseUnlessPrincipal(RETRY)
+/** The forge-touching steps the objectives edit runs, replaceable so a test stubs the forge. */
+export interface ObjectivesDeps {
+  forge: PlannerForge
+  requirePrincipal: (retryCommand: string) => void
+  resolvePrincipals: (check: string, retryCommand: string) => string[]
+  fetchIssue: typeof fetchIssueBodyAndComments
+  supersede: typeof prepareTaskOrIssue
+  postComment: typeof postMarkedComment
+}
 
-  const { number, body, title, labels, comments } = fetchIssueBodyAndComments(issueRef)
+export const realObjectivesDeps: ObjectivesDeps = {
+  forge: realPlannerForge,
+  requirePrincipal: refuseUnlessPrincipal,
+  resolvePrincipals: resolvePrincipalsOrRefuse,
+  fetchIssue: (ref) => fetchIssueBodyAndComments(ref),
+  supersede: prepareTaskOrIssue,
+  postComment: postMarkedComment
+}
+
+async function editObjectivesOrRefuse(args: string[], io: PlannerIo, deps: ObjectivesDeps): Promise<ObjectivesOutcome> {
+  const { issueRef, op, reason, part } = parseArgs(args)
+  deps.requirePrincipal(RETRY)
+
+  const { number, body, title, labels, comments } = deps.fetchIssue(issueRef)
   // Resolved before the edit below is written, so a Principal list that does
   // not resolve refuses with nothing changed on the forge.
-  const allowlist = resolvePrincipalsOrRefuse('principal-only', RETRY)
+  const allowlist = deps.resolvePrincipals('principal-only', RETRY)
   const parsed = objectivesOf(body)
   if (!parsed.ok) {
     refuse([
@@ -739,7 +765,7 @@ async function editObjectivesOrRefuse(args: string[], io: PlannerIo): Promise<Ob
         skipFrozenSectionsCheck: true
       },
       io,
-      realPlannerForge
+      deps.forge
     )
     if (!written.ok) {
       if (written.forgeError !== undefined) throw written.forgeError
@@ -761,7 +787,7 @@ async function editObjectivesOrRefuse(args: string[], io: PlannerIo): Promise<Ob
   const frozen = resolveNewestFrozenBrief(comments, allowlist)
   if (frozen !== null) {
     const taskRef = resolveTaskIssueRef(title, labels)
-    const result = await prepareTaskOrIssue(
+    const result = await deps.supersede(
       taskRef !== null
         ? { tranche: taskRef.trancheSlug, n: Number.parseInt(taskRef.taskId, 10), supersede: { reason } }
         : { issue: number, supersede: { reason } }
@@ -785,7 +811,7 @@ async function editObjectivesOrRefuse(args: string[], io: PlannerIo): Promise<Ob
     `Reason: ${reason}`,
     `Version: ${newVersion}`
   ].join('\n')
-  const url = postMarkedComment('issue', issueRef, marker, commentBody)
+  const url = deps.postComment('issue', issueRef, marker, commentBody)
 
   return { ok: true, version: newVersion, url, supersedeUrl }
 }

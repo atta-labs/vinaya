@@ -2173,16 +2173,37 @@ export function fetchForgeIssueContext(
  * (its own write goes through `writeValidatedIssueEdit`, below), and it posts
  * its own superseding `vinaya:brief:v<k+1>` comment after writing — this
  * gate must not refuse the very command it names as the sanctioned escape.
+ *
+ * `frozenSectionChangeOutcome` is the returning form: the refusal findings, or
+ * `[]` when the edit may proceed. The two forge reads beneath it still refuse
+ * internally, so only those two calls run inside a narrow capture scope; the
+ * frozen-section decision itself returns its finding directly.
  */
-/** Returning form of `refuseFrozenSectionChange`: the refusal findings, or `[]` when the edit may proceed. */
 export function frozenSectionChangeOutcome(
   issueRef: string,
   newBody: string | null,
   retryCommand: string,
   skipCheck = false
 ): CheckError[] {
-  const r = captureRefusalSync(() => refuseFrozenSectionChange(issueRef, newBody, retryCommand, skipCheck))
-  return r.ok ? [] : r.errors
+  if (skipCheck || newBody === null) return []
+  const read = captureRefusalSync(() => ({
+    context: fetchForgeIssueContext(issueRef, retryCommand),
+    allowlist: resolvePrincipalsOrRefuse('issue-frozen-brief', retryCommand)
+  }))
+  if (!read.ok) return read.errors
+  const { context, allowlist } = read.value
+  const frozen = resolveNewestFrozenBrief(context.comments, allowlist)
+  if (frozen === null) return []
+  const changed = frozenSectionsChanged(context.body, newBody)
+  if (changed.length === 0) return []
+  const sections = changed.map((s) => `\`## ${s}\``).join(', ')
+  return [
+    makeCheckError(
+      'issue-frozen-brief',
+      `This task Issue's brief is already frozen — the frozen comment is at ${frozen.url}. This edit changes ${sections}, which is locked once frozen. Use \`vinaya issue objectives edit\` for an Objectives change; \`## Surface\`/\`## Parts\`/\`## Documentation\` have no self-serve edit path once frozen — escalate to the Planner to supersede the frozen brief.`,
+      `Revert the ${sections} change(s) in the body, or use \`vinaya issue objectives edit\` for an Objectives change, then re-run \`${retryCommand}\`.`
+    )
+  ]
 }
 
 export function refuseFrozenSectionChange(
@@ -2191,21 +2212,8 @@ export function refuseFrozenSectionChange(
   retryCommand: string,
   skipCheck = false
 ): void {
-  if (skipCheck || newBody === null) return
-  const { body: oldBody, comments } = fetchForgeIssueContext(issueRef, retryCommand)
-  const allowlist = resolvePrincipalsOrRefuse('issue-frozen-brief', retryCommand)
-  const frozen = resolveNewestFrozenBrief(comments, allowlist)
-  if (frozen === null) return
-  const changed = frozenSectionsChanged(oldBody, newBody)
-  if (changed.length === 0) return
-  const sections = changed.map((s) => `\`## ${s}\``).join(', ')
-  refuse([
-    makeCheckError(
-      'issue-frozen-brief',
-      `This task Issue's brief is already frozen — the frozen comment is at ${frozen.url}. This edit changes ${sections}, which is locked once frozen. Use \`vinaya issue objectives edit\` for an Objectives change; \`## Surface\`/\`## Parts\`/\`## Documentation\` have no self-serve edit path once frozen — escalate to the Planner to supersede the frozen brief.`,
-      `Revert the ${sections} change(s) in the body, or use \`vinaya issue objectives edit\` for an Objectives change, then re-run \`${retryCommand}\`.`
-    )
-  ])
+  const errors = frozenSectionChangeOutcome(issueRef, newBody, retryCommand, skipCheck)
+  if (errors.length > 0) refuse(errors)
 }
 
 /**
