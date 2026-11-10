@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { makeCheckError, refuse } from '../../../tools/task-contract/forge/forge-write'
+import { captureRefusal, makeCheckError, refuse } from '../../../tools/task-contract/forge/forge-write'
 import {
   type ObjectivesDeps,
   type PlannerForge,
@@ -290,6 +290,27 @@ describe('editObjectives with a stubbed forge', () => {
     const out = await editObjectives(addArgs, {}, deps)
     expect(out.ok).toBe(false)
     if (!out.ok) expect(out.findings[0]?.check).toBe('forge-comment')
+  })
+})
+
+describe('refusal capture is fail-closed', () => {
+  it('turns a refusal deep in awaited work into findings, never a pass', async () => {
+    const r = await captureRefusal(async () => {
+      await Promise.resolve()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      refuse([finding('deep')])
+      return 'continued'
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors[0]?.check).toBe('deep')
+  })
+
+  it('rethrows an unrelated error rather than reporting a refusal', async () => {
+    await expect(
+      captureRefusal(() => {
+        throw new Error('not a refusal')
+      })
+    ).rejects.toThrow('not a refusal')
   })
 })
 
