@@ -9,7 +9,7 @@
   "apps/cli/src/commands/issue.ts": 5,
   "apps/cli/src/commands/milestone.ts": 12,
   "apps/cli/src/commands/new-noop-check.ts": 3,
-  "apps/cli/src/commands/pr-rule.ts": 8,
+  "apps/cli/src/commands/pr-rule.ts": 6,
   "apps/cli/src/commands/quickstart.ts": 2,
   "apps/cli/src/commands/task-run.ts": 19,
   "apps/cli/src/commands/task-status.ts": 7,

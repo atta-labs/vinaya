@@ -24,21 +24,18 @@ import {
   countMarkerComments,
   locateBody,
   makeCheckError,
+  objectivesVersionMarkerPrefixes,
   postMarkedComment,
   refuse,
   refuseUnlessPrincipal,
   resolvePrincipalsOrRefuse,
   writeValidatedIssueEdit
 } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
-import {
-  OBJECTIVES_VERSION_MARKER,
-  markerSpellings
-} from '../../../../harness/processes/vinaya-strict/tools/legacy-markers'
 
 const RETRY =
   'vinaya issue objectives edit <n> --add "<sentence>" | --drop O<k> | --replace O<k> "<sentence>" --reason "<text>"'
 /** The objectives-version marker's opening, in every spelling, the current one first — the writer posts the first; `k` counts them all, so a version posted before the rename is never reused. */
-const MARKER_PREFIXES = markerSpellings(OBJECTIVES_VERSION_MARKER).map((m) => `<!-- ${m}:v`)
+const MARKER_PREFIXES = objectivesVersionMarkerPrefixes()
 const MARKER_PREFIX = MARKER_PREFIXES[0] as string
 
 type EditOp =

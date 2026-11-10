@@ -104,7 +104,13 @@ import {
 } from '../brief-validation'
 import type { GateCutovers } from '../gate-cutovers'
 import { checkMilestoneShape } from '../milestone-validation'
-import { DEFERRED_FINDINGS_MARKER, markerSpellings } from '../../legacy-markers'
+import {
+  DEFERRED_FINDINGS_MARKER,
+  OBJECTIVES_VERSION_MARKER,
+  PRINCIPAL_RULING_MARKER,
+  markerSpellings
+} from '../../legacy-markers'
+import { principalRulingMarker } from '../ruling-ordinal'
 import { DEFERRAL_REASON_TEXT, type DeferralReason } from '../review-policy'
 import {
   deriveBuiltinCrossCuttingDefaults,
@@ -3149,6 +3155,19 @@ export function refuseUnlessPrincipal(retryCommand: string): void {
 export function countMarkerComments(bodies: string[], prefix: string | readonly string[]): number {
   const prefixes = typeof prefix === 'string' ? [prefix] : prefix
   return bodies.filter((b) => prefixes.some((p) => b.startsWith(p))).length
+}
+
+/** The opening of a ruling marker on pull request `prRef`, in every spelling, the current one first — what `pr rule` counts before choosing its ordinal. */
+export function rulingMarkerPrefixes(prRef: string): readonly string[] {
+  return markerSpellings(PRINCIPAL_RULING_MARKER).map((m) => `<!-- ${m}:${prRef}-`)
+}
+
+/** The ruling marker `pr rule` posts — always the current spelling. */
+export { principalRulingMarker as rulingMarker }
+
+/** The opening of an objectives-version marker, in every spelling, the current one first — the writer posts the first; `k` counts them all. */
+export function objectivesVersionMarkerPrefixes(): readonly string[] {
+  return markerSpellings(OBJECTIVES_VERSION_MARKER).map((m) => `<!-- ${m}:v`)
 }
 
 /** The exact bytes `postMarkedComment` posts — exported so a caller computing a payload digest for reconciliation (`EffectIdentity.payloadDigest`, `harness/kernel/effects/effects.ts`) hashes the SAME string this function actually sends, rather than a hand-reconstructed copy that could drift from it. */
