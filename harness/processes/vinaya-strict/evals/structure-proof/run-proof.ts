@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
+import { JUNIT_REPORT_ENV } from '../../../../kernel/gates/ring0-hooks/pre-push/junit-store.js'
 
 // The frozen halt, inspect, resume and cancel proof, as one command every structural move reruns. It runs each test
 // `proof-list.json` names, file by file, and fails when a listed test fails, is skipped, or no longer exists under its
@@ -122,7 +123,8 @@ function runFile(file: string, entries: readonly ProofEntry[], reportDir: string
       '--reporter=junit',
       `--reporter-outfile=${report}`
     ],
-    { cwd, stdio: ['ignore', 'inherit', 'inherit'] }
+    // Each bunfig.toml names a fixed JUnit path that the test preload links to the file this variable names.
+    { cwd, stdio: ['ignore', 'inherit', 'inherit'], env: { ...process.env, [JUNIT_REPORT_ENV]: report } }
   )
   return existsSync(report) ? parseJunit(readFileSync(report, 'utf8')) : []
 }

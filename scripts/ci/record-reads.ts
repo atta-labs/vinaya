@@ -56,6 +56,7 @@ import {
 import { readTestInventory, type TestIdentity } from '../test-suites/inventory-check.js'
 import { GROUP_TIME_LIMIT_MS, groupOutcomeOf, runnerCommand } from '../test-suites/schedule.js'
 import { RECORD_FILE } from '../test-suites/read-records.js'
+import { JUNIT_REPORT_ENV } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store.js'
 
 /** The syscall filter the trace is taken with. */
 export const STRACE_ARGS = ['-f', '-yy', '-qq', '-s', '4096', '-e', 'trace=%file,getdents64'] as const
@@ -207,7 +208,14 @@ async function recordTest(
   const traceFile = join(scratch, `${index}.trace`)
   const command = ['strace', ...STRACE_ARGS, '-o', traceFile, '--', ...runnerCommand(group, report)]
   const cwd = join(repoRoot, group.cwd)
-  const child = Bun.spawn(command, { cwd, stdout: 'ignore', stderr: 'ignore', env: process.env })
+  // Each bunfig.toml names a fixed JUnit path that the test preload links to the file this variable names;
+  // without it the report lands elsewhere and the run reads back as not passed.
+  const child = Bun.spawn(command, {
+    cwd,
+    stdout: 'ignore',
+    stderr: 'ignore',
+    env: { ...process.env, [JUNIT_REPORT_ENV]: report }
+  })
   const timer = setTimeout(() => child.kill('SIGKILL'), GROUP_TIME_LIMIT_MS)
   const status = await child.exited
   clearTimeout(timer)
