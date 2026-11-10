@@ -143,7 +143,13 @@ refused as an unexpected base by the base check itself, and undoing that rebase
 publishes again against the base the turn started from. The recorded base moves
 forward — to a merge base that descends from it — only at a Developer turn
 start and after a publication that pushed (`resolvePublicationBase`), or
-through the fast-forward-onto-the-default-tip rule below. A retry of the
+through the fast-forward-onto-the-default-tip rule below, or when the
+Developer merged the moved default branch into the task branch: the expected
+base is an ancestor of the new base, the new base is an ancestor of the default
+branch's tip, and the worktree head descends from both the recorded head and
+the new base (four `gitIsAncestor` facts). The driver then re-records the new
+base and head, so changed paths are measured from the new base. Any other moved
+base, or an unreadable fact, is still refused. A retry of the
 driver's own commit whose push the pre-push hook refused is checked against
 that commit's own base, so a merge from the default branch it carries still
 publishes. <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts contains:const base = await readPublicationBase(worktreeHead) -->
