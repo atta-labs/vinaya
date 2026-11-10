@@ -16,7 +16,7 @@ describe('renderPublishedMarker', () => {
       { rounds: [round(1, null), round(2, { value: 80 }), round(3, 'absent')] },
       HEAD
     )
-    expect(marker).toBe(`<!-- aeg:loop:published head=${HEAD} confidence=1:-,2:80,3:absent -->`)
+    expect(marker).toBe(`<!-- vinaya:loop:published head=${HEAD} confidence=1:-,2:80,3:absent -->`)
   })
 
   it('posts no round table and no finding text', () => {

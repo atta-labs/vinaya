@@ -1,8 +1,9 @@
 /**
  * The one module that spells the retired marker names.
  *
- * Pull-request bodies and archive comments written before the rename carry the
- * old region prefix and the old provenance heading, and closed history is never
+ * Pull-request bodies, archive comments and forge comment markers written
+ * before the rename carry the old region prefix, the old provenance heading and
+ * the old comment-marker prefix, and closed history is never
  * rewritten, so every reader accepts both spellings while every writer emits
  * only the new one. The kernel's region grammar names no spelling of its own —
  * its callers pass the prefixes they accept, and they take them from here.
@@ -24,11 +25,71 @@ export const PROVENANCE_HEADING: MarkerSpelling = {
   current: '### Vinaya provenance'
 }
 
+/**
+ * The prefix of a forge comment marker: `<!-- <prefix>:<family>… -->` on a
+ * comment's, or a tracker Issue body's, first line. Rulings, round records and
+ * frozen briefs on closed history keep the old prefix, so every reader matches
+ * both, and every ordinal or version counted from those comments counts both
+ * spellings together.
+ */
+export const COMMENT_MARKER_PREFIX: MarkerSpelling = { old: 'aeg', current: 'vinaya' }
+
+function commentMarkerFamily(name: string): MarkerSpelling {
+  return { old: `${COMMENT_MARKER_PREFIX.old}:${name}`, current: `${COMMENT_MARKER_PREFIX.current}:${name}` }
+}
+
+/** The frozen brief on a task Issue: `<!-- …:brief:v<k> -->`. */
+export const FROZEN_BRIEF_MARKER: MarkerSpelling = commentMarkerFamily('brief')
+/** The Developer's round record: `<!-- …:developer:round-<n> -->`. */
+export const DEVELOPER_ROUND_MARKER: MarkerSpelling = commentMarkerFamily('developer:round')
+/** The Developer's stop record: `<!-- …:developer:stop -->`. */
+export const DEVELOPER_STOP_MARKER: MarkerSpelling = commentMarkerFamily('developer:stop')
+/** The loop's published record: `<!-- …:loop:published head=<sha> confidence=<…> -->`. */
+export const LOOP_PUBLISHED_MARKER: MarkerSpelling = commentMarkerFamily('loop:published')
+/** The loop's paused record: `<!-- …:loop:paused:<reason> -->`. */
+export const LOOP_PAUSED_MARKER: MarkerSpelling = commentMarkerFamily('loop:paused')
+/** The loop's unpushed-work-resume record: `<!-- …:loop:unpushed-work-resume -->`. */
+export const LOOP_UNPUSHED_WORK_RESUME_MARKER: MarkerSpelling = commentMarkerFamily('loop:unpushed-work-resume')
+/** The Principal's ruling: `<!-- …:principal:ruling:<pr>-<k> -->`. */
+export const PRINCIPAL_RULING_MARKER: MarkerSpelling = commentMarkerFamily('principal:ruling')
+/** An objectives version: `<!-- …:objectives:v<k> -->`. */
+export const OBJECTIVES_VERSION_MARKER: MarkerSpelling = commentMarkerFamily('objectives')
+/** The deferred-findings tracker Issue's first body line: `<!-- …:deferred-findings:pr-<n> -->`. */
+export const DEFERRED_FINDINGS_MARKER: MarkerSpelling = commentMarkerFamily('deferred-findings')
+
 /** Every marker family and its old-to-new pair, for a program that rewrites old markers. */
 export const MARKER_FAMILIES = {
   regionPrefix: REGION_PREFIX,
-  provenanceHeading: PROVENANCE_HEADING
+  provenanceHeading: PROVENANCE_HEADING,
+  commentMarkerPrefix: COMMENT_MARKER_PREFIX,
+  frozenBrief: FROZEN_BRIEF_MARKER,
+  developerRound: DEVELOPER_ROUND_MARKER,
+  developerStop: DEVELOPER_STOP_MARKER,
+  loopPublished: LOOP_PUBLISHED_MARKER,
+  loopPaused: LOOP_PAUSED_MARKER,
+  loopUnpushedWorkResume: LOOP_UNPUSHED_WORK_RESUME_MARKER,
+  principalRuling: PRINCIPAL_RULING_MARKER,
+  objectivesVersion: OBJECTIVES_VERSION_MARKER,
+  deferredFindings: DEFERRED_FINDINGS_MARKER
 } as const
+
+/** The prefix a comment-marker writer emits. */
+export const COMMENT_MARKER_PREFIX_CURRENT: string = COMMENT_MARKER_PREFIX.current
+
+/** The comment-marker prefixes a reader accepts: the current one first, then the retired one. */
+export const COMMENT_MARKER_PREFIXES: readonly string[] = [COMMENT_MARKER_PREFIX.current, COMMENT_MARKER_PREFIX.old]
+
+/**
+ * A non-capturing regular-expression alternation of every accepted
+ * comment-marker prefix — `(?:vinaya|aeg)` — for a reader's marker pattern. It
+ * captures nothing, so a pattern that adopts it keeps its own group numbers.
+ */
+export const COMMENT_MARKER_PREFIX_PATTERN: string = `(?:${COMMENT_MARKER_PREFIXES.join('|')})`
+
+/** Both spellings of one marker family, the current one first — for a reader matching by literal text (a `startsWith`, an `includes`, a search phrase). */
+export function markerSpellings(family: MarkerSpelling): readonly string[] {
+  return [family.current, family.old]
+}
 
 /** The prefix a region writer emits. */
 export const REGION_PREFIX_CURRENT: string = REGION_PREFIX.current

@@ -104,6 +104,13 @@ import {
 } from '../brief-validation'
 import type { GateCutovers } from '../gate-cutovers'
 import { checkMilestoneShape } from '../milestone-validation'
+import {
+  DEFERRED_FINDINGS_MARKER,
+  OBJECTIVES_VERSION_MARKER,
+  PRINCIPAL_RULING_MARKER,
+  markerSpellings
+} from '../../legacy-markers'
+import { principalRulingMarker } from '../ruling-ordinal'
 import { DEFERRAL_REASON_TEXT, type DeferralReason } from '../review-policy'
 import {
   deriveBuiltinCrossCuttingDefaults,
@@ -2064,7 +2071,7 @@ export function fetchForgeIssueContext(
  * `skipCheck`, when true, is `issue objectives edit`'s own escape hatch: that
  * command IS the sanctioned way to change `## Objectives` on a frozen task
  * (its own write goes through `writeValidatedIssueEdit`, below), and it posts
- * its own superseding `aeg:brief:v<k+1>` comment after writing — this
+ * its own superseding `vinaya:brief:v<k+1>` comment after writing — this
  * gate must not refuse the very command it names as the sanctioned escape.
  */
 export function refuseFrozenSectionChange(
@@ -3132,15 +3139,39 @@ export function refuseUnlessPrincipal(retryCommand: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Marked comments — the `<!-- aeg:… -->`-prefixed comment shape `pr.ts`'s
+// Marked comments — the `<!-- vinaya:… -->`-prefixed comment shape `pr.ts`'s
 // `postBriefComment` established for the brief comment, generalised so
 // `issue objectives edit` and `pr rule` can post their own marked
 // comments without duplicating the temp-file-then-`gh comment` dance.
 // ---------------------------------------------------------------------------
 
-/** How many of `bodies` open with `prefix` — the marker-numbering scheme every marked-comment poster uses (`k = count + 1`). Counted on the forge at post time, never derived from a local file. */
-export function countMarkerComments(bodies: string[], prefix: string): number {
-  return bodies.filter((b) => b.startsWith(prefix)).length
+/**
+ * How many of `bodies` open with `prefix`, or with any one of several
+ * prefixes — the marker-numbering scheme every marked-comment poster uses
+ * (`k = count + 1`). A caller passes every spelling of its marker so a comment
+ * posted before the rename is counted with the new ones and no number is
+ * reused. Counted on the forge at post time, never derived from a local file.
+ */
+export function countMarkerComments(bodies: string[], prefix: string | readonly string[]): number {
+  const prefixes = typeof prefix === 'string' ? [prefix] : prefix
+  return bodies.filter((b) => prefixes.some((p) => b.startsWith(p))).length
+}
+
+/**
+ * The marker the next ruling on pull request `prRef` carries, always in the
+ * current spelling: `k` is one more than the ruling comments already on it,
+ * counted in every spelling, so a ruling posted before the rename keeps its
+ * number and none is reused. `bodies` are the pull request's comment bodies,
+ * read on the forge at post time.
+ */
+export function nextRulingMarker(prRef: string, bodies: string[]): string {
+  const prefixes = markerSpellings(PRINCIPAL_RULING_MARKER).map((m) => `<!-- ${m}:${prRef}-`)
+  return principalRulingMarker(Number(prRef), countMarkerComments(bodies, prefixes) + 1)
+}
+
+/** The opening of an objectives-version marker, in every spelling, the current one first — the writer posts the first; `k` counts them all. */
+export function objectivesVersionMarkerPrefixes(): readonly string[] {
+  return markerSpellings(OBJECTIVES_VERSION_MARKER).map((m) => `<!-- ${m}:v`)
 }
 
 /** The exact bytes `postMarkedComment` posts — exported so a caller computing a payload digest for reconciliation (`EffectIdentity.payloadDigest`, `harness/kernel/effects/effects.ts`) hashes the SAME string this function actually sends, rather than a hand-reconstructed copy that could drift from it. */
@@ -3297,7 +3328,12 @@ export type DeferredFindingsIssueRef = { issue: number }
 
 /** The hidden marker naming the pull request, on the tracking Issue's first body line — how the Issue is FOUND on a republish, never its title. */
 export function deferredFindingsMarker(prNumber: number): string {
-  return `<!-- aeg:deferred-findings:pr-${prNumber} -->`
+  return `<!-- ${DEFERRED_FINDINGS_MARKER.current}:pr-${prNumber} -->`
+}
+
+/** Every spelling of the tracker marker for `prNumber`, the current one first — a tracker opened before the rename is still the one tracker for its pull request. */
+export function deferredFindingsMarkers(prNumber: number): readonly string[] {
+  return markerSpellings(DEFERRED_FINDINGS_MARKER).map((m) => `<!-- ${m}:pr-${prNumber} -->`)
 }
 
 /** The tracking Issue's title — human-facing only; the marker, never this, is what a republish matches on. */
@@ -3372,7 +3408,7 @@ type ForgeIssueRow = { number: number; body: string | null; state: string }
  * across every page; the REST `state` is lower-case (`open`/`closed`), which
  * the caller's own `toUpperCase()` reopen check already accounts for.
  */
-function findDeferredFindingsIssue(gh: GhRunner, marker: string): ForgeIssueRow | null {
+function findDeferredFindingsIssue(gh: GhRunner, markers: readonly string[]): ForgeIssueRow | null {
   const raw = gh([
     'api',
     '--paginate',
@@ -3384,7 +3420,7 @@ function findDeferredFindingsIssue(gh: GhRunner, marker: string): ForgeIssueRow 
     .split('\n')
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line) as ForgeIssueRow)
-  return rows.find((r) => (r.body ?? '').includes(marker)) ?? null
+  return rows.find((r) => markers.some((marker) => (r.body ?? '').includes(marker))) ?? null
 }
 
 function writeIssueBodyFromFile(gh: GhRunner, ghCmd: string[], body: string): string {
@@ -3424,10 +3460,9 @@ export function upsertDeferredFindingsIssue(
   gh: GhRunner = realGhRunner
 ): DeferredFindingsIssueRef {
   const { prNumber, entries } = input
-  const marker = deferredFindingsMarker(prNumber)
   const body = renderDeferredFindingsIssueBody(prNumber, entries)
   ensureDeferredFindingsLabel(gh)
-  const existing = findDeferredFindingsIssue(gh, marker)
+  const existing = findDeferredFindingsIssue(gh, deferredFindingsMarkers(prNumber))
   if (existing) {
     if (existing.state.toUpperCase() === 'CLOSED') gh(['issue', 'reopen', String(existing.number)])
     if ((existing.body ?? '').trim() !== body.trim())

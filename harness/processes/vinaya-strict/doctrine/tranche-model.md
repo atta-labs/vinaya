@@ -29,7 +29,7 @@ Every fact in Vinaya lives in exactly **one** place. Nothing is duplicated; no a
 | **The forge Issue** | Task identity + metadata (project label, ticket link, its own `Depends-on` / `Conflicts-with` edges) | Planner (at plan time) |
 | **The tranche's label and Milestone** | Planning *grouping* only — which Issues form the tranche, and the goal they serve | Planner (at plan time) |
 | **The Git forge** (branch / PR / review / merge state) | All live execution *status* — derived, never stored | the act of working (opening a branch, a PR, a review, a merge) |
-| **The task Issue's `aeg:brief:v1` comment** | The just-in-time brief — the task's full execution context | The Planner's dispatch act, once, when work starts (mechanically rendered, never hand-typed) |
+| **The task Issue's `vinaya:brief:v1` comment** | The just-in-time brief — the task's full execution context | The Planner's dispatch act, once, when work starts (mechanically rendered, never hand-typed) |
 
 The cardinal rule, stated once and enforced everywhere below: **the forge's live facts hold what is happening; the Issue and its Milestone hold the plan. Never copy "what is happening" into the Issue or the Milestone.**
 
@@ -100,7 +100,7 @@ The file held **only** what the forge models poorly: the task→Issue mapping an
 
 **What the archive still holds, and what a pre-cutover tranche still needs.** A tranche planned before the cutover that still carries its topology file is archived the old way, in addition to closing its Milestone: the Tranche Archivist adds `Lifecycle: complete` after the file's heading and moves it from `aeg-root/tranches/<name>.md` to `aeg-root/tranches/completed/<name>.md`, its `<name>.tokens.md` ledger beside it; for such a tranche the Planner's readiness gate also confirms the moved file exists. A forge-native tranche carries no file to move or check.
 
-**The per-project state directory went with it.** `aeg-project/` once held each unit's living state — `state.md` (the active-work pointer), `lessons.md` and `retrospectives/` (close-out observations), and committed `briefs/`. Each has a forge home now: active work is derived from Issues, branches and pull requests; a retrospective is a comment on the pinned lessons Issue; a brief is the task Issue's frozen `aeg:brief:v1` comment; and anything genuinely non-derivable is an ordinary open Issue, closed when resolved.
+**The per-project state directory went with it.** `aeg-project/` once held each unit's living state — `state.md` (the active-work pointer), `lessons.md` and `retrospectives/` (close-out observations), and committed `briefs/`. Each has a forge home now: active work is derived from Issues, branches and pull requests; a retrospective is a comment on the pinned lessons Issue; a brief is the task Issue's frozen `vinaya:brief:v1` comment; and anything genuinely non-derivable is an ordinary open Issue, closed when resolved.
 
 Template:
 
@@ -169,7 +169,7 @@ The Planner writes no briefs (those are just-in-time, §7), writes no status (th
 The brief is the task's full execution context. It has one home, and it is not the PR:
 
 - **Before dispatch — nowhere persistent.** It does not exist yet. The task Issue carries the Planner's rationale (durable conclusions, written at plan time), never the brief itself — a brief in the Issue's own body would age, attract edits, and become stale planning documentation.
-- **At dispatch — the task Issue's `aeg:brief:v1` comment, posted once, frozen.** The Planner's dispatch act runs `vinaya-task-brief`, which mechanically renders the brief from the Issue's rationale and judgment sections (consuming the `planner-developer` contract) and posts it as a comment on that same Issue, before the Developer's worktree exists. That comment is the brief's permanent, durable home, attached to exactly the work it governs, and what the Developer, Reviewer, and Archivist all read. It is never carried in the PR body, which holds only the Developer's report; a reference copy may ride along inside a collapsed `<details>` block there, but the frozen comment is the source of truth.
+- **At dispatch — the task Issue's `vinaya:brief:v1` comment, posted once, frozen.** The Planner's dispatch act runs `vinaya-task-brief`, which mechanically renders the brief from the Issue's rationale and judgment sections (consuming the `planner-developer` contract) and posts it as a comment on that same Issue, before the Developer's worktree exists. That comment is the brief's permanent, durable home, attached to exactly the work it governs, and what the Developer, Reviewer, and Archivist all read. It is never carried in the PR body, which holds only the Developer's report; a reference copy may ride along inside a collapsed `<details>` block there, but the frozen comment is the source of truth.
 
 Retry reads the same frozen comment; no re-render, no rewrite.
 

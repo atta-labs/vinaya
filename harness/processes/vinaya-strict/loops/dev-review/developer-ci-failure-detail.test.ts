@@ -188,7 +188,7 @@ describe('the red-CI retry message carries each failed check’s log tail', () =
     expect(prompt).toContain('Tail of the job log of `shard 1` (run 101)')
     expect(prompt).toContain('(fail) dispatch > names the failing test')
     expect(prompt).not.toContain(TOKEN)
-    expect(prompt).not.toContain('<!-- aeg:principal:ruling')
+    expect(prompt).not.toContain('<!-- vinaya:principal:ruling')
     expect(prompt).toContain('Job log of `shard 2` (run 102): could not be read.')
     // Only the failed runs were read — never a passing check.
     expect([...new Set(tailReads)].sort()).toEqual([101, 102])

@@ -37,7 +37,7 @@
  */
 
 import { PUBLISHED_MARKER_LINE } from '../tools/dev-review-policy/journal-reconstruction'
-import { REGION_PREFIXES } from '../tools/legacy-markers'
+import { COMMENT_MARKER_PREFIX_PATTERN, REGION_PREFIXES } from '../tools/legacy-markers'
 import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
 import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import { spawn, spawnSync } from 'node:child_process'
@@ -109,8 +109,11 @@ export const WHOLE_LOOP_GRADERS = WHOLE_LOOP_GRADER_IDS.map((id) => {
 const WRITE_PERMISSIONS = new Set(['ADMIN', 'MAINTAIN', 'WRITE'])
 /** Pauses the driver lifts on its own after a bounded backoff; every other pause waits on a ruling. */
 const SELF_RESUMING_PAUSES = new Set(['infrastructure', 'stale_driver'])
-const PAUSE_MARKER = /<!--\s*aeg:loop:paused:([a-z_]+)\s*-->/i
-const DEVELOPER_ROUND_MARKER = /<!--\s*aeg:developer:round-(\d+)\s*-->/gi
+const PAUSE_MARKER = new RegExp(`<!--\\s*${COMMENT_MARKER_PREFIX_PATTERN}:loop:paused:([a-z_]+)\\s*-->`, 'i')
+const DEVELOPER_ROUND_MARKER = new RegExp(
+  `<!--\\s*${COMMENT_MARKER_PREFIX_PATTERN}:developer:round-(\\d+)\\s*-->`,
+  'gi'
+)
 /** A check conclusion that is not a failure, the set the driver's own check reading counts as green. */
 const PASSING_CHECK_STATES = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED'])
 const PENDING_CHECK_STATES = new Set(['', 'PENDING', 'EXPECTED', 'QUEUED', 'IN_PROGRESS', 'WAITING', 'REQUESTED'])

@@ -7,6 +7,7 @@
  */
 
 import type { PauseReason } from '../../../../tools/dev-review-policy/types'
+import { COMMENT_MARKER_PREFIX_CURRENT } from '../../../../tools/legacy-markers'
 import { unlinkSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { dirname } from 'node:path'
@@ -191,9 +192,9 @@ export function sanitizePublicPauseDetail(raw: string): string {
 const SANDBOX_REFUSED_COMMENT_REMEDY =
   "the agent's sandbox could not run a command on this host, which only a change to the host fixes (the escalation packet names the remedy)."
 
-/** Exactly `<!-- aeg:loop:paused:<reason> -->` — carries no verdict grammar (Traps to avoid). */
+/** Exactly `<!-- vinaya:loop:paused:<reason> -->` — carries no verdict grammar (Traps to avoid). */
 export function pauseMarker(reason: PauseReason): string {
-  return `<!-- aeg:loop:paused:${reason} -->`
+  return `<!-- ${COMMENT_MARKER_PREFIX_CURRENT}:loop:paused:${reason} -->`
 }
 
 /**

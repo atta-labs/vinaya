@@ -8,6 +8,7 @@
  * (`../verdict-extraction`) can read it as a real verdict.
  */
 
+import { COMMENT_MARKER_PREFIX_CURRENT } from '../legacy-markers'
 import { PUBLISHED_MARKER_LINE } from './journal-reconstruction'
 import type { Confidence, Journal } from './types'
 
@@ -26,13 +27,13 @@ function confidenceCell(confidence: Confidence | null): string {
 }
 
 /**
- * The published marker: `<!-- aeg:loop:published head=<sha> confidence=1:-,2:80,3:absent -->`.
+ * The published marker: `<!-- vinaya:loop:published head=<sha> confidence=1:-,2:80,3:absent -->`.
  * Each round contributes `<round>:<cell>` — a percentage, `absent` (asked, no
  * readable statement) or `-` (never asked).
  */
 export function renderPublishedMarker(journal: Journal, head: string): string {
   const confidence = journal.rounds.map((record) => `${record.round}:${confidenceCell(record.confidence)}`).join(',')
-  return `<!-- aeg:loop:published head=${head} confidence=${confidence} -->`
+  return `<!-- ${COMMENT_MARKER_PREFIX_CURRENT}:loop:published head=${head} confidence=${confidence} -->`
 }
 
 /**

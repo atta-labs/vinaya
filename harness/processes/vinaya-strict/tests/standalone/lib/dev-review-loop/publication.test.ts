@@ -237,12 +237,14 @@ describe('publicationComment — the loop posts no round table (O1, O2)', () => 
   }
 
   it('is the hidden marker line alone when nothing was deferred — no table, no counts, no outcome', () => {
-    expect(publicationComment(journal, 'abc1234')).toBe('<!-- aeg:loop:published head=abc1234 confidence=1:-,2:90 -->')
+    expect(publicationComment(journal, 'abc1234')).toBe(
+      '<!-- vinaya:loop:published head=abc1234 confidence=1:-,2:90 -->'
+    )
   })
 
   it('adds one sentence linking the deferred-findings Issue, and nothing else, when one was opened or updated', () => {
     expect(publicationComment(journal, 'abc1234', { issue: 77 } as never)).toBe(
-      '<!-- aeg:loop:published head=abc1234 confidence=1:-,2:90 -->\n\nDeferred findings that no longer block a round are tracked in #77.'
+      '<!-- vinaya:loop:published head=abc1234 confidence=1:-,2:90 -->\n\nDeferred findings that no longer block a round are tracked in #77.'
     )
   })
 

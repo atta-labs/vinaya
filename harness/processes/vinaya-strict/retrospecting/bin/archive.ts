@@ -478,7 +478,7 @@ export function resolveTaskMilestone(issues: readonly LabeledIssueRef[]): TaskMi
 }
 
 /**
- * The highest Developer round marker (`<!-- aeg:developer:round-<n> -->`,
+ * The highest Developer round marker (`<!-- vinaya:developer:round-<n> -->`,
  * `@attalabs/aeg-core`'s `parseDeveloperRoundMarker`) posted on a merged
  * task PR — `1` when none is found, since a task that merged on its first
  * round never had a reason to post one.

@@ -320,7 +320,7 @@ describe('vinaya issue objectives edit', () => {
     expect(editedBody).toContain('Intro text before the Objectives section.')
 
     const posted = readFileSync(commentsLogPath, 'utf-8')
-    expect(posted).toContain('<!-- aeg:objectives:v1 -->')
+    expect(posted).toContain('<!-- vinaya:objectives:v1 -->')
     expect(posted).toContain('Reason: scope grew')
     expect(posted).toMatch(/Version: [0-9a-f]{64}/)
   })
@@ -406,7 +406,7 @@ describe('vinaya issue objectives edit', () => {
     )
     expect(r.status).toBe(0)
     const posted = readFileSync(commentsLogPath, 'utf-8')
-    expect(posted).toContain('<!-- aeg:objectives:v2 -->')
+    expect(posted).toContain('<!-- vinaya:objectives:v2 -->')
   })
 
   it('refuses when the authenticated actor is not an allowlisted principal — nothing written or posted', () => {
@@ -985,10 +985,10 @@ process.exit(1)
 
     const posted = readFileSync(commentsLogPath, 'utf-8')
     // Both comments landed: the objectives audit comment...
-    expect(posted).toContain('<!-- aeg:objectives:v1 -->')
+    expect(posted).toContain('<!-- vinaya:objectives:v1 -->')
     expect(posted).toContain('Reason: scope grew on a backlog issue')
     // ...and the superseding v2 brief, naming the v1 predecessor.
-    expect(posted).toContain('<!-- aeg:brief:v2 -->')
+    expect(posted).toContain('<!-- vinaya:brief:v2 -->')
     expect(posted).toMatch(/Supersedes: .*scope grew on a backlog issue/)
     // Two separate URLs on stdout — the objectives comment, then the brief.
     const lines = r.stdout.trim().split('\n')

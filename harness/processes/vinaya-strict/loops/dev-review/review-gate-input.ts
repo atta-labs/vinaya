@@ -152,7 +152,7 @@ type Resolved<T> = { ok: true; value: T } | { ok: false; failure: ReviewGateInpu
 /**
  * The pause-bound ruling the newest review round was frozen with — never read
  * from the verdicts being judged. Before any reviewer runs, the loop posts
- * its round comment (`<!-- aeg:developer:round-<n> -->`) carrying the frozen
+ * its round comment (`<!-- vinaya:developer:round-<n> -->`) carrying the frozen
  * manifest's `Pause-bound ruling:` line, which the loop itself took from the
  * resolution its resume consumed. This reads that line from the
  * latest principal-authored round comment with the highest round number, then

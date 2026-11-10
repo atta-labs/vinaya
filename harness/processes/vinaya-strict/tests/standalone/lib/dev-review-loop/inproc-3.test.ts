@@ -297,7 +297,7 @@ describe('devReviewLoop — a paused loop for reason escalation still logs its c
     // the first.
     expect(world.postedComments.length).toBeGreaterThan(0)
     const pauseComment = world.postedComments[world.postedComments.length - 1]
-    expect(pauseComment?.body).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
+    expect(pauseComment?.body).toMatch(/^<!-- vinaya:loop:paused:escalation -->$/m)
     // The escalation pause carries no `detail` from `assessRound`; the
     // driver narrates it from the round's own verdicts, naming which role
     // escalated.

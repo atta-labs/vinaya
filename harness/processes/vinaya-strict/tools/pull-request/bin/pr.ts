@@ -132,7 +132,7 @@ function fetchPrForgeContext(prRef: string): { changedFiles: string[]; branch: s
 }
 
 /**
- * The brief now lives on the Issue as the frozen `aeg:brief:v1` comment,
+ * The brief now lives on the Issue as the frozen `vinaya:brief:v1` comment,
  * posted by `dispatchTask` (`lib/dispatch-task.ts`) —
  * `pr create` no longer splits a brief section out of the PR body, and never
  * posts a second copy of it as a PR comment. A body still carrying either
@@ -163,7 +163,7 @@ function legacyBriefMarkerErrors(body: string, retryCommand: string): CheckError
   return [
     makeCheckError(
       'pr-brief-comment',
-      `body carries the retired brief-split marker(s) (${found.join(', ')}) — the brief lives on the Issue's \`aeg:brief:v1\` comment now, never split out of the PR body.`,
+      `body carries the retired brief-split marker(s) (${found.join(', ')}) — the brief lives on the Issue's \`vinaya:brief:v1\` comment now, never split out of the PR body.`,
       `Remove the \`## Reference\` section and its markers from the body (see \`harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md\`), then re-run \`${retryCommand}\`.`
     )
   ]
@@ -352,7 +352,7 @@ export async function prCreateCommand(args: string[]): Promise<void> {
     ])
   }
 
-  // No split any more: the brief lives on the Issue's `aeg:brief:v1`
+  // No split any more: the brief lives on the Issue's `vinaya:brief:v1`
   // comment, never riding along inside the PR body — `body` is simply the
   // raw body every gate below grades and `gh` receives.
   const body = rawBody

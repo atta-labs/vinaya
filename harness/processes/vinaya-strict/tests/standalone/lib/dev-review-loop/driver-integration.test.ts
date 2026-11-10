@@ -234,7 +234,7 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
       const files = postedCommentFiles(home)
       const summaryFile = files[files.length - 1] as string
       const summary = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile), 'utf8')
-      expect(summary).toMatch(/^<!-- aeg:loop:published head=\S+ confidence=1:\S+,2:\S+ -->$/m)
+      expect(summary).toMatch(/^<!-- vinaya:loop:published head=\S+ confidence=1:\S+,2:\S+ -->$/m)
       expect(summary).not.toContain('| round |')
     },
     45000
@@ -636,7 +636,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
         join(home, '.fake-gh-posted-comments', roundCommentFile as string),
         'utf8'
       )
-      expect(roundCommentPosted).toMatch(/^<!-- aeg:developer:round-1 -->$/m)
+      expect(roundCommentPosted).toMatch(/^<!-- vinaya:developer:round-1 -->$/m)
       expect(roundCommentPosted).toMatch(new RegExp(`^Head: ${HEAD_SHA}$`, 'm'))
 
       const reviewerPosted = readFileSync(join(home, '.fake-gh-posted-comments', reviewerFile as string), 'utf8')
@@ -647,7 +647,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
       expect(securityPosted).toMatch(/^VERDICT: PASS$/m)
 
       const summaryPosted = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile as string), 'utf8')
-      expect(summaryPosted).toMatch(/^<!-- aeg:loop:published head=\S+ confidence=1:\S+ -->$/m)
+      expect(summaryPosted).toMatch(/^<!-- vinaya:loop:published head=\S+ confidence=1:\S+ -->$/m)
       expect(summaryPosted).not.toContain('| round |')
       expect(summaryPosted).not.toMatch(/^VERDICT:/m)
       expect(summaryPosted).not.toMatch(/^Judged head:/m)
@@ -1354,7 +1354,7 @@ describe('devReviewLoop — O1 (`[task-operator-v1]`/Issue #662): the pause comm
       const pausedFiles = postedCommentFiles(home)
       expect(pausedFiles).toHaveLength(2)
       const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
-      expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
+      expect(pauseComment).toMatch(/^<!-- vinaya:loop:paused:escalation -->$/m)
 
       // The local pause state — the authoritative record — carries the REAL
       // reason (escalation), never clobbered into a synthetic 'infrastructure'
@@ -1560,7 +1560,7 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
       // reviewer even dispatches) and the pause. Never a verdict.
       expect(world.postedComments).toHaveLength(2)
       const pauseComment = world.postedComments[1]!.body
-      expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+      expect(pauseComment).toMatch(/^<!-- vinaya:loop:paused:infrastructure -->$/m)
       expect(pauseComment).toMatch(/security/)
       expect(pauseComment).toMatch(/no review \(missing\)/)
       expect(pauseComment).not.toMatch(/^VERDICT:/m)
@@ -1646,7 +1646,7 @@ describe('devReviewLoop — the loop maps every reviewer run to its outcome and 
         expect(world.dispatchCountByRole.security).toBe(2)
         expect(existsSync(join(ipRoundDir(world, 1), 'security.md'))).toBe(false)
         const pauseComment = world.postedComments.at(-1)!.body
-        expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+        expect(pauseComment).toMatch(/^<!-- vinaya:loop:paused:infrastructure -->$/m)
         expect(pauseComment).toContain(`no review (${reason})`)
         expect(pauseComment).not.toMatch(/^VERDICT:/m)
       }
@@ -1730,7 +1730,7 @@ describe('devReviewLoop — a rejected reviewer result is an infrastructure paus
       const pausedFiles = postedCommentFiles(home)
       expect(pausedFiles).toHaveLength(2)
       const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
-      expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+      expect(pauseComment).toMatch(/^<!-- vinaya:loop:paused:infrastructure -->$/m)
       // Names the rejection, what was wrong, and the reviewer's session id.
       expect(pauseComment).toMatch(/no review \(rejected\)/)
       expect(pauseComment).toMatch(/unknown objective id/)
@@ -1896,7 +1896,7 @@ describe('devReviewLoop — O7 (task-run-v1 task 15): a moved base re-execs in p
       const commentsDir = join(home, '.fake-gh-posted-comments')
       if (existsSync(commentsDir)) {
         for (const file of readdirSync(commentsDir)) {
-          expect(readFileSync(join(commentsDir, file), 'utf8')).not.toMatch(/aeg:loop:paused:stale_driver/)
+          expect(readFileSync(join(commentsDir, file), 'utf8')).not.toMatch(/vinaya:loop:paused:stale_driver/)
         }
       }
     },
@@ -2213,7 +2213,7 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
     expect(probes.slept[0]).toBeGreaterThan(60_000)
     expect(probes.slept[0]).toBeLessThanOrEqual(65_000)
     expect(probes.resetReads()).toBe(1)
-    expect(world.postedComments.some((c) => /aeg:loop:paused/.test(c.body))).toBe(false)
+    expect(world.postedComments.some((c) => /vinaya:loop:paused/.test(c.body))).toBe(false)
   })
 
   it('a rate limit on the post-dispatch self-check reads waits in place — no reviewer is dispatched a second time (O1)', async () => {
@@ -2239,7 +2239,7 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
     expect(probes.slept).toHaveLength(1)
     expect(world.dispatchCountByRole['code-reviewer']).toBe(1)
     expect(world.dispatchCountByRole.security).toBe(1)
-    expect(world.postedComments.some((c) => /aeg:loop:paused/.test(c.body))).toBe(false)
+    expect(world.postedComments.some((c) => /vinaya:loop:paused/.test(c.body))).toBe(false)
   })
 
   it('a rate limit that never clears pauses after two waits, names the rate limit, asks for no ruling and spends no retry (O2/O3)', async () => {
@@ -2263,7 +2263,7 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
     >
     expect(String(pauseState.detail)).toMatch(/^GitHub rate limit:/)
     expect(pauseState.infrastructureRetries).toBe(0)
-    const comment = world.postedComments.find((c) => /aeg:loop:paused:infrastructure/.test(c.body))
+    const comment = world.postedComments.find((c) => /vinaya:loop:paused:infrastructure/.test(c.body))
     expect(comment).toBeDefined()
     expect(comment!.body).toMatch(/No Principal ruling is needed/)
     expect(comment!.body).not.toMatch(/A Principal ruling is needed/)
@@ -2279,7 +2279,7 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
       {
         ...probes.deps,
         postMarkedComment: (kind, ref, marker, body) => {
-          if (/aeg:developer:round-/.test(marker) && !thrown) {
+          if (/vinaya:developer:round-/.test(marker) && !thrown) {
             thrown = true
             throw new Error(RATE_LIMIT)
           }
@@ -2291,7 +2291,7 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
     expect(thrown).toBe(true)
     expect(probes.slept).toHaveLength(1)
     expect(world.dispatchCountByRole.developer).toBe(1)
-    expect(world.postedComments.some((c) => /aeg:loop:paused/.test(c.body))).toBe(false)
+    expect(world.postedComments.some((c) => /vinaya:loop:paused/.test(c.body))).toBe(false)
     expect(result.finalDecision.type).toBe('publish')
   })
 
@@ -2318,7 +2318,7 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
     expect(String(pauseState.detail)).toMatch(/^GitHub rate limit: .*did not wait/)
     expect(String(pauseState.detail)).not.toMatch(/waited/)
     expect(pauseState.infrastructureRetries).toBe(0)
-    const comment = world.postedComments.find((c) => /aeg:loop:paused:infrastructure/.test(c.body))
+    const comment = world.postedComments.find((c) => /vinaya:loop:paused:infrastructure/.test(c.body))
     expect(comment!.body).toMatch(/No Principal ruling is needed/)
   })
 
@@ -2337,7 +2337,7 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
     )
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
     expect(probes.slept).toHaveLength(0)
-    const comment = world.postedComments.find((c) => /aeg:loop:paused:infrastructure/.test(c.body))
+    const comment = world.postedComments.find((c) => /vinaya:loop:paused:infrastructure/.test(c.body))
     expect(comment!.body).toMatch(/A Principal ruling is needed/)
   })
 })

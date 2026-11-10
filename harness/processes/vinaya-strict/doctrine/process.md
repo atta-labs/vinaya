@@ -101,7 +101,7 @@ Before dispatching a task, the Planner checks four gates (`roles/planner/referen
 
 A brief with any `[NEEDS CLARIFICATION: …]` marker left in it is not dispatched — the Planner resolves the ambiguity on the Issue's rationale (or puts it to the Principal) and re-renders. A brief is self-contained and executable without further conversation.
 
-**Where the brief lives:** the task Issue's own `aeg:brief:v1` comment, posted once, frozen, before the Developer starts — never in the PR body, which carries only the Developer's report. It is **not** committed and **not** put in the Issue's own body — the Issue body (written by the Planner at plan time) holds task identity + metadata + the rationale + judgment sections; the brief is a rendered comment on it, not a field of it.
+**Where the brief lives:** the task Issue's own `vinaya:brief:v1` comment, posted once, frozen, before the Developer starts — never in the PR body, which carries only the Developer's report. It is **not** committed and **not** put in the Issue's own body — the Issue body (written by the Planner at plan time) holds task identity + metadata + the rationale + judgment sections; the brief is a rendered comment on it, not a field of it.
 
 **Artifacts:** the brief (a markdown block, not a committed file). The task's Issue already exists from tranche planning.
 
@@ -170,7 +170,7 @@ Before opening the PR, the Developer runs the tier-appropriate Task Done checkli
 
 The Developer opens a PR with:
 - Title in commitlint format (`Type: Subject`)
-- **No brief in the body at all** — its permanent home is the task Issue's frozen `aeg:brief:v1` comment (posted at Phase 3, before the Developer ever started), which is where the Reviewer and Archivist read it
+- **No brief in the body at all** — its permanent home is the task Issue's frozen `vinaya:brief:v1` comment (posted at Phase 3, before the Developer ever started), which is where the Reviewer and Archivist read it
 - A `Tier:` declaration (`Tier: 0|1|3`) so verify-docs reads the correct tier
 - `Closes #N` linking the task's Issue (so the merge auto-closes it)
 - Body following the PR template (what shipped, validated mechanism, what's not in scope, next steps)
@@ -193,7 +193,7 @@ code-reviewer pass → security pass → Principal code review → Planner spec 
 
 ### Stage A — Agent review passes
 
-Each pass is a **separate fresh-context invocation** with no memory of writing the code (the independence rule). Manual: the Principal pastes the review prompt. Automated: the automation layer dispatches the `code-reviewer` and `security-reviewer` passes. The agent reads its role doc + the PR diff + **the brief, read from the task Issue's frozen `aeg:brief:v1` comment**, and emits a structured verdict. Review agents do not edit code, do not merge, and do not write status.
+Each pass is a **separate fresh-context invocation** with no memory of writing the code (the independence rule). Manual: the Principal pastes the review prompt. Automated: the automation layer dispatches the `code-reviewer` and `security-reviewer` passes. The agent reads its role doc + the PR diff + **the brief, read from the task Issue's frozen `vinaya:brief:v1` comment**, and emits a structured verdict. Review agents do not edit code, do not merge, and do not write status.
 
 1. **Code-reviewer pass** — `roles/reviewer.md`. Brief conformance, scope violations, test honesty, code quality, doc coupling, lock awareness, multi-project reach. Emits `VERDICT: APPROVE | REQUEST CHANGES` (BLOCKER / MAJOR / MINOR).
 2. **Security pass** — `roles/security.md`. Secret leakage, BYOK/crypto, auth/permissions, MCP/agent-tooling exposure, injection surfaces, dependency risk. Runs a config-security scan over the agent/MCP/hook config when that config is touched. Emits `VERDICT: PASS | FAIL` (CRITICAL / HIGH / MEDIUM / LOW).

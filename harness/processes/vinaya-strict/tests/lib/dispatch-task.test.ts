@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  AEG_BRIEF_V1_MARKER,
+  FROZEN_BRIEF_V1_MARKER,
   assignIssueAtRunStart,
   briefHash,
   contentAfterTwoLines,
@@ -54,7 +54,7 @@ const CLI_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', 'apps', 'cl
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
 
 /**
- * `contentAfterTwoLines` and `AEG_BRIEF_V1_MARKER` are the promoted
+ * `contentAfterTwoLines` and `FROZEN_BRIEF_V1_MARKER` are the promoted
  * `@attalabs/aeg-core` exports (plan-brief-v1 task 3, #428) — `dispatch-task.ts`
  * re-exports them rather than carrying its own copy. Pinned identically in
  * `harness/processes/vinaya-strict/checks/standalone/verify-dispatch.content-after-two-lines.test.ts`,
@@ -146,12 +146,12 @@ describe('dispatchTask', () => {
     const p = posted as unknown as { kind: string; ref: string; marker: string; body: string }
     expect(p.kind).toBe('issue')
     expect(p.ref).toBe('427')
-    expect(p.marker).toBe(AEG_BRIEF_V1_MARKER)
+    expect(p.marker).toBe(FROZEN_BRIEF_V1_MARKER)
 
     // The full posted comment, as `postMarkedComment` would actually write it
     // (marker line, then the body verbatim, then its own trailing newline) —
     // a reader recomputes the hash over exactly this reconstruction.
-    const fullComment = `${AEG_BRIEF_V1_MARKER}\n${p.body}\n`
+    const fullComment = `${FROZEN_BRIEF_V1_MARKER}\n${p.body}\n`
     const reconstructed = contentAfterTwoLines(fullComment)
     expect(reconstructed).toBe(`${BRIEF_TEXT}\n`)
     const hashLine = p.body.split('\n')[0]
@@ -620,7 +620,7 @@ describe('prepareTask --supersede (O3, task-run-v1 task 4, #483)', () => {
     expect(result.commentUrl).toBe('https://github.com/acme/widget/issues/427#issuecomment-2')
     expect(posted).not.toBeNull()
     const p = posted as unknown as { kind: string; ref: string; marker: string; body: string }
-    expect(p.marker).toBe('<!-- aeg:brief:v2 -->')
+    expect(p.marker).toBe('<!-- vinaya:brief:v2 -->')
     expect(p.body).toContain('Supersedes: https://github.com/acme/widget/issues/427#issuecomment-1 — wrong tier')
     expect(p.body).toContain(BRIEF_TEXT)
   })

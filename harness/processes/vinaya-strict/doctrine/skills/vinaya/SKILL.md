@@ -35,7 +35,7 @@ Vinaya runs on **the Repo + the Git forge (GitHub/GitLab) + plain git worktrees*
    - PR merged → merged · `aeg:blocked` label → blocked
    Labels are only `tier:*`, `aeg:blocked`, `needs:*-input` — never status.
 2. **The Repo** = code, specs, and the doctrine tree (`vinaya-strict/`: role docs, contracts, the models, skills), plus the per-role entry points `vinaya init` installs (§11). The source of truth for **governance** — not for the plan, which is a Milestone plus labeled Issues on the forge (§5), and not for live status.
-3. **The task Issue's `aeg:brief:v1` comment** = the **just-in-time brief** — a task's full execution context, rendered mechanically and posted once, frozen, never hand-written. The PR body carries only the Developer's report (optionally a reference copy of the brief in a collapsed `<details>` block).
+3. **The task Issue's `vinaya:brief:v1` comment** = the **just-in-time brief** — a task's full execution context, rendered mechanically and posted once, frozen, never hand-written. The PR body carries only the Developer's report (optionally a reference copy of the brief in a collapsed `<details>` block).
 4. **Local filesystem** = orchestration-tool runtime, worktrees, dev servers. Ephemeral, never canonical.
 
 Conversation logs / thinking are **not** artifacts — never cite them as authority.
@@ -62,7 +62,7 @@ Conflicts are **package-level, and mostly derived, not hand-declared** (collisio
 
 ## 7. The brief
 
-The brief is the task's full execution context: **rendered mechanically, never hand-written, posted once frozen as the task Issue's own `aeg:brief:v1` comment**, amended only via escalation. If it isn't in the brief, it doesn't exist. Rendering + dispatch rules: `roles/planner/reference.md` § The dispatch act. Brief Step 0 is always worktree creation (`git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/main`).
+The brief is the task's full execution context: **rendered mechanically, never hand-written, posted once frozen as the task Issue's own `vinaya:brief:v1` comment**, amended only via escalation. If it isn't in the brief, it doesn't exist. Rendering + dispatch rules: `roles/planner/reference.md` § The dispatch act. Brief Step 0 is always worktree creation (`git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/main`).
 
 ## 8. Roles (one line each — load the role doc for detail)
 
@@ -79,7 +79,7 @@ Principal → Planner → Developer → Reviewer (code + security) → merge, pl
 
 - ❌ Never write task status anywhere (file, Issue field, label) — it is derived from the forge.
 - ❌ Never add execution metadata (status, PR #, dates) to a task Issue — its body holds the plan only.
-- ❌ Never hand-write the brief into the Issue body — it is rendered mechanically and posted frozen as the Issue's own `aeg:brief:v1` comment, never in the PR body.
+- ❌ Never hand-write the brief into the Issue body — it is rendered mechanically and posted frozen as the Issue's own `vinaya:brief:v1` comment, never in the PR body.
 - ❌ Never put planning metadata (priority, estimates, points) on an Issue — that's the roadmap, outside Vinaya.
 - ❌ Never build a dynamic conflict scanner — declare conservatively and serialize.
 - ❌ Never read or write `roadmap.md` — retired.
