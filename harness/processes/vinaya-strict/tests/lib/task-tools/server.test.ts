@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'bun:test'
 import { PassThrough } from 'node:stream'
-import { createTaskToolsMcpServer, dispatchToolCall, type TaskToolHandlers } from '../../../integration/server.js'
+import { UnknownSeatError } from '../../../../../kernel/tools/host/seat-host.js'
+import {
+  createTaskToolsMcpServer,
+  dispatchToolCall,
+  serveTaskToolsStdio,
+  TASK_TOOLS_MCP_SERVER_NAME,
+  type TaskToolHandlers
+} from '../../../integration/server.js'
 
 /**
  * `handleLine`'s own doc comment promises it never throws. In-process
@@ -88,8 +95,8 @@ describe('task-tools MCP server — a handler exception never crashes the proces
  * here (rather than mocking `router.js` globally, which would leak across
  * the other files this shared bun process runs) so a call can be forced
  * through the ungranted branch without needing a catalog tool that is
- * actually outside the grant (there is none — `OPERATOR_TOOL_GRANT` is built
- * from `TASK_TOOL_NAMES` itself); production callers never pass a fourth
+ * actually outside the grant (there is none — `OPERATOR_TOOL_GRANT` holds
+ * all six task tools); production callers never pass a fourth
  * argument, so they always get the real `refuseUngrantedTool`.
  */
 describe('dispatchToolCall — the grant gate runs on the real call path, before any handler', () => {
@@ -265,3 +272,73 @@ describe('serve — a failure on one line never wedges dispatch for a later line
     expect(responses[1]?.error).toBeUndefined()
   })
 })
+
+/**
+ * One launch serves one seat, picked from the server program's own launch
+ * arguments — never from a tool-call argument. The Operator's seat is the
+ * default; a seat no table declares refuses to start, naming the declared
+ * seats.
+ */
+describe('the seat a launch serves', () => {
+  it('a launch naming an undeclared seat refuses to start, naming the declared seats', () => {
+    expect(() => createTaskToolsMcpServer({ serverVersion: '0.0.0-test', seat: 'planner' })).toThrow(UnknownSeatError)
+    expect(() => createTaskToolsMcpServer({ serverVersion: '0.0.0-test', seat: 'planner' })).toThrow(
+      'no seat named "planner" — this process declares: operator'
+    )
+  })
+
+  it('the stdio program refuses an undeclared seat argument before it serves', async () => {
+    await expect(serveTaskToolsStdio('0.0.0-test', ['--seat', 'planner'])).rejects.toThrow(
+      'this process declares: operator'
+    )
+  })
+
+  it('a launch with no seat argument reports the Operator server name it always has', async () => {
+    const server = createTaskToolsMcpServer({ serverVersion: '0.0.0-test' })
+    const line = await server.handleLine(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } }
+      })
+    )
+    expect(JSON.parse(line ?? '{}').result?.serverInfo?.name).toBe(TASK_TOOLS_MCP_SERVER_NAME)
+  })
+
+  it('a seat named in a tool-call argument changes nothing — an ungranted tool is still refused before any handler', async () => {
+    let called = false
+    const server = createTaskToolsMcpServer({
+      serverVersion: '0.0.0-test',
+      handlers: {
+        ...noopHandlers(),
+        task_status: () => {
+          called = true
+          return { ok: true, result: { items: [], nextCursor: null } }
+        }
+      }
+    })
+    const line = await server.handleLine(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'merge', arguments: { seat: 'principal' } }
+      })
+    )
+    expect(JSON.parse(line ?? '{}').result?.structuredContent?.error?.kind).toBe('validation')
+    expect(called).toBe(false)
+  })
+})
+
+function noopHandlers(): TaskToolHandlers {
+  const stub = () => ({ ok: false as const, error: { kind: 'capability' as const, message: 'stub' } })
+  return {
+    task_status: stub,
+    task_escalation_read: stub,
+    task_pr_read: stub,
+    task_resume: stub,
+    task_cancel: stub,
+    task_start: stub
+  }
+}

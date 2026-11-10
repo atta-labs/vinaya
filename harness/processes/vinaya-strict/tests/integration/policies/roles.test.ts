@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test'
-import { OPERATOR_TOOL_GRANT } from '../../../../../kernel/tools/catalog/task-tools'
 import { ROLE_VALUES } from '../../../../../kernel/log/schema'
 import { DEV_TOOL_NAMES } from '../../../../../kernel/tools/dev-tools-server.js'
 import { isToolGranted } from '../../../../../kernel/tools/role-grants.js'
 import { AGENT_TOOL_CATALOG } from '../../../../../kernel/tools/tool-catalog.js'
 import {
   GRANTED_ROLES,
+  OPERATOR_TOOL_GRANT,
   ROLE_TOOL_GRANTS,
   VINAYA_BOUNDARY_ROLES,
   VINAYA_BROKER_ROLES,
@@ -86,5 +86,15 @@ describe("the router's role facts", () => {
     expect([...VINAYA_ROUTER_ROLES.grantedTools]).toEqual([...OPERATOR_TOOL_GRANT])
     expect(VINAYA_ROUTER_ROLES.seat).toBe('the Operator')
     expect(VINAYA_ROUTER_ROLES.askedOf).toBe('the Planner or Principal')
+  })
+  it('the Operator grant lives in this role policy as exactly the six task tools', () => {
+    expect([...OPERATOR_TOOL_GRANT]).toEqual([
+      'task_start',
+      'task_status',
+      'task_escalation_read',
+      'task_pr_read',
+      'task_resume',
+      'task_cancel'
+    ])
   })
 })

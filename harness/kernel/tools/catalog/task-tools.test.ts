@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   isTaskToolName,
   TASK_START_TOOL,
@@ -45,6 +47,22 @@ describe('TASK_TOOL_CATALOG', () => {
   it('every catalog tool is bound to a real handler', () => {
     for (const tool of TASK_TOOL_CATALOG) {
       expect(taskToolByName(tool.name).handlerBinding.kind).toBe('bound')
+    }
+  })
+
+  // A binding is a pointer, relative to the root folder of the process that
+  // supplies the handlers; the one process that supplies them today is read
+  // here by path, at run time, so the kernel's own modules still import no
+  // process. A binding that names a moved or deleted module, or an export the
+  // module no longer has, fails here.
+  it('every bound module exists and exports its named handler function', async () => {
+    const supplyingProcessRoot = join(import.meta.dir, '..', '..', '..', 'processes', 'vinaya-strict')
+    for (const tool of TASK_TOOL_CATALOG) {
+      const binding = tool.handlerBinding
+      const modulePath = join(supplyingProcessRoot, binding.module)
+      expect(existsSync(modulePath), `${tool.name} binds ${binding.module}, which does not exist`).toBe(true)
+      const loaded: Record<string, unknown> = await import(modulePath)
+      expect(typeof loaded[binding.export], `${binding.module} exports no function ${binding.export}`).toBe('function')
     }
   })
 

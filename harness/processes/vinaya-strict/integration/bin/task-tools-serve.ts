@@ -11,14 +11,20 @@
  * authenticates, not the payload (`server.ts`). An attended operator exports
  * that variable to authorize `task_start`; started without it, the server
  * still answers every read tool and refuses `task_start`.
+ *
+ * One launch serves one seat, named by this program's own `--seat <name>`
+ * argument as the generated MCP configuration wrote it; with none, it serves
+ * the Operator — so every configuration generated before seats existed keeps
+ * starting the same server. A seat no Vinaya seat table declares refuses to
+ * start, naming the seats it does declare.
  */
 
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
 import { ownVersion } from '../artifacts.js'
 import { serveTaskToolsStdio } from '../server.js'
 
-export async function taskToolsServeCommand(_args: string[]): Promise<void> {
-  await serveTaskToolsStdio(ownVersion())
+export async function taskToolsServeCommand(args: string[]): Promise<void> {
+  await serveTaskToolsStdio(ownVersion(), args)
 }
 
 // Run as a program (`vinaya-task-tools-serve`): started through the shared program entry.

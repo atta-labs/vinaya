@@ -5,7 +5,7 @@
  * these facts through the policies `vinaya-policies.ts` composes.
  */
 
-import { OPERATOR_TOOL_GRANT } from '../../../../kernel/tools/catalog/task-tools'
+import type { TaskToolName } from '../../../../kernel/tools/catalog/task-tools'
 import { ROLE_VALUES } from '../../../../kernel/log/schema'
 import type { BrokerRolePolicy } from '../../../../kernel/tools/host/broker.js'
 import type { ToolGrantPolicy } from '../../../../kernel/tools/role-grants.js'
@@ -76,6 +76,34 @@ export const VINAYA_BOUNDARY_ROLES: BoundaryRolePolicy = {
     return { name: role === 'code-reviewer' ? 'reviewer-work' : 'security-work', suffixed: true }
   },
   concurrentSibling: (role) => (role === 'code-reviewer' ? 'security' : role === 'security' ? 'code-reviewer' : null)
+}
+
+// --- the Operator's tool grant, the boundary the seat host enforces ---------
+
+/**
+ * The complete, closed set of tools the Operator seat is granted — the six
+ * task tools, and nothing else. This is the machine-readable twin of the
+ * Operator role doctrine's `allowed-tools` frontmatter and of the generated
+ * skill's `allowed-tools`, and it is the list the Operator's tool server
+ * serves; a test binds all four so no representation drifts from another. The
+ * seat host refuses every tool outside this set: a registered tool is a
+ * capability, but the grant is what says the Operator may call it — a shell,
+ * a forge write, an Issue edit, a review publish or a merge is never in it.
+ */
+export const OPERATOR_TOOL_GRANT = [
+  'task_start',
+  'task_status',
+  'task_escalation_read',
+  'task_pr_read',
+  'task_resume',
+  'task_cancel'
+] as const satisfies readonly TaskToolName[]
+
+export type OperatorGrantedTool = (typeof OPERATOR_TOOL_GRANT)[number]
+
+/** True only for a tool inside the Operator's grant. Any name not in `OPERATOR_TOOL_GRANT` (a shell, a forge write, an Issue edit, `merge`, a review publish) is outside the grant. */
+export function isOperatorGranted(tool: string): tool is OperatorGrantedTool {
+  return (OPERATOR_TOOL_GRANT as readonly string[]).includes(tool)
 }
 
 // --- the task-tool router -----------------------------------------------------
