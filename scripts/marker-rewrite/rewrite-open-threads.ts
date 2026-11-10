@@ -66,7 +66,7 @@ export type OpenThread = {
 export type ThreadComment = { id: number; htmlUrl: string; body: string }
 
 /** Why an edit did not land. */
-export type EditRefusal = { kind: 'forbidden'; detail: string } | { kind: 'rate-limited'; detail: string }
+export type EditRefusal = { kind: 'refused'; detail: string } | { kind: 'rate-limited'; detail: string }
 
 /** The forge as this program uses it. Every call is one REST request (or one paginated listing). */
 export type Forge = {
@@ -248,7 +248,9 @@ export function formatReport(result: RunResult, options: { dryRun: boolean }): s
     }
   }
   for (const { rewrite, detail } of result.skipped) {
-    lines.push(`skipped ${rewrite.htmlUrl}: the token may not edit it (${detail})`)
+    lines.push(
+      `skipped ${rewrite.htmlUrl}: the edit was refused, so the token may not edit it or the item is gone (${detail})`
+    )
   }
   if (result.stopped !== null) lines.push(`stopped: ${result.stopped}`)
   const total = done.reduce((sum, rewrite) => sum + rewrite.count, 0)
@@ -294,7 +296,7 @@ export function ghForge(repo: string, gh: GhRunner = spawnGh): Forge {
     const reason = answer.stderr.trim()
     return isRateLimit(reason)
       ? { kind: 'rate-limited', detail: `REST rate limit reached editing ${path}: ${reason}` }
-      : { kind: 'forbidden', detail: reason }
+      : { kind: 'refused', detail: reason }
   }
   return {
     listOpenThreads: () =>

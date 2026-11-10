@@ -105,7 +105,7 @@ describe('rewriteMarkers', () => {
 type StoredThread = OpenThread & { comments: ThreadComment[] }
 
 /** An in-memory forge with the REST semantics the program relies on. */
-function fakeForge(threads: StoredThread[], options: { forbiddenComments?: number[]; rateLimitAfter?: number } = {}) {
+function fakeForge(threads: StoredThread[], options: { refusedComments?: number[]; rateLimitAfter?: number } = {}) {
   const calls = { commentReads: [] as number[], edits: [] as string[] }
   const refuse = (): EditRefusal | null => {
     if (options.rateLimitAfter !== undefined && calls.edits.length >= options.rateLimitAfter) {
@@ -132,8 +132,7 @@ function fakeForge(threads: StoredThread[], options: { forbiddenComments?: numbe
     updateComment: (id, body) => {
       const refusal = refuse()
       if (refusal) return refusal
-      if (options.forbiddenComments?.includes(id))
-        return { kind: 'forbidden', detail: 'HTTP 403: Resource not accessible' }
+      if (options.refusedComments?.includes(id)) return { kind: 'refused', detail: 'HTTP 403: Resource not accessible' }
       for (const thread of threads) {
         const comment = thread.comments.find((candidate) => candidate.id === id)
         if (comment) {
@@ -246,10 +245,10 @@ describe('the program against a fake forge', () => {
 
   test('a comment the token may not edit is reported by its link and skipped, and the run exits non-zero', () => {
     const threads = sampleThreads()
-    const { forge, calls } = fakeForge(threads, { forbiddenComments: [101] })
+    const { forge, calls } = fakeForge(threads, { refusedComments: [101] })
     const { code, out } = runMain(forge, [])
     expect(code).toBe(1)
-    expect(out).toContain('skipped https://github.com/o/r/issues/1#issuecomment-101: the token may not edit it')
+    expect(out).toContain('skipped https://github.com/o/r/issues/1#issuecomment-101: the edit was refused')
     expect(calls.edits).toEqual(['body:1', 'body:2', 'comment:202'])
     expect(threads[0]?.comments[0]?.body).toBe(commentBody('old'))
   })
@@ -289,7 +288,7 @@ describe('the gh-backed forge', () => {
     expect(forge.listComments(7)).toEqual([{ id: 9, htmlUrl: 'c9', body: 'x' }])
     const body = 'line\r\n"quoted" \\ `code`\n'
     expect(forge.updateThreadBody(7, body)).toBeNull()
-    expect(forge.updateComment(9, body)).toEqual({ kind: 'forbidden', detail: 'gh: Forbidden (HTTP 403)' })
+    expect(forge.updateComment(9, body)).toEqual({ kind: 'refused', detail: 'gh: Forbidden (HTTP 403)' })
 
     for (const { args } of calls) {
       expect(args[0]).toBe('api')
