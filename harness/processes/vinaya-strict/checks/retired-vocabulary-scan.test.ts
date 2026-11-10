@@ -26,7 +26,7 @@ describe('scanRetiredVocabulary', () => {
       'decision-log': 'a decision-log entry is required',
       'decision entr': 'add a decision entry',
       'decisions? (are |is )?logged': 'why decisions are logged',
-      'log entries': 'Type 1 decisions without log entries',
+      '(^|[^a-zA-Z])log entries': 'Type 1 decisions without log entries',
       '(^|[^-_a-zA-Z0-9])decisions\\.md': 'log it to decisions.md',
       'decisions-legacy': 'a task updates docs/decisions-legacy.md',
       CONTRADICTION: 'open a ## CONTRADICTION — <topic> entry',
