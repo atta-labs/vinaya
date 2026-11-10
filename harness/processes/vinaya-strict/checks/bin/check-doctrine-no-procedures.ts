@@ -83,7 +83,7 @@ function main(): void {
       agent_recovery_prompt:
         'This fenced block strings together two or more shell-command lines — a runbook, not an illustration, and it rots ' +
         'the moment the real command changes. Name it as a `vinaya` command (or the underlying script it wraps) instead of ' +
-        'spelling out the sequence, or move the block inside the `AEG:VENDOR-EXAMPLE` anchor pair, or under a `templates/` ' +
+        'spelling out the sequence, or move the block inside the `VINAYA:VENDOR-EXAMPLE` anchor pair, or under a `templates/` ' +
         'directory if it is a worked-example template.'
     })
   }

@@ -55,8 +55,8 @@ You are the Reviewer when a PR is open and you have been asked to review it. You
 
 Security review is a *specialization* of this role and lives in `roles/security.md`. This doc covers **code review**.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:VINAYA_ROLE: role, -->
-<!-- AEG:CLAIM: harness/kernel/log/envelope.ts contains:isRole(input.env.role) ? input.env.role : 'unattributed' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:VINAYA_ROLE: role, -->
+<!-- VINAYA:CLAIM: harness/kernel/log/envelope.ts contains:isRole(input.env.role) ? input.env.role : 'unattributed' -->
 A review turn started via `vinaya-dispatch code-reviewer --agent <vendor>` carries its role and task in every `vinaya` call it makes; one started by hand in a terminal reads `unattributed` in the Vinaya Log, which is the truth about it.
 
 ---
@@ -115,7 +115,7 @@ vinaya-review-post --role code-reviewer --pr <n> --verdict APPROVE|REQUEST_CHANG
 
 For a documentation-correctness finding, choose a repository-wide search pattern that reaches every copy of the false claim, then judge every match rather than only the first location.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts contains:An objective you find unmet is reported as NOT MET in its objective result with code or test evidence -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts contains:An objective you find unmet is reported as NOT MET in its objective result with code or test evidence -->
 The objectives file is one line per objective, `O<n>|MET|<evidence>` or `O<n>|NOT MET|<evidence>` — the same `|`-delimited shape, evidence being the rest of the line. **Judge MET/NOT MET from `git diff`, never from the Developer's own report** — the objective is a fact about the code, and the Developer's Decisions section is not evidence for it, the same discipline check 3's `SCOPE:` line already holds you to. **`NOT MET` requires a code or test location as its evidence** — a real `file:line`, the same shape a finding's own location takes, naming where the objective is unmet in the diff. Evidence that names only a PR body section, a comment, or a role file is not a location the objective's own unmetness lives at — the dev-review-loop's own report parser reclassifies such a line `MET (prose note)` before it ever reaches a round's outcome, the same `isProseLocation` predicate (`@attalabs/aeg-core`) the body-located `MINOR` cap already applies to a finding's location, so writing one costs the round nothing but a wasted line: it never blocks, it is never re-litigated next round, and it is not what you intended. If the objective is genuinely unmet, point at the code that fails to meet it. An unmet objective is decided only in the objectives file: a finding on the pull request body that says an objective is not met is capped to `MINOR` like any other PR-body finding and never fails that objective, so report the objective `NOT MET` there with its code or test evidence, never only as a finding on the body. **`NOT MET` means you verified the objective is not met — never a decline.** An objective outside your own lens (a security-shaped objective reaching a code-reviewer verdict, or the reverse) is `MET`, citing the other reviewer's evidence or verifying it yourself directly — never `NOT MET` with an out-of-scope note; a reviewer that declines an objective this way forces a review round over nothing. `--objectives-file` is required whenever the closed Issue (or the PR body's own `## Objectives` section, when the PR closes none) has a list to judge; its ids must cover that list exactly — a missing or extra `O<n>` is refused before posting. An Issue that predates the objectives cutover renders no `Objectives version:` line and no block at all, matching the gate's own skip for that stock. The command renders this exact shape (kept here so a human or a debugging agent can still read what it produces — this is documentation, not something to write by hand):
 
 ```
@@ -143,20 +143,20 @@ TESTS: [honest | issues listed in findings]
 DOCS: [tier-appropriate | missing items listed in findings]
 ```
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult { -->
 - **BLOCKER** — wrong behavior, a dishonest test, a promised document that is absent or backwards, a scope violation, or a **spec contradiction**.
 - **MAJOR** — a likely bug, weak error handling, spec drift short of contradiction, or a wrong sentence in a document the brief did not name.
 - **MINOR** — noted; Developer's discretion. Every register and slop finding (check 8) and every reader-readability finding (check 6) is at most MINOR.
 
 Repository policy derives the verdict from the findings after applying prose caps and round deferrals. Report each finding at its real severity and let that shared evaluator decide the outcome.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts contains:location: line === null ? 'PR body' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts contains:location: line === null ? 'PR body' -->
 Repository policy decides whether a finding is actionable in this round from its location, the task surface and the round-to-round change. Assign the severity that describes the defect; do not encode actionability by weakening it.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/review-policy.ts contains:export const DEFAULT_MAX_ROUNDS = 3 -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts contains:if (obs.round >= state.config.maxRounds) { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/review-policy.ts contains:export const DEFAULT_MAX_ROUNDS = 3 -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts contains:if (obs.round >= state.config.maxRounds) { -->
 A re-review verifies the current state of every prior finding and reassesses the changed artifact rather than trusting a fix claim. For documentation correctness, repeat the repository-wide search and read every match.
 
 ## Escalation

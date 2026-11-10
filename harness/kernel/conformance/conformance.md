@@ -168,7 +168,7 @@ Principal's own authorized run on a host that has one.
 
 ## E — Adapter conformance (layer L4)
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.ts contains:export function sessionRuleViolations(cases: readonly AdapterContractCase[]): string[] { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.ts contains:export function sessionRuleViolations(cases: readonly AdapterContractCase[]): string[] { -->
 `harness/processes/vinaya-strict/integration/conformance/unit/adapter-contract.ts` holds one case list every
 agent adapter runs unchanged — today Claude Code and Codex — against the
 contract the developer-review controller holds its agents to

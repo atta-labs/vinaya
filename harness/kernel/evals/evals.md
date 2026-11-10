@@ -16,7 +16,7 @@ Each program of the harness run on its own (`step-one.ts`, `whole-loop.ts`, `har
 
 Every value crossing a port is plain data. Each has a validator returning either `{ ok: true, value }` or `{ ok: false, refusal }`, where the refusal carries a typed `code`, the dotted `path` of the offending field, and a one-line `detail`.
 
-<!-- AEG:CLAIM: harness/kernel/evals/contracts.ts contains:export type Validated<T> = { ok: true; value: T } | { ok: false; refusal: ContractRefusal } -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/contracts.ts contains:export type Validated<T> = { ok: true; value: T } | { ok: false; refusal: ContractRefusal } -->
 
 Digests are SHA-256, written as 64 lowercase hexadecimal characters; commits are 40 lowercase hexadecimal characters; identifiers (task ids, suite names, conditions) are stable lowercase kebab names.
 
@@ -62,7 +62,7 @@ What a run reports: the suite's name and version; the `split` it ran on; one ent
 
 Every estimator is a pure function: equal inputs give equal outputs. Each returns `{ ok: true, value }` or a typed refusal.
 
-<!-- AEG:CLAIM: harness/kernel/evals/estimators.ts contains:export type Estimate<T> = { ok: true; value: T } | { ok: false; refusal: EstimatorRefusal } -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/estimators.ts contains:export type Estimate<T> = { ok: true; value: T } | { ok: false; refusal: EstimatorRefusal } -->
 
 - **Per task:** `tallyTask` counts successes c out of n trials. An `unknown` verdict is refused (`unadjudicated_unknown`) — it is adjudicated first.
 - **pass^k:** per task C(c, k) / C(n, k), computed as the product of (c − i) / (n − i) for i from 0 to k − 1; averaged over tasks by `passHatK`. Refused when any task ran fewer than k trials (`trials_below_k`) or k is not a positive integer.
@@ -82,7 +82,7 @@ No default method, seed, resample count, confidence level or threshold is built 
   - `percentile` — [q(α/2), q(1 − α/2)];
   - `basic` — [2θ̂ − q(1 − α/2), 2θ̂ − q(α/2)], clamped to the estimate's range.
 
-<!-- AEG:CLAIM: harness/kernel/evals/estimators.ts contains:export const BOOTSTRAP_METHODS = ['percentile', 'basic'] as const -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/estimators.ts contains:export const BOOTSTRAP_METHODS = ['percentile', 'basic'] as const -->
 
 `harness/kernel/evals/estimators.test.ts` checks each method, pass^k and the paired estimates against values computed by hand from pinned resample indices.
 
@@ -90,7 +90,7 @@ No default method, seed, resample count, confidence level or threshold is built 
 
 The evaluation program's §6 requires every migrating component to carry a recorded evaluation with ten fields — contract, owner, official basis, suite, tasks, grader, backends, decision rule, cadence and migration gate — collected in one module registry. `registry.ts` holds its types, validation, shard aggregation and shard completeness; the data lives under `harness/processes/vinaya-strict/evals/suites/registry/`.
 
-<!-- AEG:CLAIM: harness/kernel/evals/registry.ts contains:export const REQUIRED_FIELDS = [ -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/registry.ts contains:export const REQUIRED_FIELDS = [ -->
 
 ### Rows and their sources
 
@@ -108,9 +108,9 @@ A pending number is written with the program's own marker — a floor marked *Pr
 
 Validation returns the value or `{ ok: false, refusal }` with a typed `code`, the dotted `path` of the offending field (prefixed by the file and `#` when it came from one) and a one-line `detail`. It refuses a missing field (`missing_field`) — an L5 or L6 suite without its `processLayer` among them — an empty one (`empty`), a placeholder such as `TBD`, `N/A` or `…` (`placeholder`), a value outside the vocabulary (`unknown_value`) — a `processLayer` other than `G` or `P`, or one on a suite of another layer, among them — an unknown module (`unknown_module`), the excluded module (`module_excluded`), a suite the module does not declare (`unknown_suite`), and a component field stated as not applicable (`not_applicable_refused`).
 
-<!-- AEG:CLAIM: harness/kernel/evals/registry.ts contains:export type RegistryResult<T> = { ok: true; value: T } | { ok: false; refusal: RegistryRefusal } -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/registry.ts contains:export type RegistryResult<T> = { ok: true; value: T } | { ok: false; refusal: RegistryRefusal } -->
 
-<!-- AEG:CLAIM: harness/kernel/evals/registry.ts contains:export const PROCESS_LAYERED = ['L5', 'L6'] as const -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/registry.ts contains:export const PROCESS_LAYERED = ['L5', 'L6'] as const -->
 
 ### Backend evidence
 
@@ -123,13 +123,13 @@ A test that runs only when an opt-in live environment variable is set — such a
 
 The registry refuses, when it loads: a row of either kind without `backendEvidence` or without an entry for a backend it lists (`missing_field`); an entry for a backend the row does not list, a `backendEvidence` on a row of any other kind, or a field outside the two shapes (`unknown_value`); an entry naming both a test and an owed reason, or an owed reason over more than one line (`wrong_type`); a test path that is not a path from the repository root, or a live-gate variable that is not an environment variable name (`bad_name`); a named file that does not exist (`evidence_file_missing`); and a file that does not contain the row's full id (`evidence_id_absent`). Each refusal names the row id, and a file refusal names the file. The loader reads the files from the repository by default; a caller may pass its own reader.
 
-<!-- AEG:CLAIM: harness/kernel/evals/registry.ts contains:export const EVIDENCE_KINDS = ['fault-attack', 'cutover-gate'] as const -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/registry.ts contains:export const EVIDENCE_KINDS = ['fault-attack', 'cutover-gate'] as const -->
 
 ### Shards and aggregation
 
 Component rows live in shard files under `harness/processes/vinaya-strict/evals/suites/registry/shards/`. Each shard names itself after its file and declares the component kinds it covers; a row of any other kind is refused (`kind_not_declared`). `readShardDirectory` finds the shards by listing that directory — every `.json` file, in name order — so a later shard is a new file and touches nothing shared. `aggregateShards` validates each shard against the catalog and joins their rows; a component id that appears twice, within one shard or across two, is refused (`duplicate_component`) naming both locations, as `shards/<file>.json#components[<n>]`. `loadRegistry` reads the catalog and the directory and does both.
 
-<!-- AEG:CLAIM: harness/kernel/evals/registry.ts contains:export function readShardDirectory( -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/registry.ts contains:export function readShardDirectory( -->
 
 ### Shard completeness
 
@@ -190,13 +190,13 @@ The report also gives, for the fault-and-attack and cutover-gate kinds, the Engi
 - the list cannot gain a row: the test pins its ceiling at the list's current length, so a row past the ceiling fails (`list_grew`), and a row that leaves lowers the ceiling in the same change;
 - a live-gated row stays listed until its entry records the pull request carrying the pasted live probe output; removing it before then fails (`live_run_unrecorded`).
 
-<!-- AEG:CLAIM: harness/kernel/evals/exit-check.ts contains:export function checkOwedEngineEvidence( -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/exit-check.ts contains:export function checkOwedEngineEvidence( -->
 
 ## Layer G — neutral cases and generic graders
 
 Layer G grades process-neutral facts in the Development Process vocabulary — Intent, Execution, Change, Evidence, Review, Decision — so the same case and the same graders can judge any process. A grader that has to parse a brief, a verdict or a severity name is layer P. Layer G reads no Vinaya artifact: its graders' input type is a neutral case plus neutral outcomes, and nothing else.
 
-<!-- AEG:CLAIM: harness/kernel/evals/contracts.ts contains:export const GRADER_LAYERS = ['G', 'P'] as const -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/contracts.ts contains:export const GRADER_LAYERS = ['G', 'P'] as const -->
 
 ### The neutral case
 
@@ -211,7 +211,7 @@ Layer G grades process-neutral facts in the Development Process vocabulary — I
 
 A review case adjudicated clean carries no planted defect and names at least two adjudicators; one not adjudicated clean carries at least one planted defect, which is what shows it is not clean, and may name no adjudicator. The task statement must pass the banned-terms checker below (`banned_term`).
 
-<!-- AEG:CLAIM: harness/kernel/evals/neutral-case.ts contains:export function validateNeutralCase(input: unknown): Validated<NeutralCase> { -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/neutral-case.ts contains:export function validateNeutralCase(input: unknown): Validated<NeutralCase> { -->
 
 `neutralCaseDigest` is the SHA-256 of the validated case's canonical JSON — every object's keys sorted — so it is the same whatever the key order and changes when any field changes. `intentVersion` is the SHA-256 of the task statement and authorized scope alone: the intent a review is bound to.
 
@@ -233,7 +233,7 @@ A review case adjudicated clean carries no planted defect and names at least two
 
 Each outcome carries a fact status: `known` (recorded and valid; only this status carries a value), `absent` (looked for where it is recorded, and not there), `unavailable` (could not be observed), `invalid` (recorded but malformed) or `inapplicable` (the fact does not exist for this kind of case).
 
-<!-- AEG:CLAIM: harness/kernel/evals/neutral-outcomes.ts contains:export const FACT_STATUSES = ['known', 'absent', 'unavailable', 'invalid', 'inapplicable'] as const -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/neutral-outcomes.ts contains:export const FACT_STATUSES = ['known', 'absent', 'unavailable', 'invalid', 'inapplicable'] as const -->
 
 ### Generic graders
 
@@ -254,13 +254,13 @@ Each outcome carries a fact status: `known` (recorded and valid; only this statu
 
 A glob with no wildcard covers that path and everything under it; `*` matches within one path segment, `**` across segments. An `answer` case is judged by the three graders that apply to every kind — `generic-capabilities-granted`, `generic-documents-used` and `generic-effects-once`; its change, test, scope, review and decision outcomes are `inapplicable`.
 
-<!-- AEG:CLAIM: harness/kernel/evals/generic-graders.ts contains:export const GENERIC_GRADERS: readonly GenericGrader[] = [ -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/generic-graders.ts contains:export const GENERIC_GRADERS: readonly GenericGrader[] = [ -->
 
 ### Banned terms
 
 `banned-terms.ts` holds the one list of process terms a neutral task statement may not contain: `Surface`, `objective`, `brief` and `verdict` (any case, singular or plural); every reviewer severity name as the scales write it (`BLOCKER`, `MAJOR`, `MINOR`, `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`); an objective id such as `O3`; a finding id such as `F2` or `R2-CR-3`; and the role names `principal`, `planner`, `architect`, `archivist`, `developer`, `reviewer` and `operator`. `checkTaskStatement` refuses a statement containing any of them as `banned_term`, naming the term, and accepts one free of them; `findBannedTerms` lists every term found, outside the code spans of an Interface block that ends the statement (see the layer-`G` re-cut). Severity names are matched only in capitals, so lowercase `blocker`, `major` or `minor` — and `blocking` — are accepted: banning them in any case would refuse ordinary English such as "a major release" or "low latency". A statement that names a severity in lowercase is therefore not caught here.
 
-<!-- AEG:CLAIM: harness/kernel/evals/banned-terms.ts contains:export function checkTaskStatement(statement: string, path = 'taskStatement'): Validated<string> { -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/banned-terms.ts contains:export function checkTaskStatement(statement: string, path = 'taskStatement'): Validated<string> { -->
 
 `harness/processes/vinaya-strict/evals/suites/neutral-case.test.ts`, `generic-graders.test.ts` and `banned-terms.test.ts` prove each refusal, the digest's stability and sensitivity, every grader's pass on good outcomes for every case kind, its fail on every non-`known`, non-`inapplicable` status of every outcome it reads, and its rejection of a planted bad outcome.
 
@@ -270,12 +270,12 @@ A glob with no wildcard covers that path and everything under it; `*` matches wi
 
 `renderCase` validates a neutral case and renders it as Vinaya process input: a frozen brief whose `## Surface` is the authorized scope (`in:` from `in`, `out:` from `excluded` then `protected`), whose `## Documentation` lists the relevant delivered documents, and whose one objective is the task statement; the source manifest, which also delivers the documents that are not relevant, without requiring them; and each dispatched role's tool grant — the Developer for a `change` or `answer` case, both reviewers for a `review` case, all three for a `loop` case — holding the tools of the granted capabilities that role may hold: the Developer any of them, a reviewer its granted catalog tools and the `Read`, `Grep`, `Glob`, reading-command (`shell_read`) and shell built-ins (`REVIEWER_BUILTINS`), never a write. An `answer` case changes nothing, so it renders as a Developer dispatch with no Surface: the process input's `surface` is `null` and the brief has no `## Surface` section; it requires no capability. A Vinaya `out:` path is beyond the Surface wherever `in:` covers it, as a neutral `excluded` path is outside the scope. Every case field is rendered, withheld (only grading reads it: hidden tests, reference solution, planted defects, adjudication) or declared inapplicable (`layer`). A case the process cannot express is refused as `unexpressible`, naming the field: a scope glob whose coverage a Surface entry cannot state — any wildcard but a trailing `/**` or the bare root glob `*`, so a wildcard inside a segment or a single-level `/*` — while a literal directory or file path, optionally followed by `/**`, and `*`, which covers the repository-root files, are written as they are; a protected glob overlapping an `in` glob, since an `out:` glob overrides `in:` where a neutral scope allows a protected path inside it; a document id that cannot be one Documentation source; a relevant document in a review case, since a reviewer reports no source use; a capability no tool exercises, or none a dispatched role may hold; a `change` or `loop` case without `publish_change` and `open_change_request`; and a task statement with a line break. An invalid case is refused as `invalid_case` with the validator's path.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/vinaya-renderer.ts contains:export function renderCase(raw: unknown): Rendered { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/vinaya-renderer.ts contains:export const REVIEWER_BUILTINS: readonly string[] = ['Read', 'Grep', 'Glob', 'shell_read', 'shell'] -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/vinaya-renderer.ts contains:export function renderCase(raw: unknown): Rendered { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/vinaya-renderer.ts contains:export const REVIEWER_BUILTINS: readonly string[] = ['Read', 'Grep', 'Glob', 'shell_read', 'shell'] -->
 
 A case's grants also decide what its trial's agent can do, the same on Claude Code and Codex: `capabilitiesForCase` narrows the role's own capability contract (its grants file, `RoleContract`) through one table beside `TOOL_CAPABILITIES`, `CASE_ROLE_CAPABILITIES`, before the adapter's own generator translates it. `read_file` keeps the role's `read_files`; `write_file` its `write_files`, with the role's roots; `run_commands` its `run_commands`, with the role's rules; `read_web` its `web_fetch` and `web_search`; each driver-run capability keeps the role's MCP tools that `TOOL_CAPABILITIES` maps to it, and a server left with none is dropped. `subagents` is always denied (`CASE_DENIED_CAPABILITIES`), since a subagent's own calls never reach the trace; `plan_tool`, `view_image` and `network` keep the role's decision (`ROLE_DECIDED_CAPABILITIES`), since no case expresses them and they reach nothing a grader judges. Every narrowed capability is the role's decision and the case's grant together, never either alone, so a case never widens a role: a reviewer whose case grants `run_commands` still has no shell beyond reading. The table and the function enter the renderer version.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/vinaya-renderer.ts contains:export function capabilitiesForCase(contract: RoleContract, granted: readonly string[]): RoleContract { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/vinaya-renderer.ts contains:export function capabilitiesForCase(contract: RoleContract, granted: readonly string[]): RoleContract { -->
 
 `extractOutcomes` reads the nine neutral outcomes from a Vinaya trial record, which holds the process input the trial ran on and what the harness recorded:
 
@@ -295,7 +295,7 @@ A case's grants also decide what its trial's agent can do, the same on Claude Co
 
 `VINAYA_RENDERER_VERSION` is the renderer's schema version and a SHA-256 over its mapping tables (the tool catalog's names among them), every render and extract function, and the whole text of every source file the mapping depends on (`MAPPING_SOURCE_PATHS`: the renderer, the neutral case and its validator, the review-result and turn-result parsers and schemas, which live in the Vinaya process (`harness/processes/vinaya-strict/executing/code-reviewer/review-result.ts`, `harness/processes/vinaya-strict/executing/developer/developer-turn-result.ts`), the role grants (the membership logic in `harness/kernel/tools/role-grants.ts` and the process's grant table in `harness/processes/vinaya-strict/integration/policies/roles.ts`, the same tool-grant policy every evaluation tool host is started with), the capability contract a case narrows (`harness/kernel/adapters/agents/manifest.ts`), and the beyond-Surface reader with its helpers (`harness/processes/vinaya-strict/tools/task-contract/issue-validation.ts`, `harness/processes/vinaya-strict/tools/task-contract/review-policy.ts`)), so any change to the mapping changes it. Every process input and trial record carries the version it was made under, and `extractOutcomes` refuses one of another version as `stale_renderer`; every extraction returns the version it ran under.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/vinaya-renderer.ts contains:export const VINAYA_RENDERER_VERSION = rendererVersionOf(MAPPING_TABLES, MAPPING_LOGIC, MAPPING_SOURCES) -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/vinaya-renderer.ts contains:export const VINAYA_RENDERER_VERSION = rendererVersionOf(MAPPING_TABLES, MAPPING_LOGIC, MAPPING_SOURCES) -->
 
 `harness/processes/vinaya-strict/evals/suites/vinaya-renderer.test.ts` proves each rendered section, each refusal, each mapping table and each extraction status, and that a record naming its `doctrineDigest` round-trips and extracts the same outcomes as one that omits it. `vinaya-renderer-round-trip.test.ts` runs the committed cases in `neutral-cases-fixture.json` through fixture trial records: each reference solution, rendered and extracted, passes every generic grader for its kind; each known-bad variant that applies — the reference reverted, a planted protected-path edit, a planted blocking finding removed, an ungranted capability call, a relevant document left unused, an undelivered document claimed — fails the grader it targets and no other; the `answer` case's reference passes, and its unused relevant document and its claimed undelivered document each fail `generic-documents-used`; an outcome the record does not carry fails every grader that reads it; and every grader's logic digest is the same in a process that never loads the renderer. Hidden-test results in these records are recorded facts: the tests call no model and run no repository's code.
 
@@ -305,8 +305,8 @@ A case's grants also decide what its trial's agent can do, the same on Claude Co
 
 The derived files are named by kind of task, never by role, and sit under `harness/kernel/evals/suites/`: the change cases in `change/change-generic-cases.json` and `change/change-generic-held-out.json`, the review cases (code and security reviewer) in `review/review-generic-cases.json` and `review/review-generic-held-out.json`, the source-citation cases in `citation/source-citation-generic-cases.json` and `citation/source-citation-generic-held-out.json`, and the whole-loop cases in `whole-loop/whole-loop-generic-cases.json` and `whole-loop/whole-loop-generic-held-out.json`. The re-cut's derived-file table and the digest pins in `generic-suites.ts` use the same kind keys (`change`, `review`, `sourceCitation`, `wholeLoop`). The suite identifiers recorded inside the files keep their names.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/suites/recut-generic-cases.ts contains:export function recutDevelopment(git: Git = repositoryGit): Recut { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/suites/recut-generic-cases.ts contains:export const REVIEWER_CAPABILITIES: readonly string[] = ['read_file', 'run_commands'] -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/suites/recut-generic-cases.ts contains:export function recutDevelopment(git: Git = repositoryGit): Recut { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/suites/recut-generic-cases.ts contains:export const REVIEWER_CAPABILITIES: readonly string[] = ['read_file', 'run_commands'] -->
 
 - **Developer capability** — each case becomes a `change` case. The issue, pull request and brief are dropped. The scope's `in:` becomes the authorized scope's `in` and its `out:` the scope's `excluded`, each entry written as the paths the Surface entry covers (a trailing `/**` or `/*` dropped; a file path and `*` kept); `protected` is empty. Each required source becomes a relevant delivered document pinned by the SHA-256 of its content at the base commit; a web source, whose content the corpus does not hold, cannot be pinned, so it is not delivered, and the re-cut counts it in its summary. The base commit, the reference solution's digest and the hidden tests are kept: each fail-to-pass test by name, each pass-to-pass test by its name digest. The case grants the capabilities the suite's Developer holds.
 - **Code and security reviewer** — each case becomes a `review` case whose scope is the changed file. Its expected defect becomes a planted one, `blocking` by its severity's rank and `critical` exactly for a seeded critical or high security defect; its objectives are dropped. It grants `read_file` and `run_commands` (`REVIEWER_CAPABILITIES`), since a reviewer reads the change with its files and with shell commands and never writes it. A historical or clean change keeps its head commit; a seeded patch's head is the commit that applies it to the base with a fixed author, committer and date (`SEEDED_COMMIT_IDENTITY`), made in a scratch object directory so it is reproducible and the repository gains nothing. A clean case's adjudicators are its two recorded adjudications. A case whose defect kind is `beyond-surface` or `objective-unmet` states a Vinaya Surface or objective, so it stays layer-`P` only, with no layer-`G` counterpart.
@@ -324,7 +324,7 @@ bun harness/processes/vinaya-strict/evals/suites/recut-generic-cases.ts held-out
 
 `harness/processes/vinaya-strict/evals/suites/generic-suites.ts` pins each derived file by the SHA-256 of its bytes and each suite's held-out ids. Development loading never opens a held-out file; a held-out file opens only for an approval naming its pinned digest. Each suite renders its cases with the Vinaya renderer and grades them with the generic graders alone, on fixture trial records; the whole-loop suite is layer `L6`, the others `L5`. A loop case's reference record is its merged change approved by both reviewers on its head, with the evidence and the ready-for-merge decision bound to that head; besides the shared known-bad variants, a loop case is graded with one each for a review bound to another brief, a decision on stale evidence, a recorded change differing from the measured one, an effect performed twice and an unrecorded out-of-scope change, so each of its six graders is targeted. `recut-generic-cases.test.ts` proves each field mapping and that a re-run reproduces every derived file, held-out ones compared by digest only — except a held-out file its test lists as awaiting its approved re-cut, which the current derivation no longer reproduces until that re-cut is run and committed: the developer, source-citation and whole-loop held-out files, since the Interface derivation and the injected-source grant changed; `generic-suites.test.ts` proves, for every derived case, development and held-out, that the reference passes every generic grader and every applicable known-bad variant fails the grader it targets and no other, asserting held-out results as counts and failing ids only, and that the variant marks follow their rules, reporting the held-out marks as counts only.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/suites/generic-suites.ts contains:export const DERIVED_FILE_DIGESTS = { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/suites/generic-suites.ts contains:export const DERIVED_FILE_DIGESTS = { -->
 
 ### The whole-loop runner
 
@@ -342,7 +342,7 @@ bun harness/processes/vinaya-strict/evals/whole-loop.ts --case <id> --split deve
 
 `harness/processes/vinaya-strict/evals/whole-loop.test.ts` drives the whole runner against a fake forge, a local repository as the sandbox and a fake task run, on each backend with each flow it accepts and each adapter, for a run that reaches ready-for-merge and one that stops before it; asserts each refusal and that it writes nothing; asserts the task run's environment and that every forge write names the sandbox; and builds the trial Issue body for every development case and passes it through the core Issue grammar checks.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/whole-loop.ts contains:export async function runWholeLoopTrial(options: WholeLoopOptions, deps: WholeLoopDeps): Promise<WholeLoopOutcome> { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/whole-loop.ts contains:export async function runWholeLoopTrial(options: WholeLoopOptions, deps: WholeLoopDeps): Promise<WholeLoopOutcome> { -->
 
 ## Trial staging
 
@@ -364,7 +364,7 @@ The source repository is only read.
 
 Before staging creates the workspace, the controller freezes the allowed-object manifest from its declared starter input, the base commit, reading the source repository and not the clone it will judge. For a clone it is every object `git rev-list --objects` reaches from the base commit; for a snapshot it is the base commit's tree, every entry with its mode and blob id. The manifest is deeply frozen and carries a SHA-256 digest over its sorted contents. Objects a trial later creates are never admitted to it.
 
-<!-- AEG:CLAIM: harness/kernel/evals/staging.ts contains:export function freezeObjectManifest(source: string, baseCommit: string): Readonly<AllowedObjectManifest> { -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/staging.ts contains:export function freezeObjectManifest(source: string, baseCommit: string): Readonly<AllowedObjectManifest> { -->
 
 ### The contamination test
 
@@ -386,7 +386,7 @@ A snapshot is refused when any `.git` exists anywhere in it (`git_metadata_prese
 
 `admitTrial` runs the test and calls the trial's start function — the only way its model process is launched — when, and only when, the test is clean; otherwise it returns the report as the refusal and the start function is never called.
 
-<!-- AEG:CLAIM: harness/kernel/evals/contamination.ts contains:export function admitTrial<T>( -->
+<!-- VINAYA:CLAIM: harness/kernel/evals/contamination.ts contains:export function admitTrial<T>( -->
 
 ### Hidden inputs and the grading copy
 
@@ -431,7 +431,7 @@ Deeper trace review is ongoing work (the evaluation program's §16), not part of
 
 The evaluation program's §6.6 asks whether each tool is selected when it should be and not when it should not, called with correct arguments, recovered from through its structured error, not confused with its neighbours, and never used to reach authority the role does not hold. `harness/processes/vinaya-strict/executing/evals/tool-selection-suite.ts` is that suite. It evaluates every tool a dispatched role is granted — the Developer's seven and the reviewers' `read_source` — on Claude Code and on Codex, and it is built on this harness: each case is a non-coding `Task`, each run a set of `Trial`s, each grade a pinned code grader's verdict, and each run's result a validated `Report`.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/executing/evals/tool-selection-suite.ts contains:export const TOOL_SELECTION_FLOOR = 0.95 -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/executing/evals/tool-selection-suite.ts contains:export const TOOL_SELECTION_FLOOR = 0.95 -->
 
 ### Cases
 
@@ -472,7 +472,7 @@ bun harness/processes/vinaya-strict/executing/evals/tool-selection-suite.ts run 
 
 The decision rule is the evaluation program's §10 absolute floor: a success rate of at least 0.95 for every tool, on each adapter, on the held-out split; no margin applies.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/executing/evals/tool-selection-suite.ts contains:export const LIVE_SUITE = { name: 'tool-catalog.l5', version: 1, layer: 'L5' } as const -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/executing/evals/tool-selection-suite.ts contains:export const LIVE_SUITE = { name: 'tool-catalog.l5', version: 1, layer: 'L5' } as const -->
 
 ## Source-citation suite
 
@@ -480,7 +480,7 @@ The source-citation cases of `source-delivery.l5@1` run real Claude Code and Cod
 
 Only a case's relevant sources are required. An irrelevant source is still in the manifest and delivered, but the prompt lists it as context and the result schema does not require it, so the task can be satisfied by citing only the relevant source. A source-mutation case runs two turns of one session: the web source changes between them, and the second turn is graded. A receipt counts under the production revision policy — a matching revision, or a changed revision of a volatile source — and only if it delivered the revision the source holds in the graded turn. A trial whose result the production parser or its semantic check refuses counts as a failure rather than stopping the run.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/executing/evals/source-citation-suite.ts contains:export const SOURCE_CITATION_FLOOR = 0.95 -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/executing/evals/source-citation-suite.ts contains:export const SOURCE_CITATION_FLOOR = 0.95 -->
 The decision rule is an absolute source-requiring-task floor of at least 0.95 pass^3 on each adapter, with every balancing trial correct. Reports name each adapter, task count, trial count, pass rate and reported spend, tokens and wall time.
 
 `source-citation-cases.json` contains the development cases and a split record that pins both splits by digest. The record exposes only the held-out index; held-out content lives in `source-citation-held-out.json`. Development loading never opens that file. A held-out run must present the pinned digest before the file is opened, and the bytes and public index are then verified before any case runs. Prompt, tool-description and grader development uses only the development split.
@@ -609,7 +609,7 @@ a whole-loop or fixture record — omits; no outcome reads it. The field moved
 (`executeDeveloper`, `executeReviewer`) give no doctrine: their suites measure
 the model on the brief.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export async function trialDoctrineBlock( -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export async function trialDoctrineBlock( -->
 
 The record's effects are the performed publication calls, each operation its
 `kind` and each call's arguments its `idempotencyKey`; its tool trace is the
@@ -633,10 +633,10 @@ a rendered case and returns its trial record, production passes the real
 dispatch (`runVinayaProcess`), and the tests pass fixture reference and
 known-bad records, calling no model.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export async function executeLayerGTrial( -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export const CLAUDE_HARNESS_INTERNAL_TOOLS: readonly string[] = ['StructuredOutput', 'ToolSearch', 'TodoWrite'] -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export const CLAUDE_COORDINATION_TOOLS: readonly string[] = [ -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:import { publishingInstructionLine } -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export async function executeLayerGTrial( -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export const CLAUDE_HARNESS_INTERNAL_TOOLS: readonly string[] = ['StructuredOutput', 'ToolSearch', 'TodoWrite'] -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export const CLAUDE_COORDINATION_TOOLS: readonly string[] = [ -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:import { publishingInstructionLine } -->
 
 Nothing a trial's workspace controls runs on the host. Every step that runs
 in or over it — the dependency install before the agent starts, staging and
@@ -681,10 +681,10 @@ ahead of its base or a bundle that does not verify is unavailable. An
 unavailable trial's reason is redacted with the Log's redaction helper and
 truncated before it is stored.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export interface StepOneContainer { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export function vinayaProcess(steps: VinayaProcessSteps): VinayaProcessRunner { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export function commitInWorkingTree(workingTree: string, message: string, baseCommit: string): TrialCommit { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:if (context.container !== undefined) throw new Error(`container mode runs no layer-P suite: ${input.suite}`) -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export interface StepOneContainer { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export function vinayaProcess(steps: VinayaProcessSteps): VinayaProcessRunner { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export function commitInWorkingTree(workingTree: string, message: string, baseCommit: string): TrialCommit { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:if (context.container !== undefined) throw new Error(`container mode runs no layer-P suite: ${input.suite}`) -->
 
 **Container mode.** A layer-`G` trial can instead run inside a container
 that is its own sandbox, holding one task. The trial entry sets it
@@ -855,12 +855,12 @@ holds none, `owed.wholeLoopStepOne` must say so, and a record that holds one
 while still owing it is refused. Operator capability selection remains owed by
 the Operator on one host project; the record's `owed` section names it.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/freeze-record.ts contains:export const LIVE_SUITE_LAYERS = { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export const STEP_ONE_COMPARISON_SUITES = [ -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/freeze-record.ts contains:export const LIVE_SUITE_LAYERS = { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:export const STEP_ONE_COMPARISON_SUITES = [ -->
 
 The evaluation program's §6.5 asks whether the Developer, isolated, completes real tasks correctly within its tools and authority. `harness/processes/vinaya-strict/executing/developer/evals/developer-capability-suite.ts` is that suite, `developer-capability.l5`, built on this harness: each case is a coding `Task` whose reference solution is the merged change, and each criterion is a pinned code grader. It runs no live trial; it holds the cases, their splits and the grader a live run uses.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/executing/developer/evals/developer-capability-suite.ts contains:export const SUITE = { name: 'developer-capability.l5', version: 1, layer: 'L5' } as const -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/executing/developer/evals/developer-capability-suite.ts contains:export const SUITE = { name: 'developer-capability.l5', version: 1, layer: 'L5' } as const -->
 
 ### Cases
 
@@ -878,7 +878,7 @@ Every case is a merged task pull request of this repository, reconstructed the S
 
 Commits and blob ids are stored, never source trees. `reconstruct` checks out each candidate in a scratch clone, installs dependencies at each commit, and runs the hidden test files with their package's own runner — vitest where the package's `test` script names it, bun's otherwise — once on the base commit with the hidden tests written in, and twice on the merge commit. A test passing in both merge-commit runs is fail-to-pass when it did not pass before (it failed, was skipped or its file did not load) and pass-to-pass when it did; a test failing in either merge-commit run is in neither list. Pass-to-pass then takes in the existing suite the change can affect: the existing test files the pre-push hook's affected-test selection picks, one import edge deep, for every path the merged change adds or modifies, run once on the merge commit and once on the base commit. A test passing in both runs is pass-to-pass. When a run of those files overruns its budget, each file runs on its own within a shorter one, and a file that still does not finish contributes no test. A candidate is dropped, and counted by reason in the suite report, when its merge commit is missing or has more than one parent, it changes no test file or nothing besides tests, its brief names no §4 scope, the merged change itself touches a protected path its scope does not name, dependencies do not install, the runner fails, or no test fails before and passes after. The newest candidates by merge time are examined up to a recorded limit, and the report states how many older ones were not. Fewer than ten admitted cases is a strategy question for the Principal, never a lowered bar.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/executing/developer/evals/developer-capability-suite.ts contains:export const MINIMUM_CASES = 10 -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/executing/developer/evals/developer-capability-suite.ts contains:export const MINIMUM_CASES = 10 -->
 
 ```
 bun harness/processes/vinaya-strict/executing/developer/evals/developer-capability-suite.ts reconstruct --snapshot <merged-task-prs.jsonl> --work <dir> --limit <n>
@@ -904,7 +904,7 @@ Six pinned code graders, one per pass criterion of the evaluation program's §6.
 | `authority` | No call in the trace matches the Developer's forbidden calls: the tool-selection suite's role rules, every catalog tool outside its grant, and the Operator's task tools |
 | `turn-result-accepted` | A `DeveloperTurnResult` is accepted by the production validator within the one same-session retry, and no governed effect is performed twice |
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/executing/developer/evals/developer-capability-suite.ts contains:export function gradeDeveloperTrial( -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/executing/developer/evals/developer-capability-suite.ts contains:export function gradeDeveloperTrial( -->
 
 Result valid on first attempt, paths beyond the Surface, tool calls, tool errors, wall time, tokens and self-repair cycles are reported beside the verdict and read by no criterion. `harness/processes/vinaya-strict/executing/developer/evals/developer-capability-suite.test.ts` proves the grader on planted cases: the reference solution of every development case passes, and each criterion rejects a planted bad result — a failing or unrun test, a protected or agent-configuration path, an unrecorded or mismatched beyond-Surface record, an undelivered, uncited or other-brief source, each forbidden call, results outside the repair allowance and a repeated effect — while extreme diagnostics leave a passing trial passing. It also checks every development case against git history.
 
@@ -971,7 +971,7 @@ does not validate as the `Quarantine` contract, carries a stale adjudication
 digest or lacks one of its four fields refuses the job. The in-container `executeLayerGTrial` path remains the path the
 Harbor `vinaya` agent invokes.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:export const HARBOR_VERSION = '0.24.0' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:export const HARBOR_VERSION = '0.24.0' -->
 
 ### The converter
 
@@ -994,17 +994,17 @@ A folder holds:
 
 Task folders are written only under `--out` and never committed: they derive byte for byte from committed files — a re-run with the same inputs writes an identical tree, with sorted JSON keys, no timestamps and fixed file modes — a committed copy would duplicate every hidden test and could drift from its source, and a held-out folder must never reach a public tree.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:export const AGENT_ALLOWED_HOSTS = ['api.anthropic.com'] as const -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:export const TRIAL_TIMEOUT_SEC = AGENT_TIMEOUT_SEC - TRIAL_TIMEOUT_MARGIN_SEC -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:export const CODEX_ALLOWED_HOSTS = ['api.openai.com', 'chatgpt.com'] as const -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:export const CLAUDE_BIN_DIRECTORY = '/opt/claude/bin' -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:git fetch --quiet --filter=blob:none origin "$base" -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:export const AGENT_ALLOWED_HOSTS = ['api.anthropic.com'] as const -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:export const TRIAL_TIMEOUT_SEC = AGENT_TIMEOUT_SEC - TRIAL_TIMEOUT_MARGIN_SEC -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:export const CODEX_ALLOWED_HOSTS = ['api.openai.com', 'chatgpt.com'] as const -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:export const CLAUDE_BIN_DIRECTORY = '/opt/claude/bin' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-tasks.ts contains:git fetch --quiet --filter=blob:none origin "$base" -->
 
 ### The quarantine record
 
 `harness/processes/vinaya-strict/evals/suites/harbor-quarantine.json` lists, by suite, the cases whose Harbor trials are counted apart: each entry a `Quarantine` (`taskId`, `cause`, `reason`, `reasonVersion`, `adjudicationDigest`) validated with `validateQuarantine`, its `adjudicationDigest` the SHA-256 of the canonical JSON of the other four fields; the loader refuses a stale digest or a case quarantined twice, and the converter refuses, before it writes any folder, a quarantine naming a suite it does not convert or a case that suite's development split does not hold. A quarantined case is never deleted or edited: the converter still writes its task folder, adding the quarantine to its `task.toml`, and the results reader shows its trial apart from the estimate. The record holds six `developer-capability-neutral.l5` cases. Three have cause `environment`: `pr-1002` and `pr-1077`, whose fail-to-pass hidden tests run only on macOS and are skipped on Linux, where the task image runs, until the cases are re-made to run on any platform; and `pr-1271`, whose hidden test `6a4dc500b240` in `harness/processes/vinaya-strict/integration/conformance/unit/dev-review-engine-architecture-exit.test.ts` still fails in the container with the base's history present, its cause not yet diagnosed. Three have cause `broken-task`, since no solution written from the case's inputs can pass their tests: `pr-1299`, whose tests check two GitHub comment ids and a title-to-path map that no delivered document or allowed network source holds; `pr-1268`, whose test requires exactly the 29 placeholder keys of a hidden fill map, 21 of which no base file holds; and `pr-1277`, whose tests require that no doctrine page but the tranche model names the retired plan-on-disk layout, which its reference meets by editing role and contract doctrine files under the doctrine tree of its base revision, paths the case excludes from its scope, so a run that keeps to the scope cannot pass. Their whole-loop copies stay scored, since the record names only the developer suite.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-results.ts contains:export function checkedQuarantine(input: unknown, subject: string): Quarantine { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-results.ts contains:export function checkedQuarantine(input: unknown, subject: string): Quarantine { -->
 
 ### The `vinaya` agent
 
@@ -1062,13 +1062,13 @@ The trial honours its own limit, `--timeout-sec`, which the agent's run command 
 
 On `engine` (`runEngineRoleStep`, `engine-role-step.ts`), the role's single agent step is written as a one-step Flow into the trial's scratch directory, outside `/app`, and run through the Engine's public process-run start (`startProcessRun`), with no mechanical step, gate or forge read or write. Its agent is launched by the Engine's role launcher (`createRoleLauncher`) from the settings the adapter generates from the process's own grants file for the role (`harness/processes/vinaya-strict/executing/<role>/grants.yaml`), narrowed to the capabilities the trial's case grants (`capabilitiesForCase`; a layer-`P` case, which names no grant, keeps the grants file's), the exact model id substituted for the grants' process-supplied model. A capability the case does not grant is denied on both adapters, and Claude Code's launch names exactly the built-ins left allowed with `--tools`, so it is offered no other built-in, even one the pinned catalog does not list. The generated settings name the driver-run tools' server `vinaya_dev_tools` and, on Codex, require it; the trial starts the same dev-tools host the standalone trial starts — the Developer's on its fake forge world, a reviewer's serving `read_source` on an empty source world — and the generated settings reach it through a bridge script in the scratch directory. The checkpoint store is a SQLite file in the same scratch directory, removed with it. The role gets the same logins as the standalone container trial and no other credential: Claude the subscription token alone, refused when it is unset; Codex a copy of the login the agent staged in `/home/tester/.codex`, in its generated Codex home. The executor's environment allowlist passes only `PATH` and `HOME`. The run's stdout stream is read back into the standalone dispatch's handle — the turn result or review result from the adapter's own structured output, the usage from the stream — with the Engine's server name read as the standalone one, so the same tool call is the same trace entry on both backends. A run that does not complete is a failed dispatch, never a result; one that ends unfinished at the launcher's limit is reported as timed out (`timedOut`, failure reason `timeout`), any other as a crash. A host-side step-one run never takes the Engine backend: `runStepOne` still refuses it with `engine_forbidden`. `harness/processes/vinaya-strict/evals/suites/harbor-tasks.test.ts` runs one change case and one review case on each backend with stub agents in place of Claude Code and Codex, and the same change case on the Engine on both adapters, and the verifier grades each record with the same verdicts.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-trial.ts contains:export async function runHarborTrial( -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-trial.ts contains:export const STREAM_FILE = 'vinaya-trial.txt' -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/vinaya_harbor_agent.py contains:TRIAL_TIMEOUT_ENV = "VINAYA_TRIAL_TIMEOUT_SEC" -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/engine-role-step.ts contains:export function usageOfStream(adapter: 'claude-code' | 'codex', lines: readonly string[]) { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-trial.ts contains:export const HARBOR_TRIAL_BACKENDS = ['standalone', 'engine'] as const -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/engine-role-step.ts contains:export async function runEngineRoleStep(request: EngineRoleStepRequest): Promise<DispatchHandle> { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:return refusal('engine_forbidden', 'step one runs only on the standalone backend') -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-trial.ts contains:export async function runHarborTrial( -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-trial.ts contains:export const STREAM_FILE = 'vinaya-trial.txt' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/vinaya_harbor_agent.py contains:TRIAL_TIMEOUT_ENV = "VINAYA_TRIAL_TIMEOUT_SEC" -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/engine-role-step.ts contains:export function usageOfStream(adapter: 'claude-code' | 'codex', lines: readonly string[]) { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-trial.ts contains:export const HARBOR_TRIAL_BACKENDS = ['standalone', 'engine'] as const -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/engine-role-step.ts contains:export async function runEngineRoleStep(request: EngineRoleStepRequest): Promise<DispatchHandle> { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/step-one.ts contains:return refusal('engine_forbidden', 'step one runs only on the standalone backend') -->
 
 ### Each outcome's source and the reward
 
@@ -1082,8 +1082,8 @@ On `engine` (`runEngineRoleStep`, `engine-role-step.ts`), the role's single agen
 
 `tests/grade.js` merges the three into one `VinayaTrialRecord`, runs `extractOutcomes` and `GENERIC_GRADERS` unchanged, and writes `/logs/verifier/reward.txt` as `1` exactly when every generic grader passes and `0` otherwise, with every verdict and reason in `/logs/verifier/grades.json`. A missing agent record, one whose process input differs from the harness's, or one the renderer cannot extract rewards `0` with its reason. Each hidden-test runner's standard output and standard error, headed by the test file it ran, are kept in `/logs/verifier/hidden-tests-stdout.txt` and `/logs/verifier/hidden-tests-stderr.txt` and printed to the script's own output, which `tests/test.sh` joins with its standard error into the output Harbor writes to `/logs/verifier/test-stdout.txt`.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-grade.ts contains:export async function gradeTrial(spec: GradingSpec, agent: unknown, measured: MeasuredPart): Promise<TrialGrade> { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/evals/harbor-grade.ts contains:export const HIDDEN_TEST_STDOUT_FILE = 'hidden-tests-stdout.txt' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-grade.ts contains:export async function gradeTrial(spec: GradingSpec, agent: unknown, measured: MeasuredPart): Promise<TrialGrade> { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/evals/harbor-grade.ts contains:export const HIDDEN_TEST_STDOUT_FILE = 'hidden-tests-stdout.txt' -->
 
 ### Held-out cases
 

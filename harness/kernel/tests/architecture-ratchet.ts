@@ -220,9 +220,9 @@ export function resolvePath(text: string, file: string, tree: Tree, nearestOnly 
 
 type Located = { target: string; contribution: number }
 
-// The path a documentation claim anchor names, unquoted: `AEG:CLAIM: <path> contains|absent|sha256:…`, read from the
+// The path a documentation claim anchor names, unquoted: `VINAYA:CLAIM: <path> contains|absent|sha256:…`, read from the
 // repository root the way the claim check reads it.
-const CLAIM_ANCHOR_PATH = /AEG:CLAIM:\s*(\S+)\s+(?:contains|absent|sha256)\s*:/gi
+const CLAIM_ANCHOR_PATH = /VINAYA:CLAIM:\s*(\S+)\s+(?:contains|absent|sha256)\s*:/gi
 
 /** The spans of a source file's comments, line and block, leaving strings alone. */
 function commentSpans(source: string): Span[] {

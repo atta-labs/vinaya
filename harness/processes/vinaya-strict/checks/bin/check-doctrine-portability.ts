@@ -194,7 +194,7 @@ function main(): void {
 
   const VENDOR_NAME_RECOVERY_PROMPT =
     'This doctrine page names an AI vendor/product/agent by name outside the one sanctioned fenced home ' +
-    '(`<!-- AEG:VENDOR-EXAMPLE:START -->` … `<!-- AEG:VENDOR-EXAMPLE:END -->` in `tranche-model.md` §12). ' +
+    '(`<!-- VINAYA:VENDOR-EXAMPLE:START -->` … `<!-- VINAYA:VENDOR-EXAMPLE:END -->` in `tranche-model.md` §12). ' +
     'Rewrite the mention to refer to the host/agent generically (e.g. "the coding agent," "this repo\'s ' +
     'shipped reference host," "an external, independently-hosted model") instead of by product name.'
 

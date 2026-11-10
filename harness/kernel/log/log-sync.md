@@ -128,8 +128,8 @@ The slot's own unread tail is drained in full in that one `readPage` call, never
 
 **Refusal.** Every file this source opens — a live file, a rotated slot — is opened `O_NOFOLLOW`, so a symlink is refused atomically rather than raced against a separate `lstat`; the open descriptor is then confirmed a regular file before anything is read. The same open also carries `O_NONBLOCK`, so a FIFO planted at a stream's path is skipped rather than hanging the open call indefinitely waiting for a writer — the same pairing the sink's own append open uses. Neither check throws: a symlinked, FIFO or other non-regular entry is simply excluded from the stream listing, or, for a rotated slot, treated as a missing slot — a retention gap, not a crash. This source never writes, renames or deletes anything in the folder it reads.
 
-<!-- AEG:CLAIM: harness/kernel/log/client/log-sync-folder-source.ts contains:export function createFolderLogSource(deps: FolderSourceDeps): FolderLogSource { -->
-<!-- AEG:CLAIM: harness/kernel/log/client/log-sync-folder-source.ts contains:lookback(cursor: SourceCursor | null, span: number): Promise<SourcePage> -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/log-sync-folder-source.ts contains:export function createFolderLogSource(deps: FolderSourceDeps): FolderLogSource { -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/log-sync-folder-source.ts contains:lookback(cursor: SourceCursor | null, span: number): Promise<SourcePage> -->
 
 ## Following a Log live
 
@@ -145,8 +145,8 @@ A source answers "what is stored after this cursor?" once. A **follower** (`LogF
 
 **The folder follower.** `createFolderLogFollower` takes the folder root and repository the folder source takes, plus an injected file watch, and watches the one repository directory the folder source reads (`repoDirFor`, from the sink's own layout). It arms the watch first, then reads on with the folder source from its cursor until a page brings nothing new, so a line appended during that first read still raises a change; every later change reads on the same way. Each line therefore comes with the position the folder source already gives — the stream's name and the line's starting byte in the live file (`<work>:live:<byte>`) — and the handle's cursor is the folder source's own cursor. A torn last line is handed over once it is whole, never twice, and a rotation gap the folder source reports is passed to the sink's `gap`. A folder that cannot be watched, or a watch that fails, is retried with the same growing waits, from the same cursor.
 
-<!-- AEG:CLAIM: harness/kernel/log/client/log-follow.ts contains:export function createServerLogFollower(deps: ServerFollowerDeps): LogFollower { -->
-<!-- AEG:CLAIM: harness/kernel/log/client/log-follow.ts contains:export function createFolderLogFollower(deps: FolderFollowerDeps): LogFollower { -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/log-follow.ts contains:export function createServerLogFollower(deps: ServerFollowerDeps): LogFollower { -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/log-follow.ts contains:export function createFolderLogFollower(deps: FolderFollowerDeps): LogFollower { -->
 
 ## The sync run
 
@@ -180,9 +180,9 @@ The one command a person types to fill, resume and rebuild the local cache. Its 
 
 **Read-only.** The command reads the destination and writes only its own cache directory — never the folder, never the server (it only ever issues `GET` requests through the server source), and never the forge.
 
-<!-- AEG:CLAIM: harness/kernel/log/client/log-sync.ts contains:export async function runLogSync(opts: SyncRunOptions, deps: LogSyncDeps = realLogSyncDeps()): Promise<number> { -->
-<!-- AEG:CLAIM: harness/kernel/log/client/log-sync.ts contains:export const LOGS_CACHE_DIR_NAME = 'logs-cache' -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/integration/bin/sync.ts contains:export async function syncCommand(args: string[]): Promise<number> { -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/log-sync.ts contains:export async function runLogSync(opts: SyncRunOptions, deps: LogSyncDeps = realLogSyncDeps()): Promise<number> { -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/log-sync.ts contains:export const LOGS_CACHE_DIR_NAME = 'logs-cache' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/integration/bin/sync.ts contains:export async function syncCommand(args: string[]): Promise<number> { -->
 
 ## The questions
 
@@ -291,8 +291,8 @@ Rebuilding (`vinaya-sync --rebuild`) deletes `cache.sqlite` and its `-wal` and `
 
 The one proof that the folder source, the server source, the durable cache and every entry in `QUESTIONS` agree with each other and with the in-memory fixtures is `harness/kernel/log/client/log-readers-integration.test.ts` (`log-readers-v1` 12, O1–O5): it writes the fixture executions (`harness/kernel/log/fixtures`) to a real log folder and serves the same lines from a fake server implementing the log server's own wire contract (`apps/log-server/specs/server.md` § 5), syncs each into a real SQLite cache with `runLogSync`, and asserts every `QUESTIONS` entry answers identically across the fixtures and both real caches — then deletes a cache file and syncs again, with and without a source line removed first. The fake server is what lets this run with no network, on CI, every time; reading a real, deployed log server this same way — this repository's own — is the Principal's own step (that task's test plan), never an automated one, since a test is never pointed at a live server it does not control.
 
-<!-- AEG:CLAIM: harness/kernel/log/sync/engine.ts contains:export async function syncSource(source: LogSource, cache: LogCache, options: SyncOptions): Promise<SyncSummary> { -->
-<!-- AEG:CLAIM: harness/kernel/log/sync/normalize.ts contains:const classified = classifyStoredLine(raw, '') -->
-<!-- AEG:CLAIM: harness/kernel/log/sync/row.ts contains:export const LOW_TRUST_BELOW_VERSION = '0.33.0' -->
-<!-- AEG:CLAIM: harness/kernel/log/client/log-sync-server-source.ts contains:export const SERVER_SOURCE_PAGE_MAX = 1000 -->
-<!-- AEG:CLAIM: harness/kernel/log/client/log-sync-server-source.ts contains:export const SERVER_SOURCE_TIMEOUT_MS = 10_000 -->
+<!-- VINAYA:CLAIM: harness/kernel/log/sync/engine.ts contains:export async function syncSource(source: LogSource, cache: LogCache, options: SyncOptions): Promise<SyncSummary> { -->
+<!-- VINAYA:CLAIM: harness/kernel/log/sync/normalize.ts contains:const classified = classifyStoredLine(raw, '') -->
+<!-- VINAYA:CLAIM: harness/kernel/log/sync/row.ts contains:export const LOW_TRUST_BELOW_VERSION = '0.33.0' -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/log-sync-server-source.ts contains:export const SERVER_SOURCE_PAGE_MAX = 1000 -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/log-sync-server-source.ts contains:export const SERVER_SOURCE_TIMEOUT_MS = 10_000 -->

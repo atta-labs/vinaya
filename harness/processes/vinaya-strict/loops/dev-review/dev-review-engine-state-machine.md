@@ -26,7 +26,7 @@ on live in `harness/processes/vinaya-strict/loops/dev-review/dev-review-capabili
 
 ## Why this file exists, and what it consumes
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json contains:"rulingStatus": "ruled", -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json contains:"rulingStatus": "ruled", -->
 This model encodes only two kinds of fact: product guarantees the standalone
 loop already demonstrates (`harness/processes/vinaya-strict/loops/dev-review/dev-review-invariants.md`'s
 `product-guarantee` entries), and the thirteen policy questions frozen as
@@ -40,7 +40,7 @@ contract names it (`AMB-01` through `AMB-13` all appear at least once).
 
 ## The states (O1)
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts contains:export const ENGINE_STATES: EngineState[] = [ -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts contains:export const ENGINE_STATES: EngineState[] = [ -->
 Fifteen named positions `Progress.currentNode` may hold, each with an
 **owner** (the layer that decides what happens while control sits there) and
 an **authority** (what kind of state that decision reads):
@@ -136,7 +136,7 @@ and exhausting max-rounds stop for the Principal.
 
 ## The terminal outcomes (O1)
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts contains:export const TERMINAL_OUTCOMES: TerminalOutcome[] = [ -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts contains:export const TERMINAL_OUTCOMES: TerminalOutcome[] = [ -->
 Five, never collapsed into one value: `ready_for_merge`, `paused`, `failed`,
 `cancelled`, `exhausted`. They are the outcomes of one execution leg (one
 start or one resume, tech spec § 16.4): four end the run, and `paused` is a
@@ -176,7 +176,7 @@ is missing; this section explains the two load-bearing ones.
 
 ### Side-effect classification and effect-once boundaries
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts contains:export type SideEffectClass = (typeof SIDE_EFFECT_CLASSES)[number] -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts contains:export type SideEffectClass = (typeof SIDE_EFFECT_CLASSES)[number] -->
 Five classes (tech spec § 16.12): `none`, `pure-read-only`, `replay-safe`,
 `idempotent-keyed`, `reconcilable-not-replayable`. `publish_ready_for_merge`
 and `reconcile_external_state` are `reconcilable-not-replayable` on purpose —
@@ -211,7 +211,7 @@ run to be paused before it can be cancelled.
 
 ## Provider-neutral core (O3)
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts contains:export const PROVIDER_ADAPTER_EXTENSION_POINTS = [ -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts contains:export const PROVIDER_ADAPTER_EXTENSION_POINTS = [ -->
 None of the fifteen states, thirty-three transitions, five terminal outcomes
 or fifteen node contracts names a provider, a model, a hook, a plugin, a
 tool-block format, or a vendor session shape. The core exposes three typed
