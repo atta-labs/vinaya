@@ -123,6 +123,20 @@ export interface ReadyGateResult {
   requiredCi?: { workflow: string; check: string; runId?: string }
 }
 
+/** What one round-test run reported: the head it judged, how it ended, and the first failing test when it failed. */
+export interface RoundTestsResult {
+  head: string
+  /** `failed` only for a verified red run; every infrastructure problem is `none`, `timed_out` or `unavailable`. */
+  outcome: 'passed' | 'failed' | 'none' | 'timed_out' | 'unavailable'
+  /** The first failing test, set with `failed`: its path, `file:line` (the file alone when no frame is found) and the failure lines. */
+  firstFailure?: { test: string; location: string; excerpt: string }
+  wallMs: number
+  /** Why the run did not give a verdict (set with `none`, `timed_out` and `unavailable`). */
+  detail?: string
+  /** What stopped the run's process group before it ended on its own. */
+  stoppedBy?: 'cancel' | 'deadline'
+}
+
 /** One explicit Test Plan command the driver ran (or reused a receipt for) at the publication boundary. */
 export interface ExplicitCommandResult {
   command: string
@@ -158,6 +172,8 @@ export interface V2Functions {
     signal?: AbortSignal
     deferTests?: boolean
   }) => Promise<ReadyGateResult> | ReadyGateResult
+  /** Runs the repository's selected tests on `head` as a supervised job, one at a time on a host; never throws. */
+  runRoundTests?: (input: { head: string; signal?: AbortSignal }) => Promise<RoundTestsResult> | RoundTestsResult
   /** The default branch's ready-tests policy; throws when the trusted read fails. Absent: local tests. */
   readyTestsPolicy?: () => ReadyTestsPolicy
   /**
