@@ -30,9 +30,11 @@ import {
   isWholeSuiteCommand,
   runExplicitCommandsLive,
   runReadyGateLive,
+  runRoundTestsLive,
   stagedPullRequestStore,
   withV2DevTools
 } from './flow-v2-live'
+import { acquireRoundTestLock } from './round-test-lock'
 
 // The live wiring of version 2: the staged pull request, the storage-push marker and the ready push run through
 // the worktree's real pre-push hook, against throwaway repositories.
@@ -1136,6 +1138,275 @@ describe('live progress of the ready push and the explicit-command run', () => {
     })
     expect(result.outcome).toBe('passed')
     expect(lines(progress.logPath)).toEqual([])
+  })
+})
+
+describe('runRoundTestsLive', () => {
+  type Adapter = {
+    selected?: string[]
+    selectFails?: boolean
+    groups?: number
+    groupMs?: number
+    hangMs?: number
+    exit?: number
+    output?: string
+    name?: string
+    events?: string
+    pidFile?: string
+    failedRecord?: boolean
+    result?: {
+      outcome: 'passed' | 'failed'
+      failed?: string[]
+      unreported?: string[]
+      native?: boolean
+      completed?: boolean
+    }
+  }
+
+  // A fake native adapter: `select` prints the plan, `run` plays its groups one after another and records the
+  // structured last-push result the way the real adapter does. `__DIR__` is the repository's own path.
+  const adapterSource = (cfg: Adapter): string => `
+import { execFileSync } from 'node:child_process'
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+const cfg = ${JSON.stringify(cfg)}
+const cwd = process.cwd()
+const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim()
+const note = (line) => { if (cfg.events) appendFileSync(cfg.events, line + '\\n') }
+const dir = join(cwd, '.git', 'vinaya')
+if (process.argv[2] === 'select') {
+  if (cfg.selectFails) { console.error('refused: no plan'); process.exit(1) }
+  console.log((cfg.selected ?? []).join('\\n'))
+  process.exit(0)
+}
+note('in ' + (cfg.name ?? ''))
+mkdirSync(dir, { recursive: true })
+if (cfg.pidFile) writeFileSync(cfg.pidFile, String(process.pid))
+if (cfg.failedRecord)
+  writeFileSync(join(dir, 'pre-push-failed-tests.json'), JSON.stringify({
+    version: 1, head, branch: 'task/issue-1', failed: [join(cwd, 'a.test.ts')],
+    failedHoldsUnconfirmed: true, runStartedAt: new Date().toISOString(), recordedAt: new Date().toISOString()
+  }))
+for (let group = 0; group < (cfg.groups ?? 0); group += 1) {
+  note('group-in ' + (cfg.name ?? ''))
+  await Bun.sleep(cfg.groupMs ?? 50)
+  note('group-out ' + (cfg.name ?? ''))
+}
+if (cfg.hangMs) await Bun.sleep(cfg.hangMs)
+console.log(cfg.output ?? '')
+if (cfg.result) {
+  const r = cfg.result
+  writeFileSync(join(dir, 'pre-push-last-result.json'), JSON.stringify({
+    version: 1, head, branch: 'task/issue-1', mode: 'ready', outcome: r.outcome,
+    selection: { head, selected: cfg.selected ?? [], ...(r.native === false ? {} : { native: { version: 1 } }) },
+    failed: r.outcome === 'passed' ? [] : (r.failed ?? 'all'), elapsedSeconds: 1,
+    recordedAt: new Date().toISOString(), native: { completed: r.completed !== false },
+    ...(r.unreported ? { unreported: r.unreported } : {})
+  }))
+}
+note('out ' + (cfg.name ?? ''))
+process.exit(cfg.exit ?? 0)
+`
+
+  const git = (dir: string, ...args: string[]) => {
+    const env = { ...process.env }
+    for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
+    return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+      cwd: dir,
+      env,
+      encoding: 'utf8'
+    }).trim()
+  }
+
+  /** A repository committing a fake native adapter (none for `null`); returns it with its head. */
+  const repoWith = (cfg: Adapter | null) => {
+    const dir = repo()
+    if (cfg !== null) {
+      mkdirSync(join(dir, 'scripts', 'test-suites'), { recursive: true })
+      writeFileSync(join(dir, 'scripts', 'test-suites', 'local-run.ts'), adapterSource(cfg).replaceAll('__DIR__', dir))
+      git(dir, 'add', '-A')
+      git(dir, 'commit', '-q', '-m', 'adapter')
+    }
+    return { dir, head: git(dir, 'rev-parse', 'HEAD') }
+  }
+
+  const common = (dir: string) => ({
+    worktreePath: dir,
+    registryDir: join(dir, 'registry'),
+    lockRoot: fixtureDir('round-root-'),
+    lock: { pollMs: 20 }
+  })
+
+  test('a repository that commits no native adapter is `none`, logged, and runs nothing', async () => {
+    const { dir, head } = repoWith(null)
+    const logs: string[] = []
+    const result = await runRoundTestsLive({ ...common(dir), head, log: (line) => logs.push(line) })
+    expect(result).toMatchObject({ head, outcome: 'none' })
+    expect(logs).toHaveLength(1)
+  })
+
+  test('a complete native pass recorded for the head is `passed`, whatever the exit status says', async () => {
+    const { dir, head } = repoWith({ selected: ['a.test.ts'], exit: 1, result: { outcome: 'passed' } })
+    const result = await runRoundTestsLive({ ...common(dir), head })
+    expect(result).toMatchObject({ head, outcome: 'passed' })
+    expect(result.firstFailure).toBeUndefined()
+    expect(result.wallMs).toBeGreaterThanOrEqual(0)
+  })
+
+  test('a plan that selected nothing is `none`', async () => {
+    const { dir, head } = repoWith({ selected: [], result: { outcome: 'passed' } })
+    expect((await runRoundTestsLive({ ...common(dir), head })).outcome).toBe('none')
+  })
+
+  test('a verified red run is `failed` with the first failing test, its file:line and an excerpt', async () => {
+    const { dir, head } = repoWith({
+      selected: ['a.test.ts'],
+      exit: 1,
+      output: 'a.test.ts:\nerror: expected 1 to be 2\n      at __DIR__/src/thing.ts:12:3\n 0 pass\n 1 fail',
+      result: { outcome: 'failed', failed: ['__DIR__/a.test.ts'] }
+    })
+    const result = await runRoundTestsLive({ ...common(dir), head })
+    expect(result.outcome).toBe('failed')
+    expect(result.firstFailure?.test).toBe('a.test.ts')
+    expect(result.firstFailure?.location).toBe('src/thing.ts:12')
+    expect(result.firstFailure?.excerpt).toContain('expected 1 to be 2')
+  })
+
+  test('a failing test with no frame inside the repository names the file alone', async () => {
+    const { dir, head } = repoWith({
+      selected: ['a.test.ts'],
+      output: 'error: boom\n  at /somewhere/else/node_modules/x.js:3:4',
+      result: { outcome: 'failed', failed: ['__DIR__/a.test.ts'] }
+    })
+    const result = await runRoundTestsLive({ ...common(dir), head })
+    expect(result.firstFailure).toMatchObject({ test: 'a.test.ts', location: 'a.test.ts' })
+  })
+
+  test('no record, a runner that crashed before reporting, an incomplete pass and a refused plan are `unavailable`, never `failed`', async () => {
+    const cases: Adapter[] = [
+      { selected: ['a.test.ts'], exit: 0 },
+      { selected: ['a.test.ts'], exit: 1, result: { outcome: 'failed' } },
+      {
+        selected: ['a.test.ts'],
+        result: { outcome: 'failed', failed: ['/x/a.test.ts'], unreported: ['/x/a.test.ts'] }
+      },
+      { selected: ['a.test.ts'], result: { outcome: 'passed', completed: false } },
+      { selected: ['a.test.ts'], result: { outcome: 'passed', native: false } },
+      { selectFails: true }
+    ]
+    for (const cfg of cases) {
+      const { dir, head } = repoWith(cfg)
+      const logs: string[] = []
+      const result = await runRoundTestsLive({ ...common(dir), head, log: (line) => logs.push(line) })
+      expect(result.outcome).toBe('unavailable')
+      expect(result.detail).toBeTruthy()
+      expect(logs).toHaveLength(1)
+    }
+  }, 60_000)
+
+  test('a record from an earlier run is never taken for this run’s verdict', async () => {
+    const { dir, head } = repoWith({ selected: ['a.test.ts'], exit: 0 })
+    mkdirSync(join(dir, '.git', 'vinaya'), { recursive: true })
+    writeFileSync(
+      join(dir, '.git', 'vinaya', 'pre-push-last-result.json'),
+      JSON.stringify({
+        version: 1,
+        head,
+        branch: 'task/issue-1',
+        mode: 'ready',
+        outcome: 'passed',
+        selection: { head, selected: ['a.test.ts'], native: { version: 1 } },
+        failed: [],
+        elapsedSeconds: 1,
+        recordedAt: new Date(Date.now() - 3_600_000).toISOString(),
+        native: { completed: true }
+      })
+    )
+    expect((await runRoundTestsLive({ ...common(dir), head })).outcome).toBe('unavailable')
+  })
+
+  test('a head that is not the worktree’s, or a tracked change, runs nothing and names the drift', async () => {
+    const events = join(fixtureDir('round-events-'), 'events.log')
+    const { dir, head } = repoWith({ selected: ['a.test.ts'], events, name: 'x', result: { outcome: 'passed' } })
+    const wrong = await runRoundTestsLive({ ...common(dir), head: 'f'.repeat(40) })
+    expect(wrong.outcome).toBe('unavailable')
+    expect(wrong.detail).toContain('not the approved head')
+    writeFileSync(join(dir, 'scripts', 'test-suites', 'local-run.ts'), '// changed\n')
+    const dirty = await runRoundTestsLive({ ...common(dir), head })
+    expect(dirty.outcome).toBe('unavailable')
+    expect(dirty.detail).toContain('uncommitted')
+    expect(existsSync(events)).toBe(false)
+  })
+
+  test('the deadline stops the whole group, keeps the failed record the run wrote, and says so', async () => {
+    const pidFile = join(fixtureDir('round-pid-'), 'pid')
+    const { dir, head } = repoWith({ selected: ['a.test.ts'], hangMs: 120_000, pidFile, failedRecord: true })
+    const result = await runRoundTestsLive({ ...common(dir), head, deadlineMs: 4_000 })
+    expect(result).toMatchObject({ outcome: 'timed_out', stoppedBy: 'deadline' })
+    expect(() => process.kill(Number(readFileSync(pidFile, 'utf8')), 0)).toThrow()
+    // The record the stopped run wrote stays, so the next run re-runs what was not confirmed.
+    expect(existsSync(join(dir, '.git', 'vinaya', 'pre-push-failed-tests.json'))).toBe(true)
+  }, 30_000)
+
+  test('a cancel stops the group and the result says it was a cancel', async () => {
+    const pidFile = join(fixtureDir('round-pid-'), 'pid')
+    const { dir, head } = repoWith({ selected: ['a.test.ts'], hangMs: 120_000, pidFile })
+    const controller = new AbortController()
+    const running = runRoundTestsLive({ ...common(dir), head, signal: controller.signal })
+    for (let waited = 0; !existsSync(pidFile) && waited < 20_000; waited += 100)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    controller.abort()
+    const result = await running
+    expect(result).toMatchObject({ outcome: 'unavailable', stoppedBy: 'cancel' })
+    expect(() => process.kill(Number(readFileSync(pidFile, 'utf8')), 0)).toThrow()
+  }, 30_000)
+
+  test('a lock held for the whole limit is `timed_out`, never `failed`, and nothing ran', async () => {
+    const events = join(fixtureDir('round-events-'), 'events.log')
+    const { dir, head } = repoWith({ selected: ['a.test.ts'], events, name: 'x', result: { outcome: 'passed' } })
+    const shared = common(dir)
+    const held = await acquireRoundTestLock({ rootDir: shared.lockRoot, deadlineAt: Date.now() + 60_000 })
+    const logs: string[] = []
+    const result = await runRoundTestsLive({ ...shared, head, deadlineMs: 400, log: (line) => logs.push(line) })
+    if (held.ok) held.release()
+    expect(result).toMatchObject({ outcome: 'timed_out', stoppedBy: 'deadline' })
+    expect(logs).toHaveLength(1)
+    expect(existsSync(events)).toBe(false)
+  })
+
+  test('two runs on one host never overlap, and each runs its two groups one after the other', async () => {
+    const events = join(fixtureDir('round-events-'), 'events.log')
+    const lockRoot = fixtureDir('round-root-')
+    const make = (name: string) =>
+      repoWith({ selected: ['a.test.ts'], groups: 2, groupMs: 150, events, name, result: { outcome: 'passed' } })
+    const runs = [make('A'), make('B')]
+    const results = await Promise.all(runs.map((r) => runRoundTestsLive({ ...common(r.dir), lockRoot, head: r.head })))
+    expect(results.map((r) => r.outcome)).toEqual(['passed', 'passed'])
+    const lines = readFileSync(events, 'utf8').trim().split('\n')
+    const first = lines[0]?.split(' ')[1] ?? 'A'
+    const second = first === 'A' ? 'B' : 'A'
+    const block = (name: string) => [
+      `in ${name}`,
+      `group-in ${name}`,
+      `group-out ${name}`,
+      `group-in ${name}`,
+      `group-out ${name}`,
+      `out ${name}`
+    ]
+    expect(lines).toEqual([...block(first), ...block(second)])
+  }, 60_000)
+
+  test('the live function bag binds runRoundTests', () => {
+    const { dir, head } = repoWith(null)
+    const functions = liveV2Functions({
+      worktreePath: dir,
+      branch: 'task/issue-1',
+      store: stagedPullRequestStore(join(dir, 'run')),
+      findOpenPullRequest: () => null,
+      remoteHead: () => head,
+      openWithDeveloperTool: async () => ({ ok: false, error: { message: 'unused' } }) as never
+    })
+    expect(typeof functions.runRoundTests).toBe('function')
   })
 })
 

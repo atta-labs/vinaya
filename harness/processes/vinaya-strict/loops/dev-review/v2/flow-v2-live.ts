@@ -92,6 +92,7 @@ import {
   isTestRunLine,
   type ReadyGateResult,
   readyTestPlanCommand,
+  type RoundTestsResult,
   type StagedPullRequest,
   type V2Functions,
   withReadyTestCommand
@@ -100,6 +101,9 @@ import { checkReadyBaseline } from './ready-baseline'
 import { readRequiredCiLive } from './ci-recovery'
 import { CONTROL_FD, parseSupervisedCommandResult, RESULT_FD } from './supervised-command'
 import { carriedPass, carryKey } from './test-plan-carry'
+import { acquireRoundTestLock, type RoundTestLockOptions } from './round-test-lock'
+import { runtimeDirForThisRepo } from '../../../../../kernel/run-paths'
+import { extractFailureExcerpt } from '../run-control/pr-facts'
 
 // The live wiring of review locally, push once (version 2 of the developer-review Flow) for the Engine runner: the
 // staged pull request the Developer's `open_pull_request` saves, the storage-push marker its worktree's pre-push hook
@@ -654,10 +658,15 @@ export async function superviseChild(input: {
 }
 
 /** Why the worktree is not exactly `head` with nothing uncommitted, or null when it is. */
-async function worktreeDrift(worktreePath: string, head: string, signal?: AbortSignal): Promise<string | null> {
+async function worktreeDrift(
+  worktreePath: string,
+  head: string,
+  signal?: AbortSignal,
+  trackedOnly = false
+): Promise<string | null> {
   const gitEnv = gitEnvOf()
   const actualHead = await runGit(['rev-parse', 'HEAD'], worktreePath, gitEnv, signal)
-  const status = await runGit(['status', '--porcelain'], worktreePath, gitEnv, signal)
+  const status = await runGit(['status', '--porcelain', ...(trackedOnly ? ['-uno'] : [])], worktreePath, gitEnv, signal)
   return actualHead.status !== 0 || actualHead.stdout.trim() !== head
     ? `the worktree head is ${actualHead.stdout.trim() || 'unreadable'}, not the approved head ${head}`
     : status.status !== 0
@@ -907,6 +916,227 @@ export async function runReadyGateLive(input: {
   } finally {
     if (marked) endReadyDeferral(input.worktreePath)
     cleanupReadyGateStorage(ownedRun)
+  }
+}
+
+/** How much of a run's captured output is read back for the failure excerpt: its tail. */
+const ROUND_TEST_CAPTURE_CHARS = 400_000
+/** The longest failure excerpt a round-test result carries. */
+const ROUND_TEST_EXCERPT_CHARS = 2_000
+/** A source frame: `path.ts:12` or `path.ts:12:5`. */
+const SOURCE_FRAME = /([^\s():'"]+\.[cm]?[jt]sx?):(\d+)(?::\d+)?/g
+
+/** `file:line` of the first frame inside the repository after the failing test is named, else the file alone. */
+function failureLocation(output: string, worktreePath: string, test: string): string {
+  const named = output.indexOf(test)
+  const fromIndex = named >= 0 ? named : Math.max(0, output.indexOf(basename(test)))
+  const text = output.slice(fromIndex)
+  for (const match of text.matchAll(SOURCE_FRAME)) {
+    const raw = match[1] ?? ''
+    const absolute = isAbsolute(raw) ? raw : join(worktreePath, raw)
+    if (!absolute.startsWith(`${worktreePath}/`) || absolute.includes('/node_modules/')) continue
+    return `${absolute.slice(worktreePath.length + 1)}:${match[2]}`
+  }
+  return test
+}
+
+/**
+ * A review round's selected tests, run as a supervised asynchronous job on `head`: the repository's native adapter's
+ * `select` and then `run`, started as children in their own process groups under the ready push's environment, in
+ * the task worktree, one at a time on a host (the lock lives in the runtime root every repository's runtime
+ * directory sits under). The adapter runs its runner groups one after another, exactly as the pre-push hook does; this
+ * function adds no parallelism of its own. The verdict is the structured last-push result the run recorded for this
+ * head during this run, never an exit status or printed text; the adapter itself leaves the passing and the failed
+ * records the next run on a descendant head builds on. Only a verified red run is `failed`: a timeout (the lock wait
+ * counts against the same deadline), a cancel, a drift, a missing adapter, an unreadable record and a runner that
+ * crashed before reporting are `timed_out`, `unavailable` or `none`, each with one line in the driver log. It never
+ * throws.
+ */
+export async function runRoundTestsLive(input: {
+  worktreePath: string
+  head: string
+  defaultBranch?: string
+  now?: () => number
+  signal?: AbortSignal
+  deadlineMs?: number
+  startDeadline?: (fire: () => void, ms: number) => () => void
+  log?: (line: string) => void
+  registryDir?: string
+  register?: typeof registerProcess
+  /** The directory holding the host lock; the parent of this repository's runtime directory when absent. */
+  lockRoot?: string
+  /** Lock timing and clock overrides, for a test. */
+  lock?: Partial<Omit<RoundTestLockOptions, 'rootDir' | 'deadlineAt' | 'signal'>>
+}): Promise<RoundTestsResult> {
+  const now = input.now ?? (() => Date.now())
+  const log = input.log ?? (() => {})
+  const started = now()
+  const done = (
+    outcome: RoundTestsResult['outcome'],
+    extra: Omit<RoundTestsResult, 'head' | 'outcome' | 'wallMs'> = {}
+  ): RoundTestsResult => {
+    if (outcome !== 'passed' && outcome !== 'failed')
+      log(`round tests: ${outcome} at ${input.head.slice(0, 12)}: ${extra.detail ?? 'no detail'}`)
+    return { head: input.head, outcome, wallMs: Math.max(0, now() - started), ...extra }
+  }
+  const deadlineMs = input.deadlineMs ?? READY_GATE_DEADLINE_MS
+  const deadlineAt = started + deadlineMs
+  const minutes = Math.round(deadlineMs / 60000)
+  try {
+    if (!existsSync(join(input.worktreePath, REPOSITORY_LOCAL_RUN)))
+      return done('none', { detail: 'the repository commits no native test adapter' })
+    const drift = await worktreeDrift(input.worktreePath, input.head, input.signal, true)
+    if (drift !== null) return done('unavailable', { detail: `refused before any test ran: ${drift.split('\n')[0]}` })
+    const lock = await acquireRoundTestLock({
+      rootDir: input.lockRoot ?? dirname(runtimeDirForThisRepo()),
+      deadlineAt,
+      now,
+      ...(input.signal ? { signal: input.signal } : {}),
+      ...input.lock
+    })
+    if (!lock.ok) {
+      if (lock.reason === 'timeout')
+        return done('timed_out', {
+          detail: `the host's round-test lock stayed held for the whole ${minutes} min limit`,
+          stoppedBy: 'deadline'
+        })
+      return done('unavailable', {
+        detail: `the host lock could not be taken: ${lock.detail}`,
+        ...(lock.reason === 'cancel' ? { stoppedBy: 'cancel' as const } : {})
+      })
+    }
+    try {
+      return await runRoundTestsLocked(input, { now, log, started, deadlineAt, minutes, done })
+    } finally {
+      lock.release()
+    }
+  } catch (error) {
+    const cancelled = error instanceof ReadyGateCancelledError
+    return done('unavailable', {
+      detail: cancelled
+        ? 'cancelled'
+        : `infrastructure error: ${error instanceof Error ? error.message : String(error)}`,
+      ...(cancelled ? { stoppedBy: 'cancel' as const } : {})
+    })
+  }
+}
+
+/** The part of a round-test run that holds the host lock. */
+async function runRoundTestsLocked(
+  input: Parameters<typeof runRoundTestsLive>[0],
+  ctx: {
+    now: () => number
+    log: (line: string) => void
+    started: number
+    deadlineAt: number
+    minutes: number
+    done: (
+      outcome: RoundTestsResult['outcome'],
+      extra?: Omit<RoundTestsResult, 'head' | 'outcome' | 'wallMs'>
+    ) => RoundTestsResult
+  }
+): Promise<RoundTestsResult> {
+  const { now, done } = ctx
+  // The head can move while the run waits for the lock.
+  const drift = await worktreeDrift(input.worktreePath, input.head, input.signal, true)
+  if (drift !== null) return done('unavailable', { detail: `refused before any test ran: ${drift.split('\n')[0]}` })
+  const { ownedRun, runToken, runTemp, registry } = await openSupervisedRun(input.registryDir)
+  try {
+    const startedAt = Date.now()
+    const baseline: NodeJS.ProcessEnv = {}
+    for (const key of ['PATH', 'LANG', 'HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'BUN_INSTALL_CACHE_DIR']) {
+      if (process.env[key] !== undefined) baseline[key] = process.env[key]
+    }
+    const env: NodeJS.ProcessEnv = {
+      ...baseline,
+      TMPDIR: runTemp,
+      VINAYA_TEST_TMP: join(runTemp, 'fixtures'),
+      VINAYA_PROCESS_REGISTRY_DIR: join(runTemp, 'processes'),
+      VINAYA_PUSH_MODE: 'ready',
+      VINAYA_PUSH_BASE: `origin/${input.defaultBranch ?? 'main'}`
+    }
+    const capture = join(runTemp, 'round-tests.log')
+    const child = (argv: string[], label: string) =>
+      superviseChild({
+        argv,
+        cwd: input.worktreePath,
+        env,
+        label,
+        runToken,
+        registry,
+        ...(input.register ? { register: input.register } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+        deadlineMs: Math.max(1, ctx.deadlineAt - now()),
+        ...(input.startDeadline ? { startDeadline: input.startDeadline } : {})
+      })
+    const stopped = (run: SupervisedRun): RoundTestsResult | null => {
+      if (run.interrupted === 'cancel') return done('unavailable', { detail: 'cancelled', stoppedBy: 'cancel' })
+      if (run.interrupted === 'deadline') {
+        const kept = keepRecordAfterDeadline(input.worktreePath, input.head, startedAt)
+        return done('timed_out', {
+          detail: `stopped at the ${ctx.minutes} min limit; ${kept.next}`,
+          stoppedBy: 'deadline'
+        })
+      }
+      return null
+    }
+    // The adapter's plan: one selected file per line on stdout, a refusal otherwise.
+    const select = await child([process.execPath, REPOSITORY_LOCAL_RUN, 'select'], 'round-tests select')
+    const selectStop = stopped(select)
+    if (selectStop) return selectStop
+    if (select.status !== 0)
+      return done('unavailable', {
+        detail: `the adapter planned no tests (${select.signal ?? `exit ${select.status}`}): ${(select.stderr || select.stdout || select.error?.message || 'no output').trim().split('\n')[0]}`
+      })
+    // The adapter reads the capture file back to record the run, so its output goes to the file, as the hook does.
+    const run = await child(
+      ['sh', '-c', '"$1" "$2" run --log "$3" > "$3" 2>&1', 'sh', process.execPath, REPOSITORY_LOCAL_RUN, capture],
+      'round-tests run'
+    )
+    const runStop = stopped(run)
+    if (runStop) return runStop
+    const after = await worktreeDrift(input.worktreePath, input.head, input.signal, true)
+    if (after !== null)
+      return done('unavailable', { detail: `the worktree changed during the run: ${after.split('\n')[0]}` })
+    const record = readLastPushResult(input.worktreePath)
+    const recorded =
+      record !== null &&
+      record.head === input.head &&
+      record.mode === 'ready' &&
+      Date.parse(record.recordedAt) >= startedAt - 1000
+    if (!recorded) return done('unavailable', { detail: 'the run recorded no result for this head' })
+    if (record.outcome === 'passed') {
+      if (!(record.selection?.native && record.native?.completed === true))
+        return done('unavailable', { detail: 'the run recorded a pass, but no complete native test result' })
+      if (record.selection.selected.length === 0) return done('none', { detail: 'the plan selected no tests' })
+      return done('passed')
+    }
+    const unreported = new Set(record.unreported ?? [])
+    const named = record.failed === 'all' ? [] : record.failed.filter((file) => !unreported.has(file))
+    const first = named[0]
+    if (first === undefined) return done('unavailable', { detail: 'a runner failed without naming its failing tests' })
+    let output = ''
+    try {
+      output = readFileSync(capture, 'utf8').slice(-ROUND_TEST_CAPTURE_CHARS)
+    } catch {
+      output = ''
+    }
+    const test = first.startsWith(`${input.worktreePath}/`) ? first.slice(input.worktreePath.length + 1) : first
+    const failedResult = done('failed', {
+      firstFailure: {
+        test,
+        location: failureLocation(output, input.worktreePath, test),
+        excerpt: extractFailureExcerpt(output, ROUND_TEST_EXCERPT_CHARS)
+      }
+    })
+    ctx.log(`round tests failed: ${failedResult.firstFailure?.location}; wall time ${failedResult.wallMs} ms`)
+    return failedResult
+  } finally {
+    try {
+      cleanupReadyGateStorage(ownedRun)
+    } catch (error) {
+      ctx.log(`round tests: storage cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 }
 
@@ -1187,6 +1417,15 @@ export function liveV2Functions(input: {
       renameSync(temporary, path)
       return gate
     },
+    runRoundTests: ({ head, signal }) =>
+      runRoundTestsLive({
+        worktreePath: input.worktreePath,
+        head,
+        ...(signal ? { signal } : {}),
+        ...(input.readyPushDeadlineMs ? { deadlineMs: input.readyPushDeadlineMs() } : {}),
+        ...(input.startDeadline ? { startDeadline: input.startDeadline } : {}),
+        ...(input.log ? { log: input.log } : {})
+      }),
     stagedPullRequest: input.store.read,
     findOpenPullRequest: input.findOpenPullRequest,
     openPullRequest: async (staged) => {
