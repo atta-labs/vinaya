@@ -36,6 +36,7 @@ import {
 import {
   checkPublicationPreconditions,
   fastForwardedOntoDefaultTip,
+  mergedMovedParent,
   validateCommitHeader
 } from '../../../../loops/dev-review/standalone/dev-review-loop/developer-publication.js'
 import {
@@ -241,6 +242,55 @@ describe('checkPublicationPreconditions (O7)', () => {
           ok: false,
           reason: movedReason(tip)
         })
+      }
+    })
+  })
+
+  describe('a task branch that merged its moved parent', () => {
+    const recorded = 'a'.repeat(40)
+    const oldBase = 'b'.repeat(40)
+    const newBase = 'n'.repeat(40)
+    const merge = 'm'.repeat(40)
+    const facts = {
+      expectedBaseIsAncestorOfBase: true,
+      baseIsOnDefaultBranch: true,
+      recordedHeadIsAncestorOfHead: true,
+      baseIsAncestorOfHead: true
+    }
+    const merged = {
+      ...ok,
+      recordedHead: recorded,
+      worktreeHead: merge,
+      base: newBase,
+      expectedBase: oldBase,
+      parentMerge: facts
+    }
+    const baseReason = `the worktree branch's base is \`${newBase}\`, not the expected base \`${oldBase}\` — rebase onto the base this task was cut from before leaving changes to publish`
+
+    it('accepts a merge head over a base that contains the old base and lies on the parent', () => {
+      expect(mergedMovedParent(merged)).toBe(true)
+      expect(checkPublicationPreconditions(merged).ok).toBe(true)
+    })
+
+    it('refuses a rewritten base, a base off the parent and an unread fact with the base reason', () => {
+      const rewritten = { ...merged, parentMerge: { ...facts, expectedBaseIsAncestorOfBase: false } }
+      const offParent = { ...merged, parentMerge: { ...facts, baseIsOnDefaultBranch: false } }
+      for (const input of [
+        rewritten,
+        offParent,
+        { ...merged, parentMerge: null },
+        { ...merged, parentMerge: undefined }
+      ]) {
+        expect(checkPublicationPreconditions(input)).toEqual({ ok: false, reason: baseReason })
+      }
+    })
+
+    it('refuses a head that does not descend from the recorded head or the new base', () => {
+      for (const parentMerge of [
+        { ...facts, recordedHeadIsAncestorOfHead: false },
+        { ...facts, baseIsAncestorOfHead: false }
+      ]) {
+        expect(checkPublicationPreconditions({ ...merged, parentMerge }).ok).toBe(false)
       }
     })
   })

@@ -101,6 +101,42 @@ describe('publication preconditions on the shared live context', () => {
     expect(state.turnPreHead).toBe('commit-1')
   })
 
+  test('a merged moved parent publishes, re-records the base and head, and measures paths from the new base', async () => {
+    const world = makeWorld({ head: 'merge-1' })
+    const state = createLivePublicationState(BASE)
+    state.turnPreHead = 'head-0'
+    const deps = {
+      ...fakeDeps(world),
+      gitMergeBase: async () => 'base-1',
+      readDefaultBranchTip: () => 'tip-1'
+    }
+    const result = await createLiveDeveloperContext(paramsFor(world, state, deps)).publishChanges(HEADER)
+    expect(result.ok).toBe(true)
+    expect(world.pushes).toHaveLength(1)
+    expect(world.rangeBases).toContain('base-1')
+    expect(world.rangeBases).not.toContain(BASE)
+    expect(state.publicationExpectedBase).toBe('base-1')
+    expect(state.turnPreHead).toBe('commit-1')
+  })
+
+  test('a moved base that is not an ancestor relation is refused and nothing is re-recorded', async () => {
+    const world = makeWorld({ head: 'merge-1' })
+    const state = createLivePublicationState(BASE)
+    state.turnPreHead = 'head-0'
+    const deps = {
+      ...fakeDeps(world),
+      gitMergeBase: async () => 'base-1',
+      readDefaultBranchTip: () => 'tip-1',
+      gitIsAncestor: () => false
+    }
+    const result = await createLiveDeveloperContext(paramsFor(world, state, deps)).publishChanges(HEADER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.output).toContain('not the expected base')
+    expect(world.pushes).toEqual([])
+    expect(state.publicationExpectedBase).toBe(BASE)
+    expect(state.turnPreHead).toBe('head-0')
+  })
+
   test('a path beyond the Surface is recorded in the pull request body, never refused', async () => {
     const world = makeWorld({ changed: [OWN, OUTSIDE] })
     const state = createLivePublicationState(BASE)

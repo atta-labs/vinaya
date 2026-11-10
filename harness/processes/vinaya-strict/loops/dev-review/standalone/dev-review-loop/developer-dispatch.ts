@@ -321,8 +321,10 @@ export function fetchNewestRulingOrdinal(prNumber: number): number {
   try {
     out = sh('gh', ['pr', 'view', String(prNumber), '--json', 'comments'])
   } catch (err) {
+    // The cause rides along so the connection-failure classifier reads the `gh` failure itself, not the rewrapped line.
     throw new Error(
-      `fetchNewestRulingOrdinal: could not fetch PR #${prNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`
+      `fetchNewestRulingOrdinal: could not fetch PR #${prNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err }
     )
   }
   return newestPrincipalRulingOrdinal(markerComments(out), principalAllowlist())

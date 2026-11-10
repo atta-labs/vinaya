@@ -275,7 +275,6 @@ import {
   assertDispatchOrEscalate,
   DeveloperDispatchHistory,
   DispatchSandboxRefused,
-  DispatchSignInRefused,
   developerRoundMarker,
   driverCrashEvents,
   driverDecidedPauseEvents,
@@ -309,6 +308,13 @@ import {
   waitForOwnLoopLine,
   type DeveloperHandoff
 } from './dev-review-loop/round-assess.js'
+import {
+  classifyDriverError,
+  decideStop,
+  pauseForDriverError,
+  type DriverErrorClass,
+  type StopEvent
+} from './dev-review-loop/stop-decision.js'
 import {
   addressedFindingIdsFromRecords,
   confidenceFromRecords,
@@ -6885,7 +6891,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // wait in place instead (`withRateLimitWait`); anything else that
           // lands after a dispatch pauses as it did before this wait existed.
           if (roleDispatchesInPass > 0) throw loopErr
-          if (isGitHubConnectionFailure(loopErr)) await absorbGitHubOutage(loopErr)
+          // The decision function owns the row: a connection failure to GitHub is
+          // an unbounded wait here, spending no retry and asking for no ruling.
+          const stop = decideStop({
+            kind: 'driver_error',
+            runner: 'loop',
+            errorClass: classifyDriverError(loopErr),
+            message: loopErr instanceof Error ? loopErr.message : String(loopErr),
+            round
+          })
+          if (stop.type === 'wait') await absorbGitHubOutage(loopErr)
           else await absorbRateLimit(loopErr)
         }
       }
@@ -6953,33 +6968,49 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // A sign-in refusal narrates itself (`DispatchSignInRefused`): the
       // pause a reader sees says the developer could not sign in, never
       // that an unnamed error ended the round.
-      decision = {
-        type: 'pause',
-        reason:
-          turnResultPause?.pauseReason ??
-          (sandboxRefusal !== null ? 'sandbox_refused' : missingSources !== null ? 'missing_source' : 'infrastructure'),
-        detail:
-          turnResultPause !== null
-            ? turnResultPause.message
-            : sandboxRefusal !== null
-              ? sandboxRefusal.message
-              : missingSources !== null
-                ? missingSources.message
-                : err instanceof DispatchSignInRefused
-                  ? err.message
-                  : err instanceof DispatchUsageLimit
-                    ? usageLimitPauseDetail(err.limit, d.now())
-                    : isGitHubRateLimitError(err)
-                      ? `${rateLimitPauseDetail(
-                          round === roundAtLastWait ? rateLimitWaits : 0,
-                          err instanceof RateLimitWaitsSpent
-                            ? err.resetEpochSeconds
-                            : round === roundAtLastWait
-                              ? lastRateLimitResetEpoch
-                              : null
-                        )} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
-                      : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
+      // The one decision function holds every stop: the error's class, plus
+      // the detail only this closure can narrate (a usage limit's reset, a
+      // rate limit's waits), goes in and the pause comes out. A connection
+      // failure reaching here was not absorbed in place (a role was
+      // dispatched in the iteration), so it pauses as it always did.
+      // Here, as before, an error that is both a rate limit and a connection failure narrates as the rate limit.
+      const classified = classifyDriverError(err)
+      const errorClass: DriverErrorClass =
+        missingSources !== null
+          ? 'missing_source'
+          : classified === 'forge_connection' && isGitHubRateLimitError(err)
+            ? 'rate_limit'
+            : classified
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      const narration =
+        errorClass === 'sandbox_refused' || errorClass === 'missing_source' || errorClass === 'sign_in_refused'
+          ? errorMessage
+          : err instanceof DispatchUsageLimit
+            ? usageLimitPauseDetail(err.limit, d.now())
+            : errorClass === 'rate_limit'
+              ? `${rateLimitPauseDetail(
+                  round === roundAtLastWait ? rateLimitWaits : 0,
+                  err instanceof RateLimitWaitsSpent
+                    ? err.resetEpochSeconds
+                    : round === roundAtLastWait
+                      ? lastRateLimitResetEpoch
+                      : null
+                )} (round ${round}: ${errorMessage})`
+              : undefined
+      const stopEvent: StopEvent = {
+        kind: 'driver_error',
+        runner: 'loop',
+        errorClass,
+        message: errorMessage,
+        round,
+        ...(narration !== undefined ? { narration } : {})
       }
+      const decidedStop = decideStop(stopEvent)
+      const stopPause = decidedStop.type === 'pause' ? decidedStop : pauseForDriverError(stopEvent)
+      decision =
+        turnResultPause !== null
+          ? { type: 'pause', reason: turnResultPause.pauseReason, detail: turnResultPause.message }
+          : { type: 'pause', reason: stopPause.reason, detail: stopPause.detail }
       // A host-repair pause ends this driver and frees the lock, so the
       // ordinary start can continue the task once the host is repaired.
       keepLockAlive = keepDriverLock({ kind: 'crash', hostRepair: sandboxRefusal !== null })
