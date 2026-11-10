@@ -23,12 +23,11 @@
  * verify-docs/premise steps run against an empty body (as they would for a
  * non-task branch).
  *
- * Scoped to `@attalabs/aeg-core`: `turbo typecheck`/`turbo test`/`turbo build`
+ * Scoped to `@attalabs/vinaya`: `turbo typecheck`/`turbo test`/`turbo build`
  * run with `--filter=@attalabs/vinaya` — a full monorepo application build is
  * the deployment pipeline's job, not this gate's (`harness/processes/vinaya-strict/doctrine/enforcement.md`
  * Ring 1: "application builds are verified by the deployment pipeline").
- * `aeg-core` itself has no bundler build step (source-only package), so the
- * `build` step is a real, if usually no-op, invocation — not a rubber stamp.
+ * The `build` step is a real invocation — not a rubber stamp.
  * Repo-wide lint (`biome check .`) still runs unscoped, matching the
  * existing `bun run check` script (Biome has no per-package filter here).
  *

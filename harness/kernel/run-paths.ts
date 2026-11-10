@@ -103,7 +103,7 @@ export type RunFileLocation =
 /**
  * Same guard every path builder in this repository already applies before
  * splicing a resolved repo into a filesystem path: `resolveRepo()` can
- * return an `VINAYA_REPO` env value parsed by `parseOwnerRepo`, which accepts
+ * return a `VINAYA_REPO` env value parsed by `parseOwnerRepo`, which accepts
  * anything shaped `owner/repo` — including a `repo` half containing `../`.
  */
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
