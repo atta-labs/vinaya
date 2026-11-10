@@ -537,6 +537,7 @@ describe('marker prefixes are the caller’s to name', () => {
 
   it('pairs each marker family’s old spelling with its new one', () => {
     expect(Object.keys(MARKER_FAMILIES).sort()).toEqual([
+      'claimAnchor',
       'commentMarkerPrefix',
       'deferredFindings',
       'developerRound',
@@ -548,7 +549,9 @@ describe('marker prefixes are the caller’s to name', () => {
       'objectivesVersion',
       'principalRuling',
       'provenanceHeading',
-      'regionPrefix'
+      'quotesFileAnchor',
+      'regionPrefix',
+      'vendorExampleAnchor'
     ])
     for (const family of Object.values(MARKER_FAMILIES)) {
       expect(family.old.length).toBeGreaterThan(0)
