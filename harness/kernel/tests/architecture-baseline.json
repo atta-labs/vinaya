@@ -70,7 +70,7 @@
   "harness/kernel/telemetry/questions/judgment.ts": 16,
   "harness/kernel/telemetry/questions/labels.ts": 1,
   "harness/kernel/telemetry/questions/time.ts": 10,
-  "harness/kernel/tools/catalog/task-tools.ts": 31,
+  "harness/kernel/tools/catalog/task-tools.ts": 23,
   "harness/kernel/tools/dev-tools-names.ts": 2,
   "harness/kernel/tools/dev-tools-registration.ts": 4,
   "harness/kernel/tools/dev-tools-server.ts": 17,

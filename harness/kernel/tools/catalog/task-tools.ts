@@ -1,26 +1,24 @@
 /**
- * The task-tool catalog — the one place a task-operator tool's name, input
- * shape, result shape, error shape and purpose are written. Six tools:
- * `task_status`, `task_escalation_read` and `task_pr_read` are bound to a real
- * read interface (`apps/cli/src/lib/task-tools/read.ts`, `pr-read.ts` and
- * `handlers.ts` —
- * `apps/cli` reads the outbox and the forge, `aeg-core` stays pure); `task_start`,
- * `task_resume` and `task_cancel` are bound to real mutating handlers of their
- * own (`start.ts`, `resume.ts`, `cancel.ts`) and each acts on the control store
- * — none of the six refuses with a `capability` error any more (Traps to
- * avoid: an internal helper is not automatically an agent tool, and this
- * catalog exposes no raw shell or forge access — every field below is
- * either a schema or prose, never a live handle to a process or a write).
+ * The task-tool catalog — the one place a task tool's name, input shape,
+ * result shape, error shape and purpose are written. Six tools: the reads
+ * `task_status`, `task_escalation_read` and `task_pr_read`, and the mutating
+ * `task_start`, `task_resume` and `task_cancel`, each of which acts on the
+ * control store. None of the six refuses with a `capability` error any more
+ * (an internal helper is not automatically an agent tool, and this catalog
+ * exposes no raw shell or forge access — every field below is either a
+ * schema or prose, never a live handle to a process or a write).
  *
  * `handlerBinding` names where each tool's behaviour actually lives; it is
- * data (a module/export pointer), not an import — `aeg-core` has no
- * dependency on `apps/cli`, so the binding is documentation the CLI-side
- * registry is expected to satisfy, not a call this file can make itself.
+ * data (a module/export pointer), not an import — the kernel depends on no
+ * process, so the binding is a pointer the process that supplies the handlers
+ * must satisfy, not a call this file can make itself. Which tools a seat may
+ * call is not written here: the process grants each seat its tools, and the
+ * seat host (`../host/seat-host.ts`) serves that grant.
  *
  * A caller-supplied `role` field is never part of any input schema below —
- * an agent's own claim about who it is authenticates nothing (Traps to
- * avoid); authority is a property of the transport that invokes a tool, not
- * a value that transport lets the caller set.
+ * an agent's own claim about who it is authenticates nothing; authority is a
+ * property of the transport that invokes a tool, not a value that transport
+ * lets the caller set.
  */
 
 import { createHash } from 'node:crypto'
@@ -590,14 +588,19 @@ export function isTaskToolName(value: string): value is TaskToolName {
   return (TASK_TOOL_NAMES as readonly string[]).includes(value)
 }
 
-/** Where a tool's behaviour is actually implemented — a pointer for a CLI-side registry to satisfy, never a call this module makes. */
+/**
+ * Where a tool's behaviour is actually implemented — a pointer for the process
+ * that supplies the handler to satisfy, never a call this module makes.
+ * `module` is the path of the module that exports the handler, relative to the
+ * root folder of that process; `export` is the exported function's name.
+ */
 export type TaskToolHandlerBinding =
   | { kind: 'bound'; module: string; export: string }
   | { kind: 'stub'; module: string; export: string }
 
 export type TaskToolDefinition<Input = unknown, Result = unknown> = {
   name: TaskToolName
-  /** One sentence: what an Operator calls this tool to accomplish. */
+  /** One sentence: what a caller calls this tool to accomplish. */
   purpose: string
   /** What this tool is not — the neighbour it is easiest to confuse it with, and why the boundary sits where it does. */
   boundaries: string
@@ -619,7 +622,7 @@ export const TASK_STATUS_TOOL: TaskToolDefinition<TaskStatusInput, TaskStatusRes
   resultSchema: TaskStatusResultSchema,
   errorSchema: TaskToolErrorSchema,
   examples: [{ task: { tranche: 'task-operator-v1', id: '1' } }, { limit: 10 }, {}],
-  handlerBinding: { kind: 'bound', module: 'apps/cli/src/lib/task-tools/handlers.ts', export: 'taskStatusHandler' }
+  handlerBinding: { kind: 'bound', module: 'loops/dev-review/run-control/handlers.ts', export: 'taskStatusHandler' }
 }
 
 export const TASK_ESCALATION_READ_TOOL: TaskToolDefinition<TaskEscalationReadInput, TaskEscalationReadResult> = {
@@ -634,7 +637,7 @@ export const TASK_ESCALATION_READ_TOOL: TaskToolDefinition<TaskEscalationReadInp
   examples: [{ task: { tranche: 'task-operator-v1', id: '1' } }, { task: { issue: 558 }, limit: 5 }],
   handlerBinding: {
     kind: 'bound',
-    module: 'apps/cli/src/lib/task-tools/handlers.ts',
+    module: 'loops/dev-review/run-control/handlers.ts',
     export: 'taskEscalationReadHandler'
   }
 }
@@ -649,7 +652,7 @@ export const TASK_PR_READ_TOOL: TaskToolDefinition<TaskPrReadInput, TaskPrReadRe
   resultSchema: TaskPrReadResultSchema,
   errorSchema: TaskToolErrorSchema,
   examples: [{ task: { tranche: 'unattended-run-v1', id: '9' } }, { task: { issue: 558 }, pr: 560 }],
-  handlerBinding: { kind: 'bound', module: 'apps/cli/src/lib/task-tools/pr-read.ts', export: 'taskPrReadHandler' }
+  handlerBinding: { kind: 'bound', module: 'loops/dev-review/run-control/pr-read.ts', export: 'taskPrReadHandler' }
 }
 
 export const TASK_START_TOOL: TaskToolDefinition<TaskStartInput, TaskStartResult> = {
@@ -662,7 +665,7 @@ export const TASK_START_TOOL: TaskToolDefinition<TaskStartInput, TaskStartResult
   resultSchema: TaskStartResultSchema,
   errorSchema: TaskToolErrorSchema,
   examples: [{ tranche: 'task-operator-v1', id: '1' }, { issue: 729 }],
-  handlerBinding: { kind: 'bound', module: 'apps/cli/src/lib/task-tools/start.ts', export: 'defaultTaskStartHandler' }
+  handlerBinding: { kind: 'bound', module: 'loops/dev-review/run-control/start.ts', export: 'defaultTaskStartHandler' }
 }
 
 export const TASK_RESUME_TOOL: TaskToolDefinition<TaskResumeInput, TaskResumeResult> = {
@@ -674,7 +677,11 @@ export const TASK_RESUME_TOOL: TaskToolDefinition<TaskResumeInput, TaskResumeRes
   resultSchema: TaskResumeResultSchema,
   errorSchema: TaskToolErrorSchema,
   examples: [{ task: { tranche: 'task-operator-v1', id: '1' } }],
-  handlerBinding: { kind: 'bound', module: 'apps/cli/src/lib/task-tools/resume.ts', export: 'defaultTaskResumeHandler' }
+  handlerBinding: {
+    kind: 'bound',
+    module: 'loops/dev-review/run-control/resume.ts',
+    export: 'defaultTaskResumeHandler'
+  }
 }
 
 export const TASK_CANCEL_TOOL: TaskToolDefinition<TaskCancelInput, TaskCancelResult> = {
@@ -686,7 +693,11 @@ export const TASK_CANCEL_TOOL: TaskToolDefinition<TaskCancelInput, TaskCancelRes
   resultSchema: TaskCancelResultSchema,
   errorSchema: TaskToolErrorSchema,
   examples: [{ task: { issue: 558 }, reason: 'superseded by a re-plan' }],
-  handlerBinding: { kind: 'bound', module: 'apps/cli/src/lib/task-tools/cancel.ts', export: 'defaultTaskCancelHandler' }
+  handlerBinding: {
+    kind: 'bound',
+    module: 'loops/dev-review/run-control/cancel.ts',
+    export: 'defaultTaskCancelHandler'
+  }
 }
 
 /** The one place every tool's name and shape can be found — in this fixed order, matching `TASK_TOOL_NAMES`. */
@@ -710,25 +721,4 @@ export function taskToolByName(name: TaskToolName): TaskToolDefinition {
   const found = TASK_TOOL_CATALOG.find((tool) => tool.name === name)
   if (!found) throw new Error(`no catalog entry for task tool "${name}"`)
   return found as TaskToolDefinition
-}
-
-// --- the Operator's tool grant, the boundary the router enforces -----------
-
-/**
- * The complete, closed set of tools the task Operator is granted — exactly the
- * catalog's tool names, and nothing else. This is the machine-readable twin of
- * the process's Operator role doctrine's `allowed-tools` frontmatter and of the
- * generated skill's `allowed-tools`, and it is the list the task-tools server
- * serves; a test binds all four so no representation drifts from another. The
- * router refuses every tool outside this set: a registered tool is a
- * capability, but the grant is what says the Operator may call it — a shell, a
- * forge write, an Issue edit, a review publish or a merge is never in it.
- */
-export const OPERATOR_TOOL_GRANT = TASK_TOOL_NAMES
-
-export type OperatorGrantedTool = (typeof OPERATOR_TOOL_GRANT)[number]
-
-/** True only for a tool inside the Operator's grant — the membership test the router's refusal is built on. Any name not in `OPERATOR_TOOL_GRANT` (a shell, a forge write, an Issue edit, `merge`, a review publish) is outside the grant and refused. */
-export function isOperatorGranted(tool: string): tool is OperatorGrantedTool {
-  return (OPERATOR_TOOL_GRANT as readonly string[]).includes(tool)
 }
