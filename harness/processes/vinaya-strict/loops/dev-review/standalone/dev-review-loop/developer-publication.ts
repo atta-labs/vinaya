@@ -90,6 +90,17 @@ export type PublicationCheckInput = {
   driverUnpushedCommit?: { sha: string; parent: string | null } | null
   /** The default branch's tip as the remote reports it, with whether `recordedHead` is its ancestor, or `null` when unread. Only consulted to recognize the Developer fast-forwarding its worktree onto that tip. */
   defaultBranchTip?: { sha: string; recordedHeadIsAncestor: boolean } | null
+  /** Four ancestry facts, read only when the base moved off the expected one and the default branch's tip is readable, or `null` when not read. Only consulted to recognize the Developer merging the moved default branch into the task branch. */
+  parentMerge?: {
+    /** The expected base is an ancestor of the new base. */
+    expectedBaseIsAncestorOfBase: boolean
+    /** The new base is an ancestor of the default branch's tip. */
+    baseIsOnDefaultBranch: boolean
+    /** The recorded head is an ancestor of the worktree head. */
+    recordedHeadIsAncestorOfHead: boolean
+    /** The new base is an ancestor of the worktree head. */
+    baseIsAncestorOfHead: boolean
+  } | null
   /** The worktree branch's base (merge base with the default branch), or `null` when unreadable. */
   base: string | null
   /** The base recorded before this attempt (the base this task was cut from, moved forward only at a turn start or after a push) — what `base` must equal. `null` only before a known base has been recorded. */
@@ -140,6 +151,30 @@ export function fastForwardedOntoDefaultTip(
 }
 
 /**
+ * True when the Developer merged the moved default branch into the task
+ * branch: the base differs from the expected one, the expected base is an
+ * ancestor of the new base, the new base lies on the default branch, and the
+ * head descends from both the recorded head and the new base. No history is
+ * rewritten, so it needs no bound; every other moved base stays refused. The
+ * driver then re-records its base and head.
+ */
+export function mergedMovedParent(
+  input: Pick<PublicationCheckInput, 'recordedHead' | 'base' | 'expectedBase' | 'parentMerge'>
+): boolean {
+  const facts = input.parentMerge
+  return (
+    facts != null &&
+    input.base !== null &&
+    input.expectedBase !== null &&
+    input.base !== input.expectedBase &&
+    facts.expectedBaseIsAncestorOfBase &&
+    facts.baseIsOnDefaultBranch &&
+    facts.baseIsAncestorOfHead &&
+    (input.recordedHead === null || facts.recordedHeadIsAncestorOfHead)
+  )
+}
+
+/**
  * O7: run before the driver commits or uses its GitHub credential — the
  * worktree must be on the task branch, its base the expected base, and its
  * head the head recorded before the turn (the Developer left its work
@@ -168,7 +203,7 @@ export function checkPublicationPreconditions(
   if (input.base === null) {
     return { ok: false, reason: 'could not read the worktree branch base — refusing to publish without the base check' }
   }
-  const fastForwarded = fastForwardedOntoDefaultTip(input)
+  const fastForwarded = fastForwardedOntoDefaultTip(input) || mergedMovedParent(input)
   if (input.expectedBase !== null && input.base !== input.expectedBase && !fastForwarded) {
     return {
       ok: false,

@@ -95,6 +95,28 @@ describe('publishChanges gates', () => {
       })
     expect(committed).toBe(false)
   })
+  it('publishes after a mid-turn merge of the default branch', async () => {
+    const old = 'b'.repeat(40)
+    const ctx = createDeveloperDevToolContext(
+      deps({
+        readPublicationCheckInput: () => ({
+          ...PASSING_PRECHECK,
+          worktreeHead: 'm'.repeat(40),
+          recordedHead: 'a'.repeat(40),
+          base: 'n'.repeat(40),
+          expectedBase: old,
+          parentMerge: {
+            expectedBaseIsAncestorOfBase: true,
+            baseIsOnDefaultBranch: true,
+            recordedHeadIsAncestorOfHead: true,
+            baseIsAncestorOfHead: true
+          }
+        })
+      })
+    )
+    const res = await ctx.publishChanges('Fix(cli): a valid header')
+    expect(res.ok).toBe(true)
+  })
   it('commits and pushes when the header and preconditions pass', async () => {
     const ctx = createDeveloperDevToolContext(deps())
     const res = await ctx.publishChanges('Fix(cli): a valid header')

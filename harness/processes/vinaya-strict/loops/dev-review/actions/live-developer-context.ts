@@ -20,7 +20,7 @@ import {
   readDeveloperModelRuns,
   withDeveloperModelsLine
 } from '../standalone/dev-review-loop/developer-dispatch.js'
-import { fastForwardedOntoDefaultTip } from '../standalone/dev-review-loop/developer-publication.js'
+import { fastForwardedOntoDefaultTip, mergedMovedParent } from '../standalone/dev-review-loop/developer-publication.js'
 import { resolveHead } from '../standalone/dev-review-loop/gate-reading.js'
 import type { LoopDeps } from '../standalone/dev-review-loop.js'
 import {
@@ -222,6 +222,32 @@ export function createLiveDeveloperContext(params: LiveDeveloperContextParams): 
     }
     return { sha: tip, recordedHeadIsAncestor }
   }
+  // Ancestry facts for a base that moved off the expected one; an unreadable
+  // fact reads false, so the base stays refused.
+  const readParentMergeFacts = (
+    worktreeHead: string | null,
+    base: string | null,
+    recordedHead: string | null,
+    expectedBase: string | null
+  ) => {
+    if (worktreeHead === null || base === null || expectedBase === null || base === expectedBase) return null
+    const tip = d.readDefaultBranchTip(defaultRemoteUrl)
+    if (tip === null) return null
+    const isAncestor = (a: string | null, b: string): boolean => {
+      if (a === null) return true
+      try {
+        return d.gitIsAncestor(a, b)
+      } catch {
+        return false
+      }
+    }
+    return {
+      expectedBaseIsAncestorOfBase: isAncestor(expectedBase, base),
+      baseIsOnDefaultBranch: isAncestor(base, tip),
+      recordedHeadIsAncestorOfHead: isAncestor(recordedHead, worktreeHead),
+      baseIsAncestorOfHead: isAncestor(base, worktreeHead)
+    }
+  }
   // The protected administrative paths among `paths` the task's Surface
   // does not cover — exactly what the Broker's protected-path check refuses.
   const blockingPaths = (paths: readonly string[], surface: IssueSurface | null): string[] =>
@@ -293,21 +319,31 @@ export function createLiveDeveloperContext(params: LiveDeveloperContextParams): 
         state.publicationExpectedBase = tip
         state.publicationFastForwardBase = tip
       }
+      const recordedHead = state.turnPreHead
+      const expectedBase =
+        driverUnpushedCommit !== null && worktreeHead === driverUnpushedCommit.sha && driverUnpushedCommitBase !== null
+          ? driverUnpushedCommitBase
+          : state.publicationExpectedBase
+      // The Developer merged the moved default branch into the task branch:
+      // the ancestry facts decide it, and the base and head are re-recorded
+      // so every later check measures changed paths from the new base.
+      const parentMerge = readParentMergeFacts(worktreeHead, base, recordedHead, expectedBase)
+      if (parentMerge !== null && mergedMovedParent({ recordedHead, base, expectedBase, parentMerge })) {
+        state.turnPreHead = worktreeHead
+        state.publicationExpectedBase = base
+        state.publicationFastForwardBase = base
+      }
       return {
         worktreeBranch: d.readWorktreeBranch(worktree),
         expectedBranch: branch,
         worktreeHead,
-        recordedHead: state.turnPreHead,
+        recordedHead,
         remoteHead: safeRemoteHead(),
         driverUnpushedCommit,
         defaultBranchTip,
+        parentMerge,
         base,
-        expectedBase:
-          driverUnpushedCommit !== null &&
-          worktreeHead === driverUnpushedCommit.sha &&
-          driverUnpushedCommitBase !== null
-            ? driverUnpushedCommitBase
-            : state.publicationExpectedBase,
+        expectedBase,
         changedPaths: worktreeChangedPaths(),
         surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
       }
