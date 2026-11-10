@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
-import {
-  isOperatorGranted,
-  OPERATOR_TOOL_GRANT,
-  TASK_TOOL_CATALOG,
-  TASK_TOOL_NAMES
-} from '../../../../../kernel/tools/catalog/task-tools'
+import { TASK_TOOL_CATALOG, TASK_TOOL_NAMES } from '../../../../../kernel/tools/catalog/task-tools'
 import { discoverRoleNames, renderAgentSkill, roleAllowedTools } from '../../agents-skills-emitter.js'
 import { createTaskToolRouter } from '../../../../../kernel/tools/host/router.js'
-import { createTaskToolsMcpServer } from '../../server.js'
+import { createTaskToolsMcpServer, OPERATOR_SEAT, vinayaToolSeats } from '../../server.js'
+import { isOperatorGranted, OPERATOR_TOOL_GRANT } from '../../policies/roles.js'
 import { vinayaRouterPolicies } from '../../policies/vinaya-policies.js'
 
 const { refuseUngrantedTool } = createTaskToolRouter(vinayaRouterPolicies())
@@ -44,6 +40,24 @@ describe('OPERATOR_TOOL_GRANT — the catalog task tools, and nothing else', () 
   it('is exactly the catalog tool names', () => {
     expect([...OPERATOR_TOOL_GRANT]).toEqual([...TASK_TOOL_NAMES])
     expect(OPERATOR_TOOL_GRANT.length).toBe(TASK_TOOL_CATALOG.length)
+  })
+
+  it('is exactly the six task tools, written out', () => {
+    expect([...OPERATOR_TOOL_GRANT]).toEqual([
+      'task_start',
+      'task_status',
+      'task_escalation_read',
+      'task_pr_read',
+      'task_resume',
+      'task_cancel'
+    ])
+  })
+
+  it("is the grant the seat table gives the Operator's seat, the default seat", () => {
+    const table = vinayaToolSeats()
+    expect(table.seats.map((seat) => seat.name)).toEqual([OPERATOR_SEAT])
+    expect(table.defaultSeat).toBe(OPERATOR_SEAT)
+    expect([...(table.seats[0]?.grant.grantedTools ?? [])]).toEqual([...OPERATOR_TOOL_GRANT])
   })
 
   it('isOperatorGranted admits every granted tool and refuses everything else', () => {
@@ -102,6 +116,16 @@ describe('the grant has one source of truth across the doc, the skill, the catal
     expect([...served].sort()).toEqual([...OPERATOR_TOOL_GRANT].sort())
     expect([...served].sort()).toEqual([...roleAllowedTools(REAL_DOCTRINE_ROOT, 'operator')].sort())
     for (const name of served) expect(refuseUngrantedTool(name)).toBeNull()
+  })
+
+  it('a launch naming the Operator seat serves the same six tools as a launch naming none', async () => {
+    const list = async (seat: string | null) => {
+      const server = createTaskToolsMcpServer({ serverVersion: '0.0.0-test', seat })
+      const line = await server.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))
+      return (JSON.parse(line ?? '{}').result?.tools ?? []).map((t: { name: string }) => t.name)
+    }
+    expect(await list(OPERATOR_SEAT)).toEqual(await list(null))
+    expect(await list(null)).toEqual([...OPERATOR_TOOL_GRANT])
   })
 
   it('a role with no allowed-tools frontmatter renders the unchanged pointer (no grant line)', () => {

@@ -25,6 +25,13 @@
  * embedded newlines, UTF-8 — implemented directly here rather than pulling in
  * an MCP SDK, so the change adds no dependency and every protocol fixture runs
  * hermetically against real framing (this task's PR body records that decision).
+ *
+ * One launch serves one seat. The kernel's seat host (`seat-host.ts`) serves
+ * whatever seat it is given; this module is Vinaya's seat table
+ * (`vinayaToolSeats`) — which seats exist and, for each, its catalog entries,
+ * handlers and grant — and the server program's own `--seat` launch argument,
+ * written by the generated configuration, picks one. A launch with no seat
+ * argument serves the Operator.
  */
 
 import {
@@ -32,9 +39,16 @@ import {
   TASK_TOOL_CATALOG,
   type TaskToolDefinition,
   type TaskToolError,
-  type TaskToolName,
-  taskToolError
+  type TaskToolName
 } from '../../../kernel/tools/catalog/task-tools'
+import {
+  createSeatHost,
+  dispatchSeatCall,
+  readSeatArgument,
+  type SeatTable,
+  selectSeat,
+  validateSeatTable
+} from '../../../kernel/tools/host/seat-host.js'
 import { Writable } from 'node:stream'
 import { defaultTaskCancelHandler } from '../loops/dev-review/run-control/cancel.js'
 import type { TaskToolCallResult } from '../loops/dev-review/run-control/handlers.js'
@@ -103,19 +117,18 @@ export const defaultTaskToolHandlers: TaskToolHandlers = {
 }
 
 /**
- * Routes one tool call to its handler through two refusals, both BEFORE a
- * handler runs so a forbidden call reaches no effect: first, a name not in
- * the catalog at all; second, `grantCheck` (by default the
- * `refuseUngrantedTool` of a router built from `vinayaRouterPolicies` — the
- * router's grant gate), a catalog name outside the Operator's
- * grant — every caller of this server speaks for the Operator seat, so this
- * is the one place that gate actually runs, not just where it is unit-
- * tested. `grantCheck` is injectable, like `handlers`, so a fixture can force
- * the refusal branch without a global module mock or a catalog tool that is
- * actually outside the grant (there is none — `OPERATOR_TOOL_GRANT` is built
- * from the catalog's own tool names). Every other refusal (malformed input,
- * absent caller, unknown run) is the handler's own typed `TaskToolError`,
- * returned unchanged.
+ * Routes one Operator-seat tool call to its handler through the seat host's
+ * two refusals (`dispatchSeatCall`), both BEFORE a handler runs so a
+ * forbidden call reaches no effect: first, a name not in the catalog at all;
+ * second, `grantCheck` (by default the `refuseUngrantedTool` of a router built
+ * from `vinayaRouterPolicies` — the Operator's grant), a catalog name outside
+ * the grant. `grantCheck` is injectable, like `handlers`, so a fixture can
+ * force the refusal branch without a global module mock or a catalog tool
+ * that is actually outside the grant (there is none — the Operator is granted
+ * all six). Every other refusal (malformed input, absent caller, unknown run)
+ * is the handler's own typed `TaskToolError`, returned unchanged. A served
+ * launch reaches the same function through its seat's host
+ * (`createSeatHost`), built over the seat's own grant.
  */
 export async function dispatchToolCall(
   handlers: TaskToolHandlers,
@@ -124,12 +137,37 @@ export async function dispatchToolCall(
   ctx: CallerContext,
   grantCheck: (tool: string) => TaskToolError | null = createTaskToolRouter(vinayaRouterPolicies()).refuseUngrantedTool
 ): Promise<TaskToolCallResult<unknown>> {
-  if (!isTaskToolName(name)) {
-    return { ok: false, error: taskToolError('validation', `no such task tool: ${JSON.stringify(name)}`) }
-  }
-  const refusal = grantCheck(name)
-  if (refusal) return { ok: false, error: refusal }
-  return handlers[name](input, ctx)
+  return dispatchSeatCall({ isEntry: isTaskToolName, refuseUngranted: grantCheck, handlers }, name, input, ctx)
+}
+
+// --- the seat table: every seat Vinaya serves, in one place -------------------
+
+/** The Operator's seat — what `--seat` names, and the seat a launch with no seat argument serves. */
+export const OPERATOR_SEAT = 'operator'
+
+/**
+ * Vinaya's seat table — the one place it declares which seats its tool server
+ * serves and, for each, the catalog entries, the handlers and the grant. Today
+ * it declares the Operator's seat only: the six task tools, their handlers,
+ * and `VINAYA_ROUTER_ROLES` (the Operator's grant). The Operator's seat is the
+ * default, and it keeps the server name every generated configuration already
+ * registers, so a server started with no seat argument still serves it.
+ * `handlers` is injectable so a fixture drives the real seat host with
+ * recording handlers.
+ */
+export function vinayaToolSeats(handlers: TaskToolHandlers = defaultTaskToolHandlers): SeatTable<CallerContext> {
+  return validateSeatTable({
+    defaultSeat: OPERATOR_SEAT,
+    seats: [
+      {
+        name: OPERATOR_SEAT,
+        serverName: TASK_TOOLS_MCP_SERVER_NAME,
+        entries: TASK_TOOL_CATALOG.map((def) => toolListEntry(def)),
+        handlers,
+        grant: vinayaRouterPolicies().roles
+      }
+    ]
+  })
 }
 
 // --- tool input JSON Schemas (the wire needs JSON Schema, the catalog is Zod) -
@@ -226,25 +264,28 @@ export type CreateTaskToolsMcpServerOptions = {
   serverVersion: string
   handlers?: TaskToolHandlers
   callerContext?: CallerContext
+  /** The seat this launch serves, as its seat argument named it; absent serves the default seat (the Operator's). An undeclared seat throws `UnknownSeatError`. */
+  seat?: string | null
 }
 
 /**
- * Builds the server over an explicit handler set and caller context — both
- * injectable so a fixture can drive the real protocol with recording handlers
- * (O3) while the CLI subcommand wires the production defaults. The wire
- * protocol itself is the shared `createMcpServerCore` (`mcp-protocol.ts`); this
- * function binds it to the task-tools catalog and `dispatchToolCall`, the same
- * binding the driver-run dev-tools server makes against its own catalog.
+ * Builds the server for one seat over an explicit handler set and caller
+ * context — both injectable so a fixture can drive the real protocol with
+ * recording handlers (O3) while the CLI subcommand wires the production
+ * defaults. The seat is chosen once, here, from the launch — never per call.
+ * The wire protocol itself is the shared `createMcpServerCore`
+ * (`mcp-protocol.ts`); this function binds it to the seat host built over the
+ * seat's own entries, handlers and grant.
  */
 export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions): TaskToolsMcpServer {
-  const handlers = opts.handlers ?? defaultTaskToolHandlers
+  const host = createSeatHost(selectSeat(vinayaToolSeats(opts.handlers), opts.seat ?? null))
   const ctx = opts.callerContext ?? { caller: null }
   return createMcpServerCore({
     protocolVersion: MCP_PROTOCOL_VERSION,
-    serverName: TASK_TOOLS_MCP_SERVER_NAME,
+    serverName: host.seat.serverName,
     serverVersion: opts.serverVersion,
-    listTools: () => TASK_TOOL_CATALOG.map((def) => toolListEntry(def)),
-    callTool: (name, args) => dispatchToolCall(handlers, name, args, ctx)
+    listTools: () => host.listTools(),
+    callTool: (name, args) => host.callTool(name, args, ctx)
   })
 }
 
@@ -261,8 +302,17 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
  * malformed protocol frame. `serverVersion` is passed in (never imported from
  * `artifacts.ts` here) to keep this module free of the `artifacts → adapters →
  * server` import cycle.
+ *
+ * `argv` is the program's own launch arguments: its seat argument
+ * (`--seat <name>`) picks the seat, and none serves the Operator. The seat is
+ * resolved before any stream is touched, so a launch naming an undeclared
+ * seat refuses to start with the declared seats named, rather than serving.
  */
-export async function serveTaskToolsStdio(serverVersion: string): Promise<void> {
+export async function serveTaskToolsStdio(serverVersion: string, argv: readonly string[] = []): Promise<void> {
+  const seat = readSeatArgument(argv)
+  const callerContext = resolveCallerFromEnv(process.env)
+  const server = createTaskToolsMcpServer({ serverVersion, callerContext, seat })
+
   const realStdoutWrite = process.stdout.write.bind(process.stdout)
   const protocolOut = new Writable({
     write(chunk, _encoding, callback) {
@@ -274,9 +324,5 @@ export async function serveTaskToolsStdio(serverVersion: string): Promise<void> 
   // stderr from here on, so it can never land in the JSON-RPC stream.
   process.stdout.write = process.stderr.write.bind(process.stderr) as typeof process.stdout.write
 
-  const server = createTaskToolsMcpServer({
-    serverVersion,
-    callerContext: resolveCallerFromEnv(process.env)
-  })
   await server.serve(process.stdin, protocolOut)
 }

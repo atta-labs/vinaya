@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { SEAT_ARGUMENT } from '../../../../../kernel/tools/host/seat-host.js'
 import type { VendoredVinaya } from '../../../tools/self-host.js'
 import {
   CLAUDE_MCP_ADAPTER,
@@ -7,9 +10,13 @@ import {
   CODEX_MCP_ADAPTER,
   codexMcpServersToml,
   MCP_RUNTIME_ADAPTERS,
+  seatServerRegistrations,
   taskToolsServerInvocation
 } from '../../../integration/adapters.js'
-import { MCP_PROTOCOL_VERSION, TASK_TOOLS_MCP_SERVER_NAME } from '../../../integration/server.js'
+import { ownVersion } from '../../../integration/artifacts.js'
+import { MCP_PROTOCOL_VERSION, TASK_TOOLS_MCP_SERVER_NAME, vinayaToolSeats } from '../../../integration/server.js'
+
+const REPO_ROOT = join(import.meta.dir, '../../../../../..')
 
 /**
  * The two runtime adapters (O1): both register the SAME server command; they
@@ -70,6 +77,80 @@ describe('Codex [mcp_servers] adapter', () => {
     // The TOML's command/args are the same invocation the Claude .mcp.json declares.
     expect(toml).toContain(`command = ${JSON.stringify(claude?.command)}`)
     expect(toml).toContain(`args = [${(claude?.args ?? []).map((a) => JSON.stringify(a)).join(', ')}]`)
+  })
+})
+
+/**
+ * One server entry per declared seat, the Operator's byte-identical to the
+ * entry the generator wrote before seats existed: same server name, same
+ * command, no seat argument. The expected text below is that earlier output,
+ * written out — never recomputed from the generator under test.
+ */
+describe('one server entry per declared seat, the Operator’s unchanged', () => {
+  const OPERATOR_CLAUDE_FILE_SELF_HOST = `{
+  "mcpServers": {
+    "vinaya-task-tools": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts"
+      ]
+    }
+  }
+}
+`
+  const OPERATOR_CODEX_TOML_SELF_HOST = `[mcp_servers.vinaya-task-tools]
+command = "bun"
+args = ["harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts"]
+`
+  const operatorClaudeFilePublished = (version: string) => `{
+  "mcpServers": {
+    "vinaya-task-tools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "--yes",
+        "-p",
+        "@attalabs/vinaya@${version}",
+        "vinaya-task-tools-serve"
+      ]
+    }
+  }
+}
+`
+  const operatorCodexTomlPublished = (version: string) => `[mcp_servers.vinaya-task-tools]
+command = "npx"
+args = ["--yes", "-p", "@attalabs/vinaya@${version}", "vinaya-task-tools-serve"]
+`
+
+  it('registers exactly one server per seat the seat table declares', () => {
+    const seats = vinayaToolSeats().seats
+    const registrations = seatServerRegistrations(SELF_HOST)
+    expect(registrations.map((r) => r.serverName)).toEqual(seats.map((seat) => seat.serverName))
+    expect(Object.keys(claudeMcpJsonConfig(SELF_HOST).mcpServers)).toEqual(seats.map((seat) => seat.serverName))
+    const tables: string[] = [...(codexMcpServersToml(SELF_HOST).match(/^\[mcp_servers\.[^\]]+\]$/gm) ?? [])]
+    expect(tables).toEqual(seats.map((seat) => `[mcp_servers.${seat.serverName}]`))
+  })
+
+  it("the Operator's seat is registered under its current name, with no seat argument", () => {
+    const operator = seatServerRegistrations(SELF_HOST).find((r) => r.serverName === TASK_TOOLS_MCP_SERVER_NAME)
+    expect(operator?.invocation).toEqual({ command: 'bun', args: [SERVE_SOURCE] })
+    expect(operator?.invocation.args).not.toContain(SEAT_ARGUMENT)
+  })
+
+  it('the vendoring-repo Claude .mcp.json and Codex TOML are byte-identical to the earlier output', () => {
+    expect(claudeMcpJsonFile(SELF_HOST)).toBe(OPERATOR_CLAUDE_FILE_SELF_HOST)
+    expect(codexMcpServersToml(SELF_HOST)).toBe(OPERATOR_CODEX_TOML_SELF_HOST)
+  })
+
+  it('the published-adopter Claude .mcp.json and Codex TOML are byte-identical to the earlier output', () => {
+    expect(claudeMcpJsonFile(null)).toBe(operatorClaudeFilePublished(ownVersion()))
+    expect(codexMcpServersToml(null)).toBe(operatorCodexTomlPublished(ownVersion()))
+  })
+
+  it("the committed .mcp.json at the repository root registers the Operator's entry the generator writes", () => {
+    const committed = JSON.parse(readFileSync(join(REPO_ROOT, '.mcp.json'), 'utf8'))
+    expect(committed).toEqual(claudeMcpJsonConfig(SELF_HOST))
   })
 })
 

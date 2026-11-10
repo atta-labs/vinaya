@@ -25,7 +25,7 @@ planning (the Planner's own brief authoring) and nothing after merge
 as a bounded, read-mostly client — it starts, reads status on, and requests
 authenticated continuation or cancellation of a run; it plans nothing,
 edits no code, changes no Objectives, posts no ruling, approves nothing,
-and merges nothing (`harness/processes/vinaya-strict/executing/operator/doctrine.md`; `harness/kernel/tools/catalog/task-tools.ts`'s
+and merges nothing (`harness/processes/vinaya-strict/executing/operator/doctrine.md`; `harness/processes/vinaya-strict/integration/policies/roles.ts`'s
 `OPERATOR_TOOL_GRANT`). Studio reporting, multi-task batch scheduling,
 automatic merge, and a whole-repository rewrite of this path into a
 standalone product are explicitly outside this boundary — classified in
@@ -42,7 +42,7 @@ permitted/forbidden lists and the security rationale behind each.
 | Controller | Runs `devReviewLoop`/`task run`; holds the Operator's own forge login and model credentials; the only actor that spawns Worker, Reviewer and repository subprocesses | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `dev-review-loop.ts` |
 | Worker (Developer) | Reads/writes its own worktree; runs the declared toolchain; pushes and opens a PR on its own branch only | `harness/kernel/isolation/worker-boundary.ts` (Seatbelt sandbox on Darwin, always on where supported) |
 | Reviewer | Reads the repository at a judged head; writes findings to a driver-chosen work directory; never holds any forge-write credential | Same `worker-boundary.ts` profile, with every forge-write grant denied |
-| Operator | The task-scoped external client described in Section A | `harness/kernel/tools/catalog/task-tools.ts`'s `OPERATOR_TOOL_GRANT` + `harness/kernel/tools/host/router.ts`'s `refuseUngrantedTool` |
+| Operator | The task-scoped external client described in Section A | `harness/processes/vinaya-strict/integration/policies/roles.ts`'s `OPERATOR_TOOL_GRANT` + `harness/kernel/tools/host/seat-host.ts`'s seat host, gated by `harness/kernel/tools/host/router.ts`'s `refuseUngrantedTool` |
 | Repository subprocess | Reads/writes only what the Controller explicitly constructs into its environment | `harness/kernel/gates/checks/runner.ts`'s `buildCheckEnv` (never `{ ...process.env }` spread) |
 | Broker | Grants Worker `branch-push`/`branch-lease-push`/`pr-open`/`pr-comment` (a `branch-lease-push` only to a `refs/heads/task/` target, and requested only by the driver's own publication) and Operator `task-execute`/`task-observe`; refuses `ruling-post`/`criteria-edit`/`protected-merge`/`review-publish` unconditionally to both | `harness/kernel/tools/host/broker.ts` |
 
@@ -54,10 +54,14 @@ vendor.
 ## C — Adapter boundary
 
 Two runtime adapters, one shared server: `harness/kernel/tools/catalog/task-tools.ts`'s
-six registered tools are served by exactly one process
+six registered tools are served by exactly one program
 (`harness/processes/vinaya-strict/integration/server.ts`, MCP protocol `2025-06-18`,
-newline-delimited JSON-RPC over stdio) — `harness/processes/vinaya-strict/integration/adapters.ts`'s
-`claudeMcpJsonConfig`/`codexMcpServersToml` differ only in how each runtime
+newline-delimited JSON-RPC over stdio), one seat per launch: the kernel's seat
+host (`harness/kernel/tools/host/seat-host.ts`) serves the catalog entries,
+handlers and grant the process's seat table gives the seat the launch's
+`--seat` argument names, and a launch with none serves the Operator — `harness/processes/vinaya-strict/integration/adapters.ts`'s
+`claudeMcpJsonConfig`/`codexMcpServersToml` register one server per declared
+seat and differ only in how each runtime
 is TOLD to launch that one server (Claude's project-root `.mcp.json`;
 Codex's user-home `~/.codex/config.toml`), never in the server, the
 protocol, or the tool catalog itself (`protocol.test.ts`'s own "identical
