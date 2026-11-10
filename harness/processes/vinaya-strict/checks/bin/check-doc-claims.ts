@@ -100,7 +100,7 @@ function main(): void {
       file: finding.file,
       line: finding.line,
       agent_recovery_prompt:
-        'An `VINAYA:CLAIM` marker binds the sentence beside it to text its cited file must hold. When the binding no ' +
+        'A `VINAYA:CLAIM` marker binds the sentence beside it to text its cited file must hold. When the binding no ' +
         'longer holds, re-read the cited code, correct the sentence to what the code does now, and re-bind it to a ' +
         'literal the file holds — or remove the sentence with its marker. Never reword the sentence while it is ' +
         'unbound, and never delete only the marker. A malformed marker must stand alone on its own line, in the form ' +

@@ -149,7 +149,7 @@ const OBJECTIVES_VERSION_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Objectives version
  * `0` when no principal ruling existed on the PR at cast time, never
  * omitted the way `Objectives version:` is pre-cutover. Read from its OWN
  * wider window (`firstSevenLines`, below), never from `firstFiveLines`:
- * `packages/sources` carries an `VINAYA:CLAIM` binding on `firstFiveLines`'s
+ * `packages/sources` carries a `VINAYA:CLAIM` binding on `firstFiveLines`'s
  * exact signature that this task's declared Surface excludes, so that
  * function's name, body, and 5-line reach stay byte-identical — widening
  * it in place would silently break that out-of-surface claim. The value is

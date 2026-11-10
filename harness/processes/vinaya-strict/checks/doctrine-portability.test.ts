@@ -229,6 +229,20 @@ describe('vendor-name finding (Issue #298)', () => {
     expect(findings.filter((f) => f.kind === 'vendor-name')).toEqual([])
   })
 
+  it('honours the fenced home in the current prefix and in the retired prefix alike', () => {
+    for (const prefix of ['VINAYA:VENDOR-EXAMPLE', 'AEG:VENDOR-EXAMPLE']) {
+      const findings = checkDoctrinePortability([
+        file(
+          'harness/processes/vinaya-strict/doctrine/tranche-model.md',
+          [`<!-- ${prefix}:START -->`, 'Vinaya ships one adapter, for Claude Code.', `<!-- ${prefix}:END -->`].join(
+            '\n'
+          )
+        )
+      ])
+      expect(findings.filter((f) => f.kind === 'vendor-name')).toEqual([])
+    }
+  })
+
   it('still flags a vendor mention OUTSIDE the fenced home in the same file', () => {
     const findings = checkDoctrinePortability([
       file(

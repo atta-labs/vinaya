@@ -34,6 +34,20 @@ describe('findCitedQuotes — marker discovery', () => {
     ])
   })
 
+  it('finds a pair in the current prefix and in the retired prefix alike', () => {
+    for (const prefix of ['VINAYA:QUOTES-FILE', 'AEG:QUOTES-FILE']) {
+      const content = `one job — <!-- ${prefix}:START:.github/workflows/x.yml -->\`vinaya check --all\`<!-- ${prefix}:END --> today`
+      const quotes = findCitedQuotes(
+        [{ path: 'harness/processes/vinaya-strict/doctrine/enforcement.md', content }],
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX
+      )
+      expect(quotes.map((q) => [q.quotedText, q.citedFile])).toEqual([
+        ['vinaya check --all', '.github/workflows/x.yml']
+      ])
+    }
+  })
+
   it('finds a two-line pair, reporting the line the marker pair starts on', () => {
     const content = [
       'preamble',

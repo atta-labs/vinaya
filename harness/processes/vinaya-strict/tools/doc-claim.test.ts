@@ -81,6 +81,38 @@ describe('findClaimBindings — marker discovery', () => {
   })
 })
 
+describe('findClaimBindings — both anchor spellings', () => {
+  const expected = { kind: 'contains' as const, path: 'src/a.ts', value: 'function windows(' }
+
+  it('reads the current prefix and the retired prefix in the markdown and comment forms alike', () => {
+    for (const prefix of ['VINAYA:CLAIM', 'AEG:CLAIM']) {
+      const md = findClaimBindings([
+        { path: 'x.md', content: `<!-- ${prefix}: src/a.ts contains:function windows( -->` }
+      ])
+      const ts = findClaimBindings([{ path: 'x.ts', content: `// ${prefix}: src/a.ts contains:function windows(` }])
+      expect(md.map((b) => b.assertion)).toEqual([expected])
+      expect(ts.map((b) => b.assertion)).toEqual([expected])
+    }
+  })
+
+  it('still checks a retired-prefix claim: a stale one is reported', () => {
+    const bindings = findClaimBindings([{ path: 'x.md', content: '<!-- AEG:CLAIM: src/a.ts contains:gone -->' }])
+    expect(evaluateClaimBindings(bindings, reader({ 'src/a.ts': 'present' }))).toHaveLength(1)
+  })
+
+  it('reports a malformed marker in either prefix', () => {
+    for (const prefix of ['VINAYA:CLAIM', 'AEG:CLAIM']) {
+      expect(findMalformedClaimMarkers([{ path: 'x.md', content: `<!-- ${prefix}: src/a.ts -->` }])).toHaveLength(1)
+    }
+  })
+
+  it('strips a retired-prefix marker from the cited file, so it cannot satisfy itself', () => {
+    const bindings = findClaimBindings([{ path: 'x.md', content: '<!-- AEG:CLAIM: y.md contains:AEG:CLAIM -->' }])
+    const cited = '<!-- AEG:CLAIM: y.md contains:AEG:CLAIM -->'
+    expect(evaluateClaimBindings(bindings, reader({ 'y.md': cited }))).toHaveLength(1)
+  })
+})
+
 describe('findMalformedClaimMarkers', () => {
   it('reports a marker announcing itself that parses as neither form', () => {
     const content = ['<!-- AEG:CLAIM: src/a.ts holds:something -->', 'Sentence.'].join('\n')

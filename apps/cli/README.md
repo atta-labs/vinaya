@@ -276,7 +276,7 @@ The `changeset-coverage` core check couples a diff touching a published package'
 
 A doc that quotes a command or config line verbatim, in backticks, as a statement of present fact ("what runs today: `X`") goes stale silently once the thing it quotes changes — every other gate can pass while the quotation is simply wrong. The `quoted-command` core check catches this, but **only for spans an author explicitly marks** — it never infers from a command-looking span, because an adopter-facing instruction (a README's `npx @attalabs/vinaya init`) is not a claim and flagging it is exactly the false-positive shape that gets a check disabled.
 
-Opt a span in by wrapping it in an `VINAYA:QUOTES-FILE` marker pair naming the file it quotes:
+Opt a span in by wrapping it in a `VINAYA:QUOTES-FILE` marker pair naming the file it quotes:
 
 ```markdown
 one job — <!-- VINAYA:QUOTES-FILE:START:.github/workflows/ci.yml -->`npm test`<!-- VINAYA:QUOTES-FILE:END --> in CI

@@ -487,7 +487,7 @@ const C8_PATHSPECS = [
 
 /**
  * C8 — doc-claim bindings. A doctrine sentence or source comment stating what
- * code does carries an `VINAYA:CLAIM` marker pinning the source that proves it;
+ * code does carries a `VINAYA:CLAIM` marker pinning the source that proves it;
  * this verifies every marker against the file it cites.
  *
  * `only` is the diff's own changed-file set in PR mode (undefined in full
