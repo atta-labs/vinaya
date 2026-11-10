@@ -117,8 +117,9 @@ export function classifyDriverError(err: unknown): DriverErrorClass {
   if (err instanceof DispatchSignInRefused) return 'sign_in_refused'
   if (err instanceof DispatchUsageLimit) return 'usage_limit'
   if (err instanceof DispatchSandboxRefused) return 'sandbox_refused'
-  if (isGitHubRateLimitError(err)) return 'rate_limit'
+  // The connection check comes first, as the original loop's round loop always checked it.
   if (isGitHubConnectionFailure(err)) return 'forge_connection'
+  if (isGitHubRateLimitError(err)) return 'rate_limit'
   return 'other'
 }
 

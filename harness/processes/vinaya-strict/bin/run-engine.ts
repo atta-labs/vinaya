@@ -2604,6 +2604,10 @@ export interface EngineForge {
   refreshPrEvidence: BoundFunctions['refreshPrEvidence']
 }
 
+/**
+ * Only the two newest-ruling reads are retried; every other forge read and push pauses at once, as before.
+ * The wait blocks this thread because the reads are synchronous; it is bounded by the retry bound (three minutes).
+ */
 /** Blocks the calling thread for `ms` — the forge reads the round makes are synchronous, so the retry wait is too. */
 export function blockingSleep(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)

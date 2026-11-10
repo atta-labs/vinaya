@@ -1879,6 +1879,29 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
   const connectionFailure = (): Error =>
     Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT', hostname: 'api.github.com' })
 
+  test("the real reader's rewrapped plain Error (message only) is still retried", () => {
+    const waits: number[] = []
+    let calls = 0
+    const forge = retryingForge(
+      {
+        ...liveForge,
+        fetchNewestRulingOrdinal: () => {
+          calls += 1
+          if (calls === 1) {
+            // The shape the real reader throws: its own message wrapping the `gh` failure, which rides as the cause.
+            throw new Error("fetchNewestRulingOrdinal: could not fetch PR #1's comments: gh failed", {
+              cause: new Error('error connecting to api.github.com\ncheck your internet connection')
+            })
+          }
+          return 5
+        }
+      },
+      (ms) => waits.push(ms)
+    )
+    expect(forge.fetchNewestRulingOrdinal(1)).toBe(5)
+    expect(waits).toEqual([ENGINE_FORGE_RETRY_WAIT_MS])
+  })
+
   test('a read that recovers is retried after the fixed wait and returns', () => {
     const waits: number[] = []
     let calls = 0
