@@ -114,9 +114,19 @@ type Manifest = {
   name?: string
   version?: string
   bin?: Record<string, string>
-  exports?: Record<string, string>
+  exports?: Record<string, ExportTarget>
   dependencies?: Record<string, string>
 }
+
+/** A subpath's target: one file, or conditions naming the declaration file (`types`) and the runtime file (`default`). */
+type ExportTarget = string | { types?: string; default?: string }
+
+/** The file a TypeScript consumer reads for a subpath. */
+const typesFileOf = (target: ExportTarget): string =>
+  typeof target === 'string' ? target : (target.types ?? target.default ?? '')
+
+/** The subpaths whose declarations are read: not the manifest or any other data file. */
+const isCodeEntry = (file: string): boolean => !file.endsWith('.json')
 
 const readManifest = (path: string): Manifest => JSON.parse(readFileSync(path, 'utf8')) as Manifest
 
@@ -370,10 +380,15 @@ export function normalizeDeclaration(text: string, scratch: string): string {
     .trim()
 }
 
-function declarationText(decl: ts.Declaration, checker: ts.TypeChecker, declRoot: string, scratch: string): string {
+function declarationText(
+  decl: ts.Declaration,
+  checker: ts.TypeChecker,
+  declRoots: readonly string[],
+  scratch: string
+): string {
   const file = decl.getSourceFile()
   const path = realpathSync(file.fileName)
-  if (!path.startsWith(`${declRoot}${sep}`)) {
+  if (!declRoots.some((root) => path.startsWith(`${root}${sep}`))) {
     const tail = path.split(`${sep}node_modules${sep}`).at(-1) ?? path
     const parts = tail.split(sep)
     const pkg = parts[0]?.startsWith('@') ? `${parts[0]}/${parts[1]}` : (parts[0] ?? tail)
@@ -396,12 +411,14 @@ function declarationText(decl: ts.Declaration, checker: ts.TypeChecker, declRoot
  * The declarations a consumer sees for each subpath of one installed package:
  * the package copied out of `node_modules` (the compiler emits no file there),
  * its declarations emitted, and each exported symbol printed from the emitted
- * files with every alias followed to its target.
+ * files with every alias followed to its target. A subpath whose declaration
+ * file the tarball already ships (`.d.ts`) is read as shipped, and a data file
+ * such as the manifest has no declarations.
  */
 function declarationFacts(
   installDir: string,
   name: string,
-  exportsMap: Record<string, string>
+  exportsMap: Record<string, ExportTarget>
 ): { symbols: Record<string, Record<string, string[]>>; problems: string[]; outside: string[] } {
   const scratch = realpathSync(installDir)
   const emitRoot = join(scratch, '.emit', name)
@@ -411,6 +428,9 @@ function declarationFacts(
   cpSync(join(scratch, 'node_modules', name), emitRoot, { recursive: true, dereference: true })
   mkdirSync(declRoot, { recursive: true })
   const entries = Object.entries(exportsMap)
+    .map(([subpath, target]): [string, string] => [subpath, typesFileOf(target)])
+    .filter(([, file]) => isCodeEntry(file))
+  const shipped = (file: string) => file.endsWith('.d.ts')
   const options: ts.CompilerOptions = {
     ...consumerOptions(),
     declaration: true,
@@ -420,7 +440,7 @@ function declarationFacts(
     outDir: declRoot
   }
   const program = ts.createProgram(
-    entries.map(([, file]) => join(emitRoot, file)),
+    entries.filter(([, file]) => !shipped(file)).map(([, file]) => join(emitRoot, file)),
     options,
     hostIn(scratch, options)
   )
@@ -429,7 +449,10 @@ function declarationFacts(
   const outside = filesOutside(program, scratch)
 
   const declOptions: ts.CompilerOptions = { ...consumerOptions(), noEmit: true }
-  const declFile = (file: string) => join(declRoot, file.replace(/^\.\//, '').replace(/\.tsx?$/, '.d.ts'))
+  const declFile = (file: string) =>
+    shipped(file)
+      ? join(emitRoot, file.replace(/^\.\//, ''))
+      : join(declRoot, file.replace(/^\.\//, '').replace(/\.tsx?$/, '.d.ts'))
   const declProgram = ts.createProgram(
     entries.map(([, file]) => declFile(file)),
     declOptions,
@@ -437,7 +460,7 @@ function declarationFacts(
   )
   outside.push(...filesOutside(declProgram, scratch))
   const checker = declProgram.getTypeChecker()
-  const realDeclRoot = realpathSync(declRoot)
+  const realDeclRoots = [realpathSync(declRoot), realpathSync(emitRoot)]
   const symbols: Record<string, Record<string, string[]>> = {}
   for (const [subpath, file] of entries) {
     const source = declProgram.getSourceFile(declFile(file))
@@ -450,7 +473,7 @@ function declarationFacts(
     for (const exported of checker.getExportsOfModule(moduleSymbol)) {
       const target = exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported
       const texts = (target.declarations ?? []).map((d) =>
-        recordedDeclaration(declarationText(d, checker, realDeclRoot, scratch))
+        recordedDeclaration(declarationText(d, checker, realDeclRoots, scratch))
       )
       out[exported.name] = [...new Set(texts)].sort()
     }
@@ -622,7 +645,13 @@ export function allowlistProblems(snapshot: Snapshot): string[] {
   const out: string[] = []
   for (const [name, pkg] of Object.entries(snapshot.packages)) {
     const manifest = readManifest(join(REPO_ROOT, pkg.dir, 'package.json'))
-    const entries = new Set(Object.values(manifest.exports ?? {}).map((p) => p.replace(/^\.\//, '')))
+    const entries = new Set(
+      Object.values(manifest.exports ?? {}).flatMap((target) =>
+        (typeof target === 'string' ? [target] : [target.types, target.default]).map((p) =>
+          (p ?? '').replace(/^\.\//, '')
+        )
+      )
+    )
     for (const module of pkg.internalModules) {
       if (entries.has(module.path)) out.push(`${name}: internal module ${module.path} is a subpath entry`)
       if (!module.reason?.trim()) out.push(`${name}: internal module ${module.path} carries no reason`)

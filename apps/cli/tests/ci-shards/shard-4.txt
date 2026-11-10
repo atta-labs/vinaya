@@ -1,1 +1,2 @@
+tests/public-api.test.ts
 tests/studio.test.ts
