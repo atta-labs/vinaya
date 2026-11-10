@@ -88,12 +88,18 @@ function sh(cmd: string, args: string[], options: { attempts?: number } = {}): s
 }
 
 /**
- * The parent of every task branch in both runners: the default branch. The
- * original loop's base is always this branch and the Atta Engine runner
- * resolves no other parent; its head is read through `resolveHead` like any
- * branch's.
+ * The name of the parent of every task branch in both runners: the
+ * repository's default branch, as the remote reports its `HEAD`
+ * (`git ls-remote --symref origin HEAD`). Neither runner resolves another
+ * parent; the branch's head is then read through `resolveHead` like any
+ * branch's. Throws when the remote names no default branch.
  */
-export const PARENT_BRANCH = 'main'
+export function resolveParentBranch(): string {
+  const out = sh('git', ['ls-remote', '--symref', 'origin', 'HEAD'])
+  const match = /^ref:\s+refs\/heads\/(\S+)\s+HEAD$/m.exec(out)
+  if (match?.[1] === undefined) throw new Error('resolveParentBranch: origin reports no default branch for HEAD.')
+  return match[1]
+}
 
 /**
  * The branch's true head via `git ls-remote` only — `gh pr view

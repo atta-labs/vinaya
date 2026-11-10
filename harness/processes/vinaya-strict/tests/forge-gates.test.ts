@@ -54,6 +54,8 @@ interface Forge {
   evidenceFailures?: number
   /** The check names failing on the parent's head, read in turn (the last repeats); absent, the parent is green. */
   parentFailing?: string[][]
+  /** The parent head's overall CI conclusions read in turn (the last repeats); absent, the parent is green. */
+  parentConclusion?: Conclusion[]
 }
 
 interface World {
@@ -322,6 +324,7 @@ async function run(
     localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
     probeAgentSandbox: async () => ({ ok: true }),
     resolveParentHead: () => 'p'.repeat(40),
+    fetchParentCiConclusion: () => next(forge.parentConclusion ?? ['green']),
     fetchParentFailingCheckRuns: () =>
       next(forge.parentFailing ?? [[]]).map((name, index) => ({ name, id: 100 + index, startedAt: null })),
     readComparisonBase: () => 'base-0',
@@ -503,6 +506,22 @@ for (const agent of AGENTS) {
       expect(observed.reruns).toEqual([41])
       expect(observed.outcome).toBe('completed')
       expect(observed.spawns).toEqual({ developer: 1, 'code-reviewer': 1, 'security-reviewer': 1 })
+    })
+
+    test('a parent that names no failing check but is still pending is not green: the wait goes on', async () => {
+      const observed = await run(agent, {
+        ci: ['red'],
+        mergeable: ['MERGEABLE'],
+        conflictFiles: [],
+        prBody: `Closes #${TASK}`,
+        failedRunIds: [41],
+        rerunTurnsGreen: true,
+        parentFailing: [['unit'], [], [], []],
+        parentConclusion: ['red', 'pending', 'pending', 'green']
+      })
+      expect(observed.sleeps).toBe(3)
+      expect(observed.reruns).toEqual([41])
+      expect(observed.outcome).toBe('completed')
     })
 
     test('a parent red for the whole fixed wait pauses for the Principal with no Developer turn spent on it', async () => {

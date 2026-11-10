@@ -558,6 +558,7 @@ async function drive(
       journalFinalized: null
     }),
     resolveHead: () => head,
+    resolveParentBranch: () => 'main',
     resolveDeveloperDoctrineText: () => Promise.resolve('Execute the frozen brief.'),
     prBody: () => `Closes #${TASK}`,
     pullRequestView: () => ({

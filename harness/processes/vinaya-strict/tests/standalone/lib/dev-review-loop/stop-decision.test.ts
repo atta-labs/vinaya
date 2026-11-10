@@ -170,6 +170,7 @@ describe('decideStop — required CI red', () => {
     headFailing: ['unit'],
     rerunHeads: [],
     parentFailing: [],
+    parentConclusion: 'green',
     parentWaitedMs: 0,
     ...over
   })
@@ -215,10 +216,21 @@ describe('decideStop — required CI red', () => {
     expect(decideStop(red({ headFailing: [], parentFailing: ['unit'] })).type).toBe('rerun')
   })
 
-  test('the parent turning green after the wait reruns the head once, then the head goes back', () => {
+  test('the parent turning green after a wait reruns the head once, even when its first-red rerun is spent', () => {
     expect(decideStop(red({ parentFailing: [], parentWaitedMs: 120_000 })).type).toBe('rerun')
-    expect(decideStop(red({ parentFailing: [], parentWaitedMs: 120_000, rerunHeads: ['h1'] })).type).toBe(
-      'send_back_to_developer'
-    )
+    expect(decideStop(red({ parentFailing: [], parentWaitedMs: 120_000, rerunHeads: ['h1'] })).type).toBe('rerun')
+  })
+
+  test('a pending, red or unread parent is never green: a begun wait goes on, bounded', () => {
+    for (const parentConclusion of ['pending', 'red', null] as const) {
+      expect(decideStop(red({ parentFailing: [], parentConclusion, parentWaitedMs: 60_000 })).type).toBe('wait')
+      expect(decideStop(red({ parentFailing: [], parentConclusion, parentWaitedMs: CI_PARENT_WAIT_MAX_MS })).type).toBe(
+        'pause'
+      )
+    }
+  })
+
+  test('a pending parent before any wait began, naming no shared failure, is not waited on', () => {
+    expect(decideStop(red({ parentFailing: [], parentConclusion: 'pending' })).type).toBe('rerun')
   })
 })

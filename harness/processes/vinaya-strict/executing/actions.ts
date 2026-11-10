@@ -109,10 +109,10 @@ import {
   fetchFailingCheckRuns,
   fetchMergeableState,
   type fetchSettledCiConclusion,
-  PARENT_BRANCH,
   pollMergeableState,
   readWorktreeHead,
   resolveHead,
+  resolveParentBranch,
   rerunFailedWorkflowJobs,
   type GatePoll
 } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
@@ -343,6 +343,8 @@ export interface BoundFunctions {
   resolveParentHead?: () => string
   /** The checks failing on the parent's head, read the way the task head's are. */
   fetchParentFailingCheckRuns?: typeof fetchFailingCheckRuns
+  /** The parent head's overall CI conclusion, read the way the task head's is. */
+  fetchParentCiConclusion?: typeof fetchCiConclusion
   fetchMergeableState: typeof fetchMergeableState
   fetchConflictingFiles: typeof fetchConflictingFiles
   /** Posts a marked comment on the pull request: the round marker the reviewers' dispatch leaves. */
@@ -2058,27 +2060,32 @@ export async function readForgeCi(
     // The first red read of a head goes through the one decision function before any send-back. Every fact it
     // decides on is read here from the forge: the head's failing checks, the parent's, the heads already rerun.
     const readHeadFailing = () => (task.bound?.fetchFailingCheckRuns ?? fetchFailingCheckRuns)(head).map((r) => r.name)
-    const readParentFailing = (): string[] | null => {
+    const readParent = (): { failing: string[] | null; conclusion: 'green' | 'red' | 'pending' | null } => {
       try {
-        const parentHead = (task.bound?.resolveParentHead ?? (() => resolveHead(PARENT_BRANCH)))()
+        const parentHead = (task.bound?.resolveParentHead ?? (() => resolveHead(resolveParentBranch())))()
         // A parent head equal to the task's own head holds no separate parent to compare with.
-        if (parentHead === head) return null
-        return (task.bound?.fetchParentFailingCheckRuns ?? fetchFailingCheckRuns)(parentHead).map((r) => r.name)
+        if (parentHead === head) return { failing: null, conclusion: null }
+        return {
+          failing: (task.bound?.fetchParentFailingCheckRuns ?? fetchFailingCheckRuns)(parentHead).map((r) => r.name),
+          conclusion: (task.bound?.fetchParentCiConclusion ?? fetchCiConclusion)(parentHead)
+        }
       } catch {
         // A parent that cannot be read never decides a wait.
-        return null
+        return { failing: null, conclusion: null }
       }
     }
     const headFailing = readHeadFailing()
     let parentWaitedMs = 0
     for (;;) {
+      const parent = readParent()
       const decision = decideStop({
         kind: 'ci_red',
         runner: 'engine',
         head,
         headFailing,
         rerunHeads,
-        parentFailing: readParentFailing(),
+        parentFailing: parent.failing,
+        parentConclusion: parent.conclusion,
         parentWaitedMs
       })
       if (decision.type === 'wait') {
@@ -2111,7 +2118,7 @@ export async function readForgeCi(
       head,
       conclusion,
       failingChecks,
-      rerunHeads: rerunRunIds.length > 0 ? [...rerunHeads, head] : rerunHeads,
+      rerunHeads: rerunRunIds.length > 0 && !rerunHeads.includes(head) ? [...rerunHeads, head] : rerunHeads,
       rerunRunIds,
       ...(parentRedPause === undefined ? {} : { parentRedPause })
     })

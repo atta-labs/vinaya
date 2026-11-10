@@ -98,6 +98,8 @@ export type StopEvent =
       headFailing: readonly string[]
       rerunHeads: readonly string[]
       parentFailing: readonly string[] | null
+      /** The parent head's overall CI conclusion; `null` when it could not be read. Only `green` ends a wait. */
+      parentConclusion: 'green' | 'red' | 'pending' | null
       parentWaitedMs: number
     }
 
@@ -148,7 +150,10 @@ function decideCiRed(event: Extract<StopEvent, { kind: 'ci_red' }>): StopDecisio
   const parent = event.parentFailing
   const sharedWithParent =
     parent !== null && event.headFailing.length > 0 && event.headFailing.every((name) => parent.includes(name))
-  if (sharedWithParent) {
+  // Once a wait has begun it ends only on the parent's own green conclusion: a pending, rerunning or unread parent
+  // is never green, even when it names no failing check yet.
+  const waiting = event.parentWaitedMs > 0
+  if (sharedWithParent || (waiting && event.parentConclusion !== 'green')) {
     if (event.parentWaitedMs < CI_PARENT_WAIT_MAX_MS)
       return {
         type: 'wait',
@@ -158,6 +163,8 @@ function decideCiRed(event: Extract<StopEvent, { kind: 'ci_red' }>): StopDecisio
       }
     return { type: 'pause', reason: 'infrastructure', detail: parentRedPauseDetail(event.headFailing) }
   }
+  // The parent turned green after a wait: the head's CI runs again once, even when its first-red rerun is spent.
+  if (waiting) return { type: 'rerun', bound: { kind: 'attempts', used: 1, max: 1 } }
   return event.rerunHeads.includes(event.head)
     ? { type: 'send_back_to_developer' }
     : { type: 'rerun', bound: { kind: 'attempts', used: 1, max: 1 } }

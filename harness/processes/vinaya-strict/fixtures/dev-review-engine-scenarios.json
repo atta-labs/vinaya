@@ -14,7 +14,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "sha256": "89eb7624d5f3481cf0d3fa95de2a8e39ee57455fd1f42b9ba9d4acfafa2836bc"
+        "sha256": "5eed5717fa09840cce68908fc4d1184ed207de0e17d48b62980643565893de29"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.ts",
@@ -30,7 +30,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/gate-reading.ts",
-        "sha256": "4f71a7f541c09fd2d36e06f9e2cf71efa1605b6f9cd94541cb9482033b47fe26"
+        "sha256": "511eae10155313320cf3e77bb6c34a833c15affa4e720493f3ded302b0bb5485"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/journal-history.ts",
@@ -66,7 +66,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stop-decision.ts",
-        "sha256": "4f35ed7f89394d919adfb0c5c65eee2832ee2a3be1cfb1bb2d5ea7912e159d94"
+        "sha256": "baf6c6f2cc5ae82d44f00ab70c05be66c1e0bac1effc220884bf3bf73917d356"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.ts",

@@ -32,7 +32,6 @@ import {
   handoffIdsInPrompt
 } from '../dev-review-loop-harness.js'
 import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import { PARENT_BRANCH } from '../../../../loops/dev-review/standalone/dev-review-loop/gate-reading.js'
 import {
   CI_PARENT_WAIT_MAX_MS,
   CI_PARENT_WAIT_POLL_MS
@@ -167,14 +166,26 @@ describe('devReviewLoop — a red CI read goes through the one decision function
   const fail = (name: string) => ({ id: 1, name, conclusion: 'failure' }) as never
 
   /** A world whose head CI is red until a rerun, with the parent's checks read in turn (the last repeats). */
-  function redWorld(parentReads: string[][], opts: { rerunTurnsGreen: boolean }) {
+  function redWorld(
+    parentReads: string[][],
+    opts: { rerunTurnsGreen: boolean; parentConclusions?: ('green' | 'red' | 'pending')[] }
+  ) {
+    let conclusionRead = 0
     const world = makeWorld({ gate: 'red', failingCheckRuns: [fail('unit')] })
     const reruns: number[] = []
     const sleeps: number[] = []
     let parentRead = 0
     const { deps, prompts } = withCapturedDeveloperDispatch(world, {
-      resolveHead: (branch) => (branch === PARENT_BRANCH ? PARENT_HEAD : world.head),
-      fetchCiConclusion: () => (opts.rerunTurnsGreen && reruns.length > 0 ? 'green' : 'red'),
+      resolveHead: (branch) => (branch === 'trunk' ? PARENT_HEAD : world.head),
+      fetchCiConclusion: (head) => {
+        if (head === PARENT_HEAD) {
+          const queue = opts.parentConclusions ?? ['green']
+          const read = queue[Math.min(conclusionRead, queue.length - 1)] ?? 'green'
+          conclusionRead += 1
+          return read
+        }
+        return opts.rerunTurnsGreen && reruns.length > 0 ? 'green' : 'red'
+      },
       fetchFailingCheckRuns: (head) => {
         if (head !== PARENT_HEAD) return reruns.length > 0 && opts.rerunTurnsGreen ? [] : [fail('unit')]
         const names = parentReads[Math.min(parentRead, parentReads.length - 1)] ?? []
@@ -208,6 +219,17 @@ describe('devReviewLoop — a red CI read goes through the one decision function
     expect(sleeps.filter((ms) => ms === CI_PARENT_WAIT_POLL_MS)).toHaveLength(2)
     expect(reruns).toEqual([41])
     expect(prompts).toHaveLength(1)
+    expect(result.finalDecision.type).toBe('publish')
+  })
+
+  it('does not take a pending parent that names no failing check as green', async () => {
+    const { world, deps, reruns, sleeps } = redWorld([['unit'], [], [], []], {
+      rerunTurnsGreen: true,
+      parentConclusions: ['red', 'pending', 'pending', 'green']
+    })
+    const result = await runLoopInProcessSafe(world, deps)
+    expect(sleeps.filter((ms) => ms === CI_PARENT_WAIT_POLL_MS)).toHaveLength(3)
+    expect(reruns).toEqual([41])
     expect(result.finalDecision.type).toBe('publish')
   })
 

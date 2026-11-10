@@ -188,13 +188,13 @@ import {
   gitCommitsTouchingDriverPaths,
   type FailingCheckRun,
   MAX_AUTOMATIC_CONFLICT_REENTRIES,
-  PARENT_BRANCH,
   pollMergeableState,
   readPublishedPullRequest,
   readWorktreeHead,
   renderConflictPrompt,
   rerunFailedWorkflowJobs,
   resolveHead,
+  resolveParentBranch,
   sh
 } from './dev-review-loop/gate-reading.js'
 import {
@@ -545,6 +545,8 @@ export {
 export type LoopDeps = {
   dispatchRole: typeof realDispatchRole
   resolveHead: typeof resolveHead
+  /** The default branch's name, the parent of the task branch. */
+  resolveParentBranch: typeof resolveParentBranch
   /**
    * The repository's review policy, read once per run from the default
    * branch's trust anchor — `reviewPolicyForLoop`, the fail-loud variant: a
@@ -2643,6 +2645,7 @@ export function defaultDeps(): LoopDeps {
   return {
     dispatchRole: realDispatchRole,
     resolveHead,
+    resolveParentBranch,
     reviewPolicy: reviewPolicyForLoop,
     fetchCiConclusion,
     fetchFailingCheckRuns,
@@ -7190,27 +7193,32 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     ): Promise<{ gate: Awaited<ReturnType<typeof waitForGreenGate>>; pauseDetail: string | null }> {
       if (gate.ciConclusion !== 'red') return { gate, pauseDetail: null }
       const head = gate.stats.head
-      const readParentFailing = (): string[] | null => {
+      const readParent = (): { failing: string[] | null; conclusion: 'green' | 'red' | 'pending' | null } => {
         try {
-          const parentHead = d.resolveHead(PARENT_BRANCH)
+          const parentHead = d.resolveHead(d.resolveParentBranch())
           // A parent head equal to the task's own head holds no separate parent to compare with.
-          if (parentHead === head) return null
-          return d.fetchFailingCheckRuns(parentHead).map((run) => run.name)
+          if (parentHead === head) return { failing: null, conclusion: null }
+          return {
+            failing: d.fetchFailingCheckRuns(parentHead).map((run) => run.name),
+            conclusion: d.fetchCiConclusion(parentHead)
+          }
         } catch {
           // A parent that cannot be read never decides a wait.
-          return null
+          return { failing: null, conclusion: null }
         }
       }
       const headFailing = gate.failingRuns.map((run) => run.name)
       let parentWaitedMs = 0
       for (;;) {
+        const parent = readParent()
         const decided = decideStop({
           kind: 'ci_red',
           runner: 'loop',
           head,
           headFailing,
           rerunHeads: [...rerunHeads],
-          parentFailing: readParentFailing(),
+          parentFailing: parent.failing,
+          parentConclusion: parent.conclusion,
           parentWaitedMs
         })
         if (decided.type === 'wait') {
