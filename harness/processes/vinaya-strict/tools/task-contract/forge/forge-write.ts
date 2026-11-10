@@ -21,6 +21,7 @@
  * repo's required-section set is just one config instance.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { readFileSync } from 'node:fs'
@@ -290,8 +291,45 @@ export function makeCheckError(
   }
 }
 
-/** Emits every finding as a JSON line on stderr, then exits 1. Nothing reached the forge. */
+/** Thrown by `refuse()` inside a `captureRefusal` scope, carrying the findings the exit would have printed. */
+export class RefusalCaptured extends Error {
+  constructor(readonly errors: CheckError[]) {
+    super(errors.map((e) => e.message).join('\n'))
+    this.name = 'RefusalCaptured'
+  }
+}
+
+const refusalScope = new AsyncLocalStorage<true>()
+
+/**
+ * Runs `fn` with `refuse()` turned into a returned finding list: a refusal
+ * anywhere beneath it, however deep, yields `{ ok: false, errors }` instead of
+ * ending the process. Outside a scope `refuse()` is unchanged.
+ */
+export async function captureRefusal<T>(
+  fn: () => T | Promise<T>
+): Promise<{ ok: true; value: T } | { ok: false; errors: CheckError[] }> {
+  try {
+    return { ok: true, value: await refusalScope.run(true, fn) }
+  } catch (err) {
+    if (err instanceof RefusalCaptured) return { ok: false, errors: err.errors }
+    throw err
+  }
+}
+
+/** Synchronous `captureRefusal`, for a helper that never awaits. */
+export function captureRefusalSync<T>(fn: () => T): { ok: true; value: T } | { ok: false; errors: CheckError[] } {
+  try {
+    return { ok: true, value: refusalScope.run(true, fn) }
+  } catch (err) {
+    if (err instanceof RefusalCaptured) return { ok: false, errors: err.errors }
+    throw err
+  }
+}
+
+/** Emits every finding as a JSON line on stderr, then exits 1. Nothing reached the forge. Inside a `captureRefusal` scope it throws the findings instead. */
 export function refuse(errors: CheckError[]): never {
+  if (refusalScope.getStore()) throw new RefusalCaptured(errors)
   for (const e of errors) emitCheckError(e)
   process.exit(1)
 }
@@ -335,7 +373,8 @@ export function resolvePrincipalsOrRefuse(check: string, retryCommand: string): 
 // ---------------------------------------------------------------------------
 const TRANCHE_LABEL_COLOR = '1D76DB'
 
-export function ensureTrancheLabelExists(slug: string): void {
+/** Returning form of `ensureTrancheLabelExists`: the refusal findings, or `[]` when the label exists or was created. */
+export function ensureTrancheLabelExistsOutcome(slug: string): CheckError[] {
   const name = trancheLabel(slug)
   let existing: Array<{ name: string }>
   try {
@@ -345,29 +384,35 @@ export function ensureTrancheLabelExists(slug: string): void {
     })
     existing = JSON.parse(out) as Array<{ name: string }>
   } catch (err) {
-    refuse([
+    return [
       makeCheckError(
         'forge-fetch',
         `Could not list labels (\`gh label list\`) to check for '${name}': ${(err as Error).message}`,
         'Check `gh auth status` and network, then retry.'
       )
-    ])
+    ]
   }
-  if (existing.some((l) => l.name === name)) return
+  if (existing.some((l) => l.name === name)) return []
   try {
     execFileSync('gh', ['label', 'create', name, '--color', TRANCHE_LABEL_COLOR, '--description', `Tranche: ${slug}`], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
   } catch (err) {
-    refuse([
+    return [
       makeCheckError(
         'forge-fetch',
         `Could not create tranche label '${name}' (\`gh label create\`): ${(err as Error).message}`,
         'Check `gh auth status`/repo write access, then retry.'
       )
-    ])
+    ]
   }
+  return []
+}
+
+export function ensureTrancheLabelExists(slug: string): void {
+  const errors = ensureTrancheLabelExistsOutcome(slug)
+  if (errors.length > 0) refuse(errors)
 }
 
 /**
@@ -382,20 +427,31 @@ export function ensureTrancheLabelExists(slug: string): void {
  * re-derived — the same union of argv `--label`s and the ensured tranche
  * label `issueCreateCommand` already has in hand.
  */
-export function resolveMilestoneAttachArgs(ghArgs: string[], labels: string[]): string[] {
-  if (!isTaskIssueLabelSet(labels)) return ghArgs
-  if (hasExplicitMilestoneFlag(ghArgs)) return ghArgs
+export function resolveMilestoneAttachOutcome(
+  ghArgs: string[],
+  labels: string[]
+): { args: string[]; notice: string | null } {
+  if (!isTaskIssueLabelSet(labels)) return { args: ghArgs, notice: null }
+  if (hasExplicitMilestoneFlag(ghArgs)) return { args: ghArgs, notice: null }
   const slug = findTrancheSlug(labels)
-  if (!slug) return ghArgs
+  if (!slug) return { args: ghArgs, notice: null }
 
   let target: ReturnType<typeof findMilestoneAttachTargetForSlug>
   try {
     target = findMilestoneAttachTargetForSlug('{owner}', '{repo}', slug)
   } catch {
-    process.stderr.write(`vinaya: milestone lookup for '${slug}' failed (\`gh api\`) — creating without --milestone.\n`)
-    return ghArgs
+    return {
+      args: ghArgs,
+      notice: `vinaya: milestone lookup for '${slug}' failed (\`gh api\`) — creating without --milestone.\n`
+    }
   }
-  return target ? [...ghArgs, '--milestone', target.title] : ghArgs
+  return { args: target ? [...ghArgs, '--milestone', target.title] : ghArgs, notice: null }
+}
+
+export function resolveMilestoneAttachArgs(ghArgs: string[], labels: string[]): string[] {
+  const { args, notice } = resolveMilestoneAttachOutcome(ghArgs, labels)
+  if (notice) process.stderr.write(notice)
+  return args
 }
 
 /**
@@ -1625,28 +1681,36 @@ export function renderSurfaceForcedSet(set: SurfaceForcedSet): string {
  * returns the exit code — `0` with the report, `2` when the body cannot be
  * read or its `## Surface` does not parse. Writes nothing.
  */
-export function runIssueSurface(args: string[]): number {
+export function issueSurfaceOutcome(
+  args: string[]
+): { ok: true; set: SurfaceForcedSet; json: boolean } | { ok: false; message: string } {
   const json = args.includes('--json')
   let body: string | null = null
   try {
     body = locateBody(args.filter((a) => a !== '--json'))?.body ?? null
   } catch (e) {
-    process.stderr.write(`issue surface: ${e instanceof Error ? e.message : String(e)}\n`)
-    return 2
+    return { ok: false, message: `issue surface: ${e instanceof Error ? e.message : String(e)}\n` }
   }
   if (body === null) {
-    process.stderr.write('issue surface: pass the draft Issue body with `--body-file <path>`.\n')
-    return 2
+    return { ok: false, message: 'issue surface: pass the draft Issue body with `--body-file <path>`.\n' }
   }
   const set = readSurfaceForcedSet(body)
   if (set === null) {
     const parsed = parseIssueSurface(body)
     const why = parsed.ok ? '' : ` ${parsed.errors.join(' ')}`
-    process.stderr.write(`issue surface: the body's \`## Surface\` does not parse.${why}\n`)
+    return { ok: false, message: `issue surface: the body's \`## Surface\` does not parse.${why}\n` }
+  }
+  return { ok: true, set, json }
+}
+
+export function runIssueSurface(args: string[]): number {
+  const r = issueSurfaceOutcome(args)
+  if (!r.ok) {
+    process.stderr.write(r.message)
     return 2
   }
-  if (json) printJson(set)
-  else process.stdout.write(renderSurfaceForcedSet(set))
+  if (r.json) printJson(r.set)
+  else process.stdout.write(renderSurfaceForcedSet(r.set))
   return 0
 }
 
@@ -1953,6 +2017,32 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
  * more specific URL (`issue objectives edit` prints its comment's url, never
  * the plain issue-edit url the underlying write also produces).
  */
+export function runGhWriteOutcome(
+  ghCmd: string[],
+  ghArgs: string[],
+  bodyResult: BodyResult | null
+): { ok: true; url: string } | { ok: false; errors: CheckError[]; cause: unknown } {
+  const { finalArgs, cleanup } = resolveShippableArgs(ghArgs, bodyResult)
+  try {
+    const out = execFileSync('gh', [...ghCmd, ...finalArgs], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
+    return { ok: true, url: out.trim() }
+  } catch (cause) {
+    return {
+      ok: false,
+      cause,
+      errors: [
+        makeCheckError(
+          'forge-write',
+          `\`gh ${ghCmd.join(' ')}\` failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          'Check `gh auth status` and network, then re-run the command.'
+        )
+      ]
+    }
+  } finally {
+    cleanup()
+  }
+}
+
 export function runGhWrite(
   ghCmd: string[],
   ghArgs: string[],
@@ -1960,16 +2050,13 @@ export function runGhWrite(
   json: boolean,
   quiet = false
 ): void {
-  const { finalArgs, cleanup } = resolveShippableArgs(ghArgs, bodyResult)
-  try {
-    const out = execFileSync('gh', [...ghCmd, ...finalArgs], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
-    if (quiet) return
-    const url = out.trim()
-    if (json) printJson({ validated: true, written: true, url })
-    else if (url) process.stdout.write(`${url}\n`)
-  } finally {
-    cleanup()
-  }
+  const r = runGhWriteOutcome(ghCmd, ghArgs, bodyResult)
+  // The exiting form keeps its old behaviour: a failed `gh` throws its raw error.
+  if (!r.ok) throw r.cause
+  if (quiet) return
+  const url = r.url
+  if (json) printJson({ validated: true, written: true, url })
+  else if (url) process.stdout.write(`${url}\n`)
 }
 
 /**
@@ -1978,7 +2065,10 @@ export function runGhWrite(
  * target is a task Issue — the forge is the only truthful source. A
  * failed fetch is a HARD refusal, never treated as "no tranche label".
  */
-export function fetchForgeLabels(issueRef: string, retryCommand: string): string[] {
+export function fetchForgeLabelsOutcome(
+  issueRef: string,
+  retryCommand: string
+): { labels: string[] } | { errors: CheckError[] } {
   let out: string
   try {
     out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'labels'], {
@@ -1986,25 +2076,35 @@ export function fetchForgeLabels(issueRef: string, retryCommand: string): string
       stdio: ['ignore', 'pipe', 'pipe']
     })
   } catch {
-    refuse([
-      makeCheckError(
-        'forge-fetch',
-        `Could not fetch Issue ${issueRef}'s labels from the forge (\`gh issue view\`) — the rationale gate cannot decide whether it applies.`,
-        `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`. The edit is refused rather than passed through unvalidated.`
-      )
-    ])
+    return {
+      errors: [
+        makeCheckError(
+          'forge-fetch',
+          `Could not fetch Issue ${issueRef}'s labels from the forge (\`gh issue view\`) — the rationale gate cannot decide whether it applies.`,
+          `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`. The edit is refused rather than passed through unvalidated.`
+        )
+      ]
+    }
   }
   try {
-    return (JSON.parse(out) as { labels: Array<{ name: string }> }).labels.map((l) => l.name)
+    return { labels: (JSON.parse(out) as { labels: Array<{ name: string }> }).labels.map((l) => l.name) }
   } catch {
-    refuse([
-      makeCheckError(
-        'forge-fetch',
-        `Could not parse \`gh issue view ${issueRef} --json labels\` output.`,
-        `Re-run \`${retryCommand}\`; the edit is refused rather than passed through unvalidated.`
-      )
-    ])
+    return {
+      errors: [
+        makeCheckError(
+          'forge-fetch',
+          `Could not parse \`gh issue view ${issueRef} --json labels\` output.`,
+          `Re-run \`${retryCommand}\`; the edit is refused rather than passed through unvalidated.`
+        )
+      ]
+    }
   }
+}
+
+export function fetchForgeLabels(issueRef: string, retryCommand: string): string[] {
+  const r = fetchForgeLabelsOutcome(issueRef, retryCommand)
+  if ('errors' in r) refuse(r.errors)
+  return r.labels
 }
 
 /**
@@ -2074,6 +2174,17 @@ export function fetchForgeIssueContext(
  * its own superseding `vinaya:brief:v<k+1>` comment after writing — this
  * gate must not refuse the very command it names as the sanctioned escape.
  */
+/** Returning form of `refuseFrozenSectionChange`: the refusal findings, or `[]` when the edit may proceed. */
+export function frozenSectionChangeOutcome(
+  issueRef: string,
+  newBody: string | null,
+  retryCommand: string,
+  skipCheck = false
+): CheckError[] {
+  const r = captureRefusalSync(() => refuseFrozenSectionChange(issueRef, newBody, retryCommand, skipCheck))
+  return r.ok ? [] : r.errors
+}
+
 export function refuseFrozenSectionChange(
   issueRef: string,
   newBody: string | null,
@@ -2996,6 +3107,39 @@ export async function collectTaskIssueErrors(
   )
 
   return { errors, renderSkipped: rendered.skipped }
+}
+
+/**
+ * Returning form of `validateTaskIssue`: every finding (warnings included), whether any
+ * is blocking, and the render-skip cause. Never refuses and never prints.
+ */
+export async function validateTaskIssueOutcome(
+  body: string | null,
+  title: string | null,
+  labels: string[],
+  retryCommand: string,
+  issueNumber: number | null,
+  milestoneSource?: MilestoneSource
+): Promise<{ errors: CheckError[]; blocking: boolean; renderSkipped: string | null }> {
+  if (body === null) {
+    return {
+      errors: [
+        makeCheckError(
+          'forge-args',
+          'A task Issue (a `vinaya/tranche:*` label) requires a `--body-file <path>` so the rationale gate can validate it.',
+          `Add \`--body-file <path>\`, then re-run \`${retryCommand}\`.`
+        )
+      ],
+      blocking: true,
+      renderSkipped: null
+    }
+  }
+  const collected = await captureRefusal(() =>
+    collectTaskIssueErrors(body, title, labels, retryCommand, issueNumber, milestoneSource)
+  )
+  if (!collected.ok) return { errors: collected.errors, blocking: true, renderSkipped: null }
+  const { errors, renderSkipped } = collected.value
+  return { errors, blocking: errors.some((e) => e.severity !== 'warning'), renderSkipped }
 }
 
 export async function validateTaskIssue(
