@@ -337,6 +337,7 @@ describe('real runtime directory guard', () => {
       // The kernel's generic preload and the process preload that imports it first.
       const lib = join(import.meta.dir, '..', '..', '..', '..', '..', 'kernel', 'conformance', 'unit')
       const integration = join(import.meta.dir, '..', '..')
+      const kernelRoot = join(lib, '..', '..')
       const root = join(home, '.vinaya', 'runtime', 'o-r')
       const task = join(root, 'tasks-execution', '4242')
       mkdirSync(task, { recursive: true })
@@ -366,12 +367,12 @@ describe('real runtime directory guard', () => {
         processPreload
           .replace(kernelImport, "import './test-env-preload.ts'")
           .replace(
-            "import('./config/compose.js')",
-            `import(${JSON.stringify(join(integration, 'config', 'compose.ts'))})`
+            "import('../../../kernel/dev-process-socket/contract/install-process.js')",
+            `import(${JSON.stringify(join(kernelRoot, 'dev-process-socket', 'contract', 'install-process.ts'))})`
           )
           .replace(
-            "import('./log/log-sink-factory.js')",
-            `import(${JSON.stringify(join(integration, 'log', 'log-sink-factory.ts'))})`
+            "import('./process/process-integration.js')",
+            `import(${JSON.stringify(join(integration, 'process', 'process-integration.ts'))})`
           )
       )
       const dead = Bun.spawnSync(['true']).pid
