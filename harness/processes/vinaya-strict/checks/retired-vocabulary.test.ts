@@ -430,7 +430,7 @@ const SAMPLES: Record<string, string> = {
   'decision-log': 'a decision-log entry is required',
   'decision entr': 'add a decision entry',
   'decisions? (are |is )?logged': 'why decisions are logged',
-  'log entries': 'Type 1 decisions without log entries',
+  '(^|[^a-zA-Z])log entries': 'Type 1 decisions without log entries',
   '(^|[^-_a-zA-Z0-9])decisions\\.md': 'log it to decisions.md',
   'decisions-legacy': 'a task updates docs/decisions-legacy.md',
   CONTRADICTION: 'open a ## CONTRADICTION — <topic> entry',
@@ -475,6 +475,15 @@ describe('the gate can see what it bans', () => {
 
   it('`decision log` does not match `decision logic` — ordinary English stays legal', () => {
     expect(matches('decision log(s|ged|ging)?([^a-z]|$)', 'all decision logic lives in the evaluator')).toBe(false)
+  })
+
+  it('`log entries` matches only the phrase as its own words — `catalog entries` stays legal', () => {
+    const pattern = [...RETIRED_IN_PRODUCT, ...RETIRED_IN_DOCTRINE].find((p) => p.includes('log entries'))
+    expect(pattern, 'the `log entries` retired pattern moved — update this test').toBeDefined()
+    if (pattern === undefined) return
+    expect(matches(pattern, "the seat's catalog entries")).toBe(false)
+    expect(matches(pattern, 'Type 1 decisions without log entries')).toBe(true)
+    expect(matches(pattern, 'log entries at line start')).toBe(true)
   })
 
   it('the placeholder pattern matches every form, including the one a word boundary breaks', () => {
