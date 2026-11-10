@@ -37,6 +37,17 @@
     "vinaya-log-selftest": "dist/programs/log-selftest.js",
     "vinaya-sync": "dist/programs/sync.js"
   },
+  "exports": {
+    "./harness": {
+      "types": "./dist/types/harness/kernel/public-api.d.ts",
+      "default": "./dist/harness.js"
+    },
+    "./process": {
+      "types": "./dist/types/harness/processes/vinaya-strict/public-api.d.ts",
+      "default": "./dist/process.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist",
     "templates",
