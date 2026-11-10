@@ -43,7 +43,10 @@ describe('every entry point installs the module process.yaml declares as its int
   for (const [relative, slots] of Object.entries(ENTRY_POINTS)) {
     test(`${relative} installs the declared integration for ${slots.join(', ')}`, () => {
       const file = join(processDir, relative)
+      // Comments do not install anything: a commented-out call must not satisfy the test.
       const source = readFileSync(file, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '')
       const modules = integrationModulesOf(file, source)
       expect(modules.length).toBeGreaterThan(0)
       for (const module of modules) expect(module).toBe(declared.replace(/\.ts$/, ''))

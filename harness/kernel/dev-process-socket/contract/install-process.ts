@@ -24,7 +24,9 @@ function partOf(integration: ProcessIntegration, slot: ProcessSlot): unknown {
 /**
  * Fills the kernel slots `slots` names from a process's integration, in a fixed order, and does nothing else.
  * The Log slot is registered deferred (`registerDeferredLogSinkFactory`), so the sink and the process's Log
- * folder load the first time something logs, never here. An integration lacking a part a named slot reads is
+ * folder load the first time something logs, never here. Because the Log slot only registers, filling it first
+ * or last is not observable, so an entry point that once installed it after configuration (the Engine runner,
+ * the test preload) behaves the same under this fixed order. An integration lacking a part a named slot reads is
  * refused before any slot is filled.
  */
 export function installProcess(integration: ProcessIntegration, slots: readonly ProcessSlot[]): void {

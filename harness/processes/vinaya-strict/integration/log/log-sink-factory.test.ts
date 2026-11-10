@@ -170,19 +170,6 @@ const EMBEDDED_CALL = new RegExp(`\\b(${CENSUSED_CALLS.join('|')})\\s*\\(`, 'g')
 /** The process module that builds every sink the product uses. */
 const FACTORY_MODULE = 'harness/processes/vinaya-strict/integration/log/log-sink-factory.ts'
 
-/** The entry points that install the process factory before any command or run starts. */
-const ENTRY_POINTS = [
-  'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts',
-  'harness/processes/vinaya-strict/integration/cli-services.ts',
-  'harness/processes/vinaya-strict/bin/run-engine.ts',
-  // The evaluation programs, each run on its own.
-  ...['harbor-grade', 'harbor-results', 'harbor-tasks', 'harbor-trial', 'step-one', 'whole-loop'].map(
-    (name) => `harness/processes/vinaya-strict/evals/${name}.ts`
-  ),
-  // The shared entry every plumbing program starts through.
-  'harness/processes/vinaya-strict/tools/program-entry.ts'
-]
-
 /**
  * Every site in the repository, as `<file> <name> <code|reference|embedded>`
  * with its count: `code` is a call the compiler sees, `reference` any other
@@ -194,20 +181,6 @@ const SITES: Record<string, number> = {
   // The factory itself: a sink with the process's reader or with a caller's own, and the default-sink installation.
   [`${FACTORY_MODULE} createLogSink code`]: 2,
   [`${FACTORY_MODULE} installDefaultLogSinkFactory code`]: 1,
-  // The entry points.
-  'harness/processes/vinaya-strict/integration/cli-services.ts installVinayaLogSinkFactory code': 1,
-  'harness/processes/vinaya-strict/gates/ring2-audits/audit.ts installVinayaLogSinkFactory code': 1,
-  'harness/processes/vinaya-strict/bin/run-engine.ts installVinayaLogSinkFactory code': 1,
-  ...Object.fromEntries(
-    ['harbor-grade', 'harbor-results', 'harbor-tasks', 'harbor-trial', 'step-one', 'whole-loop'].map((name) => [
-      `harness/processes/vinaya-strict/evals/${name}.ts installVinayaLogSinkFactory code`,
-      1
-    ])
-  ),
-  // The shared program entry: every plumbing program installs the factory through it.
-  'harness/processes/vinaya-strict/tools/program-entry.ts installVinayaLogSinkFactory code': 1,
-  // The test processes' composition root.
-  'harness/processes/vinaya-strict/integration/test-preload.ts installVinayaLogSinkFactory code': 1,
   // Child processes a test starts with the bare default sink, installing the process factory as an entry point does.
   'harness/processes/vinaya-strict/integration/log/log-destination.test.ts installVinayaLogSinkFactory embedded': 1,
   'harness/processes/vinaya-strict/integration/log/log-sink-no-sync-spawn.test.ts installVinayaLogSinkFactory embedded': 1,
@@ -394,25 +367,22 @@ describe('every Log sink is built through the process factory', () => {
     expect(bypassingSites(sites)).toEqual([])
   })
 
-  it('each entry point, and only an entry point, installs the process factory', () => {
+  it('no product code calls the process factory installer: entry points install through the integration', () => {
     const installing = Object.keys(sites)
       .filter((site) => site.endsWith(' installVinayaLogSinkFactory code'))
       .map((site) => site.split(' ')[0] as string)
       .filter((file) => !isTestPath(file))
-      .sort()
-    expect(installing).toEqual([...ENTRY_POINTS].sort())
-    // Every process runner the process ships as a program is one of them.
+    expect(installing).toEqual([])
+    // Which entry points install, and which slots each names, is held by integration/process/composition.test.ts.
     const binDir = join(REPOSITORY_ROOT, 'harness', 'processes', 'vinaya-strict', 'bin')
-    const runners = readdirSync(binDir)
-      .filter((name) => name.endsWith('.ts') && readFileSync(join(binDir, name), 'utf8').includes('import.meta.main'))
-      .map((name) => `harness/processes/vinaya-strict/bin/${name}`)
-    for (const runner of runners) expect(ENTRY_POINTS).toContain(runner)
-    // So is every evaluation program.
-    const evalDir = join(REPOSITORY_ROOT, 'harness', 'processes', 'vinaya-strict', 'evals')
-    const evalPrograms = readdirSync(evalDir)
-      .filter((name) => name.endsWith('.ts') && readFileSync(join(evalDir, name), 'utf8').includes('import.meta.main'))
-      .map((name) => `harness/processes/vinaya-strict/evals/${name}`)
-    for (const program of evalPrograms) expect(ENTRY_POINTS).toContain(program)
+    const runners = readdirSync(binDir).filter(
+      (name) => name.endsWith('.ts') && readFileSync(join(binDir, name), 'utf8').includes('import.meta.main')
+    )
+    for (const runner of runners) {
+      if (runner === 'run-engine.ts') {
+        expect(readFileSync(join(binDir, runner), 'utf8')).toContain('installProcess(vinayaProcessIntegration')
+      }
+    }
   })
 
   it('the entry point installs the factory, with the other services, before any command but version runs', () => {
@@ -424,7 +394,7 @@ describe('every Log sink is built through the process factory', () => {
       join(REPOSITORY_ROOT, 'harness', 'processes', 'vinaya-strict', 'integration', 'cli-services.ts'),
       'utf8'
     )
-    expect(services).toContain('startup.installVinayaLogSinkFactory()')
+    expect(services).toContain("kernel.installProcess(vinayaProcessIntegration, ['log', 'config', 'checks'])")
   })
 
   it('lists every construction site and installation in the repository', () => {
