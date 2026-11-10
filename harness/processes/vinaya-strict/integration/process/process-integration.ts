@@ -18,29 +18,38 @@
 import type { ProcessIntegration } from '../../../../kernel/dev-process-socket/contract/process-integration.js'
 import { coreCheckRegistry } from '../../checks/registry.js'
 import { vinayaConfigProvider } from '../config/compose.js'
-import { VINAYA_CONFIG_SECTION } from '../config/vinaya-config-section.js'
-import {
-  vinayaBrokerPolicies,
-  vinayaRouterPolicies,
-  vinayaToolGrantPolicy,
-  vinayaWorkerBoundaryPolicies
-} from '../policies/vinaya-policies.js'
 
 type LogSinkFactoryModule = typeof import('../log/log-sink-factory.js')
+type PoliciesModule = typeof import('../policies/vinaya-policies.js')
+type ConfigSectionModule = typeof import('../config/vinaya-config-section.js')
 
 const logSinkFactory = (): LogSinkFactoryModule => require('../log/log-sink-factory.js') as LogSinkFactoryModule
+// The policies and the configuration section load when called: a composition root that fills only the Log,
+// configuration and check slots (the command line at start) loads neither.
+const policies = (): PoliciesModule => require('../policies/vinaya-policies.js') as PoliciesModule
+const configSection = (): ConfigSectionModule => require('../config/vinaya-config-section.js') as ConfigSectionModule
+
+/**
+ * Names the modules loaded by `require` above as dynamic imports, so the test selector — which does not follow
+ * `require` — still reaches every test through them. Never called.
+ */
+export const lazyIntegrationModules = (): Promise<unknown>[] => [
+  import('../policies/vinaya-policies.js'),
+  import('../config/vinaya-config-section.js'),
+  import('../log/log-sink-factory.js')
+]
 
 export const vinayaProcessIntegration: ProcessIntegration = {
   checks: () => coreCheckRegistry(),
   policies: {
-    broker: () => vinayaBrokerPolicies(),
-    workerBoundary: () => vinayaWorkerBoundaryPolicies(),
-    taskToolRouter: () => vinayaRouterPolicies(),
-    toolGrants: () => vinayaToolGrantPolicy()
+    broker: () => policies().vinayaBrokerPolicies(),
+    workerBoundary: () => policies().vinayaWorkerBoundaryPolicies(),
+    taskToolRouter: () => policies().vinayaRouterPolicies(),
+    toolGrants: () => policies().vinayaToolGrantPolicy()
   },
   config: {
     provider: () => vinayaConfigProvider,
-    section: () => VINAYA_CONFIG_SECTION
+    section: () => configSection().VINAYA_CONFIG_SECTION
   },
   log: {
     loadSinkFactory: () => logSinkFactory().createVinayaLogSink

@@ -2,9 +2,8 @@ import { spawnSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import { cliPackageRoot } from '../../../../apps/cli/src/lib/package-root.js'
 import { ensureGhOnPath } from '../../../kernel/adapters/code-host/github/gh-path.js'
-import { installVinayaCheckRegistry } from '../checks/registry.js'
-import { installVinayaConfigProvider } from '../integration/config/compose.js'
-import { installVinayaLogSinkFactory } from '../integration/log/log-sink-factory.js'
+import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process.js'
+import { vinayaProcessIntegration } from '../integration/process/process-integration.js'
 import { PROGRAMS } from './programs.js'
 import { resolveAuthorRepoSourceEntry } from './self-host.js'
 
@@ -60,13 +59,12 @@ export async function runProgram(name: string, run: (argv: string[]) => unknown)
   if (!entry) throw new Error(`no program named '${name}'`)
 
   // The Log client builds its default sink from an installed factory, never on its own.
-  installVinayaLogSinkFactory()
+  installProcess(vinayaProcessIntegration, ['log'])
   // Before the program runs, and before the author-repo re-exec (which passes `env: process.env`
   // to its child), make `gh` reachable when the launching PATH lacked its install folder.
   ensureGhOnPath()
   // The composition root: kernel code reads configuration through the provider this installs.
-  installVinayaConfigProvider()
-  installVinayaCheckRegistry()
+  installProcess(vinayaProcessIntegration, ['config', 'checks'])
 
   maybeDeferToAuthorRepoSource(entry.source)
 

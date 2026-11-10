@@ -38,7 +38,8 @@
 
 import { PUBLISHED_MARKER_LINE } from '../tools/dev-review-policy/journal-reconstruction'
 import { COMMENT_MARKER_PREFIX_PATTERN, REGION_PREFIXES } from '../tools/legacy-markers'
-import { installVinayaLogSinkFactory } from './step-one'
+import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
+import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -1246,7 +1247,7 @@ export async function wholeLoopCommand(argv: readonly string[], deps?: WholeLoop
 
 if (import.meta.main) {
   // An entry point: Log events reach the sink the process factory builds.
-  installVinayaLogSinkFactory()
+  installProcess(vinayaProcessIntegration, ['log'])
   wholeLoopCommand(process.argv.slice(2))
     .then((code) => process.exit(code))
     .catch((error) => {

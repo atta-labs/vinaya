@@ -13,12 +13,13 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { beyondSurfacePaths, withBeyondSurfaceBlock } from '../tools/task-contract/issue-validation'
 import { redact } from '../../../kernel/log/redact'
+import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
+import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import {
   addCodexWritableDirs,
   buildCodexExecpolicyRules,
   codexSpawnEnvExtras,
   dispatchRole,
-  installVinayaLogSinkFactory,
   type AgentVendor
 } from '../loops/dev-review/dispatch/dispatch'
 import { publishingInstructionLine } from '../loops/dev-review/standalone/dev-review-loop'
@@ -56,9 +57,6 @@ import {
   type VinayaProcessInput,
   type VinayaTrialRecord
 } from './vinaya-renderer'
-
-// The process Log sink factory, for this folder's entry programs to install.
-export { installVinayaLogSinkFactory }
 
 export const STEP_ONE_SUITES = [
   'developer-capability.l5',
@@ -2532,7 +2530,7 @@ export async function runStepOneCommand(
 
 if (import.meta.main) {
   // An entry point: Log events reach the sink the process factory builds.
-  installVinayaLogSinkFactory()
+  installProcess(vinayaProcessIntegration, ['log'])
   runStepOneCommand(process.argv.slice(2))
     .then((outcome) => process.exit(outcome.ok ? 0 : 2))
     .catch((error) => {
