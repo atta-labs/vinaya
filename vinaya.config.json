@@ -31,6 +31,10 @@
       "run": "./scripts/vinaya-checks/secret-scan.ts",
       "scope": "full"
     },
+    "atta-labs/no-aeg-token": {
+      "run": "./scripts/vinaya-checks/no-aeg-token.ts",
+      "scope": "full"
+    },
     "atta-labs/ui-rules": {
       "run": "./scripts/vinaya-checks/ui-rules.ts",
       "scope": "diff",
