@@ -29,7 +29,13 @@ import {
   type RunTrace
 } from '../../../bin/run-engine'
 import { createActions } from '../../../executing/actions'
-import { createV2Actions, type ExplicitCommandsResult, type StagedPullRequest, type V2Functions } from './v2-actions'
+import {
+  createV2Actions,
+  type ExplicitCommandsResult,
+  type RoundTestsResult,
+  type StagedPullRequest,
+  type V2Functions
+} from './v2-actions'
 import type { RequiredCiRead } from './ci-recovery'
 import type { DeveloperPromptFacts } from '../../../executing/developer-prompt'
 import { liveHandoffDeps, type HandoffDeps } from '../../../executing/handoff'
@@ -75,6 +81,8 @@ export interface Scenario {
   readyTimesOut?: (readyAttempt: number) => boolean
   /** The test files the changes since a refused push affect; default none. */
   affectedSince?: string[]
+  /** What each round-test run (1-based) reports for the head it was asked to judge; absent: the run is not wired. */
+  roundTests?: (call: number, head: string) => RoundTestsResult
   /** The gate results in turn; the last repeats. */
   gates?: Array<{ code: number; output: string }>
   policy?: Partial<ReviewPolicy>
@@ -140,6 +148,8 @@ export interface World {
   prOpenAtReview: boolean[]
   /** The remote head after each Developer turn: each storage push moves it. */
   remoteAfterTurn: string[]
+  /** The head each round-test run was asked to judge, in turn. */
+  roundTestRuns: string[]
   /** Calls that ended storage pushes. */
   storageEnded: number
   /** The pull request and head of each Evidence block the loop wrote. */
@@ -232,7 +242,7 @@ export const confident = (confidence: number | undefined, addressed: string[] = 
 })
 
 const handoffIds = (prompt: string): string[] => [
-  ...new Set([...prompt.matchAll(/^- (R\d+-(?:CR|SEC)-\d+)(?::|$)/gm)].map((m) => m[1]!))
+  ...new Set([...prompt.matchAll(/^- (R\d+-(?:CR|SEC)-\w+)(?::|$)/gm)].map((m) => m[1]!))
 ]
 
 /** The CLI-shaped child a vendor launches: its stream is delivered after the executor closes stdin. */
@@ -377,6 +387,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     prOpen: false,
     staged: null,
     readyRuns: [],
+    roundTestRuns: [],
     readyDeferrals: [],
     explicitRuns: [],
     requiredCiReads: [],
@@ -647,6 +658,14 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
                     return typeof entry === 'function' ? entry(head) : entry
                   }
                 })
+          }
+        : {}),
+      ...(scenario.roundTests
+        ? {
+            runRoundTests: ({ head }: { head: string }) => {
+              world.roundTestRuns.push(head)
+              return scenario.roundTests!(world.roundTestRuns.length, head)
+            }
           }
         : {}),
       runReadyGate: ({ head, signal, deferTests }) => {

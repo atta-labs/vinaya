@@ -81,7 +81,9 @@ import {
   readAssessment,
   readForgeCi,
   type RecordedApprovalCarry,
+  type RecordedRoundTests,
   recordedDispatch,
+  recordedRoundTests,
   recordOutput,
   safeRead,
   type SendBack,
@@ -291,6 +293,86 @@ export async function runLocalChecks(
     })
   const gates = run(env)
   return { exitCode: gates.passed ? 0 : 1, stdout: gates.output }
+}
+
+/**
+ * The round's selected tests, run beside both reviewers on the head the round's reviewers were dispatched against.
+ * The step records one result per round and head and exits zero for every outcome, so a red test never fails the
+ * fan-out: the round's verdicts carry it (`recordedVerdicts`) and the Developer's prompt names it. A step re-entered
+ * for the same round and head (a reviewer retry) reuses its own earlier `passed` or `failed` result. The failing
+ * test's name, location and output are untrusted pull-request output, sanitized before they are recorded.
+ */
+export async function runRoundTestsStep(
+  task: TaskInput,
+  context: ActionContext
+): Promise<{ exitCode: number; stdout: string }> {
+  const fns = v2Of(task)
+  const dispatch = recordedDispatch(context.results)
+  const round = dispatch?.round ?? task.reviewRound()
+  const head = dispatch?.inputs?.manifest.headSha ?? worktreeHeadOf(task)
+  const record = (result: RecordedRoundTests['result'], head: string): { exitCode: number; stdout: string } => {
+    fns.log?.(
+      `round tests: ${result.outcome} for round ${round} at ${head.slice(0, 12)}${result.detail ? `: ${result.detail}` : ''}`
+    )
+    return ok(JSON.stringify({ round, head, result } satisfies RecordedRoundTests))
+  }
+  if (head === null)
+    return record({ outcome: 'unavailable', detail: 'the head the round judges could not be read' }, '')
+  const previous = recordedRoundTests(context.results)
+  if (
+    previous !== null &&
+    previous.round === round &&
+    previous.head === head &&
+    (previous.result.outcome === 'passed' || previous.result.outcome === 'failed')
+  ) {
+    fns.log?.(`round tests: reusing the ${previous.result.outcome} result for round ${round} at ${head.slice(0, 12)}`)
+    return ok(JSON.stringify(previous))
+  }
+  // A run with no round-test function wired has nothing to report: the record stands, and the driver log stays as it was.
+  if (fns.runRoundTests === undefined)
+    return ok(
+      JSON.stringify({
+        round,
+        head,
+        result: { outcome: 'none', detail: 'no round-test function is wired for this run' }
+      } satisfies RecordedRoundTests)
+    )
+  let ran: RoundTestsResult
+  try {
+    ran = await fns.runRoundTests({ head, ...(context.signal ? { signal: context.signal } : {}) })
+  } catch (error) {
+    return record(
+      {
+        outcome: 'unavailable',
+        detail: `the round tests threw: ${error instanceof Error ? error.message : String(error)}`
+      },
+      head
+    )
+  }
+  // A result for another head than the one judged is absent.
+  if (ran.head !== head)
+    return record(
+      { outcome: 'unavailable', detail: `the round tests ran for ${ran.head.slice(0, 12)}, not the judged head` },
+      head
+    )
+  const failure = ran.outcome === 'failed' ? ran.firstFailure : undefined
+  return record(
+    {
+      outcome: ran.outcome === 'failed' && failure === undefined ? 'unavailable' : ran.outcome,
+      ...(failure
+        ? {
+            firstFailure: {
+              test: sanitizeForgeText(failure.test, 200),
+              location: sanitizeForgeText(failure.location, 200),
+              excerpt: sanitizeForgeText(failure.excerpt, MAX_FAILURE_EXCERPT_CHARS)
+            }
+          }
+        : {}),
+      ...(ran.detail !== undefined ? { detail: sanitizeForgeText(ran.detail, 300) } : {}),
+      wallMs: ran.wallMs
+    },
+    head
+  )
 }
 
 /**
@@ -1708,6 +1790,7 @@ export const V2_ACTION_BINDINGS: Readonly<Record<string, V2Binding>> = {
   'vinaya.v2-classify-approval-carry': { adapts: [], build: () => classifyApprovalCarry },
   'vinaya.v2-carry-approvals': { adapts: [], build: () => carryApprovals },
   'vinaya.v2-local-checks': { adapts: [runCli], build: (task) => (context) => runLocalChecks(task, context) },
+  'vinaya.v2-run-round-tests': { adapts: [], build: (task) => (context) => runRoundTestsStep(task, context) },
   'vinaya.v2-check-premise': { adapts: [checkPremiseAtHead], build: (task) => () => checkPremiseStaged(task) },
   'vinaya.v2-ready-push': { adapts: [], build: (task) => (context) => readyPush(task, context) },
   'vinaya.v2-classify-ready-push': { adapts: [], build: () => classifyReadyPush },

@@ -9,12 +9,13 @@ import { decodeLoopState, type latestRecord, recordOutput } from '../../../execu
 import { V2_APPROVED_REPAIR_ALLOWANCE, exhaustedPause, withPolicyCeilings } from '../../../bin/run-engine'
 import { heldVerdictPath } from '../standalone/dev-review-loop/reviewer-dispatch'
 import { publicationEffectKey } from '../standalone/dev-review-loop/publication'
-import { conflictRepairFailure, readyTestPlanCommand } from './v2-actions'
+import { conflictRepairFailure, readyTestPlanCommand, type RoundTestsResult } from './v2-actions'
 import {
   ALL_TESTS,
   AGENTS,
   confident,
   PR,
+  review,
   records,
   TASK,
   runV2,
@@ -1735,5 +1736,119 @@ describe('a carried-approval merge on a deferred run', () => {
     expect(observed.world.explicitRuns).toEqual([{ head: merged[0] as string, commands: EXPLICIT }])
     expect(observed.world.requiredCiReads).toEqual(merged)
     expect(observed.published).toEqual([])
+  })
+})
+
+describe('the round runs its selected tests beside both reviewers', () => {
+  const red = (head: string, test = '/repo/a.test.ts'): RoundTestsResult => ({
+    head,
+    outcome: 'failed',
+    firstFailure: { test, location: `${test}:12`, excerpt: 'error: expected 1 to be 2\n  at a.test.ts:12' },
+    wallMs: 5
+  })
+  const result = (head: string, outcome: RoundTestsResult['outcome'], detail?: string): RoundTestsResult => ({
+    head,
+    outcome,
+    wallMs: 1,
+    ...(detail ? { detail } : {})
+  })
+
+  test('a red head ends changes_requested though both reviewers approved, naming the test; the next head is judged', async () => {
+    const observed = await runV2('claude', {
+      roundTests: (call, head) => (call === 1 ? red(head) : result(head, 'passed'))
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.spawns.developer).toBe(2)
+    expect(observed.spawns['code-reviewer']).toBe(2)
+    expect(observed.world.roundTestRuns).toHaveLength(2)
+    expect(new Set(observed.world.roundTestRuns).size).toBe(2)
+    // Nothing was published for the red head, and the ready push ran once, on the approved one.
+    expect(observed.published).toHaveLength(1)
+    expect(observed.world.readyRuns).toHaveLength(1)
+    const [first] = observed.rawEvents.filter((event) => event.event === 'round_ended')
+    expect(first?.outcome).toBe('changes_requested')
+    // The Developer is told the test, its file:line, the finding id and the failure lines.
+    const prompt = observed.prompts.developer[1] ?? ''
+    expect(prompt).toContain('/repo/a.test.ts:12')
+    expect(prompt).toContain('T1')
+    expect(prompt).toContain('error: expected 1 to be 2')
+    // The step ran with the reviewers and before the join.
+    const order = observed.steps.map((step) => step.node)
+    expect(order.indexOf('run-round-tests')).toBeLessThan(order.indexOf('validate-reviewer-outputs'))
+    // The held verdict text is the reviewers' own, never annotated.
+    expect(JSON.stringify(observed.published)).not.toContain('expected 1 to be 2')
+  })
+
+  test('the handoff list carries the test finding beside the reviewers', async () => {
+    const observed = await runV2('claude', {
+      roundTests: (call, head) => (call === 1 ? red(head) : result(head, 'passed')),
+      reviewer: (role, attempt) => (role === 'code-reviewer' && attempt === 1 ? 'request-changes' : 'approve')
+    })
+    expect(observed.outcome).toBe('completed')
+    const handoff = observed.steps.find((step) => step.node === 'build-revision-handoff')
+    const ids = (JSON.parse(handoff?.stdout ?? '[]') as Array<{ id: string }>).map((finding) => finding.id)
+    expect(ids).toContain('R1-CR-T1')
+    expect(ids).toContain('R1-CR-1')
+  })
+
+  for (const outcome of ['passed', 'none'] as const) {
+    test(`${outcome} is assessed as before`, async () => {
+      const observed = await runV2('claude', { roundTests: (_call, head) => result(head, outcome) })
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(1)
+      expect(observed.world.roundTestRuns).toHaveLength(1)
+    })
+  }
+
+  for (const outcome of ['timed_out', 'unavailable'] as const) {
+    test(`${outcome} is logged with its reason and the round proceeds`, async () => {
+      const observed = await runV2('claude', {
+        roundTests: (_call, head) => result(head, outcome, 'the host lock stayed held')
+      })
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(1)
+      expect(
+        observed.world.evidenceLogs.some((line) => line.includes(outcome) && line.includes('the host lock stayed held'))
+      ).toBe(true)
+    })
+  }
+
+  test('the same test red in two consecutive rounds pauses as a repeated finding', async () => {
+    const observed = await runV2('claude', { roundTests: (_call, head) => red(head) })
+    expect(observed.outcome).toBe('pause:repeat_finding')
+    expect(observed.spawns.developer).toBe(2)
+  })
+
+  test('a reviewer retry for the same round and head reuses the earlier result instead of running again', async () => {
+    const observed = await runV2('claude', {
+      roundTests: (_call, head) => result(head, 'passed'),
+      reviewer: (role, attempt) =>
+        role === 'code-reviewer' && attempt === 1 ? { output: { reviewResult: { malformed: true } } } : 'approve'
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.spawns['code-reviewer']).toBeGreaterThan(1)
+    expect(observed.world.roundTestRuns).toHaveLength(1)
+  })
+
+  test('an escalation from a reviewer pauses before the red test is considered', async () => {
+    const observed = await runV2('claude', {
+      roundTests: (_call, head) => red(head),
+      reviewer: (role, _attempt, world, prompt) => ({
+        output: {
+          reviewResult: {
+            schemaVersion: 1,
+            role,
+            status: 'blocked',
+            headSha: review(role, prompt, world, false).reviewResult.headSha,
+            manifestDigest: review(role, prompt, world, false).reviewResult.manifestDigest,
+            summary: 'Only the Principal can settle this.',
+            blocker: { kind: 'scope_unclear', detail: 'only the Principal can settle this' }
+          }
+        }
+      })
+    })
+    expect(observed.outcome.startsWith('pause:')).toBe(true)
+    expect(observed.outcome).not.toBe('pause:repeat_finding')
+    expect(observed.spawns.developer).toBe(1)
   })
 })

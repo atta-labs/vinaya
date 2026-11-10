@@ -32,6 +32,22 @@ unchanged; when only the own patch changed, both reviewers judge the interdiff
 against the approvals (`harness/processes/vinaya-strict/loops/dev-review/loop.md`, "Version 2: approvals across a
 proven repair").
 
+The v2 flow runs the round's selected tests as the `run-round-tests` step, in
+parallel with both reviewers and on the head they were dispatched against;
+`validate-reviewer-outputs` joins all three.
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/v2/dev-review-v2.flow.yaml contains:action: vinaya.v2-run-round-tests -->
+The step records one of five outcomes (`passed`, `failed`, `none`, `timed_out`,
+`unavailable`) and exits zero for each. Only `failed` reaches the Developer: it
+turns the code reviewer's approval into a request for changes with one blocking
+finding, `T1`, naming the first failing test at its `file:line`, and the
+Developer's prompt carries the failure excerpt.
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/executing/actions.ts contains:function foldRoundTestFailure( -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/executing/developer-prompt.ts contains:export function roundTestFailureOf( -->
+The other four outcomes are logged with their reason and the round is assessed
+as before; required CI stays the backstop. See
+`harness/processes/vinaya-strict/loops/dev-review/loop.md`, "Version 2 runs the
+round's selected tests beside both reviewers".
+
 A pull request that changes how the process works must raise `version` in
 `process.yaml` to a higher semantic version. The files that count are
 `process.yaml` itself (any change other than its `version` line), the flow

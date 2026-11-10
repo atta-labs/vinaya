@@ -90,7 +90,10 @@ steps:
     working_directory: ""
     max_turns: 100
     depends_on: [dispatch-reviewers]
-  - { id: validate-reviewer-outputs, type: mechanical, action: vinaya.validate-reviewer-outputs, depends_on: [code-review, security-review] }
+  # The round's selected tests run beside both reviewers, on the head they were dispatched against. The step exits zero
+  # for every outcome (a red test is a finding the round's verdicts carry, not a failed branch); the join waits for it.
+  - { id: run-round-tests, type: mechanical, action: vinaya.v2-run-round-tests, depends_on: [dispatch-reviewers] }
+  - { id: validate-reviewer-outputs, type: mechanical, action: vinaya.validate-reviewer-outputs, depends_on: [code-review, security-review, run-round-tests] }
   - id: classify-reviewer-outputs
     type: mechanical
     action: vinaya.classify-reviewer-outputs
