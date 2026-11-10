@@ -37,7 +37,102 @@
         "vinaya-log-selftest": "dist/programs/log-selftest.js",
         "vinaya-sync": "dist/programs/sync.js"
       },
-      "subpaths": {},
+      "subpaths": {
+        "./harness": {
+          "symbols": [
+            "LoadProcessOptions",
+            "LoadedProcess",
+            "ProcessIdentity",
+            "ProcessLoadReason",
+            "ProvidedPaths",
+            "ProvidedRolePaths",
+            "RepoRef",
+            "ResolveRepoExec",
+            "loadProcess",
+            "resolveRepo"
+          ],
+          "runtimeExports": ["loadProcess", "resolveRepo"],
+          "declarations": {
+            "LoadProcessOptions": [
+              "interface LoadProcessOptions { /** The flow key the run chooses; absent takes the process's default. */ flow?: string; }"
+            ],
+            "LoadedProcess": [
+              "interface LoadedProcess { folder: string; identity: ProcessIdentity; /** The chosen flow's key: a `flows` key, or `default` for a `flow`-only process. */ flowKey: string; /** The chosen flow's file. */ flowPath: string; /** Every declared flow's file, by key. */ flowPaths: Record<string, string>; rolePaths: string[]; /** `provides` resolved inside the folder; absent when the process declares none. */ provided?: ProvidedPaths; digest: string; }"
+            ],
+            "ProcessIdentity": ["type ProcessIdentity = z.infer<typeof processSchema>;"],
+            "ProcessLoadReason": [
+              "type ProcessLoadReason = 'missing-process-file' | 'unparseable-yaml' | 'schema-violation' | 'declared-path-missing' | 'declared-path-escapes' | 'unknown-flow' | 'launched-role-undeclared';"
+            ],
+            "ProvidedPaths": [
+              "interface ProvidedPaths { roles: Record<string, ProvidedRolePaths>; checks: string; policies: string; configSection: string; integration: string; }"
+            ],
+            "ProvidedRolePaths": [
+              "interface ProvidedRolePaths { doctrine: string; grants?: string; outputSchema?: string; tools?: string; }"
+            ],
+            "RepoRef": ["type RepoRef = { owner: string; repo: string; };"],
+            "ResolveRepoExec": ["type ResolveRepoExec = () => Promise<{ stdout: string; }>;"],
+            "loadProcess": ["function loadProcess(folderPath: string, options?: LoadProcessOptions): LoadedProcess;"],
+            "resolveRepo": ["function resolveRepo(exec?: ResolveRepoExec): Promise<RepoRef | null>;"]
+          }
+        },
+        "./package.json": {
+          "symbols": [],
+          "runtimeExports": [
+            "author",
+            "bin",
+            "default",
+            "dependencies",
+            "description",
+            "devDependencies",
+            "engines",
+            "exports",
+            "files",
+            "homepage",
+            "keywords",
+            "license",
+            "name",
+            "overrides",
+            "publishConfig",
+            "repository",
+            "scripts",
+            "type",
+            "version"
+          ],
+          "declarations": {}
+        },
+        "./process": {
+          "symbols": [
+            "AnchorSourceFile",
+            "COMMIT_TYPE_STYLE",
+            "VocabularyHit",
+            "VocabularyPattern",
+            "checkLocalAnchorCoverage",
+            "evaluateVocabularyCitation",
+            "scanRetiredVocabulary"
+          ],
+          "runtimeExports": [
+            "COMMIT_TYPE_STYLE",
+            "checkLocalAnchorCoverage",
+            "evaluateVocabularyCitation",
+            "scanRetiredVocabulary"
+          ],
+          "declarations": {
+            "AnchorSourceFile": ["type AnchorSourceFile = { path: string; content: string; };"],
+            "COMMIT_TYPE_STYLE": ["const COMMIT_TYPE_STYLE: RegExp"],
+            "VocabularyHit": ["type VocabularyHit = { file: string; line: number; content: string; };"],
+            "VocabularyPattern": ["sha256:b424949a9e0994558563979bf247cdf3cf0621936a95f3b8c174cd56b9873c04"],
+            "checkLocalAnchorCoverage": [
+              "function checkLocalAnchorCoverage(files: readonly AnchorSourceFile[], options: LocalAnchorCoverageOptions): LocalAnchorCoverageResult;"
+            ],
+            "evaluateVocabularyCitation": [
+              "function evaluateVocabularyCitation(patterns: VocabularyPattern[], grepFn: (pattern: string, scope: string[]) => VocabularyHit[], matchFn: (pattern: string, sample: string) => boolean, globalExempt?: string[]): VocabularyCheckResult;"
+            ],
+            "scanRetiredVocabulary": [
+              "function scanRetiredVocabulary(files: readonly VocabSourceFile[], rules?: ProseRuleSet): VocabFinding[];"
+            ]
+          }
+        }
+      },
       "files": [
         "LICENSE",
         "README.md",
@@ -81,6 +176,7 @@
         "dist/checks/bin/verify-coherence.js",
         "dist/checks/bin/verify-dispatch.js",
         "dist/checks/bin/verify-docs.js",
+        "dist/harness.js",
         "dist/index.js",
         "dist/kernel/tools/host/dev-tools-bridge.js",
         "dist/lib/pre-push-cache-test-run.js",
@@ -90,6 +186,7 @@
         "dist/lib/pre-push-record-tests.js",
         "dist/lib/pre-push-select-tests.js",
         "dist/lib/push-progress-observer.js",
+        "dist/process.js",
         "dist/programs/archive.js",
         "dist/programs/audit.js",
         "dist/programs/check.js",
@@ -111,6 +208,24 @@
         "dist/programs/task-tools-serve.js",
         "dist/programs/tokens.js",
         "dist/programs/waiver.js",
+        "dist/types/harness/kernel/adapters/code-host/github/resolve-repo.d.ts",
+        "dist/types/harness/kernel/adapters/code-host/github/strip-code.d.ts",
+        "dist/types/harness/kernel/dev-process-socket/loader/load-process.d.ts",
+        "dist/types/harness/kernel/gates/checks/anchored-region.d.ts",
+        "dist/types/harness/kernel/public-api.d.ts",
+        "dist/types/harness/processes/vinaya-strict/checks/local-anchor-coverage.d.ts",
+        "dist/types/harness/processes/vinaya-strict/checks/retired-vocabulary.d.ts",
+        "dist/types/harness/processes/vinaya-strict/checks/vocabulary-citation.d.ts",
+        "dist/types/harness/processes/vinaya-strict/public-api.d.ts",
+        "dist/types/harness/processes/vinaya-strict/tools/doctrine/doctrine-map.d.ts",
+        "dist/types/harness/processes/vinaya-strict/tools/legacy-markers.d.ts",
+        "dist/types/harness/processes/vinaya-strict/tools/prose-rules.d.ts",
+        "dist/types/harness/processes/vinaya-strict/tools/task-contract/brief-validation.d.ts",
+        "dist/types/harness/processes/vinaya-strict/tools/task-contract/forge/labels.d.ts",
+        "dist/types/harness/processes/vinaya-strict/tools/task-contract/objectives.d.ts",
+        "dist/types/harness/processes/vinaya-strict/tools/task-contract/premise-check.d.ts",
+        "dist/types/harness/processes/vinaya-strict/tools/task-contract/test-plan-section.d.ts",
+        "dist/types/harness/processes/vinaya-strict/tools/task-contract/waiver-label.d.ts",
         "package.json",
         "templates/custom-check.template.ts",
         "templates/noop-check.template.ts",

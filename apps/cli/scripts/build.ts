@@ -32,6 +32,7 @@
  */
 import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import ts from 'typescript'
 import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 
 const pkgRoot = join(import.meta.dir, '..')
@@ -52,7 +53,7 @@ function normalizeExecutable(outFile: string): void {
   chmodSync(outFile, 0o755)
 }
 
-async function build(entrypoints: string[], outdir: string): Promise<void> {
+async function build(entrypoints: string[], outdir: string, naming = '[name].[ext]'): Promise<void> {
   // `naming: '[name].[ext]'` — flat by basename only. Bun's default naming
   // template includes `[dir]`, computed relative to the entrypoints' common
   // ancestor rather than each file's own directory; for a multi-entrypoint
@@ -69,7 +70,7 @@ async function build(entrypoints: string[], outdir: string): Promise<void> {
     // `dist/` under `import`: the CLI inlines the source, so it never needs that
     // package built first.
     conditions: ['source'],
-    naming: '[name].[ext]'
+    naming
   })
   if (!result.success) {
     for (const log of result.logs) console.error(log)
@@ -158,6 +159,54 @@ if (unbuilt.length > 0) {
   process.exit(1)
 }
 
+// The two library entries a consumer imports (`@attalabs/vinaya/harness`, `@attalabs/vinaya/process`): each entry
+// module bundled into its own file with the same externals as the CLI, so importing one installs and prints nothing,
+// and its declarations emitted from the entry modules themselves under `dist/types`, mirroring the repository layout.
+const LIBRARY_ENTRIES = [
+  { name: 'harness', source: 'harness/kernel/public-api.ts' },
+  { name: 'process', source: 'harness/processes/vinaya-strict/public-api.ts' }
+]
+for (const entry of LIBRARY_ENTRIES) {
+  await build([join(repoRoot, entry.source)], join(pkgRoot, 'dist'), `${entry.name}.[ext]`)
+}
+const typesOutdir = join(pkgRoot, 'dist', 'types')
+const declarationProgram = ts.createProgram(
+  LIBRARY_ENTRIES.map((entry) => join(repoRoot, entry.source)),
+  {
+    strict: true,
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    lib: ['lib.es2022.d.ts'],
+    esModuleInterop: true,
+    isolatedModules: true,
+    noUncheckedIndexedAccess: true,
+    skipLibCheck: true,
+    types: ['node'],
+    declaration: true,
+    emitDeclarationOnly: true,
+    rootDir: repoRoot,
+    outDir: typesOutdir
+  }
+)
+const emitted = declarationProgram.emit()
+const emitProblems = [...ts.getPreEmitDiagnostics(declarationProgram), ...emitted.diagnostics]
+if (emitProblems.length > 0 || emitted.emitSkipped) {
+  console.error(ts.formatDiagnostics(emitProblems, ts.createCompilerHost({})))
+  process.exit(1)
+}
+for (const entry of LIBRARY_ENTRIES) {
+  for (const file of [
+    join(pkgRoot, 'dist', `${entry.name}.js`),
+    join(typesOutdir, entry.source.replace(/\.ts$/, '.d.ts'))
+  ]) {
+    if (!existsSync(file)) {
+      console.error(`the build emitted no ${file}`)
+      process.exit(1)
+    }
+  }
+}
+
 console.log(
-  `built dist/index.js + ${checkEntrypoints.length} check bin(s) + verify-dispatch in dist/checks/bin/ + ${libBinNames.length} lib bin(s) in dist/lib/ + ${PROGRAMS.size} program(s) (external: ${external.join(', ') || 'none'})`
+  `built dist/index.js + ${checkEntrypoints.length} check bin(s) + verify-dispatch in dist/checks/bin/ + ${libBinNames.length} lib bin(s) in dist/lib/ + ${PROGRAMS.size} program(s) + ${LIBRARY_ENTRIES.length} library entries (external: ${external.join(', ') || 'none'})`
 )

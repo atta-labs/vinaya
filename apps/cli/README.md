@@ -322,6 +322,21 @@ On Linux, `vinaya doctor` runs the same sandbox probe a dispatch runs before it 
 
 Report-only, like every other `vinaya doctor` diagnostic: it changes nothing on the host.
 
+## Library entries
+
+Beside its commands the package exposes two typed entries for code that imports it. Import the named subpaths; the package root has no entry, and no other deep path resolves. Importing an entry installs nothing and prints nothing.
+
+`@attalabs/vinaya/harness` exports `resolveRepo`, which finds the `{ owner, repo }` of the current repository from `VINAYA_REPO` or the `origin` remote and returns `null` when it can find neither, and `loadProcess`, which reads a process folder, validates its `process.yaml` and returns the resolved paths and a digest over every declared file. It also exports the types `RepoRef`, `ResolveRepoExec`, `LoadedProcess`, `LoadProcessOptions`, `ProcessIdentity`, `ProcessLoadReason`, `ProvidedPaths` and `ProvidedRolePaths`. The entry names no process.
+
+`@attalabs/vinaya/process` exports `COMMIT_TYPE_STYLE`, the pattern a commit title must match, `scanRetiredVocabulary`, `checkLocalAnchorCoverage` and `evaluateVocabularyCitation`, with the types `AnchorSourceFile`, `VocabularyHit` and `VocabularyPattern`.
+
+```ts
+import { resolveRepo } from '@attalabs/vinaya/harness'
+import { COMMIT_TYPE_STYLE } from '@attalabs/vinaya/process'
+```
+
+`@attalabs/vinaya/package.json` also resolves, for tools that read the manifest.
+
 ## Known limits
 
 The five core AEG checks (`coherence`, `dispatch-readiness`, and siblings) are bound to the Vinaya development repository — they read governance documents relative to it. Outside a Vinaya workspace, `vinaya-check --all` reports those checks as `status: 'error'` rather than crashing.
