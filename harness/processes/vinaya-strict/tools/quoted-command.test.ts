@@ -10,6 +10,7 @@ import {
   isValidCitedFilePath,
   type QuotedCommandSourceFile
 } from './quoted-command'
+import { QUOTES_FILE_ANCHORS } from './legacy-markers'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const READER_FACING_PREFIX = '/no-reader-facing-surface'
@@ -35,7 +36,7 @@ describe('findCitedQuotes — marker discovery', () => {
   })
 
   it('finds a pair in the current prefix and in the retired prefix alike', () => {
-    for (const prefix of ['VINAYA:QUOTES-FILE', 'AEG:QUOTES-FILE']) {
+    for (const prefix of QUOTES_FILE_ANCHORS) {
       const content = `one job — <!-- ${prefix}:START:.github/workflows/x.yml -->\`vinaya check --all\`<!-- ${prefix}:END --> today`
       const quotes = findCitedQuotes(
         [{ path: 'harness/processes/vinaya-strict/doctrine/enforcement.md', content }],

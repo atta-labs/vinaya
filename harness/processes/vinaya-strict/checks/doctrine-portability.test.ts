@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { checkDoctrinePortability, NON_PATH_TOP_SEGMENTS } from './doctrine-portability'
+import { VENDOR_EXAMPLE_ANCHORS } from '../tools/legacy-markers'
 
 function file(path: string, content: string) {
   return { path, content }
@@ -230,7 +231,7 @@ describe('vendor-name finding (Issue #298)', () => {
   })
 
   it('honours the fenced home in the current prefix and in the retired prefix alike', () => {
-    for (const prefix of ['VINAYA:VENDOR-EXAMPLE', 'AEG:VENDOR-EXAMPLE']) {
+    for (const prefix of VENDOR_EXAMPLE_ANCHORS) {
       const findings = checkDoctrinePortability([
         file(
           'harness/processes/vinaya-strict/doctrine/tranche-model.md',
