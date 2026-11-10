@@ -5,7 +5,7 @@
  * review gate's verdict on its current state:
  *
  *   - the round numbers every developer round marker
- *     (`<!-- aeg:developer:round-<n> -->`, `parseDeveloperRoundMarker`) carries,
+ *     (`<!-- vinaya:developer:round-<n> -->`, `parseDeveloperRoundMarker`) carries,
  *   - whether a ready-for-merge summary comment
  *     (`isPublishedSummaryComment`) has actually been posted, and where,
  *   - the review gate's verdict on the pull request's CURRENT head, objectives

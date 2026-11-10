@@ -35,6 +35,7 @@
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '../../../tools/task-contract/verdict-extraction'
+import { COMMENT_MARKER_PREFIX_PATTERN } from '../../../tools/legacy-markers'
 import { isPrincipal } from '../../../tools/task-contract/waiver-label'
 import { parseDeveloperRoundMarker } from '../../../tools/task-contract/review-status'
 import {
@@ -70,8 +71,8 @@ export const MAX_GH_STATUS_OUTPUT_BYTES = 64 * 1024 * 1024
 
 /** One comment as the forge reports it — body plus the login that authored it, the only two fields any derivation below reads. */
 export type PrComment = { body: string; author: string | null }
-/** Exactly `<!-- aeg:loop:paused:<reason> -->`, the marker `pause-resume.ts`'s `pauseMarker` renders — matched, never re-rendered, so the two can only drift by one of them changing the literal. */
-const PAUSE_MARKER = /<!--\s*aeg:loop:paused:([a-z_]+)\s*-->/i
+/** Exactly `<!-- vinaya:loop:paused:<reason> -->`, the marker `pause-resume.ts`'s `pauseMarker` renders — matched, never re-rendered, so the two can only drift by one of them changing the literal. */
+const PAUSE_MARKER = new RegExp(`<!--\\s*${COMMENT_MARKER_PREFIX_PATTERN}:loop:paused:([a-z_]+)\\s*-->`, 'i')
 /** A check name, a status and a conclusion are labels, not prose — bounded far below the free-text ceiling so a workflow file cannot spend a whole result on one. */
 const MAX_CHECK_NAME_CHARS = 200
 /** At most this many failed checks get their failing job's log read — a read tool must stay a read, and a pull request with a dozen red checks has its answer in the first few. */
@@ -104,8 +105,8 @@ export function stripAnsi(raw: string): string {
 
 /**
  * An HTML comment opener, the syntax every AEG control marker is written in
- * (`<!-- aeg:principal:ruling … -->`, `<!-- aeg:loop:paused:… -->`,
- * `<!-- aeg:developer:round-N -->`). Neutralized in forge text by escaping
+ * (`<!-- vinaya:principal:ruling … -->`, `<!-- vinaya:loop:paused:… -->`,
+ * `<!-- vinaya:developer:round-N -->`). Neutralized in forge text by escaping
  * the opening angle bracket: the text still reads as itself, and no reader
  * — this module's own marker regexes, the loop's, or a human scanning the
  * result — can mistake it for a real marker.

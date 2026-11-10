@@ -155,7 +155,7 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
     const { block, issue, dangling } = buildProvenanceBlock(makeFacts(body))
     expect(issue).toBe(395)
     expect(dangling).toEqual([
-      'no `aeg:brief:v1` comment resolved for Issue #395 — Brief field is DANGLING',
+      'no `vinaya:brief:v1` comment resolved for Issue #395 — Brief field is DANGLING',
       'no code-reviewer verdict comment found on this PR',
       'no security-review verdict comment found on this PR'
     ])
@@ -171,7 +171,10 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
     // names the Issue's `aeg:brief:v1` comment URL (DANGLING here — this
     // fixture's `makeFacts` carries no `briefCommentUrl`) instead of the
     // retired "in this PR body" text. Assembly is otherwise untouched.
-    expect(sha256(block)).toBe('6a1494b858b65f0d262e9ac790b88892f53420546c100c469b5ee8b36cdfa9c2')
+    //
+    // Re-pinned again: the DANGLING note names the frozen brief marker in its
+    // current `vinaya:brief:v1` spelling. Assembly is otherwise untouched.
+    expect(sha256(block)).toBe('06bda73e2cad53686c4c83fad6ec5ffcb0cfc7f36178af50aa96fc9385ebc82f')
   })
 })
 
@@ -533,7 +536,20 @@ describe('marker prefixes are the caller’s to name', () => {
   })
 
   it('pairs each marker family’s old spelling with its new one', () => {
-    expect(Object.keys(MARKER_FAMILIES).sort()).toEqual(['provenanceHeading', 'regionPrefix'])
+    expect(Object.keys(MARKER_FAMILIES).sort()).toEqual([
+      'commentMarkerPrefix',
+      'deferredFindings',
+      'developerRound',
+      'developerStop',
+      'frozenBrief',
+      'loopPaused',
+      'loopPublished',
+      'loopUnpushedWorkResume',
+      'objectivesVersion',
+      'principalRuling',
+      'provenanceHeading',
+      'regionPrefix'
+    ])
     for (const family of Object.values(MARKER_FAMILIES)) {
       expect(family.old.length).toBeGreaterThan(0)
       expect(family.current).not.toBe(family.old)

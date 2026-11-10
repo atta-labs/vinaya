@@ -174,7 +174,7 @@ type GradedBodyResolution = { ok: true; body: string } | { ok: false; message: s
 /**
  * The body `checkBriefSections` actually grades (plan-brief-v1 task 3,
  * #428 — folded in from #422). On a task branch, the brief lives on the
- * task Issue's frozen `aeg:brief:v1` comment posted by `dispatchTask`
+ * task Issue's frozen `vinaya:brief:v1` comment posted by `dispatchTask`
  * (`vinaya task dispatch`), never in the PR body — so that comment, not
  * `PR_BODY`, is what gets graded. This is the SAME resolution
  * `harness/processes/vinaya-strict/checks/bin/check-brief-shape.ts` runs in CI (`resolveGradedBody`
@@ -211,7 +211,7 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
   const comments = json.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
   const comment = resolveNewestFrozenBrief(comments, principals.principals)
   if (!comment) {
-    return { ok: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issue}.` }
+    return { ok: false, message: `not dispatched — no \`vinaya:brief:v<k>\` comment on Issue #${issue}.` }
   }
   return { ok: true, body: comment.content }
 }

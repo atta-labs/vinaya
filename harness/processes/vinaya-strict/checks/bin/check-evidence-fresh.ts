@@ -66,10 +66,10 @@ import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/ker
 import { compareEvidenceBlock, EVIDENCE_PLACEHOLDER_TEXT } from '../evidence-fresh-logic'
 import { refuseUnresolvedPrincipals } from '../principals-refusal'
 import { ScanContext, resolveAnchoredRegion } from '../../../../../harness/kernel/gates/checks/scan-context'
-import { REGION_PREFIXES } from '../../tools/legacy-markers'
+import { COMMENT_MARKER_PREFIX_PATTERN, REGION_PREFIXES } from '../../tools/legacy-markers'
 
 /** The exact marker `developerRoundMarker` (`dev-review-loop/round-assess.ts`) renders into every round's own comment — posted the first time this PR's gate ever goes green, the SAME moment the driver's automatic evidence report first runs. */
-const DEVELOPER_ROUND_MARKER = /<!--\s*aeg:developer:round-\d+\s*-->/i
+const DEVELOPER_ROUND_MARKER = new RegExp(`<!--\\s*${COMMENT_MARKER_PREFIX_PATTERN}:developer:round-\\d+\\s*-->`, 'i')
 
 /**
  * A mutable PR comment is not by itself a trustworthy "a round already

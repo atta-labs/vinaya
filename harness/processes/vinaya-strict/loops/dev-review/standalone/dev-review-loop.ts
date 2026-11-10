@@ -41,6 +41,7 @@
  * so no existing import elsewhere in this codebase needed to change.
  */
 
+import { LOOP_UNPUSHED_WORK_RESUME_MARKER } from '../../../tools/legacy-markers'
 import { assessRound, recordDeveloperAttempt } from '../../../tools/dev-review-policy/assess-round'
 import {
   concludedLoopRefusal,
@@ -5570,7 +5571,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       ].join('\n')
       await withRateLimitWait(() =>
         postForgeEffectOnce(root, task, `unpushed-work-resume-${roundNum}-${head}`, () =>
-          d.postMarkedComment('pr', String(prNumber), '<!-- aeg:loop:unpushed-work-resume -->', body)
+          d.postMarkedComment('pr', String(prNumber), `<!-- ${LOOP_UNPUSHED_WORK_RESUME_MARKER.current} -->`, body)
         )
       )
     }

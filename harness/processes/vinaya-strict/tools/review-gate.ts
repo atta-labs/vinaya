@@ -190,7 +190,7 @@ export type ReviewGateInput = {
    * `null`: unlike `objectivesVersion`, there is no "skip this binding"
    * case here — a PR either has rulings or it doesn't, and `0` says so.
    * Resolved by the caller (never here; this stays pure) by counting
-   * principal-authored `<!-- aeg:principal:ruling:<pr>-<k> -->` comments.
+   * principal-authored `<!-- vinaya:principal:ruling:<pr>-<k> -->` comments.
    * A verdict's own `extraction.rulingOrdinal` binds only when it equals
    * this value exactly — `null` (pre-cutover stock, no `Ruling ordinal:`
    * line at all) binds only when this value is `0`, the same "the PR truly

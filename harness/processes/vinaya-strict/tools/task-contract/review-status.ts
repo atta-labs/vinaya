@@ -19,6 +19,7 @@
  */
 
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict, parseFindingState } from './verdict-extraction'
+import { COMMENT_MARKER_PREFIX_PATTERN } from '../legacy-markers'
 import { isPrincipal } from './waiver-label'
 
 /**
@@ -27,7 +28,7 @@ import { isPrincipal } from './waiver-label'
  * that needs to know a Developer round happened reads THIS marker at a fixed
  * position rather than scanning the comment's free text for a phrase.
  */
-const DEVELOPER_ROUND_MARKER = /<!--\s*aeg:developer:round-(\d+)\s*-->/i
+const DEVELOPER_ROUND_MARKER = new RegExp(`<!--\\s*${COMMENT_MARKER_PREFIX_PATTERN}:developer:round-(\\d+)\\s*-->`, 'i')
 
 /**
  * A rendered finding line as `review-post.ts`'s `renderFindingsSection`

@@ -260,7 +260,7 @@ describe('renderNoPushStopComment (pure) — the no-PR-yet variant carries detai
    * as instructed. Round-tripping cannot pass while the two disagree.
    */
   function parsedOrdinalOf(body: string): number {
-    const marker = body.split('\n').find((l) => l.startsWith('<!-- aeg:principal:ruling:')) ?? ''
+    const marker = body.split('\n').find((l) => l.startsWith('<!-- vinaya:principal:ruling:')) ?? ''
     return newestPrincipalRulingOrdinal([{ body: marker, author: 'principal-1' }], ['principal-1'])
   }
 
@@ -802,7 +802,7 @@ describe('a sandbox capability refusal pauses once for the Operator and is never
     expect(packet?.requestedAuthority).toBe('operator')
     expect(packet?.detail).toContain(PROBE_ERROR)
     expect(packet?.attemptedRecovery).toContain(`${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1`)
-    const comment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:sandbox_refused -->')
+    const comment = world.postedComments.find((c) => c.marker === '<!-- vinaya:loop:paused:sandbox_refused -->')
     expect(comment?.body).toContain('No Principal ruling is needed')
     expect(comment?.body).not.toContain('A Principal ruling is needed')
   })

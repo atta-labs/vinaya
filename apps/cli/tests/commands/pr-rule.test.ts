@@ -153,7 +153,7 @@ describe('vinaya pr rule', () => {
     // remote in this tempDir) prints its own warning line to stdout first.
     expect(r.stdout.trim().split('\n').pop()).toBe('https://github.com/acme/widget/pull/1#issuecomment-1')
     const posted = readFileSync(commentsLogPath, 'utf-8')
-    expect(posted).toContain('<!-- aeg:principal:ruling:1-1 -->')
+    expect(posted).toContain('<!-- vinaya:principal:ruling:1-1 -->')
     expect(posted).toContain('> VERDICT: PASS')
   })
 
@@ -178,7 +178,7 @@ describe('vinaya pr rule', () => {
     const r = runCli(['pr', 'rule', '1', '--file', filePath], repo, path)
     expect(r.status).toBe(0)
     const posted = readFileSync(commentsLogPath, 'utf-8')
-    expect(posted).toContain('<!-- aeg:principal:ruling:1-2 -->')
+    expect(posted).toContain('<!-- vinaya:principal:ruling:1-2 -->')
   })
 
   it('refuses a non-numeric PR ref before ever checking who is authenticated', () => {

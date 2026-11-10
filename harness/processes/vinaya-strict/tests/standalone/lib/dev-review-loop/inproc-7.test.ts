@@ -209,7 +209,7 @@ describe('devReviewLoop — O5 (#595): an infrastructure pause resumes on the ba
     // ruling was ever configured on the world, and none of the driver's own
     // posted comments carries a ruling marker either.
     expect(world.rulings).toHaveLength(0)
-    for (const c of world.postedComments) expect(c.marker).not.toMatch(/aeg:principal:ruling/)
+    for (const c of world.postedComments) expect(c.marker).not.toMatch(/vinaya:principal:ruling/)
     markDriverLockDead(world)
 
     // `--resume` must still continue rather than throw "carries no Principal
@@ -258,9 +258,9 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     // One more than a clean round: the driver posts the round marker comment
     // itself before the escalation is even discovered.
     expect(world.postedComments).toHaveLength(2)
-    expect(world.postedComments[0]!.marker).toBe('<!-- aeg:developer:round-1 -->')
+    expect(world.postedComments[0]!.marker).toBe('<!-- vinaya:developer:round-1 -->')
     const pauseComment = world.postedComments[1]!
-    expect(pauseComment.marker).toBe('<!-- aeg:loop:paused:escalation -->')
+    expect(pauseComment.marker).toBe('<!-- vinaya:loop:paused:escalation -->')
     // The pause comment names the exact command to resume this run (the
     // harness fake `postPauseComment` renders the real body via
     // `renderPauseComment`, which embeds this `--resume` line).

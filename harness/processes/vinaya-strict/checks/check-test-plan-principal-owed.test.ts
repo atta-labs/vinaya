@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { FROZEN_BRIEF_MARKER } from '../tools/legacy-markers'
 import { renderLiveRecordBlock } from '../tools/task-contract/live-record'
 import { buildTestPlanCheckErrors, runTestPlanCheck } from './bin/check-test-plan'
 import type { LiveCheckDeps as TestPlanCheckDeps } from './frozen-brief'
@@ -110,6 +111,19 @@ describe("runTestPlanCheck — the frozen brief's [live] lines, failing closed",
     expect(errors.length).toBe(1)
     expect(errors[0]?.pending).toBeUndefined()
     expect(runTestPlanCheck({ body: '', branch: TASK_BRANCH, head: '' }, throwing('must not be called'))).toEqual([])
+  })
+
+  it('recognizes the frozen brief in either spelling — the current marker and the retired one', () => {
+    for (const spelling of [FROZEN_BRIEF_MARKER.current, FROZEN_BRIEF_MARKER.old]) {
+      const brief = {
+        body: `<!-- ${spelling}:v1 -->\nBrief hash: x\n# Brief\n\n## 9. Test Plan\n\n\`\`\`\nbun test a.test.ts\n\`\`\`\n\n- **[live]** ${COMMAND}`,
+        author: { login: PRINCIPAL }
+      }
+      const errors = runTestPlanCheck({ body: PLAN, branch: TASK_BRANCH, head: HEAD }, depsReturning([brief]))
+      expect(errors.length).toBeGreaterThan(0)
+      for (const e of errors) expect(e.pending).toBe(true)
+      expect(errors.map((e) => e.message).join('\n')).toContain(COMMAND)
+    }
   })
 
   it('a non-task branch never reads the forge', () => {

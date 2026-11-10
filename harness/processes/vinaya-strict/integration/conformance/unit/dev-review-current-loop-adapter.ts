@@ -350,7 +350,7 @@ const DRIVERS: Record<string, Driver> = {
       makeWorld({
         objectivesText: 'O1. Do the thing.\nO2. Do the other thing.',
         frozenBrief:
-          '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\nO2. Do the other thing.\n\n## Planner rationale\n\nOut of scope for facts.\n',
+          '<!-- vinaya:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\nO2. Do the other thing.\n\n## Planner rationale\n\nOut of scope for facts.\n',
         roleOutcomes: { 1: { reviewer: UNDER_REPORTING_REVIEWER } }
       })
     ),

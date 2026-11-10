@@ -35,7 +35,7 @@
  *   --premise [file]   Re-assert every `Premise:` pin against the current
  *                      on-disk state. With a file argument, reads that body
  *                      file (a brief not yet dispatched). With none, resolves
- *                      the task Issue's frozen `aeg:brief:v1` comment
+ *                      the task Issue's frozen `vinaya:brief:v1` comment
  *                      instead (plan-brief-v1 task 2, #427) and re-asserts
  *                      the premises it carries. A failed premise is a stop
  *                      condition, not a silent re-guess (contracts/brief-developer.md).
@@ -964,7 +964,7 @@ export function resolvePremiseBriefText(
   const normalized = comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
   const briefComment = resolveNewestFrozenBrief(normalized, principalAllowlist)
   if (!briefComment) {
-    return { ok: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issueNumber}.` }
+    return { ok: false, message: `not dispatched — no \`vinaya:brief:v<k>\` comment on Issue #${issueNumber}.` }
   }
   return { ok: true, text: briefComment.content }
 }

@@ -45,7 +45,7 @@ The failure mode this prevents: a Developer who starts work without reading the 
 
 ## The hand-off carrier
 
-The task **Issue's `aeg:brief:v1` comment** — posted once, frozen, by `vinaya-task-brief` before the Developer starts, and read by the Developer as the whole brief. The brief is not in the Issue's own body (the body is task identity + the Planner's rationale + the Issue's judgment sections only — see below). It is not carried in the pull-request body either — that body holds only the Developer's report. The frozen Issue comment is the brief's permanent, durable home; the Reviewer and Archivist read it there as evidence of intent.
+The task **Issue's `vinaya:brief:v1` comment** — posted once, frozen, by `vinaya-task-brief` before the Developer starts, and read by the Developer as the whole brief. The brief is not in the Issue's own body (the body is task identity + the Planner's rationale + the Issue's judgment sections only — see below). It is not carried in the pull-request body either — that body holds only the Developer's report. The frozen Issue comment is the brief's permanent, durable home; the Reviewer and Archivist read it there as evidence of intent.
 
 ---
 

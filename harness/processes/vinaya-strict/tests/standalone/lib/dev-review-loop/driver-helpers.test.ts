@@ -326,7 +326,7 @@ describe('renderDeveloperRoundComment / developerRoundMarker (pure)', () => {
   })
 
   it("developerRoundMarker matches the SAME regex @attalabs/aeg-core's parseDeveloperRoundMarker reads", () => {
-    expect(developerRoundMarker(3)).toBe('<!-- aeg:developer:round-3 -->')
+    expect(developerRoundMarker(3)).toBe('<!-- vinaya:developer:round-3 -->')
   })
 })
 describe('routeCompletionEvents (pure) — regression, PR #459 MAJOR', () => {
@@ -439,7 +439,7 @@ describe('filterPrincipalRulings / findPrincipalFrozenBrief (pure)', () => {
   })
 
   it('excludes a null-author comment (e.g. a bot) the same way', () => {
-    const comments = [{ body: '<!-- aeg:principal:ruling:445-1 -->\nBot-posted, no author.', author: null }]
+    const comments = [{ body: '<!-- vinaya:principal:ruling:445-1 -->\nBot-posted, no author.', author: null }]
     expect(filterPrincipalRulings(comments, ALLOWLIST)).toEqual([])
   })
 

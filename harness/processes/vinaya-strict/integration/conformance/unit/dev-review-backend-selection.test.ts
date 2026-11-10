@@ -277,9 +277,9 @@ describe('cutover-gate:gate-13 — backend selection and rollback on the Engine 
         const markers = [...engineMarkers, ...restartedPosted]
         expect(engineLedger.filter((effect) => effect.kind === 'published')).toEqual([])
         for (const marker of PUBLICATION_MARKERS) expect(markers.filter((m) => m === marker)).toHaveLength(1)
-        const pauseMarkers = markers.filter((marker) => marker.includes('aeg:loop:paused'))
+        const pauseMarkers = markers.filter((marker) => marker.includes('vinaya:loop:paused'))
         expect(new Set(pauseMarkers).size).toBe(pauseMarkers.length)
-        expect(restartedPosted.filter((marker) => marker.includes('aeg:loop:paused'))).toEqual([])
+        expect(restartedPosted.filter((marker) => marker.includes('vinaya:loop:paused'))).toEqual([])
         // Nothing the continued run performs is missing: each effect it carries is on the restarted ledger too.
         const expected = await baseline(kind, agent)
         for (const marker of expected.effects.markers) expect(markers).toContain(marker)

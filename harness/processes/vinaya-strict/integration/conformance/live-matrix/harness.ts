@@ -262,7 +262,7 @@ JSON
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   cat <<'JSON'
-{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\n\\nA brief body.","author":{"login":"daniboomerang"}}]}
+{"comments":[{"body":"<!-- vinaya:brief:v1 -->\\nBrief hash: deadbeef\\n\\nA brief body.","author":{"login":"daniboomerang"}}]}
 JSON
   exit 0
 fi

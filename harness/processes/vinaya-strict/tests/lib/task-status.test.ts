@@ -20,7 +20,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture.js'
+import { FROZEN_BRIEF_MARKER } from '../../tools/legacy-markers'
 import {
+  BRIEF_CANDIDATE_SEARCH,
   claimDepsForOneRead,
   confidenceFromSummaryComments,
   deriveLoopState,
@@ -316,6 +318,13 @@ function claimThunk(
 ): () => StartClaimState | null {
   return () => readStartClaim(root, task, address, claimDeps(now, livePids, snapshots))
 }
+
+describe('the frozen-brief candidate search', () => {
+  it('is one query naming both spellings joined by OR under a single in:comments', () => {
+    expect(BRIEF_CANDIDATE_SEARCH).toBe(`"${FROZEN_BRIEF_MARKER.current}" OR "${FROZEN_BRIEF_MARKER.old}" in:comments`)
+    expect(BRIEF_CANDIDATE_SEARCH.match(/in:comments/g)).toHaveLength(1)
+  })
+})
 
 describe('readStartClaim', () => {
   it('reads a claim that named this Issue directly, inside its own window, as starting', () => {
