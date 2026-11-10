@@ -9,6 +9,7 @@ import {
   type ClaimVoice,
   type DocClaimSourceFile
 } from './doc-claim'
+import { CLAIM_ANCHOR, CLAIM_ANCHORS } from './legacy-markers'
 
 const reader = (files: Record<string, string>) => (path: string) => files[path] ?? null
 
@@ -78,6 +79,41 @@ describe('findClaimBindings — marker discovery', () => {
 
     expect(findClaimBindings([{ path: 'aeg-root/documentation-coherence.md', content }])).toEqual([])
     expect(findMalformedClaimMarkers([{ path: 'aeg-root/documentation-coherence.md', content }])).toEqual([])
+  })
+})
+
+describe('findClaimBindings — both anchor spellings', () => {
+  const expected = { kind: 'contains' as const, path: 'src/a.ts', value: 'function windows(' }
+
+  it('reads the current prefix and the retired prefix in the markdown and comment forms alike', () => {
+    for (const prefix of CLAIM_ANCHORS) {
+      const md = findClaimBindings([
+        { path: 'x.md', content: `<!-- ${prefix}: src/a.ts contains:function windows( -->` }
+      ])
+      const ts = findClaimBindings([{ path: 'x.ts', content: `// ${prefix}: src/a.ts contains:function windows(` }])
+      expect(md.map((b) => b.assertion)).toEqual([expected])
+      expect(ts.map((b) => b.assertion)).toEqual([expected])
+    }
+  })
+
+  it('still checks a retired-prefix claim: a stale one is reported', () => {
+    const bindings = findClaimBindings([
+      { path: 'x.md', content: `<!-- ${CLAIM_ANCHOR.old}: src/a.ts contains:gone -->` }
+    ])
+    expect(evaluateClaimBindings(bindings, reader({ 'src/a.ts': 'present' }))).toHaveLength(1)
+  })
+
+  it('reports a malformed marker in either prefix', () => {
+    for (const prefix of CLAIM_ANCHORS) {
+      expect(findMalformedClaimMarkers([{ path: 'x.md', content: `<!-- ${prefix}: src/a.ts -->` }])).toHaveLength(1)
+    }
+  })
+
+  it('strips a retired-prefix marker from the cited file, so it cannot satisfy itself', () => {
+    const retired = `<!-- ${CLAIM_ANCHOR.old}: y.md contains:${CLAIM_ANCHOR.old} -->`
+    const bindings = findClaimBindings([{ path: 'x.md', content: retired }])
+    const cited = retired
+    expect(evaluateClaimBindings(bindings, reader({ 'y.md': cited }))).toHaveLength(1)
   })
 })
 

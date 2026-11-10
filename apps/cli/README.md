@@ -12,11 +12,11 @@ npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
 
 ## Commands
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult { -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:export function renderBrief(facts: BriefFacts, template: string): RenderResult { -->
-<!-- AEG:CLAIM: apps/cli/src/commands/brief.ts contains:refuse(`cannot render — missing fact(s): -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult { -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:export function renderBrief(facts: BriefFacts, template: string): RenderResult { -->
+<!-- VINAYA:CLAIM: apps/cli/src/commands/brief.ts contains:refuse(`cannot render — missing fact(s): -->
 
 | Command | Description |
 |---------|-------------|
@@ -276,10 +276,10 @@ The `changeset-coverage` core check couples a diff touching a published package'
 
 A doc that quotes a command or config line verbatim, in backticks, as a statement of present fact ("what runs today: `X`") goes stale silently once the thing it quotes changes — every other gate can pass while the quotation is simply wrong. The `quoted-command` core check catches this, but **only for spans an author explicitly marks** — it never infers from a command-looking span, because an adopter-facing instruction (a README's `npx @attalabs/vinaya init`) is not a claim and flagging it is exactly the false-positive shape that gets a check disabled.
 
-Opt a span in by wrapping it in an `AEG:QUOTES-FILE` marker pair naming the file it quotes:
+Opt a span in by wrapping it in a `VINAYA:QUOTES-FILE` marker pair naming the file it quotes:
 
 ```markdown
-one job — <!-- AEG:QUOTES-FILE:START:.github/workflows/ci.yml -->`npm test`<!-- AEG:QUOTES-FILE:END --> in CI
+one job — <!-- VINAYA:QUOTES-FILE:START:.github/workflows/ci.yml -->`npm test`<!-- VINAYA:QUOTES-FILE:END --> in CI
 ```
 
 Both markers are HTML comments — invisible on render — and may sit inline within a sentence or on their own lines around a fenced block. The check reads the text between them (an inline `` `span` ``, a fenced block, or bare text — one layer of wrapping is stripped either way) and asserts it still appears verbatim in the named file's current content; a marker inside a fenced/inline code example (e.g. one demonstrating this very syntax) is ignored, never mistaken for a real annotation. A finding names both sides: what the doc claims, and which file no longer contains it.
@@ -290,7 +290,7 @@ Swept corpus: the same `ships`/`reader-facing` governed-doc classes `reader-reso
 
 Doctrine explains what a command does and why; it is not a runbook a reader executes verbatim, and a copy-pasted sequence rots the moment the real command changes underneath it. The `doctrine-no-procedures` core check refuses a fenced code block anywhere under `<doctrineRoot>/**/*.md` that contains two or more lines each starting with a shell command word (`export`/`bun`/`gh`/`git`/`grep`/`sed`/`cat`/`diff`/`vinaya`) — that shape is a sequence to run, not an illustration.
 
-Two exemptions: a block sitting inside the `AEG:VENDOR-EXAMPLE` anchor pair (this repo's own one sanctioned fenced home for a real command sequence, `tranche-model.md` §12), and any file under a `templates/` directory (a worked-example template legitimately shows the full shape a real PR/Issue body carries). Unlike `doctrine-portability`/`reader-resolvable-prose`/`retired-vocabulary` above, this check is **blocking, not report-only** (`severity: error`, exit `1` on any finding) — it ships with an expected-zero corpus rather than an unfixed backlog, so day-one install does not need a baseline rollout.
+Two exemptions: a block sitting inside the `VINAYA:VENDOR-EXAMPLE` anchor pair (this repo's own one sanctioned fenced home for a real command sequence, `tranche-model.md` §12), and any file under a `templates/` directory (a worked-example template legitimately shows the full shape a real PR/Issue body carries). Unlike `doctrine-portability`/`reader-resolvable-prose`/`retired-vocabulary` above, this check is **blocking, not report-only** (`severity: error`, exit `1` on any finding) — it ships with an expected-zero corpus rather than an unfixed backlog, so day-one install does not need a baseline rollout.
 
 ## Objectives gate
 

@@ -2,7 +2,7 @@
 
 /**
  * Core check: doc-claims. Thin adapter over `@attalabs/aeg-core`'s
- * `checkDocClaims` — every `AEG:CLAIM` marker in a doctrine page or source
+ * `checkDocClaims` — every `VINAYA:CLAIM` marker in a doctrine page or source
  * comment re-asserted against the file it cites. A marker that parses as
  * neither form, and a binding whose cited file no longer holds its literal,
  * are both `severity: error`, exit 1: a sentence that reads as checked and is
@@ -100,7 +100,7 @@ function main(): void {
       file: finding.file,
       line: finding.line,
       agent_recovery_prompt:
-        'An `AEG:CLAIM` marker binds the sentence beside it to text its cited file must hold. When the binding no ' +
+        'A `VINAYA:CLAIM` marker binds the sentence beside it to text its cited file must hold. When the binding no ' +
         'longer holds, re-read the cited code, correct the sentence to what the code does now, and re-bind it to a ' +
         'literal the file holds — or remove the sentence with its marker. Never reword the sentence while it is ' +
         'unbound, and never delete only the marker. A malformed marker must stand alone on its own line, in the form ' +

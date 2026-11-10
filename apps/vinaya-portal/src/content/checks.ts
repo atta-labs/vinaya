@@ -158,7 +158,7 @@ export const CHECKS: CheckRow[] = [
   {
     name: 'doc-claims',
     stage: 'Push',
-    refuses: 'An `AEG:CLAIM` marker its cited file no longer supports',
+    refuses: 'A `VINAYA:CLAIM` marker its cited file no longer supports',
     implements: 'Evidence freshness',
     href: '/docs/process/gates/ring0-push-checks#doc-claims'
   },

@@ -34,9 +34,9 @@
  * reuse that function directly without widening a closed, PR-body-specific
  * type for a doc-authoring concern outside this task's surface. The shape:
  *
- *     <!-- AEG:QUOTES-FILE:START:<repo-relative-path> -->
+ *     <!-- VINAYA:QUOTES-FILE:START:<repo-relative-path> -->
  *     `<quoted text>`
- *     <!-- AEG:QUOTES-FILE:END -->
+ *     <!-- VINAYA:QUOTES-FILE:END -->
  *
  * Both markers may sit on their own lines or inline within a prose
  * sentence (the real annotation this task ships wraps an inline backtick
@@ -70,6 +70,7 @@
 import { maskCode } from '../../../kernel/adapters/code-host/github/strip-code'
 import { classifyProseFile, type ProseFileClass } from './reader-resolvable-prose'
 import { DOCTRINE_TREE } from './doctrine/doctrine-map'
+import { anchorAlternation, QUOTES_FILE_ANCHORS } from './legacy-markers'
 
 // `maskCode` (index-preserving) is imported directly from the `./strip-code`
 // subpath — the same narrow front door `anchored-region.ts` uses, per that
@@ -107,8 +108,11 @@ const QUOTED_COMMAND_SHIPS_PREFIX = `${DOCTRINE_TREE}/`
 /** The two classes this check sweeps for markers — `internal` never is, matching `reader-resolvable-prose.ts`'s own (identically-valued, differently-named to avoid `symbol-collisions.test.ts`) `SWEPT_CLASSES`. */
 const QUOTED_COMMAND_SWEPT_CLASSES: ReadonlySet<ProseFileClass> = new Set(['ships', 'reader-facing'])
 
-const START_PATTERN = /<!--\s*AEG:QUOTES-FILE:START:(\S+?)\s*-->/g
-const END_PATTERN = /<!--\s*AEG:QUOTES-FILE:END\s*-->/
+/** Matches the quotes-file anchor in either spelling: the current one, and the retired one an adopter's docs may still carry. */
+const QUOTES_FILE_ANCHOR_ALTERNATION = anchorAlternation(QUOTES_FILE_ANCHORS)
+
+const START_PATTERN = new RegExp(`<!--\\s*${QUOTES_FILE_ANCHOR_ALTERNATION}:START:(\\S+?)\\s*-->`, 'g')
+const END_PATTERN = new RegExp(`<!--\\s*${QUOTES_FILE_ANCHOR_ALTERNATION}:END\\s*-->`)
 
 /**
  * A marker's `citedFile` must be a plain repo-root-relative path — never
@@ -159,7 +163,7 @@ function extractQuotedText(raw: string): string {
 }
 
 /**
- * Scans one file's content for `AEG:QUOTES-FILE` marker pairs. Searches
+ * Scans one file's content for `VINAYA:QUOTES-FILE` marker pairs. Searches
  * position-only over `stripCode`'s masked-but-length-altering output is
  * unsafe (indices would no longer map back) — so this uses `maskCode`
  * (index-preserving, same primitive `anchored-region.ts` uses) to find

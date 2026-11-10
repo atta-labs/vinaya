@@ -22,14 +22,14 @@
  * `premise-check.ts` parses, carried inline in a marker that sits on its own
  * line immediately before the paragraph it binds. Two forms, one per host
  * language — in markdown, an HTML comment of the same invisible-on-render
- * shape as `AEG:QUOTES-FILE`; in TypeScript, a `//` line comment or a `*`
+ * shape as `VINAYA:QUOTES-FILE`; in TypeScript, a `//` line comment or a `*`
  * block-comment line:
  *
- *     <!-- AEG:CLAIM: <path> contains:<literal> -->
- *     // AEG:CLAIM: <path> contains:<literal>
+ *     <!-- VINAYA:CLAIM: <path> contains:<literal> -->
+ *     // VINAYA:CLAIM: <path> contains:<literal>
  *
  * Several markers may stack before one paragraph. Both example lines above
- * are inert here by construction: the patterns below require `AEG:CLAIM:` to
+ * are inert here by construction: the patterns below require `VINAYA:CLAIM:` to
  * follow its comment prefix immediately, and in a JSDoc both examples carry
  * an intervening `<!--` or `//` after this comment's own `*`.
  *
@@ -47,6 +47,10 @@
 import { maskCode } from '../../../kernel/adapters/code-host/github/strip-code'
 import { checkPremises, type PremiseAssertion } from './task-contract/premise-check'
 import { isValidCitedFilePath } from './quoted-command'
+import { anchorAlternation, CLAIM_ANCHORS } from './legacy-markers'
+
+/** Matches the claim anchor in either spelling: the current one, and the retired one an adopter's docs may still carry. */
+const CLAIM_ANCHOR_ALTERNATION = anchorAlternation(CLAIM_ANCHORS)
 
 export type DocClaimSourceFile = { path: string; content: string }
 
@@ -55,21 +59,27 @@ export type ClaimBinding = { file: string; line: number; assertion: PremiseAsser
 
 export type ClaimFinding = { file: string; line: number; message: string }
 
-/** Markdown form — an HTML comment, invisible on render, exactly as `AEG:QUOTES-FILE` is. */
-const MARKDOWN_MARKER = /^\s*<!--\s*AEG:CLAIM:\s*(\S+)\s+(contains|absent|sha256)\s*:\s*(.+?)\s*-->\s*$/i
+/** Markdown form — an HTML comment, invisible on render, exactly as `VINAYA:QUOTES-FILE` is. */
+const MARKDOWN_MARKER = new RegExp(
+  `^\\s*<!--\\s*${CLAIM_ANCHOR_ALTERNATION}:\\s*(\\S+)\\s+(contains|absent|sha256)\\s*:\\s*(.+?)\\s*-->\\s*$`,
+  'i'
+)
 
 /** Source-comment form — a `//` line or a `*` block-comment line. */
-const COMMENT_MARKER = /^\s*(?:\/\/|\*)\s*AEG:CLAIM:\s*(\S+)\s+(contains|absent|sha256)\s*:\s*(.+?)\s*$/i
+const COMMENT_MARKER = new RegExp(
+  `^\\s*(?:\\/\\/|\\*)\\s*${CLAIM_ANCHOR_ALTERNATION}:\\s*(\\S+)\\s+(contains|absent|sha256)\\s*:\\s*(.+?)\\s*$`,
+  'i'
+)
 
 /**
  * A line that announces itself as a marker but parses as neither form. Kept
- * deliberately loose — anything carrying the `AEG:CLAIM:` token after a
+ * deliberately loose — anything carrying the `VINAYA:CLAIM:` token after a
  * comment opener is a marker the author *meant*, so a typo in the kind or a
  * missing colon surfaces as a finding rather than silently binding nothing.
  * Silence there would be the worst outcome this check has: a sentence that
  * looks bound to every reader and is checked by nothing.
  */
-const MARKER_ANNOUNCEMENT = /^\s*(?:<!--|\/\/|\*)\s*AEG:CLAIM:/i
+const MARKER_ANNOUNCEMENT = new RegExp(`^\\s*(?:<!--|\\/\\/|\\*)\\s*${CLAIM_ANCHOR_ALTERNATION}:`, 'i')
 
 /**
  * Marker lines are scanned on `maskCode`'s output — index- and
@@ -99,7 +109,7 @@ function scanFile(path: string, content: string): { bindings: ClaimBinding[]; ma
       malformed.push({
         file: path,
         line,
-        message: `${path}:${line} carries an \`AEG:CLAIM:\` marker that parses as neither form — expected \`<path> contains:<literal>\` (or \`absent:\`/\`sha256:\`), in an HTML comment in markdown or a \`//\`/\`*\` comment line in TypeScript. A marker that binds nothing is worse than no marker: the sentence reads as checked and is not.`
+        message: `${path}:${line} carries a \`VINAYA:CLAIM:\` marker that parses as neither form — expected \`<path> contains:<literal>\` (or \`absent:\`/\`sha256:\`), in an HTML comment in markdown or a \`//\`/\`*\` comment line in TypeScript. A marker that binds nothing is worse than no marker: the sentence reads as checked and is not.`
       })
       continue
     }
@@ -138,11 +148,11 @@ export function findMalformedClaimMarkers(files: readonly DocClaimSourceFile[]):
 }
 
 /**
- * Removes every `AEG:CLAIM:` marker line from a cited file's content before a
+ * Removes every `VINAYA:CLAIM:` marker line from a cited file's content before a
  * `contains`/`absent` pin is evaluated against it.
  *
  * Defeat case this closes: a marker whose literal is the marker's own text
- * ("`reviewer.md` contains `AEG:CLAIM`", written inside `reviewer.md`) would
+ * ("`reviewer.md` contains `VINAYA:CLAIM`", written inside `reviewer.md`) would
  * otherwise satisfy itself, proving nothing while reading as bound. Stripping
  * the marker lines makes the evidence necessarily live outside the claim —
  * and closes the cross-file variant too, where a marker in one file cites

@@ -74,9 +74,9 @@ A task **is** a forge Issue. Its status is not a field anyone writes — it is *
 
 **One task number, several Issues.** A re-cut task leaves its closed `NOT_PLANNED` Issue (a `dropped` task) in the tranche beside the open replacement. Readers that need one Issue per task number — the dispatch-readiness check — resolve an open Issue over a closed one, and refuse when two open Issues claim the same number; forge facts are read and keyed by Issue number, then mapped back to the task.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.ts contains:export function resolveDuplicateTasks -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/forge/fetch-forge-facts.ts contains:export async function fetchForgeFactsByIssue -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/checks/bin/check-dispatch-readiness.ts contains:resolveDuplicateTasks( -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/forge/list-tasks.ts contains:export function resolveDuplicateTasks -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/forge/fetch-forge-facts.ts contains:export async function fetchForgeFactsByIssue -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/checks/bin/check-dispatch-readiness.ts contains:resolveDuplicateTasks( -->
 
 So: there is **no status column anywhere.** The Developer does not "flip to in-review" — *opening the PR is the in-review signal*. The close-out does not "flip to merged" — *the merge is that signal*. The branch-name convention `task/<tranche>/<n>` is what links a task number to its branch and PR, so any role finds a task's live status with one forge query and writes nothing. `blocked` is the one state with no native forge fact, so it is a label (cheap, native, doesn't race).
 
@@ -324,11 +324,11 @@ Self-metering capture is real, not estimated: the adapter sums the session's own
 
 This is doctrine's one fenced, concrete instance of a layer-2 adapter — named here, by product, so a first-time adopter has something real to look at; nowhere else in this doctrine tree names this or any other host by product name. Everywhere else, the concept stays generic: "the agent's own host," "whatever your harness offers."
 
-<!-- AEG:VENDOR-EXAMPLE:START -->
+<!-- VINAYA:VENDOR-EXAMPLE:START -->
 Vinaya ships exactly one collection adapter, for today's shipped reference host, Claude Code, exposed as `vinaya-tokens`. It reads that host's session transcript — a JSONL file carrying a `usage` object per assistant message — sums it, and emits a layer-3 `Tokens: …` line. Every doctrine citation of it is an **example of one way to satisfy layer 2**, never the requirement; a role on another host satisfies the same obligation by other means and is equally compliant.
 
 **The seam is the summary shape, not the file tree.** An adapter's whole job is to produce a `TranscriptSummary` — four integers (fresh input, cache creation, cache read, output) plus a model id. Everything downstream of that shape is portable and already shipped: `formatTokensLine` renders the grammar, `parse-token-report.ts` reads it back. Two things sit adapter-side because both know host-specific facts: `summarizeTranscript` (`@attalabs/aeg-core`'s Claude Code transcript module), which knows Claude Code's transcript JSONL and its `usage` field names, and the bin itself, which knows how that host points a session at its own transcript. The `bin/` vs `src/` split does **not** mark this seam and never did.
-<!-- AEG:VENDOR-EXAMPLE:END -->
+<!-- VINAYA:VENDOR-EXAMPLE:END -->
 
 **To satisfy layer 2 on another harness:** obtain your turn's usage figures by whatever means your host offers — its own transcript or log, an API usage response, a meter the harness exposes, or an operator reading them off a dashboard and handing them over — and write the layer-3 line yourself. Reusing this adapter is not required, and neither is writing any code: the requirement is the reported figures, in the grammar, in the right artifact. If your host exposes nothing to the agent, you are operator-metered and the `—` rule above applies — that is the sanctioned outcome, not a failure to comply.
 

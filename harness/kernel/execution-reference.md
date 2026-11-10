@@ -101,18 +101,18 @@ family the schema declares, the file(s) that actually call `log()` with
 that kind today — "ownership" in the literal sense: which file is on the
 hook when a family's shape needs to change. Each producer file named in the table is bound to a literal it still holds.
 
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:kind: 'role_attempt' -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts contains:kind: 'dev_review_loop' -->
-<!-- AEG:CLAIM: harness/kernel/gates/checks/runner.ts contains:kind: 'gate' -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts contains:kind: 'operation' -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts contains:kind: 'operation' -->
-<!-- AEG:CLAIM: harness/kernel/tools/host/broker.ts contains:operationEvent -->
-<!-- AEG:CLAIM: harness/kernel/effects/effects.ts contains:kind: 'effect' -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts contains:kind: 'handoff' -->
-<!-- AEG:CLAIM: harness/kernel/log/client/log-custom.ts contains:kind: 'custom' -->
-<!-- AEG:CLAIM: harness/kernel/log/client/log-custom.ts contains:kind: 'operation' -->
-<!-- AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:kind: 'operation' -->
-<!-- AEG:CLAIM: harness/kernel/log/client/cli-operation-log.ts contains:kind: 'operation' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:kind: 'role_attempt' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts contains:kind: 'dev_review_loop' -->
+<!-- VINAYA:CLAIM: harness/kernel/gates/checks/runner.ts contains:kind: 'gate' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts contains:kind: 'operation' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts contains:kind: 'operation' -->
+<!-- VINAYA:CLAIM: harness/kernel/tools/host/broker.ts contains:operationEvent -->
+<!-- VINAYA:CLAIM: harness/kernel/effects/effects.ts contains:kind: 'effect' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts contains:kind: 'handoff' -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/log-custom.ts contains:kind: 'custom' -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/log-custom.ts contains:kind: 'operation' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:kind: 'operation' -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/cli-operation-log.ts contains:kind: 'operation' -->
 
 | Kind | Producer(s) | Records |
 | ---- | ----------- | ------- |

@@ -24,7 +24,7 @@
  * code-reviewer.md`/`security-reviewer.md` require verbatim) — tightening
  * to it closes the gap without inventing a new convention.
  *
- * AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * The VALUE is windowed to the comment's first FIVE lines only
  * (widened, when `Objectives version:` became a third head line) —
  * never a line anywhere else in the body. Every shape this package's own
@@ -49,7 +49,7 @@
  * narrowing what any real render needs matched; it is this module's own
  * contribution, not a claim that no render can still collide.
  *
- * AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * The CANDIDATE SET stays whole-body — an earlier round windowed where a verdict's value is read, not which
  * comments count as a candidate at all. A comment whose only VERDICT-shaped
  * line sits outside its first five lines is still the most recent
@@ -120,7 +120,7 @@
  * fifth field, `rulingOrdinal`, is read from the SAME winning comment via
  * `extractRulingOrdinal`/`firstSevenLines` — its OWN window, not
  * `firstFiveLines` widened in place (see that function's doc comment for
- * why: an out-of-surface `AEG:CLAIM` in `packages/sources` pins
+ * why: an out-of-surface `VINAYA:CLAIM` in `packages/sources` pins
  * `firstFiveLines`'s exact signature). `null` means no `Ruling ordinal:`
  * line at all — the pre-cutover stock — never confused with a rendered
  * `0`, which means a post-cutover verdict cast when the PR carried no
@@ -149,7 +149,7 @@ const OBJECTIVES_VERSION_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Objectives version
  * `0` when no principal ruling existed on the PR at cast time, never
  * omitted the way `Objectives version:` is pre-cutover. Read from its OWN
  * wider window (`firstSevenLines`, below), never from `firstFiveLines`:
- * `packages/sources` carries an `AEG:CLAIM` binding on `firstFiveLines`'s
+ * `packages/sources` carries a `VINAYA:CLAIM` binding on `firstFiveLines`'s
  * exact signature that this task's declared Surface excludes, so that
  * function's name, body, and 5-line reach stay byte-identical — widening
  * it in place would silently break that out-of-surface claim. The value is
@@ -221,9 +221,9 @@ export function extractPauseBoundRuling(
 }
 
 /**
- * AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
- * AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
- * AEG:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
+ * VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
+ * VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/bin/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
  * A ruling, later widened:
  * all three markers are read from a comment's first FIVE lines only, never
  * anywhere else in the body. Every shape this package itself renders
@@ -399,7 +399,7 @@ function extractFindingSeverities(
 }
 
 /**
- * AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * `headSha` is `null` in two distinct situations that both mean "cannot
  * confirm this verdict covers the current head": no verdict comment matched
  * at all (`danglingNote` is also set), or a verdict comment matched but
@@ -437,7 +437,7 @@ export type VerdictExtraction = {
 }
 
 /**
- * AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+ * VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * The candidate set — which comments even ATTEMPTED a
  * verdict — is a whole-body test, an earlier pattern. Only the VALUE is
  * read from the first five lines (widened by a later change). An earlier
@@ -472,7 +472,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
   const latest = candidates[candidates.length - 1] as string
   const m = firstFiveLines(latest).match(valuePattern)
   if (!m) {
-    // AEG:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
+    // VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
     return {
       value: `the most recent ${missingLabel} comment's VERDICT line is not within its first five lines — DANGLING, see below`,
       headSha: null,

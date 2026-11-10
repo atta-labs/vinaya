@@ -411,7 +411,7 @@ describe('a relocated dependency is unchanged, never growth', () => {
   })
 
   test('a claim anchor re-pointed to its moved file keeps its count, and a new claim naming a process path is growth', () => {
-    const claim = (path: string): string => `// AEG:CLAIM: ${path} contains:export function dispatchRole(\n`
+    const claim = (path: string): string => `// VINAYA:CLAIM: ${path} contains:export function dispatchRole(\n`
     const { root, base } = plantedRepository({
       'apps/cli/src/lib/dispatch.ts': `export function dispatchRole() {}\n${BODY}\n`,
       'packages/aeg-core/src/commands.ts': `${claim('apps/cli/src/lib/dispatch.ts')}${BODY}\n`

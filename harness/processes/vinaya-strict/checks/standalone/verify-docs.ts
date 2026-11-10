@@ -467,7 +467,7 @@ function runC7(only?: ReadonlySet<string>): void {
  * what the code did, which is the exact defect this check exists to catch.
  * The corpus is now what the doctrine says it is.
  *
- * AEG:CLAIM: harness/processes/vinaya-strict/tools/reader-resolvable-prose.ts contains:export const PRODUCT_SLUG_SCOPE: readonly string[] = [
+ * VINAYA:CLAIM: harness/processes/vinaya-strict/tools/reader-resolvable-prose.ts contains:export const PRODUCT_SLUG_SCOPE: readonly string[] = [
  * **Deliberately not `PRODUCT_SLUG_SCOPE`.** That export landed in `#436`
  * and this brief anticipated folding into it. It answers a different
  * question — which product paths a tranche slug is banned from — and is
@@ -487,7 +487,7 @@ const C8_PATHSPECS = [
 
 /**
  * C8 — doc-claim bindings. A doctrine sentence or source comment stating what
- * code does carries an `AEG:CLAIM` marker pinning the source that proves it;
+ * code does carries a `VINAYA:CLAIM` marker pinning the source that proves it;
  * this verifies every marker against the file it cites.
  *
  * `only` is the diff's own changed-file set in PR mode (undefined in full
