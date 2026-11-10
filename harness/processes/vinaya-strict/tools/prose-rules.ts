@@ -67,7 +67,7 @@ const retiredPatterns = [
   'decision-log',
   'decision entr',
   'decisions? (are |is )?logged',
-  'log entries',
+  '(^|[^a-zA-Z])log entries',
   String.raw`(^|[^-_a-zA-Z0-9])decisions\.md`,
   'decisions-legacy',
   'CONTRADICTION',
