@@ -88,6 +88,14 @@ function sh(cmd: string, args: string[], options: { attempts?: number } = {}): s
 }
 
 /**
+ * The parent of every task branch in both runners: the default branch. The
+ * original loop's base is always this branch and the Atta Engine runner
+ * resolves no other parent; its head is read through `resolveHead` like any
+ * branch's.
+ */
+export const PARENT_BRANCH = 'main'
+
+/**
  * The branch's true head via `git ls-remote` only — `gh pr view
  * headRefOid` is refused by name (Traps to avoid; a real fix moved both gates
  * off it because it can lag a push). Throws, never returns a placeholder,

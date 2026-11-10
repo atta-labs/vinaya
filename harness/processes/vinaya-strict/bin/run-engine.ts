@@ -82,6 +82,7 @@ import {
   fetchPrState,
   fetchSettledCiConclusion,
   MAX_AUTOMATIC_CONFLICT_REENTRIES,
+  PARENT_BRANCH,
   readWorktreeHead,
   rerunFailedWorkflowJobs,
   resolveHead
@@ -2886,6 +2887,8 @@ export async function liveTaskInput(
       fetchCiConclusion: forge.fetchCiConclusion,
       fetchSettledCiConclusion: forge.fetchSettledCiConclusion,
       fetchFailingCheckRuns: forge.fetchFailingCheckRuns,
+      resolveParentHead: () => forge.resolveHead(PARENT_BRANCH),
+      fetchParentFailingCheckRuns: forge.fetchFailingCheckRuns,
       fetchFailedCheckWorkflowRunIds: forge.fetchFailedCheckWorkflowRunIds,
       rerunFailedWorkflowJobs: forge.rerunFailedWorkflowJobs,
       fetchMergeableState: forge.fetchMergeableState,

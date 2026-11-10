@@ -50,6 +50,8 @@ export const BOUND_FUNCTION_CLASSES = {
   fetchFailingCheckRuns: 'read',
   fetchFailedCheckWorkflowRunIds: 'read',
   rerunFailedWorkflowJobs: 'effect',
+  resolveParentHead: 'read',
+  fetchParentFailingCheckRuns: 'read',
   fetchMergeableState: 'read',
   fetchConflictingFiles: 'read',
   postMarkedComment: 'effect',

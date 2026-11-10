@@ -188,6 +188,7 @@ import {
   gitCommitsTouchingDriverPaths,
   type FailingCheckRun,
   MAX_AUTOMATIC_CONFLICT_REENTRIES,
+  PARENT_BRANCH,
   pollMergeableState,
   readPublishedPullRequest,
   readWorktreeHead,
@@ -309,6 +310,7 @@ import {
   type DeveloperHandoff
 } from './dev-review-loop/round-assess.js'
 import {
+  CI_PARENT_WAIT_POLL_MS,
   classifyDriverError,
   decideStop,
   pauseForDriverError,
@@ -3614,6 +3616,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const handoffFindingIds = (): string[] => developerHandoff.findings.map((finding) => finding.id)
     /** The rounds whose one red-check rerun for a `tooling_unavailable` report is spent — a second report in the same round pauses. */
     const toolingRerunRounds = new Set<number>()
+    /** The heads whose failed jobs a red read already had rerun, each once: the first-red row, an unchanged Developer turn and a `tooling_unavailable` report all spend this one memory, so no head is rerun twice. */
+    const rerunHeads = new Set<string>()
     /** The findings the newest review handed over, with the ids the Developer cites — set when a round's verdicts request changes, cleared by a ruling or a recovered verdict that carries no ids. */
     let lastHandoffFindings: { id: string; line: string }[] | null = null
     const loopOutboxPath = await d.resolveLogAppendPath(repo, task)
@@ -5019,6 +5023,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     ): Promise<{ runIds: number[]; gate: Awaited<ReturnType<typeof waitForGreenGate>> } | null> {
       const rerunIds = rerunFailedWorkflowsOn(head, roundNum, reason)
       if (rerunIds.length === 0) return null
+      rerunHeads.add(head)
       const gate = await waitForGreenGate(d.now())
       return { runIds: rerunIds, gate }
     }
@@ -7171,6 +7176,60 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
+     * The first red read of a head goes through the one decision function
+     * before any send-back (`decideStop`, kind `ci_red`). A head whose every
+     * failing check also fails on the parent's current head waits for the
+     * parent, within the row's fixed bound; any other red reruns the head's
+     * failed jobs once; a head already rerun is a real failure for the
+     * Developer. Every fact is read here from the forge. Returns the gate to
+     * judge, and the pause detail when the parent stayed red for the whole
+     * bound.
+     */
+    async function settleFirstRedRead(
+      gate: Awaited<ReturnType<typeof waitForGreenGate>>
+    ): Promise<{ gate: Awaited<ReturnType<typeof waitForGreenGate>>; pauseDetail: string | null }> {
+      if (gate.ciConclusion !== 'red') return { gate, pauseDetail: null }
+      const head = gate.stats.head
+      const readParentFailing = (): string[] | null => {
+        try {
+          const parentHead = d.resolveHead(PARENT_BRANCH)
+          // A parent head equal to the task's own head holds no separate parent to compare with.
+          if (parentHead === head) return null
+          return d.fetchFailingCheckRuns(parentHead).map((run) => run.name)
+        } catch {
+          // A parent that cannot be read never decides a wait.
+          return null
+        }
+      }
+      const headFailing = gate.failingRuns.map((run) => run.name)
+      let parentWaitedMs = 0
+      for (;;) {
+        const decided = decideStop({
+          kind: 'ci_red',
+          runner: 'loop',
+          head,
+          headFailing,
+          rerunHeads: [...rerunHeads],
+          parentFailing: readParentFailing(),
+          parentWaitedMs
+        })
+        if (decided.type === 'wait') {
+          await d.sleep(CI_PARENT_WAIT_POLL_MS)
+          parentWaitedMs += CI_PARENT_WAIT_POLL_MS
+          continue
+        }
+        if (decided.type === 'pause') return { gate, pauseDetail: decided.detail }
+        if (decided.type === 'rerun') {
+          const rerunIds = rerunFailedWorkflowsOn(head, round, 'a first red CI read')
+          if (rerunIds.length === 0) return { gate, pauseDetail: null }
+          rerunHeads.add(head)
+          return { gate: await absorbRateLimitedRed(await waitForGreenGate(roundStartMs, head)), pauseDetail: null }
+        }
+        return { gate, pauseDetail: null }
+      }
+    }
+
+    /**
      * Waits out one connection failure to GitHub: checks reachability every
      * `GITHUB_REACHABILITY_INTERVAL_MS`, for as long as it takes, and returns
      * once GitHub answers, so the round re-runs the step that failed. It
@@ -7448,13 +7507,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               if (!resolvedByUnpushedResume) {
                 // The forge, not the turn result, decides whether an unchanged
                 // red head has something actionable to rerun. This shares the
-                // tooling-report's once-per-round budget. A refusal or an
+                // once-per-head memory the first red read spends. A refusal or an
                 // unresolved conflict keeps its existing, named stall path.
                 if (
                   isGateRedRetry &&
                   conflictFiles === null &&
                   refusedPublication === null &&
-                  !toolingRerunRounds.has(round)
+                  !rerunHeads.has(headBeforeDispatch)
                 ) {
                   const rerun = await rerunFailedChecksForHead(
                     headBeforeDispatch,
@@ -7462,7 +7521,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                     'an unchanged Developer turn on a red head'
                   )
                   if (rerun !== null) {
-                    toolingRerunRounds.add(round)
                     gateAfterUnchangedHeadRerun = rerun.gate
                     resolvedByUnpushedResume = true
                   }
@@ -7603,7 +7661,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // A red that is a GitHub rate limit and nothing else is waited out
           // and rerun here, before any observation: it is never the
           // Developer's, never a stall and never a mechanical retry.
-          const gate = await absorbRateLimitedRed(gateAfterUnchangedHeadRerun ?? (await waitForGreenGate(roundStartMs)))
+          const absorbedGate = await absorbRateLimitedRed(
+            gateAfterUnchangedHeadRerun ?? (await waitForGreenGate(roundStartMs))
+          )
+          const { gate, pauseDetail: parentRedPause } = await settleFirstRedRead(absorbedGate)
+          if (parentRedPause !== null) {
+            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, gate.stats, 'infrastructure'))
+            decision = { type: 'pause', reason: 'infrastructure', detail: parentRedPause }
+            persistCurrentLoopState('pause', 'infrastructure')
+            continue
+          }
           // The dispatch gate's own premise re-assertion,
           // re-run against the PR's live body at this exact head — a stale
           // `Premise:` pin (a symbol the head deleted since the brief was

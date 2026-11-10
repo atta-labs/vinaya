@@ -32,6 +32,11 @@ import {
   handoffIdsInPrompt
 } from '../dev-review-loop-harness.js'
 import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+import { PARENT_BRANCH } from '../../../../loops/dev-review/standalone/dev-review-loop/gate-reading.js'
+import {
+  CI_PARENT_WAIT_MAX_MS,
+  CI_PARENT_WAIT_POLL_MS
+} from '../../../../loops/dev-review/standalone/dev-review-loop/stop-decision.js'
 import type { DeveloperTurnOutput } from '../../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import {
   rulingsAfterNewestBrief,
@@ -154,6 +159,75 @@ describe('devReviewLoop — O1 (#595): one failing CI check never ends the drive
 
     // Never a pause of any kind — this run reaches a clean publish.
     expect(existsSync(join(controlDir(world), 'pause-state.json'))).toBe(false)
+  })
+})
+
+describe('devReviewLoop — a red CI read goes through the one decision function before any send-back', () => {
+  const PARENT_HEAD = 'f'.repeat(40)
+  const fail = (name: string) => ({ id: 1, name, conclusion: 'failure' }) as never
+
+  /** A world whose head CI is red until a rerun, with the parent's checks read in turn (the last repeats). */
+  function redWorld(parentReads: string[][], opts: { rerunTurnsGreen: boolean }) {
+    const world = makeWorld({ gate: 'red', failingCheckRuns: [fail('unit')] })
+    const reruns: number[] = []
+    const sleeps: number[] = []
+    let parentRead = 0
+    const { deps, prompts } = withCapturedDeveloperDispatch(world, {
+      resolveHead: (branch) => (branch === PARENT_BRANCH ? PARENT_HEAD : world.head),
+      fetchCiConclusion: () => (opts.rerunTurnsGreen && reruns.length > 0 ? 'green' : 'red'),
+      fetchFailingCheckRuns: (head) => {
+        if (head !== PARENT_HEAD) return reruns.length > 0 && opts.rerunTurnsGreen ? [] : [fail('unit')]
+        const names = parentReads[Math.min(parentRead, parentReads.length - 1)] ?? []
+        parentRead += 1
+        return names.map(fail)
+      },
+      fetchFailedCheckWorkflowRunIds: () => [41],
+      rerunFailedWorkflowJobs: (runId) => {
+        reruns.push(runId)
+      },
+      // Yields to the event loop like the harness's own sleep, so no wait busy-loops on resolved promises.
+      sleep: (ms) => {
+        sleeps.push(ms)
+        return new Promise((resolve) => setTimeout(resolve, 1))
+      }
+    })
+    return { world, deps, prompts, reruns, sleeps }
+  }
+
+  it('reruns the failed jobs of a first red head once, with no Developer turn spent on it', async () => {
+    const { world, deps, prompts, reruns } = redWorld([[]], { rerunTurnsGreen: true })
+    const result = await runLoopInProcessSafe(world, deps)
+    expect(reruns).toEqual([41])
+    expect(prompts).toHaveLength(1)
+    expect(result.finalDecision.type).toBe('publish')
+  })
+
+  it('waits for a parent that fails every check the head fails, then reruns the head once', async () => {
+    const { world, deps, prompts, reruns, sleeps } = redWorld([['unit'], ['unit'], []], { rerunTurnsGreen: true })
+    const result = await runLoopInProcessSafe(world, deps)
+    expect(sleeps.filter((ms) => ms === CI_PARENT_WAIT_POLL_MS)).toHaveLength(2)
+    expect(reruns).toEqual([41])
+    expect(prompts).toHaveLength(1)
+    expect(result.finalDecision.type).toBe('publish')
+  })
+
+  it('pauses for the Principal when the parent stays red for the whole fixed wait', async () => {
+    const { world, deps, prompts, reruns, sleeps } = redWorld([['unit']], { rerunTurnsGreen: true })
+    const result = await runLoopInProcessSafe(world, deps)
+    expect(sleeps.filter((ms) => ms === CI_PARENT_WAIT_POLL_MS)).toHaveLength(
+      CI_PARENT_WAIT_MAX_MS / CI_PARENT_WAIT_POLL_MS
+    )
+    expect(reruns).toEqual([])
+    expect(prompts).toHaveLength(1)
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+  })
+
+  it('sends a check that fails only on the task branch back to the Developer after its one rerun', async () => {
+    const { world, deps, prompts, reruns } = redWorld([['another-check']], { rerunTurnsGreen: false })
+    await runLoopInProcessSafe(world, deps)
+    expect(reruns[0]).toBe(41)
+    expect(prompts.length).toBeGreaterThanOrEqual(2)
+    expect(prompts[1]).toMatch(/unit/)
   })
 })
 
@@ -2066,8 +2140,8 @@ describe('devReviewLoop — a tooling_unavailable report on a red check is rerun
   })
 })
 
-describe('devReviewLoop — an unchanged Developer turn reruns the red head once per round', () => {
-  it('reruns the failed workflow and reaches reviewers without a second Developer dispatch', async () => {
+describe('devReviewLoop — a red head is rerun once, never twice', () => {
+  it('reruns the failed workflow on the first red read and reaches reviewers without any Developer dispatch', async () => {
     const world = makeWorld({ worktreeExists: true, developerPushed: true, prOpened: true })
     world.gate = 'red'
     const reruns: number[] = []
@@ -2084,7 +2158,7 @@ describe('devReviewLoop — an unchanged Developer turn reruns the red head once
     )
     expect(result.finalDecision.type).toBe('publish')
     expect(reruns).toEqual([4242])
-    expect(world.dispatchCountByRole.developer).toBe(1)
+    expect(world.dispatchCountByRole.developer ?? 0).toBe(0)
     expect(world.dispatches.filter((dispatch) => dispatch.role === 'code-reviewer')).toHaveLength(1)
     expect(world.dispatches.filter((dispatch) => dispatch.role === 'security')).toHaveLength(1)
   })
