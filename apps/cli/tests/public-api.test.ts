@@ -4,12 +4,18 @@ import { join } from 'node:path'
 
 const repoRoot = join(import.meta.dir, '..', '..', '..')
 
-/** The runtime names an entry exports, read in a fresh process that also reports anything the import printed. */
-function importEntry(file: string): { names: string[]; stdout: string } {
-  const script = `const m = await import(${JSON.stringify(join(repoRoot, file))}); process.stderr.write(JSON.stringify(Object.keys(m).sort()))`
+const MARKER = 'EXPORTED-NAMES:'
+
+/** The runtime names an entry exports, read in a fresh process; `printed` is everything the import itself wrote to stdout or stderr. */
+function importEntry(file: string): { names: string[]; printed: string } {
+  const script = `const m = await import(${JSON.stringify(join(repoRoot, file))}); console.log('${MARKER}' + JSON.stringify(Object.keys(m).sort()))`
   const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', cwd: repoRoot })
   expect(run.status).toBe(0)
-  return { names: JSON.parse(run.stderr) as string[], stdout: run.stdout }
+  const lines = run.stdout.split('\n').filter((line) => line !== '')
+  const marked = lines.filter((line) => line.startsWith(MARKER))
+  expect(marked).toHaveLength(1)
+  const printed = [...lines.filter((line) => !line.startsWith(MARKER)), run.stderr].join('')
+  return { names: JSON.parse((marked[0] as string).slice(MARKER.length)) as string[], printed }
 }
 
 describe('the library entries', () => {
@@ -21,13 +27,13 @@ describe('the library entries', () => {
       'evaluateVocabularyCitation',
       'scanRetiredVocabulary'
     ])
-    expect(entry.stdout).toBe('')
+    expect(entry.printed).toBe('')
   })
 
   test('the harness entry exports exactly the resolver and the loader and prints nothing on import', () => {
     const entry = importEntry('harness/kernel/public-api.ts')
     expect(entry.names).toEqual(['loadProcess', 'resolveRepo'])
-    expect(entry.stdout).toBe('')
+    expect(entry.printed).toBe('')
   })
 
   test('the process entry values keep their behaviour', async () => {

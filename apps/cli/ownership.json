@@ -105,6 +105,7 @@
       "tests/package-root.test.ts",
       "tests/placement.test.ts",
       "tests/platform-independence.test.ts",
+      "tests/public-api.test.ts",
       "tests/quickstart.test.ts",
       "tests/serial-lock.test.ts",
       "tests/studio.test.ts",
