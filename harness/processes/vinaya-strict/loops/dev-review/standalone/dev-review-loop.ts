@@ -6973,7 +6973,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // rate limit's waits), goes in and the pause comes out. A connection
       // failure reaching here was not absorbed in place (a role was
       // dispatched in the iteration), so it pauses as it always did.
-      const errorClass: DriverErrorClass = missingSources !== null ? 'missing_source' : classifyDriverError(err)
+      // Here, as before, an error that is both a rate limit and a connection failure narrates as the rate limit.
+      const classified = classifyDriverError(err)
+      const errorClass: DriverErrorClass =
+        missingSources !== null
+          ? 'missing_source'
+          : classified === 'forge_connection' && isGitHubRateLimitError(err)
+            ? 'rate_limit'
+            : classified
       const errorMessage = err instanceof Error ? err.message : String(err)
       const narration =
         errorClass === 'sandbox_refused' || errorClass === 'missing_source' || errorClass === 'sign_in_refused'
