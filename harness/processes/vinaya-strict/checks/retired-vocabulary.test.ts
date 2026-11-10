@@ -478,7 +478,9 @@ describe('the gate can see what it bans', () => {
   })
 
   it('`log entries` matches only the phrase as its own words — `catalog entries` stays legal', () => {
-    const pattern = '(^|[^a-zA-Z])log entries'
+    const pattern = [...RETIRED_IN_PRODUCT, ...RETIRED_IN_DOCTRINE].find((p) => p.includes('log entries'))
+    expect(pattern, 'the `log entries` retired pattern moved — update this test').toBeDefined()
+    if (pattern === undefined) return
     expect(matches(pattern, "the seat's catalog entries")).toBe(false)
     expect(matches(pattern, 'Type 1 decisions without log entries')).toBe(true)
     expect(matches(pattern, 'log entries at line start')).toBe(true)
