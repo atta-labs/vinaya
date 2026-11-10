@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../harness/kernel/conformance/unit/process-fixture'
 
 const repoRoot = join(import.meta.dir, '..', '..', '..')
 
@@ -9,7 +9,11 @@ const MARKER = 'EXPORTED-NAMES:'
 /** The runtime names an entry exports, read in a fresh process; `printed` is everything the import itself wrote to stdout or stderr. */
 function importEntry(file: string): { names: string[]; printed: string } {
   const script = `const m = await import(${JSON.stringify(join(repoRoot, file))}); console.log('${MARKER}' + JSON.stringify(Object.keys(m).sort()))`
-  const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', cwd: repoRoot })
+  const run = spawnSyncBudgeted(process.execPath, ['-e', script], {
+    encoding: 'utf8',
+    cwd: repoRoot,
+    env: stripVinayaEnv()
+  })
   expect(run.status).toBe(0)
   const lines = run.stdout.split('\n').filter((line) => line !== '')
   const marked = lines.filter((line) => line.startsWith(MARKER))
