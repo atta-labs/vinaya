@@ -94,7 +94,8 @@
         "scripts/test-suites/turbo-test-task-uncached.test.ts",
         "scripts/release/release.test.ts",
         "scripts/ci/record-reads.test.ts",
-        "scripts/test-suites/real-replay.test.ts"
+        "scripts/test-suites/real-replay.test.ts",
+        "scripts/marker-rewrite/rewrite-open-threads.test.ts"
       ]
     },
     {
