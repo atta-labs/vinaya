@@ -96,7 +96,7 @@ describe('the process Log sink factory', () => {
         env: {
           ...stripVinayaEnv(),
           HOME: scratch,
-          AEG_REPO: 'example/example',
+          VINAYA_REPO: 'example/example',
           VINAYA_TASK: '404',
           VINAYA_RUNTIME_DIR: join(scratch, 'runtime')
         }

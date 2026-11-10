@@ -131,7 +131,7 @@ function git(args: string[]): string {
 
 /** Same shape `checks/bin/check-dispatch-readiness.ts` uses — kept local rather than a fourth copy of `resolveEdge`'s own two prior consolidations. */
 function resolveRepo(): { owner: string; repo: string } | null {
-  const fromEnv = process.env.AEG_REPO
+  const fromEnv = process.env.VINAYA_REPO
   if (fromEnv) {
     const m = fromEnv.match(/^([^/]+)\/(.+)$/)
     if (m?.[1] && m[2]) return { owner: m[1], repo: m[2] }
@@ -162,7 +162,7 @@ function resolveRepo(): { owner: string; repo: string } | null {
  *     dispatch renders from but no `harness/processes/vinaya-strict/` of its own, so this gate
  *     switched itself off and printed a pass for an Issue `task run` then
  *     refused at brief render.
- *  2. **The owner/repo resolves** (`AEG_REPO`, or a GitHub `origin` remote) —
+ *  2. **The owner/repo resolves** (`VINAYA_REPO`, or a GitHub `origin` remote) —
  *     the render reads the forge under that identity.
  *  3. **A git work tree** — the render shells out to `git ls-files`/`git
  *     rev-parse` to build the surface map and pin the revision; outside a work
@@ -186,7 +186,8 @@ export function canRenderBriefFromHere(): BriefRenderability {
   if (resolveRepo() === null) {
     return {
       ok: false,
-      reason: 'the owner/repo could not be resolved (set `AEG_REPO=owner/repo`, or confirm `git remote get-url origin`)'
+      reason:
+        'the owner/repo could not be resolved (set `VINAYA_REPO=owner/repo`, or confirm `git remote get-url origin`)'
     }
   }
   if (git(['rev-parse', '--is-inside-work-tree']) !== 'true') {
@@ -728,7 +729,7 @@ export async function assembleAndRenderBrief(
   if (!repo) {
     return {
       ok: false,
-      missing: ['could not resolve owner/repo (set AEG_REPO=owner/repo, or confirm `git remote get-url origin`).']
+      missing: ['could not resolve owner/repo (set VINAYA_REPO=owner/repo, or confirm `git remote get-url origin`).']
     }
   }
 
@@ -1044,7 +1045,7 @@ export async function assembleAndRenderBriefForIssue(
   if (!repo) {
     return {
       ok: false,
-      missing: ['could not resolve owner/repo (set AEG_REPO=owner/repo, or confirm `git remote get-url origin`).']
+      missing: ['could not resolve owner/repo (set VINAYA_REPO=owner/repo, or confirm `git remote get-url origin`).']
     }
   }
 

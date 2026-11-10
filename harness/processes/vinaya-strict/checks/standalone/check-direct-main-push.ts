@@ -130,7 +130,7 @@ async function main(): Promise<void> {
 
   const repo = await resolveRepo()
   if (!repo) {
-    console.error('[check-direct-main-push] could not resolve a GitHub repo (set AEG_REPO or check `git remote`).')
+    console.error('[check-direct-main-push] could not resolve a GitHub repo (set VINAYA_REPO or check `git remote`).')
     process.exit(1)
   }
 

@@ -120,7 +120,7 @@ binary and version `adapters.ts`'s `CLAUDE_MCP_ADAPTER` already records for
 its own registration-format check, re-confirmed here as still current.
 
 Real typed event emitted by the real `log()` sink for this run (`meta.repo`
-reads `attalabs/vinaya` because `buildSandbox()`'s own `AEG_REPO` fixture
+reads `attalabs/vinaya` because `buildSandbox()`'s own `VINAYA_REPO` fixture
 value, not this repo's real `atta-labs/vinaya` slug, resolves inside the
 sandbox — a harness cosmetic, not a defect in the event itself):
 

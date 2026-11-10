@@ -23,13 +23,13 @@ describe('buildCheckEnv', () => {
   })
 
   it('`true` forwards the caller value for that exact key when set', () => {
-    const out = buildCheckEnv({ AEG_REPO: true }, { ...BASELINE_CALLER_ENV, AEG_REPO: 'owner/repo' })
-    expect(out.AEG_REPO).toBe('owner/repo')
+    const out = buildCheckEnv({ VINAYA_REPO: true }, { ...BASELINE_CALLER_ENV, VINAYA_REPO: 'owner/repo' })
+    expect(out.VINAYA_REPO).toBe('owner/repo')
   })
 
   it('`true` omits the key entirely when the caller does not have it set', () => {
-    const out = buildCheckEnv({ AEG_REPO: true }, BASELINE_CALLER_ENV)
-    expect('AEG_REPO' in out).toBe(false)
+    const out = buildCheckEnv({ VINAYA_REPO: true }, BASELINE_CALLER_ENV)
+    expect('VINAYA_REPO' in out).toBe(false)
   })
 
   it('`{ optional: true }` forwards the caller value when set', () => {

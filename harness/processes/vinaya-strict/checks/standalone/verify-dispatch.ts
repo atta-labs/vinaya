@@ -974,7 +974,7 @@ async function runPremiseModeFromIssue(trancheSlug: string, taskId: string): Pro
   const repo = await resolveTargetRepository()
   if (!repo) {
     console.error(
-      'verify-dispatch --premise: could not resolve a GitHub repo (set AEG_REPO=owner/repo, or confirm `gh auth login`).'
+      'verify-dispatch --premise: could not resolve a GitHub repo (set VINAYA_REPO=owner/repo, or confirm `gh auth login`).'
     )
     process.exit(1)
   }
@@ -1199,7 +1199,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
   const token = await resolveGithubToken()
   if (!repo || !token) {
     console.error(
-      'verify-dispatch severity:infra — could not resolve a GitHub repo/token (set AEG_REPO / GITHUB_TOKEN, or `gh auth login`). Cannot evaluate forge-dependent predicates.'
+      'verify-dispatch severity:infra — could not resolve a GitHub repo/token (set VINAYA_REPO / GITHUB_TOKEN, or `gh auth login`). Cannot evaluate forge-dependent predicates.'
     )
     process.exit(1)
   }
@@ -1328,7 +1328,7 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
   const token = await resolveGithubToken()
   if (!repo || !token) {
     console.error(
-      'verify-dispatch severity:infra — could not resolve a GitHub repo/token (set AEG_REPO / GITHUB_TOKEN, or `gh auth login`). Cannot evaluate forge-dependent predicates.'
+      'verify-dispatch severity:infra — could not resolve a GitHub repo/token (set VINAYA_REPO / GITHUB_TOKEN, or `gh auth login`). Cannot evaluate forge-dependent predicates.'
     )
     process.exit(1)
   }

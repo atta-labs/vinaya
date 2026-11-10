@@ -80,7 +80,7 @@ describe('vinaya brief render — --surfaces is an override, not a requirement (
         encoding: 'utf8',
         cwd: outside,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, AEG_REPO: '' }
+        env: { ...process.env, VINAYA_REPO: '' }
       })
       expect(result).toBeDefined()
     } catch (e) {

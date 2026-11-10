@@ -99,7 +99,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  delete process.env.AEG_REPO
+  delete process.env.VINAYA_REPO
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
@@ -148,13 +148,13 @@ describe('target repository resolution', () => {
     })
   })
 
-  it('preserves AEG_REPO as the highest-priority override', async () => {
+  it('preserves VINAYA_REPO as the highest-priority override', async () => {
     const target = temporaryRepository()
-    process.env.AEG_REPO = 'override/project'
+    process.env.VINAYA_REPO = 'override/project'
 
     expect(
       await resolveTargetRepository(target, (() => {
-        throw new Error('origin lookup must not run when AEG_REPO is valid')
+        throw new Error('origin lookup must not run when VINAYA_REPO is valid')
       }) as typeof actualChildProcess.execFileSync)
     ).toEqual({ owner: 'override', repo: 'project' })
   })

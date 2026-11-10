@@ -109,9 +109,9 @@ describe('check-coherence bin under a failing forge', () => {
           ...stripVinayaEnv(),
           PATH: `${binDir}:${process.env.PATH ?? ''}`,
           HOME: process.env.HOME ?? root,
-          AEG_REPO: 'fixture-owner/fixture-repo',
+          VINAYA_REPO: 'fixture-owner/fixture-repo',
           // The Principal read resolves its repository from the runner's
-          // variable, not `AEG_REPO`; the stub answers it as `gh --jq .content` would.
+          // variable, not `VINAYA_REPO`; the stub answers it as `gh --jq .content` would.
           GITHUB_REPOSITORY: 'fixture-owner/fixture-repo',
           GITHUB_TOKEN: 'dummy',
           BRANCH: `task/${SLUG}/1`,

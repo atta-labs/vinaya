@@ -279,7 +279,7 @@ describe('real runtime directory guard', () => {
         const out = spawnSyncBudgeted(
           'bun',
           ['test', '--preload', join(import.meta.dir, '..', '..', 'test-preload.ts'), probe],
-          { cwd: work, env: { ...stripVinayaEnv(), HOME: home, AEG_REPO: 'o/r' }, encoding: 'utf8' }
+          { cwd: work, env: { ...stripVinayaEnv(), HOME: home, VINAYA_REPO: 'o/r' }, encoding: 'utf8' }
         )
         return { status: out.status, output: `${out.stdout}${out.stderr}` }
       }
@@ -383,7 +383,7 @@ describe('real runtime directory guard', () => {
         Bun.sleepSync(1100)
         const out = spawnSyncBudgeted('bun', ['test', '--preload', preloadPath, probe], {
           cwd: work,
-          env: { ...stripVinayaEnv(), HOME: home, AEG_REPO: 'o/r' },
+          env: { ...stripVinayaEnv(), HOME: home, VINAYA_REPO: 'o/r' },
           encoding: 'utf8'
         })
         return { status: out.status, output: `${out.stdout}${out.stderr}` }
@@ -506,7 +506,7 @@ describe('real runtime directory guard', () => {
       writeFileSync(join(bin, 'git'), `#!/bin/sh\necho called >> "${marker}"\nexit 1\n`, { mode: 0o755 })
       const core = join(import.meta.dir, '../../../../../kernel/conformance/unit/real-runtime-guard-core.ts')
       const env: NodeJS.ProcessEnv = { ...stripVinayaEnv(), PATH: `${bin}:${process.env.PATH ?? ''}` }
-      delete env.AEG_REPO
+      delete env.VINAYA_REPO
       const out = spawnSyncBudgeted(
         'bun',
         ['-e', `const m = await import(${JSON.stringify(core)}); console.log('RUNTIME=' + m.realRuntimeDir())`],

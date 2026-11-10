@@ -2742,7 +2742,7 @@ exit 1
       ...stripVinayaEnv(),
       HOME: home,
       PATH: `${bin}:${process.env.PATH ?? ''}`,
-      AEG_REPO: 'acme/widget',
+      VINAYA_REPO: 'acme/widget',
       GITHUB_REPOSITORY: 'acme/widget'
     }
     const child = spawnSyncBudgeted(

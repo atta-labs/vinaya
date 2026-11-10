@@ -61,7 +61,7 @@ const LIVE_AT_START = liveTaskPrefixes(START_ROOT)
 /**
  * The real runtime directory, `~/.vinaya/runtime/<owner>-<repo>`, resolved from
  * the default home — never from `VINAYA_RUNTIME_DIR`, which a test or a
- * dispatched run may point elsewhere. The repository comes from `AEG_REPO`,
+ * dispatched run may point elsewhere. The repository comes from `VINAYA_REPO`,
  * else `GITHUB_REPOSITORY` (set on every Actions runner), else `origin`; it is
  * derived here rather than imported so this adds no dependent to the path
  * resolver's own test selection. It is resolved once per process: every test
@@ -72,7 +72,7 @@ export function realRuntimeDir(): string {
   if (resolvedRuntimeDir !== undefined) return resolvedRuntimeDir
   let owner: string | undefined
   let repo: string | undefined
-  const fromEnv = /^([^/]+)\/(.+)$/.exec(process.env.AEG_REPO || process.env.GITHUB_REPOSITORY || '')
+  const fromEnv = /^([^/]+)\/(.+)$/.exec(process.env.VINAYA_REPO || process.env.GITHUB_REPOSITORY || '')
   if (fromEnv) [, owner, repo] = fromEnv
   else {
     try {
