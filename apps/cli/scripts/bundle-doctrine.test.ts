@@ -45,7 +45,7 @@ describe('bundle-doctrine — the milestone/task-model regression', () => {
     // (see bundle-doctrine.ts's own top comment) — excluded here by the same
     // logical key, not re-derived, so this list and the script's own exclusion
     // reasoning stay one decision, not two.
-    const deliberatelyExcluded = new Set(['aeg-manual-flow.md', 'documentation-coherence.md', 'reviewer-prompt.md'])
+    const deliberatelyExcluded = new Set(['manual-flow.md', 'documentation-coherence.md', 'reviewer-prompt.md'])
 
     const portable = DOCTRINE_MAP.filter((entry) => !deliberatelyExcluded.has(entry.key))
 

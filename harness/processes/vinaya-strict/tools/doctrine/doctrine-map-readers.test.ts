@@ -39,7 +39,7 @@ describe('the doctrine map', () => {
   })
 
   it('keeps the old layout as logical keys and serves the front door from its process-relative source', () => {
-    expect(FRONT_DOOR_KEY).toBe('skills/aeg/SKILL.md')
+    expect(FRONT_DOOR_KEY).toBe('skills/vinaya/SKILL.md')
     expect(ENTRY_SEGMENTS.join('/')).toBe(doctrineSource(FRONT_DOOR_KEY))
     expect(keyForRepoPath(MOVED_ROLE)).toBe('roles/developer.md')
     expect(keyForRepoPath(NOT_DOCTRINE)).toBeUndefined()

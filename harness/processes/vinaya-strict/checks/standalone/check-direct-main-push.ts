@@ -103,7 +103,7 @@ function openIncident(sha: string, owner: string, repo: string): void {
     '',
     `Commit \`${sha}\` landed on \`main\` but the commits→pulls association API reports no merged pull request that introduced it.`,
     '',
-    'This is a detection-only finding — nothing was reverted or mutated. AEG routes every repo-file change through a worktree branch + PR + green merge; investigate how this commit reached `main` directly (a bypassed hook, a manual admin push, or an unusual merge shape the association API cannot explain).'
+    'This is a detection-only finding — nothing was reverted or mutated. Vinaya routes every repo-file change through a worktree branch + PR + green merge; investigate how this commit reached `main` directly (a bypassed hook, a manual admin push, or an unusual merge shape the association API cannot explain).'
   ].join('\n')
 
   sh([

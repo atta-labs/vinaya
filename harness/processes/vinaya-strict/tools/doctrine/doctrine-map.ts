@@ -38,7 +38,7 @@ export const DOCTRINE_TREE = 'harness/processes/vinaya-strict'
 export const BUNDLED_DOCTRINE_DIR = 'vinaya-strict'
 
 export const DOCTRINE_MAP: readonly DoctrineMapEntry[] = [
-  { key: 'aeg-manual-flow.md', source: 'doctrine/manual-flow.md', ships: false },
+  { key: 'manual-flow.md', source: 'doctrine/manual-flow.md', ships: false },
   { key: 'contracts/architect-planner.md', source: 'doctrine/contracts/architect-planner.md', ships: true },
   {
     key: 'contracts/archivist-tranche-archivist.md',
@@ -79,17 +79,17 @@ export const DOCTRINE_MAP: readonly DoctrineMapEntry[] = [
     ships: true
   },
   {
-    key: 'skills/aeg-context-packets/SKILL.md',
+    key: 'skills/context-packets/SKILL.md',
     source: 'doctrine/skills/context-packets/SKILL.md',
     ships: true
   },
   {
-    key: 'skills/aeg-context-packets/examples/operator-start.md',
+    key: 'skills/context-packets/examples/operator-start.md',
     source: 'doctrine/skills/context-packets/examples/operator-start.md',
     ships: true
   },
-  { key: 'skills/aeg-roles/SKILL.md', source: 'doctrine/skills/roles/SKILL.md', ships: true },
-  { key: 'skills/aeg/SKILL.md', source: 'doctrine/skills/vinaya/SKILL.md', ships: true },
+  { key: 'skills/roles/SKILL.md', source: 'doctrine/skills/roles/SKILL.md', ships: true },
+  { key: 'skills/vinaya/SKILL.md', source: 'doctrine/skills/vinaya/SKILL.md', ships: true },
   { key: 'state-machine.md', source: 'doctrine/state-machine.md', ships: true },
   { key: 'task-model.md', source: 'doctrine/task-model.md', ships: true },
   {
@@ -120,7 +120,7 @@ export const DOCTRINE_MAP: readonly DoctrineMapEntry[] = [
 ]
 
 /** The doctrine's front door: the logical key of the operating-model skill every session loads first. */
-export const FRONT_DOOR_KEY = 'skills/aeg/SKILL.md'
+export const FRONT_DOOR_KEY = 'skills/vinaya/SKILL.md'
 
 const BY_KEY: ReadonlyMap<string, DoctrineMapEntry> = new Map(DOCTRINE_MAP.map((entry) => [entry.key, entry]))
 
