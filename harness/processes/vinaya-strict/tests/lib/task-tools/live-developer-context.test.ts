@@ -116,6 +116,7 @@ describe('publication preconditions on the shared live context', () => {
     expect(world.rangeBases).toContain('base-1')
     expect(world.rangeBases).not.toContain(BASE)
     expect(state.publicationExpectedBase).toBe('base-1')
+    expect(state.turnPreHead).toBe('commit-1')
   })
 
   test('a moved base that is not an ancestor relation is refused and nothing is re-recorded', async () => {
