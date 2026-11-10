@@ -29,6 +29,16 @@ const logSinkFactory = (): LogSinkFactoryModule => require('../log/log-sink-fact
 const policies = (): PoliciesModule => require('../policies/vinaya-policies.js') as PoliciesModule
 const configSection = (): ConfigSectionModule => require('../config/vinaya-config-section.js') as ConfigSectionModule
 
+/**
+ * Names the modules loaded by `require` above as dynamic imports, so the test selector — which does not follow
+ * `require` — still reaches every test through them. Never called.
+ */
+export const lazyIntegrationModules = (): Promise<unknown>[] => [
+  import('../policies/vinaya-policies.js'),
+  import('../config/vinaya-config-section.js'),
+  import('../log/log-sink-factory.js')
+]
+
 export const vinayaProcessIntegration: ProcessIntegration = {
   checks: () => coreCheckRegistry(),
   policies: {
