@@ -90,8 +90,15 @@ import {
   tolerateReviewerExit,
   launcherRoleOf,
   roleBridgeCommands,
-  ROLE_HOST_BRIDGES
+  ROLE_HOST_BRIDGES,
+  liveForge,
+  retryForgeRead,
+  retryingForge
 } from '../bin/run-engine'
+import {
+  ENGINE_FORGE_RETRY_MAX_ATTEMPTS,
+  ENGINE_FORGE_RETRY_WAIT_MS
+} from '../loops/dev-review/standalone/dev-review-loop/stop-decision'
 import { ROLE_NAMES } from '../../../../harness/kernel/adapters/agents/manifest'
 import { createDispatchCapabilityTable } from '../../../kernel/tools/host/dev-tools-host'
 
@@ -1865,5 +1872,73 @@ describe("version 2's stage-change lines", () => {
       const log = readFileSync(loopLogPathFor(null, V2_TASK, observed.world.runtimeDir), 'utf8').split('\n')
       expect(newestStage(log)).toMatchObject({ round: 1, stage: 'paused_principal', reason: 'max_rounds' })
     })
+  })
+})
+
+describe('the Engine runner retries a forge connection failure on the newest-ruling read', () => {
+  const connectionFailure = (): Error =>
+    Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT', hostname: 'api.github.com' })
+
+  test('a read that recovers is retried after the fixed wait and returns', () => {
+    const waits: number[] = []
+    let calls = 0
+    const read = () => {
+      calls += 1
+      if (calls <= 2) throw connectionFailure()
+      return 7
+    }
+    expect(retryForgeRead(read, (ms) => waits.push(ms))).toBe(7)
+    expect(waits).toEqual([ENGINE_FORGE_RETRY_WAIT_MS, ENGINE_FORGE_RETRY_WAIT_MS])
+  })
+
+  test('a read that never recovers throws its error once the bound is spent, as before', () => {
+    const waits: number[] = []
+    const failure = connectionFailure()
+    expect(() =>
+      retryForgeRead(
+        () => {
+          throw failure
+        },
+        (ms) => waits.push(ms)
+      )
+    ).toThrow(failure)
+    expect(waits).toHaveLength(ENGINE_FORGE_RETRY_MAX_ATTEMPTS)
+  })
+
+  test('any other error is thrown at once, with no wait', () => {
+    const waits: number[] = []
+    expect(() =>
+      retryForgeRead(
+        () => {
+          throw new Error('HTTP 500')
+        },
+        (ms) => waits.push(ms)
+      )
+    ).toThrow('HTTP 500')
+    expect(waits).toEqual([])
+  })
+
+  test('the wrapped forge retries both newest-ruling reads and leaves the rest alone', () => {
+    const waits: number[] = []
+    let calls = 0
+    const forge = retryingForge(
+      {
+        ...liveForge,
+        fetchNewestRulingOrdinal: () => {
+          calls += 1
+          if (calls === 1) throw connectionFailure()
+          return 3
+        },
+        fetchNewestIssueRulingOrdinal: () => {
+          calls += 1
+          if (calls === 3) throw connectionFailure()
+          return 4
+        }
+      },
+      (ms) => waits.push(ms)
+    )
+    expect(forge.fetchNewestRulingOrdinal(1)).toBe(3)
+    expect(forge.fetchNewestIssueRulingOrdinal(1)).toBe(4)
+    expect(waits).toHaveLength(2)
   })
 })

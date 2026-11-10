@@ -38,6 +38,7 @@ import {
   semanticErrors
 } from '../../../../executing/developer/developer-turn-result.js'
 import { runPath } from '../../../../../../kernel/run-paths.js'
+import { decideStop } from './stop-decision.js'
 
 // --- adapter ----------------------------------------------------------------
 
@@ -487,17 +488,24 @@ export class DeveloperTurnResultPause extends Error {
 
 /** The pause an accepted `blocked`/`needs_ruling` result raises; `null` for `completed`. */
 export function pauseForAcceptedResult(result: DeveloperTurnResult): DeveloperTurnResultPause | null {
-  if (result.status === 'blocked') {
-    return new DeveloperTurnResultPause(
-      'blocked',
-      `the Developer reported the task blocked (${result.blocker.kind}): ${result.blocker.detail} — ${result.summary}`
-    )
-  }
-  if (result.status === 'needs_ruling') {
-    return new DeveloperTurnResultPause(
-      'needs_ruling',
-      `the Developer asks for a ruling: ${result.rulingRequest.question} (decisions: ${result.rulingRequest.decisions.join(', ')}) — ${result.summary}`
-    )
-  }
-  return null
+  if (result.status === 'completed') return null
+  // The one decision function names the pause; the kind only picks the Log's reason code.
+  const decision = decideStop(
+    result.status === 'blocked'
+      ? {
+          kind: 'developer_blocked',
+          blockerKind: result.blocker.kind,
+          blockerDetail: result.blocker.detail,
+          summary: result.summary
+        }
+      : {
+          kind: 'developer_needs_ruling',
+          question: result.rulingRequest.question,
+          decisions: result.rulingRequest.decisions,
+          summary: result.summary
+        }
+  )
+  // Every Developer-turn event pauses today; any other decision is not a pause to raise here.
+  if (decision.type !== 'pause') return null
+  return new DeveloperTurnResultPause(result.status, decision.detail)
 }
