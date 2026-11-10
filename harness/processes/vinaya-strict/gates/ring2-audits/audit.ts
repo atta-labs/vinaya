@@ -1,9 +1,8 @@
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
 import { CLI_OPERATION_STREAM, recordCliOperationAtExit } from '../../../../kernel/log/client/cli-operation-log.js'
 import { logSync } from '../../../../kernel/log/log-sink.js'
-import { installVinayaConfigProvider } from '../../integration/config/compose.js'
-import { installVinayaLogSinkFactory } from '../../integration/log/log-sink-factory.js'
-import { installVinayaCheckRegistry } from '../../checks/registry.js'
+import { installProcess } from '../../../../kernel/dev-process-socket/contract/install-process.js'
+import { vinayaProcessIntegration } from '../../integration/process/process-integration.js'
 // `vinaya audit` — the two ring-2 detection/notification checks, callable
 // directly instead of only from the `daily-drift` and
 // `direct-main-push-detection` jobs in the generated `vinaya-archivist.yml`
@@ -460,9 +459,7 @@ export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
 }
 
 if (isEntryPoint(import.meta.url, 'audit')) {
-  installVinayaConfigProvider()
-  installVinayaLogSinkFactory()
-  installVinayaCheckRegistry()
+  installProcess(vinayaProcessIntegration, ['log', 'config', 'checks'])
   recordCliOperationAtExit(['audit', ...process.argv.slice(2)], {
     on: (event, handler) => process.on(event, handler),
     logSync,

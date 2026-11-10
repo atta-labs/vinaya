@@ -22,7 +22,8 @@
  * the role starts.
  */
 
-import { installVinayaLogSinkFactory } from './step-one'
+import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
+import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { DeveloperCapabilityCase } from '../executing/developer/evals/developer-capability-suite'
@@ -347,7 +348,7 @@ export async function harborTrialCommand(
 
 if (import.meta.main) {
   // An entry point: Log events reach the sink the process factory builds.
-  installVinayaLogSinkFactory()
+  installProcess(vinayaProcessIntegration, ['log'])
   harborTrialCommand(process.argv.slice(2))
     .then((code) => process.exit(code))
     .catch((error) => {

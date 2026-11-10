@@ -1,7 +1,7 @@
 import { processHasLogDestination } from '../../../../apps/cli/src/lib/log-destination.js'
 
-type StartupModule = typeof import('./cli-startup.js')
-type ConfigComposeModule = typeof import('./config/compose.js')
+type InstallProcessModule = typeof import('../../../kernel/dev-process-socket/contract/install-process.js')
+type IntegrationModule = typeof import('./process/process-integration.js')
 type LogSinkModule = typeof import('../../../kernel/log/log-sink.js')
 type OperationLogModule = typeof import('../../../kernel/log/client/cli-operation-log.js')
 
@@ -16,11 +16,9 @@ let servicesInstalled = false
 export function installServices(): void {
   if (servicesInstalled) return
   servicesInstalled = true
-  const startup = require('./cli-startup.js') as StartupModule
-  const compose = require('./config/compose.js') as ConfigComposeModule
-  startup.installVinayaLogSinkFactory()
-  compose.installVinayaConfigProvider()
-  startup.installVinayaCheckRegistry()
+  const kernel = require('../../../kernel/dev-process-socket/contract/install-process.js') as InstallProcessModule
+  const { vinayaProcessIntegration } = require('./process/process-integration.js') as IntegrationModule
+  kernel.installProcess(vinayaProcessIntegration, ['log', 'config', 'checks'])
 }
 
 /**

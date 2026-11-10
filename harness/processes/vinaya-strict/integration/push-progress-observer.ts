@@ -9,13 +9,14 @@
  * Arguments: `<progress dir> <driver log path> <driver pid>`, all from the driver that spawned it. It only reads the
  * directory and only appends to the log; it never decides anything.
  */
-import { installVinayaConfigProvider } from './config/compose.js'
+import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process.js'
+import { vinayaProcessIntegration } from './process/process-integration.js'
 import { appendLoopLogLine } from '../../../kernel/log/client/loop-log.js'
 import { ProgressReader } from '../../../kernel/gates/ring0-hooks/pre-push/push-progress.js'
 
 // The composition root: the driver starts this program on its own, and the loop log and run paths it reaches read
 // configuration only through the provider this installs.
-installVinayaConfigProvider()
+installProcess(vinayaProcessIntegration, ['config'])
 
 /** How often the directory is read. */
 const POLL_MS = 200

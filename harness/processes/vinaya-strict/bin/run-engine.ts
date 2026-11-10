@@ -6,7 +6,8 @@ import {
   type LoopState
 } from '../tools/dev-review-policy/types'
 import type { PauseReason } from '../tools/dev-review-policy/types'
-import { installVinayaCheckRegistry } from '../checks/registry'
+import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
+import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import { Database } from 'bun:sqlite'
 import type { RoleName } from '../../../../harness/kernel/adapters/agents/manifest'
 import { execFileSync } from 'node:child_process'
@@ -125,7 +126,7 @@ import {
   type LogSinkDeps,
   type LaunchLogAttribution
 } from '../../../kernel/log/log-sink'
-import { createVinayaLogSink, installVinayaLogSinkFactory } from '../integration/log/log-sink-factory'
+import { createVinayaLogSink } from '../integration/log/log-sink-factory'
 import { setEngineLogIdentity } from './engine-log-identity'
 import {
   abortableSleep,
@@ -204,7 +205,6 @@ import {
   type UsageLimit
 } from '../loops/dev-review/dispatch/dispatch'
 import { loadConfig } from '../integration/config/compose'
-import { installVinayaConfigProvider } from '../integration/config/compose'
 import { crossRunnerRefusal, recordTaskRunner } from '../loops/dev-review/run-control/task-run-engine'
 import {
   createDispatchCapabilityTable,
@@ -3518,9 +3518,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 
 if (import.meta.main) {
   // The composition root: kernel code reads configuration through the provider this installs, before the run starts.
-  installVinayaConfigProvider()
-  installVinayaCheckRegistry()
-  installVinayaLogSinkFactory()
+  installProcess(vinayaProcessIntegration, ['log', 'config', 'checks'])
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {
