@@ -72,6 +72,17 @@ export type StopEvent =
       /** How many retries this error's rule has already spent. */
       attempts?: number
     }
+  | {
+      /**
+       * An earlier Developer launch bound no vendor session. `ended` is the
+       * caller's resolved fact: no process of that launch is left that a fresh
+       * session could race — its process is gone, or its recorded dispatcher
+       * is the controller deciding now.
+       */
+      kind: 'unbound_launch'
+      attempt: number
+      ended: boolean
+    }
 
 /** The bound a non-pause decision may spend. */
 export type StopBound =
@@ -142,8 +153,21 @@ export function pauseForDriverError(
   }
 }
 
+/** The pause an unbound earlier launch whose process may still run decides — today's text. */
+export function unboundLaunchPauseDetail(attempt: number): string {
+  return (
+    `the developer's prior launch (attempt ${attempt}) bound no vendor session and its process may still ` +
+    'be running — refusing to start a second worker beside it'
+  )
+}
+
 export function decideStop(event: StopEvent): StopDecision {
   switch (event.kind) {
+    case 'unbound_launch':
+      // An ended launch left no session and no turn state to lose: one fresh session replaces it.
+      return event.ended
+        ? { type: 'dispatch_fresh', bound: { kind: 'attempts', used: 1, max: 1 } }
+        : { type: 'pause', reason: 'infrastructure', detail: unboundLaunchPauseDetail(event.attempt) }
     case 'developer_blocked':
       return { type: 'pause', reason: 'escalation', detail: developerBlockedDetail(event) }
     case 'developer_needs_ruling':

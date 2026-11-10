@@ -717,7 +717,8 @@ function recoveryDeps(over: Partial<RecoveryDeps> = {}): RecoveryDeps {
       isPidAlive: () => false,
       hostname: () => hostname(),
       getProcessSnapshot: () => null,
-      terminateChild: () => {}
+      terminateChild: () => {},
+      selfPid: () => 4242
     },
     heldVerdict: () => null,
     currentManifest: () => null,
@@ -737,7 +738,8 @@ describe('recovering a re-run', () => {
             hostname: () => record.host,
             getProcessSnapshot: () =>
               ({ ppid: record.dispatcherPid, startedAt: record.childStartedAt, command: record.childCommand }) as never,
-            terminateChild: () => {}
+            terminateChild: () => {},
+            selfPid: () => 4242
           }
         })
       }
@@ -791,7 +793,8 @@ describe('recovering a re-run', () => {
           hostname: () => record.host,
           getProcessSnapshot: () =>
             ({ ppid: 1, startedAt: record.childStartedAt, command: record.childCommand }) as never,
-          terminateChild: (pid) => void ended.push(pid)
+          terminateChild: (pid) => void ended.push(pid),
+          selfPid: () => 4242
         }
       })
     )

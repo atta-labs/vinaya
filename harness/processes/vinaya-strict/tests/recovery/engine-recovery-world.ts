@@ -201,7 +201,8 @@ function recovery(world: World, loopState: () => TaskInput['loopState']): Recove
       isPidAlive: () => false,
       hostname: () => hostname(),
       getProcessSnapshot: () => null,
-      terminateChild: () => {}
+      terminateChild: () => {},
+      selfPid: () => 4242
     },
     heldVerdict: () => null,
     currentManifest: () => null

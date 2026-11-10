@@ -813,7 +813,8 @@ export function realLaunchDeps(
     isPidAlive: isDriverPidAlive,
     hostname: () => hostname(),
     getProcessSnapshot: snapshot,
-    terminateChild: terminate
+    terminateChild: terminate,
+    selfPid: () => process.pid
   }
 }
 

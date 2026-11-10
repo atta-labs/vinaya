@@ -3605,12 +3605,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /** O8: recorded once, at loop start — never re-derived. Re-read at every round entry (top of the `while(true)` below) and compared against this fixed watermark for commits touching `DRIVER_OWNED_PATHS`. */
     let baseHeadAtStart!: string
     /**
-     * O3: every finding id each round's handoff carried, keyed by the round
-     * the Developer answers it in — `addressedFindingIds` may name only these,
-     * on any dispatch of that round (a later commit-and-push resume may cite
-     * the same ids again).
+     * O3: every finding id the newest handoff carried — `addressedFindingIds`
+     * may name only these, on any dispatch of the round that answers it (a
+     * later commit-and-push resume may cite the same ids again). Read from the
+     * durable Developer handoff, which a restarted driver recovers from its
+     * `loop_state` record, never from a copy this process keeps.
      */
-    const handoffFindingIdsByRound = new Map<number, string[]>()
+    const handoffFindingIds = (): string[] => developerHandoff.findings.map((finding) => finding.id)
     /** The rounds whose one red-check rerun for a `tooling_unavailable` report is spent — a second report in the same round pauses. */
     const toolingRerunRounds = new Set<number>()
     /** The findings the newest review handed over, with the ids the Developer cites — set when a round's verdicts request changes, cleared by a ruling or a recovered verdict that carries no ids. */
@@ -4481,7 +4482,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
       // This is the same handoff the controller uses in settleTurnResult.
       // Passing it into the launcher makes the vendor schema turn-specific.
-      const turnResultKnownFindingIds = handoffFindingIdsByRound.get(roundNum) ?? []
+      const turnResultKnownFindingIds = handoffFindingIds()
       await recordDeveloperModel(roundNum)
       appendDriverLine(
         loopLogPath,
@@ -4906,8 +4907,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     function reportsTestFailure(handle: DispatchHandle, roundNum: number, answersFindings: boolean): boolean {
       const verdict = judgeTurnOutput(handle.turnOutput, {
         round: roundNum,
-        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
-        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
+        knownFindingIds: handoffFindingIds(),
+        requireAddressedFindings: answersFindings && handoffFindingIds().length > 0,
         documentation: handle.documentation ?? { sources: [], countedReads: [] }
       })
       return verdict.ok && verdict.result.status === 'blocked' && verdict.result.blocker.kind === 'test_failure'
@@ -4917,8 +4918,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     function endsInEscalation(handle: DispatchHandle, roundNum: number, answersFindings: boolean): boolean {
       const verdict = judgeTurnOutput(handle.turnOutput, {
         round: roundNum,
-        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
-        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
+        knownFindingIds: handoffFindingIds(),
+        requireAddressedFindings: answersFindings && handoffFindingIds().length > 0,
         documentation: handle.documentation ?? { sources: [], countedReads: [] }
       })
       return verdict.ok && pauseForAcceptedResult(verdict.result) !== null
@@ -4944,8 +4945,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     > {
       const verdict = judgeTurnOutput(handle.turnOutput, {
         round: roundNum,
-        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
-        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
+        knownFindingIds: handoffFindingIds(),
+        requireAddressedFindings: answersFindings && handoffFindingIds().length > 0,
         documentation: handle.documentation ?? { sources: [], countedReads: [] }
       })
       if (!verdict.ok || verdict.result.status !== 'blocked' || verdict.result.blocker.kind !== 'tooling_unavailable')
@@ -4992,8 +4993,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     ): Promise<{ runIds: number[]; ciConclusion: 'green' | 'red' | 'pending'; failingChecks: string[] } | null> {
       const verdict = judgeTurnOutput(handle.turnOutput, {
         round: roundNum,
-        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
-        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
+        knownFindingIds: handoffFindingIds(),
+        requireAddressedFindings: answersFindings && handoffFindingIds().length > 0,
         documentation: handle.documentation ?? { sources: [], countedReads: [] }
       })
       if (!verdict.ok || verdict.result.status !== 'blocked' || verdict.result.blocker.kind !== 'tooling_unavailable')
@@ -5056,7 +5057,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * `needs_ruling` result pauses it for the Principal.
      */
     async function settleTurnResult(handle: DispatchHandle, roundNum: number, answersFindings: boolean): Promise<void> {
-      const knownFindingIds = handoffFindingIdsByRound.get(roundNum) ?? []
+      const knownFindingIds = handoffFindingIds()
       const context = (documentation: DispatchHandle['documentation']): TurnResultControllerContext => ({
         round: roundNum,
         knownFindingIds,
@@ -7263,11 +7264,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // turn result of this round may cite, listed beside the findings
             // so the Developer cites exactly these.
             const handoff = isReviewFindingsRetry ? (lastHandoffFindings ?? []) : []
-            if (isReviewFindingsRetry)
-              handoffFindingIdsByRound.set(
-                round,
-                handoff.map((f) => f.id)
-              )
             const prompt = [
               // A resumed pause that was raised before the pull request existed
               // keeps its ruling on the task Issue: the first Developer dispatch

@@ -287,6 +287,7 @@ import {
   AGENT_EXIT_EVENT,
   agentOutput,
   createActions,
+  knownFindingIdsOf,
   gatePollOf,
   readAssessment,
   recordedDispatch,
@@ -2092,6 +2093,17 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           narrate(
             `effect ${effect.key} was issued at input version ${effect.inputVersion} and never acknowledged; its retry reconciles it at that version`
           )
+      }
+      // A checkpoint resume continues the round with the finding ids its handoff gave the Developer, read back from
+      // the checkpointed results: the task input of a restarted process starts with none, and no action runs
+      // between the handoff and the Developer's launch to set them.
+      if (choice.kind === 'resume' && options.taskInput?.developerContext) {
+        const resumed = await readEffectiveResumedStateFrom(saver, identity.threadId)
+        if (resumed !== null)
+          options.taskInput.developerContext = {
+            ...options.taskInput.developerContext,
+            knownFindingIds: knownFindingIdsOf(resumed.results)
+          }
       }
       // What a re-run reads before it dispatches: the prior launch, the round journal and any held verdict.
       const recovery = lifecycle.recovery ? recoverRun(lifecycle.recovery) : null

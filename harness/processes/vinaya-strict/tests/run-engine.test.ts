@@ -57,7 +57,8 @@ import {
   classifyReviewerOutputs,
   createActions,
   dispatchReviewers,
-  type TaskInput
+  type TaskInput,
+  withDeveloperContext
 } from '../executing/actions'
 import { heldVerdictPath, writeHeldVerdict } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import {
@@ -1963,5 +1964,60 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
     expect(forge.fetchNewestRulingOrdinal(1)).toBe(3)
     expect(forge.fetchNewestIssueRulingOrdinal(1)).toBe(4)
     expect(waits).toHaveLength(2)
+  })
+})
+
+describe("a restarted Engine run keeps the round's handed-over finding ids", () => {
+  test('the Developer launch after a restart carries the ids the checkpointed handoff gave the round', async () => {
+    const run = stubRun()
+    const freshTaskInput = (): TaskInput =>
+      ({
+        ...run.options.taskInput,
+        developerContext: { knownFindingIds: [], requiredSources: [] }
+      }) as unknown as TaskInput
+    const record = (seq: number) =>
+      JSON.stringify({ seq, state: { rounds: [] }, sendBack: { kind: 'review' }, decision: { type: 'revise' } })
+    const stubbed = run.options.actions!
+    // The production registry wraps every action in the shared Developer-context step; this one does too.
+    const wrapped = (task: TaskInput, actions: ActionRegistry): ActionRegistry =>
+      Object.fromEntries(Object.entries(actions).map(([name, action]) => [name, withDeveloperContext(task, action)]))
+    const schemas: string[] = []
+    run.options.spawnFn = (_command, args) => {
+      const role = (args[args.indexOf('--settings') + 1] ?? '').split('/').at(-2) ?? ''
+      if (role === 'developer') schemas.push(args[args.indexOf('--json-schema') + 1] ?? '')
+      return stubAgent(role, AGENT_LINES[role] ?? [])
+    }
+
+    const firstTask = freshTaskInput()
+    run.options.taskInput = firstTask
+    run.options.actions = wrapped(firstTask, {
+      ...stubbed,
+      'vinaya.assess-round': async () => ({ exitCode: 1, stdout: record(1) }),
+      'vinaya.build-revision-handoff': async () => {
+        // The driver dies once the handoff is checkpointed, before the Developer answers it.
+        run.options.control!.halt('driver killed in round 2')
+        return { exitCode: 0, stdout: JSON.stringify([{ id: 'R1-CR-1', line: '[MAJOR] src/a.ts:1' }]) }
+      }
+    })
+    const first = await runEngine(run.options)
+    expect(first.exitCode).toBe(2)
+    expect(schemas).toHaveLength(1)
+    expect(schemas[0]).not.toContain('R1-CR-1')
+
+    // A fresh process: the task input is built again from nothing, as a restarted driver's is.
+    const restartedTask = freshTaskInput()
+    const control = createRunControl()
+    run.options.taskInput = restartedTask
+    run.options.actions = wrapped(restartedTask, {
+      ...stubbed,
+      'vinaya.validate-developer-output': async () => {
+        control.halt('stop after the Developer turn')
+        return { exitCode: 0, stdout: record(2) }
+      }
+    })
+    const resumed = await runEngine({ ...run.options, control, heldPullRequestConflicts: async () => false })
+    expect(resumed.exitCode).toBe(2)
+    expect(schemas).toHaveLength(2)
+    expect(schemas[1]).toContain('R1-CR-1')
   })
 })
