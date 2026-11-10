@@ -1,8 +1,10 @@
 /**
  * The two runtime adapters (O1) — one per runtime that hosts the shared MCP
  * server (`server.ts`). They differ ONLY in how each runtime is told to launch
- * the server; the server, the protocol, and the five tools are identical across
- * both:
+ * the server; the server, the protocol, and the tools are identical across
+ * both. Each registers one server per seat Vinaya's seat table declares
+ * (`seatServerRegistrations`) — today the Operator's only, under the name and
+ * arguments it has always had:
  *
  *   - **Claude** registers a stdio MCP server in the project-root `.mcp.json`
  *     (`mcpServers.<name>.command`/`args`), generated through `artifacts.ts`
@@ -32,7 +34,8 @@
 import { ownVersion } from './artifacts.js'
 import type { VendoredVinaya } from '../tools/self-host.js'
 import { MCP_PROTOCOL_VERSION } from '../../../kernel/tools/mcp-protocol.js'
-import { TASK_TOOLS_MCP_SERVER_NAME } from './server.js'
+import { seatLaunchArguments } from '../../../kernel/tools/host/seat-host.js'
+import { vinayaToolSeats } from './server.js'
 import { type Program, PROGRAMS } from '../tools/programs.js'
 
 /** A launchable command: the program plus its argument vector, the shape both `.mcp.json` and Codex's TOML expect. */
@@ -51,6 +54,25 @@ export function taskToolsServerInvocation(selfHost: VendoredVinaya | null): Serv
     return { command: 'bun', args: [program.source] }
   }
   return { command: 'npx', args: ['--yes', '-p', `@attalabs/vinaya@${ownVersion()}`, program.bin] }
+}
+
+/** One MCP server registration: the name it is registered under and the launch that serves its seat. */
+export type SeatServerRegistration = { serverName: string; invocation: ServerInvocation }
+
+/**
+ * One registration per seat Vinaya's seat table declares, in the table's
+ * order: the shared server program, plus the seat's own launch argument. The
+ * Operator's seat is the default, so its entry carries no seat argument and
+ * keeps the server name and arguments every configuration already generated
+ * registers.
+ */
+export function seatServerRegistrations(selfHost: VendoredVinaya | null): SeatServerRegistration[] {
+  const table = vinayaToolSeats()
+  const base = taskToolsServerInvocation(selfHost)
+  return table.seats.map((seat) => ({
+    serverName: seat.serverName,
+    invocation: { command: base.command, args: [...base.args, ...seatLaunchArguments(table, seat.name)] }
+  }))
 }
 
 /** What each adapter pins: the runtime it registers on, the version verified against, and the MCP protocol revision. */
@@ -85,16 +107,15 @@ export const MCP_RUNTIME_ADAPTERS: readonly McpRuntimeAdapter[] = [CLAUDE_MCP_AD
 
 // --- Claude: the generated `.mcp.json` --------------------------------------
 
-/** The Claude `.mcp.json` object — one stdio MCP server, the shared task-tools server. */
+/** The Claude `.mcp.json` object — one stdio MCP server per declared seat, each a launch of the shared task-tools server. */
 export function claudeMcpJsonConfig(selfHost: VendoredVinaya | null): {
   mcpServers: Record<string, { type: 'stdio'; command: string; args: string[] }>
 } {
-  const { command, args } = taskToolsServerInvocation(selfHost)
-  return {
-    mcpServers: {
-      [TASK_TOOLS_MCP_SERVER_NAME]: { type: 'stdio', command, args }
-    }
+  const mcpServers: Record<string, { type: 'stdio'; command: string; args: string[] }> = {}
+  for (const { serverName, invocation } of seatServerRegistrations(selfHost)) {
+    mcpServers[serverName] = { type: 'stdio', command: invocation.command, args: invocation.args }
   }
+  return { mcpServers }
 }
 
 /** The `.mcp.json` file content (trailing newline), generated through `artifacts.ts`. */
@@ -110,15 +131,19 @@ function tomlStringArray(values: readonly string[]): string {
 
 /**
  * The Codex `[mcp_servers.<name>]` TOML an operator adds to `~/.codex/config.toml`
- * — the same server command as Claude's `.mcp.json`, in Codex's documented
- * registration format.
+ * — one table per declared seat, the same server commands as Claude's
+ * `.mcp.json`, in Codex's documented registration format. Tables are
+ * separated by one blank line.
  */
 export function codexMcpServersToml(selfHost: VendoredVinaya | null): string {
-  const { command, args } = taskToolsServerInvocation(selfHost)
-  return [
-    `[mcp_servers.${TASK_TOOLS_MCP_SERVER_NAME}]`,
-    `command = ${JSON.stringify(command)}`,
-    `args = ${tomlStringArray(args)}`,
-    ''
-  ].join('\n')
+  return seatServerRegistrations(selfHost)
+    .map(({ serverName, invocation }) =>
+      [
+        `[mcp_servers.${serverName}]`,
+        `command = ${JSON.stringify(invocation.command)}`,
+        `args = ${tomlStringArray(invocation.args)}`,
+        ''
+      ].join('\n')
+    )
+    .join('\n')
 }

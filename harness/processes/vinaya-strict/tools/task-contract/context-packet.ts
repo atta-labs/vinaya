@@ -19,12 +19,9 @@
  * attempt alike.
  */
 
-import {
-  taskToolError,
-  type OperatorGrantedTool,
-  type TaskToolError
-} from '../../../../kernel/tools/catalog/task-tools'
+import { taskToolError, type TaskToolError } from '../../../../kernel/tools/catalog/task-tools'
 import { routeTaskToolIntent } from '../../../../kernel/tools/host/router.js'
+import type { OperatorGrantedTool } from '../../integration/policies/roles.js'
 
 export type ContextPacketRole = 'operator' | 'developer' | 'reviewer'
 
@@ -381,7 +378,7 @@ export function classifyOperatorRequest(utterance: string): RequestClassificatio
     }
   }
   // No `isOperatorGranted` guard needed here: `routeTaskToolIntent` only ever
-  // returns one of the five catalog `TaskToolName`s, and every one of those is
+  // returns one of the six catalog `TaskToolName`s, and every one of those is
   // already a member of `OPERATOR_TOOL_GRANT` — the check could never be false.
   const tool = routeTaskToolIntent(utterance)
   if (tool !== null) return { kind: 'granted', tool }
