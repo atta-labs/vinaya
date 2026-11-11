@@ -1681,10 +1681,6 @@
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.ts",
           "symbol": "buildVerifiedReviewerCandidate"
-        },
-        {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-confinement.ts",
-          "symbol": "developerScanTexts"
         }
       ],
       "tests": [
@@ -2244,6 +2240,10 @@
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts",
           "symbol": "acquireDriverLockAtomic"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-entry.ts",
+          "symbol": "initializeRunEntry"
         }
       ],
       "tests": [
@@ -2443,10 +2443,6 @@
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts",
           "symbol": "seedLoopHistory"
-        },
-        {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-entry.ts",
-          "symbol": "initializeRunEntry"
         }
       ],
       "tests": [
@@ -2821,7 +2817,7 @@
     },
     {
       "id": "INV-119",
-      "behavior": "The driver is one composition-root module of about six thousand lines with split helpers, every split module covered by DRIVER_OWNED_PATHS.",
+      "behavior": "The driver is a short per-run orchestrator over phase modules, with compatibility exports and every split module covered by DRIVER_OWNED_PATHS; the structure test bounds the orchestrator, the driver file and every module.",
       "classification": "implementation-accident",
       "owner": "standalone-only",
       "authority": "effect",
@@ -2852,10 +2848,6 @@
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-context.ts",
           "symbol": "buildDeveloperDevToolContext"
-        },
-        {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-confinement.ts",
-          "symbol": "snapshotTurnConfinement"
         }
       ],
       "tests": ["harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-5.test.ts"],
@@ -2900,6 +2892,10 @@
         {
           "path": "harness/kernel/isolation/worker-boundary.ts",
           "symbol": "startTurnWriteAttribution"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-confinement.ts",
+          "symbol": "snapshotTurnConfinement / checkTurnConfinement / developerScanTexts"
         }
       ],
       "tests": ["harness/processes/vinaya-strict/loops/dev-review/standalone/after-turn-attribution.test.ts"],

@@ -54,10 +54,7 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
   })
 
   it('the outer round-loop catch no longer re-throws — it is a `return`, same as every other decided exit', () => {
-    const source = readFileSync(
-      join(import.meta.dir, '..', '..', '..', '..', 'loops', 'dev-review', 'standalone', 'dev-review-loop.ts'),
-      'utf8'
-    )
+    const source = readFileSync(join(MODULE_DIR, 'run-start.ts'), 'utf8')
     // Located via `recordDriverExited('error')` — unique to THIS catch —
     // rather than a `catch (err) {`-anchored regex: several OTHER catches in
     // this file (control-store-v1 task 6, `#556`: `resolveEscalation`'s own
@@ -91,10 +88,7 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
   // process-memoized control store `pause-resume.test.ts`'s own tests
   // avoid touching in-process for the identical reason.
   it("logPauseCommentRetryIfNotable's own guard only stays silent on a genuinely boring outcome (posted, attempts <= 1) — never a real posted:false failure", () => {
-    const source = readFileSync(
-      join(import.meta.dir, '..', '..', '..', '..', 'loops', 'dev-review', 'standalone', 'dev-review-loop.ts'),
-      'utf8'
-    )
+    const source = readFileSync(join(MODULE_DIR, 'developer-prompts.ts'), 'utf8')
     const markerIndex = source.indexOf('async function logPauseCommentRetryIfNotable(')
     expect(markerIndex).toBeGreaterThan(-1)
     const guardLine = source.slice(markerIndex, source.indexOf('\n', markerIndex + 1) + 200)

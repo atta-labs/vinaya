@@ -65,7 +65,7 @@ export type LoopRunContext = {
   rerunHeads: Set<string>
   publicationState: ReturnType<typeof createLivePublicationState>
 
-  // --- mutable, shared by the round loop and the code that stayed in `devReviewLoop`
+  // --- mutable, shared by the round loop and the other run phases
   prNumber: number
   issueRulingsOwed: boolean
   keepLockAlive: boolean
@@ -137,9 +137,9 @@ export type LoopRunContext = {
 
 /**
  * The context a run starts with: the dependencies, the input and the runtime root, every mutable local at
- * its first value, and the fixed values and helper fields left for `devReviewLoop` to fill in before the
- * round loop runs (`Object.assign(c, { ... })`, right before its `try`). The cast is the one place the
- * object is wider than what it holds at creation.
+ * its first value, and the remaining fields left for the entry and setup phases to initialize in their
+ * original order before the round loop runs. The cast is the one place the object is wider than what it
+ * holds at creation.
  */
 export function createLoopRunContext(seed: { d: LoopDeps; input: LoopInput; root: string }): LoopRunContext {
   return {

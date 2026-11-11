@@ -920,6 +920,6 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
     }
     // The catch answers with what the round loop last left in the context.
     const { decision, prNumber } = c
-    return { finalDecision: decision, prNumber, task: task }
+    return { finalDecision: decision, prNumber, task }
   }
 }
