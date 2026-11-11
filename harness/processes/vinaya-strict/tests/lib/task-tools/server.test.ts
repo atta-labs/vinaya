@@ -281,15 +281,15 @@ describe('serve — a failure on one line never wedges dispatch for a later line
  */
 describe('the seat a launch serves', () => {
   it('a launch naming an undeclared seat refuses to start, naming the declared seats', () => {
-    expect(() => createTaskToolsMcpServer({ serverVersion: '0.0.0-test', seat: 'planner' })).toThrow(UnknownSeatError)
-    expect(() => createTaskToolsMcpServer({ serverVersion: '0.0.0-test', seat: 'planner' })).toThrow(
-      'no seat named "planner" — this process declares: operator'
+    expect(() => createTaskToolsMcpServer({ serverVersion: '0.0.0-test', seat: 'reviewer' })).toThrow(UnknownSeatError)
+    expect(() => createTaskToolsMcpServer({ serverVersion: '0.0.0-test', seat: 'reviewer' })).toThrow(
+      'no seat named "reviewer" — this process declares: operator, planner'
     )
   })
 
   it('the stdio program refuses an undeclared seat argument before it serves', async () => {
-    await expect(serveTaskToolsStdio('0.0.0-test', ['--seat', 'planner'])).rejects.toThrow(
-      'this process declares: operator'
+    await expect(serveTaskToolsStdio('0.0.0-test', ['--seat', 'reviewer'])).rejects.toThrow(
+      'this process declares: operator, planner'
     )
   })
 
