@@ -154,11 +154,12 @@ function scannerDeclarations(repoRoot: string, head: string): ScannerDeclaration
   return out
 }
 
-/** The root suites the build job runs on every pull request, each under the policy that states the duty. */
-const BUILD_GATES = [
-  { policy: 'inventory-gate', suite: 'repository' },
-  { policy: 'package-compatibility', suite: 'package-compat' }
-]
+/**
+ * The root suites every pull request runs whatever its change selects, each under the policy that states the duty.
+ * The repository suite is not one of them: its tests are selected by what they read, like every other test, and the
+ * build job runs the selected ones; a push to the default branch still runs all of them.
+ */
+const BUILD_GATES = [{ policy: 'package-compatibility', suite: 'package-compat' }]
 /** A `path#key.path` list the head commit holds, or none. */
 function committedList(repoRoot: string, head: string, entry: string): string[] {
   const [path, keyPath] = entry.split('#') as [string, string | undefined]

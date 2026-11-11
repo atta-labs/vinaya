@@ -1570,7 +1570,7 @@
       "id": "inventory-gate",
       "kind": "mandatory",
       "inputs": ["scripts/test-suites/"],
-      "duty": "the build job checks the inventory and runs the repository suite on every pull request, documentation-only ones included",
+      "duty": "the build job checks the inventory on every pull request, documentation-only ones included, and runs the repository tests the CI plan selected; a push to the default branch runs the whole repository suite",
       "source": ".github/workflows/ci.yml"
     },
     {

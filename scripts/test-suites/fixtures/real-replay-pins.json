@@ -84,26 +84,13 @@
       "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/stall-current-head.test.ts",
       "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/takeover-phase.test.ts",
       "harness/processes/vinaya-strict/tests/standalone/lib/task-worktree-install.test.ts",
-      "scripts/ci/ci-limits-diagnostic.test.ts",
-      "scripts/ci/config-probe.test.ts",
       "scripts/ci/impact-plan.test.ts",
-      "scripts/ci/job-oracle.test.ts",
-      "scripts/ci/record-reads.test.ts",
       "scripts/package-compat/package-compat.test.ts",
-      "scripts/release/release.test.ts",
-      "scripts/test-suites/bun-runtime.test.ts",
       "scripts/test-suites/inventory-check.test.ts",
       "scripts/test-suites/local-run.test.ts",
-      "scripts/test-suites/read-records.test.ts",
-      "scripts/test-suites/recorded-selection.test.ts",
-      "scripts/test-suites/relocation-fixture.test.ts",
-      "scripts/test-suites/schedule.test.ts",
-      "scripts/test-suites/staged-driver-move.test.ts",
-      "scripts/test-suites/turbo-test-task-uncached.test.ts",
-      "scripts/vinaya-checks/process-version-bump.test.ts",
-      "scripts/vinaya-checks/ui-rules.test.ts"
+      "scripts/test-suites/schedule.test.ts"
     ],
-    "staticCount": 53
+    "staticCount": 43
   },
   "c943bc67f": {
     "selected": [
@@ -179,26 +166,13 @@
       "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/stall-current-head.test.ts",
       "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/takeover-phase.test.ts",
       "harness/processes/vinaya-strict/tests/standalone/lib/task-worktree-install.test.ts",
-      "scripts/ci/ci-limits-diagnostic.test.ts",
-      "scripts/ci/config-probe.test.ts",
       "scripts/ci/impact-plan.test.ts",
-      "scripts/ci/job-oracle.test.ts",
-      "scripts/ci/record-reads.test.ts",
       "scripts/package-compat/package-compat.test.ts",
-      "scripts/release/release.test.ts",
-      "scripts/test-suites/bun-runtime.test.ts",
       "scripts/test-suites/inventory-check.test.ts",
       "scripts/test-suites/local-run.test.ts",
-      "scripts/test-suites/read-records.test.ts",
-      "scripts/test-suites/recorded-selection.test.ts",
-      "scripts/test-suites/relocation-fixture.test.ts",
-      "scripts/test-suites/schedule.test.ts",
-      "scripts/test-suites/staged-driver-move.test.ts",
-      "scripts/test-suites/turbo-test-task-uncached.test.ts",
-      "scripts/vinaya-checks/process-version-bump.test.ts",
-      "scripts/vinaya-checks/ui-rules.test.ts"
+      "scripts/test-suites/schedule.test.ts"
     ],
-    "staticCount": 49
+    "staticCount": 39
   },
   "30fb6efbc": {
     "selected": [
@@ -214,26 +188,9 @@
       "harness/processes/vinaya-strict/integration/log/client/log-callers.test.ts",
       "harness/processes/vinaya-strict/integration/run-paths-only.test.ts",
       "harness/processes/vinaya-strict/tests/commands/task-status.test.ts",
-      "scripts/ci/ci-limits-diagnostic.test.ts",
-      "scripts/ci/config-probe.test.ts",
-      "scripts/ci/impact-plan.test.ts",
-      "scripts/ci/job-oracle.test.ts",
-      "scripts/ci/record-reads.test.ts",
-      "scripts/package-compat/package-compat.test.ts",
-      "scripts/release/release.test.ts",
-      "scripts/test-suites/bun-runtime.test.ts",
-      "scripts/test-suites/inventory-check.test.ts",
-      "scripts/test-suites/local-run.test.ts",
-      "scripts/test-suites/read-records.test.ts",
-      "scripts/test-suites/recorded-selection.test.ts",
-      "scripts/test-suites/relocation-fixture.test.ts",
-      "scripts/test-suites/schedule.test.ts",
-      "scripts/test-suites/staged-driver-move.test.ts",
-      "scripts/test-suites/turbo-test-task-uncached.test.ts",
-      "scripts/vinaya-checks/process-version-bump.test.ts",
-      "scripts/vinaya-checks/ui-rules.test.ts"
+      "scripts/package-compat/package-compat.test.ts"
     ],
-    "staticCount": 29
+    "staticCount": 12
   },
   "4044a489f": {
     "selected": [
@@ -411,26 +368,10 @@
       "harness/processes/vinaya-strict/tools/task-contract/forge/documentation-probe.test.ts",
       "harness/processes/vinaya-strict/tools/task-contract/forge/issue-surface.test.ts",
       "harness/processes/vinaya-strict/tools/task-contract/forge/planning-collisions.test.ts",
-      "scripts/ci/ci-limits-diagnostic.test.ts",
-      "scripts/ci/config-probe.test.ts",
-      "scripts/ci/impact-plan.test.ts",
-      "scripts/ci/job-oracle.test.ts",
-      "scripts/ci/record-reads.test.ts",
       "scripts/package-compat/package-compat.test.ts",
-      "scripts/release/release.test.ts",
-      "scripts/test-suites/bun-runtime.test.ts",
-      "scripts/test-suites/inventory-check.test.ts",
-      "scripts/test-suites/local-run.test.ts",
-      "scripts/test-suites/read-records.test.ts",
-      "scripts/test-suites/recorded-selection.test.ts",
-      "scripts/test-suites/relocation-fixture.test.ts",
-      "scripts/test-suites/schedule.test.ts",
-      "scripts/test-suites/staged-driver-move.test.ts",
-      "scripts/test-suites/turbo-test-task-uncached.test.ts",
-      "scripts/vinaya-checks/process-version-bump.test.ts",
-      "scripts/vinaya-checks/ui-rules.test.ts"
+      "scripts/test-suites/recorded-selection.test.ts"
     ],
-    "staticCount": 41
+    "staticCount": 24
   },
   "3aca29afb": {
     "selected": [
@@ -586,25 +527,8 @@
       "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/takeover-phase.test.ts",
       "harness/processes/vinaya-strict/tests/standalone/lib/task-worktree-install.test.ts",
       "harness/processes/vinaya-strict/tests/task-run-engine.test.ts",
-      "scripts/ci/ci-limits-diagnostic.test.ts",
-      "scripts/ci/config-probe.test.ts",
-      "scripts/ci/impact-plan.test.ts",
-      "scripts/ci/job-oracle.test.ts",
-      "scripts/ci/record-reads.test.ts",
-      "scripts/package-compat/package-compat.test.ts",
-      "scripts/release/release.test.ts",
-      "scripts/test-suites/bun-runtime.test.ts",
-      "scripts/test-suites/inventory-check.test.ts",
-      "scripts/test-suites/local-run.test.ts",
-      "scripts/test-suites/read-records.test.ts",
-      "scripts/test-suites/recorded-selection.test.ts",
-      "scripts/test-suites/relocation-fixture.test.ts",
-      "scripts/test-suites/schedule.test.ts",
-      "scripts/test-suites/staged-driver-move.test.ts",
-      "scripts/test-suites/turbo-test-task-uncached.test.ts",
-      "scripts/vinaya-checks/process-version-bump.test.ts",
-      "scripts/vinaya-checks/ui-rules.test.ts"
+      "scripts/package-compat/package-compat.test.ts"
     ],
-    "staticCount": 32
+    "staticCount": 15
   }
 }

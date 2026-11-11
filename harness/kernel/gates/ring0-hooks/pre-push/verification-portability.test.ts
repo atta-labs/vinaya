@@ -193,14 +193,14 @@ describe('the one repository adapter', () => {
 
       const transitive = repositorySelection(repo, { base: 'HEAD~1', head: 'HEAD' })
       expect(transitive.context.base).toBe(git(repo, ['rev-parse', 'HEAD~1']))
+      // The repository suite is selected by what it reads, never added as an obligation of its own.
       expect(transitive.obligations.map((o) => `${o.obligation} ${o.test}`)).toEqual([
-        'inventory-gate scripts/check.test.ts',
         'pre-push-always-run packages/app/tests/add.test.ts'
       ])
       // One policy for every caller: the walk stops at a test's own direct edges.
       expect(transitive.required.map((t) => t.test)).toEqual(['packages/app/tests/add.test.ts'])
       expect(transitive.context.policy).toBe(repositorySelection(repo, { base: 'HEAD~1', head: 'HEAD' }).context.policy)
-      expect(plannedTests(transitive)).toContain('scripts/check.test.ts')
+      expect(plannedTests(transitive)).not.toContain('scripts/check.test.ts')
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }

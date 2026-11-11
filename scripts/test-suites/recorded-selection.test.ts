@@ -399,11 +399,11 @@ function callersRepository(): { dir: string; git: (...args: string[]) => string;
     providers: [],
     policies: [
       {
-        id: 'inventory-gate',
-        kind: 'mandatory',
-        inputs: ['scripts/test-suites/'],
-        duty: 'the repository suite runs on every change',
-        source: 'ci'
+        id: 'pre-push-always-run',
+        kind: 'always-run',
+        inputs: ['vinaya.config.json#prePush.alwaysRun'],
+        duty: 'the listed test runs on every change',
+        source: 'vinaya.config.json'
       }
     ],
     unknowns: []
@@ -418,7 +418,7 @@ function callersRepository(): { dir: string; git: (...args: string[]) => string;
     'packages/app/tests/mul.test.ts': "import { mul } from '../../core/src/mul.ts'\nexport const used = mul\n",
     'scripts/check.test.ts': "import { test } from 'bun:test'\ntest('check', () => {})\n",
     'scripts/test-suites/inventory.json': `${JSON.stringify(inventory, null, 2)}\n`,
-    'vinaya.config.json': '{ "prePush": { "alwaysRun": [] } }\n'
+    'vinaya.config.json': '{ "prePush": { "alwaysRun": ["scripts/check.test.ts"] } }\n'
   }
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(dir, path)), { recursive: true })

@@ -1,8 +1,19 @@
-import { expect, it } from 'bun:test'
+import { afterEach, beforeEach, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { nearestReachableRecord } from './read-records'
+
+// Every lookup here is about record use itself, so a switch another file in the same process left set never applies.
+let previousReadRecord: string | undefined
+beforeEach(() => {
+  previousReadRecord = process.env.VINAYA_READ_RECORD
+  delete process.env.VINAYA_READ_RECORD
+})
+afterEach(() => {
+  if (previousReadRecord === undefined) delete process.env.VINAYA_READ_RECORD
+  else process.env.VINAYA_READ_RECORD = previousReadRecord
+})
 
 const record = (commit: string) =>
   JSON.stringify({ schema: 'vinaya.read-record', schemaVersion: 1, commit, platform: 'linux', tests: {} })
