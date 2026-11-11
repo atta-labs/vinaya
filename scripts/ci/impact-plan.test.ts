@@ -239,7 +239,7 @@ describe('the CI plan', () => {
     expect(ci.identity).toBe(local.identity)
     // Every caller adds the same stated obligations, never folded into what the change requires.
     const added = [...new Set(ci.obligations.map((o) => o.obligation))].sort()
-    expect(added).toEqual(['inventory-gate', 'pre-push-always-run'])
+    expect(added).toEqual(['pre-push-always-run'])
   }, 60_000)
 
   it('covers the local push: every test the local plan names runs in CI', () => {

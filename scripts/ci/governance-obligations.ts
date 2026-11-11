@@ -51,7 +51,7 @@ export const GOVERNANCE_OBLIGATIONS: readonly GovernanceObligation[] = [
     job: 'build',
     step: 'Check the test inventory and run the repository suite',
     when: 'every-run',
-    duty: 'the test inventory validates and the repository suite — the inventory, relocation and schedule proofs among it — runs, documentation-only pull requests included'
+    duty: 'the test inventory validates on every pull request, documentation-only ones included, and the repository tests the CI plan selected run; a push to the default branch runs the whole repository suite'
   },
   {
     id: 'package-compatibility',

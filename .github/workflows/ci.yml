@@ -21,7 +21,7 @@
 # declared inputs (fixtures, docs, configuration, workflow), folder scans,
 # spawned programs, preloads, runner and lockfile inputs, with a named
 # fallback for an input it cannot model — plus the always-run list and the
-# repository suite as stated obligations. The same plan decides which
+# package-compatibility suite as stated obligations. The same plan decides which
 # packages to typecheck, which files to lint, and whether the root-config
 # probe and the Linux sandbox suite run; each place runs the planned files it
 # holds, plus the portal whole when the change
@@ -346,17 +346,33 @@ jobs:
 
       # The test inventory (`scripts/test-suites/inventory.json`): every
       # tracked test-shaped file must be owned by exactly one suite's native
-      # runner or excluded with a reason, and the repository suite — the root
+      # runner or excluded with a reason. The repository suite — the root
       # tests no workspace runs, the inventory's own tests and the relocation
       # proof among them — runs here, from the root, under the root
-      # `bunfig.toml`. The list is the inventory's repository suite, written
-      # out (`scripts/test-suites/inventory-check.test.ts` keeps the two
-      # equal), never a discovery that could pick up fixture data. Never gated
-      # behind the docs-only skip: a documentation-only pull request runs it,
-      # and a failure fails this job and so the required check.
+      # `bunfig.toml`: on a pull request only the files the CI plan selected
+      # (by what each test reads, as for every other test, through the
+      # schedule's `build` placement); on a push to the default branch, or
+      # with no plan for this tree, the whole list below. That list is the
+      # inventory's repository suite, written out
+      # (`scripts/test-suites/inventory-check.test.ts` keeps the two equal),
+      # never a discovery that could pick up fixture data. The inventory check
+      # is never gated behind the docs-only skip, and a failure of it or of a
+      # repository test fails this job and so the required check.
       - name: Check the test inventory and run the repository suite
+        env:
+          EVENT: ${{ github.event_name }}
+          CI_PLAN_DECISION: ${{ steps.plan.outputs.decision }}
+          CI_PLAN_TESTED: ${{ steps.plan.outputs.plan_tested }}
         run: |
           bun scripts/test-suites/inventory-check.ts
+          # A pull request runs the repository tests its CI plan selected, like every other test; a push to the
+          # default branch, or a run with no plan for this tree, runs the whole suite.
+          if [ "$EVENT" = "pull_request" ] && [ -n "$CI_PLAN_DECISION" ] && [ "$CI_PLAN_TESTED" = "$(git rev-parse HEAD)" ]; then
+            printf '%s\n' "$CI_PLAN_DECISION" > "$RUNNER_TEMP/build-decision.json"
+            unset CI_PLAN_DECISION CI_PLAN_TESTED
+            bun scripts/test-suites/schedule.ts --run --placement build --decision "$RUNNER_TEMP/build-decision.json" --summary "$GITHUB_STEP_SUMMARY"
+            exit $?
+          fi
           bun test ./scripts/test-suites/bun-runtime.test.ts ./scripts/vinaya-checks/ui-rules.test.ts ./scripts/vinaya-checks/process-version-bump.test.ts ./scripts/vinaya-checks/no-aeg-token.test.ts ./scripts/test-suites/inventory-check.test.ts ./scripts/test-suites/relocation-fixture.test.ts ./scripts/test-suites/schedule.test.ts ./scripts/test-suites/staged-driver-move.test.ts ./scripts/test-suites/recorded-selection.test.ts ./scripts/test-suites/read-records.test.ts ./scripts/ci/ci-limits-diagnostic.test.ts ./scripts/ci/config-probe.test.ts ./scripts/ci/impact-plan.test.ts ./scripts/ci/job-oracle.test.ts ./scripts/release/release.test.ts ./scripts/test-suites/local-run.test.ts ./scripts/test-suites/turbo-test-task-uncached.test.ts ./scripts/ci/record-reads.test.ts ./scripts/test-suites/real-replay.test.ts ./scripts/marker-rewrite/rewrite-open-threads.test.ts ./harness/processes/minimal/minimal-process.test.ts
 
       # The package-compatibility suite (`scripts/package-compat/`): each
