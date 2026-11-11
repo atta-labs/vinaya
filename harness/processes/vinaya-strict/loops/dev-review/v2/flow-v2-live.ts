@@ -1155,14 +1155,14 @@ async function runRoundTestsLocked(
       record.mode === 'ready' &&
       Date.parse(record.recordedAt) >= startedAt - 1000
     if (!recorded) return done('unavailable', { detail: 'the run recorded no result for this head' })
+    // One count for both outcome lines: the selection the run recorded, the plan's own lines when it recorded none.
+    const fileCount = record.selection?.selected.length ?? selectedCount
     if (record.outcome === 'passed') {
       if (!(record.selection?.native && record.native?.completed === true))
         return done('unavailable', { detail: 'the run recorded a pass, but no complete native test result' })
       if (record.selection.selected.length === 0) return done('none', { detail: 'the plan selected no tests' })
       const passed = done('passed')
-      ctx.log(
-        `round tests passed: ${record.selection.selected.length} selected test file(s); wall time ${passed.wallMs} ms`
-      )
+      ctx.log(`round tests passed: ${fileCount} selected test file(s); wall time ${passed.wallMs} ms`)
       return passed
     }
     const unreported = new Set(record.unreported ?? [])
@@ -1184,7 +1184,7 @@ async function runRoundTestsLocked(
       }
     })
     ctx.log(
-      `round tests failed: ${failedResult.firstFailure?.location}; ${selectedCount} selected test file(s); wall time ${failedResult.wallMs} ms`
+      `round tests failed: ${failedResult.firstFailure?.location}; ${fileCount} selected test file(s); wall time ${failedResult.wallMs} ms`
     )
     return failedResult
   } finally {
