@@ -54,9 +54,8 @@ import {
   type TraceOptions
 } from '@attalabs/test-selection'
 import { readTestInventory, type TestIdentity } from '../test-suites/inventory-check.js'
-import { GROUP_TIME_LIMIT_MS, groupOutcomeOf, runnerCommand } from '../test-suites/schedule.js'
+import { GROUP_TIME_LIMIT_MS, groupOutcomeOf, runnerLaunch } from '../test-suites/schedule.js'
 import { RECORD_FILE } from '../test-suites/read-records.js'
-import { JUNIT_REPORT_ENV } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store.js'
 
 /** The syscall filter the trace is taken with. */
 export const STRACE_ARGS = ['-f', '-yy', '-qq', '-s', '4096', '-e', 'trace=%file,getdents64'] as const
@@ -206,15 +205,16 @@ async function recordTest(
   const started = performance.now()
   const report = join(scratch, `${index}.${group.runner === 'bun' ? 'xml' : 'json'}`)
   const traceFile = join(scratch, `${index}.trace`)
-  const command = ['strace', ...STRACE_ARGS, '-o', traceFile, '--', ...runnerCommand(group, report)]
   const cwd = join(repoRoot, group.cwd)
-  // Each bunfig.toml names a fixed JUnit path that the test preload links to the file this variable names;
-  // without it the report lands elsewhere and the run reads back as not passed.
+  // Runs go in parallel in one folder: each gets its own configuration naming its own report, never the folder's
+  // shared report path, or a run ending first would write its report into a sibling's file.
+  const launch = runnerLaunch(group, report, cwd)
+  const command = ['strace', ...STRACE_ARGS, '-o', traceFile, '--', ...launch.command]
   const child = Bun.spawn(command, {
     cwd,
     stdout: 'ignore',
     stderr: 'ignore',
-    env: { ...process.env, [JUNIT_REPORT_ENV]: report }
+    env: { ...process.env, ...launch.env }
   })
   const timer = setTimeout(() => child.kill('SIGKILL'), GROUP_TIME_LIMIT_MS)
   const status = await child.exited

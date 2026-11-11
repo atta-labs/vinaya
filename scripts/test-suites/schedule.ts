@@ -58,7 +58,7 @@ import {
   type WholeSuiteRequest
 } from '@attalabs/test-selection'
 import { testGroupEndLine, testGroupStartLine } from '../../harness/kernel/gates/ring0-hooks/pre-push/push-progress.js'
-import { JUNIT_REPORT_ENV } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store.js'
+import { JUNIT_REPORT_ENV, junitRunConfig } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store.js'
 import { passEntriesOfRun } from './repository-selection.js'
 import { type InventoryView, readTestInventory, type TestIdentity } from './inventory-check.js'
 
@@ -472,6 +472,22 @@ export function vitestJsonFiles(text: string): string[] | null {
   }
 }
 
+/**
+ * The command and environment that start one group's runner in `cwd`, its report written to `report`. A Bun run gets
+ * its own copy of the folder's configuration naming `report` (`junitRunConfig`), so runs started together in one
+ * folder never share a report; without one it falls back to the shared link the preload points at `report`.
+ */
+export function runnerLaunch(
+  group: NativeGroup,
+  report: string,
+  cwd: string
+): { command: string[]; env: Record<string, string> } {
+  const command = runnerCommand(group, report)
+  const own = group.runner === 'bun' ? junitRunConfig(cwd, report) : null
+  if (!own) return { command, env: { [JUNIT_REPORT_ENV]: report } }
+  return { command: [command[0] as string, ...own.args, ...command.slice(1)], env: own.env }
+}
+
 /** The command that starts one group's runner, with its own report written to `report`. */
 export function runnerCommand(group: NativeGroup, report: string): string[] {
   if (group.runner === 'bun') {
@@ -686,7 +702,7 @@ export function runGroups(
       if (stopped) return
       ranCount = index + 1
       const report = join(dir, `${index}.${group.runner === 'bun' ? 'xml' : 'json'}`)
-      const command = runnerCommand(group, report)
+      const { command, env: reportEnv } = runnerLaunch(group, report, join(repoRoot, group.cwd))
       log(
         `vinaya schedule: ${group.id} — ${group.owner}, ${group.runner} in ${group.cwd}, ${group.tests.length} file(s)`
       )
@@ -698,9 +714,9 @@ export function runGroups(
           cwd: join(repoRoot, group.cwd),
           stdio: 'inherit',
           ...(limit !== undefined ? { timeout: limit, killSignal: 'SIGKILL' as const } : {}),
-          // Bun writes the report its `bunfig.toml` names even when `--reporter-outfile` names another; the test
-          // preload points that path at this report (`junit-store.ts`).
-          env: { ...(options.env ?? process.env), [JUNIT_REPORT_ENV]: report }
+          // Bun writes the report its configuration names even when `--reporter-outfile` names another: the run's own
+          // configuration names this report, or the test preload points the shared path at it (`junit-store.ts`).
+          env: { ...(options.env ?? process.env), ...reportEnv }
         })
       let run = start()
       // A runner stopped at the limit is started once more: a test whose synchronous child never returns freezes its
