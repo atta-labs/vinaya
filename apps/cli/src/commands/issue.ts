@@ -1,46 +1,23 @@
-import { findTrancheSlug } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
-import {
-  isTaskIssueBodyShaped,
-  isTaskIssueLabelSet
-} from '../../../../harness/processes/vinaya-strict/tools/task-contract/issue-validation'
 import { printJson } from '../../../../harness/kernel/effects/envelope'
+import { emitCheckError } from '../../../../harness/kernel/gates/checks/contract'
 import {
-  type BodyResult,
-  ForgeArgError,
-  ensureTrancheLabelExists,
-  extractLabels,
-  extractTitle,
-  fetchForgeLabels,
-  locateBody,
-  makeCheckError,
-  parseIssueNumberFromRef,
-  refuse,
-  refuseFrozenSectionChange,
-  resolveMilestoneAttachArgs,
-  runGhWrite,
-  runIssueSurface,
-  validateTaskIssue,
-  writeValidatedIssueEdit
-} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
+  type IssueWriteOutcome,
+  createIssue,
+  editIssue,
+  printIssueSurface
+} from '../../../../harness/processes/vinaya-strict/thinking/planner/tools/planner-operations'
 
 export { parseIssueNumberFromRef } from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
 
-const RETRY_CREATE = 'vinaya issue create --validate-only …'
-const RETRY_EDIT = 'vinaya issue edit <n> --validate-only …'
-
-function locateBodyOrRefuse(ghArgs: string[], retryCommand: string): BodyResult | null {
-  try {
-    return locateBody(ghArgs)
-  } catch (e) {
-    if (e instanceof ForgeArgError) {
-      refuse([makeCheckError('forge-args', e.message, `Fix the invocation, then re-run \`${retryCommand}\`.`)])
-    }
-    throw e
+const io = {
+  warning: emitCheckError,
+  notice: (text: string) => {
+    process.stderr.write(text)
   }
 }
 
 /**
- * O3 — the plan-time result. `renderSkipped` non-null means the brief render
+ * The plan-time result. `renderSkipped` non-null means the brief render
  * never ran (no template/repo/work-tree, a tranche create whose title yields no
  * task id, or a tranche edit whose Issue is not yet in the derived task list):
  * the output then reports the skip and its cause rather than a clean pass, so a
@@ -65,106 +42,49 @@ function reportPass(json: boolean, command: string, renderSkipped: string | null
   }
 }
 
+/** Prints an Issue-write outcome exactly as the command always has: a refusal as findings and exit 1, a failed `gh` write as its raw error, a pass as the link (or the validate-only report). */
+function printOutcome(outcome: IssueWriteOutcome, json: boolean, validateOnly: boolean, command: string): void {
+  if (!outcome.ok) {
+    if (outcome.forgeError !== undefined) throw outcome.forgeError
+    for (const e of outcome.findings) emitCheckError(e)
+    process.exit(1)
+  }
+  if (validateOnly) {
+    reportPass(json, command, outcome.renderSkipped)
+    return
+  }
+  if (json) printJson({ validated: true, written: true, url: outcome.url })
+  else if (outcome.url) process.stdout.write(`${outcome.url}\n`)
+}
+
 // --- commands ----------------------------------------------------------------
 
 export async function issueCreateCommand(args: string[]): Promise<void> {
   const json = args.includes('--json')
   const validateOnly = args.includes('--validate-only')
   const ghArgs = args.filter((a) => a !== '--json' && a !== '--validate-only')
-
-  const bodyResult = locateBodyOrRefuse(ghArgs, RETRY_CREATE)
-  const body = bodyResult?.body ?? null
-  const title = extractTitle(ghArgs)
-  const labels = extractLabels(ghArgs)
-
-  // O3: a backlog Issue (task-shaped body, no
-  // `vinaya/tranche:*` label) gets the same brief-schema validation as a
-  // tranche task — everything except the tranche-specific label/Milestone
-  // machinery below, which stays gated on `isTaskIssueLabelSet` alone since
-  // there is no tranche to ensure a label for or attach a Milestone from.
-  let renderSkipped: string | null = null
-  if (isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))) {
-    // No number exists until the write completes — `checkIssueObjectives`
-    // treats `null` as NOT exempted (fail-closed), never as "old enough to
-    // skip"; every Issue this repo can newly mint is already far past
-    // `OBJECTIVES_SINCE_ISSUE`, so this never blocks a legitimate create.
-    ;({ renderSkipped } = await validateTaskIssue(body, title, labels, RETRY_CREATE, null, { kind: 'create', ghArgs }))
-  }
-
-  if (validateOnly) {
-    reportPass(json, 'issue create', renderSkipped)
-    return
-  }
-
-  const slugToEnsure = findTrancheSlug(labels)
-  if (slugToEnsure) ensureTrancheLabelExists(slugToEnsure)
-
-  runGhWrite(['issue', 'create'], resolveMilestoneAttachArgs(ghArgs, labels), bodyResult, json)
+  printOutcome(await createIssue({ ghArgs, validateOnly }, io), json, validateOnly, 'issue create')
 }
 
 export async function issueEditCommand(args: string[]): Promise<void> {
   const json = args.includes('--json')
   const validateOnly = args.includes('--validate-only')
   const rest = args.filter((a) => a !== '--json' && a !== '--validate-only')
-
-  const issueRef = rest[0]
-  if (!issueRef || issueRef.startsWith('-')) {
-    refuse([
-      makeCheckError(
-        'forge-args',
-        '`issue edit` requires the target Issue number/URL as the first argument.',
-        'Pass the Issue number, e.g. `vinaya issue edit 123 --body-file <path>`.'
-      )
-    ])
-  }
-  const ghArgs = rest.slice(1)
-
-  const bodyResult = locateBodyOrRefuse(ghArgs, RETRY_EDIT)
-
-  if (validateOnly) {
-    const body = bodyResult?.body ?? null
-    const title = extractTitle(ghArgs)
-    // Union the forge's real labels with any passed on argv — argv is
-    // normally silent on edit, so the forge is what decides task-Issue
-    // applicability.
-    const labels = [...new Set([...fetchForgeLabels(issueRef, RETRY_EDIT), ...extractLabels(ghArgs)])]
-    let renderSkipped: string | null = null
-    if (isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))) {
-      refuseFrozenSectionChange(issueRef, body, RETRY_EDIT)
-      ;({ renderSkipped } = await validateTaskIssue(
-        body,
-        title,
-        labels,
-        RETRY_EDIT,
-        parseIssueNumberFromRef(issueRef),
-        {
-          kind: 'edit',
-          issueRef,
-          ghArgs
-        }
-      ))
-    }
-    reportPass(json, 'issue edit', renderSkipped)
-    return
-  }
-
-  await writeValidatedIssueEdit({ issueRef, ghArgs, bodyResult, json, retryCommand: RETRY_EDIT })
+  printOutcome(await editIssue({ args: rest, validateOnly }, io), json, validateOnly, 'issue edit')
 }
 
 /**
  * `vinaya issue surface --body-file <path>` — prints what a draft Issue's
- * Boundary pins force on its Surface (`runIssueSurface`). Writes nothing.
+ * Boundary pins force on its Surface. Writes nothing.
  * Exits 0 with the report, or 2 when the body cannot be read or its
  * `## Surface` does not parse.
  */
 export function issueSurfaceCommand(args: string[]): void {
-  const exitCode = runIssueSurface(args)
-  if (exitCode !== 0) process.exit(exitCode)
-}
-
-import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
-
-export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'issue create': { date: '2026-09-11', callsToday: 9, retiresVia: 'forgeWrite' },
-  'issue edit': { date: '2026-09-11', callsToday: 10, retiresVia: 'forgeWrite' }
+  const outcome = printIssueSurface(args)
+  if (!outcome.ok) {
+    process.stderr.write(outcome.message)
+    process.exit(outcome.exitCode)
+  }
+  if (outcome.json) printJson(outcome.set)
+  else process.stdout.write(outcome.text)
 }

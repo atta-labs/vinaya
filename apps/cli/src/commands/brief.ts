@@ -13,7 +13,7 @@
  */
 
 import { writeFileSync } from 'node:fs'
-import { assembleAndRenderBrief } from '../../../../harness/processes/vinaya-strict/tools/task-contract/brief-assembly.js'
+import { renderBrief } from '../../../../harness/processes/vinaya-strict/thinking/planner/tools/planner-operations'
 
 export {
   expandGlob,
@@ -55,7 +55,7 @@ export async function briefRenderCommand(args: string[]): Promise<void> {
   const outIdx = args.indexOf('--out')
   const outPath = outIdx !== -1 ? args[outIdx + 1] : undefined
 
-  const result = await assembleAndRenderBrief(trancheSlug, taskId, globs)
+  const result = await renderBrief({ trancheSlug, taskId, globs })
   if (!result.ok) {
     refuse(`cannot render — missing fact(s):\n${result.missing.map((m) => `  - ${m}`).join('\n')}`)
   }
