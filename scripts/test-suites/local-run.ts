@@ -446,6 +446,15 @@ export function failedOf(result: RunResult, completion: NativeCompletion): strin
  * group that leaves nothing confirmed so far writes nothing, so an earlier
  * record stays.
  */
+/**
+ * How the frozen plan's groups run: a push stops after the first failing group and refuses at once; a review
+ * round's tests run every group, so the record confirms every group that passed and the next round re-runs only
+ * what failed or never ran.
+ */
+export function frozenPlanRunOptions(input: { allGroups: boolean }): { stopAfterFailedGroup: boolean } {
+  return { stopAfterFailedGroup: !input.allGroups }
+}
+
 export function runFrozenPlan(
   repoRoot: string,
   native: NativeSelection,
@@ -456,6 +465,8 @@ export function runFrozenPlan(
     roots?: readonly string[]
     groupRecord?: GroupRecordWriter
     now?: () => Date
+    /** Run every group even after one fails, so each passing group is confirmed; a push stops at the first. */
+    allGroups?: boolean
   } = {}
 ): LocalRunOutcome {
   const state = deps.state ?? (() => trackedState(repoRoot))
@@ -512,7 +523,7 @@ export function runFrozenPlan(
         announce: true,
         onGroupEnd: onEnd,
         onReport: (group, xml) => reports.push({ cwd: group.cwd, xml }),
-        stopAfterFailedGroup: true
+        ...frozenPlanRunOptions({ allGroups: deps.allGroups === true })
       }))
   const reports: { cwd: string; xml: string }[] = []
   // An empty plan starts nothing.
@@ -717,7 +728,7 @@ function selectCommand(repoRoot: string): number {
   return 0
 }
 
-async function runCommand(repoRoot: string, logPath: string | undefined): Promise<number> {
+async function runCommand(repoRoot: string, logPath: string | undefined, allGroups = false): Promise<number> {
   const started = Date.now()
   const head = currentHead(repoRoot)
   const note = parseSelectionNote(readJsonUnderGit(repoRoot, SELECTION_NOTE), head)
@@ -727,6 +738,7 @@ async function runCommand(repoRoot: string, logPath: string | undefined): Promis
   }
   const runStartedAt = new Date(started).toISOString()
   const outcome = runFrozenPlan(repoRoot, note.native, {
+    allGroups,
     groupRecord: {
       head: note.head,
       branch: currentBranch(repoRoot),
@@ -834,10 +846,10 @@ function exactCommand(repoRoot: string, argv: readonly string[]): number {
 async function main(argv: readonly string[]): Promise<number> {
   const repoRoot = repositoryRoot()
   if (argv[0] === 'select') return selectCommand(repoRoot)
-  if (argv[0] === 'run') return runCommand(repoRoot, argValue(argv, '--log'))
+  if (argv[0] === 'run') return runCommand(repoRoot, argValue(argv, '--log'), argv.includes('--all-groups'))
   if (argv[0] === 'exact') return exactCommand(repoRoot, argv)
   process.stderr.write(
-    'usage: local-run.ts select | run --log <capture> | exact --context <digest> -- <test@configuration>...\n'
+    'usage: local-run.ts select | run [--all-groups] --log <capture> | exact --context <digest> -- <test@configuration>...\n'
   )
   return 2
 }

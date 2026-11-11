@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   completionOf,
+  frozenPlanRunOptions,
   LOCAL_GROUP_FILE_CAP,
   LOCAL_RUN_EXECUTION,
   type LocalRunOutcome,
@@ -852,6 +853,11 @@ describe('what a native run records', () => {
       context: note.native?.context
     })
     expect(await lookupGreenRun(note.native?.command as string, dir, cache)).toBeNull()
+  })
+
+  it('a push stops after the first failing group; a review round runs every group', () => {
+    expect(frozenPlanRunOptions({ allGroups: false })).toEqual({ stopAfterFailedGroup: true })
+    expect(frozenPlanRunOptions({ allGroups: true })).toEqual({ stopAfterFailedGroup: false })
   })
 
   it('a run stopped after its first failing group credits no unrun test and names only the failing one', async () => {
