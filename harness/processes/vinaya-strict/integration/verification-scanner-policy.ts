@@ -34,6 +34,15 @@ export { underDeclaredRoot } from '@attalabs/test-selection'
  */
 export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   {
+    test: 'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/repository-structure.test.ts',
+    roots: [
+      'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts',
+      'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/',
+      'harness/processes/vinaya-strict/fixtures/dev-review-driver-exports.json'
+    ],
+    trigger: 'listed-files'
+  },
+  {
     test: 'harness/processes/vinaya-strict/integration/conformance/unit/dev-review-engine-architecture-exit.test.ts',
     roots: [
       'harness/processes/vinaya-strict/fixtures/dev-review-engine-scenarios.json',
