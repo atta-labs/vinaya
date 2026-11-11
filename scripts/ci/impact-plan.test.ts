@@ -8,7 +8,7 @@
  * nothing. Fixture changes are committed into the object store as commits no
  * branch names (`scripts/ci/replay.ts`); the checkout is never touched.
  */
-import { beforeAll, describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -19,8 +19,14 @@ import { SUITE_INPUTS } from '../../harness/processes/vinaya-strict/integration/
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../harness/kernel/conformance/unit/process-fixture.js'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-// These plans are the static selection's: no workflow artifact is fetched for the base commit.
+// These plans are the static selection's: no workflow artifact is fetched for the base commit. The switch is put
+// back once this file ends: Bun runs a group's files in one process, and a later file must not inherit it.
+const previousReadRecord = process.env.VINAYA_READ_RECORD
 process.env.VINAYA_READ_RECORD = 'off'
+afterAll(() => {
+  if (previousReadRecord === undefined) delete process.env.VINAYA_READ_RECORD
+  else process.env.VINAYA_READ_RECORD = previousReadRecord
+})
 
 // The repository's CI scripts sit outside this package's type program, so they load by path, never by a
 // static import; the inventory declares them as this test's code input.
