@@ -195,7 +195,9 @@ describe('a rate-limited red gate is waited out, rerun and continued — never s
       const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
       expect(result.finalDecision).toEqual({ type: 'publish' })
       expect(longSleeps).toEqual([])
-      expect(events.some((e) => e.startsWith('rerun:'))).toBe(false)
+      // Not a rate-limited red, so no wait; the first red read of the head reruns its failed jobs once, and the
+      // red that remains goes back to the Developer.
+      expect(events.filter((e) => e.startsWith('rerun:'))).toEqual([`rerun:${WORKFLOW_RUN}`])
       expect(prompts).toHaveLength(2)
       expect(prompts[1]).toContain('CI is red on the last head')
       expect(prompts[1]).toContain('adds two numbers')
@@ -220,7 +222,8 @@ describe('a rate-limited red gate is waited out, rerun and continued — never s
       const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
       expect(result.finalDecision).toEqual({ type: 'publish' })
       expect(longSleeps).toHaveLength(1)
-      expect(events.filter((e) => e.startsWith('rerun:'))).toEqual([`rerun:${WORKFLOW_RUN}`])
+      // The rate-limited rerun, then the one rerun the first real red read of that head gets.
+      expect(events.filter((e) => e.startsWith('rerun:'))).toEqual([`rerun:${WORKFLOW_RUN}`, `rerun:${WORKFLOW_RUN}`])
       expect(prompts).toHaveLength(2)
       expect(prompts[1]).toContain('CI is red on the last head')
       expect(prompts[1]).toContain('adds two numbers')

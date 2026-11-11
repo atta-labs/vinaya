@@ -6,6 +6,7 @@ import {
   DispatchUsageLimit
 } from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess'
 import {
+  CI_PARENT_WAIT_MAX_MS,
   classifyDriverError,
   decideStop,
   ENGINE_FORGE_RETRY_MAX_ATTEMPTS,
@@ -158,5 +159,78 @@ describe('classifyDriverError', () => {
     expect(classifyDriverError(new DispatchUsageLimit({ agent: 'claude', message: 'm' } as never, 'task'))).toBe(
       'usage_limit'
     )
+  })
+})
+
+describe('decideStop — required CI red', () => {
+  const red = (over: Partial<Extract<StopEvent, { kind: 'ci_red' }>> = {}): StopEvent => ({
+    kind: 'ci_red',
+    runner: 'loop',
+    head: 'h1',
+    headFailing: ['unit'],
+    rerunHeads: [],
+    parentFailing: [],
+    parentConclusion: 'green',
+    parentWaitedMs: 0,
+    ...over
+  })
+
+  for (const runner of ['loop', 'engine'] as const) {
+    test(`${runner}: the first red of a head reruns once`, () => {
+      expect(decideStop(red({ runner }))).toEqual({ type: 'rerun', bound: { kind: 'attempts', used: 1, max: 1 } })
+    })
+
+    test(`${runner}: a head already rerun is a real failure for the Developer`, () => {
+      expect(decideStop(red({ runner, rerunHeads: ['h1'] }))).toEqual({ type: 'send_back_to_developer' })
+    })
+
+    test(`${runner}: a rerun of another head does not spend this head's rerun`, () => {
+      expect(decideStop(red({ runner, rerunHeads: ['h0'] })).type).toBe('rerun')
+    })
+
+    test(`${runner}: every failing check also failing on the parent waits, within the fixed bound`, () => {
+      expect(decideStop(red({ runner, parentFailing: ['unit', 'lint'], parentWaitedMs: 60_000 }))).toEqual({
+        type: 'wait',
+        bound: { kind: 'time', usedMs: 60_000, maxMs: CI_PARENT_WAIT_MAX_MS },
+        spendsRetry: false,
+        asksRuling: false
+      })
+    })
+
+    test(`${runner}: the parent red for the whole bound pauses for the Principal`, () => {
+      const decided = decideStop(red({ runner, parentFailing: ['unit'], parentWaitedMs: CI_PARENT_WAIT_MAX_MS }))
+      expect(decided.type).toBe('pause')
+      expect(decided).toMatchObject({ reason: 'infrastructure' })
+    })
+  }
+
+  test('a check failing only on the head is a branch failure, never a parent wait', () => {
+    expect(decideStop(red({ headFailing: ['unit', 'lint'], parentFailing: ['unit'] })).type).toBe('rerun')
+    expect(decideStop(red({ headFailing: ['unit'], parentFailing: ['lint'], rerunHeads: ['h1'] }))).toEqual({
+      type: 'send_back_to_developer'
+    })
+  })
+
+  test('an unreadable parent or a head with no named failing check never waits', () => {
+    expect(decideStop(red({ parentFailing: null })).type).toBe('rerun')
+    expect(decideStop(red({ headFailing: [], parentFailing: ['unit'] })).type).toBe('rerun')
+  })
+
+  test('the parent turning green after a wait reruns the head once, even when its first-red rerun is spent', () => {
+    expect(decideStop(red({ parentFailing: [], parentWaitedMs: 120_000 })).type).toBe('rerun')
+    expect(decideStop(red({ parentFailing: [], parentWaitedMs: 120_000, rerunHeads: ['h1'] })).type).toBe('rerun')
+  })
+
+  test('a pending, red or unread parent is never green: a begun wait goes on, bounded', () => {
+    for (const parentConclusion of ['pending', 'red', null] as const) {
+      expect(decideStop(red({ parentFailing: [], parentConclusion, parentWaitedMs: 60_000 })).type).toBe('wait')
+      expect(decideStop(red({ parentFailing: [], parentConclusion, parentWaitedMs: CI_PARENT_WAIT_MAX_MS })).type).toBe(
+        'pause'
+      )
+    }
+  })
+
+  test('a pending parent before any wait began, naming no shared failure, is not waited on', () => {
+    expect(decideStop(red({ parentFailing: [], parentConclusion: 'pending' })).type).toBe('rerun')
   })
 })

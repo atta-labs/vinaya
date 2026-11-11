@@ -9,6 +9,10 @@ import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
 import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { defaultRebaseOntoDefaultTip, publishingInstructionLine } from '../loops/dev-review/standalone/dev-review-loop'
+import {
+  CI_PARENT_WAIT_MAX_MS,
+  CI_PARENT_WAIT_POLL_MS
+} from '../loops/dev-review/standalone/dev-review-loop/stop-decision'
 import { renderConflictPrompt } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import { pauseMarker, readPauseState } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { cleanupAllReviewerIsolationArtifacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
@@ -48,6 +52,10 @@ interface Forge {
   rerunTurnsGreen: boolean
   /** How many Evidence writes fail before one reaches the pull request; absent, every write reaches it. */
   evidenceFailures?: number
+  /** The check names failing on the parent's head, read in turn (the last repeats); absent, the parent is green. */
+  parentFailing?: string[][]
+  /** The parent head's overall CI conclusions read in turn (the last repeats); absent, the parent is green. */
+  parentConclusion?: Conclusion[]
 }
 
 interface World {
@@ -315,6 +323,10 @@ async function run(
     ...task.bound,
     localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
     probeAgentSandbox: async () => ({ ok: true }),
+    resolveParentHead: () => 'p'.repeat(40),
+    fetchParentCiConclusion: () => next(forge.parentConclusion ?? ['green']),
+    fetchParentFailingCheckRuns: () =>
+      next(forge.parentFailing ?? [[]]).map((name, index) => ({ name, id: 100 + index, startedAt: null })),
     readComparisonBase: () => 'base-0',
     evidenceRetrySleep: () => {},
     refreshPrEvidence: ({ prNumber }) => {
@@ -452,22 +464,95 @@ for (const agent of AGENTS) {
       expect(observed.reruns).toEqual([])
     })
 
-    test('an unchanged red head has its failed jobs rerun once, and a green rerun goes on to review', async () => {
-      const observed = await run(
-        agent,
-        {
-          ci: ['red'],
-          mergeable: ['MERGEABLE'],
-          conflictFiles: [],
-          prBody: `Closes #${TASK}`,
-          failedRunIds: [41, 42],
-          rerunTurnsGreen: true
-        },
-        (attempt) => attempt === 1
-      )
+    test('a first red read reruns the head once before any Developer turn, and a green rerun goes on to review', async () => {
+      const observed = await run(agent, {
+        ci: ['red'],
+        mergeable: ['MERGEABLE'],
+        conflictFiles: [],
+        prBody: `Closes #${TASK}`,
+        failedRunIds: [41, 42],
+        rerunTurnsGreen: true
+      })
       expect(observed.reruns).toEqual([41, 42])
       expect(observed.outcome).toBe('completed')
-      expect(observed.spawns).toEqual({ developer: 2, 'code-reviewer': 1, 'security-reviewer': 1 })
+      expect(observed.spawns).toEqual({ developer: 1, 'code-reviewer': 1, 'security-reviewer': 1 })
+    })
+
+    test('a head red twice after its one rerun is a real failure that goes back to the Developer', async () => {
+      const observed = await run(agent, {
+        ci: ['red', 'red', 'green'],
+        mergeable: ['MERGEABLE'],
+        conflictFiles: [],
+        prBody: `Closes #${TASK}`,
+        failedRunIds: [41],
+        rerunTurnsGreen: false
+      })
+      expect(observed.reruns).toEqual([41])
+      expect(observed.spawns.developer).toBe(2)
+      expect(observed.developerPrompts[1]).toContain('CI is red on the last head.')
+    })
+
+    test('a red whose every failing check also fails on the parent waits for the parent, then reruns once', async () => {
+      const observed = await run(agent, {
+        ci: ['red'],
+        mergeable: ['MERGEABLE'],
+        conflictFiles: [],
+        prBody: `Closes #${TASK}`,
+        failedRunIds: [41],
+        rerunTurnsGreen: true,
+        parentFailing: [['unit'], ['unit'], []]
+      })
+      expect(observed.sleeps).toBe(2)
+      expect(observed.reruns).toEqual([41])
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns).toEqual({ developer: 1, 'code-reviewer': 1, 'security-reviewer': 1 })
+    })
+
+    test('a parent that names no failing check but is still pending is not green: the wait goes on', async () => {
+      const observed = await run(agent, {
+        ci: ['red'],
+        mergeable: ['MERGEABLE'],
+        conflictFiles: [],
+        prBody: `Closes #${TASK}`,
+        failedRunIds: [41],
+        rerunTurnsGreen: true,
+        parentFailing: [['unit'], [], [], []],
+        parentConclusion: ['red', 'pending', 'pending', 'green']
+      })
+      expect(observed.sleeps).toBe(3)
+      expect(observed.reruns).toEqual([41])
+      expect(observed.outcome).toBe('completed')
+    })
+
+    test('a parent red for the whole fixed wait pauses for the Principal with no Developer turn spent on it', async () => {
+      const observed = await run(agent, {
+        ci: ['red'],
+        mergeable: ['MERGEABLE'],
+        conflictFiles: [],
+        prBody: `Closes #${TASK}`,
+        failedRunIds: [41],
+        rerunTurnsGreen: true,
+        parentFailing: [['unit']]
+      })
+      expect(observed.sleeps).toBe(CI_PARENT_WAIT_MAX_MS / CI_PARENT_WAIT_POLL_MS)
+      expect(observed.reruns).toEqual([])
+      expect(observed.outcome).toBe('paused')
+      expect(observed.pauseReason).toBe('infrastructure')
+      expect(observed.spawns).toEqual({ developer: 1, 'code-reviewer': 0, 'security-reviewer': 0 })
+    })
+
+    test('a red check that fails only on the task branch is not the parent’s: it reruns, then goes to the Developer', async () => {
+      const observed = await run(agent, {
+        ci: ['red', 'red', 'green'],
+        mergeable: ['MERGEABLE'],
+        conflictFiles: [],
+        prBody: `Closes #${TASK}`,
+        failedRunIds: [41],
+        rerunTurnsGreen: false,
+        parentFailing: [['some-other-check']]
+      })
+      expect(observed.reruns).toEqual([41])
+      expect(observed.spawns.developer).toBe(2)
     })
 
     test('an unchanged red head is rerun only once: a second stall on it is the repeat_failure stop', async () => {

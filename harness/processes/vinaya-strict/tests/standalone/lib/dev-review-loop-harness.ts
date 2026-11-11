@@ -711,6 +711,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // fixture states its own; the default is `null` — nothing prepended, the
     // pre-task shape).
     resolveDeveloperDoctrine: async () => world.developerDoctrine ?? null,
+    resolveParentBranch: () => 'trunk',
     resolveHead: (_branch) => {
       // O3 (#1046): the branch sits at the default branch's tip — the
       // commit-free ref the driver created before round 1 — until a real push

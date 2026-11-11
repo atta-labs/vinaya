@@ -35,7 +35,12 @@ function rerunDeps(world: LoopWorld, afterRerun: () => void): { deps: Partial<Lo
   return {
     reruns,
     deps: {
-      fetchFailedCheckWorkflowRunIds: () => (world.gate === 'red' && world.failingCheckRuns.length > 0 ? [4242] : []),
+      // The forge names a failed workflow run only once the Developer's tooling report is in: the first red read of
+      // the head, before any turn, finds none to rerun, so these cases start from the tooling report as they did.
+      fetchFailedCheckWorkflowRunIds: () =>
+        (world.dispatchCountByRole.developer ?? 0) >= 1 && world.gate === 'red' && world.failingCheckRuns.length > 0
+          ? [4242]
+          : [],
       rerunFailedWorkflowJobs: (runId) => {
         reruns.push(runId)
         afterRerun()

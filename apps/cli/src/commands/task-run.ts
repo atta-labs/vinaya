@@ -30,7 +30,8 @@
  * the frozen brief with the widened Surface, records that as the
  * escalation's resolution, grades the widened Issue through the write gate,
  * and only then starts the run — refusing before any of it when the pause is
- * not such an escalation, a driver is still alive, or the widened body fails
+ * not such an escalation, a driver is still working (a driver halted at that
+ * escalation is stopped first), or the widened body fails
  * the gate. With `--background`, the widening happens in this process before
  * the detached controller is launched, never in the controller.
  *

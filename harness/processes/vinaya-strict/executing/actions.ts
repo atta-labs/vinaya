@@ -111,9 +111,12 @@ import {
   type fetchSettledCiConclusion,
   pollMergeableState,
   readWorktreeHead,
+  resolveHead,
+  resolveParentBranch,
   rerunFailedWorkflowJobs,
   type GatePoll
 } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
+import { CI_PARENT_WAIT_POLL_MS, decideStop } from '../loops/dev-review/standalone/dev-review-loop/stop-decision'
 import {
   buildManifestRecord,
   decideSecurityScan,
@@ -336,6 +339,12 @@ export interface BoundFunctions {
   fetchFailingCheckRuns: typeof fetchFailingCheckRuns
   fetchFailedCheckWorkflowRunIds: typeof fetchFailedCheckWorkflowRunIds
   rerunFailedWorkflowJobs: typeof rerunFailedWorkflowJobs
+  /** The parent branch's (the default branch's) current head as the forge reports it. */
+  resolveParentHead?: () => string
+  /** The checks failing on the parent's head, read the way the task head's are. */
+  fetchParentFailingCheckRuns?: typeof fetchFailingCheckRuns
+  /** The parent head's overall CI conclusion, read the way the task head's is. */
+  fetchParentCiConclusion?: typeof fetchCiConclusion
   fetchMergeableState: typeof fetchMergeableState
   fetchConflictingFiles: typeof fetchConflictingFiles
   /** Posts a marked comment on the pull request: the round marker the reviewers' dispatch leaves. */
@@ -1473,6 +1482,16 @@ function assessGate(task: TaskInput, context: ActionContext): { exitCode: number
       { counters, sendBack: { kind: 'unpushed', headBefore: safeRead(task.remoteHead) } }
     )
 
+  // A head red only because the parent stayed red for the whole fixed wait is no task failure: the Principal decides.
+  if (ciRed && ci.parentRedPause !== undefined) {
+    events.push(...driverDecidedPauseEvents(loopIdOf(state), state, round, stats, 'infrastructure'))
+    return paused(
+      { reason: 'infrastructure', detail: ci.parentRedPause },
+      { kind: 'gate-red', headBefore: ci.head ?? headNow() },
+      new Error(ci.parentRedPause)
+    )
+  }
+
   const confidence = round >= 2 && green ? stated(results) : undefined
   const observation: Observations = {
     kind: 'gate',
@@ -1966,6 +1985,8 @@ export interface RecordedForgeCi {
   rerunHeads: string[]
   /** The workflow runs this read reran, empty when it reran none. */
   rerunRunIds: number[]
+  /** Set when the head stayed red only because the parent did for the whole fixed wait: the assessment pauses with it. */
+  parentRedPause?: string
 }
 
 /** The CI step's newest record, or null before it ran or when it recorded something unreadable. */
@@ -1980,7 +2001,8 @@ export function recordedForgeCi(results: Results): RecordedForgeCi | null {
           conclusion: parsed.conclusion,
           failingChecks: parsed.failingChecks ?? [],
           rerunHeads: parsed.rerunHeads ?? [],
-          rerunRunIds: parsed.rerunRunIds ?? []
+          rerunRunIds: parsed.rerunRunIds ?? [],
+          ...(typeof parsed.parentRedPause === 'string' ? { parentRedPause: parsed.parentRedPause } : {})
         }
       : null
   } catch {
@@ -2033,26 +2055,59 @@ export async function readForgeCi(
     ).catch(() => 'red' as const)
   let conclusion = await wait()
   const rerunRunIds: number[] = []
-  const previous = latestRecord(results)
-  const stall = previous?.counters.stallCheck ?? null
-  const unchangedRedHead =
-    conclusion === 'red' &&
-    previous?.answered === 'gate-red' &&
-    stall !== null &&
-    stall.headBefore === head &&
-    stall.refusal === null &&
-    !rerunHeads.includes(head)
-  if (unchangedRedHead) {
-    const rerun = task.bound?.rerunFailedWorkflowJobs ?? rerunFailedWorkflowJobs
-    for (const runId of (task.bound?.fetchFailedCheckWorkflowRunIds ?? fetchFailedCheckWorkflowRunIds)(head)) {
+  let parentRedPause: string | undefined
+  if (conclusion === 'red') {
+    // The first red read of a head goes through the one decision function before any send-back. Every fact it
+    // decides on is read here from the forge: the head's failing checks, the parent's, the heads already rerun.
+    const readHeadFailing = () => (task.bound?.fetchFailingCheckRuns ?? fetchFailingCheckRuns)(head).map((r) => r.name)
+    const readParent = (): { failing: string[] | null; conclusion: 'green' | 'red' | 'pending' | null } => {
       try {
-        rerun(runId)
-        rerunRunIds.push(runId)
+        const parentHead = (task.bound?.resolveParentHead ?? (() => resolveHead(resolveParentBranch())))()
+        // A parent head equal to the task's own head holds no separate parent to compare with.
+        if (parentHead === head) return { failing: null, conclusion: null }
+        return {
+          failing: (task.bound?.fetchParentFailingCheckRuns ?? fetchFailingCheckRuns)(parentHead).map((r) => r.name),
+          conclusion: (task.bound?.fetchParentCiConclusion ?? fetchCiConclusion)(parentHead)
+        }
       } catch {
-        // A run the forge refused to rerun keeps its failure; the others still rerun.
+        // A parent that cannot be read never decides a wait.
+        return { failing: null, conclusion: null }
       }
     }
-    if (rerunRunIds.length > 0) conclusion = await wait()
+    const headFailing = readHeadFailing()
+    let parentWaitedMs = 0
+    for (;;) {
+      const parent = readParent()
+      const decision = decideStop({
+        kind: 'ci_red',
+        runner: 'engine',
+        head,
+        headFailing,
+        rerunHeads,
+        parentFailing: parent.failing,
+        parentConclusion: parent.conclusion,
+        parentWaitedMs
+      })
+      if (decision.type === 'wait') {
+        await poll.sleep(CI_PARENT_WAIT_POLL_MS)
+        parentWaitedMs += CI_PARENT_WAIT_POLL_MS
+        continue
+      }
+      if (decision.type === 'pause') parentRedPause = decision.detail
+      if (decision.type === 'rerun') {
+        const rerun = task.bound?.rerunFailedWorkflowJobs ?? rerunFailedWorkflowJobs
+        for (const runId of (task.bound?.fetchFailedCheckWorkflowRunIds ?? fetchFailedCheckWorkflowRunIds)(head)) {
+          try {
+            rerun(runId)
+            rerunRunIds.push(runId)
+          } catch {
+            // A run the forge refused to rerun keeps its failure; the others still rerun.
+          }
+        }
+        if (rerunRunIds.length > 0) conclusion = await wait()
+      }
+      break
+    }
   }
   const failingChecks =
     conclusion === 'red'
@@ -2063,8 +2118,9 @@ export async function readForgeCi(
       head,
       conclusion,
       failingChecks,
-      rerunHeads: rerunRunIds.length > 0 ? [...rerunHeads, head] : rerunHeads,
-      rerunRunIds
+      rerunHeads: rerunRunIds.length > 0 && !rerunHeads.includes(head) ? [...rerunHeads, head] : rerunHeads,
+      rerunRunIds,
+      ...(parentRedPause === undefined ? {} : { parentRedPause })
     })
   )
 }
