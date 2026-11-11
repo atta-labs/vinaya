@@ -13,6 +13,13 @@
  * folder and the verification context the run started under. A selection
  * reads those files back as earlier passes; nothing here decides selection.
  *
+ * One link per folder holds one run at a time: two runs started together in
+ * one folder would each repoint it, and the run that ends first would write
+ * its report into the other's file. So a scheduler that starts runs in
+ * parallel gives each its own copy of the folder's `bunfig.toml` with the
+ * report path replaced (`junitRunConfig`), and the preload then leaves the
+ * shared link alone.
+ *
  * Nothing here may fail a test run: every step that cannot be done is
  * skipped, and a report that cannot be tied to its commit and folder is
  * never read as a pass.
@@ -37,6 +44,8 @@ import { computeVerificationContext } from './pre-push-failed-tests.js'
 export const JUNIT_LINK_DIR = 'node_modules/.vinaya-junit'
 /** The environment variable a scheduler sets to the report path it will read. */
 export const JUNIT_REPORT_ENV = 'VINAYA_JUNIT_REPORT'
+/** Set by a scheduler to the report path its run's own configuration already names: the preload then links nothing. */
+export const JUNIT_CONFIGURED_ENV = 'VINAYA_JUNIT_CONFIGURED'
 /** Set to this process's id once its report link is made, so an isolated file's preload does not make it again. */
 const LINKED_ENV = 'VINAYA_JUNIT_LINKED'
 /** The store under the worktree's git directory. */
@@ -181,6 +190,13 @@ export function linkJunitReport(cwd: string = process.cwd(), env: NodeJS.Process
   try {
     if (env[LINKED_ENV] === String(process.pid)) return null
     env[LINKED_ENV] = String(process.pid)
+    const configured = env[JUNIT_CONFIGURED_ENV]
+    if (configured !== undefined) {
+      // This run's own configuration names its report; a test it starts gets neither variable.
+      delete env[JUNIT_CONFIGURED_ENV]
+      delete env[JUNIT_REPORT_ENV]
+      return configured || null
+    }
     const repoRoot = git(cwd, ['rev-parse', '--show-toplevel'])
     if (!repoRoot) return null
     const linkDir = join(repoRoot, JUNIT_LINK_DIR)
@@ -210,6 +226,34 @@ export function linkJunitReport(cwd: string = process.cwd(), env: NodeJS.Process
     renameSync(temporary, link)
     writeFileSync(owner, `${process.pid}\n${repoRoot}\n`)
     return target
+  } catch {
+    return null
+  }
+}
+
+const JUNIT_LINE = /^(\s*junit\s*=\s*).*$/m
+
+/**
+ * A run of its own for a scheduler that starts Bun runs in parallel: writes `<report>.bunfig.toml`, the `bunfig.toml`
+ * of `cwd` with its JUnit path replaced by `report`, and returns the arguments that make `bun` read it (they go
+ * before `test`) with the environment that tells the preload the report is already the run's own. `null` when `cwd`
+ * has no `bunfig.toml` naming exactly one JUnit path, or it cannot be copied: the run then uses the shared link.
+ * Every other line is kept as written, so relative paths still resolve from `cwd`, where Bun resolves them.
+ */
+export function junitRunConfig(cwd: string, report: string): { args: string[]; env: Record<string, string> } | null {
+  try {
+    const source = readFileSync(join(cwd, 'bunfig.toml'), 'utf8')
+    if ((source.match(new RegExp(JUNIT_LINE.source, 'gm')) ?? []).length !== 1) return null
+    const absolute = resolve(cwd, report)
+    const config = `${absolute}.bunfig.toml`
+    writeFileSync(
+      config,
+      source.replace(JUNIT_LINE, (_, key: string) => `${key}${JSON.stringify(absolute)}`)
+    )
+    return {
+      args: [`--config=${config}`],
+      env: { [JUNIT_REPORT_ENV]: absolute, [JUNIT_CONFIGURED_ENV]: absolute }
+    }
   } catch {
     return null
   }

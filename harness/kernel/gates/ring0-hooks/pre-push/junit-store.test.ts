@@ -14,11 +14,14 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawn } from 'node:child_process'
 import {
   JUNIT_LINK_DIR,
+  JUNIT_CONFIGURED_ENV,
   JUNIT_REPORT_ENV,
   junitFileResults,
   junitLinkName,
+  junitRunConfig,
   linkJunitReport,
   ownedByAncestor,
   storedJunitReports
@@ -181,6 +184,79 @@ describe('the JUnit report link', () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'junit-store-none-')))
     try {
       expect(linkJunitReport(dir, {} as NodeJS.ProcessEnv)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('runs started together in one folder each write only their own report', async () => {
+    const dir = repository()
+    try {
+      const pkg = join(dir, 'pkg')
+      writeFileSync(
+        join(pkg, 'preload.ts'),
+        `import { linkJunitReport } from ${JSON.stringify(join(import.meta.dir, 'junit-store.ts'))}\nlinkJunitReport()\n`
+      )
+      writeFileSync(
+        join(pkg, 'bunfig.toml'),
+        `[test]\npreload = "./preload.ts"\n\n[test.reporter]\njunit = "../${JUNIT_LINK_DIR}/pkg.xml"\n`
+      )
+      // Started in order, ended in reverse: the first run is still going when the others end.
+      const names = ['one', 'two', 'three']
+      for (const [i, name] of names.entries())
+        writeFileSync(
+          join(pkg, `${name}.test.ts`),
+          `import { test } from 'bun:test'\ntest('${name}', async () => { await Bun.sleep(${(names.length - i) * 400}) })\n`
+        )
+      const runs = names.map(async (name, i) => {
+        await Bun.sleep(i * 100)
+        const report = join(dir, `${name}.xml`)
+        const own = junitRunConfig(pkg, report)
+        expect(own).not.toBeNull()
+        const env: NodeJS.ProcessEnv = {}
+        for (const [key, value] of Object.entries(process.env))
+          if (!key.startsWith('GIT_') && !key.startsWith('VINAYA_JUNIT')) env[key] = value
+        const child = spawn(process.execPath, [...(own?.args ?? []), 'test', `./${name}.test.ts`], {
+          cwd: pkg,
+          stdio: 'ignore',
+          env: { ...env, ...own?.env }
+        })
+        const status = await new Promise<number | null>((done) => child.on('exit', done))
+        return { name, status, report }
+      })
+      for (const { name, status, report } of await Promise.all(runs)) {
+        expect(status).toBe(0)
+        expect(junitFileResults(readFileSync(report, 'utf8'))).toEqual([{ file: `${name}.test.ts`, passed: true }])
+      }
+      // The shared link is left to hand runs.
+      expect(() => readlinkSync(join(dir, JUNIT_LINK_DIR, 'pkg.xml'))).toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a run with its own configuration takes its report as is and hides both variables from runs it starts', () => {
+    const env: NodeJS.ProcessEnv = {
+      [JUNIT_REPORT_ENV]: '/r.xml',
+      [JUNIT_CONFIGURED_ENV]: '/r.xml'
+    } as NodeJS.ProcessEnv
+    expect(linkJunitReport(tmpdir(), env)).toBe('/r.xml')
+    expect(env[JUNIT_REPORT_ENV]).toBeUndefined()
+    expect(env[JUNIT_CONFIGURED_ENV]).toBeUndefined()
+  })
+
+  it('a folder whose bunfig.toml names no single JUnit path gets no configuration of its own', () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'junit-config-')))
+    try {
+      expect(junitRunConfig(dir, join(dir, 'r.xml'))).toBeNull()
+      writeFileSync(join(dir, 'bunfig.toml'), '[test]\ntimeout = 1\n')
+      expect(junitRunConfig(dir, join(dir, 'r.xml'))).toBeNull()
+      writeFileSync(join(dir, 'bunfig.toml'), '[test]\npreload = "./p.ts"\n[test.reporter]\njunit = "x.xml"\n')
+      const own = junitRunConfig(dir, 'r.xml')
+      expect(own?.args).toEqual([`--config=${join(dir, 'r.xml')}.bunfig.toml`])
+      expect(readFileSync(`${join(dir, 'r.xml')}.bunfig.toml`, 'utf8')).toBe(
+        `[test]\npreload = "./p.ts"\n[test.reporter]\njunit = ${JSON.stringify(join(dir, 'r.xml'))}\n`
+      )
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
