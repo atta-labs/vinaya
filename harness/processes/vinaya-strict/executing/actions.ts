@@ -43,6 +43,7 @@ import {
 } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   checkTaskDispatchReadiness,
+  type DispatchReadinessCheckResult,
   createTaskWorktree,
   fetchSourceRevision,
   findOpenPrForBranch,
@@ -333,6 +334,8 @@ export interface BoundFunctions {
   /** The repository's local gate control, read for the enforcement controls every dispatch requires. */
   localGateControl: () => EnforcementControl
   probeAgentSandbox: typeof probeAgentSandbox
+  /** Waits between readiness re-checks after a forge read failure; tests pass one that returns at once. */
+  setupRetrySleep: (ms: number) => Promise<void>
   fetchCiConclusion: typeof fetchCiConclusion
   /** A head's CI conclusion under the every-run-completed rule alone, with no early red. */
   fetchSettledCiConclusion: typeof fetchSettledCiConclusion
@@ -578,6 +581,60 @@ export function pauseThrough(task: TaskInput, step: string, request: PauseReques
  * unrecorded and the resume after its cause is fixed runs it again. A deciding step's pause is recorded instead: its
  * record carries the decision the resume continues from.
  */
+/**
+ * Whether a not-ready readiness result failed only because a forge read did not complete: every blocking JSON
+ * finding is marked `severity:infra` or names a connection failure, no gate step reports a real not-ready, and the
+ * local controls are active. Such a result says nothing about the task, so setup re-checks it instead of pausing.
+ */
+export function readinessFailedOnForgeRead(output: string): boolean {
+  const blocking: string[] = []
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('{')) continue
+    try {
+      const finding = JSON.parse(trimmed) as { severity?: unknown; message?: unknown }
+      if (finding.severity === 'error') blocking.push(String(finding.message ?? ''))
+    } catch {}
+  }
+  if (blocking.length === 0) return false
+  if (/NOT READY|gate step '[^']+' is missing/.test(output)) return false
+  if (!output.includes('all required controls are active')) return false
+  return blocking.every((message) => /severity:infra/.test(message) || FORGE_READ_FAILURE.test(message))
+}
+
+const FORGE_READ_FAILURE =
+  /TLS handshake timeout|i\/o timeout|connection refused|connection reset|no such host|network is unreachable|Client\.Timeout exceeded|could not resolve host|error connecting to/i
+
+/**
+ * The task's readiness, re-checked across a forge outage: a result that failed only on a forge read goes to the stop
+ * decision as a forge connection failure, which retries after its wait within the same bound a round's forge reads
+ * use; once that bound is spent, or for any other not-ready result, the last result is returned for setup to pause on.
+ */
+async function checkReadinessAcrossForgeOutage(task: TaskInput): Promise<DispatchReadinessCheckResult> {
+  const check = task.bound?.checkTaskDispatchReadiness ?? checkTaskDispatchReadiness
+  const sleep = task.bound?.setupRetrySleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)))
+  let attempts = 0
+  for (;;) {
+    const readiness = check(task.branch)
+    if (readiness.ready || !readinessFailedOnForgeRead(readiness.output)) return readiness
+    const stop = decideStop({
+      kind: 'driver_error',
+      runner: 'engine',
+      errorClass: 'forge_connection',
+      message: readiness.output,
+      round: 0,
+      attempts
+    })
+    if (stop.type !== 'retry') return readiness
+    appendDriverLine(
+      loopLogPathFor(null, task.issueNumber, task.runtimeDir),
+      `the readiness check could not read the forge; checking again in ${Math.round(stop.waitMs / 1000)} s (attempt ${attempts + 1})`
+    )
+    await sleep(stop.waitMs)
+    attempts = stop.bound.kind === 'attempts' ? stop.bound.used : attempts + 1
+  }
+}
+
 function refuseThrough(
   task: TaskInput,
   step: string,
@@ -2293,7 +2350,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         const detail = describeInactiveControls(controls)
         return refuse({ reason: 'infrastructure', detail, error: new Error(detail) })
       }
-      const readiness = (task.bound?.checkTaskDispatchReadiness ?? checkTaskDispatchReadiness)(task.branch)
+      const readiness = await checkReadinessAcrossForgeOutage(task)
       if (!readiness.ready)
         return refuse({
           reason: 'escalation',
