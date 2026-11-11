@@ -150,7 +150,7 @@
     {
       "id": "readme-only",
       "category": "empty-with-governance",
-      "about": "A root README edit no test reads: no typecheck, no lint, no sandbox, yet every mandatory duty and the always-run list stay.",
+      "about": "A root README edit no test reads: no typecheck, no lint, no sandbox, yet every mandatory duty and the always-run list stay; the repository suite is selected by reads, so none of it runs.",
       "changes": { "README.md": { "append": "replay: a documentation edit" } },
       "expect": {
         "scope": "selected",
@@ -163,11 +163,7 @@
         },
         "typecheck": "skip",
         "lint": "skip",
-        "tests": [
-          "apps/cli/tests/lib/log-callers.test.ts",
-          "apps/cli/tests/ci-shards.test.ts",
-          "scripts/test-suites/inventory-check.test.ts"
-        ],
+        "tests": ["apps/cli/tests/lib/log-callers.test.ts", "apps/cli/tests/ci-shards.test.ts"],
         "obligations": [
           "inventory-gate",
           "architecture-ratchet",

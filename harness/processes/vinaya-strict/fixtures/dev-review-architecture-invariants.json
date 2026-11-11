@@ -76,6 +76,36 @@
     ],
     "addedSinceBaseline": [
       {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-context.ts",
+        "kind": "implementation",
+        "reason": "The per-run context object the round loop and the helpers moved out of the driver share, so each can live in its own module without closing over the driver's locals; created once per run, never at module level."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-loop.ts",
+        "kind": "implementation",
+        "reason": "The round loop, moved out of the driver verbatim over the run's context: dispatch, gate, review, decide, in the order the round invariants fix."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/rate-limit-waits.ts",
+        "kind": "implementation",
+        "reason": "The rate-limit and connection-outage waits and the read wrappers that absorb them, moved out of the driver verbatim."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/ci-gate.ts",
+        "kind": "implementation",
+        "reason": "The first-red CI read, the green-gate and live-gate waits and the failed-check reruns, moved out of the driver verbatim."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-report.ts",
+        "kind": "implementation",
+        "reason": "The round statistics, the round's confidence and the Developer's round comment, moved out of the driver verbatim."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-turn.ts",
+        "kind": "implementation",
+        "reason": "One Reviewer or security turn with its after-turn confinement check, and the rule that keeps a sibling's verdict on a pause, moved out of the driver verbatim."
+      },
+      {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stop-decision.ts",
         "kind": "implementation",
         "reason": "The one pure decision function every loop stop goes through, with its typed events, so the standalone loop and the Engine runner take their pauses and retries from the same rows."
@@ -476,6 +506,10 @@
         {
           "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
           "symbol": "assessGate"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-report.ts",
+          "symbol": "roundConfidence"
         }
       ],
       "tests": ["harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.test.ts"],
@@ -1338,7 +1372,7 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-turn.ts",
           "symbol": "dispatchReviewer"
         }
       ],
@@ -1480,7 +1514,7 @@
       "scenarios": ["invalid-reviews"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-turn.ts",
           "symbol": "dispatchReviewer"
         }
       ],
@@ -1724,7 +1758,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/ci-gate.ts",
           "symbol": "waitForGreenGate"
         }
       ],
@@ -2257,6 +2291,14 @@
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
           "symbol": "devReviewLoop"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-loop.ts",
+          "symbol": "runRoundLoop"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-context.ts",
+          "symbol": "LoopRunContext"
         }
       ],
       "tests": [
@@ -3092,6 +3134,9 @@
       "sources": [
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.ts"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/rate-limit-waits.ts"
         }
       ],
       "tests": [
