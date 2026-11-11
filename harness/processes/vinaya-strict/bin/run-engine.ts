@@ -84,7 +84,8 @@ import {
   MAX_AUTOMATIC_CONFLICT_REENTRIES,
   readWorktreeHead,
   rerunFailedWorkflowJobs,
-  resolveHead
+  resolveHead,
+  resolveParentBranch
 } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import { postMarkedComment } from '../tools/task-contract/forge/forge-write'
 import {
@@ -2599,6 +2600,8 @@ export interface EngineForge {
   fetchRulings: typeof fetchRulings
   fetchLoopHistory: typeof fetchLoopHistory
   resolveHead: typeof resolveHead
+  /** The default branch's name, the parent of every task branch. */
+  resolveParentBranch: typeof resolveParentBranch
   resolveDeveloperDoctrineText: typeof resolveDeveloperDoctrineText
   /** The open pull request's body. */
   prBody: (prNumber: number) => string
@@ -2673,6 +2676,7 @@ export const liveForge: EngineForge = {
   fetchRulings,
   fetchLoopHistory,
   resolveHead,
+  resolveParentBranch,
   resolveDeveloperDoctrineText,
   prBody: (prNumber) => sh('gh', ['pr', 'view', String(prNumber), '--json', 'body', '-q', '.body']),
   checkTaskDispatchReadiness,
@@ -2886,6 +2890,9 @@ export async function liveTaskInput(
       fetchCiConclusion: forge.fetchCiConclusion,
       fetchSettledCiConclusion: forge.fetchSettledCiConclusion,
       fetchFailingCheckRuns: forge.fetchFailingCheckRuns,
+      resolveParentHead: () => forge.resolveHead(forge.resolveParentBranch()),
+      fetchParentFailingCheckRuns: forge.fetchFailingCheckRuns,
+      fetchParentCiConclusion: forge.fetchCiConclusion,
       fetchFailedCheckWorkflowRunIds: forge.fetchFailedCheckWorkflowRunIds,
       rerunFailedWorkflowJobs: forge.rerunFailedWorkflowJobs,
       fetchMergeableState: forge.fetchMergeableState,
