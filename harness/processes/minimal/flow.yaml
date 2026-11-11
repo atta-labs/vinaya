@@ -1,0 +1,20 @@
+schema_version: "2.0"
+id: minimal-flow
+display_name: Minimal
+description: One mechanical step, one agent step for the worker, and a closing mechanical step.
+experimental: true
+benchmarked: false
+defaults:
+  model: process-supplied
+agents:
+  - role: worker
+steps:
+  - { id: begin, type: mechanical, action: minimal.begin }
+  - id: work
+    type: agent
+    role: worker
+    prompt_template: "Answer in one line: {{question}}"
+    permission: roles/worker/grants.yaml
+    working_directory: "."
+    max_turns: 1
+  - { id: close, type: mechanical, action: minimal.close }

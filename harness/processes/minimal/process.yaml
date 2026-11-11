@@ -1,0 +1,19 @@
+id: minimal
+name: Minimal
+version: 0.1.0
+flow: flow.yaml
+# The one role folder the harness launches; declared by its folder name under provides.roles.
+roles:
+  - roles/worker
+# Everything else the process provides. The checks, policies and configuration section are supplied by the
+# integration module, which is the one module that implements the kernel's ProcessIntegration interface.
+provides:
+  roles:
+    worker:
+      doctrine: roles/worker/doctrine.md
+      grants: roles/worker/grants.yaml
+      output_schema: roles/worker/output.schema.json
+  checks: integration.ts
+  policies: integration.ts
+  config_section: integration.ts
+  integration: integration.ts
