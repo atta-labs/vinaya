@@ -324,7 +324,27 @@ describe('stageOAuthCredential — O1 (Issue #640)', () => {
     expect(result).not.toBeNull()
     const stagedPath = join(result!.configDir, '.credentials.json')
     expect(stagedPath.startsWith(scratchTmpDir)).toBe(true)
-    expect(stagedPath).not.toContain('/home/dev')
+    // A copy, never the real credential: not the source file, and nothing under the source's own config folder.
+    expect(stagedPath).not.toBe(join('/home/dev', '.claude', '.credentials.json'))
+    expect(stagedPath.startsWith(`${join('/home/dev', '.claude')}/`)).toBe(false)
+    expect(readFileSync(stagedPath, 'utf8')).toBe(fixtureContents)
+  })
+
+  it('stages the copy in scratch even when the temporary folder sits inside the real home', () => {
+    // Some hosts keep their temporary folder under the home folder (a TMPDIR of ~/tmp).
+    const realHome = tempDir('vinaya-wb-oauth-home-')
+    const scratchTmpDir = join(realHome, 'tmp', 'scratch')
+    mkdirSync(scratchTmpDir, { recursive: true })
+    const fixtureContents = JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
+    const source = join(realHome, '.claude', '.credentials.json')
+    const result = stageOAuthCredential({}, realHome, scratchTmpDir, {
+      readOAuthCredentialFile: (path) => (path === source ? fixtureContents : null)
+    })
+    expect(result).not.toBeNull()
+    const stagedPath = join(result!.configDir, '.credentials.json')
+    expect(stagedPath.startsWith(`${scratchTmpDir}/`)).toBe(true)
+    expect(stagedPath).not.toBe(source)
+    expect(stagedPath.startsWith(`${join(realHome, '.claude')}/`)).toBe(false)
     expect(readFileSync(stagedPath, 'utf8')).toBe(fixtureContents)
   })
 
