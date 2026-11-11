@@ -682,12 +682,23 @@ describe("the verifier's hidden-test runs", () => {
 describe("a change trial's publishing instruction and its pull request", () => {
   it('imports the review loop’s one publishing instruction, defined once at module level', () => {
     const loop = readFileSync(
-      join(REPOSITORY_ROOT, 'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts'),
+      join(
+        REPOSITORY_ROOT,
+        'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-helpers.ts'
+      ),
       'utf8'
     )
     expect(loop.match(/function publishingInstructionLine\(/g)?.length).toBe(1)
     expect(loop).toContain('\nexport function publishingInstructionLine(): string {\n')
-    expect(loop.match(/publishingInstructionLine\(\)/g)?.length).toBeGreaterThan(1)
+    expect(
+      readFileSync(
+        join(
+          REPOSITORY_ROOT,
+          'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-prompts.ts'
+        ),
+        'utf8'
+      ).match(/publishingInstructionLine\(\)/g)?.length
+    ).toBeGreaterThan(1)
     const stepOne = readFileSync(join(REPOSITORY_ROOT, 'harness/processes/vinaya-strict/evals/step-one.ts'), 'utf8')
     expect(stepOne).toContain(
       "import { publishingInstructionLine } from '../loops/dev-review/standalone/dev-review-loop'"

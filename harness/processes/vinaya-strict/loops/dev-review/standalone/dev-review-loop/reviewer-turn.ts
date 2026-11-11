@@ -1,3 +1,8 @@
+import { startReviewerSourceTools } from './developer-context.js'
+import { snapshotTurnConfinement } from './turn-confinement.js'
+import { reviewerScanTexts } from './turn-confinement.js'
+import { describeTurnConfinementViolation } from './turn-confinement.js'
+import { checkTurnConfinement } from './turn-confinement.js'
 /**
  * `dev-review-loop`'s reviewer dispatch: one Reviewer or security turn, with its confinement check, and the
  * rule that keeps a sibling's verdict when the other pauses. Moved out of
@@ -69,16 +74,14 @@ export async function dispatchReviewer(
   candidateInputsReady: boolean
 ): Promise<{ verdict: RoundVerdictParse }> {
   const {
-    checkTurnConfinement,
     d,
-    describeTurnConfinementViolation,
+
     dispatchAgent,
     loopLogPath,
-    reviewerScanTexts,
+
     root,
     runId,
-    snapshotTurnConfinement,
-    startReviewerSourceTools,
+
     task
   } = c
 
@@ -116,8 +119,8 @@ export async function dispatchReviewer(
     // O1/O2: the protected-path snapshot this attempt's own after-dispatch
     // check compares against — taken right before this dispatch, never
     // from a cached copy (Traps to avoid).
-    snapshotTurnConfinement(dispatchRoleName, roundNum)
-    const sourceTools = await startReviewerSourceTools(dispatchRoleName, facts.requiredSources)
+    snapshotTurnConfinement(c, dispatchRoleName, roundNum)
+    const sourceTools = await startReviewerSourceTools(c, dispatchRoleName, facts.requiredSources)
     let handle: DispatchHandle
     try {
       handle = await withPromptFile(prompt, (promptFile) =>
@@ -158,11 +161,11 @@ export async function dispatchReviewer(
     // O1/O2: never trust this attempt's structured result once a
     // protected path changed or a recognized credential pattern
     // appeared — thrown before the result is ever classified.
-    const confinement = checkTurnConfinement(dispatchRoleName, reviewerScanTexts(handle))
+    const confinement = checkTurnConfinement(c, dispatchRoleName, reviewerScanTexts(c, handle))
     if (confinement.changedPaths.length > 0 || confinement.credentialFindings.length > 0) {
       throw new ReviewerConfinementViolation(
         role,
-        describeTurnConfinementViolation(confinement),
+        describeTurnConfinementViolation(c, confinement),
         handle.effectId ?? null,
         handle.durationMs
       )

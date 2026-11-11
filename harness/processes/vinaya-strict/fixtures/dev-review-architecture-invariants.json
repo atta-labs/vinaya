@@ -244,6 +244,96 @@
         "path": "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/runner-version.test.ts",
         "kind": "test",
         "reason": "Pins the runner version the driver stamps on its Log identity to the CLI package's, added when the driver's module moved into the process package."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-deps.ts",
+        "kind": "implementation",
+        "reason": "The driver's driver-deps block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts",
+        "kind": "implementation",
+        "reason": "The driver's git-defaults block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-defaults.ts",
+        "kind": "implementation",
+        "reason": "The driver's developer-defaults block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/runtime-defaults.ts",
+        "kind": "implementation",
+        "reason": "The driver's runtime-defaults block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-helpers.ts",
+        "kind": "implementation",
+        "reason": "The driver's driver-helpers block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/cancel.ts",
+        "kind": "implementation",
+        "reason": "The driver's cancel block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-watch.ts",
+        "kind": "implementation",
+        "reason": "The driver's driver-watch block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-logging.ts",
+        "kind": "implementation",
+        "reason": "The driver's run-logging block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-state.ts",
+        "kind": "implementation",
+        "reason": "The driver's run-state block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-prompts.ts",
+        "kind": "implementation",
+        "reason": "The driver's developer-prompts block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-confinement.ts",
+        "kind": "implementation",
+        "reason": "The driver's turn-confinement block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-context.ts",
+        "kind": "implementation",
+        "reason": "The driver's developer-context block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-turn.ts",
+        "kind": "implementation",
+        "reason": "The driver's developer-turn block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-result.ts",
+        "kind": "implementation",
+        "reason": "The driver's developer-result block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stale-driver.ts",
+        "kind": "implementation",
+        "reason": "The driver's stale-driver block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-entry.ts",
+        "kind": "implementation",
+        "reason": "The driver's run-entry block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-setup.ts",
+        "kind": "implementation",
+        "reason": "The driver's run-setup block, moved over the per-run context without changing its behavior."
+      },
+      {
+        "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-start.ts",
+        "kind": "implementation",
+        "reason": "The driver's run-start block, moved over the per-run context without changing its behavior."
       }
     ]
   },
@@ -837,7 +927,7 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-turn.ts",
           "symbol": "dispatchDeveloperOnce"
         }
       ],
@@ -879,7 +969,7 @@
       "scenarios": ["revisions"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-turn.ts",
           "symbol": "dispatchDeveloper"
         }
       ],
@@ -983,7 +1073,7 @@
       "scenarios": ["restart", "isolation-refusal"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-context.ts",
           "symbol": "resolvePublicationBase"
         }
       ],
@@ -1044,7 +1134,7 @@
       "scenarios": ["uncertain-effects"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-defaults.ts",
           "symbol": "defaultPushTaskBranch"
         }
       ],
@@ -1062,7 +1152,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-prompts.ts",
           "symbol": "commitAndPushPrompt"
         }
       ],
@@ -1080,7 +1170,7 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-context.ts",
           "symbol": "publishDeveloperTurn"
         }
       ],
@@ -1098,7 +1188,7 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-context.ts",
           "symbol": "publishDeveloperTurn"
         }
       ],
@@ -1116,7 +1206,7 @@
       "scenarios": ["restart", "uncertain-effects"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-context.ts",
           "symbol": "publishDeveloperTurn"
         }
       ],
@@ -1314,7 +1404,7 @@
       "scenarios": ["isolation-refusal"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-helpers.ts",
           "symbol": "publishingInstructionLine"
         }
       ],
@@ -1591,6 +1681,10 @@
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.ts",
           "symbol": "buildVerifiedReviewerCandidate"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-confinement.ts",
+          "symbol": "developerScanTexts"
         }
       ],
       "tests": [
@@ -1696,6 +1790,10 @@
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/security-scan-command.ts",
           "symbol": "resolveTrustAnchorSecurityScanCommand"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts",
+          "symbol": "defaultRunSecurityScanSubprocess"
         }
       ],
       "tests": [
@@ -1998,7 +2096,7 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-watch.ts",
           "symbol": "watchPauseThenResume"
         }
       ],
@@ -2081,7 +2179,7 @@
       "scenarios": ["cancellation", "uncertain-effects"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/cancel.ts",
           "symbol": "cancelDevReviewLoop"
         },
         {
@@ -2107,7 +2205,7 @@
       "scenarios": ["operator-intervention", "cancellation"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-watch.ts",
           "symbol": "runDriverLoop"
         }
       ],
@@ -2126,7 +2224,7 @@
       "scenarios": ["operator-intervention"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-watch.ts",
           "symbol": "watchPauseThenResume"
         }
       ],
@@ -2188,7 +2286,7 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-state.ts",
           "symbol": "persistCurrentLoopState"
         }
       ],
@@ -2345,6 +2443,10 @@
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts",
           "symbol": "seedLoopHistory"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-entry.ts",
+          "symbol": "initializeRunEntry"
         }
       ],
       "tests": [
@@ -2402,7 +2504,7 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-helpers.ts",
           "symbol": "defaultSweepTasksAtStart"
         }
       ],
@@ -2421,7 +2523,7 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stale-driver.ts",
           "symbol": "checkStaleDriver"
         }
       ],
@@ -2441,6 +2543,10 @@
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts",
           "symbol": "keepDriverLock"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-start.ts",
+          "symbol": "startRun"
         }
       ],
       "tests": [
@@ -2462,7 +2568,7 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-helpers.ts",
           "symbol": "buildReexecArgs"
         }
       ],
@@ -2485,7 +2591,7 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/runtime-defaults.ts",
           "symbol": "defaultPullDefaultBranch"
         }
       ],
@@ -2545,7 +2651,7 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-logging.ts",
           "symbol": "logEvents"
         }
       ],
@@ -2627,7 +2733,7 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stale-driver.ts",
           "symbol": "checkStaleDriver"
         }
       ],
@@ -2647,6 +2753,10 @@
         {
           "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts",
           "symbol": "createDriverExitRecorder"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-setup.ts",
+          "symbol": "initializeRunBody"
         }
       ],
       "tests": [
@@ -2668,7 +2778,7 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-deps.ts",
           "symbol": "LoopDeps"
         }
       ],
@@ -2740,8 +2850,12 @@
           "symbol": "pushedCommitRangeBase"
         },
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-context.ts",
           "symbol": "buildDeveloperDevToolContext"
+        },
+        {
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-confinement.ts",
+          "symbol": "snapshotTurnConfinement"
         }
       ],
       "tests": ["harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-5.test.ts"],
@@ -2758,11 +2872,11 @@
       "scenarios": ["happy-path", "stale-evidence"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-defaults.ts",
           "symbol": "defaultRefreshPrEvidence"
         },
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-defaults.ts",
           "symbol": "prReportRefreshArgs"
         }
       ],
@@ -3217,7 +3331,7 @@
           "symbol": "bindPauseToPullRequest"
         },
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-watch.ts",
           "symbol": "watchPrePrPauseThenResume"
         }
       ],
@@ -3467,7 +3581,7 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
+          "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-result.ts",
           "symbol": "reportsTestFailure"
         }
       ],
