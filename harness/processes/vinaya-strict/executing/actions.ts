@@ -152,7 +152,10 @@ import {
   type LiveFailure,
   type LiveRunner
 } from '../loops/dev-review/standalone/dev-review-loop/live-check'
-import { routeCompletionEvents } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
+import {
+  isGitHubConnectionFailure,
+  routeCompletionEvents
+} from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 import { resolveTrustAnchorSecurityScanCommand } from '../loops/dev-review/standalone/dev-review-loop/security-scan-command'
 import { fetchPrBody } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import {
@@ -577,11 +580,6 @@ export function pauseThrough(task: TaskInput, step: string, request: PauseReques
 }
 
 /**
- * A precondition step's refusal: the pause made durable, and a result marked refused, so the run halts with the step
- * unrecorded and the resume after its cause is fixed runs it again. A deciding step's pause is recorded instead: its
- * record carries the decision the resume continues from.
- */
-/**
  * Whether a not-ready readiness result failed only because a forge read did not complete: every blocking JSON
  * finding is marked `severity:infra` or names a connection failure, no gate step reports a real not-ready, and the
  * local controls are active. Such a result says nothing about the task, so setup re-checks it instead of pausing.
@@ -599,20 +597,70 @@ export function readinessFailedOnForgeRead(output: string): boolean {
   if (blocking.length === 0) return false
   if (/NOT READY|gate step '[^']+' is missing/.test(output)) return false
   if (!output.includes('all required controls are active')) return false
-  return blocking.every((message) => /severity:infra/.test(message) || FORGE_READ_FAILURE.test(message))
+  return blocking.every((message) => INFRA_MARK.test(message) || namesForgeConnectionFailure(message))
 }
 
-const FORGE_READ_FAILURE =
-  /TLS handshake timeout|i\/o timeout|connection refused|connection reset|no such host|network is unreachable|Client\.Timeout exceeded|could not resolve host|error connecting to/i
+/**
+ * The marker the readiness gates put on a finding they could not evaluate because a forge read failed (an
+ * unreachable forge, a `gh` command that did not complete): the gate says it is an outage, not a finding about the
+ * task, so it is read the same way as a connection failure the message names itself.
+ */
+const INFRA_MARK = /\bseverity:infra\b/
+
+/**
+ * Whether a finding's message names a forge connection failure, as `isGitHubConnectionFailure` reads one: the
+ * request line a gate embeds after its own prefix (`… : Get "https://api.github.com/…": net/http: …`) is cut out and
+ * read on a line of its own, the shape that classifier recognises.
+ */
+function namesForgeConnectionFailure(message: string): boolean {
+  const at = message.search(
+    /(?:Get|Post|Put|Patch|Delete|Head) "https?:\/\/|fatal: unable to access '|error connecting to /
+  )
+  return at >= 0 && isGitHubConnectionFailure(new Error(message.slice(at)))
+}
 
 /**
  * The task's readiness, re-checked across a forge outage: a result that failed only on a forge read goes to the stop
  * decision as a forge connection failure, which retries after its wait within the same bound a round's forge reads
  * use; once that bound is spent, or for any other not-ready result, the last result is returned for setup to pause on.
  */
+async function forgeRetrySleep(task: TaskInput, ms: number): Promise<void> {
+  await (task.bound?.setupRetrySleep ?? ((wait: number) => new Promise<void>((done) => setTimeout(done, wait))))(ms)
+}
+
+/**
+ * Runs one setup step, retrying it when it throws a forge connection failure (`isGitHubConnectionFailure`) after the
+ * wait the stop decision gives, within the same bound a round's forge reads use; any other error, or the last one
+ * once the bound is spent, is thrown for the step's own refusal to pause on.
+ */
+async function retryAcrossForgeOutage<T>(task: TaskInput, what: string, step: () => T | Promise<T>): Promise<T> {
+  let attempts = 0
+  for (;;) {
+    try {
+      return await step()
+    } catch (error) {
+      if (!isGitHubConnectionFailure(error)) throw error
+      const stop = decideStop({
+        kind: 'driver_error',
+        runner: 'engine',
+        errorClass: 'forge_connection',
+        message: error instanceof Error ? error.message : String(error),
+        round: 0,
+        attempts
+      })
+      if (stop.type !== 'retry') throw error
+      appendDriverLine(
+        loopLogPathFor(null, task.issueNumber, task.runtimeDir),
+        `${what} could not reach the forge; trying again in ${Math.round(stop.waitMs / 1000)} s (attempt ${attempts + 1})`
+      )
+      await forgeRetrySleep(task, stop.waitMs)
+      attempts = stop.bound.kind === 'attempts' ? stop.bound.used : attempts + 1
+    }
+  }
+}
+
 async function checkReadinessAcrossForgeOutage(task: TaskInput): Promise<DispatchReadinessCheckResult> {
   const check = task.bound?.checkTaskDispatchReadiness ?? checkTaskDispatchReadiness
-  const sleep = task.bound?.setupRetrySleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)))
   let attempts = 0
   for (;;) {
     const readiness = check(task.branch)
@@ -630,11 +678,16 @@ async function checkReadinessAcrossForgeOutage(task: TaskInput): Promise<Dispatc
       loopLogPathFor(null, task.issueNumber, task.runtimeDir),
       `the readiness check could not read the forge; checking again in ${Math.round(stop.waitMs / 1000)} s (attempt ${attempts + 1})`
     )
-    await sleep(stop.waitMs)
+    await forgeRetrySleep(task, stop.waitMs)
     attempts = stop.bound.kind === 'attempts' ? stop.bound.used : attempts + 1
   }
 }
 
+/**
+ * A precondition step's refusal: the pause made durable, and a result marked refused, so the run halts with the step
+ * unrecorded and the resume after its cause is fixed runs it again. A deciding step's pause is recorded instead: its
+ * record carries the decision the resume continues from.
+ */
 function refuseThrough(
   task: TaskInput,
   step: string,
@@ -2323,7 +2376,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       const refuse = (request: PauseRequest) => refuseThrough(task, 'prepare-run', request)
       // The policy is read here, not when the run's input is built, so a failed read pauses instead of refusing entry.
       try {
-        task.reviewPolicy?.()
+        await retryAcrossForgeOutage(task, 'reading the review policy', () => task.reviewPolicy?.())
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error)
         return refuse({
@@ -2359,7 +2412,9 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       ;(task.bound?.createTaskWorktree ?? createTaskWorktree)(task.branch)
       // The worktree's own dependencies, installed on every start, before any agent step; a failure stops the run here.
       try {
-        ;(task.bound?.installWorktreeDependencies ?? defaultInstallWorktreeDependencies)(task.worktreePath)
+        await retryAcrossForgeOutage(task, 'installing the worktree dependencies', () =>
+          (task.bound?.installWorktreeDependencies ?? defaultInstallWorktreeDependencies)(task.worktreePath)
+        )
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error)
         return refuse({

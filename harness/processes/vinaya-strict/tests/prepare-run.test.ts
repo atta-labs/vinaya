@@ -677,4 +677,61 @@ describe('setup re-checks readiness across a forge outage', () => {
     expect(calls.filter((c) => c === 'readiness')).toHaveLength(1)
     expect(recorded.calls).toContain('pause-state:escalation')
   })
+
+  const connectionFailure = () =>
+    new Error('Get "https://api.github.com/repos/o/r/contents/x": net/http: TLS handshake timeout')
+
+  test('a review policy read that fails to connect once is read again instead of pausing', async () => {
+    let reads = 0
+    const sleeps: number[] = []
+    const { task, run, recorded, calls } = setup({
+      reviewPolicy: () => {
+        reads += 1
+        if (reads === 1) throw connectionFailure()
+        return undefined as never
+      }
+    } as Partial<TaskInput>)
+    task.bound = { ...task.bound, setupRetrySleep: async (ms: number) => void sleeps.push(ms) }
+    const result = await run('vinaya.prepare-run')
+    expect(result.exitCode).toBe(0)
+    expect(reads).toBe(2)
+    expect(sleeps).toHaveLength(1)
+    expect(calls).toContain('worktree')
+    expect(recorded.calls).toEqual([])
+  })
+
+  test('a dependency install that fails to connect once is run again instead of pausing', async () => {
+    let installs = 0
+    const sleeps: number[] = []
+    const { task, run, recorded } = setup()
+    task.bound = {
+      ...task.bound,
+      installWorktreeDependencies: () => {
+        installs += 1
+        if (installs === 1) throw connectionFailure()
+      },
+      setupRetrySleep: async (ms: number) => void sleeps.push(ms)
+    }
+    const result = await run('vinaya.prepare-run')
+    expect(result.exitCode).toBe(0)
+    expect(installs).toBe(2)
+    expect(sleeps).toHaveLength(1)
+    expect(recorded.calls).toEqual([])
+  })
+
+  test('a dependency install that fails for any other reason pauses at once', async () => {
+    const sleeps: number[] = []
+    const { task, run, recorded } = setup()
+    task.bound = {
+      ...task.bound,
+      installWorktreeDependencies: () => {
+        throw new Error('lockfile is out of date')
+      },
+      setupRetrySleep: async (ms: number) => void sleeps.push(ms)
+    }
+    const result = await run('vinaya.prepare-run')
+    expect(result.exitCode).toBe(1)
+    expect(sleeps).toEqual([])
+    expect(recorded.calls).toContain('pause-state:infrastructure')
+  })
 })
