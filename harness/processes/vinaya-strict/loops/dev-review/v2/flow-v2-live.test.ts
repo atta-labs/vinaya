@@ -9,7 +9,11 @@ import {
   LAST_PUSH_RESULT,
   SELECTION_NOTE
 } from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
-import { PROGRESS_MARKER } from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
+import {
+  PROGRESS_MARKER,
+  testGroupEndLine,
+  testGroupStartLine
+} from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
 import {
   DEFERRAL_MARKER_TTL_MS,
   parseDeferralMarker,
@@ -1141,6 +1145,9 @@ describe('live progress of the ready push and the explicit-command run', () => {
   })
 })
 
+// A 4 GB host: one round-test slot, whatever machine runs the tests.
+const ONE_SLOT_HOST = { totalMemory: () => 4 * 1024 ** 3, processors: () => 12 }
+
 describe('runRoundTestsLive', () => {
   type Adapter = {
     selected?: string[]
@@ -1234,7 +1241,7 @@ process.exit(cfg.exit ?? 0)
     worktreePath: dir,
     registryDir: join(dir, 'registry'),
     lockRoot: fixtureDir('round-root-'),
-    lock: { pollMs: 20 }
+    lock: { pollMs: 20, ...ONE_SLOT_HOST }
   })
 
   test('a repository that commits no native adapter is `none`, logged, and runs nothing', async () => {
@@ -1365,12 +1372,18 @@ process.exit(cfg.exit ?? 0)
     const events = join(fixtureDir('round-events-'), 'events.log')
     const { dir, head } = repoWith({ selected: ['a.test.ts'], events, name: 'x', result: { outcome: 'passed' } })
     const shared = common(dir)
-    const held = await acquireRoundTestLock({ rootDir: shared.lockRoot, deadlineAt: Date.now() + 60_000 })
+    const held = await acquireRoundTestLock({
+      ...ONE_SLOT_HOST,
+      rootDir: shared.lockRoot,
+      deadlineAt: Date.now() + 60_000
+    })
     const logs: string[] = []
     const result = await runRoundTestsLive({ ...shared, head, deadlineMs: 400, log: (line) => logs.push(line) })
     if (held.ok) held.release()
     expect(result).toMatchObject({ outcome: 'timed_out', stoppedBy: 'deadline' })
-    expect(logs).toHaveLength(1)
+    // The wait's start, then the timeout.
+    expect(logs).toHaveLength(2)
+    expect(logs[0]).toStartWith('round tests: waiting for a round-test slot')
     expect(existsSync(events)).toBe(false)
   })
 
@@ -1395,6 +1408,98 @@ process.exit(cfg.exit ?? 0)
     ]
     expect(lines).toEqual([...block(first), ...block(second)])
   }, 60_000)
+
+  test('a run that waits for a slot logs when the wait starts and when it takes the slot; a free slot logs neither', async () => {
+    const { dir, head } = repoWith({ selected: ['a.test.ts'], result: { outcome: 'passed' } })
+    const shared = common(dir)
+    const held = await acquireRoundTestLock({
+      ...ONE_SLOT_HOST,
+      rootDir: shared.lockRoot,
+      deadlineAt: Date.now() + 60_000
+    })
+    if (!held.ok) throw new Error('the slot must be taken')
+    setTimeout(() => held.release(), 300)
+    const waited: string[] = []
+    expect((await runRoundTestsLive({ ...shared, head, log: (line) => waited.push(line) })).outcome).toBe('passed')
+    expect(waited.filter((line) => line.startsWith('round tests: waiting for a round-test slot'))).toEqual([
+      `round tests: waiting for a round-test slot at ${head.slice(0, 12)}: all 1 on this host are held`
+    ])
+    expect(waited.some((line) => /^round tests: took round-test slot 1 of 1 after waiting \d+s$/.test(line))).toBe(true)
+    const free: string[] = []
+    expect((await runRoundTestsLive({ ...shared, head, log: (line) => free.push(line) })).outcome).toBe('passed')
+    expect(free.some((line) => line.includes('round-test slot'))).toBe(false)
+  }, 30_000)
+
+  test('two runs on a host with two slots run at the same time', async () => {
+    const events = join(fixtureDir('round-events-'), 'events.log')
+    const lockRoot = fixtureDir('round-root-')
+    const make = (name: string) =>
+      repoWith({ selected: ['a.test.ts'], groups: 1, groupMs: 600, events, name, result: { outcome: 'passed' } })
+    const runs = [make('A'), make('B')]
+    const twoSlots = { pollMs: 20, totalMemory: () => 8 * 1024 ** 3, processors: () => 12 }
+    const results = await Promise.all(
+      runs.map((r) => runRoundTestsLive({ ...common(r.dir), lockRoot, lock: twoSlots, head: r.head }))
+    )
+    expect(results.map((r) => r.outcome)).toEqual(['passed', 'passed'])
+    const lines = readFileSync(events, 'utf8').trim().split('\n')
+    // Both runs were inside before either came out.
+    const firstOut = lines.findIndex((line) => line.startsWith('out '))
+    expect(lines.slice(0, firstOut).filter((line) => line.startsWith('in '))).toHaveLength(2)
+  }, 60_000)
+
+  test('a passed and a failed run each log the outcome, the selected file count and the wall time', async () => {
+    const pass = repoWith({ selected: ['a.test.ts', 'b.test.ts'], result: { outcome: 'passed' } })
+    const passLogs: string[] = []
+    await runRoundTestsLive({ ...common(pass.dir), head: pass.head, log: (line) => passLogs.push(line) })
+    expect(passLogs).toHaveLength(1)
+    expect(passLogs[0]).toMatch(/^round tests passed: 2 selected test file\(s\); wall time \d+ ms$/)
+    const fail = repoWith({
+      selected: ['a.test.ts'],
+      output: 'error: boom\n      at __DIR__/src/thing.ts:12:3',
+      result: { outcome: 'failed', failed: ['__DIR__/a.test.ts'] }
+    })
+    const failLogs: string[] = []
+    await runRoundTestsLive({ ...common(fail.dir), head: fail.head, log: (line) => failLogs.push(line) })
+    expect(failLogs).toHaveLength(1)
+    expect(failLogs[0]).toMatch(/^round tests failed: src\/thing\.ts:12; 1 selected test file\(s\); wall time \d+ ms$/)
+  }, 30_000)
+
+  describe('live progress', () => {
+    const savedRegistry = process.env.VINAYA_PROCESS_REGISTRY_DIR
+    beforeEach(() => {
+      process.env.VINAYA_PROCESS_REGISTRY_DIR = fixtureDir('round-progress-registry-')
+    })
+    afterEach(() => {
+      if (savedRegistry === undefined) delete process.env.VINAYA_PROCESS_REGISTRY_DIR
+      else process.env.VINAYA_PROCESS_REGISTRY_DIR = savedRegistry
+    })
+
+    test('the runner group lines the adapter writes to its capture reach the driver log', async () => {
+      const start = testGroupStartLine({ group: 'g@default', runner: 'bun', cwd: '.', tests: ['a.test.ts'] })
+      const end = testGroupEndLine({ group: 'g@default', executed: ['a.test.ts'], failed: [] })
+      const { dir, head } = repoWith({
+        selected: ['a.test.ts'],
+        output: `${start}\nbun test v1.4.4\n\na.test.ts:\n(pass) a passes [1.00ms]\n\n 1 pass\n 0 fail\n${end}`,
+        result: { outcome: 'passed' }
+      })
+      const runtime = fixtureDir('round-progress-runtime-')
+      const progress = progressContextOf(join(runtime, 'engine-runs', '7'))
+      if (progress === null) throw new Error('not an Engine run directory')
+      const result = await runRoundTestsLive({ ...common(dir), head, progress })
+      expect(result.outcome).toBe('passed')
+      const log = existsSync(progress.logPath) ? readFileSync(progress.logPath, 'utf8') : ''
+      expect(log).toMatch(/test progress: .*a\.test\.ts ✓/)
+    }, 60_000)
+
+    test('with no progress context the run writes no driver log of its own', async () => {
+      const { dir, head } = repoWith({ selected: ['a.test.ts'], result: { outcome: 'passed' } })
+      const runtime = fixtureDir('round-progress-runtime-')
+      const progress = progressContextOf(join(runtime, 'engine-runs', '8'))
+      if (progress === null) throw new Error('not an Engine run directory')
+      expect((await runRoundTestsLive({ ...common(dir), head })).outcome).toBe('passed')
+      expect(existsSync(progress.logPath)).toBe(false)
+    }, 30_000)
+  })
 
   test('the live function bag binds runRoundTests', () => {
     const { dir, head } = repoWith(null)

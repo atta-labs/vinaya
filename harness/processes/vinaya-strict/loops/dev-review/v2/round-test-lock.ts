@@ -1,13 +1,33 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { availableParallelism, totalmem } from 'node:os'
 import { join } from 'node:path'
 
-// A host-wide mutex for round-test runs: a directory taken with an atomic `mkdir` under the runtime root (the parent
-// of every repository's own runtime directory), kept alive by a heartbeat file its holder touches, and reclaimed from
-// a holder whose process died and whose heartbeat stopped. One run of the repository's selected tests at a time on a
-// host, whichever number of drivers and repositories are running.
+// A host-wide counted lock for round-test runs: a fixed number of slots, each a directory taken with an atomic `mkdir`
+// under the runtime root (the parent of every repository's own runtime directory), kept alive by a heartbeat file its
+// holder touches, and reclaimed from a holder whose process died and whose heartbeat stopped. The slot count comes
+// from the host's memory and processors, so a small host runs one round-test run at a time and a large one runs
+// several, whichever number of drivers and repositories are running.
 
-/** The lock directory's name under the runtime root. */
+/** The first slot's directory name under the runtime root; slot `i > 0` is this name followed by `.<i>`. */
 export const ROUND_TEST_LOCK_DIRNAME = 'round-tests.lock'
+
+/** The memory one round-test slot is sized for. */
+export const ROUND_TEST_SLOT_MEMORY_BYTES = 4 * 1024 ** 3
+
+/**
+ * How many round-test runs a host runs at once: one per 4 GiB of memory and per two logical processors, whichever
+ * is fewer, and never fewer than one. A host below 8 GiB keeps a single slot.
+ */
+export function roundTestSlotCount(host: { totalMemoryBytes: number; processors: number }): number {
+  const byMemory = Math.floor(host.totalMemoryBytes / ROUND_TEST_SLOT_MEMORY_BYTES)
+  const byProcessors = Math.floor(host.processors / 2)
+  return Math.max(1, Math.min(byMemory, byProcessors))
+}
+
+/** The directory of slot `index` under `rootDir`. */
+export function roundTestSlotDir(rootDir: string, index: number): string {
+  return join(rootDir, index === 0 ? ROUND_TEST_LOCK_DIRNAME : `${ROUND_TEST_LOCK_DIRNAME}.${index}`)
+}
 
 const OWNER_FILE = 'owner.json'
 const HEARTBEAT_FILE = 'heartbeat'
@@ -22,7 +42,7 @@ const HEARTBEAT_ABANDONED_MS = 10 * 60_000
 export const LOCK_POLL_MS = 1_000
 
 export type RoundTestLockResult =
-  | { ok: true; release: () => void }
+  | { ok: true; release: () => void; slot: number; slots: number; waitedMs: number }
   | { ok: false; reason: 'timeout' | 'cancel' | 'error'; detail: string }
 
 export interface RoundTestLockOptions {
@@ -42,6 +62,12 @@ export interface RoundTestLockOptions {
   pid?: number
   /** Starts the heartbeat: calls `beat` every `ms`, returns its canceller. A test fakes it. */
   startHeartbeat?: (beat: () => void, ms: number) => () => void
+  /** The host's total memory in bytes; the real reading when absent. */
+  totalMemory?: () => number
+  /** The host's logical processor count; the real reading when absent. */
+  processors?: () => number
+  /** Called once, when every slot is held and the caller starts to wait. */
+  onWait?: (info: { slots: number }) => void
 }
 
 function realSleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -106,8 +132,9 @@ function holderDead(lockDir: string, nowMs: number, staleMs: number, isAlive: (p
 }
 
 /**
- * Takes the host lock, waiting for the current holder until `deadlineAt`. Returns a `release` that stops the heartbeat
- * and removes the directory (only when it still belongs to this holder). Never throws: a failure is `ok: false`.
+ * Takes the first free round-test slot, waiting for one to free up until `deadlineAt`. Returns a `release` that stops
+ * the heartbeat and removes the slot's directory (only when it still belongs to this holder), the slot taken, the slot
+ * count and how long the wait lasted. Never throws: a failure is `ok: false`.
  */
 export async function acquireRoundTestLock(options: RoundTestLockOptions): Promise<RoundTestLockResult> {
   const now = options.now ?? (() => Date.now())
@@ -115,35 +142,53 @@ export async function acquireRoundTestLock(options: RoundTestLockOptions): Promi
   const isAlive = options.isAlive ?? realIsAlive
   const staleMs = options.staleMs ?? HEARTBEAT_STALE_MS
   const pollMs = options.pollMs ?? LOCK_POLL_MS
-  const lockDir = join(options.rootDir, ROUND_TEST_LOCK_DIRNAME)
   const token = `${options.pid ?? process.pid}-${Math.random().toString(36).slice(2)}-${Date.now()}`
+  const startedAt = now()
+  let waiting = false
   try {
+    const slots = roundTestSlotCount({
+      totalMemoryBytes: (options.totalMemory ?? totalmem)(),
+      processors: (options.processors ?? availableParallelism)()
+    })
     mkdirSync(options.rootDir, { recursive: true, mode: 0o700 })
     for (;;) {
       if (options.signal?.aborted)
         return { ok: false, reason: 'cancel', detail: 'cancelled while waiting for the lock' }
-      try {
-        mkdirSync(lockDir, { mode: 0o700 })
-        writeFileSync(join(lockDir, OWNER_FILE), JSON.stringify({ pid: options.pid ?? process.pid, token }))
-        writeFileSync(join(lockDir, HEARTBEAT_FILE), String(now()))
-        utimesSync(join(lockDir, HEARTBEAT_FILE), new Date(now()), new Date(now()))
-        return { ok: true, release: holdLock(lockDir, token, options) }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      }
-      if (holderDead(lockDir, now(), staleMs, isAlive)) {
-        // One reclaimer wins the rename; a loser's rename fails and it simply looks again.
-        const aside = `${lockDir}.reclaimed-${token}`
+      for (let slot = 0; slot < slots; slot++) {
+        const lockDir = roundTestSlotDir(options.rootDir, slot)
         try {
-          renameSync(lockDir, aside)
-          rmSync(aside, { recursive: true, force: true })
-        } catch {
-          // Someone else reclaimed it first.
+          mkdirSync(lockDir, { mode: 0o700 })
+          writeFileSync(join(lockDir, OWNER_FILE), JSON.stringify({ pid: options.pid ?? process.pid, token }))
+          writeFileSync(join(lockDir, HEARTBEAT_FILE), String(now()))
+          utimesSync(join(lockDir, HEARTBEAT_FILE), new Date(now()), new Date(now()))
+          return {
+            ok: true,
+            release: holdLock(lockDir, token, options),
+            slot,
+            slots,
+            waitedMs: waiting ? Math.max(0, now() - startedAt) : 0
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
         }
-        continue
+        if (holderDead(lockDir, now(), staleMs, isAlive)) {
+          // One reclaimer wins the rename (each slot has its own aside name); a loser's rename fails and it looks again.
+          const aside = `${lockDir}.reclaimed-${token}`
+          try {
+            renameSync(lockDir, aside)
+            rmSync(aside, { recursive: true, force: true })
+          } catch {
+            // Someone else reclaimed it first.
+          }
+          slot--
+        }
+      }
+      if (!waiting) {
+        waiting = true
+        options.onWait?.({ slots })
       }
       const remaining = options.deadlineAt - now()
-      if (remaining <= 0) return { ok: false, reason: 'timeout', detail: 'the lock stayed held until the deadline' }
+      if (remaining <= 0) return { ok: false, reason: 'timeout', detail: 'every slot stayed held until the deadline' }
       await sleep(Math.min(pollMs, remaining), options.signal)
     }
   } catch (error) {
