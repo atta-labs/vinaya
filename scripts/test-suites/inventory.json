@@ -95,7 +95,8 @@
         "scripts/release/release.test.ts",
         "scripts/ci/record-reads.test.ts",
         "scripts/test-suites/real-replay.test.ts",
-        "scripts/marker-rewrite/rewrite-open-threads.test.ts"
+        "scripts/marker-rewrite/rewrite-open-threads.test.ts",
+        "harness/processes/minimal/minimal-process.test.ts"
       ]
     },
     {

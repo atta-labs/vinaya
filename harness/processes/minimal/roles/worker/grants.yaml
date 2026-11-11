@@ -1,0 +1,3 @@
+role: worker
+# The worker is granted no tool.
+tools: []

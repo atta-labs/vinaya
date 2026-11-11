@@ -1,0 +1,10 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Worker turn result",
+  "type": "object",
+  "required": ["answer"],
+  "additionalProperties": false,
+  "properties": {
+    "answer": { "type": "string", "minLength": 1, "description": "The one-line answer to the question." }
+  }
+}
