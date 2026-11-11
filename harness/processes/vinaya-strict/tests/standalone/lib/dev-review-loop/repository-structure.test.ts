@@ -4,11 +4,17 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { readFileSync, rmSync } from 'node:fs'
+import { readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import ts from 'typescript'
 import { DRIVER_OWNED_PATHS } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
 import { cleanupWorlds } from '../dev-review-loop-harness.js'
 import { tempDirs as sharedTempDirs } from './driver-test-support.js'
+
+const DRIVER_DIR = join(import.meta.dir, '..', '..', '..', '..', 'loops', 'dev-review', 'standalone')
+const MODULE_DIR = join(DRIVER_DIR, 'dev-review-loop')
+const DRIVER_PATH = join(DRIVER_DIR, 'dev-review-loop.ts')
+const EXPORT_LIST_PATH = join(import.meta.dir, '..', '..', '..', '..', 'fixtures', 'dev-review-driver-exports.json')
 
 const tempDirs = sharedTempDirs
 afterEach(() => {
@@ -43,6 +49,10 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
     )
     const exitProcessCalls = source.match(/\bd\.exitProcess\(/g) ?? []
     expect(exitProcessCalls).toHaveLength(1)
+    // ... and none hides in a module the driver calls into.
+    for (const file of readdirSync(MODULE_DIR).filter((name) => name.endsWith('.ts'))) {
+      expect(readFileSync(join(MODULE_DIR, file), 'utf8').match(/\bd\.exitProcess\(/g) ?? []).toHaveLength(0)
+    }
   })
 
   it('the outer round-loop catch no longer re-throws — it is a `return`, same as every other decided exit', () => {
@@ -62,8 +72,11 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
     expect(markerIndex).toBeGreaterThan(-1)
     const catchStart = source.lastIndexOf('catch (err) {', markerIndex)
     expect(catchStart).toBeGreaterThan(-1)
-    const catchEnd = source.indexOf('\n    }\n\n    // eslint-disable-next-line no-constant-condition', markerIndex)
-    expect(catchEnd).toBeGreaterThan(markerIndex)
+    // The catch's own closing line: the first one after its `return`.
+    const returnIndex = source.indexOf('return { finalDecision: decision, prNumber, task }', markerIndex)
+    expect(returnIndex).toBeGreaterThan(markerIndex)
+    const catchEnd = source.indexOf('\n    }\n', returnIndex)
+    expect(catchEnd).toBeGreaterThan(returnIndex)
     const body = source.slice(catchStart, catchEnd)
     expect(body).not.toMatch(/^\s*throw err\s*$/m)
     expect(body).toMatch(/return \{ finalDecision: decision, prNumber, task \}/)
@@ -104,12 +117,15 @@ describe('devReviewLoop — O4 (issue-657) wiring: the manifest builder reads a 
     'utf8'
   )
 
+  // The round loop moved to its own module; the wiring it carries is read there.
+  const roundLoopSrc = readFileSync(join(MODULE_DIR, 'round-loop.ts'), 'utf8')
+
   it('the round-1 dispatch builds baseSha from d.gitMergeBase(head), not d.gitRevParseOriginMain()', () => {
-    expect(src).toContain('const baseSha = await d.gitMergeBase(head)')
+    expect(roundLoopSrc).toContain('const baseSha = await d.gitMergeBase(head)')
   })
 
   it('the publish-time fallback manifest rebuild resolves baseSha the same way', () => {
-    expect(src).toContain('baseSha: await d.gitMergeBase(d.resolveHead(branch))')
+    expect(roundLoopSrc).toContain('baseSha: await d.gitMergeBase(d.resolveHead(branch))')
   })
 
   it('gitMergeBase is a real Deps field, defaulting to resolveMergeBase — never an ad hoc shell pipeline in the driver', () => {
@@ -130,11 +146,99 @@ describe('DRIVER_OWNED_PATHS covers every dev-review-loop/*.ts split module (rev
       'round-assess.ts',
       'publication.ts',
       'pause-resume.ts',
-      'developer-dispatch.ts'
+      'developer-dispatch.ts',
+      'run-context.ts',
+      'round-loop.ts',
+      'rate-limit-waits.ts',
+      'ci-gate.ts',
+      'round-report.ts',
+      'reviewer-turn.ts'
     ]
     for (const m of splitModules) {
       const modulePath = `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/${m}`
       expect(DRIVER_OWNED_PATHS.some((p) => modulePath === p || modulePath.startsWith(p))).toBe(true)
     }
+  })
+})
+
+// --- driver-split-v1 1: the driver file is a composition root, not the place the round loop lives ---
+
+/** The most lines `devReviewLoop`, its nested `runDevReviewLoopBody` included, may span. */
+const DEV_REVIEW_LOOP_LINE_CAP = 3950
+
+describe('devReviewLoop stays a bounded composition root (driver-split-v1 1)', () => {
+  it(`spans at most ${DEV_REVIEW_LOOP_LINE_CAP} lines`, () => {
+    const source = readFileSync(DRIVER_PATH, 'utf8')
+    const file = ts.createSourceFile(DRIVER_PATH, source, ts.ScriptTarget.Latest, true)
+    const fn = file.statements.find(
+      (statement): statement is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(statement) && statement.name?.text === 'devReviewLoop'
+    )
+    expect(fn).toBeDefined()
+    const first = file.getLineAndCharacterOfPosition(fn!.getStart()).line
+    const last = file.getLineAndCharacterOfPosition(fn!.getEnd()).line
+    expect(last - first + 1).toBeLessThanOrEqual(DEV_REVIEW_LOOP_LINE_CAP)
+  })
+
+  it('creates its run context inside the function — no module in the loop holds one at module level', () => {
+    const driver = readFileSync(DRIVER_PATH, 'utf8')
+    expect(driver).toContain('const c = createLoopRunContext(')
+    // `createLoopRunContext` is called exactly once, in `devReviewLoop`; a module-level call would share one
+    // context between two drivers running in one process.
+    expect(driver.match(/createLoopRunContext\(/g)).toHaveLength(1)
+    for (const file of readdirSync(MODULE_DIR).filter((name) => name.endsWith('.ts'))) {
+      expect(readFileSync(join(MODULE_DIR, file), 'utf8')).not.toMatch(
+        /^(export )?(const|let) \w+(: [^=\n]+)? = createLoopRunContext\(/m
+      )
+    }
+  })
+})
+
+/** The names a module's top level exports, read from its syntax — a re-export names its own exports too. */
+function exportedNames(path: string): Set<string> {
+  const source = readFileSync(path, 'utf8')
+  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true)
+  const names = new Set<string>()
+  for (const statement of file.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      expect(statement.exportClause).toBeDefined() // `export *` would hide names from this list
+      if (statement.exportClause && ts.isNamedExports(statement.exportClause))
+        for (const element of statement.exportClause.elements) names.add(element.name.text)
+      continue
+    }
+    const exported = ts.getCombinedModifierFlags(statement as unknown as ts.Declaration) & ts.ModifierFlags.Export
+    if (!exported) continue
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations)
+        if (ts.isIdentifier(declaration.name)) names.add(declaration.name.text)
+    } else if (
+      (ts.isFunctionDeclaration(statement) ||
+        ts.isClassDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isInterfaceDeclaration(statement) ||
+        ts.isEnumDeclaration(statement)) &&
+      statement.name
+    ) {
+      names.add(statement.name.text)
+    }
+  }
+  return names
+}
+
+describe('the driver file keeps every name it exported before the split (driver-split-v1 1)', () => {
+  const listed = JSON.parse(readFileSync(EXPORT_LIST_PATH, 'utf8')) as { values: string[]; types: string[] }
+
+  it('exports each name in the committed list, taken from the default branch before the move', () => {
+    const exported = exportedNames(DRIVER_PATH)
+    const missing = [...listed.values, ...listed.types].filter((name) => !exported.has(name))
+    expect(missing).toEqual([])
+  })
+
+  it('exports each listed value at run time, under the same path', async () => {
+    const loaded = (await import('../../../../loops/dev-review/standalone/dev-review-loop.js')) as Record<
+      string,
+      unknown
+    >
+    expect(listed.values.filter((name) => !(name in loaded))).toEqual([])
   })
 })

@@ -31,6 +31,8 @@ const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..',
 const SINK_PATH = 'harness/kernel/log/log-sink.ts'
 const DISPATCH_PATH = 'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts'
 const DEV_REVIEW_LOOP_PATH = 'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts'
+const DEV_REVIEW_LOOP_ROUND_LOOP_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-loop.ts'
 const DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH =
   'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts'
 const DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH =
@@ -612,7 +614,7 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
   },
   {
     name: 'devReviewLoop driver — resume, cancel, unpushed-work resume and a failed reviewer report',
-    files: [DEV_REVIEW_LOOP_PATH],
+    files: [DEV_REVIEW_LOOP_PATH, DEV_REVIEW_LOOP_ROUND_LOOP_PATH],
     requires: [
       { kind: 'dev_review_loop', event: 'resumed' },
       { kind: 'dev_review_loop', event: 'unpushed_work_resume' },
@@ -835,9 +837,9 @@ describe('log coverage — every schema event maps to a producer boundary', () =
  */
 const FAMILY_OWNERS: Record<string, readonly string[]> = {
   dispatch: [DISPATCH_PATH],
-  role_attempt: [DISPATCH_PATH, DEV_REVIEW_LOOP_PATH],
+  role_attempt: [DISPATCH_PATH, DEV_REVIEW_LOOP_ROUND_LOOP_PATH],
   usage: [DISPATCH_PATH],
-  dev_review_loop: [DEV_REVIEW_LOOP_PATH, DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
+  dev_review_loop: [DEV_REVIEW_LOOP_PATH, DEV_REVIEW_LOOP_ROUND_LOOP_PATH, DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
   gate: [RUNNER_PATH],
   effect: [EFFECTS_PATH],
   handoff: [DEV_REVIEW_LOOP_PAUSE_RESUME_PATH],
