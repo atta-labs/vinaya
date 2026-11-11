@@ -3,14 +3,15 @@
  * server (`server.ts`). They differ ONLY in how each runtime is told to launch
  * the server; the server, the protocol, and the tools are identical across
  * both. Each registers one server per seat Vinaya's seat table declares
- * (`seatServerRegistrations`) — today the Operator's only, under the name and
- * arguments it has always had:
+ * (`seatServerRegistrations`) — the Operator's, under the name and arguments it
+ * has always had, and the Planner's, under its own name with `--seat planner`:
  *
  *   - **Claude** registers a stdio MCP server in the project-root `.mcp.json`
  *     (`mcpServers.<name>.command`/`args`), generated through `artifacts.ts`
  *     (`buildInitOps`) as a refuse-if-foreign whole file, the same treatment
  *     `.claude/settings.json` already gets — strict JSON carries no comment
- *     markers, so it is never a managed block.
+ *     markers, so it is never a managed block. It is a managed file
+ *     (`vinaya.config.json`'s `managed.files`), so `vinaya upgrade` regenerates it.
  *   - **Codex** registers the same command through its documented
  *     `~/.codex/config.toml` `[mcp_servers.<name>]` table (`command`/`args`).
  *     Codex's config is a user-home file, not a repo artifact, so this adapter

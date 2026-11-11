@@ -14,7 +14,12 @@ import {
   taskToolsServerInvocation
 } from '../../../integration/adapters.js'
 import { ownVersion } from '../../../integration/artifacts.js'
-import { MCP_PROTOCOL_VERSION, TASK_TOOLS_MCP_SERVER_NAME, vinayaToolSeats } from '../../../integration/server.js'
+import {
+  MCP_PROTOCOL_VERSION,
+  PLANNER_TOOLS_MCP_SERVER_NAME,
+  TASK_TOOLS_MCP_SERVER_NAME,
+  vinayaToolSeats
+} from '../../../integration/server.js'
 
 const REPO_ROOT = join(import.meta.dir, '../../../../../..')
 
@@ -87,7 +92,7 @@ describe('Codex [mcp_servers] adapter', () => {
  * written out — never recomputed from the generator under test.
  */
 describe('one server entry per declared seat, the Operator’s unchanged', () => {
-  const OPERATOR_CLAUDE_FILE_SELF_HOST = `{
+  const BOTH_CLAUDE_FILE_SELF_HOST = `{
   "mcpServers": {
     "vinaya-task-tools": {
       "type": "stdio",
@@ -95,9 +100,22 @@ describe('one server entry per declared seat, the Operator’s unchanged', () =>
       "args": [
         "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts"
       ]
+    },
+    "vinaya-planner-tools": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts",
+        "--seat",
+        "planner"
+      ]
     }
   }
 }
+`
+  const PLANNER_CODEX_TOML_SELF_HOST = `[mcp_servers.vinaya-planner-tools]
+command = "bun"
+args = ["harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts", "--seat", "planner"]
 `
   const OPERATOR_CODEX_TOML_SELF_HOST = `[mcp_servers.vinaya-task-tools]
 command = "bun"
@@ -138,19 +156,46 @@ args = ["--yes", "-p", "@attalabs/vinaya@${version}", "vinaya-task-tools-serve"]
     expect(operator?.invocation.args).not.toContain(SEAT_ARGUMENT)
   })
 
-  it('the vendoring-repo Claude .mcp.json and Codex TOML are byte-identical to the earlier output', () => {
-    expect(claudeMcpJsonFile(SELF_HOST)).toBe(OPERATOR_CLAUDE_FILE_SELF_HOST)
-    expect(codexMcpServersToml(SELF_HOST)).toBe(OPERATOR_CODEX_TOML_SELF_HOST)
+  it('the vendoring-repo Claude .mcp.json and Codex TOML carry the Operator’s entry as it was, then the Planner’s', () => {
+    expect(claudeMcpJsonFile(SELF_HOST)).toBe(BOTH_CLAUDE_FILE_SELF_HOST)
+    expect(codexMcpServersToml(SELF_HOST)).toBe(`${OPERATOR_CODEX_TOML_SELF_HOST}\n${PLANNER_CODEX_TOML_SELF_HOST}`)
   })
 
-  it('the published-adopter Claude .mcp.json and Codex TOML are byte-identical to the earlier output', () => {
-    expect(claudeMcpJsonFile(null)).toBe(operatorClaudeFilePublished(ownVersion()))
-    expect(codexMcpServersToml(null)).toBe(operatorCodexTomlPublished(ownVersion()))
+  it('the published-adopter Claude .mcp.json and Codex TOML carry both servers, the Operator’s as it was', () => {
+    const version = ownVersion()
+    const claude = JSON.parse(claudeMcpJsonFile(null))
+    expect(Object.keys(claude.mcpServers)).toEqual([TASK_TOOLS_MCP_SERVER_NAME, PLANNER_TOOLS_MCP_SERVER_NAME])
+    expect(claude.mcpServers[TASK_TOOLS_MCP_SERVER_NAME]).toEqual(
+      JSON.parse(operatorClaudeFilePublished(version)).mcpServers[TASK_TOOLS_MCP_SERVER_NAME]
+    )
+    expect(claude.mcpServers[PLANNER_TOOLS_MCP_SERVER_NAME].args).toEqual([
+      '--yes',
+      '-p',
+      `@attalabs/vinaya@${version}`,
+      'vinaya-task-tools-serve',
+      SEAT_ARGUMENT,
+      'planner'
+    ])
+    expect(codexMcpServersToml(null).startsWith(operatorCodexTomlPublished(version))).toBe(true)
+    expect(codexMcpServersToml(null)).toContain(`[mcp_servers.${PLANNER_TOOLS_MCP_SERVER_NAME}]`)
+  })
+
+  it('the Planner is registered under its own server name with its seat argument', () => {
+    const planner = seatServerRegistrations(SELF_HOST).find((r) => r.serverName === PLANNER_TOOLS_MCP_SERVER_NAME)
+    expect(planner?.invocation).toEqual({ command: 'bun', args: [SERVE_SOURCE, SEAT_ARGUMENT, 'planner'] })
   })
 
   it("the committed .mcp.json at the repository root registers the Operator's entry the generator writes", () => {
+    // `.mcp.json` is a managed file: `vinaya upgrade` regenerates it, so the Planner's entry reaches the committed file there.
     const committed = JSON.parse(readFileSync(join(REPO_ROOT, '.mcp.json'), 'utf8'))
-    expect(committed).toEqual(claudeMcpJsonConfig(SELF_HOST))
+    expect(committed.mcpServers[TASK_TOOLS_MCP_SERVER_NAME]).toEqual(
+      claudeMcpJsonConfig(SELF_HOST).mcpServers[TASK_TOOLS_MCP_SERVER_NAME]
+    )
+  })
+
+  it('lists .mcp.json in the managed-files manifest, so upgrade owns and regenerates it', () => {
+    const config = JSON.parse(readFileSync(join(REPO_ROOT, 'vinaya.config.json'), 'utf8'))
+    expect(config.managed.files).toContain('.mcp.json')
   })
 })
 

@@ -3,10 +3,14 @@ import { ROLE_VALUES } from '../../../../../kernel/log/schema'
 import { DEV_TOOL_NAMES } from '../../../../../kernel/tools/dev-tools-server.js'
 import { isToolGranted } from '../../../../../kernel/tools/role-grants.js'
 import { AGENT_TOOL_CATALOG } from '../../../../../kernel/tools/tool-catalog.js'
+import { OPERATOR_SEAT, PLANNER_SEAT, createTaskToolsMcpServer } from '../../../integration/server.js'
+import { PLANNER_TOOL_NAMES } from '../../../thinking/planner/tools/planner-tools.js'
 import {
   GRANTED_ROLES,
   OPERATOR_TOOL_GRANT,
+  PLANNER_TOOL_GRANT,
   ROLE_TOOL_GRANTS,
+  VINAYA_PLANNER_ROUTER_ROLES,
   VINAYA_BOUNDARY_ROLES,
   VINAYA_BROKER_ROLES,
   VINAYA_ROUTER_ROLES
@@ -96,5 +100,50 @@ describe("the router's role facts", () => {
       'task_resume',
       'task_cancel'
     ])
+  })
+})
+
+describe("the Planner seat's grant", () => {
+  const PLANNER_TOOLS: string[] = [
+    'task_issue_create',
+    'task_issue_edit',
+    'task_issue_surface',
+    'task_objectives_edit',
+    'brief_render',
+    'task_issue_validate'
+  ]
+  const list = async (seat: string | null) => {
+    const server = createTaskToolsMcpServer({ serverVersion: '0.0.0-test', seat })
+    const line = await server.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))
+    return (JSON.parse(line ?? '{}').result?.tools ?? []).map((t: { name: string }) => t.name) as string[]
+  }
+  const call = async (seat: string | null, name: string) => {
+    const server = createTaskToolsMcpServer({ serverVersion: '0.0.0-test', seat })
+    const line = await server.handleLine(
+      JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } })
+    )
+    return JSON.parse(line ?? '{}').result
+  }
+
+  it('is exactly the six Planner tools, the catalog tool names bound to the grant', () => {
+    expect([...PLANNER_TOOL_GRANT] as string[]).toEqual(PLANNER_TOOLS)
+    expect([...PLANNER_TOOL_NAMES] as string[]).toEqual(PLANNER_TOOLS)
+    expect(VINAYA_PLANNER_ROUTER_ROLES.seat).toBe('the Planner')
+  })
+  it('serves exactly the six on the Planner seat', async () => {
+    expect(await list(PLANNER_SEAT)).toEqual(PLANNER_TOOLS)
+  })
+  it('leaves the Operator seat serving exactly its six task tools', async () => {
+    expect(await list(OPERATOR_SEAT)).toEqual([...OPERATOR_TOOL_GRANT])
+    expect(await list(null)).toEqual([...OPERATOR_TOOL_GRANT])
+  })
+  it('refuses a Planner tool called on the Operator seat', async () => {
+    for (const tool of PLANNER_TOOLS) expect((await call(OPERATOR_SEAT, tool)).isError).toBe(true)
+  })
+  it('refuses an Operator tool called on the Planner seat', async () => {
+    for (const tool of OPERATOR_TOOL_GRANT) expect((await call(PLANNER_SEAT, tool)).isError).toBe(true)
+  })
+  it('refuses a tool outside both catalogs on the Planner seat', async () => {
+    expect((await call(PLANNER_SEAT, 'merge')).isError).toBe(true)
   })
 })
