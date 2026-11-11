@@ -62,7 +62,9 @@ import {
   appendProgressRecord,
   beginProgressSession,
   type CommandProgressOutcome,
+  copyCaptureTail,
   ENGINE_RUNS_DIRNAME,
+  FINAL_DRAIN_BOUND_MS,
   isBunTestCommand,
   type ProgressRecord
 } from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
@@ -940,6 +942,16 @@ function failureLocation(output: string, worktreePath: string, test: string): st
   return test
 }
 
+/** A wait's length for the driver log: milliseconds under a second, whole seconds under a minute, then minutes. */
+export function formatWait(ms: number): string {
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`
+  const seconds = Math.round(ms / 1000)
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
+/** How often the round tests' progress copy looks at the capture file. */
+const ROUND_TEST_PROGRESS_INTERVAL_MS = 250
+
 /**
  * A review round's selected tests, run as a supervised asynchronous job on `head`: the repository's native adapter's
  * `select` and then `run`, started as children in their own process groups under the ready push's environment, in
@@ -965,8 +977,10 @@ export async function runRoundTestsLive(input: {
   register?: typeof registerProcess
   /** The directory holding the host lock; the parent of this repository's runtime directory when absent. */
   lockRoot?: string
-  /** Lock timing and clock overrides, for a test. */
-  lock?: Partial<Omit<RoundTestLockOptions, 'rootDir' | 'deadlineAt' | 'signal'>>
+  /** Lock timing, host and clock overrides, for a test. */
+  lock?: Partial<Omit<RoundTestLockOptions, 'rootDir' | 'deadlineAt' | 'signal' | 'onWait'>>
+  /** Where the run's live progress goes; none when absent. */
+  progress?: ProgressContext | null
 }): Promise<RoundTestsResult> {
   const now = input.now ?? (() => Date.now())
   const log = input.log ?? (() => {})
@@ -992,7 +1006,11 @@ export async function runRoundTestsLive(input: {
       deadlineAt,
       now,
       ...(input.signal ? { signal: input.signal } : {}),
-      ...input.lock
+      ...input.lock,
+      onWait: ({ slots }) =>
+        log(
+          `round tests: waiting for a round-test slot at ${input.head.slice(0, 12)}: all ${slots} on this host are held`
+        )
     })
     if (!lock.ok) {
       if (lock.reason === 'timeout')
@@ -1005,6 +1023,10 @@ export async function runRoundTestsLive(input: {
         ...(lock.reason === 'cancel' ? { stoppedBy: 'cancel' as const } : {})
       })
     }
+    if (lock.waitedMs > 0)
+      log(
+        `round tests: took round-test slot ${lock.slot + 1} of ${lock.slots} after waiting ${formatWait(lock.waitedMs)}`
+      )
     try {
       return await runRoundTestsLocked(input, { now, log, started, deadlineAt, minutes, done })
     } finally {
@@ -1088,11 +1110,40 @@ async function runRoundTestsLocked(
       return done('unavailable', {
         detail: `the adapter planned no tests (${select.signal ?? `exit ${select.status}`}): ${(select.stderr || select.stdout || select.error?.message || 'no output').trim().split('\n')[0]}`
       })
+    const selectedCount = select.stdout.split('\n').filter((line) => line.trim() !== '').length
     // The adapter reads the capture file back to record the run, so its output goes to the file, as the hook does.
-    const run = await child(
-      ['sh', '-c', '"$1" "$2" run --log "$3" > "$3" 2>&1', 'sh', process.execPath, REPOSITORY_LOCAL_RUN, capture],
-      'round-tests run'
-    )
+    // While it runs, the capture's tail is copied into the progress directory, as the pre-push hook's copier does,
+    // and the progress observer narrates it into the driver log.
+    const run = await withProgress(input.progress, input.worktreePath, async (dir) => {
+      const stream = `round-tests-${process.pid}`
+      let timer: ReturnType<typeof setInterval> | null = null
+      if (dir !== null) {
+        appendProgressRecord(dir, `${stream}.ndjson`, {
+          v: 1,
+          kind: 'tests-start',
+          stream,
+          total: selectedCount > 0 ? selectedCount : null,
+          label: 'round tests'
+        })
+        timer = setInterval(
+          () => copyCaptureTail({ capture, dir, stream, deadline: Date.now() + ROUND_TEST_PROGRESS_INTERVAL_MS }),
+          ROUND_TEST_PROGRESS_INTERVAL_MS
+        )
+        timer.unref?.()
+      }
+      try {
+        return await child(
+          ['sh', '-c', '"$1" "$2" run --log "$3" > "$3" 2>&1', 'sh', process.execPath, REPOSITORY_LOCAL_RUN, capture],
+          'round-tests run'
+        )
+      } finally {
+        if (timer !== null) clearInterval(timer)
+        if (dir !== null) {
+          copyCaptureTail({ capture, dir, stream, deadline: Date.now() + FINAL_DRAIN_BOUND_MS })
+          appendProgressRecord(dir, `${stream}.ndjson`, { v: 1, kind: 'tests-end', stream })
+        }
+      }
+    })
     const runStop = stopped(run)
     if (runStop) return runStop
     const after = await worktreeDrift(input.worktreePath, input.head, input.signal, true)
@@ -1105,11 +1156,15 @@ async function runRoundTestsLocked(
       record.mode === 'ready' &&
       Date.parse(record.recordedAt) >= startedAt - 1000
     if (!recorded) return done('unavailable', { detail: 'the run recorded no result for this head' })
+    // One count for both outcome lines: the selection the run recorded, the plan's own lines when it recorded none.
+    const fileCount = record.selection?.selected.length ?? selectedCount
     if (record.outcome === 'passed') {
       if (!(record.selection?.native && record.native?.completed === true))
         return done('unavailable', { detail: 'the run recorded a pass, but no complete native test result' })
       if (record.selection.selected.length === 0) return done('none', { detail: 'the plan selected no tests' })
-      return done('passed')
+      const passed = done('passed')
+      ctx.log(`round tests passed: ${fileCount} selected test file(s); wall time ${passed.wallMs} ms`)
+      return passed
     }
     const unreported = new Set(record.unreported ?? [])
     const named = record.failed === 'all' ? [] : record.failed.filter((file) => !unreported.has(file))
@@ -1129,7 +1184,9 @@ async function runRoundTestsLocked(
         excerpt: extractFailureExcerpt(output, ROUND_TEST_EXCERPT_CHARS)
       }
     })
-    ctx.log(`round tests failed: ${failedResult.firstFailure?.location}; wall time ${failedResult.wallMs} ms`)
+    ctx.log(
+      `round tests failed: ${failedResult.firstFailure?.location}; ${fileCount} selected test file(s); wall time ${failedResult.wallMs} ms`
+    )
     return failedResult
   } finally {
     try {
@@ -1424,7 +1481,8 @@ export function liveV2Functions(input: {
         ...(signal ? { signal } : {}),
         ...(input.readyPushDeadlineMs ? { deadlineMs: input.readyPushDeadlineMs() } : {}),
         ...(input.startDeadline ? { startDeadline: input.startDeadline } : {}),
-        ...(input.log ? { log: input.log } : {})
+        ...(input.log ? { log: input.log } : {}),
+        progress
       }),
     stagedPullRequest: input.store.read,
     findOpenPullRequest: input.findOpenPullRequest,
