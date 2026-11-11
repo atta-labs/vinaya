@@ -43,6 +43,7 @@ import {
 } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   checkTaskDispatchReadiness,
+  type DispatchReadinessCheckResult,
   createTaskWorktree,
   fetchSourceRevision,
   findOpenPrForBranch,
@@ -151,7 +152,10 @@ import {
   type LiveFailure,
   type LiveRunner
 } from '../loops/dev-review/standalone/dev-review-loop/live-check'
-import { routeCompletionEvents } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
+import {
+  isGitHubConnectionFailure,
+  routeCompletionEvents
+} from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 import { resolveTrustAnchorSecurityScanCommand } from '../loops/dev-review/standalone/dev-review-loop/security-scan-command'
 import { fetchPrBody } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import {
@@ -333,6 +337,8 @@ export interface BoundFunctions {
   /** The repository's local gate control, read for the enforcement controls every dispatch requires. */
   localGateControl: () => EnforcementControl
   probeAgentSandbox: typeof probeAgentSandbox
+  /** Waits between readiness re-checks after a forge read failure; tests pass one that returns at once. */
+  setupRetrySleep: (ms: number) => Promise<void>
   fetchCiConclusion: typeof fetchCiConclusion
   /** A head's CI conclusion under the every-run-completed rule alone, with no early red. */
   fetchSettledCiConclusion: typeof fetchSettledCiConclusion
@@ -571,6 +577,110 @@ export const BACK = 1
 export function pauseThrough(task: TaskInput, step: string, request: PauseRequest): void {
   if (!task.handoff) throw new Error(`${step} decided a pause but no handoff is wired to make it durable`)
   task.handoff.pause(request)
+}
+
+/**
+ * Whether a not-ready readiness result failed only because a forge read did not complete: every blocking JSON
+ * finding is marked `severity:infra` or names a connection failure, no gate step reports a real not-ready, and the
+ * local controls are active. Such a result says nothing about the task, so setup re-checks it instead of pausing.
+ */
+export function readinessFailedOnForgeRead(output: string): boolean {
+  const blocking: string[] = []
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('{')) continue
+    try {
+      const finding = JSON.parse(trimmed) as { severity?: unknown; message?: unknown }
+      if (finding.severity === 'error') blocking.push(String(finding.message ?? ''))
+    } catch {}
+  }
+  if (blocking.length === 0) return false
+  if (/NOT READY|gate step '[^']+' is missing/.test(output)) return false
+  if (!output.includes('all required controls are active')) return false
+  return blocking.every((message) => INFRA_MARK.test(message) || namesForgeConnectionFailure(message))
+}
+
+/**
+ * The marker the readiness gates put on a finding they could not evaluate because a forge read failed (an
+ * unreachable forge, a `gh` command that did not complete): the gate says it is an outage, not a finding about the
+ * task, so it is read the same way as a connection failure the message names itself.
+ */
+const INFRA_MARK = /\bseverity:infra\b/
+
+/**
+ * Whether a finding's message names a forge connection failure, as `isGitHubConnectionFailure` reads one: the
+ * request line a gate embeds after its own prefix (`… : Get "https://api.github.com/…": net/http: …`) is cut out and
+ * read on a line of its own, the shape that classifier recognises.
+ */
+function namesForgeConnectionFailure(message: string): boolean {
+  const at = message.search(
+    /(?:Get|Post|Put|Patch|Delete|Head) "https?:\/\/|fatal: unable to access '|error connecting to /
+  )
+  return at >= 0 && isGitHubConnectionFailure(new Error(message.slice(at)))
+}
+
+/**
+ * The task's readiness, re-checked across a forge outage: a result that failed only on a forge read goes to the stop
+ * decision as a forge connection failure, which retries after its wait within the same bound a round's forge reads
+ * use; once that bound is spent, or for any other not-ready result, the last result is returned for setup to pause on.
+ */
+async function forgeRetrySleep(task: TaskInput, ms: number): Promise<void> {
+  await (task.bound?.setupRetrySleep ?? ((wait: number) => new Promise<void>((done) => setTimeout(done, wait))))(ms)
+}
+
+/**
+ * Runs one setup step, retrying it when it throws a forge connection failure (`isGitHubConnectionFailure`) after the
+ * wait the stop decision gives, within the same bound a round's forge reads use; any other error, or the last one
+ * once the bound is spent, is thrown for the step's own refusal to pause on.
+ */
+async function retryAcrossForgeOutage<T>(task: TaskInput, what: string, step: () => T | Promise<T>): Promise<T> {
+  let attempts = 0
+  for (;;) {
+    try {
+      return await step()
+    } catch (error) {
+      if (!isGitHubConnectionFailure(error)) throw error
+      const stop = decideStop({
+        kind: 'driver_error',
+        runner: 'engine',
+        errorClass: 'forge_connection',
+        message: error instanceof Error ? error.message : String(error),
+        round: 0,
+        attempts
+      })
+      if (stop.type !== 'retry') throw error
+      appendDriverLine(
+        loopLogPathFor(null, task.issueNumber, task.runtimeDir),
+        `${what} could not reach the forge; trying again in ${Math.round(stop.waitMs / 1000)} s (attempt ${attempts + 1})`
+      )
+      await forgeRetrySleep(task, stop.waitMs)
+      attempts = stop.bound.kind === 'attempts' ? stop.bound.used : attempts + 1
+    }
+  }
+}
+
+async function checkReadinessAcrossForgeOutage(task: TaskInput): Promise<DispatchReadinessCheckResult> {
+  const check = task.bound?.checkTaskDispatchReadiness ?? checkTaskDispatchReadiness
+  let attempts = 0
+  for (;;) {
+    const readiness = check(task.branch)
+    if (readiness.ready || !readinessFailedOnForgeRead(readiness.output)) return readiness
+    const stop = decideStop({
+      kind: 'driver_error',
+      runner: 'engine',
+      errorClass: 'forge_connection',
+      message: readiness.output,
+      round: 0,
+      attempts
+    })
+    if (stop.type !== 'retry') return readiness
+    appendDriverLine(
+      loopLogPathFor(null, task.issueNumber, task.runtimeDir),
+      `the readiness check could not read the forge; checking again in ${Math.round(stop.waitMs / 1000)} s (attempt ${attempts + 1})`
+    )
+    await forgeRetrySleep(task, stop.waitMs)
+    attempts = stop.bound.kind === 'attempts' ? stop.bound.used : attempts + 1
+  }
 }
 
 /**
@@ -2266,7 +2376,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       const refuse = (request: PauseRequest) => refuseThrough(task, 'prepare-run', request)
       // The policy is read here, not when the run's input is built, so a failed read pauses instead of refusing entry.
       try {
-        task.reviewPolicy?.()
+        await retryAcrossForgeOutage(task, 'reading the review policy', () => task.reviewPolicy?.())
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error)
         return refuse({
@@ -2293,7 +2403,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         const detail = describeInactiveControls(controls)
         return refuse({ reason: 'infrastructure', detail, error: new Error(detail) })
       }
-      const readiness = (task.bound?.checkTaskDispatchReadiness ?? checkTaskDispatchReadiness)(task.branch)
+      const readiness = await checkReadinessAcrossForgeOutage(task)
       if (!readiness.ready)
         return refuse({
           reason: 'escalation',
@@ -2302,7 +2412,9 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       ;(task.bound?.createTaskWorktree ?? createTaskWorktree)(task.branch)
       // The worktree's own dependencies, installed on every start, before any agent step; a failure stops the run here.
       try {
-        ;(task.bound?.installWorktreeDependencies ?? defaultInstallWorktreeDependencies)(task.worktreePath)
+        await retryAcrossForgeOutage(task, 'installing the worktree dependencies', () =>
+          (task.bound?.installWorktreeDependencies ?? defaultInstallWorktreeDependencies)(task.worktreePath)
+        )
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error)
         return refuse({
