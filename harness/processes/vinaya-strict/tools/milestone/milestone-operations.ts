@@ -171,6 +171,19 @@ async function outcomeOf<T>(fn: () => Promise<T | Refused>): Promise<T | Refused
   return result.ok ? result.value : { ok: false, findings: result.errors }
 }
 
+/** The Milestone number is interpolated into a REST path, so anything but digits is refused inside the library, whoever calls it. */
+function refuseUnlessDigits(number: string, retryCommand: string): void {
+  if (!/^\d+$/.test(number)) {
+    refuse([
+      makeCheckError(
+        'forge-args',
+        'A Milestone number is digits only.',
+        `Pass the Milestone number, then re-run \`${retryCommand}\`.`
+      )
+    ])
+  }
+}
+
 /** `checkMilestoneShape` refusal — unconditional; config decides which EXTRA sections are required, never whether THIS runs. */
 function refuseOnBadShape(body: string, retryCommand: string): void {
   const shape = checkMilestoneShape(body)
@@ -260,6 +273,7 @@ export async function editMilestone(
 ): Promise<MilestoneWriteOutcome> {
   return outcomeOf(async () => {
     const { number, body } = input
+    refuseUnlessDigits(number, RETRY_EDIT)
     refuseOnBadShape(body, RETRY_EDIT)
     refuseOnSchemaErrors(body, RETRY_EDIT)
     if (input.validateOnly) return { ok: true as const, written: false as const }
@@ -636,6 +650,7 @@ export async function milestoneStatus(
 ): Promise<StatusOutcome> {
   return outcomeOf(async (): Promise<StatusOutcome> => {
     const numberArg = input.number
+    refuseUnlessDigits(numberArg, RETRY_STATUS)
     const repoFlag = await resolveRepoFlagOrRefuse(forge, RETRY_STATUS)
     const [owner, repo] = repoFlag.split('/') as [string, string]
 

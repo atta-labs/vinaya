@@ -238,6 +238,55 @@ describe('closeMilestone', () => {
   })
 })
 
+describe('a Milestone number that is not digits', () => {
+  it('is refused by edit and status before any forge call', async () => {
+    const forge = stubForge(() => '')
+    const edit = await editMilestone({ number: '../3', body: GOAL, validateOnly: false }, forge)
+    const status = await milestoneStatus({ number: '3/../x' }, forge)
+    for (const out of [edit, status]) {
+      expect(out.ok).toBe(false)
+      if (!out.ok) expect(out.findings[0]?.check).toBe('forge-args')
+    }
+    expect(forge.calls).toEqual([])
+  })
+})
+
+describe('closeMilestone declared-tranche hold', () => {
+  const held = 'Goal.\n\n### Tranche intents\n- demo: Now.\n- later: Not yet.'
+  const answer = (args: string[]): string => {
+    const line = joined(args)
+    if (line.includes('milestones?state=all'))
+      return JSON.stringify([{ number: 5, title: 'Product', description: held, state: 'open' }])
+    if (line.includes('--label'))
+      return JSON.stringify([{ number: 1, state: 'CLOSED', milestone: { title: 'Product' } }])
+    if (line.includes('--milestone'))
+      return JSON.stringify([{ number: 1, state: 'CLOSED', milestone: { title: 'Product' } }])
+    return JSON.stringify({ number: 5, html_url: 'https://x/5' })
+  }
+
+  it('refuses while a declared tranche is unfinished, and never patches', async () => {
+    const forge = stubForge(answer, { deriveLifecycle: async () => 'active' })
+    const out = await closeMilestone({ slug: 'demo', validateOnly: false }, forge)
+    expect(out.ok).toBe(false)
+    if (!out.ok) {
+      expect(out.findings[0]?.check).toBe('milestone-close')
+      expect(out.findings[0]?.message).toContain('must stay open')
+    }
+    expect(forge.calls.some((c) => joined(c.args).includes('PATCH'))).toBe(false)
+  })
+
+  it('refuses with a forge-fetch finding when a declared tranche lifecycle cannot be read', async () => {
+    const forge = stubForge(answer, {
+      deriveLifecycle: async () => {
+        throw ghFailure('HTTP 500')
+      }
+    })
+    const out = await closeMilestone({ slug: 'demo', validateOnly: false }, forge)
+    expect(out.ok).toBe(false)
+    if (!out.ok) expect(out.findings[0]?.check).toBe('forge-fetch')
+  })
+})
+
 describe('milestoneStatus', () => {
   const description = 'Goal.\n\n### Tranche intents\n- demo: Do it.'
 
