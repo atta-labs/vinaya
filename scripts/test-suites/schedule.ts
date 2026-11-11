@@ -31,7 +31,7 @@
  *
  *   bun scripts/test-suites/schedule.ts --dry-run --full
  *     prints every scheduled test once, with its place, runner and working directory.
- *   bun scripts/test-suites/schedule.ts --run --placement <shard-N|shared> (--full [--reason <text>] | --decision <file>)
+ *   bun scripts/test-suites/schedule.ts --run --placement <build|shard-N|shared> (--full [--reason <text>] | --decision <file>)
  *     runs that place's groups one after another, each under its own runner,
  *     and fails when a runner fails, is interrupted, leaves no readable report,
  *     or reports a file it was not given or misses one it was.
@@ -797,7 +797,7 @@ function main(argv: readonly string[]): number {
   const decisionPath = argValue(argv, '--decision')
   if (!full && !decisionPath) {
     process.stderr.write(
-      'usage: schedule.ts (--dry-run | --json | --run --placement <shard-N|shared> [--summary <file>] [--pass-entries <file> [--record <file>] [--approved-head <sha>]]) (--full [--reason <text>] | --decision <file>)\n'
+      'usage: schedule.ts (--dry-run | --json | --run --placement <build|shard-N|shared> [--summary <file>] [--pass-entries <file> [--record <file>] [--approved-head <sha>]]) (--full [--reason <text>] | --decision <file>)\n'
     )
     return 2
   }
@@ -835,11 +835,16 @@ function main(argv: readonly string[]): number {
   }
 
   const placement = argValue(argv, '--placement') as Placement | undefined
-  if (!argv.includes('--run') || !placement || placement === 'build') {
-    process.stderr.write('schedule.ts --run needs --placement shard-<n> or shared; the build job runs its own step\n')
+  if (!argv.includes('--run') || !placement) {
+    process.stderr.write('schedule.ts --run needs --placement build, shard-<n> or shared\n')
     return 2
   }
-  const groups = schedule.placements[placement] ?? []
+  // The build placement runs the selected repository tests only: the package-compatibility suite has its own step.
+  const repository = new Set(view.tests.filter((t) => t.kind === 'repository').map((t) => t.id))
+  const groups =
+    placement === 'build'
+      ? (schedule.placements.build ?? []).filter((g) => g.tests.every((test) => repository.has(test)))
+      : (schedule.placements[placement] ?? [])
   const why = schedule.reason ? `everything: ${schedule.reason}` : 'the tests the selection picked'
   process.stderr.write(`vinaya schedule: ${placement} runs ${why}\n`)
   if (groups.length === 0) {

@@ -22,7 +22,13 @@ import { SourceReaderUnavailable } from '../../../kernel/tools/source-provider'
 import type { FetchDocumentationDeps } from '../../../kernel/tools/fetch-documentation'
 import type { SandboxProbePlan } from '../../../kernel/isolation/worker-boundary'
 import { BRANCH, fakeDeps, makeWorld } from './live-developer-context-world'
-import { createActions, createRoleLaunchers, sandboxProbePlanFor, type TaskInput } from '../executing/actions'
+import {
+  createActions,
+  createRoleLaunchers,
+  readinessFailedOnForgeRead,
+  sandboxProbePlanFor,
+  type TaskInput
+} from '../executing/actions'
 import { createHandoff } from '../executing/handoff'
 import { handoffHaltReason } from '../executing/log-events'
 import { developerSourceStoreDir, engineLiveDevToolsContext, liveTaskInput } from '../bin/run-engine'
@@ -574,5 +580,158 @@ describe('an empty fetch issues no source receipt on the Engine path', () => {
     if (fetched.ok) expect(fetched.result.receipt).toMatchObject({ recorded: true })
     expect(existsSync(sourceReceiptsPath(developerSourceStoreDir(runtimeDir, TASK)))).toBe(true)
     expect(await validate()).toMatchObject({ exitCode: 0 })
+  })
+})
+
+// The readiness output a real run paused on: both blocking findings are forge reads that did not complete.
+const FORGE_OUTAGE_OUTPUT = [
+  '$ bun check-dispatch-readiness.ts some-tranche-v1 16',
+  '{"schema":1,"check":"dispatch-readiness","severity":"warning","message":"dispatch-readiness: could not read \\"principals\\" from vinaya.config.json on the default branch: Get \\"https://api.github.com/repos/o/r/contents/vinaya.config.json\\": net/http: TLS handshake timeout"}',
+  '{"schema":1,"check":"dispatch-readiness","severity":"error","message":"dispatch-gate prior-tranche-archival severity:infra — could not read the active tranches (Command failed: gh issue list --repo o/r); whether a prior tranche is archived is unknown."}',
+  '',
+  '$ bun verify-dispatch.ts some-tranche-v1 16 --existing-work',
+  'verify-dispatch: READY TO DISPATCH',
+  '',
+  'enforcement controls',
+  'all required controls are active'
+].join('\n')
+
+describe('setup re-checks readiness across a forge outage', () => {
+  test('a readiness result that failed only on forge reads is told apart from a real not-ready', () => {
+    expect(readinessFailedOnForgeRead(FORGE_OUTAGE_OUTPUT)).toBe(true)
+    expect(readinessFailedOnForgeRead('task 9 has not merged')).toBe(false)
+    expect(
+      readinessFailedOnForgeRead(
+        FORGE_OUTAGE_OUTPUT.replace(
+          'severity:infra — could not read the active tranches',
+          'prior tranche agent-confinement-v1 is not archived'
+        )
+      )
+    ).toBe(false)
+    expect(readinessFailedOnForgeRead(FORGE_OUTAGE_OUTPUT.replace('READY TO DISPATCH', 'NOT READY'))).toBe(false)
+  })
+
+  test('a forge read that fails once and then completes creates the worktree with no pause', async () => {
+    const results = [
+      { ready: false, output: FORGE_OUTAGE_OUTPUT },
+      { ready: true, output: 'ready' }
+    ]
+    const sleeps: number[] = []
+    const { task, run, recorded, runtimeDir, calls } = setup()
+    task.bound = {
+      ...task.bound,
+      checkTaskDispatchReadiness: () => {
+        calls.push('readiness')
+        return results.shift() ?? { ready: true, output: 'ready' }
+      },
+      setupRetrySleep: async (ms: number) => {
+        sleeps.push(ms)
+      }
+    }
+    const result = await run('vinaya.prepare-run')
+    expect(result.exitCode).toBe(0)
+    expect(calls.filter((c) => c === 'readiness')).toHaveLength(2)
+    expect(calls).toContain('worktree')
+    expect(sleeps).toHaveLength(1)
+    expect(recorded.calls).toEqual([])
+    expect(paused(runtimeDir)).toBeNull()
+  })
+
+  test('a forge outage that never ends pauses only after the retry bound is spent', async () => {
+    const sleeps: number[] = []
+    const { task, run, recorded, calls } = setup()
+    task.bound = {
+      ...task.bound,
+      checkTaskDispatchReadiness: () => {
+        calls.push('readiness')
+        return { ready: false, output: FORGE_OUTAGE_OUTPUT }
+      },
+      setupRetrySleep: async (ms: number) => {
+        sleeps.push(ms)
+      }
+    }
+    const result = await run('vinaya.prepare-run')
+    expect(result.exitCode).toBe(1)
+    expect(sleeps.length).toBeGreaterThan(0)
+    expect(calls.filter((c) => c === 'readiness')).toHaveLength(sleeps.length + 1)
+    expect(calls).not.toContain('worktree')
+    expect(recorded.calls).toContain('pause-state:escalation')
+  })
+
+  test('a real not-ready pauses at once with no retry', async () => {
+    const sleeps: number[] = []
+    const { task, run, recorded, calls } = setup()
+    task.bound = {
+      ...task.bound,
+      checkTaskDispatchReadiness: () => {
+        calls.push('readiness')
+        return { ready: false, output: 'task 9 has not merged' }
+      },
+      setupRetrySleep: async (ms: number) => {
+        sleeps.push(ms)
+      }
+    }
+    const result = await run('vinaya.prepare-run')
+    expect(result.exitCode).toBe(1)
+    expect(sleeps).toEqual([])
+    expect(calls.filter((c) => c === 'readiness')).toHaveLength(1)
+    expect(recorded.calls).toContain('pause-state:escalation')
+  })
+
+  const connectionFailure = () =>
+    new Error('Get "https://api.github.com/repos/o/r/contents/x": net/http: TLS handshake timeout')
+
+  test('a review policy read that fails to connect once is read again instead of pausing', async () => {
+    let reads = 0
+    const sleeps: number[] = []
+    const { task, run, recorded, calls } = setup({
+      reviewPolicy: () => {
+        reads += 1
+        if (reads === 1) throw connectionFailure()
+        return undefined as never
+      }
+    } as Partial<TaskInput>)
+    task.bound = { ...task.bound, setupRetrySleep: async (ms: number) => void sleeps.push(ms) }
+    const result = await run('vinaya.prepare-run')
+    expect(result.exitCode).toBe(0)
+    expect(reads).toBe(2)
+    expect(sleeps).toHaveLength(1)
+    expect(calls).toContain('worktree')
+    expect(recorded.calls).toEqual([])
+  })
+
+  test('a dependency install that fails to connect once is run again instead of pausing', async () => {
+    let installs = 0
+    const sleeps: number[] = []
+    const { task, run, recorded } = setup()
+    task.bound = {
+      ...task.bound,
+      installWorktreeDependencies: () => {
+        installs += 1
+        if (installs === 1) throw connectionFailure()
+      },
+      setupRetrySleep: async (ms: number) => void sleeps.push(ms)
+    }
+    const result = await run('vinaya.prepare-run')
+    expect(result.exitCode).toBe(0)
+    expect(installs).toBe(2)
+    expect(sleeps).toHaveLength(1)
+    expect(recorded.calls).toEqual([])
+  })
+
+  test('a dependency install that fails for any other reason pauses at once', async () => {
+    const sleeps: number[] = []
+    const { task, run, recorded } = setup()
+    task.bound = {
+      ...task.bound,
+      installWorktreeDependencies: () => {
+        throw new Error('lockfile is out of date')
+      },
+      setupRetrySleep: async (ms: number) => void sleeps.push(ms)
+    }
+    const result = await run('vinaya.prepare-run')
+    expect(result.exitCode).toBe(1)
+    expect(sleeps).toEqual([])
+    expect(recorded.calls).toContain('pause-state:infrastructure')
   })
 })
