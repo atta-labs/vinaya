@@ -52,7 +52,7 @@ import {
   runTaskEngine,
   type EngineRunnerDeps
 } from './task-run-engine.js'
-import type { AgentVendor } from '../dispatch/dispatch.js'
+import { type AgentVendor, terminateChildWithGrace } from '../dispatch/dispatch.js'
 import {
   developerBranchFor as realDeveloperBranchFor,
   type DriverResult,
@@ -234,6 +234,14 @@ export type RunTaskDeps = {
    */
   hasPauseState: (task: number) => boolean
   /**
+   * Stops this task's driver only when it is halted at the named escalation's
+   * pause (its `pause-state.json` names that escalation), and returns `true`
+   * once the driver's process is gone. A halted driver only waits for a ruling
+   * or a cancel, so stopping it loses no work; a driver at any other point is
+   * left running and this returns `false`.
+   */
+  stopHaltedDriver?: (task: number, escalationId: string) => boolean
+  /**
    * O1: the SAME class-to-model resolution `task dispatch` already uses
    * (`dispatch-task.ts`'s `resolveModelForDispatch`) — an explicit model
    * wins outright (never re-derived), absent that the Issue's own
@@ -346,6 +354,22 @@ function realIsDriverAlive(task: number): boolean {
 }
 
 /** issue-711 O5: the real production check — reads the SAME on-disk `pause-state.json` `devReviewLoop`'s own `--resume` entry reads, rather than a second copy. */
+const HALTED_DRIVER_EXIT_WAIT_MS = 15_000
+
+function realStopHaltedDriver(task: number, escalationId: string): boolean {
+  const root = runtimeDir()
+  const pause = readPauseState(root, task)
+  if (pause === null || pause.escalationId !== escalationId) return false
+  const lock = readDriverLock(root, task)
+  if (lock === null || !isDriverPidAlive(lock.pid)) return true
+  terminateChildWithGrace(lock.pid)
+  const deadline = Date.now() + HALTED_DRIVER_EXIT_WAIT_MS
+  while (isDriverPidAlive(lock.pid) && Date.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200)
+  }
+  return !isDriverPidAlive(lock.pid)
+}
+
 function realHasPauseState(task: number): boolean {
   return readPauseState(runtimeDir(), task) !== null
 }
@@ -399,6 +423,7 @@ export const defaultRunTaskDeps: RunTaskDeps = {
   findOpenPrForBranch: realFindOpenPrForBranch,
   isDriverAlive: realIsDriverAlive,
   hasPauseState: realHasPauseState,
+  stopHaltedDriver: realStopHaltedDriver,
   resolveModelForDispatch: realResolveModelForDispatch,
   devReviewLoop: realRunDriverLoop,
   resolveRepo: () => realResolveRepo(),
@@ -808,7 +833,12 @@ async function widenSurfaceBeforeRun(
   request: WidenSurfaceRequest,
   deps: Pick<
     RunTaskDeps,
-    'assembleAndRenderBrief' | 'developerBranchFor' | 'findOpenPrForBranch' | 'isDriverAlive' | 'widen'
+    | 'assembleAndRenderBrief'
+    | 'developerBranchFor'
+    | 'findOpenPrForBranch'
+    | 'isDriverAlive'
+    | 'stopHaltedDriver'
+    | 'widen'
   >
 ): Promise<number> {
   const label = taskLabelFor(input)
@@ -837,14 +867,16 @@ async function widenSurfaceBeforeRun(
     issue = input.issue
   }
 
-  if (deps.isDriverAlive(issue)) {
+  const openPr = deps.findOpenPrForBranch(deps.developerBranchFor(issue))
+  const { escalationId } = widenSurfaceEscalationOf(issue, label, widen.readFacts(issue), openPr?.number ?? null)
+
+  // A driver halted at this very escalation only waits for a ruling or a cancel; it is stopped so the widened run
+  // can start. A driver anywhere else is still working the task and is never touched.
+  if (deps.isDriverAlive(issue) && !(deps.stopHaltedDriver?.(issue, escalationId) ?? false)) {
     throw new RunTaskError(
       `runTask: a driver is still running ${label} — refused before anything was superseded. Widening a Surface answers a paused run; \`vinaya task status\` shows where the live one is.`
     )
   }
-
-  const openPr = deps.findOpenPrForBranch(deps.developerBranchFor(issue))
-  const { escalationId } = widenSurfaceEscalationOf(issue, label, widen.readFacts(issue), openPr?.number ?? null)
 
   try {
     await widen.gradeWidenedSurface(issue, request.globs, retryCommand)
