@@ -1,6 +1,6 @@
 import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { acquireRoundTestLock, ROUND_TEST_LOCK_DIRNAME, roundTestSlotCount, roundTestSlotDir } from './round-test-lock'
 
@@ -299,5 +299,33 @@ describe('round-test slots', () => {
     expect(existsSync(roundTestSlotDir(root, 0))).toBe(true)
     taken.release()
     live.release()
+  })
+
+  test('a dead holder whose slot cannot be moved never stops the wait from reaching its deadline', async () => {
+    const root = fixtureDir('round-lock-stuck-')
+    const dead = await acquireRoundTestLock({
+      ...ONE_SLOT,
+      rootDir: root,
+      deadlineAt: Date.now() + 5_000,
+      pid: 999_999,
+      startHeartbeat: () => () => {}
+    })
+    if (!dead.ok) throw new Error('the slot must be taken')
+    const old = new Date(Date.now() - 60 * 60_000)
+    utimesSync(join(roundTestSlotDir(root, 0), 'heartbeat'), old, old)
+    // The runtime root refuses the reclaim's rename: the dead holder stays dead and its slot stays put.
+    chmodSync(root, 0o500)
+    try {
+      const waited = await acquireRoundTestLock({
+        ...ONE_SLOT,
+        rootDir: root,
+        deadlineAt: Date.now() + 300,
+        pollMs: 10,
+        isAlive: () => false
+      })
+      expect(waited).toMatchObject({ ok: false, reason: 'timeout' })
+    } finally {
+      chmodSync(root, 0o700)
+    }
   })
 })

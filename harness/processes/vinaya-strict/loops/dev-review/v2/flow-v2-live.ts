@@ -942,8 +942,9 @@ function failureLocation(output: string, worktreePath: string, test: string): st
   return test
 }
 
-/** A wait's length for the driver log: whole seconds under a minute, minutes and seconds above. */
-function formatWait(ms: number): string {
+/** A wait's length for the driver log: milliseconds under a second, whole seconds under a minute, then minutes. */
+export function formatWait(ms: number): string {
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`
   const seconds = Math.round(ms / 1000)
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }

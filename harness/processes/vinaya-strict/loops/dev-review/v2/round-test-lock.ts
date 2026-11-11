@@ -174,13 +174,16 @@ export async function acquireRoundTestLock(options: RoundTestLockOptions): Promi
         if (holderDead(lockDir, now(), staleMs, isAlive)) {
           // One reclaimer wins the rename (each slot has its own aside name); a loser's rename fails and it looks again.
           const aside = `${lockDir}.reclaimed-${token}`
+          let reclaimed = false
           try {
             renameSync(lockDir, aside)
+            reclaimed = true
             rmSync(aside, { recursive: true, force: true })
           } catch {
-            // Someone else reclaimed it first.
+            // Someone else reclaimed it first, or it cannot be moved: the next pass looks again, after the deadline check.
           }
-          slot--
+          // Only a slot this call just emptied is tried again at once; a failed reclaim never loops without a deadline.
+          if (reclaimed) slot--
         }
       }
       if (!waiting) {

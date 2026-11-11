@@ -1424,7 +1424,9 @@ process.exit(cfg.exit ?? 0)
     expect(waited.filter((line) => line.startsWith('round tests: waiting for a round-test slot'))).toEqual([
       `round tests: waiting for a round-test slot at ${head.slice(0, 12)}: all 1 on this host are held`
     ])
-    expect(waited.some((line) => /^round tests: took round-test slot 1 of 1 after waiting \d+s$/.test(line))).toBe(true)
+    expect(
+      waited.some((line) => /^round tests: took round-test slot 1 of 1 after waiting (\d+ ms|\d+s)$/.test(line))
+    ).toBe(true)
     const free: string[] = []
     expect((await runRoundTestsLive({ ...shared, head, log: (line) => free.push(line) })).outcome).toBe('passed')
     expect(free.some((line) => line.includes('round-test slot'))).toBe(false)
