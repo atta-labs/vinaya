@@ -902,6 +902,31 @@ describe('runTask — --widen-surface continues a pre-pull-request widen-surface
     expect(calls).toEqual([])
   })
 
+  it('stops a driver halted at this escalation, then widens and starts the run', async () => {
+    const calls: string[] = []
+    const stopped: Array<[number, string]> = []
+    await runTask(
+      INPUT,
+      widenDeps(calls, {
+        isDriverAlive: () => true,
+        stopHaltedDriver: (task, escalationId) => {
+          stopped.push([task, escalationId])
+          return true
+        }
+      })
+    )
+    expect(stopped).toHaveLength(1)
+    expect(stopped[0]?.[0]).toBe(1245)
+    expect(calls).toEqual(['grade', 'supersede', 'record', 'gate', 'start'])
+  })
+
+  it('refuses when the live driver is not halted at this escalation, stopping nothing it does not own', async () => {
+    const calls: string[] = []
+    const run = runTask(INPUT, widenDeps(calls, { isDriverAlive: () => true, stopHaltedDriver: () => false }))
+    await expect(run).rejects.toThrow('runTask: a driver is still running task 10 in tranche `t-v1`')
+    expect(calls).toEqual([])
+  })
+
   it('refuses when the widened body fails the write gate, passing its findings through and superseding nothing', async () => {
     const calls: string[] = []
     const finding =
