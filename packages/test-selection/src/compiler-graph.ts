@@ -47,8 +47,6 @@
  * it cannot resolve at all — becomes the coarse whole-module (relative) or
  * whole-package (bare) edge. Over-select, never omit.
  */
-import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 
@@ -199,99 +197,20 @@ function viewCompilerHost(
 }
 
 /**
- * The compiler host for the working tree on disk, with every installed dependency hidden. The graph keeps edges to
- * workspace files only, so a dependency's declarations are never an edge; loading them anyway made the program
- * mostly third-party code (most of its files, and most of its memory). A workspace package reached through a
- * dependency folder resolves by its declared entry point instead. The compiler's own library declarations stay
- * visible.
- */
-function diskCompilerHost(
-  ts: TypeScriptApi,
-  options: import('typescript').CompilerOptions
-): import('typescript').CompilerHost {
-  const base = ts.createCompilerHost(options)
-  const libDir = dirname(ts.getDefaultLibFilePath(options))
-  const hidden = (path: string): boolean => path.includes('/node_modules/') && !path.startsWith(`${libDir}/`)
-  return {
-    ...base,
-    fileExists: (path) => !hidden(path) && base.fileExists(path),
-    readFile: (path) => (hidden(path) ? undefined : base.readFile(path)),
-    directoryExists: (path) => !hidden(`${path}/`) && (base.directoryExists?.(path) ?? true),
-    getSourceFile: (fileName, languageVersion, onError, shouldCreate) =>
-      hidden(fileName) ? undefined : base.getSourceFile(fileName, languageVersion, onError, shouldCreate)
-  }
-}
-
-/** How many built graphs one process keeps: a selection compares two revisions, base and head. */
-const GRAPH_CACHE_SIZE = 4
-
-/** Built graphs by the content they were built from, newest last; the compiler program itself is never kept. */
-const graphCache = new Map<string, Map<string, string[]>>()
-
-/**
- * What a graph is a function of: every source file's path, owning package and text, and the workspace entry points.
- * Two inputs with the same key give the same edges, so a graph is built once per content, however many selections ask.
- */
-function graphKey(input: GraphInput): string {
-  const hash = createHash('sha256')
-  hash.update(`${input.repoRoot}\0`)
-  for (const [specifier, entry] of [...input.entrypoints].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-    hash.update(`e\0${specifier}\0${entry}\0`)
-  for (const file of [...input.files].sort()) {
-    const text = input.host ? input.host.readFile(file) : readFileOrUndefined(file)
-    hash.update(`f\0${file}\0${input.packageOfFile(file) ?? ''}\0${text ?? '\u0000missing'}\0`)
-  }
-  return hash.digest('hex')
-}
-
-function readFileOrUndefined(path: string): string | undefined {
-  try {
-    return readFileSync(path, 'utf8')
-  } catch {
-    return undefined
-  }
-}
-
-/** A fresh copy of cached edges, so no caller can change what the next one reads. */
-const copyEdges = (edges: Map<string, string[]>): Map<string, string[]> =>
-  new Map([...edges].map(([node, deps]) => [node, [...deps]]))
-
-/**
- * The whole workspace's import/export graph, built once per content: a second request for the same files, texts and
- * entry points is answered from the cache without building a program. Only the edges are kept.
- */
-export function buildCompilerGraph(ts: TypeScriptApi, input: GraphInput): CompilerGraph {
-  const key = graphKey(input)
-  const cached = graphCache.get(key)
-  if (cached) {
-    graphCache.delete(key)
-    graphCache.set(key, cached)
-    return { edges: copyEdges(cached), programMs: 0 }
-  }
-  const built = buildCompilerGraphOnce(ts, input)
-  graphCache.set(key, copyEdges(built.edges))
-  // The program and its checker are garbage once the edges are out; collect them now, so a second build never
-  // stacks on the first one's memory. Bun only; elsewhere the runtime collects on its own schedule.
-  ;(globalThis as { Bun?: { gc?: (force: boolean) => void } }).Bun?.gc?.(true)
-  while (graphCache.size > GRAPH_CACHE_SIZE) graphCache.delete(graphCache.keys().next().value as string)
-  return built
-}
-
-/**
  * Builds the whole workspace's import/export graph through the compiler.
  *
  * One program over every workspace source file, one checker, then one AST pass
  * per file emitting edges. The program build dominates; the AST pass is linear
  * and resolves each module specifier once per file.
  */
-function buildCompilerGraphOnce(ts: TypeScriptApi, input: GraphInput): CompilerGraph {
+export function buildCompilerGraph(ts: TypeScriptApi, input: GraphInput): CompilerGraph {
   const { files, packageOfFile, packageOfBareSpecifier } = input
   const fileSet = new Set(files)
   const options = graphCompilerOptions(ts, input)
 
-  const host = input.host ? viewCompilerHost(ts, options, input.repoRoot, input.host) : diskCompilerHost(ts, options)
+  const host = input.host ? viewCompilerHost(ts, options, input.repoRoot, input.host) : ts.createCompilerHost(options)
   const t0 = performance.now()
-  const program = ts.createProgram([...files], options, host)
+  const program = input.host ? ts.createProgram([...files], options, host) : ts.createProgram([...files], options)
   const checker = program.getTypeChecker()
   const programMs = performance.now() - t0
 

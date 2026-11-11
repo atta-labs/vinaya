@@ -239,7 +239,6 @@ describe('the package agrees with this repository', () => {
     const view = (JSON.parse(run.stdout) as { head: InventoryView }).head
     const owned = view.tests.filter((t) => t.id.startsWith('packages/test-selection/')).map((t) => `${t.id} ${t.suite}`)
     expect(owned).toEqual([
-      'packages/test-selection/tests/compiler-graph-cache.test.ts test-selection',
       'packages/test-selection/tests/consumer.test.ts test-selection',
       'packages/test-selection/tests/git-revisions.test.ts test-selection',
       'packages/test-selection/tests/isolation.test.ts test-selection',
