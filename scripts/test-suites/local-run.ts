@@ -430,6 +430,15 @@ export function failedOf(result: RunResult, completion: NativeCompletion): strin
 }
 
 /**
+ * How the frozen plan's groups run: a push stops after the first failing group and refuses at once; a review
+ * round's tests run every group, so the record confirms every group that passed and the next round re-runs only
+ * what failed or never ran.
+ */
+export function frozenPlanRunOptions(input: { allGroups: boolean }): { stopAfterFailedGroup: boolean } {
+  return { stopAfterFailedGroup: !input.allGroups }
+}
+
+/**
  * Runs a frozen native plan: every group, serially, with the git variables of
  * the invoking hook removed, then the check that each runner executed exactly
  * its tests. A green verdict needs every runner to pass and to have executed
@@ -446,15 +455,6 @@ export function failedOf(result: RunResult, completion: NativeCompletion): strin
  * group that leaves nothing confirmed so far writes nothing, so an earlier
  * record stays.
  */
-/**
- * How the frozen plan's groups run: a push stops after the first failing group and refuses at once; a review
- * round's tests run every group, so the record confirms every group that passed and the next round re-runs only
- * what failed or never ran.
- */
-export function frozenPlanRunOptions(input: { allGroups: boolean }): { stopAfterFailedGroup: boolean } {
-  return { stopAfterFailedGroup: !input.allGroups }
-}
-
 export function runFrozenPlan(
   repoRoot: string,
   native: NativeSelection,

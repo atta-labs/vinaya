@@ -1258,11 +1258,16 @@ describe('a relative specifier written with an output extension resolves to its 
 // repository that has no `typescript` to resolve. Both must hold the never-miss
 // line; the compiler is what makes the selection narrow as well as safe.
 describe('the compiler resolves the graph, and the text scan remains a safe fallback', () => {
-  it('on the real repository the compiler answers, and reports its program build separately from selection', () => {
-    const result = selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')])
-    expect(result.resolver).toBe('compiler')
-    expect(result.programMs).toBeGreaterThan(0)
-  }, 30_000)
+  it('on the real repository the compiler answers, reports its program build separately, and builds once per content', () => {
+    const changed = [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]
+    const first = selectAffectedTestFiles(REPO_ROOT, changed)
+    const again = selectAffectedTestFiles(REPO_ROOT, changed)
+    expect(first.resolver).toBe('compiler')
+    // The first answer may already come from a graph an earlier test built; the repeat always does.
+    expect(first.programMs).toBeGreaterThanOrEqual(0)
+    expect(again.programMs).toBe(0)
+    expect(again.selected).toEqual(first.selected)
+  }, 60_000)
 
   it('the text-scan fallback is reachable, resolves .js specifiers too, and never omits what the compiler selects', () => {
     const changed = [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]
