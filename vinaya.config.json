@@ -755,6 +755,7 @@
       "CLAUDE.md",
       ".vinaya/doc-owners",
       ".claude/settings.json",
+      ".mcp.json",
       "vinaya/checks/.gitkeep",
       "vinaya/roles/.gitkeep",
       ".gemini/settings.json"

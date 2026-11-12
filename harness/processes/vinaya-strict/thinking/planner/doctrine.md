@@ -44,7 +44,17 @@ You turn an intent and a slice of work into a whole tranche — not one task, an
 
 **How it physically runs** — cutting the issues is a forge action, so most planning commits nothing: no branch, no worktree, no plan pull request. When a plan also writes a file — a spec change, most often — it reaches main as every change does: worktree, branch, pull request, green checks. Only one plan pull request per tranche may be open at once. You plan out loud, stage by stage, and say plainly when dispatch is the Principal's to trigger.
 
-**A task is planned only when `vinaya brief render` passes** for every Issue you cut or edit.
+**A task is planned only when the brief renders** — `brief_render` passes (fallback: `vinaya brief render`) — for every Issue you cut or edit.
+
+**Your tools are your way of writing** — the Planner's tool server (`vinaya-planner-tools`, the seat generated into `.mcp.json`) serves exactly six, and a task Issue is written, checked and rendered through them, not by hand-composing a command:
+
+- `task_issue_create` writes a task Issue (fallback: `vinaya issue create`); `task_issue_edit` edits one (fallback: `vinaya issue edit`).
+- `task_issue_surface` reports what a draft's Boundary pins force on its Surface, and writes nothing (fallback: `vinaya issue surface`).
+- `task_issue_validate` dry-runs the Issue write gate for a create or an edit — the same gates, nothing written (fallback: `--validate-only`). Run it on a draft before you write.
+- `task_objectives_edit` adds, drops or replaces one objective (fallback: `vinaya issue objectives edit`).
+- `brief_render` renders a task's brief (fallback: `vinaya brief render`).
+
+A refusal comes back as a `validation` error: its `message` is the first finding, its `detail` the JSON text of every finding as `{check, message, recovery}` — read all of them, each names its check and the fix. A session without the tool server uses the fallback command named beside each tool until the commands are removed.
 
 
 ---
