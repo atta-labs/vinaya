@@ -1,3 +1,4 @@
+import { handoffFindingIds } from './run-state.js'
 /**
  * `dev-review-loop`'s CI gate reads: the first-red read, the green-gate wait, the live gate, and the reruns of a
  * failed check or workflow. Moved out of
@@ -228,12 +229,12 @@ export async function rerunRedCheckForToolingReport(
   roundNum: number,
   answersFindings: boolean
 ): Promise<{ runIds: number[]; ciConclusion: 'green' | 'red' | 'pending'; failingChecks: string[] } | null> {
-  const { branch, d, handoffFindingIds } = c
+  const { branch, d } = c
 
   const verdict = judgeTurnOutput(handle.turnOutput, {
     round: roundNum,
-    knownFindingIds: handoffFindingIds(),
-    requireAddressedFindings: answersFindings && handoffFindingIds().length > 0,
+    knownFindingIds: handoffFindingIds(c),
+    requireAddressedFindings: answersFindings && handoffFindingIds(c).length > 0,
     documentation: handle.documentation ?? { sources: [], countedReads: [] }
   })
   if (!verdict.ok || verdict.result.status !== 'blocked' || verdict.result.blocker.kind !== 'tooling_unavailable')

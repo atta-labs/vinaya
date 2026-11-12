@@ -31,6 +31,24 @@ const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..',
 const SINK_PATH = 'harness/kernel/log/log-sink.ts'
 const DISPATCH_PATH = 'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts'
 const DEV_REVIEW_LOOP_PATH = 'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts'
+const DEV_REVIEW_LOOP_DRIVER_DEPS_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-deps.ts'
+const DEV_REVIEW_LOOP_DRIVER_WATCH_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-watch.ts'
+const DEV_REVIEW_LOOP_STALE_DRIVER_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stale-driver.ts'
+const DEV_REVIEW_LOOP_RUN_START_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-start.ts'
+const DEV_REVIEW_LOOP_DEVELOPER_TURN_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-turn.ts'
+const DEV_REVIEW_LOOP_CANCEL_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/cancel.ts'
+const DEV_REVIEW_LOOP_LOGGING_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-logging.ts'
+const DEV_REVIEW_LOOP_SETUP_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-setup.ts'
+const DEV_REVIEW_LOOP_PROMPTS_PATH =
+  'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-prompts.ts'
 const DEV_REVIEW_LOOP_ROUND_LOOP_PATH =
   'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-loop.ts'
 const DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH =
@@ -163,7 +181,10 @@ const CALLER_ALLOWLIST = new Set([
   ...FUTURE_CALLER_ALLOWLIST,
   LOG_WEBHOOK_DRAIN_LIB_PATH,
   DISPATCH_PATH,
-  DEV_REVIEW_LOOP_PATH,
+  DEV_REVIEW_LOOP_CANCEL_PATH,
+  DEV_REVIEW_LOOP_LOGGING_PATH,
+  DEV_REVIEW_LOOP_DRIVER_DEPS_PATH,
+  DEV_REVIEW_LOOP_DRIVER_WATCH_PATH,
   // Conformance test support under the scanned process folders: a type-only import of the sink's dependencies.
   'harness/processes/vinaya-strict/integration/conformance/unit/dev-review-current-loop-adapter.ts',
   DEV_REVIEW_LOOP_PAUSE_RESUME_PATH,
@@ -189,6 +210,9 @@ const CALLER_ALLOWLIST = new Set([
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_WEBHOOK_DRAIN_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
   DEV_REVIEW_LOOP_PATH,
+  DEV_REVIEW_LOOP_RUN_START_PATH,
+  DEV_REVIEW_LOOP_CANCEL_PATH,
+  DEV_REVIEW_LOOP_DEVELOPER_TURN_PATH,
   DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH,
   DEV_REVIEW_LOOP_PUBLICATION_PATH,
   DEV_REVIEW_LOOP_PAUSE_RESUME_PATH
@@ -614,7 +638,15 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
   },
   {
     name: 'devReviewLoop driver — resume, cancel, unpushed-work resume and a failed reviewer report',
-    files: [DEV_REVIEW_LOOP_PATH, DEV_REVIEW_LOOP_ROUND_LOOP_PATH],
+    files: [
+      DEV_REVIEW_LOOP_SETUP_PATH,
+      DEV_REVIEW_LOOP_CANCEL_PATH,
+      DEV_REVIEW_LOOP_PROMPTS_PATH,
+      DEV_REVIEW_LOOP_STALE_DRIVER_PATH,
+      DEV_REVIEW_LOOP_RUN_START_PATH,
+      DEV_REVIEW_LOOP_DEVELOPER_TURN_PATH,
+      DEV_REVIEW_LOOP_ROUND_LOOP_PATH
+    ],
     requires: [
       { kind: 'dev_review_loop', event: 'resumed' },
       { kind: 'dev_review_loop', event: 'unpushed_work_resume' },
@@ -839,7 +871,16 @@ const FAMILY_OWNERS: Record<string, readonly string[]> = {
   dispatch: [DISPATCH_PATH],
   role_attempt: [DISPATCH_PATH, DEV_REVIEW_LOOP_ROUND_LOOP_PATH],
   usage: [DISPATCH_PATH],
-  dev_review_loop: [DEV_REVIEW_LOOP_PATH, DEV_REVIEW_LOOP_ROUND_LOOP_PATH, DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
+  dev_review_loop: [
+    DEV_REVIEW_LOOP_SETUP_PATH,
+    DEV_REVIEW_LOOP_CANCEL_PATH,
+    DEV_REVIEW_LOOP_PROMPTS_PATH,
+    DEV_REVIEW_LOOP_STALE_DRIVER_PATH,
+    DEV_REVIEW_LOOP_RUN_START_PATH,
+    DEV_REVIEW_LOOP_DEVELOPER_TURN_PATH,
+    DEV_REVIEW_LOOP_ROUND_LOOP_PATH,
+    DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH
+  ],
   gate: [RUNNER_PATH],
   effect: [EFFECTS_PATH],
   handoff: [DEV_REVIEW_LOOP_PAUSE_RESUME_PATH],

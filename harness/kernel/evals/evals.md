@@ -552,7 +552,7 @@ does not carry, and each kind of case runs its own way:
   real loop's brief does; the fake forge refuses a body whose first line closes
   any other number. The prompt ends with the review loop's
   own publishing instruction, `publishingInstructionLine` imported from
-  `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts`, so the trial tells the Developer
+  `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts` (re-exported from `driver-helpers.ts` in its module folder), so the trial tells the Developer
   exactly what the loop tells it: publish and open its own pull request through
   the driver-run tools. Its hidden tests are that case's, run in the sandbox on
   the trial's commit. The pull request the Developer opened through

@@ -102,7 +102,7 @@ that kind today — "ownership" in the literal sense: which file is on the
 hook when a family's shape needs to change. Each producer file named in the table is bound to a literal it still holds.
 
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:kind: 'role_attempt' -->
-<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts contains:kind: 'dev_review_loop' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-setup.ts contains:kind: 'dev_review_loop' -->
 <!-- VINAYA:CLAIM: harness/kernel/gates/checks/runner.ts contains:kind: 'gate' -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts contains:kind: 'operation' -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/cancel.ts contains:kind: 'operation' -->
@@ -117,12 +117,12 @@ hook when a family's shape needs to change. Each producer file named in the tabl
 | Kind | Producer(s) | Records |
 | ---- | ----------- | ------- |
 | `dispatch` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts` (`dispatchRole`) | A vendor CLI launch, its outcome, and the usage it reported. |
-| `dev_review_loop` | `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts` | The round-by-round loop lifecycle — start, gate, verdicts, pause/resume/cancel, journal. |
+| `dev_review_loop` | `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/` phase modules (see the loop specification’s module map) | The round-by-round loop lifecycle — start, gate, verdicts, pause/resume/cancel, journal. |
 | `forge_write` | none today | Declared in the schema so an already-posted comment line still parses; no file emits it — the comment-posting flush and the artifact commands are removed, and logs never reach a tracker or a code host. |
 | `gate` | `harness/kernel/gates/checks/runner.ts` | One check's terminal outcome (pass/fail/wait/skip/invalid/unavailable/timeout/cancelled). |
 | `operation` | `harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts`, `cancel.ts`, `harness/kernel/tools/host/broker.ts`, `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `harness/kernel/log/client/log-custom.ts`, `harness/kernel/log/client/cli-operation-log.ts` | A normalized tool-call or broker-authorized operation's outcome (ok/error/refused/timeout/cancelled/unavailable) — this is the family a registered task tool's own call emits; `conformance.md` Section D captures one real instance. |
 | `usage` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts` | Vendor token usage, every unit nullable rather than defaulted to zero when a vendor doesn't report one. |
-| `role_attempt` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `dev-review-loop.ts` | A dispatched role's own normalized attempt outcome, distinct from the Controller-side `dispatch` view of the same attempt. |
+| `role_attempt` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `dev-review-loop/round-loop.ts` | A dispatched role's own normalized attempt outcome, distinct from the Controller-side `dispatch` view of the same attempt. |
 | `handoff` | `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts` | A human escalation, raised and resolved. |
 | `effect` | `harness/kernel/effects/effects.ts` | A generic external effect's attempted/observed/verified outcome, additive to `forge_write`, never replacing it. |
 | `custom` | `harness/kernel/log/client/log-custom.ts` (`emitCustomEvent`) | An operator-declared event, named and shaped by the loaded configuration. |

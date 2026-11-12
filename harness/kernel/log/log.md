@@ -134,7 +134,7 @@ them; neither the sink nor `buildHeader` invents a value.
   has none, so its process version and digest stay `null`. `VINAYA_RUNTIME`
   is the agent the run dispatches, once the entry has resolved it: the
   `--agent` given, or on a resume without one, the agent the pause recorded.
-  <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts contains:export async function setStandaloneLogIdentity( -->
+  <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-helpers.ts contains:export async function setStandaloneLogIdentity( -->
 - **Engine runner.** `setEngineLogIdentity` sets runner `atta-engine` at the
   installed Engine's version, the loaded process's id, version and digest,
   and `VINAYA_RUNTIME` to the agent the run dispatches.
