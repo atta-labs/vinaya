@@ -3355,6 +3355,8 @@ describe('checkPinnedFileImportersCovered', () => {
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toContain('pins `packages/aeg-core/src/gate.ts`')
     expect(result.errors[0]).toContain('`apps/cli/src/commands/issue.ts` (add `apps/cli/src/commands` to `in:`)')
+    expect(result.errors[0]).toContain('Call `task_issue_surface` with the draft Issue text in its `body` field')
+    expect(result.errors[0]).not.toContain('--body-file')
   })
 
   it('passes when an `in:` glob covers the importer', () => {
@@ -4145,6 +4147,10 @@ describe('checkPinnedFileChecksDecided', () => {
     expect(result.status).toBe('fail')
     expect(result.errors.join('\n')).toContain('`reader-resolvable-prose`')
     expect(result.errors.join('\n')).toContain('apps/cli/specs/mirror.md')
+    expect(result.errors.join('\n')).toContain(
+      'Call `task_issue_surface` with the draft Issue text in its `body` field'
+    )
+    expect(result.errors.join('\n')).not.toContain('--body-file')
   })
 
   it('passes once the check carries a decision naming how the change satisfies it', () => {

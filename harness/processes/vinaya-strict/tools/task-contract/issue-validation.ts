@@ -3312,7 +3312,7 @@ export function checkPinnedFileImportersCovered(body: string, importers: PinnedF
     )
     if (uncovered.length === 0) continue
     errors.push(
-      `issue-validation Surface/importers: the Boundary pins \`${file}\`, and ${uncovered.length === 1 ? 'its importer' : 'its importers'} ${uncovered.map((d) => `\`${d.importer}\` (add \`${d.fix}\` to \`in:\`)`).join(', ')} ${uncovered.length === 1 ? 'is' : 'are'} neither reached by a \`## Surface\` \`in:\` glob nor named in the Boundary's \`Out:\` clause. Add the named glob to \`in:\`, or name the importer (or its directory) in the Boundary's \`Out:\` clause to exclude it deliberately (a \`## Surface\` \`out:\` glob is not that statement — it claims the directory is untouched, which a forced call-site edit contradicts). \`task_issue_surface --body-file <path>\` prints every importer and its decision.`
+      `issue-validation Surface/importers: the Boundary pins \`${file}\`, and ${uncovered.length === 1 ? 'its importer' : 'its importers'} ${uncovered.map((d) => `\`${d.importer}\` (add \`${d.fix}\` to \`in:\`)`).join(', ')} ${uncovered.length === 1 ? 'is' : 'are'} neither reached by a \`## Surface\` \`in:\` glob nor named in the Boundary's \`Out:\` clause. Add the named glob to \`in:\`, or name the importer (or its directory) in the Boundary's \`Out:\` clause to exclude it deliberately (a \`## Surface\` \`out:\` glob is not that statement — it claims the directory is untouched, which a forced call-site edit contradicts). Call \`task_issue_surface\` with the draft Issue text in its \`body\` field to report every importer and its decision.`
     )
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
@@ -3365,7 +3365,7 @@ export function checkPinnedFileChecksDecided(body: string, pinned: PinnedFileChe
     const undecided = checks.filter((c) => !c.decided)
     if (undecided.length === 0) continue
     errors.push(
-      `issue-validation Surface/checks: the Boundary pins \`${file}\`, and ${undecided.length === 1 ? 'the check' : 'the checks'} ${undecided.map((c) => `\`${c.check}\` (scope \`${c.covers}\`)`).join(', ')} cover${undecided.length === 1 ? 's' : ''} it with no decision in the Issue. For each, add a line naming the check in backticks, then a colon and how the change satisfies it (for example \`${undecided[0]?.check}\`: <how the change satisfies it>). \`task_issue_surface --body-file <path>\` lists every covering check.`
+      `issue-validation Surface/checks: the Boundary pins \`${file}\`, and ${undecided.length === 1 ? 'the check' : 'the checks'} ${undecided.map((c) => `\`${c.check}\` (scope \`${c.covers}\`)`).join(', ')} cover${undecided.length === 1 ? 's' : ''} it with no decision in the Issue. For each, add a line naming the check in backticks, then a colon and how the change satisfies it (for example \`${undecided[0]?.check}\`: <how the change satisfies it>). Call \`task_issue_surface\` with the draft Issue text in its \`body\` field to list every covering check.`
     )
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
