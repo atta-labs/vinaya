@@ -55,7 +55,7 @@ describe('OPERATOR_TOOL_GRANT — the catalog task tools, and nothing else', () 
 
   it("is the grant the seat table gives the Operator's seat, the default seat", () => {
     const table = vinayaToolSeats()
-    expect(table.seats.map((seat) => seat.name)).toEqual([OPERATOR_SEAT, 'planner'])
+    expect(table.seats.map((seat) => seat.name)).toEqual([OPERATOR_SEAT, 'planner', 'architect', 'tranche-archivist'])
     expect(table.defaultSeat).toBe(OPERATOR_SEAT)
     expect([...(table.seats[0]?.grant.grantedTools ?? [])]).toEqual([...OPERATOR_TOOL_GRANT])
   })
