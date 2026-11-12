@@ -12,7 +12,7 @@
  *
  * scope: full, ownWorkflow: true — invoked by name from
  * `harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts`'s `runIssueChecks`, which both callers
- * of the edit-path gate reach: the Issue edit gate (`vinaya issue edit`) and
+ * of the edit-path gate reach: the Issue edit gate (`task_issue_edit`) and
  * the dispatch write gate (`vinaya task run`/`task brief`). Never from
  * `vinaya check --all`, and never on create.
  */

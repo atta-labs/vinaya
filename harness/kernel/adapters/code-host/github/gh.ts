@@ -145,7 +145,7 @@ export type GhIssue = {
   /** GitHub-native milestone attachment, or `null` when unattached. */
   milestone: { title: string } | null
   /**
-   * GitHub's native close reason (`vinaya milestone status`) — optional
+   * GitHub's native close reason (`milestone_status`) — optional
    * (unlike `fetch-forge-facts.ts`'s own `IssueNode.stateReason`, which is
    * required because that GraphQL query always asks for it): most existing
    * callers of this type never request it and their fixtures predate this

@@ -5,7 +5,7 @@
  * same values.
  */
 
-/** The hot Issue's brief, as `vinaya issue create` writes it: the single-fix profile, read by the Principal. */
+/** The hot Issue's brief, as `task_issue_create` writes it: the single-fix profile, read by the Principal. */
 export const hotBrief: { label: string; value: string }[] = [
   { label: 'Objective', value: 'The CLI test passes on every CI run' },
   { label: 'Surface', value: 'apps/cli/test/tmp.test.ts' },

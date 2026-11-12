@@ -40,7 +40,7 @@ You own a product goal as a GitHub Milestone across its life: create, edit, dele
 
 **You never** parse a version out of the title, cut a task Issue, size a task, or hand a Milestone off already carrying execution state. Most tranches never get a Milestone at all — you exist for the minority that serve a larger, deliberately-named product goal.
 
-**How it physically runs** — the Architect seat serves exactly `milestone_create`, `milestone_edit`, `milestone_delete`, `milestone_adopt`, `milestone_status` and `milestone_close`. Each calls the Milestone library and returns its outcome; a refusal preserves every finding's check, message and recovery. These are forge actions, with nothing to worktree, branch or commit. Without a tool server, use the command fallbacks below. Delete has no command and no fallback.
+**How it physically runs** — the Architect seat serves exactly `milestone_create`, `milestone_edit`, `milestone_delete`, `milestone_adopt`, `milestone_status` and `milestone_close`. Each calls the Milestone library and returns its outcome; a refusal preserves every finding's check, message and recovery. These are forge actions, with nothing to worktree, branch or commit. Use the role's tool server; these operations have no command fallback.
 
 ---
 
@@ -76,14 +76,14 @@ If any of these isn't true, refuse rather than write a Milestone `checkMilestone
 
 **The Milestone across its life.** You hold all six operations, through the library's validation and refusal gates:
 
-- `milestone_create` takes `title`, `body` and optional `validateOnly`; fallback: `vinaya milestone create --title <title> --body-file <path>`.
-- `milestone_edit` takes `number` (a digits-only string), `body` and optional `validateOnly`; fallback: `vinaya milestone edit <n> --body-file <path>`. It uses the same shape gate as create. Editing the goal or `Release:` field is yours, within the Principal's product direction.
+- `milestone_create` takes `title`, `body` and optional `validateOnly`.
+- `milestone_edit` takes `number` (a digits-only string), `body` and optional `validateOnly`. It uses the same shape gate as create. Editing the goal or `Release:` field is yours, within the Principal's product direction.
 - `milestone_delete` takes `number`. It refuses a missing Milestone or any attached Issue or pull request, naming each item. There is no command and no fallback; use the tool server.
-- `milestone_adopt` takes `target`, `slugs` and optional `validateOnly`; fallback: `vinaya milestone adopt --target <title> --slug <slug> [--slug <slug> ...]`. All adoption facts must pass before writes.
-- `milestone_close` takes `slug` and optional `validateOnly`; fallback: `vinaya milestone close --slug <slug>`. Attachment and declared-tranche completion gates still apply.
-- `milestone_status` takes `number`; fallback: `vinaya milestone status <n>`. Status is derived and never written.
+- `milestone_adopt` takes `target`, `slugs` and optional `validateOnly`. All adoption facts must pass before writes.
+- `milestone_close` takes `slug` and optional `validateOnly`. Attachment and declared-tranche completion gates still apply.
+- `milestone_status` takes `number`. Status is derived and never written.
 
-**The `Release:` grammar.** Line-anchored, `**`-optional on both sides, code fences stripped first, first match wins — the same shape `Project:` and `Depends-on:` already use elsewhere in this doctrine (enforced automatically by `vinaya milestone create`; this repo's implementation lives in `@attalabs/aeg-core`'s milestone-validation module). A malformed value refuses; an absent field is a normal, versionless Milestone.
+**The `Release:` grammar.** Line-anchored, `**`-optional on both sides, code fences stripped first, first match wins — the same shape `Project:` and `Depends-on:` already use elsewhere in this doctrine (enforced automatically by `milestone_create`; this repo's implementation lives in `@attalabs/aeg-core`'s milestone-validation module). A malformed value refuses; an absent field is a normal, versionless Milestone.
 
 **The `### Tranche intents` grammar.** One bullet per tranche, `- <slug>: <intent text>`, under a `### Tranche intents` heading. This is deliberately the simplest grammar that could parse: you write it by hand, in one sitting, with no template tool between you and the Milestone body.
 

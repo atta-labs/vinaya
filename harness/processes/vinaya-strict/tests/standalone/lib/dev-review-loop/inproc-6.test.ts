@@ -203,7 +203,9 @@ describe('devReviewLoop — an objectives edit lands between reviewer dispatch a
     expect(result.finalDecision).toMatchObject({ reason: 'objectives_changed' })
     const detail = (result.finalDecision as { detail?: string }).detail ?? ''
     expect(detail).toMatch(/objectives moved from .+ to midroundversion/)
-    expect(detail).toMatch(/vinaya issue objectives edit 9001 --add "Also do this\." --reason "mid-round change"/)
+    expect(detail).toContain(
+      'task_objectives_edit {"issue":9001,"op":"add","sentence":"Also do this.","reason":"mid-round change"}'
+    )
 
     // Two posted comments — the round marker (posted before the mismatch is
     // even detected) and the pause — never a reviewer or security verdict:

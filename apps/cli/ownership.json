@@ -1,5 +1,5 @@
 {
-  "description": "Every tracked file of the command line, by what it is. The command line holds only the commands people type and the Planner's and Architect's commands; every plumbing step is a program of the process (harness/processes/vinaya-strict/tools/programs.ts). Paths are relative to apps/cli; an entry ending in / names every file under it. tests/cli-allowlist.test.ts fails on a file no entry classifies, a file two entries classify, a route no command class lists, and a manifest bin the program table does not name.",
+  "description": "Every tracked file of the command line, by what it is. The command line holds only the commands people type; every plumbing step is a program of the process (harness/processes/vinaya-strict/tools/programs.ts). Paths are relative to apps/cli; an entry ending in / names every file under it. tests/cli-allowlist.test.ts fails on a file no entry classifies, a file two entries classify, a route no command class lists, and a manifest bin the program table does not name.",
   "routes": {
     "human-command": [
       "help",
@@ -19,18 +19,6 @@
       "new check",
       "new noop-check",
       "new role"
-    ],
-    "planner-or-architect-command": [
-      "issue create",
-      "issue edit",
-      "issue surface",
-      "issue objectives edit",
-      "brief render",
-      "milestone create",
-      "milestone edit",
-      "milestone status",
-      "milestone adopt",
-      "milestone close"
     ]
   },
   "files": {
@@ -50,12 +38,6 @@
       "src/commands/task-status.ts",
       "src/commands/task-switch.ts",
       "src/commands/upgrade.ts"
-    ],
-    "planner-or-architect-command": [
-      "src/commands/brief.ts",
-      "src/commands/issue-objectives.ts",
-      "src/commands/issue.ts",
-      "src/commands/milestone.ts"
     ],
     "command-line": [
       "src/index.ts",
@@ -98,7 +80,6 @@
       "tests/init.test.ts",
       "tests/lib/command-loading.test.ts",
       "tests/lib/startup-loading.test.ts",
-      "tests/milestone.test.ts",
       "tests/new-check.test.ts",
       "tests/new-noop-check.test.ts",
       "tests/new-role.test.ts",

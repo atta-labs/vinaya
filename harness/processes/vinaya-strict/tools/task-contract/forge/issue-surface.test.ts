@@ -5,12 +5,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkPinnedFileImportersCovered } from '../issue-validation'
 import { readPinnedFileImporters, readSurfaceForcedSet, renderSurfaceForcedSet } from './forge-write'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
-
-const CLI_ENTRY = join(import.meta.dir, '../../../../../../apps/cli/src/index.ts')
+import { printIssueSurface } from '../../../thinking/planner/tools/planner-operations'
 
 // ---------------------------------------------------------------------------
-// `vinaya issue surface` and the importer rule read one listing through one
+// The surface tool's library and the importer rule read one listing through one
 // function. Every case runs against a fixture git tree built here, so the
 // report and the gate are compared on the same importers, never on this
 // repository's own imports.
@@ -138,28 +136,31 @@ describe('issue surface — the report and the gate agree on every importer', ()
     })
   })
 
-  it('the command prints the report and exits 0, writes nothing, and exits 2 on a body that does not parse', () => {
+  it('the library returns the report, writes nothing, and refuses a body that does not parse', () => {
     const bodyFile = join(fixture, 'draft.md')
     writeFileSync(bodyFile, UNDECIDED)
-    const ok = spawnSyncBudgeted('bun', [CLI_ENTRY, 'issue', 'surface', '--body-file', bodyFile], {
-      cwd: fixture,
-      encoding: 'utf8',
-      env: stripVinayaEnv()
-    })
-    expect(ok.status).toBe(0)
-    expect(ok.stdout).toContain('uncovered   apps/cli/tests/lib/gate.test.ts')
+    const run = () => {
+      const cwd = process.cwd()
+      try {
+        process.chdir(fixture)
+        return printIssueSurface(['--body-file', bodyFile])
+      } finally {
+        process.chdir(cwd)
+      }
+    }
+    const ok = run()
+    expect(ok.ok).toBe(true)
+    if (!ok.ok) throw new Error(ok.message)
+    expect(ok.text).toContain('uncovered   apps/cli/tests/lib/gate.test.ts')
     expect(execFileSync('git', ['status', '--porcelain'], { cwd: fixture, encoding: 'utf8' }).trim()).toBe(
       '?? draft.md'
     )
 
     writeFileSync(bodyFile, '**Boundary** — Pinned files: `packages/core/src/gate.ts`.\n')
-    const bad = spawnSyncBudgeted('bun', [CLI_ENTRY, 'issue', 'surface', '--body-file', bodyFile], {
-      cwd: fixture,
-      encoding: 'utf8',
-      env: stripVinayaEnv()
-    })
-    expect(bad.status).toBe(2)
-    expect(bad.stderr).toContain('does not parse')
+    const bad = run()
+    expect(bad.ok).toBe(false)
+    if (bad.ok) throw new Error('malformed Surface accepted')
+    expect(bad.message).toContain('does not parse')
   })
 })
 

@@ -15,7 +15,7 @@ import {
   renderCodeReviewComment,
   renderSecurityComment
 } from '../../../../loops/dev-review/bin/review-post.js'
-import { spliceObjectivesSection } from '../../../../../../../apps/cli/src/commands/issue-objectives.js'
+import { spliceObjectivesSection } from '../../../../thinking/planner/tools/planner-operations'
 import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
 import {
   objectivesOf,

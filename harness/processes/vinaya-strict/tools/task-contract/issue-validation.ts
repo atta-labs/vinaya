@@ -229,7 +229,7 @@ export function checkIssueObjectives(
 // task-Issue sections, each parsed by its own pure function: `## Surface`,
 // `## Parts`, `## Test plan`, `## Stop conditions`. `brief-render.ts` reads
 // their parsed values to fill a brief's §4/§6/§9/§10 mechanically, so `vinaya
-// brief render` needs no hand edit to become dispatchable. Gated by
+// brief_render` needs no hand edit to become dispatchable. Gated by
 // `BRIEF_SECTIONS_SINCE_ISSUE`, the same cutover-by-Issue-number shape as
 // `OBJECTIVES_SINCE_ISSUE` above — an Issue below the cutover legitimately
 // carries none of the four, and `checkIssueBriefSections` passes it
@@ -810,7 +810,7 @@ const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/
  * The command this statement runs when the reference declares it needs
  * something the Developer lacks, with the need named, or `null`. The
  * longest declared command name that prefixes the tokens after the CLI
- * invocation wins, so `issue objectives edit` is never read as `issue`.
+ * invocation wins, so `task_objectives_edit` is never read as `issue`.
  */
 function developerUnrunnableCommand(
   tokens: string[],
@@ -1196,7 +1196,7 @@ export const DOCUMENTATION_SINCE_ISSUE = 626
  * A fifth section, `## Documentation`, is folded into this same gate rather
  * than a new builtin — it is graded on its own, later cutover
  * (`sinceDocumentation`), since no pre-existing Issue ever carried it and
- * requiring it retroactively on an `issue edit` would refuse a body no author
+ * requiring it retroactively on a `task_issue_edit` would refuse a body no author
  * had reason to write that way.
  */
 export function checkIssueBriefSections(
@@ -1239,7 +1239,7 @@ const OBJECTIVES_HEADING_RE = /^##[ \t]*Objectives[ \t]*$/im
 /**
  * **O1 — is this body task-Issue-shaped at all?** The
  * Issue create and edit gates (`forge-write.ts`'s `writeValidatedIssueEdit`
- * and the `issue create`/`issue edit` commands) widen brief-schema
+ * and the `task_issue_create`/`task_issue_edit` commands) widen brief-schema
  * validation with this beyond `isTaskIssueLabelSet`: a body that carries the
  * Planner's judgment sections but no `vinaya/tranche:*` label — a backlog
  * Issue — would otherwise read, to every check gated behind
@@ -1749,9 +1749,9 @@ const BLAST_RADIUS_ACK_RE = /(?:\*\*)?blast-radius-ack(?:\*\*)?\s*[:—–-]/i
  * O1); it defaults to `BRIEF_SECTIONS_SINCE_ISSUE` only for a caller that does
  * not resolve config.
  * `issueNumber` follows the same posture as every other cutover-gated rule
- * here: `null` (not yet known, e.g. `issue create`) is treated as newer than
+ * here: `null` (not yet known, e.g. `task_issue_create`) is treated as newer than
  * every cutover, so a new Issue's `## Surface` is judged at creation exactly
- * as it is on `issue edit` and at dispatch. Only a number below the cutover
+ * as it is on `task_issue_edit` and at dispatch. Only a number below the cutover
  * keeps the prose scan.
  */
 export function checkBlastRadiusScope(
@@ -2835,7 +2835,7 @@ export function checkPartsCoverageAndSequence(body: string): IssueSectionResult 
 // trip these.
 // ---------------------------------------------------------------------------
 
-/** One command as the command reference records it — its name (`issue create`) and the flags it documents. */
+/** One command as the command reference records it — its name (`task_issue_create`) and the flags it documents. */
 export type CommandReferenceEntry = {
   name: string
   flags: string[]
@@ -2966,7 +2966,7 @@ function invokedCommandTokens(span: string, binary: string): string[] | null {
  * subcommand — `vinaya check dispatch-readiness` names the check to run, and
  * reading it as an introduced command would refuse every Issue that quotes a
  * check by name. A run under a documented NAMESPACE (a name some documented
- * command extends, e.g. `issue` in `issue create`) whose full form is
+ * command extends, e.g. `issue` in `task_issue_create`) whose full form is
  * undocumented is a real introduction, and so is a run whose very first word
  * the reference has never heard of.
  */
@@ -3312,7 +3312,7 @@ export function checkPinnedFileImportersCovered(body: string, importers: PinnedF
     )
     if (uncovered.length === 0) continue
     errors.push(
-      `issue-validation Surface/importers: the Boundary pins \`${file}\`, and ${uncovered.length === 1 ? 'its importer' : 'its importers'} ${uncovered.map((d) => `\`${d.importer}\` (add \`${d.fix}\` to \`in:\`)`).join(', ')} ${uncovered.length === 1 ? 'is' : 'are'} neither reached by a \`## Surface\` \`in:\` glob nor named in the Boundary's \`Out:\` clause. Add the named glob to \`in:\`, or name the importer (or its directory) in the Boundary's \`Out:\` clause to exclude it deliberately (a \`## Surface\` \`out:\` glob is not that statement — it claims the directory is untouched, which a forced call-site edit contradicts). \`vinaya issue surface --body-file <path>\` prints every importer and its decision.`
+      `issue-validation Surface/importers: the Boundary pins \`${file}\`, and ${uncovered.length === 1 ? 'its importer' : 'its importers'} ${uncovered.map((d) => `\`${d.importer}\` (add \`${d.fix}\` to \`in:\`)`).join(', ')} ${uncovered.length === 1 ? 'is' : 'are'} neither reached by a \`## Surface\` \`in:\` glob nor named in the Boundary's \`Out:\` clause. Add the named glob to \`in:\`, or name the importer (or its directory) in the Boundary's \`Out:\` clause to exclude it deliberately (a \`## Surface\` \`out:\` glob is not that statement — it claims the directory is untouched, which a forced call-site edit contradicts). \`task_issue_surface --body-file <path>\` prints every importer and its decision.`
     )
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
@@ -3365,7 +3365,7 @@ export function checkPinnedFileChecksDecided(body: string, pinned: PinnedFileChe
     const undecided = checks.filter((c) => !c.decided)
     if (undecided.length === 0) continue
     errors.push(
-      `issue-validation Surface/checks: the Boundary pins \`${file}\`, and ${undecided.length === 1 ? 'the check' : 'the checks'} ${undecided.map((c) => `\`${c.check}\` (scope \`${c.covers}\`)`).join(', ')} cover${undecided.length === 1 ? 's' : ''} it with no decision in the Issue. For each, add a line naming the check in backticks, then a colon and how the change satisfies it (for example \`${undecided[0]?.check}\`: <how the change satisfies it>). \`vinaya issue surface --body-file <path>\` lists every covering check.`
+      `issue-validation Surface/checks: the Boundary pins \`${file}\`, and ${undecided.length === 1 ? 'the check' : 'the checks'} ${undecided.map((c) => `\`${c.check}\` (scope \`${c.covers}\`)`).join(', ')} cover${undecided.length === 1 ? 's' : ''} it with no decision in the Issue. For each, add a line naming the check in backticks, then a colon and how the change satisfies it (for example \`${undecided[0]?.check}\`: <how the change satisfies it>). \`task_issue_surface --body-file <path>\` lists every covering check.`
     )
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
@@ -3460,7 +3460,7 @@ export function checkNewLoopFilesCoverInvariantMap(body: string, tracked: string
 /** A forced companion file and whether an `in:` glob already reaches it. */
 export type ForcedCompanion = { path: string; reached: boolean }
 
-/** What a draft Issue's Boundary pins force on its Surface — the `vinaya issue surface` report. */
+/** What a draft Issue's Boundary pins force on its Surface — the Planner's `task_issue_surface` report. */
 export type SurfaceForcedSet = {
   /** Every importer of every pinned file, decided by `decidePinnedFileImporters` — the write gate's own reading. */
   importers: PinnedFileDecisions[]
@@ -3730,7 +3730,7 @@ function partsEqual(a: IssuePart[], b: IssuePart[]): boolean {
  * `oldBody` and `newBody`.** Pure comparison; the caller decides whether the
  * Issue's brief is actually frozen (this function runs unconditionally, the
  * gate is applying it only when a frozen comment exists) and builds the
- * refusal message (naming the frozen comment and `issue objectives edit`).
+ * refusal message (naming the frozen comment and `task_objectives_edit`).
  *
  * A section that fails to parse on ONE side but not the other counts as
  * changed (a well-formed section that stopped parsing, or vice versa, is

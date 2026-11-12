@@ -76,12 +76,12 @@ describe('validateForgeWrite — brief-schema gate', () => {
       ...base,
       body: noRationaleIssue,
       sections: [{ builtin: 'issueRationale' }],
-      retryCommand: 'vinaya issue create --validate-only …'
+      retryCommand: 'task_issue_create --validate-only …'
     })
     expect(errors.length).toBe(8)
     for (const e of errors) {
       expect(e.check).toBe('brief-schema')
-      expect(e.agent_recovery_prompt).toContain('vinaya issue create')
+      expect(e.agent_recovery_prompt).toContain('task_issue_create')
     }
   })
 
@@ -182,7 +182,7 @@ const DORMANT_CONFIG_REFERENCE = { files: [], keys: [], text: '' }
 // resolution is exercised end-to-end by `tests/commands/issue.test.ts`'s
 // "content gate" suite instead).
 describe('validateIssueContent — the content checks', () => {
-  const cmd = 'vinaya issue create --validate-only …'
+  const cmd = 'task_issue_create --validate-only …'
 
   it('refuses a rationale naming a shared domain no declared project owns', () => {
     const errors = validateIssueContent({
@@ -209,7 +209,7 @@ describe('validateIssueContent — the content checks', () => {
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
     expect(errors[0]?.message).toContain('blast radius')
-    expect(errors[0]?.agent_recovery_prompt).toContain('vinaya issue create')
+    expect(errors[0]?.agent_recovery_prompt).toContain('task_issue_create')
   })
 
   it('passes the same body once a `blast-radius-ack:` line acknowledges the domain', () => {
@@ -292,7 +292,7 @@ describe('validateIssueContent — the content checks', () => {
     const premise = errors.find((e) => e.message.includes('premise 1 binds'))
     expect(premise).toBeDefined()
     expect(premise?.check).toBe('issue-content')
-    expect(premise?.agent_recovery_prompt).toContain('vinaya issue create')
+    expect(premise?.agent_recovery_prompt).toContain('task_issue_create')
   })
 
   it('refuses an Issue whose Boundary claims something already exists with no premise', () => {
@@ -379,7 +379,7 @@ describe('validateIssueContent — the content checks', () => {
     const edge = errors.find((e) => e.message.includes('`2a`') && /whole number/.test(e.message))
     expect(edge).toBeDefined()
     expect(edge?.check).toBe('issue-content')
-    expect(edge?.agent_recovery_prompt).toContain('vinaya issue create')
+    expect(edge?.agent_recovery_prompt).toContain('task_issue_create')
   })
 
   it('refuses a rationale naming no concrete doc/skill path', () => {
@@ -912,7 +912,7 @@ describe('runIssueChecks — the ONE registry-runner call every Issue write path
         issueNumber: null,
         currentMilestoneTitle: null,
         resolvedMilestoneTitle: null,
-        retryCommand: 'vinaya issue create'
+        retryCommand: 'task_issue_create'
       })
     ).resolves.toEqual([])
   })

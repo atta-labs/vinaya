@@ -175,7 +175,7 @@ describe('printIssueSurface', () => {
     expect(out).toEqual({
       ok: false,
       exitCode: 2,
-      message: 'issue surface: pass the draft Issue body with `--body-file <path>`.\n'
+      message: 'task_issue_surface: supply the draft Issue text in the `body` field.\n'
     })
   })
 

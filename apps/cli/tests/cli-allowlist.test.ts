@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 
 // The command line's allow list: `ownership.json` classifies every tracked file under `apps/cli` by what it is,
-// and names every route the router dispatches as a command a person types or a Planner's or Architect's command.
+// and names every route the router dispatches as a command a person types.
 // A file, a route or a manifest `bin` that arrives without a place here fails.
 
 const CLI = join(import.meta.dir, '..')

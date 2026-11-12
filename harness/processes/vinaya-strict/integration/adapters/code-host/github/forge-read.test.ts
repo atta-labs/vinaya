@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fetchIssueBodyAndComments } from '../../../../../../../apps/cli/src/commands/issue-objectives'
+import { fetchIssueBodyAndComments } from '../../../../thinking/planner/tools/planner-operations'
 import { resolveBriefHashForPr } from '../../../../loops/dev-review/bin/review-post'
 import {
   FORGE_READ_CEILING_BYTES,

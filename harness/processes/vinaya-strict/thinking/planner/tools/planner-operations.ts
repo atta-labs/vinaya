@@ -2,8 +2,7 @@
  * The Planner's Issue, surface, objectives and brief operations as a library.
  * Each operation returns an outcome — the written Issue's link, the rendered
  * text, or the findings that refused it — and never ends the process: the
- * `vinaya issue …` / `vinaya brief render` commands parse argv, call one
- * operation here and print the outcome. Every refusal reached beneath an
+ * Planner role tools call one operation here and return its outcome. Every refusal reached beneath an
  * operation (however deep) is captured as a finding, not an exit.
  */
 
@@ -58,8 +57,8 @@ import {
   renderObjectives
 } from '../../../tools/task-contract/objectives'
 
-export const RETRY_CREATE = 'vinaya issue create --validate-only …'
-export const RETRY_EDIT = 'vinaya issue edit <n> --validate-only …'
+export const RETRY_CREATE = 'task_issue_create'
+export const RETRY_EDIT = 'task_issue_edit'
 
 // --- outcomes ----------------------------------------------------------------
 
@@ -154,7 +153,7 @@ async function gate(
 // --- create ------------------------------------------------------------------
 
 /**
- * Creates a task Issue: the same gates as `vinaya issue create`, then the
+ * Creates a task Issue: the same gates as `task_issue_create`, then the
  * tranche label, the Milestone attach and the `gh` write. `validateOnly` runs
  * every gate and returns without touching the forge.
  */
@@ -200,7 +199,7 @@ export async function createIssue(
 
 /**
  * Edits an Issue: `args` is the target Issue ref followed by the `gh issue
- * edit` flags. The same gates as `vinaya issue edit`; `validateOnly` stops
+ * edit` flags. The same gates as `task_issue_edit`; `validateOnly` stops
  * after them. `skipFrozenSectionsCheck` is the objectives edit's own escape
  * hatch; `retryCommand` names the command a refusal tells the caller to re-run.
  */
@@ -221,8 +220,8 @@ export async function editIssue(
       [
         makeCheckError(
           'forge-args',
-          '`issue edit` requires the target Issue number/URL as the first argument.',
-          'Pass the Issue number, e.g. `vinaya issue edit 123 --body-file <path>`.'
+          '`task_issue_edit` requires the target Issue number/URL as the first argument.',
+          'Call `task_issue_edit` with the `issue` number and the fields to change.'
         )
       ],
       []
@@ -331,8 +330,7 @@ export async function renderBrief(
 
 // --- objectives edit ---------------------------------------------------------
 
-const RETRY =
-  'vinaya issue objectives edit <n> --add "<sentence>" | --drop O<k> | --replace O<k> "<sentence>" --reason "<text>"'
+const RETRY = 'task_objectives_edit'
 /** The objectives-version marker's opening, in every spelling, the current one first — the writer posts the first; `k` counts them all, so a version posted before the rename is never reused. */
 const MARKER_PREFIXES = objectivesVersionMarkerPrefixes()
 const MARKER_PREFIX = MARKER_PREFIXES[0] as string
@@ -457,7 +455,7 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
     refuse([
       makeCheckError(
         'forge-args',
-        '`issue objectives edit` requires the target Issue number as the first argument.',
+        '`task_objectives_edit` requires the target Issue number as the first argument.',
         `Pass the Issue number, e.g. \`${RETRY}\`.`
       )
     ])
@@ -488,7 +486,7 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
     refuse([
       makeCheckError(
         'forge-args',
-        `\`issue objectives edit\` requires exactly one of --add, --drop, --replace (found ${ops.length}).`,
+        `\`task_objectives_edit\` requires exactly one of --add, --drop, --replace (found ${ops.length}).`,
         `Pass exactly one edit flag, e.g. \`${RETRY}\`.`
       )
     ])
@@ -497,7 +495,7 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
     refuse([
       makeCheckError(
         'forge-args',
-        '`issue objectives edit` requires a non-empty `--reason "<text>"`.',
+        '`task_objectives_edit` requires a non-empty `--reason "<text>"`.',
         `Add \`--reason "<text>"\`, then re-run \`${RETRY}\`.`
       )
     ])

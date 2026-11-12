@@ -574,7 +574,7 @@ describe('describeObjectivesEdit (pure)', () => {
       reason: 'needed a second outcome'
     }
     expect(describeObjectivesEdit(ISSUE, edit)).toBe(
-      `vinaya issue objectives edit ${ISSUE} --add "Also do this." --reason "needed a second outcome"`
+      `task_objectives_edit {"issue":${ISSUE},"op":"add","sentence":"Also do this.","reason":"needed a second outcome"}`
     )
   })
 
@@ -588,7 +588,7 @@ describe('describeObjectivesEdit (pure)', () => {
       reason: 'no longer needed'
     }
     expect(describeObjectivesEdit(ISSUE, edit)).toBe(
-      `vinaya issue objectives edit ${ISSUE} --drop O2 --reason "no longer needed"`
+      `task_objectives_edit {"issue":${ISSUE},"op":"drop","id":"O2","reason":"no longer needed"}`
     )
   })
 
@@ -599,7 +599,7 @@ describe('describeObjectivesEdit (pure)', () => {
       reason: 'scope changed'
     }
     expect(describeObjectivesEdit(ISSUE, edit)).toBe(
-      `vinaya issue objectives edit ${ISSUE} --replace O1 "Do the other thing." --reason "scope changed"`
+      `task_objectives_edit {"issue":${ISSUE},"op":"replace","id":"O1","sentence":"Do the other thing.","reason":"scope changed"}`
     )
   })
 })

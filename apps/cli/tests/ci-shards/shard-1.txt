@@ -1,5 +1,4 @@
 src/commands/doctor-metering-io.test.ts
-tests/commands/issue-objectives.test.ts
 tests/demo.test.ts
 tests/doctrine.test.ts
 tests/import-boundary.test.ts

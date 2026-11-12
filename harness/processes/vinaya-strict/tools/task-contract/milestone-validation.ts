@@ -1,5 +1,5 @@
 /**
- * Milestone-shape validation for `vinaya milestone create`. Pure — no `fs`, no `gh`. The command calls `checkMilestoneShape` before
+ * Milestone-shape validation for `milestone_create`. Pure — no `fs`, no `gh`. The command calls `checkMilestoneShape` before
  * any forge write, so a malformed body never reaches GitHub.
  *
  * A Milestone's description carries three independent things, each parsed and
@@ -154,7 +154,7 @@ export function checkMilestoneShape(body: string): MilestoneShapeResult {
 }
 
 // ---------------------------------------------------------------------------
-// `vinaya milestone adopt` — checkAdoptable
+// `milestone_adopt` — checkAdoptable
 // ---------------------------------------------------------------------------
 
 /**
@@ -212,7 +212,7 @@ export function checkAdoptable(facts: AdoptFacts): AdoptResult {
 
   if (!facts.target.exists) {
     errors.push(
-      `milestone-adopt target: Milestone "${facts.target.title}" does not exist — create it first with \`vinaya milestone create\`.`
+      `milestone-adopt target: Milestone "${facts.target.title}" does not exist — create it first with \`milestone_create\`.`
     )
   } else if (facts.target.state === 'closed') {
     errors.push(`milestone-adopt target: Milestone "${facts.target.title}" is closed — adopt requires an open target.`)

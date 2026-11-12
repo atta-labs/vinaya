@@ -1826,7 +1826,7 @@ function inputsChangedDetail(
     case 'objectives_changed': {
       const command =
         safeRead(task.objectivesEdit) ??
-        `vinaya issue objectives edit ${task.issueNumber} ... (edit comment not found on re-read)`
+        `task_objectives_edit ${task.issueNumber} ... (edit comment not found on re-read)`
       return `objectives moved from ${dispatched.objectivesVersion ?? 'none'} to ${current.objectivesVersion ?? 'none'} between reviewer dispatch and assessment — superseded by \`${command}\``
     }
     case 'brief_superseded':
