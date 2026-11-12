@@ -56,10 +56,21 @@ describe('pinnedFilesOf', () => {
     ])
   })
 
-  it('resolves a bare filename elided from a shared prefix, the same way the brief renderer does', () => {
-    expect(pinnedFilesOf(bodyWith('Pinned files: `config-reference.ts`.'), tracked)).toEqual([
+  it('resolves a unique tracked path suffix accepted by the shared pin parser', () => {
+    expect(pinnedFilesOf(bodyWith('Pinned files: `integration/config-reference.ts`.'), tracked)).toEqual([
       'harness/processes/vinaya-strict/integration/config-reference.ts'
     ])
+  })
+
+  it('does not turn a bare filename into a pin even when it uniquely matches a tracked file', () => {
+    expect(pinnedFilesOf(bodyWith('Pinned files: `config-reference.ts`.'), tracked)).toEqual([])
+  })
+
+  it('does not treat a tracked file named in Boundary Out as a collision pin', () => {
+    const body = bodyWith(
+      'Pinned files: `integration/config-reference.ts`. Out: `harness/processes/vinaya-strict/integration/config/compose.ts`.'
+    )
+    expect(pinnedFilesOf(body, tracked)).toEqual(['harness/processes/vinaya-strict/integration/config-reference.ts'])
   })
 
   it('never invents a file — a token matching no tracked path is dropped', () => {
