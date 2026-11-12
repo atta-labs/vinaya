@@ -17,13 +17,6 @@ performs:
   - adopt-tranches
   - close-the-milestone
   - read-milestone-status
-allowed-tools:
-  - milestone_create
-  - milestone_edit
-  - milestone_delete
-  - milestone_adopt
-  - milestone_status
-  - milestone_close
 refuses_when: >
   The goal is absent; a declared Release: field is present but not a
   version; the Tranche intents section doesn't parse (every non-blank

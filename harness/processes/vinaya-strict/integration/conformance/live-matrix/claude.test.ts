@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import type { VendoredVinaya } from '../../../tools/self-host.js'
 import { claudeMcpJsonConfig } from '../../adapters.js'
-import { PLANNER_TOOLS_MCP_SERVER_NAME, TASK_TOOLS_MCP_SERVER_NAME } from '../../server.js'
+import {
+  ARCHITECT_TOOLS_MCP_SERVER_NAME,
+  TRANCHE_ARCHIVIST_TOOLS_MCP_SERVER_NAME,
+  PLANNER_TOOLS_MCP_SERVER_NAME,
+  TASK_TOOLS_MCP_SERVER_NAME
+} from '../../server.js'
 import { resolve } from 'node:path'
 import { ABS_BIN, defineConformanceSuite, REPO_ROOT } from './harness.js'
 import { defineLiveGrantCases } from './role-grants-live.js'
@@ -21,7 +26,12 @@ const SELF_HOST: VendoredVinaya = { dir: 'apps/cli', bin: ABS_BIN } as VendoredV
 describe('Claude adapter — registers the shared task-tools server', () => {
   it('`.mcp.json` names the shared server under the shared server name', () => {
     const config = claudeMcpJsonConfig(SELF_HOST)
-    expect(Object.keys(config.mcpServers)).toEqual([TASK_TOOLS_MCP_SERVER_NAME, PLANNER_TOOLS_MCP_SERVER_NAME])
+    expect(Object.keys(config.mcpServers)).toEqual([
+      TASK_TOOLS_MCP_SERVER_NAME,
+      PLANNER_TOOLS_MCP_SERVER_NAME,
+      ARCHITECT_TOOLS_MCP_SERVER_NAME,
+      TRANCHE_ARCHIVIST_TOOLS_MCP_SERVER_NAME
+    ])
     expect(config.mcpServers[TASK_TOOLS_MCP_SERVER_NAME]?.type).toBe('stdio')
   })
 })
