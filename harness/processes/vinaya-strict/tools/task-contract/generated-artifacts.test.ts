@@ -2,11 +2,11 @@ import { describe, expect, it } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
-  GENERATED_ARTIFACT_SOURCES,
+  GENERATED_ARTIFACT_WRITERS,
   NON_SOURCED_GENERATED_FILES,
   readGeneratedArtifactSources,
-  repositoryImportTree,
-  transitiveImportClosure
+  directSources,
+  repositoryImportTree
 } from './generated-artifacts'
 import { checkGeneratedArtifactsCovered } from './issue-validation'
 
@@ -39,20 +39,39 @@ describe('generated artifact sources', () => {
       ciSetup: null,
       agents: new Set(['skills', 'claude', 'gemini'])
     }).flatMap((op) => (op.kind === 'create-file' || op.kind === 'managed-block' ? [op.path] : []))
-    const mapped = Object.keys(GENERATED_ARTIFACT_SOURCES).filter((path) => !path.startsWith('.husky/'))
+    const mapped = Object.keys(GENERATED_ARTIFACT_WRITERS).filter((path) => !path.startsWith('.husky/'))
     expect([...mapped, ...NON_SOURCED_GENERATED_FILES].sort()).toEqual(generated.sort())
   })
 
-  it('lists only real modules, each reachable from the module that writes the file', () => {
+  it('lists only real files: the writer and its direct imports', () => {
     const tree = repositoryImportTree(ROOT)
-    for (const [path, sources] of Object.entries(GENERATED_ARTIFACT_SOURCES)) {
-      const writer = sources[0] as string
-      const reachable = new Set(transitiveImportClosure(writer, tree))
-      for (const source of sources) {
-        expect({ path, source, exists: existsSync(resolve(ROOT, source)) }).toEqual({ path, source, exists: true })
-        expect({ path, source, reachable: reachable.has(source) }).toEqual({ path, source, reachable: true })
+    for (const artifact of readGeneratedArtifactSources(ROOT)) {
+      const direct = new Set(directSources(artifact.writer, tree))
+      for (const source of artifact.sources) {
+        expect({ source, exists: existsSync(resolve(ROOT, source)) }).toEqual({ source, exists: true })
+        const imported = source === artifact.writer || direct.has(source)
+        expect({ path: artifact.path, source, imported }).toEqual({ path: artifact.path, source, imported: true })
       }
     }
+  })
+
+  // The modules a review found writing content into generated files, each checked against what the rule now reads.
+  it("counts the constants a writer emits as sources, and leaves a role's doctrine prose out", () => {
+    const byPath = new Map(readGeneratedArtifactSources(ROOT).map((a) => [a.path, new Set(a.sources)]))
+    const workflow = byPath.get('.github/workflows/vinaya-review-verdict.yml')
+    for (const source of [
+      `${P}tools/task-contract/verdict-extraction.ts`,
+      `${P}tools/task-contract/waiver-label.ts`,
+      `${P}tools/review-gate-check-name.ts`,
+      'harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.ts',
+      `${P}tools/pre-push-ready-policy.ts`,
+      `${P}tools/programs.ts`
+    ])
+      expect({ source, listed: workflow?.has(source) }).toEqual({ source, listed: true })
+    const operator = byPath.get('.agents/skills/vinaya-operator/SKILL.md')
+    expect(operator?.has(`${P}executing/operator/doctrine.md`)).toBe(false)
+    expect(operator?.has(`${P}tools/doctrine/doctrine-map.ts`)).toBe(true)
+    expect(byPath.get('.mcp.json')?.has(`${P}integration/server.ts`)).toBe(true)
   })
 
   it('keeps each source set narrow: the Issue gate and brief modules are no source of any generated file', () => {
