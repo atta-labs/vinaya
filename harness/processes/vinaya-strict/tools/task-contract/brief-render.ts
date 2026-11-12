@@ -25,6 +25,7 @@ import { deriveSection7 } from './derive-section7'
 import type { GateCutovers } from './gate-cutovers'
 import {
   globCoversPath,
+  boundaryPinnedFiles,
   type IssuePart,
   type IssuePremise,
   type IssueSurface,
@@ -188,27 +189,12 @@ export function parseRationaleFields(body: string): ParsedRationale {
  * Boundary names `harness/processes/vinaya-strict/tools/task-contract/brief-render.ts`, which sits outside
  * every one of its Surface `in:` globs.
  *
- * A token counts as path-shaped when it is backtick-delimited, contains no
- * space (excludes multi-word command examples like `git push -u origin
- * HEAD`) or `*` (excludes glob examples like `apps/cli/**`), and ends in a
- * short alphanumeric extension. Resolving a token to a real repo path (exact
- * match, or a unique `git ls-files` suffix match for a bare filename elided
- * from a shared directory prefix in the Boundary prose, e.g. "harness/processes/vinaya-strict/
- * aeg-manual-flow.md, process.md, roles/developer.md") is the caller's job —
- * this function is pure text extraction, no `fs`/`git`.
+ * Compatibility entry point for callers that already extracted the Boundary
+ * field. The Issue gate's parser owns token syntax and Out exclusions; this
+ * wrapper does not define a second pinned-file grammar.
  */
 export function extractBoundaryFilePaths(boundaryText: string): string[] {
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const match of boundaryText.matchAll(/`([^`\n]+)`/g)) {
-    const token = (match[1] as string).trim()
-    if (token.length === 0 || token.includes(' ') || token.includes('*')) continue
-    if (!/\.[A-Za-z0-9]{1,6}$/.test(token)) continue
-    if (seen.has(token)) continue
-    seen.add(token)
-    out.push(token)
-  }
-  return out
+  return boundaryPinnedFiles(`**Boundary** — ${boundaryText}`)
 }
 
 /** One §4 surface-map file: its path, a whole-file `sha256` premise pin, and the workspace package that owns it (`null` for a file outside every workspace member, e.g. a doctrine file under `harness/processes/vinaya-strict/`). */
@@ -382,17 +368,6 @@ function admittedSurfaceFiles(surfaceFiles: SurfaceFileFact[], surface: IssueSur
 
 function bulletList(items: string[]): string {
   return items.map((i) => `- ${i}`).join('\n')
-}
-
-/**
- * A `## Surface` `in:` entry renders as a clean directory path, never a raw
- * glob (a round-2 MINOR review finding): `globCoversPath`/`admittedSurfaceFiles` above
- * already tolerate a `/**`/`/*` suffix on an `in:` entry, but Modify's
- * directory-listing branch rendered the entry verbatim — the same stripping
- * `globCoversPath` does internally, exposed here for display.
- */
-function stripSurfaceGlobSuffix(glob: string): string {
-  return glob.replace(/\/\*\*?$/, '').replace(/\/+$/, '')
 }
 
 function isTestFile(path: string): boolean {
@@ -571,35 +546,8 @@ function renderSection4(facts: BriefFacts): string {
   const created = facts.surfaceFiles.filter((f) => f.sha256 === null).map((f) => f.path)
   const modified = facts.surfaceFiles.filter((f) => f.sha256 !== null).map((f) => f.path)
 
-  // O7: a Boundary that named fewer files than the Issue's
-  // own `## Surface` `in:` list is narrower than the real scope — Boundary
-  // prose justifies a few files, it is never an exhaustive enumeration.
-  // When the Boundary names fewer files than there are `in:` directories,
-  // Modify lists each `in:` directory instead of the handful of files the
-  // prose happened to name, so a developer reads the scope as the
-  // directory, not the one file the rationale mentioned (a real Issue's
-  // own Origin: exactly this narrowing shipped two lines against ten
-  // objectives).
-  //
-  // A bare count comparison misses an uneven distribution (a MINOR review
-  // finding): two Boundary files and two `in:` directories
-  // pass the count check even when both files land in the SAME directory,
-  // leaving the other entirely unnamed anywhere in Modify. Coverage is
-  // checked per directory instead — `globCoversPath` is the same matcher
-  // `admittedSurfaceFiles` above already uses, so a directory only counts as
-  // covered by the exact rule that decides which files are in scope at all.
-  const uncoveredSurfaceDirs = facts.surface.in.filter(
-    (dir) => !facts.surfaceFiles.some((f) => globCoversPath(dir, f.path))
-  )
-  const boundaryNarrowsSurface = uncoveredSurfaceDirs.length > 0
-  // `facts.surface.in` is never empty when `boundaryNarrowsSurface` is true
-  // (an empty list has nothing to be uncovered), so the `- (none named)`
-  // arm below could never execute — removed rather than left dead (a MINOR review finding).
-  const modifyLines = boundaryNarrowsSurface
-    ? bulletList(facts.surface.in.map(stripSurfaceGlobSuffix))
-    : modified.length > 0
-      ? bulletList(modified)
-      : '- (none named)'
+  // Surface globs grant scope, but only pinned files belong in the work list.
+  const modifyLines = modified.length > 0 ? bulletList(modified) : '- (none named)'
 
   const createdBlock = created.length > 0 ? bulletList(created) : '- (none — every surface file already exists)'
   // The recording rule rides on the same line: a change beyond the Surface is
@@ -623,27 +571,17 @@ function renderSection4(facts: BriefFacts): string {
   // sentinel — ONE sentinel occurrence anywhere in §4 satisfies the whole
   // section, so a single combined line covers every uncovered consumer.
   //
-  // O6: when `boundaryNarrowsSurface` is true, `modifyLines` above
-  // lists bare Surface DIRECTORIES, never the individual files — so a
-  // covered consumer's actual test FILE path never appears anywhere in §4,
-  // and `checkConsumerTests`'s file-path regex finds nothing even though
-  // real coverage exists (a real frozen brief: this renderer produced a
-  // brief its own validator rejected). A covered consumer gets an explicit
-  // line naming its covering test DIRECTORY (or the file itself, when no
-  // `tests`/`specs` ancestor exists to name — see `nearestTestDir`) in that
-  // mode — a form `checkConsumerTests` accepts either way — so the renderer
-  // can never again produce a brief its own validator fails.
+  // A covered consumer gets an explicit line naming its test directory (or
+  // a colocated test file), making consumer coverage independently visible.
   //
   // The trigger reads `packagesNamedIn` against the SAME text
   // `checkConsumerTests` will re-scan (Create + Modify + Out of surface +
   // Premise pins, everything but the consumer lines themselves, not yet
   // computed) — never `facts.surfaceFiles`' per-file `packageName` alone.
-  // A Boundary that narrows Modify to bare Surface DIRECTORIES (`in:`
-  // globs with no individual file pinned under them) named a shared
-  // package nowhere a file-based scan could see, so the renderer emitted no
-  // consumer-tests line at all for it — reproduced live on a real brief's
-  // own write, before its Boundary named a consumer test file by path.
-  const prelude = [createdBlock, modifyLines, outOfSurfaceLine, premisePinsBlock].join('\n')
+  // Include the separate Surface in line so unpinned package directories
+  // still participate in consumer coverage without becoming Modify entries.
+  const surfaceInLine = `**Surface in:** ${facts.surface.in.map((glob) => `\`${glob}\``).join(', ')}`
+  const prelude = [createdBlock, modifyLines, surfaceInLine, outOfSurfaceLine, premisePinsBlock].join('\n')
   const uncovered: string[] = []
   const coveredDirLines: string[] = []
   for (const pkg of packagesNamedIn(prelude)) {
@@ -651,7 +589,7 @@ function renderSection4(facts: BriefFacts): string {
       const coveringFile = facts.surfaceFiles.find((f) => f.path.startsWith(`${consumer}/`) && isTestFile(f.path))
       if (!coveringFile) {
         uncovered.push(`@attalabs/${pkg} (${consumer})`)
-      } else if (boundaryNarrowsSurface) {
+      } else {
         coveredDirLines.push(`- consumer-tests: ${nearestTestDir(coveringFile.path)} (covers @attalabs/${pkg})`)
       }
     }
@@ -674,6 +612,8 @@ function renderSection4(facts: BriefFacts): string {
     '**Modify:**',
     modifyLines,
     ...(consumerLines.length > 0 ? ['', ...consumerLines] : []),
+    '',
+    surfaceInLine,
     '',
     outOfSurfaceLine,
     '',

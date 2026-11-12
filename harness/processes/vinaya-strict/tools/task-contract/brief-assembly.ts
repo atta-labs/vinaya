@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { buildConsumersOf, type PackageManifest } from './consumer-enumeration'
 import {
   boundaryPinnedFiles,
+  globCoversPath,
   checkIssueRationale,
   checkPremisesHold,
   isTaskIssueLabelSet,
@@ -33,7 +34,6 @@ import {
   type IssueTestPlan
 } from './issue-validation'
 import {
-  extractBoundaryFilePaths,
   parseRationaleFields,
   renderBrief,
   type BriefFacts,
@@ -465,19 +465,31 @@ export function checkDirtyPinnedFiles(pinnedPaths: string[], cwd?: string): stri
 }
 
 /**
- * Resolves each `extractBoundaryFilePaths` token to a real tracked path
+ * Resolves each `boundaryPinnedFiles` token to a real tracked path
  * against `allTrackedFiles` (a `git ls-files` snapshot, injected rather than
  * read here so this stays testable without a real repo) — an exact match, or
  * a UNIQUE suffix match for a bare filename elided from a shared directory
  * prefix in the Boundary prose (e.g. a real brief's own "harness/processes/vinaya-strict/
  * aeg-manual-flow.md, process.md, roles/developer.md"). A token matching
- * zero or more-than-one tracked file is dropped, never guessed.
+ * zero or more-than-one tracked file is dropped, never guessed, unless it
+ * is an exact new repository path covered by the supplied Surface.
  */
-export function resolveBoundaryPaths(tokens: string[], allTrackedFiles: string[]): string[] {
+export function resolveBoundaryPaths(tokens: string[], allTrackedFiles: string[], surface?: IssueSurface): string[] {
   const trackedSet = new Set(allTrackedFiles)
   const resolved = new Set<string>()
   for (const token of tokens) {
     if (trackedSet.has(token)) {
+      resolved.add(token)
+      continue
+    }
+    // New files need an exact repository path; suffix matching remains tracked-only.
+    if (
+      surface &&
+      token.includes('/') &&
+      !token.split('/').some((part) => part === '.' || part === '..' || part === '') &&
+      surface.in.some((glob) => globCoversPath(glob, token)) &&
+      !surface.out.some((glob) => globCoversPath(glob, token))
+    ) {
       resolved.add(token)
       continue
     }
@@ -859,10 +871,14 @@ export async function assembleAndRenderBrief(
   // precise enough to produce a brief a developer can act on, since a
   // directory-level Surface glob can only ever name a whole directory.
   const allTrackedFiles = listTrackedFiles()
-  const boundaryTokens = extractBoundaryFilePaths(rationale.boundary ?? '')
-  const surfaceFiles: SurfaceFileFact[] = resolveBoundaryPaths(boundaryTokens, allTrackedFiles)
+  const boundaryTokens = boundaryPinnedFiles(issueBody)
+  const surfaceFiles: SurfaceFileFact[] = resolveBoundaryPaths(boundaryTokens, allTrackedFiles, surface)
     .sort()
-    .map((path) => ({ path, sha256: sha256OfFile(path), packageName: packageNameForPath(path) }))
+    .map((path) => ({
+      path,
+      sha256: allTrackedFiles.includes(path) ? sha256OfFile(path) : null,
+      packageName: packageNameForPath(path)
+    }))
 
   // O1 — the second of the two guarantees: HEAD can equal the remote
   // default branch's tip and the tree can still be dirty on a file the
@@ -1157,10 +1173,14 @@ export async function assembleAndRenderBriefForIssue(
   }
 
   const allTrackedFiles = listTrackedFiles()
-  const boundaryTokens = extractBoundaryFilePaths(rationale.boundary ?? '')
-  const surfaceFiles: SurfaceFileFact[] = resolveBoundaryPaths(boundaryTokens, allTrackedFiles)
+  const boundaryTokens = boundaryPinnedFiles(issueBody)
+  const surfaceFiles: SurfaceFileFact[] = resolveBoundaryPaths(boundaryTokens, allTrackedFiles, surface)
     .sort()
-    .map((path) => ({ path, sha256: sha256OfFile(path), packageName: packageNameForPath(path) }))
+    .map((path) => ({
+      path,
+      sha256: allTrackedFiles.includes(path) ? sha256OfFile(path) : null,
+      packageName: packageNameForPath(path)
+    }))
 
   const dirtiness = checkDirtyPinnedFiles(surfaceFiles.map((f) => f.path))
   if (dirtiness.length > 0) return { ok: false, missing: dirtiness }

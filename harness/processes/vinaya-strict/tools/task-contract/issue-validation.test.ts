@@ -25,6 +25,7 @@ import {
   decidePinnedFileImporters,
   surfaceForcedSet,
   checkNewTestFilesCoverShards,
+  checkGeneratedArtifactsCovered,
   checkNewLoopFilesCoverInvariantMap,
   checkDocumentationPathsExist,
   checkDocumentationReadable,
@@ -2080,6 +2081,24 @@ describe('checkDocsWithinSurface (O6)', () => {
 })
 
 describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
+  it('accepts the importer refusal fix in Boundary Out, for a file or its directory', () => {
+    const body = '## Surface\n\nin: src\nout: —\n\n**Boundary** — Pinned files: `src/source.ts`.\n'
+    const importers = [{ file: 'src/source.ts', importers: ['apps/consumer/call.ts'] }]
+    const refused = checkPinnedFileImportersCovered(body, importers)
+    expect(refused.status).toBe('fail')
+    expect(refused.errors[0]).toContain("name the importer (or its directory) in the Boundary's `Out:` clause")
+    const namedImporter = /its importer `([^`]+)`/.exec(refused.errors[0] ?? '')?.[1]
+    expect(namedImporter).toBe('apps/consumer/call.ts')
+    for (const exclusion of [namedImporter, namedImporter?.slice(0, namedImporter.lastIndexOf('/'))]) {
+      const fixed = body.trimEnd() + ` Out: \`${exclusion}\`.\n`
+      expect(checkPinnedFileImportersCovered(fixed, importers).status).toBe('pass')
+      expect(checkRationaleSurfaceCoverage(fixed, null).status).toBe('pass')
+    }
+    // A path earlier in Boundary is still a touch claim, even when Out names it too.
+    expect(
+      checkRationaleSurfaceCoverage(body.trimEnd() + ' Also `other/touch.ts`. Out: `other/touch.ts`.', null).status
+    ).toBe('fail')
+  })
   const surface = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
 
   it('passes when the Boundary path falls inside an `in:` glob', () => {
@@ -2152,6 +2171,38 @@ describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
   it('grandfathers Issue 1 below a configured cutover — O2 unchanged', () => {
     const body = `${surface}\n**Boundary** — Edits \`packages/aeg-core/src/issue-validation.ts\`.\n`
     expect(checkRationaleSurfaceCoverage(body, 1, 426).status).toBe('pass')
+  })
+})
+
+describe('generated artifact coverage', () => {
+  const artifacts = [
+    {
+      path: '.mcp.json',
+      writer: 'integration/adapters.ts',
+      sources: ['integration/adapters.ts', 'integration/seats.ts']
+    }
+  ]
+  it('refuses a transitive source and accepts the exact printed Surface fix', () => {
+    const body = '## Surface\n\nin: integration\nout: —\n\n**Boundary** — Pinned files: `integration/seats.ts`.\n'
+    const result = checkGeneratedArtifactsCovered(body, artifacts)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`.mcp.json`')
+    expect(result.errors[0]).toContain('`vinaya upgrade`')
+    const fix = /Add `([^`]+)` to `in:`/.exec(result.errors[0] ?? '')?.[1]
+    expect(fix).toBe('*')
+    const fixed = body.replace('in: integration', `in: integration, ${fix}`)
+    expect(checkGeneratedArtifactsCovered(fixed, artifacts).status).toBe('pass')
+    expect(checkRationaleSurfaceCoverage(fixed, null).status).toBe('pass')
+  })
+  it('does not treat Boundary Out as a pin or Surface out as generated coverage', () => {
+    const body = '## Surface\n\nin: integration\nout: *\n\n**Boundary** — Pinned files: `integration/seats.ts`.\n'
+    expect(checkGeneratedArtifactsCovered(body, artifacts).status).toBe('fail')
+    expect(checkGeneratedArtifactsCovered(body.replace('Pinned files:', 'Out:'), artifacts).status).toBe('pass')
+    const excluded = body.replace('in: integration', 'in: integration, *')
+    const refusal = checkGeneratedArtifactsCovered(excluded, artifacts)
+    expect(refusal.status).toBe('fail')
+    expect(refusal.errors[0]).toContain('Remove `*` from `out:`')
+    expect(checkGeneratedArtifactsCovered(excluded.replace('out: *', 'out: —'), artifacts).status).toBe('pass')
   })
 })
 

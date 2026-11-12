@@ -83,6 +83,12 @@ function git(cwd: string, args: string[]): string {
  * network-free unit test.
  */
 describe('resolveBoundaryPaths', () => {
+  it('admits a new exact pinned path only inside the Surface, without guessing bare filenames', () => {
+    const surface = { in: ['src'], out: ['src/excluded'] }
+    expect(
+      resolveBoundaryPaths(['src/new.ts', 'new.ts', 'other/new.ts', 'src/excluded/new.ts'], ['src/old.ts'], surface)
+    ).toEqual(['src/new.ts'])
+  })
   it('resolves a full repo-relative path via an exact match', () => {
     const files = ['apps/cli/src/lib/dispatch-task.ts', 'apps/cli/src/lib/brief-assembly.ts']
     expect(resolveBoundaryPaths(['apps/cli/src/lib/dispatch-task.ts'], files)).toEqual([
@@ -534,7 +540,12 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
       title: '[fixture] pinned new directory',
       body,
       labels: []
-    }).then((result) => expect(result.ok, JSON.stringify(result)).toBe(true))
+    }).then((result) => {
+      expect(result.ok, JSON.stringify(result)).toBe(true)
+      if (!result.ok) return
+      expect(/\*\*Create:\*\*\n([\s\S]*?)\n\n/.exec(result.brief)?.[1]).toBe('- decisions/first.md')
+      expect(/\*\*Modify:\*\*\n([\s\S]*?)\n\n/.exec(result.brief)?.[1]).toBe('- src/fixture.ts')
+    })
   })
 
   it('refuses, naming the missing section, when the override body has no `## Test plan`', () => {

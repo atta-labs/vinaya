@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import type { GeneratedArtifactSources } from './generated-artifacts'
 /**
  * Planner→Brief Issue-rationale grammar. Pure — no `fs`, no `fetch`,
  * no `process.env`. The local gate (`harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts`, the sanctioned way to
@@ -2065,7 +2066,7 @@ export function checkRationaleSurfaceCoverage(
   if (!surface.ok) return { status: 'pass', errors: [] }
 
   const text = PATH_TEXT(body)
-  const scope = rationaleFieldText(text, 'Boundary')
+  const scope = rationaleFieldText(text, 'Boundary').replace(BOUNDARY_OUT_RE, '')
   const paths = [...new Set([...scope.matchAll(RATIONALE_PATH_RE_GLOBAL)].map((m) => m[1] as string))].filter(
     (p) => !/^https?:\/\//i.test(p)
   )
@@ -3217,6 +3218,27 @@ export function boundaryPinnedFiles(body: string): string[] {
   const boundary = rationaleFieldText(PATH_TEXT(body), 'Boundary')
   const excluded = new Set(namedPathsIn(boundaryOutText(body)))
   return namedPathsIn(boundary).filter((p) => looksLikeFilePath(p) && !excluded.has(p))
+}
+
+/** A pinned generator source forces its generated output into the Surface as well. */
+export function checkGeneratedArtifactsCovered(
+  body: string,
+  artifacts: GeneratedArtifactSources[]
+): IssueSectionResult {
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+  const pins = new Set(boundaryPinnedFiles(body))
+  const errors: string[] = []
+  for (const artifact of artifacts) {
+    const pinnedSources = artifact.sources.filter((source) => pins.has(source))
+    const excluded = surface.value.out.filter((glob) => globCoversPath(glob, artifact.path))
+    const admitted = surface.value.in.some((glob) => globCoversPath(glob, artifact.path))
+    if (pinnedSources.length === 0 || (admitted && excluded.length === 0)) continue
+    errors.push(
+      `issue-validation Surface/generated artifact: the Boundary pins ${pinnedSources.map((path) => `\`${path}\``).join(', ')}, a source of generated file \`${artifact.path}\`, but its \`## Surface\` does not reach it. ${excluded.length > 0 ? `Remove ${excluded.map((glob) => `\`${glob}\``).join(', ')} from \`out:\`. ` : ''}Add \`${directoryGlobFor(artifact.path)}\` to \`in:\` and regenerate \`${artifact.path}\` with \`vinaya upgrade\`.`
+    )
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 
 /**
