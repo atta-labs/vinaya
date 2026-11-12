@@ -2692,6 +2692,20 @@ export const liveForge: EngineForge = {
   refreshPrEvidence: defaultRefreshPrEvidence
 }
 
+/**
+ * Loads the run's process and names, in the run's arguments, the flow it loaded. A run that names no flow takes the
+ * process's default, and every later "which flow is this run?" question reads `args.flow`, so it must say what was
+ * loaded: an empty `args.flow` on a default-v2 run would answer v1, and the reviewers of a run with no pull request
+ * yet would get an empty pull request body instead of the one the Developer staged.
+ */
+export function withLoadedFlow<T extends { flow?: string }>(
+  args: T,
+  processFolder: string
+): { args: T & { flow: string }; loaded: LoadedProcess } {
+  const loaded = loadProcess(processFolder, args.flow ? { flow: args.flow } : {})
+  return { args: { ...args, flow: loaded.flowKey }, loaded }
+}
+
 /** The per-task input the actions read: the branch, the Log events' loop and the verdict plumbing. */
 export async function liveTaskInput(
   args: EngineArgs,
@@ -3566,13 +3580,10 @@ export async function main(argv: readonly string[]): Promise<number> {
       runtimeDir,
       run: async (resolved) => ({
         outcome: null,
-        exitCode: await runLive(
-          resolved,
-          loadProcess(processFolder, resolved.flow ? { flow: resolved.flow } : {}),
-          repoRoot,
-          runtimeDir,
-          { rulingsOwed: true }
-        ),
+        exitCode: await (async () => {
+          const continued = withLoadedFlow(resolved, processFolder)
+          return runLive(continued.args, continued.loaded, repoRoot, runtimeDir, { rulingsOwed: true })
+        })(),
         tracePath: ''
       })
     })
@@ -3581,8 +3592,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const parsed = parseArgs(argv)
   // --task also continues an existing checkpoint; only a new generation may choose another flow.
   const flow = continuationFlow(runtimeDir, parsed.task, parsed.flow)
-  const args: EngineArgs = { ...parsed, ...(flow ? { flow } : {}) }
-  const loaded = loadProcess(processFolder, args.flow ? { flow: args.flow } : {})
+  const { args, loaded } = withLoadedFlow<EngineArgs>({ ...parsed, ...(flow ? { flow } : {}) }, processFolder)
   const runDir = runDirectory(runtimeDir, args.task)
   if (args.dryRun) {
     const lines = await dryRunLines({
