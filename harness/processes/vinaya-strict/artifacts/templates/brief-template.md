@@ -52,7 +52,7 @@ You are the Vinaya Developer. Run `vinaya doctrine --role developer --print` and
 
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:'**Out of surface:** ' + -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:records each such path in the pull request body's beyond-Surface block -->
-**Out of surface:** [adjacent files/dirs the plan leaves alone, named explicitly — `vinaya brief render` fills this verbatim from the Issue's `## Surface` `out:` list, never a hand-authored placeholder, and appends the recording rule: a change there, or to any path no Surface `in:` glob covers, is still published — the review-loop driver records each such path in the pull request body's beyond-Surface block, and the reviewers judge it like any change]
+**Out of surface:** [adjacent files/dirs the plan leaves alone, named explicitly — `brief_render` fills this verbatim from the Issue's `## Surface` `out:` list, never a hand-authored placeholder, and appends the recording rule: a change there, or to any path no Surface `in:` glob covers, is still published — the review-loop driver records each such path in the pull request body's beyond-Surface block, and the reviewers judge it like any change]
 
 #### Premise pins
 
@@ -79,7 +79,7 @@ On any failure: STOP and report.
 ## 6. Numbered parts — publish once with `publish_changes` when every Part is done, then `open_pull_request`
 
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:function renderPartCitation(part: IssuePart): string { -->
-[Rendered from the Issue's `## Parts` section — `vinaya brief render` fills one numbered Part per `Part <k> (O<n>[, O<m>]) — <outcome>` line, citation reconstructed verbatim, files grouped by package as today. Hand-authoring the same: exact files + exact function/type signatures + constraints — not prose. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the executed output (skill §2's rule). Cite at least one `O<n>` from the Objectives section above; an administrative Part with no objective of its own (a changeset commit, the final push) may omit the citation.]
+[Rendered from the Issue's `## Parts` section — `brief_render` fills one numbered Part per `Part <k> (O<n>[, O<m>]) — <outcome>` line, citation reconstructed verbatim, files grouped by package as today. Hand-authoring the same: exact files + exact function/type signatures + constraints — not prose. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the executed output (skill §2's rule). Cite at least one `O<n>` from the Objectives section above; an administrative Part with no objective of its own (a changeset commit, the final push) may omit the citation.]
 
 1. **Part 1** (O[n]) — [exact files + exact function/type signatures + constraints — not prose.]
 2. **Part 2** (O[n]) — [next bounded unit of work]
@@ -99,7 +99,7 @@ On any failure: STOP and report.
 ## 9. Test Plan
 
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/task-contract/brief-render.ts contains:...facts.testPlan.lines, -->
-[Rendered from the Issue's `## Test plan` section — `vinaya brief render` copies it verbatim, never re-deriving one from the surface file list.]
+[Rendered from the Issue's `## Test plan` section — `brief_render` copies it verbatim, never re-deriving one from the surface file list.]
 
 ```
 [<scriptable, non-auth command> → <expected observable>]

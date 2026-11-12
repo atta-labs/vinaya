@@ -140,7 +140,7 @@ export const ACTIONS: Action[] = [
     // crossing class G3 polices (raw `gh issue create`/`gh pr create`/`git
     // push` bypass), not "touches the GitHub API" generally — the same
     // reason `post-provenance-comment`/`produce-the-verdict` are 'none'
-    // despite writing PR comments via the API. `vinaya milestone create`
+    // despite writing PR comments via the API. `milestone_create`
     // is a manually-invoked CLI command with no Ring-0 hook intercepting a
     // raw bypass, so it stays seam-only here.
     crosses: 'none',

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { coreCheckRegistry } from './registry'
 import { runChecks } from '../../../kernel/gates/checks/runner'
+import { plannerToolHandlers } from '../thinking/planner/tools/planner-tools'
 
 /**
  * The five write-only rules, registered as `validates: 'issue'`
@@ -138,74 +139,61 @@ describe('issue-milestone-attach (bin)', () => {
   })
 })
 
-describe('open-Issue write path — apps/cli/src/commands/issue.ts invokes runIssueChecks', () => {
-  const INDEX = join(import.meta.dir, '../../../../apps/cli/src/index.ts')
+describe('Planner validation tool — the Issue write path invokes runIssueChecks', () => {
   let tmpDir: string
 
-  function withRepo(fn: (dir: string) => void): void {
+  async function withRepo(fn: (dir: string) => Promise<void>): Promise<void> {
     tmpDir = mkdtempSync(join(tmpdir(), 'vinaya-issue-checks-test-'))
+    const cwd = process.cwd()
     try {
       execFileSync('git', ['init', '-q'], { cwd: tmpDir })
-      fn(tmpDir)
+      process.chdir(tmpDir)
+      await fn(tmpDir)
     } finally {
+      process.chdir(cwd)
       rmSync(tmpDir, { recursive: true, force: true })
     }
   }
 
-  it('refuses an issue create whose title/rationale/blast-radius/doc gates all pass, but whose Objectives numbering does not — proving runIssueChecks fires, not merely the pre-existing gates', () => {
-    withRepo((dir) => {
-      const bodyPath = join(dir, 'body.md')
-      writeFileSync(
-        bodyPath,
-        [
-          '## Objectives',
-          '',
-          'O2. Something happens.',
-          '',
-          "## Planner's rationale",
-          '',
-          '**Boundary** — test only.',
-          '',
-          '**Sizing** — one task.',
-          '',
-          '**Project(s) + blast radius** — none.',
-          '',
-          '**Dependency rationale** — none.',
-          '',
-          '**Traps** — aeg-root/roles/developer.md — no real doc surface touched.',
-          '',
-          '**Suggested agent-class** — n/a.',
-          '',
-          '**Stop-and-escalate** — n/a.',
-          '',
-          '**Docs to keep coherent** — none.'
-        ].join('\n'),
-        'utf8'
+  it('refuses invalid Objectives numbering through the real tool and registry write gate', async () => {
+    await withRepo(async () => {
+      const body = [
+        '## Objectives',
+        '',
+        'O2. Something happens.',
+        '',
+        "## Planner's rationale",
+        '',
+        '**Boundary** — test only.',
+        '',
+        '**Sizing** — one task.',
+        '',
+        '**Project(s) + blast radius** — none.',
+        '',
+        '**Dependency rationale** — none.',
+        '',
+        '**Traps** — aeg-root/roles/developer.md — no real doc surface touched.',
+        '',
+        '**Suggested agent-class** — n/a.',
+        '',
+        '**Stop-and-escalate** — n/a.',
+        '',
+        '**Docs to keep coherent** — none.'
+      ].join('\n')
+      const result = await plannerToolHandlers().task_issue_validate(
+        {
+          mode: 'create',
+          body,
+          title: 'Feat: a well-formed title',
+          labels: ['vinaya/tranche:demo-v1']
+        },
+        undefined
       )
-      let threw = false
-      try {
-        execFileSync(
-          'bun',
-          [
-            INDEX,
-            'issue',
-            'create',
-            '--validate-only',
-            '--body-file',
-            bodyPath,
-            '--title',
-            'Feat: a well-formed title',
-            '--label',
-            'vinaya/tranche:demo-v1'
-          ],
-          { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
-        )
-      } catch (err) {
-        threw = true
-        const stderr = (err as { stderr?: string }).stderr ?? ''
-        expect(stderr).toContain('issue-objectives-numbering')
-      }
-      expect(threw).toBe(true)
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('invalid Objectives accepted')
+      expect(result.error.kind).toBe('validation')
+      const findings = JSON.parse(result.error.detail ?? '[]') as { check: string }[]
+      expect(findings.some((finding) => finding.check === 'issue-objectives-numbering')).toBe(true)
     })
   })
 })

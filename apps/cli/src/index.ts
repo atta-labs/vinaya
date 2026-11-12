@@ -86,6 +86,17 @@ if (!command || command === 'help' || command === '--help' || command === '-h') 
   process.exit(0)
 }
 
+// Retired role operations remain explicit refusals, never advertised commands.
+const roleTools: Record<string, string> = {
+  issue: 'task_issue_create, task_issue_edit, task_issue_surface, task_objectives_edit, task_issue_validate',
+  brief: 'brief_render',
+  milestone: 'milestone_create, milestone_edit, milestone_adopt, milestone_close, milestone_status'
+}
+if (Object.hasOwn(roleTools, command)) {
+  console.error(`vinaya ${command} is a role tool now; use ${roleTools[command]}.`)
+  process.exit(2)
+}
+
 if (command !== 'version') installServices()
 
 try {
@@ -138,47 +149,12 @@ try {
       }
       break
     }
-    case 'brief': {
-      const [subcommand, ...rest] = args
-      if (subcommand === 'render') {
-        await (await import('./commands/brief.js')).briefRenderCommand(rest)
-      } else {
-        console.error(`Unknown 'brief' subcommand: ${subcommand ?? '(none)'} (expected 'render')`)
-        process.exit(2)
-      }
-      break
-    }
     case 'pr': {
       const [subcommand, ...rest] = args
       if (subcommand === 'rule') {
         ;(await import('./commands/pr-rule.js')).prRuleCommand(rest)
       } else {
         console.error(`Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'rule')`)
-        process.exit(2)
-      }
-      break
-    }
-    case 'issue': {
-      const [rawSubcommand, ...rest] = args
-      // `objectives edit` is one two-word subcommand, not a nested dispatch
-      // level: the router folds the second argv token into one literal so
-      // `issue objectives edit` reads as a single `subcommand === '<value>'`
-      // branch, the same shape every other multi-word command already uses
-      // (`new noop-check`, `task switch`) — never a second switch.
-      const subcommand = rawSubcommand === 'objectives' && rest[0] === 'edit' ? 'objectives edit' : rawSubcommand
-      const passthrough = subcommand === 'objectives edit' ? rest.slice(1) : rest
-      if (subcommand === 'create') {
-        await (await import('./commands/issue.js')).issueCreateCommand(passthrough)
-      } else if (subcommand === 'edit') {
-        await (await import('./commands/issue.js')).issueEditCommand(passthrough)
-      } else if (subcommand === 'objectives edit') {
-        await (await import('./commands/issue-objectives.js')).issueObjectivesEditCommand(passthrough)
-      } else if (subcommand === 'surface') {
-        ;(await import('./commands/issue.js')).issueSurfaceCommand(passthrough)
-      } else {
-        console.error(
-          `Unknown 'issue' subcommand: ${rawSubcommand ?? '(none)'} (expected 'create', 'edit', 'surface', or 'objectives edit')`
-        )
         process.exit(2)
       }
       break
@@ -193,26 +169,6 @@ try {
         await (await import('./commands/task-status.js')).taskStatusCommand(rest)
       } else {
         console.error(`Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'run', 'switch', or 'status')`)
-        process.exit(2)
-      }
-      break
-    }
-    case 'milestone': {
-      const [subcommand, ...rest] = args
-      if (subcommand === 'create') {
-        await (await import('./commands/milestone.js')).milestoneCreateCommand(rest)
-      } else if (subcommand === 'adopt') {
-        await (await import('./commands/milestone.js')).milestoneAdoptCommand(rest)
-      } else if (subcommand === 'edit') {
-        await (await import('./commands/milestone.js')).milestoneEditCommand(rest)
-      } else if (subcommand === 'close') {
-        await (await import('./commands/milestone.js')).milestoneCloseCommand(rest)
-      } else if (subcommand === 'status') {
-        await (await import('./commands/milestone.js')).milestoneStatusCommand(rest)
-      } else {
-        console.error(
-          `Unknown 'milestone' subcommand: ${subcommand ?? '(none)'} (expected create/adopt/edit/close/status)`
-        )
         process.exit(2)
       }
       break

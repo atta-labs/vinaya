@@ -17,7 +17,7 @@ export type MilestoneAttachmentReport =
       /**
        * Issue numbers natively attached to this Milestone that do not carry
        * the tranche label. This also catches a Milestone shared with a
-       * still-open sibling tranche (`vinaya milestone adopt`,
+       * still-open sibling tranche (`milestone_adopt`,
        * `milestone-model.md` §4) — refusing rather than closing out from
        * under it is the correct, conservative behavior, not a false positive.
        */

@@ -140,7 +140,7 @@ function fetchIssueLabels(n: number): string[] {
 }
 
 /**
- * O2 — grades `body` against the SAME Issue write gate `issue create`/`issue
+ * O2 — grades `body` against the SAME Issue write gate `task_issue_create`/`issue
  * edit` already enforce (`forge-write.ts`'s `collectTaskIssueErrors`), so a
  * defect that gate would refuse (a bad title, a blast-radius violation, a
  * whole-suite Test plan line, a Surface glob that resolves to no tracked
@@ -186,7 +186,7 @@ export async function validateIssueWriteGate(
     return
   }
   throw new DispatchTaskError(
-    `Issue #${issue}'s write gate refused — the same findings \`vinaya issue edit\` would report:\n${errors
+    `Issue #${issue}'s write gate refused — the same findings \`task_issue_edit\` would report:\n${errors
       .map((e) => `  - [${e.severity}] [${e.check}] ${e.message}`)
       .join('\n')}`
   )
@@ -473,7 +473,7 @@ export type DispatchAuthorization = { authorized: boolean; login: string | null 
  * a comment `dispatchTask` never authorized. Checked BEFORE anything
  * else — no render, no forge read, no post — mirroring
  * `refuseUnlessPrincipal`'s own fail-closed posture (`lib/forge-write.ts`,
- * `pr rule`/`issue objectives edit`): an unresolvable identity refuses the
+ * `pr rule`/`task_objectives_edit`): an unresolvable identity refuses the
  * same as a disallowed one.
  */
 export function resolveDispatchAuthorization(): DispatchAuthorization {
@@ -599,7 +599,7 @@ export type PrepareTaskDeps = {
   findExistingFrozenBrief: (n: number) => (IssueComment & { version: number }) | null
   postMarkedComment: typeof postMarkedComment
   resolveDispatchAuthorization: () => DispatchAuthorization
-  /** O2 — the same Issue write gate `issue create`/`issue edit` already run, over Issue `issue`'s live body, before any brief freezes from it. */
+  /** O2 — the same Issue write gate `task_issue_create`/`task_issue_edit` already run, over Issue `issue`'s live body, before any brief freezes from it. */
   runIssueWriteGate: (issue: number, retryCommand: string) => Promise<void>
   /** O3 — widens Issue `issue`'s `## Surface` `in:` list with `addedGlobs`, validated by `runIssueWriteGate`'s own gate, then written. */
   widenSurface: (issue: number, addedGlobs: string[], retryCommand: string) => Promise<void>
@@ -655,7 +655,7 @@ export async function prepareTask(
   const result = await deps.assembleAndRenderBrief(tranche, String(n))
   if (!result.ok) {
     throw new DispatchTaskError(
-      `cannot dispatch — brief render refused:\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
+      `cannot dispatch — brief_render refused:\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
     )
   }
 
@@ -667,7 +667,7 @@ export async function prepareTask(
   const issue = result.issue
   const retryCommand = `vinaya-task-brief ${tranche} ${n}`
 
-  // O2 — the SAME Issue write gate `issue create`/`issue edit` already
+  // O2 — the SAME Issue write gate `task_issue_create`/`task_issue_edit` already
   // enforce, run over this Issue's live body before any brief freezes from
   // it. Ahead of the existing-brief check: a defect the gate would refuse is
   // refused here regardless of whether this is a first dispatch or a
@@ -787,7 +787,7 @@ export async function prepareIssueTask(
   const result = await deps.assembleAndRenderBriefForIssue(n)
   if (!result.ok) {
     throw new DispatchTaskError(
-      `cannot dispatch — brief render refused:\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
+      `cannot dispatch — brief_render refused:\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
     )
   }
   const issue = result.issue

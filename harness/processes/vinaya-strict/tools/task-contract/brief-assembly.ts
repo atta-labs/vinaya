@@ -145,7 +145,7 @@ function resolveRepo(): { owner: string; repo: string } | null {
 }
 
 /**
- * Whether this checkout has enough infra to attempt a brief render at all,
+ * Whether this checkout has enough infra to attempt a brief_render at all,
  * and — when it does not — WHY (O3): a plan-time pass must never be printed
  * for a render that never ran, so the caller reports the reason instead of
  * silently claiming success.
@@ -161,7 +161,7 @@ function resolveRepo(): { owner: string; repo: string } | null {
  *     adopter that installs Vinaya from the registry has the packaged template
  *     dispatch renders from but no `harness/processes/vinaya-strict/` of its own, so this gate
  *     switched itself off and printed a pass for an Issue `task run` then
- *     refused at brief render.
+ *     refused at brief_render.
  *  2. **The owner/repo resolves** (`VINAYA_REPO`, or a GitHub `origin` remote) —
  *     the render reads the forge under that identity.
  *  3. **A git work tree** — the render shells out to `git ls-files`/`git
@@ -601,7 +601,7 @@ export function readFileAtRevision(rev: string, path: string, cwd?: string): str
  * dispatch is the first moment it can be asserted at all. The revision read is
  * the remote default branch's tip, which the freshness gate just established.
  *
- * `'none'` — the pre-write render `issue create`/`issue edit` runs to grade the
+ * `'none'` — the pre-write render `task_issue_create`/`task_issue_edit` runs to grade the
  * bytes it is about to send (`forge-write.ts`'s
  * `validateRenderedBriefForIssue`). That render asserts NO premise, for two
  * reasons. A deferred premise is not true yet by construction, so asserting it
@@ -628,7 +628,7 @@ export type PremiseScope = 'all' | 'none'
  * and reporting it twice would double every refusal the Planner reads.
  *
  * The predicate and the refusal wording are `@attalabs/aeg-core`'s
- * (`checkPremisesHold`), the same ones `issue create`/`issue edit` apply, so
+ * (`checkPremisesHold`), the same ones `task_issue_create`/`task_issue_edit` apply, so
  * the two moments can never disagree about what a premise means.
  *
  * `readAt` is injected for testing against a fixture repository; the default
@@ -710,7 +710,7 @@ export function taskNotFoundMessage(trancheSlug: string, taskId: string, openIss
 
 /**
  * Renders the twelve-section brief for `<tranche> <n>` from the forge and the
- * tree — the exact assembly `vinaya brief render` has always run, callable
+ * tree — the exact assembly `brief_render` has always run, callable
  * without an argv/stdout shell around it. `surfaceGlobsOverride`, when given,
  * is the `--surfaces` flag's expanded glob list (brief.ts's own caller);
  * omitted, the Issue's own `## Surface` `in:` list is used instead — the only
@@ -719,13 +719,13 @@ export function taskNotFoundMessage(trancheSlug: string, taskId: string, openIss
  * (no `## Surface` section at all) is not specially handled here: it flows
  * through as zero globs, and `renderBrief`'s own missing-fact check already
  * refuses on `facts.surface.in.length === 0`, naming the Surface section —
- * the same refusal a `--surfaces`-less `brief render` call would produce.
+ * the same refusal a `--surfaces`-less `brief_render` call would produce.
  *
  * `bodyOverride`, when given, replaces the live forge Issue body used for
  * every section this renders (Objectives/Surface/Parts/Test plan/Stop
  * conditions/rationale) — the pre-write validation path (`forge-write.ts`'s
  * `validateRenderedBriefForIssue`) needs to grade the bytes a tranche-labeled
- * `issue edit`/`issue objectives edit` is ABOUT to send, not what is on the
+ * `task_issue_edit`/`task_objectives_edit` is ABOUT to send, not what is on the
  * forge before it lands. `task`/`dependsOn`/`conflictsWith` still come from
  * the tranche's own forge-derived task list, unaffected by a body edit — the
  * same source `assembleAndRenderBrief` always reads those from.
@@ -957,7 +957,7 @@ export async function assembleAndRenderBrief(
  * tranche cannot be derived or no task in its forge-derived list carries
  * this Issue number yet — the pre-write render/validate gate's own way of
  * telling an ordinary edit of an existing tranche-attached task Issue (this
- * lookup succeeds; render it) apart from a brand-new `issue create` still in
+ * lookup succeeds; render it) apart from a brand-new `task_issue_create` still in
  * flight (no real Issue number exists yet to look up — genuinely circular,
  * left dormant the same way it always was).
  */
@@ -1049,7 +1049,7 @@ function extractProjectField(body: string): string[] {
  * forge read — the pre-write validation path (`forge-write.ts`'s
  * `validateRenderedBriefForIssue`) needs to grade the bytes a write is about
  * to send, not what is on the forge before it lands. `issueNumber` may be
- * `DRAFT_ISSUE_SENTINEL` for an `issue create` still in flight (no real
+ * `DRAFT_ISSUE_SENTINEL` for an `task_issue_create` still in flight (no real
  * number exists yet); every other caller passes the real one.
  */
 export async function assembleAndRenderBriefForIssue(

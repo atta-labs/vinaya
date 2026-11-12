@@ -924,7 +924,7 @@ describe("this repository's doctrine readers come from the doctrine map, with no
 
   test('a template edit reaches the template readers and not the review loop’s role readers', () => {
     const readers = edit(template).readers.map((r) => r.test)
-    expect(readers).toContain('apps/cli/tests/commands/issue.test.ts')
+    expect(readers).toContain('harness/processes/vinaya-strict/tests/lib/forge-write.test.ts')
     expect(readers).not.toContain(
       'harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/inproc-1.test.ts'
     )

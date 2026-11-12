@@ -1,7 +1,4 @@
 scripts/bundle-doctrine.test.ts
 tests/ci-shards.test.ts
-tests/commands/brief-render.test.ts
-tests/commands/issue-objectives-parts.test.ts
 tests/doctor.test.ts
 tests/init.test.ts
-tests/milestone.test.ts

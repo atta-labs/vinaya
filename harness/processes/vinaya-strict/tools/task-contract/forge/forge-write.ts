@@ -1,6 +1,6 @@
 /**
  * Shared machinery for the validated forge-write commands (`pr create/edit`,
- * `issue create/edit`). Two concerns live here:
+ * `task_issue_create/edit`). Two concerns live here:
  *
  *  1. **Same-bytes body plumbing** (`locateBody` / `resolveShippableArgs`) —
  *     adapted from `harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts`'s own fix, NEVER
@@ -367,7 +367,7 @@ export function resolvePrincipalsOrRefuse(check: string, retryCommand: string): 
 // either — cutting a tranche's first task Issue failed outright at `gh` with
 // `not found`, worked around by hand-running `gh label create`. This is the
 // point that mints it: `issueCreateCommand`/`issueEditCommand` are the
-// shipped `vinaya issue create`/`edit` — the only commands that attach a
+// shipped `task_issue_create`/`edit` — the only commands that attach a
 // `vinaya/tranche:*` label to a forge object. No `-R` flag: `gh` resolves
 // the current repo from cwd, the adopter's own repo the CLI runs in.
 // Existing labels are never modified, matching every create-if-absent label
@@ -418,7 +418,7 @@ export function ensureTrancheLabelExists(slug: string): void {
 }
 
 /**
- * `issue create`'s Milestone auto-attach: appends `--milestone <title>` to a
+ * `task_issue_create`'s Milestone auto-attach: appends `--milestone <title>` to a
  * task Issue's argv when the tranche it declares has a matching OPEN
  * Milestone and the caller didn't already pass one. Never a hard refusal —
  * `findMilestoneAttachTargetForSlug` throwing (network/auth) or resolving
@@ -526,7 +526,7 @@ export type ForgeValidationInput = {
   branch?: string
   /**
    * The target Issue's number, for the `objectives` builtin's
-   * `OBJECTIVES_SINCE_ISSUE` cutover — `null` for `issue create` (no number
+   * `OBJECTIVES_SINCE_ISSUE` cutover — `null` for `task_issue_create` (no number
    * exists until the write completes) and unused by a `pr` write (the
    * builtin never appears in a `pr` section list). `checkIssueObjectives`
    * treats `null` as NOT exempted (fail-closed), the same posture
@@ -1150,7 +1150,7 @@ export function readConfigReference(root: string = repoRoot()): ConfigReferenceF
  * being validated is attacker-reachable — anyone who can write an Issue writes
  * its Objectives — and each distinct token costs one full-tree `git grep`, so
  * an unbounded probe count turns a body listing thousands of invented flags
- * into thousands of repository scans on every `issue create`/`issue edit`. A
+ * into thousands of repository scans on every `task_issue_create`/`task_issue_edit`. A
  * real task introduces a handful of flags or keys; this bound sits far above
  * that and far below anything that costs real time.
  */
@@ -1611,8 +1611,8 @@ export function readPinnedFileChecks(body: string): PinnedFileChecks[] {
 }
 
 /**
- * What a draft Issue's Boundary pins force on its Surface (`vinaya issue
- * surface`), read through the same importer listing and tracked-file
+ * What a draft Issue's Boundary pins force on its Surface (`task_issue_surface`),
+ * read through the same importer listing and tracked-file
  * snapshot the write gate passes to `validateIssueContent`, so the report and
  * the refusal decide every importer from one listing with one function.
  * `null` when `## Surface` does not parse.
@@ -1626,7 +1626,7 @@ export function readSurfaceForcedSet(
 }
 
 /**
- * The plain-text `issue surface` report: every pinned file with each importer
+ * The plain-text `task_issue_surface` report: every pinned file with each importer
  * and its decision, then the shard list and the loop map when a pinned file
  * is new. Each undecided line names the `in:` glob that would reach it.
  */
@@ -1672,13 +1672,13 @@ export function renderSurfaceForcedSet(set: SurfaceForcedSet): string {
   lines.push(
     undecided === 0
       ? 'Every forced file is reached or disclaimed.'
-      : `${undecided} forced file(s) undecided — \`issue create\`/\`issue edit\` refuse this Surface.`
+      : `${undecided} forced file(s) undecided — \`task_issue_create\`/\`task_issue_edit\` refuse this Surface.`
   )
   return `${lines.join('\n')}\n`
 }
 
 /**
- * The whole of `vinaya issue surface`: reads the draft body named by
+ * The whole of `task_issue_surface`: reads the draft body named by
  * `--body-file`, prints the forced set (`--json` for the enveloped form), and
  * returns the exit code — `0` with the report, `2` when the body cannot be
  * read or its `## Surface` does not parse. Writes nothing.
@@ -1691,16 +1691,16 @@ export function issueSurfaceOutcome(
   try {
     body = locateBody(args.filter((a) => a !== '--json'))?.body ?? null
   } catch (e) {
-    return { ok: false, message: `issue surface: ${e instanceof Error ? e.message : String(e)}\n` }
+    return { ok: false, message: `task_issue_surface: ${e instanceof Error ? e.message : String(e)}\n` }
   }
   if (body === null) {
-    return { ok: false, message: 'issue surface: pass the draft Issue body with `--body-file <path>`.\n' }
+    return { ok: false, message: 'task_issue_surface: supply the draft Issue text in the `body` field.\n' }
   }
   const set = readSurfaceForcedSet(body)
   if (set === null) {
     const parsed = parseIssueSurface(body)
     const why = parsed.ok ? '' : ` ${parsed.errors.join(' ')}`
-    return { ok: false, message: `issue surface: the body's \`## Surface\` does not parse.${why}\n` }
+    return { ok: false, message: `task_issue_surface: the body's \`## Surface\` does not parse.${why}\n` }
   }
   return { ok: true, set, json }
 }
@@ -1793,7 +1793,7 @@ const ISSUE_CONTENT_RECOVERY = {
   issuePremises:
     'Fix the named `## Premises` line so the file really contains the text (re-read the code, then write what it holds), or — when a task that has not merged yet is what makes it true — prefix the premise `after #<n>:` and declare `Depends-on` on that Issue. Then re-run `{cmd}`.',
   premiseDependencyDeclared:
-    'Add the missing `Depends-on` edge for the deferred premise named above to the `**Dependency rationale**` field (`vinaya issue amend-deps`), or drop the `after #<n>:` prefix and write a premise that holds now. Then re-run `{cmd}`.',
+    'Add the missing `Depends-on` edge for the deferred premise named above to the `**Dependency rationale**` field (`task_issue_edit`), or drop the `after #<n>:` prefix and write a premise that holds now. Then re-run `{cmd}`.',
   boundaryClaimsNeedPremise:
     "Add a `## Premises` section pinning what the Boundary asserts already exists — one `` `<path>` contains `<text>` `` line per claim — or rewrite the Boundary so it no longer states the code's current shape. Then re-run `{cmd}`.",
   crossTaskValuesPinned:
@@ -2009,8 +2009,8 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
 }
 
 // ---------------------------------------------------------------------------
-// The validated `issue edit` write path — extracted verbatim
-// out of `commands/issue.ts` so a second command (`issue objectives edit`)
+// The validated `task_issue_edit` write path — extracted verbatim
+// out of `commands/issue.ts` so a second command (`task_objectives_edit`)
 // can drive the same validated write without importing another command file
 // (`commands/*.ts` never imports `commands/*.ts` — shared logic lives here).
 // `issueEditCommand` itself now calls `writeValidatedIssueEdit`; behaviour is
@@ -2020,7 +2020,7 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
 /**
  * Runs the `gh` write. `quiet` (default `false`) skips the stdout/JSON print
  * of the URL `gh` returns — for a caller that goes on to print its OWN,
- * more specific URL (`issue objectives edit` prints its comment's url, never
+ * more specific URL (`task_objectives_edit` prints its comment's url, never
  * the plain issue-edit url the underlying write also produces).
  */
 export function runGhWriteOutcome(
@@ -2163,7 +2163,7 @@ export function fetchForgeIssueContext(
 }
 
 /**
- * **O3 — refuses an `issue edit` that changes `## Objectives`, `## Surface`,
+ * **O3 — refuses a `task_issue_edit` that changes `## Objectives`, `## Surface`,
  * or `## Parts` on a task Issue whose brief is already frozen.** Fetches the
  * live pre-edit body and comment list, resolves the newest principal-authored
  * frozen brief (if any — dormant when none exists, the same
@@ -2171,10 +2171,10 @@ export function fetchForgeIssueContext(
  * the pre-edit body against `newBody` via `frozenSectionsChanged` (never
  * against the frozen comment's own rendered text — see that function's own
  * doc comment for why). Names the frozen comment's URL and
- * `vinaya issue objectives edit` as the sanctioned path for an Objectives
+ * `task_objectives_edit` as the sanctioned path for an Objectives
  * change; `## Surface`/`## Parts`/`## Documentation` have no self-serve edit path once frozen.
  *
- * `skipCheck`, when true, is `issue objectives edit`'s own escape hatch: that
+ * `skipCheck`, when true, is `task_objectives_edit`'s own escape hatch: that
  * command IS the sanctioned way to change `## Objectives` on a frozen task
  * (its own write goes through `writeValidatedIssueEdit`, below), and it posts
  * its own superseding `vinaya:brief:v<k+1>` comment after writing — this
@@ -2206,8 +2206,8 @@ export function frozenSectionChangeOutcome(
   return [
     makeCheckError(
       'issue-frozen-brief',
-      `This task Issue's brief is already frozen — the frozen comment is at ${frozen.url}. This edit changes ${sections}, which is locked once frozen. Use \`vinaya issue objectives edit\` for an Objectives change; \`## Surface\`/\`## Parts\`/\`## Documentation\` have no self-serve edit path once frozen — escalate to the Planner to supersede the frozen brief.`,
-      `Revert the ${sections} change(s) in the body, or use \`vinaya issue objectives edit\` for an Objectives change, then re-run \`${retryCommand}\`.`
+      `This task Issue's brief is already frozen — the frozen comment is at ${frozen.url}. This edit changes ${sections}, which is locked once frozen. Use \`task_objectives_edit\` for an Objectives change; \`## Surface\`/\`## Parts\`/\`## Documentation\` have no self-serve edit path once frozen — escalate to the Planner to supersede the frozen brief.`,
+      `Revert the ${sections} change(s) in the body, or use \`task_objectives_edit\` for an Objectives change, then re-run \`${retryCommand}\`.`
     )
   ]
 }
@@ -2223,7 +2223,7 @@ export function refuseFrozenSectionChange(
 }
 
 /**
- * The Issue number `issue edit`'s target ref names, for `checkIssueObjectives`'s
+ * The Issue number `task_issue_edit`'s target ref names, for `checkIssueObjectives`'s
  * `OBJECTIVES_SINCE_ISSUE` cutover. `edit` targets a REAL, already-existing
  * Issue, so unlike `create`'s genuinely-unknown-until-write number, `null`
  * here means only "this ref's shape carried no digits" — the Issue itself
@@ -2328,14 +2328,14 @@ function resolveLabelMilestoneFromForge(labels: string[]): string | null {
 }
 
 /**
- * O5's Milestone source for `issue create`: an explicit `--milestone`/`-m`
+ * O5's Milestone source for `task_issue_create`: an explicit `--milestone`/`-m`
  * flag wins outright; absent that, mirrors `resolveMilestoneAttachArgs`'s own
  * label-driven auto-attach lookup so the common create workflow (a tranche
  * label, no explicit flag) still resolves a real target instead of leaving
  * O5 dormant.
  *
  * Security review, round 2, HIGH: the prior version only ever
- * read the explicit flag, so a normal `issue create --label
+ * read the explicit flag, so a normal `task_issue_create --label
  * vinaya/tranche:<slug>` — the label-driven auto-attach path
  * `resolveMilestoneAttachArgs` itself resolves at write time — left
  * `milestoneTitle` `null` and the overlap check dead on `create` in the
@@ -2461,7 +2461,7 @@ function fetchOpenTaskSurfaceSiblings(
 
 /**
  * How many open pull requests the collision gate reads changed files for.
- * A busy repository must never make `vinaya issue create` crawl, and the
+ * A busy repository must never make `task_issue_create` crawl, and the
  * forge charges per pull request for a file list however it is asked for, so
  * the read is bounded rather than exhaustive; when the bound is reached the
  * gate says so in its own output instead of silently grading a subset.
@@ -2469,7 +2469,7 @@ function fetchOpenTaskSurfaceSiblings(
 export const MAX_COLLISION_PULL_REQUESTS = 50
 
 /**
- * Which peers a collision run compares against. `issue create`/`issue edit`
+ * Which peers a collision run compares against. `task_issue_create`/`task_issue_edit`
  * compare against both open task Issues and open pull requests; a dispatch
  * compares against open pull requests only — by then every other task Issue
  * is a plan, not work in flight, and the question the dispatch is asking is
@@ -2711,7 +2711,7 @@ function fetchCollisionPeers(
 
 /**
  * Best-effort read of an Issue's CURRENT title from the forge — used only to
- * fill `validateRenderedBriefForIssue`'s render input when an `issue edit`
+ * fill `validateRenderedBriefForIssue`'s render input when a `task_issue_edit`
  * carries no `--title` of its own (the common case: nobody re-passes
  * `--title` to change only a body). A failed fetch degrades to an empty
  * title, same dormant-on-failure posture `fetchForgeMilestoneBestEffort`
@@ -3066,7 +3066,7 @@ export async function collectTaskIssueErrors(
 
   // Render the brief this write would freeze and grade it with the same
   // brief-shape gate `pr create` applies, before the write. `title` is null
-  // on a plain `issue edit`/`issue objectives edit` that doesn't re-pass
+  // on a plain `task_issue_edit`/`task_objectives_edit` that doesn't re-pass
   // `--title`; the Issue's own live title fills the gap (used only on the
   // backlog path — a tranche-labeled render reads its title from the
   // tranche's own task list instead).
@@ -3090,7 +3090,7 @@ export async function collectTaskIssueErrors(
   // An edit compares the Issue's Milestone AFTER the edit — an explicit
   // `--milestone` on the edit's own arguments, else the live one — against
   // the open Milestone its tranche label resolves to. That is safe for an
-  // adopted tranche: `vinaya milestone adopt` closes the legacy Milestone and
+  // adopted tranche: `milestone_adopt` closes the legacy Milestone and
   // moves the Issues into the target, and `resolveMilestoneAttachTarget`
   // falls through a closed legacy match to that target, so an adopted Issue
   // already sits in the Milestone its label resolves to. Any failed lookup
@@ -3206,7 +3206,7 @@ export async function validateTaskIssue(
  * The validate-then-write core `issueEditCommand` runs for every non-
  * `--validate-only` edit: union the forge's real labels with argv, run
  * `validateTaskIssue` when the target is a task Issue, ensure the tranche
- * label exists, then write. `issue objectives edit` drives this
+ * label exists, then write. `task_objectives_edit` drives this
  * same path with a temp `--body-file` it wrote itself — one validated write
  * path for every Issue-edit caller, never a second hand-rolled one.
  */
@@ -3217,7 +3217,7 @@ export async function writeValidatedIssueEdit(input: {
   json: boolean
   retryCommand: string
   quiet?: boolean
-  /** `issue objectives edit`'s own escape hatch — see `refuseFrozenSectionChange`'s doc comment. Every other caller omits this (defaults to `false`, the check runs). */
+  /** `task_objectives_edit`'s own escape hatch — see `refuseFrozenSectionChange`'s doc comment. Every other caller omits this (defaults to `false`, the check runs). */
   skipFrozenSectionsCheck?: boolean
 }): Promise<void> {
   const { issueRef, ghArgs, bodyResult, json, retryCommand, quiet, skipFrozenSectionsCheck } = input
@@ -3247,7 +3247,7 @@ export async function writeValidatedIssueEdit(input: {
 }
 
 // ---------------------------------------------------------------------------
-// Principal-only gate — `issue objectives edit` and `pr rule` are
+// Principal-only gate — `task_objectives_edit` and `pr rule` are
 // Principal-only actions per `harness/processes/vinaya-strict/doctrine/roles/principal.md`, but `gh`
 // authenticates as "whoever is logged in": without this, any collaborator's
 // (or co-resident agent session's) token can post a comment indistinguishable
@@ -3300,7 +3300,7 @@ export function refuseUnlessPrincipal(retryCommand: string): void {
 // ---------------------------------------------------------------------------
 // Marked comments — the `<!-- vinaya:… -->`-prefixed comment shape `pr.ts`'s
 // `postBriefComment` established for the brief comment, generalised so
-// `issue objectives edit` and `pr rule` can post their own marked
+// `task_objectives_edit` and `pr rule` can post their own marked
 // comments without duplicating the temp-file-then-`gh comment` dance.
 // ---------------------------------------------------------------------------
 

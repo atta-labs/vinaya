@@ -2,7 +2,7 @@
  * The Milestone operations as a library: create, edit, adopt, close, status
  * and delete. Each returns an outcome — the Milestone written or read, or the
  * findings that refused it — and never ends the process: the
- * `vinaya milestone …` commands parse argv, call one operation here and print
+ * Milestone role tools call one operation here and return
  * the outcome. Every refusal reached beneath an operation (however deep) is
  * captured as a finding, not an exit.
  *
@@ -45,11 +45,11 @@ import {
 } from '../task-contract/milestone-validation'
 import { checkMilestoneAttachment } from './check-milestone-attachment'
 
-export const RETRY_CREATE = 'vinaya milestone create --title <title> --body-file <path>'
-export const RETRY_ADOPT = 'vinaya milestone adopt --target <title> --slug <slug> [--slug <slug> ...]'
-export const RETRY_EDIT = 'vinaya milestone edit <n> --body-file <path>'
-export const RETRY_CLOSE = 'vinaya milestone close --slug <slug>'
-export const RETRY_STATUS = 'vinaya milestone status <n>'
+export const RETRY_CREATE = 'milestone_create'
+export const RETRY_ADOPT = 'milestone_adopt'
+export const RETRY_EDIT = 'milestone_edit'
+export const RETRY_CLOSE = 'milestone_close'
+export const RETRY_STATUS = 'milestone_status'
 export const RETRY_DELETE = 'the Milestone delete operation'
 
 // --- outcomes ----------------------------------------------------------------
@@ -483,8 +483,7 @@ export async function closeMilestone(
         makeCheckError(
           'milestone-close',
           `No OPEN Milestone resolves for tranche \`${slug}\` — it may already be closed, or never had one attached.`,
-          `Confirm with \`gh issue list --label ${trancheLabel(slug)} --json milestone\`, or run \`vinaya milestone ` +
-            `create\`/\`${RETRY_ADOPT}\` if a Milestone is genuinely still owed, then re-run \`${RETRY_CLOSE}\`.`
+          `Confirm with \`gh issue list --label ${trancheLabel(slug)} --json milestone\`, or call \`${RETRY_CREATE}\`/\`${RETRY_ADOPT}\` if a Milestone is genuinely still owed, then call \`${RETRY_CLOSE}\`.`
         )
       ])
     }

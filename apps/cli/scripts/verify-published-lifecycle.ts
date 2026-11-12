@@ -363,22 +363,6 @@ const ADR_PROOF_TITLE = 'Lifecycle proof record'
 const ADR_PROOF_RECORD = `${ADR_PROOF_DIR}/0001-lifecycle-proof-record.md`
 const ADR_PROOF_INDEX = `${ADR_PROOF_DIR}/README.md`
 
-// A tracked importer pair for the `issue surface` exercise: the draft body
-// pins the first file, and the command must report the second as the
-// importer a `## Surface` `in:` glob reaches.
-const SURFACE_PINNED = 'surface-fixture/pinned.ts'
-const SURFACE_IMPORTER = 'surface-fixture/importer.ts'
-const SURFACE_BODY_PATH = '.surface-body-fixture.md'
-const SURFACE_BODY = `Project: vinaya
-
-**Boundary** — Fixture body used only by verify-published-lifecycle.ts's \`issue surface\` exercise. Pinned files: \`${SURFACE_PINNED}\`. Out: nothing.
-
-## Surface
-
-in: surface-fixture/**
-out: docs/**
-`
-
 /** A loopback port nothing is listening on right now. */
 function freeLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -475,12 +459,8 @@ if (!NOOP_CHECK_TARGET) {
 const NEW_ROLE_KEY = 'lifecycle/proof-role'
 const NEW_ROLE_ID = 'proof-role'
 
-const MILESTONE_BODY_FIXTURE =
-  "Fixture body used only by verify-published-lifecycle.ts's `milestone create`/`milestone edit` " +
-  '`--validate-only` exercises — never actually written to the forge (--validate-only, no network write).\n'
-
 // This script's OWN scratch files, written by the exercises that run between
-// the pre-init and post-eject snapshots (`pr create`/`issue create` fixture
+// the pre-init and post-eject snapshots (`pr create` fixture
 // bodies, `new check`'s scaffold, `init product`'s registry row). Never
 // vinaya-owned, never touched by `eject` — real byte-identity noise unrelated
 // to the question "does eject reverse init exactly", so excluded from the
@@ -489,19 +469,14 @@ const MILESTONE_BODY_FIXTURE =
 // registry row is adopter-declared data, not vinaya-owned scaffolding.
 const SCRATCH_FIXTURE_PATHS = new Set([
   '.pr-body-fixture.md',
-  '.issue-body-fixture.md',
   '.commit-msg-good.txt',
   '.commit-msg-bad.txt',
-  '.milestone-body-fixture.md',
   'scripts/vinaya-checks/proof-check.ts',
   `vinaya/checks/${NOOP_CHECK_TARGET}.ts`,
   `vinaya/roles/${NEW_ROLE_ID}.md`,
   PROJECTS_REGISTRY_PATH_LOCAL,
   ADR_PROOF_RECORD,
-  ADR_PROOF_INDEX,
-  SURFACE_BODY_PATH,
-  SURFACE_PINNED,
-  SURFACE_IMPORTER
+  ADR_PROOF_INDEX
 ])
 
 const PR_BODY_FIXTURE = `Tier: 1
@@ -514,19 +489,6 @@ exercise — never actually opened as a PR (--validate-only, no network write).
 
 ## Test Plan
 - [ ] **[agent]** N/A — fixture only, not a real change.
-`
-
-const ISSUE_BODY_FIXTURE = `Project: vinaya
-
-**Boundary** — Fixture body used only by verify-published-lifecycle.ts's \`issue create --validate-only\`
-exercise; never actually opened (--validate-only, no network write).
-**Sizing** — trivial (fixture only).
-**Project(s) + blast radius** — vinaya only; no shared package touched.
-**Dependency rationale** — none; no depends-on edge.
-**Traps to avoid** — none; fixture content only.
-**Suggested agent-class** — n/a (fixture).
-**Stop-and-escalate** — n/a (fixture; never actually filed).
-**Docs to keep coherent** — no-doc-surface
 `
 
 export const EXEMPTIONS: Record<string, string> = {
@@ -551,7 +513,7 @@ export const EXEMPTIONS: Record<string, string> = {
     'live forge (`gh` reads against real merge history) UNCONDITIONALLY — there is no dry-run path that skips ' +
     'the forge. Exercising it genuinely would require a real repo with real merged task PRs and real `gh` ' +
     "credentials reaching the network beyond the npm install, which this script's boundary forbids (same " +
-    "reasoning as `issue edit`'s exemption).",
+    'forge-credential boundary).',
   quickstart:
     '`quickstart` is a pure orchestrator over `init`/`init product`/`demo break`/`doctor` — it calls their ' +
     'existing, unmodified entry points in sequence with Y/n prompts between steps, never reimplements their ' +
@@ -571,7 +533,7 @@ export const EXEMPTIONS: Record<string, string> = {
     '`--title`, skipping the body fetch) has no analogue here: everything reachable before `resolveHeadSha` is ' +
     'argument validation — `parseFlags`, the `--role` enum, and the `requireFlag`/`requireTokenField` calls for ' +
     '`--pr`/`--task-id`/`--model`/`--tokens-in`/`--tokens-out`/`--cost` — and exercising a command rejecting a ' +
-    'bad flag is not exercising the command. Same boundary as `issue edit`; exempt for the same reason. ' +
+    'bad flag is not exercising the command. This also requires forge credentials; exempt for that reason. ' +
     "What `tests/review-post.test.ts` covers against this workspace's source is the PURE surface it imports: " +
     'findings parsing, flag parsing, comment rendering, `isNoneFoundClaim`, and the two self-verify ' +
     'predicates. It does NOT import `reviewPostCommand`, so every refusal that function holds is proven ' +
@@ -580,25 +542,6 @@ export const EXEMPTIONS: Record<string, string> = {
     'are the mechanical guards `reviewer.md` and `security.md` delegate to this command. That is a real, ' +
     'stated coverage gap in the role-guard layer, not a claim of coverage; closing it needs a unit test ' +
     "around `reviewPostCommand` with its `gh` seam injected, which is its own change, not this script's.",
-  'issue edit':
-    "`issue edit` fetches the target Issue's real labels from the forge (`gh issue view`) UNCONDITIONALLY, " +
-    'even under --validate-only — there is no code path that skips it. Exercising it genuinely would require a ' +
-    'real target Issue and real `gh` credentials reaching the network beyond the npm install, which the boundary ' +
-    "this script runs under forbids (same reasoning as the brief's own network/credential stop condition). " +
-    '`pr edit` avoids this: passing only `--title` (no `--body-file`) skips its forge fetch entirely, so it is ' +
-    'exercised for real below.',
-  'milestone adopt':
-    "`milestoneAdoptCommand` resolves the repo and then fetches this repo's real labels and Milestones from the " +
-    'forge (`gh api repos/<repo>/labels`, `gh api repos/<repo>/milestones`, and per-slug `gh issue list`) ' +
-    'UNCONDITIONALLY, before its own `--validate-only` check is ever reached — unlike `milestone create`/' +
-    '`milestone edit` below, whose `--validate-only` returns before any repo/forge call and are exercised for ' +
-    'real. Exercising `milestone adopt` genuinely would require a real target Milestone plus real tranche labels ' +
-    'and Issues on the live forge, and real `gh` credentials reaching the network beyond the npm install, which ' +
-    "this script's boundary forbids (same reasoning as `issue edit`'s exemption).",
-  'brief render':
-    '`brief render` reads the task Issue from the forge and the default branch UNCONDITIONALLY — a FORGE READ ' +
-    'with no offline path. Its rendering and refusals are proven against injected seams in ' +
-    'tests/commands/brief-render.test.ts.',
   'vinaya-task-brief':
     '`task brief` posts the frozen brief as an Issue comment — a FORGE WRITE against a real Issue. Its logic is ' +
     'proven in tests/commands/task.test.ts.',
@@ -623,16 +566,6 @@ export const EXEMPTIONS: Record<string, string> = {
   'vinaya-pr-snapshot':
     '`pr snapshot` reads a real pull request and its task Issue over the FORGE REST API (network destination ' +
     'api.github.com) with a forge credential — a FORGE READ with no offline path.',
-  'issue objectives edit':
-    "`issue objectives edit` rewrites a real Issue's Objectives on the forge — a FORGE WRITE. Its logic is proven " +
-    'in tests/commands/issue-objectives.test.ts and tests/commands/issue-objectives-parts.test.ts.',
-  'milestone close':
-    "`milestone close` lists the repository's Milestones on the FORGE before its `--validate-only` branch is " +
-    'reached — a FORGE READ with no offline path, unlike `milestone create`/`milestone edit`. Its logic is proven ' +
-    'in tests/milestone.test.ts.',
-  'milestone status':
-    '`milestone status` reads a Milestone and its Issues from the FORGE — a FORGE READ. Its logic is proven in ' +
-    'tests/milestone.test.ts.',
   'vinaya-review-status':
     "`review status` reads the pull request's comments and head from the FORGE UNCONDITIONALLY — a FORGE READ. " +
     'Its logic is proven in tests/commands/review-status.test.ts.',
@@ -808,7 +741,7 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
   'vinaya-pr edit': ({ bin, fixtureDir }) => {
     // `--title` only, no `--body-file`: `prEditCommand` skips its forge fetch
     // entirely when `body === null` — a real, network-free exercise of the
-    // command, unlike `issue edit` (see EXEMPTIONS).
+    // command, without a forge credential.
     const r = run(
       programBin(bin, 'vinaya-pr'),
       ['edit', '999999', '--title', 'Chore: verify published lifecycle edit', '--validate-only'],
@@ -875,28 +808,6 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
         ? `exit ${r.status}, VINAYA:EVIDENCE block emitted and bound to fixture head ${head.slice(0, 7)}`
         : `exit ${r.status}, block delimiters: ${hasBlock}, bound to head ${head.slice(0, 7) || '<unresolved>'}: ${bindsHead} — ${(r.stdout.trim() || r.stderr.trim()).slice(0, 200)}`
     }
-  },
-
-  'issue create': ({ bin, fixtureDir }) => {
-    const bodyPath = join(fixtureDir, '.issue-body-fixture.md')
-    writeFileSync(bodyPath, ISSUE_BODY_FIXTURE, 'utf-8')
-    const r = run(
-      bin,
-      [
-        'issue',
-        'create',
-        '--title',
-        '[vinaya-cli-v1] 10 — verify published lifecycle (fixture)',
-        '--body-file',
-        bodyPath,
-        '--label',
-        'vinaya/tranche:verify-fixture',
-        '--validate-only'
-      ],
-      fixtureDir
-    )
-    const ok = r.status === 0 && /PASS/i.test(r.stdout)
-    return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim() || r.stderr.trim()}` }
   },
 
   doctor: ({ bin, fixtureDir }) => {
@@ -1023,69 +934,6 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     return {
       status: ok ? 'pass' : 'fail',
       detail: `exit ${r.status}, scaffold created: ${created}, role_id set to ${NEW_ROLE_ID}: ${roleIdSet}${ok ? '' : ` — ${(r.stderr.trim() || r.stdout.trim()).slice(0, 200)}`}`
-    }
-  },
-
-  'milestone create': ({ bin, fixtureDir }) => {
-    // `milestoneCreateCommand`'s `--validate-only` returns BEFORE the repo is
-    // resolved or `gh` is ever called (unlike `milestone adopt` — see
-    // EXEMPTIONS) — the same network-free escape `pr create`/`issue create`
-    // above already use, so this is a real exercise of the shape/schema
-    // gates, not a mock.
-    const bodyPath = join(fixtureDir, '.milestone-body-fixture.md')
-    writeFileSync(bodyPath, MILESTONE_BODY_FIXTURE, 'utf-8')
-    const r = run(
-      bin,
-      [
-        'milestone',
-        'create',
-        '--title',
-        'Chore: verify published lifecycle',
-        '--body-file',
-        bodyPath,
-        '--validate-only'
-      ],
-      fixtureDir
-    )
-    const ok = r.status === 0 && /PASS/i.test(r.stdout)
-    return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim() || r.stderr.trim()}` }
-  },
-
-  'milestone edit': ({ bin, fixtureDir }) => {
-    // Same escape as `milestone create` above: `milestoneEditCommand`'s
-    // `--validate-only` returns before the target Milestone is ever resolved
-    // against the forge, so a fake target number is safe — nothing looks it
-    // up.
-    const bodyPath = join(fixtureDir, '.milestone-body-fixture.md')
-    writeFileSync(bodyPath, MILESTONE_BODY_FIXTURE, 'utf-8')
-    const r = run(bin, ['milestone', 'edit', '999999', '--body-file', bodyPath, '--validate-only'], fixtureDir)
-    const ok = r.status === 0 && /PASS/i.test(r.stdout)
-    return { status: ok ? 'pass' : 'fail', detail: `exit ${r.status}: ${r.stdout.trim() || r.stderr.trim()}` }
-  },
-
-  'issue surface': ({ bin, fixtureDir, homeDir }) => {
-    // Reads the draft body and the fixture's tracked files; writes nothing and
-    // reaches no forge. A pinned file with one tracked importer gives the
-    // report a line only the real command can produce. The pair is staged so
-    // `git ls-files` lists it; `demo break` commits everything later.
-    mkdirSync(join(fixtureDir, 'surface-fixture'), { recursive: true })
-    writeFileSync(join(fixtureDir, SURFACE_PINNED), 'export const pinned = 1\n', 'utf-8')
-    writeFileSync(
-      join(fixtureDir, SURFACE_IMPORTER),
-      "import { pinned } from './pinned'\nexport const importer = pinned\n",
-      'utf-8'
-    )
-    git(fixtureDir, ['add', SURFACE_PINNED, SURFACE_IMPORTER])
-    const bodyPath = join(fixtureDir, SURFACE_BODY_PATH)
-    writeFileSync(bodyPath, SURFACE_BODY, 'utf-8')
-    const r = run(bin, ['issue', 'surface', '--body-file', bodyPath], fixtureDir, isolatedEnv(homeDir))
-    const reportsImporter = new RegExp(`reached\\s+${SURFACE_IMPORTER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(
-      r.stdout
-    )
-    const ok = r.status === 0 && reportsImporter
-    return {
-      status: ok ? 'pass' : 'fail',
-      detail: `exit ${r.status}, pinned file's importer reported as reached: ${reportsImporter}${ok ? '' : ` — ${(r.stderr.trim() || r.stdout.trim()).slice(0, 200)}`}`
     }
   },
 
@@ -1394,7 +1242,7 @@ export const HANDLED_INLINE = new Set(['init', 'eject', 'vinaya-archive tranche'
  * separately, because it gates every other exercise) and before the inline
  * `vinaya-archive tranche` and `eject`. An exercise that is not listed here is never
  * run: `unaccountedCommands` reports it after a run, and the coverage test
- * reports it before any run. `issue surface` and `vinaya-task-tools-serve`
+ * reports it before any run. `vinaya-task-tools-serve`
  * need no other row; `vinaya-sync` must follow `vinaya-log-emit`, whose folder
  * it reads.
  */
@@ -1409,10 +1257,6 @@ export const RUN_ORDER = [
   'vinaya-pr create',
   'vinaya-pr edit',
   'vinaya-pr-report',
-  'issue create',
-  'milestone create',
-  'milestone edit',
-  'issue surface',
   'vinaya-task-tools-serve',
   'studio',
   'vinaya-log-emit',

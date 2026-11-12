@@ -2,5 +2,4 @@ tests/new-noop-check.test.ts
 tests/platform-independence.test.ts
 tests/quickstart.test.ts
 tests/surface-index.test.ts
-tests/commands/issue.test.ts
 tests/commands-router-coverage.test.ts

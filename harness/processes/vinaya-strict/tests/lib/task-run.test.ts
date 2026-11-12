@@ -101,7 +101,7 @@ describe('isAlreadyDispatchedError', () => {
 
   it('is false for a render-refusal DispatchTaskError', () => {
     expect(
-      isAlreadyDispatchedError(new DispatchTaskError('cannot dispatch — brief render refused:\n  - missing'))
+      isAlreadyDispatchedError(new DispatchTaskError('cannot dispatch — brief_render refused:\n  - missing'))
     ).toBe(false)
   })
 
@@ -400,11 +400,11 @@ describe('runTask — O1 (task-run-v1 21, #541): a backlog Issue runs the identi
         { issue: 541, agent: 'claude' },
         deps({
           prepareIssueTask: async () => {
-            throw new DispatchTaskError('cannot dispatch — brief render refused:\n  - missing ## Objectives')
+            throw new DispatchTaskError('cannot dispatch — brief_render refused:\n  - missing ## Objectives')
           }
         })
       )
-    ).rejects.toThrow(/brief render refused/)
+    ).rejects.toThrow(/brief_render refused/)
   })
 })
 
@@ -469,12 +469,12 @@ describe('runTask — O3: a refused preparation refuses before any agent starts'
         { tranche: 't', n: 9, agent: 'claude' },
         deps({
           prepareTask: async () => {
-            throw new DispatchTaskError('cannot dispatch — brief render refused:\n  - missing ## Objectives')
+            throw new DispatchTaskError('cannot dispatch — brief_render refused:\n  - missing ## Objectives')
           },
           assignIssue: neverCalled('assignIssue')
         })
       )
-    ).rejects.toThrow(/brief render refused/)
+    ).rejects.toThrow(/brief_render refused/)
   })
 
   it('propagates a non-DispatchTaskError from prepareTask unchanged too', async () => {
@@ -930,7 +930,7 @@ describe('runTask — --widen-surface continues a pre-pull-request widen-surface
   it('refuses when the widened body fails the write gate, passing its findings through and superseding nothing', async () => {
     const calls: string[] = []
     const finding =
-      "Issue #1245's write gate refused — the same findings `vinaya issue edit` would report:\n  - [error] [issue-content] Add a second registered `Project(s)` this task also touches"
+      "Issue #1245's write gate refused — the same findings `task_issue_edit` would report:\n  - [error] [issue-content] Add a second registered `Project(s)` this task also touches"
     const run = runTask(
       INPUT,
       widenDeps(calls, {

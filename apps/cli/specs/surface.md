@@ -6,6 +6,8 @@ One command is one function, published and tested. `apps/cli/tests/surface-index
 
 ## The rule
 
+The command line exposes only person-typed install, inspection, scaffolding, task and ruling commands, plus Studio. Planner Issue/brief operations and Architect/Tranche Archivist Milestone operations are role tools, with no command fallback.
+
 A command is a function with argument parsing in front. Commands never call commands. One capability is one function.
 
 A change that adds or removes no exported function/const/class (a new field on an already-exported type, a new CLI flag on an already-listed command, a behavioral change inside an already-exported function) needs no documentation update anywhere — this file included — under this rule.
@@ -14,7 +16,7 @@ Three layers:
 
 - **Policy** — `@attalabs/aeg-core`. Pure functions: no filesystem, no network, no process. Unrestricted for a command to call.
 - **Effects** — `apps/cli/src/lib`. The chokepoints that touch the world: git, the filesystem, the forge, a child process. A future consolidated set (`log`, `flushLog`, `forgeWrite`, `forgeRead`, `runChecks`, `collectTokens`, `dispatchRole`, `devReviewLoop`, `runTask`) does not fully exist yet; today's `apps/cli/src/lib` is a wider micro-library commands compose directly.
-- **Commands** — `apps/cli/src/commands`. One file per command (or per closely-related command family sharing a file, e.g. `milestone.ts`). Each command's entry function, reached from `apps/cli/src/index.ts`'s router, should call exactly one effects-layer function. `apps/cli/src/index.ts` itself is the router, not a command, and is exempt by construction.
+- **Commands** — `apps/cli/src/commands`. One file per command (or per closely-related command family sharing a file, e.g. `init.ts`). Each command's entry function, reached from `apps/cli/src/index.ts`'s router, should call exactly one effects-layer function. `apps/cli/src/index.ts` itself is the router, not a command, and is exempt by construction.
 
 **Predicate the test enforces (as ruled by the Principal):** for a command's entry function, collect every call expression (transitively through same-file helpers) whose callee resolves to an export of `apps/cli/src/lib/**` or of another `apps/cli/src/commands/*.ts` file. A call into `apps/cli/src/lib` beyond the one named function is a violation. A call into another `commands/*.ts` file is refused outright — commands never call commands — with zero allowance beyond the same dated-exemption mechanism (no separate carve-out). `printJson`, `promptYesNo`/`closeStdin`, and `packageRoot` count toward the cap like any other call — no allowlist (see Open note below). Calls into `@attalabs/aeg-core` are unrestricted (policy is meant to be composed freely).
 
@@ -28,7 +30,7 @@ A command whose entry function does not yet call exactly one lib chokepoint decl
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'milestone create': { date: '2026-09-05', callsToday: 8, retiresVia: 'forgeWrite' }
+  'milestone_create': { date: '2026-09-05', callsToday: 8, retiresVia: 'forgeWrite' }
 }
 ```
 

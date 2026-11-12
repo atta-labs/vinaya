@@ -579,7 +579,7 @@ describe('prepareTask — the Issue write gate runs before freezing (O2)', () =>
         preparePostingDeps({
           runIssueWriteGate: async () => {
             throw new DispatchTaskError(
-              "Issue #427's write gate refused — the same findings `vinaya issue edit` would report:\n  - [body-bare-digits] a whole-suite Test plan line"
+              "Issue #427's write gate refused — the same findings `task_issue_edit` would report:\n  - [body-bare-digits] a whole-suite Test plan line"
             )
           },
           findExistingFrozenBrief: () => {
@@ -1149,7 +1149,7 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
     rmSync(cwd, { recursive: true, force: true })
   })
 
-  it('refuses a whole-suite `## Test plan` line — the same finding `issue create`/`issue edit` would report', async () => {
+  it('refuses a whole-suite `## Test plan` line — the same finding `task_issue_create`/`task_issue_edit` would report', async () => {
     await expect(
       validateIssueWriteGate(bodyWithWholeSuiteTestPlan, [], 427, 'vinaya task brief backlog --issue 427')
     ).rejects.toThrow(/runs a test runner with no test-file argument/)

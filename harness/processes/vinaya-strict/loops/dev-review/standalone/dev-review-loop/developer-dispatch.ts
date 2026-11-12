@@ -623,36 +623,36 @@ export function resolveIssueObjectives(issueNumber: number): ObjectivesResolutio
 }
 
 /**
- * O3: reconstructs the exact `vinaya issue objectives edit` invocation an
+ * O3: reconstructs the `task_objectives_edit` input an
  * edit-audit comment records, from the `previous`/`now` lists
- * `parseObjectivesEditComment` already parsed — one of `--add`/`--drop`/
- * `--replace`, matching `applyOp`'s own three cases exactly
- * (`issue-objectives.ts`). Used only to name, in a pause detail, the command
+ * `parseObjectivesEditComment` already parsed — add, drop or replace,
+ * matching the library's edit operations. Used only to name, in a pause detail, the tool call
  * that superseded a round's dispatch-time objectives — never executed.
  */
 export function describeObjectivesEdit(issueNumber: number, edit: ObjectivesEditSource): string {
   const { previous, now, reason } = edit
-  const base = `vinaya issue objectives edit ${issueNumber}`
+  const call = (input: Record<string, unknown>) =>
+    `task_objectives_edit ${JSON.stringify({ issue: issueNumber, ...input, reason })}`
   const sameThrough = (n: number) =>
     previous.slice(0, n).every((o, i) => o.id === now[i]?.id && o.text === now[i]?.text)
 
   if (now.length === previous.length + 1 && sameThrough(previous.length)) {
     const added = now[now.length - 1] as Objective
-    return `${base} --add "${added.text}" --reason "${reason}"`
+    return call({ op: 'add', sentence: added.text })
   }
   if (now.length === previous.length - 1) {
     const missing = previous.find((p) => !now.some((n) => n.id === p.id))
     if (missing && now.every((n, i) => n.id === previous.filter((p) => p.id !== missing.id)[i]?.id)) {
-      return `${base} --drop ${missing.id} --reason "${reason}"`
+      return call({ op: 'drop', id: missing.id })
     }
   }
   if (now.length === previous.length) {
     const changed = now.find((n, i) => previous[i]?.id === n.id && previous[i]?.text !== n.text)
     if (changed && now.every((n, i) => n.id === previous[i]?.id)) {
-      return `${base} --replace ${changed.id} "${changed.text}" --reason "${reason}"`
+      return call({ op: 'replace', id: changed.id, sentence: changed.text })
     }
   }
-  return `${base} — could not reconstruct the exact flags from the edit comment's Previous:/Now: diff; Reason: ${reason}`
+  return `${call({})} — could not reconstruct the operation from the edit comment's Previous:/Now: diff`
 }
 
 const ISSUE_TITLE_SHAPE = /^\[([^\]]+)\]\s+(\d+)\s+[—-]/

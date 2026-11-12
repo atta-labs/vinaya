@@ -45,7 +45,7 @@
  * silently, per that same ruling: the repo/forge/Issue-number lookup
  * cannot be completed; the Issue's body cannot be fetched; the Issue
  * carries no well-formed `## Surface` (a malformed or below-cutover Surface
- * — `checkIssueBriefSections`/`issue create`/`edit` already refuse a
+ * — `checkIssueBriefSections`/`task_issue_create`/`edit` already refuse a
  * malformed Surface at authoring time going forward, so a task-branch PR
  * reaching this check with one is either pre-cutover or a hole in that
  * upstream gate, and either way "cannot determine scope" is not a pass);
@@ -219,13 +219,13 @@ async function checkAgainstIssue(issue: number): Promise<void> {
   if (!surface.ok) {
     refuse(
       `Issue #${issue} carries no well-formed \`## Surface\` section (${surface.errors.join('; ')}) — this task's boundary cannot be determined, so its scope cannot be enforced.`,
-      `Add a well-formed \`## Surface\` section (an \`in:\` glob list and an \`out:\` glob list) to Issue #${issue} via \`vinaya issue edit\`, which re-validates it, then re-run \`vinaya-check surface-scope\`.`
+      `Add a well-formed \`## Surface\` section (an \`in:\` glob list and an \`out:\` glob list) to Issue #${issue} via \`task_issue_edit\`, which re-validates it, then re-run \`vinaya-check surface-scope\`.`
     )
   }
   if (surface.value.out.length === 0) {
     refuse(
       `Issue #${issue}'s \`## Surface\` \`out:\` line resolves to zero globs — an empty boundary is not an enforceable one.`,
-      `Add at least one real \`out:\` glob to Issue #${issue}'s \`## Surface\` via \`vinaya issue edit\`, then re-run \`vinaya-check surface-scope\`.`
+      `Add at least one real \`out:\` glob to Issue #${issue}'s \`## Surface\` via \`task_issue_edit\`, then re-run \`vinaya-check surface-scope\`.`
     )
   }
 
@@ -249,7 +249,7 @@ async function checkAgainstIssue(issue: number): Promise<void> {
         severity: 'error',
         message: `surface-scope: \`${v.path}\` is a protected administrative path and no \`in:\` glob of Issue #${issue}'s \`## Surface\` covers it — the task's Surface must name it; the pull request body's \`VINAYA:BEYOND-SURFACE\` record does not excuse it.`,
         agent_recovery_prompt:
-          "Drop the change to that protected path from this PR, or have the Planner add the path to the task's `## Surface` `in:` list via `vinaya issue edit` — then re-run `vinaya-check surface-scope`.",
+          "Drop the change to that protected path from this PR, or have the Planner add the path to the task's `## Surface` `in:` list via `task_issue_edit` — then re-run `vinaya-check surface-scope`.",
         file: v.path
       })
       process.exit(1)
@@ -264,7 +264,7 @@ async function checkAgainstIssue(issue: number): Promise<void> {
       severity: 'error',
       message: `surface-scope: \`${v.path}\` ${beyond}, and the pull request body's \`VINAYA:BEYOND-SURFACE\` block does not record it.`,
       agent_recovery_prompt:
-        "Under the review loop the driver rewrites that block on every body write — call `refresh_evidence` or `update_pull_request_body` so it records the branch's current changes. Otherwise drop the change from this PR, or fix the Issue's own `## Surface` via `vinaya issue edit` — then re-run `vinaya-check surface-scope`.",
+        "Under the review loop the driver rewrites that block on every body write — call `refresh_evidence` or `update_pull_request_body` so it records the branch's current changes. Otherwise drop the change from this PR, or fix the Issue's own `## Surface` via `task_issue_edit` — then re-run `vinaya-check surface-scope`.",
       file: v.path
     })
     process.exit(1)

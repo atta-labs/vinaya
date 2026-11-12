@@ -129,8 +129,7 @@
         "vinaya-dispatch",
         "vinaya-dispatch developer --agent <vendor>",
         "vinaya-task-brief",
-        "vinaya task run",
-        "vinaya brief render"
+        "vinaya task run"
       ],
       "notRun": "the Operator's and the driver's commands — they start a Developer, never run inside one"
     },

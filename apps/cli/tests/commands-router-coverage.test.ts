@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { COMMANDS } from '../../../harness/processes/vinaya-strict/integration/commands'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../harness/kernel/conformance/unit/process-fixture'
 
 // The reverse direction of `harness/processes/vinaya-strict/integration/commands.test.ts` (which
 // proves every COMMANDS row is dispatched). THIS test proves the opposite:
@@ -16,12 +19,10 @@ const INDEX_SOURCE = readFileSync(INDEX_PATH, 'utf-8')
  * Every command name the router actually reaches: `help` (special-cased
  * pre-switch, see index.ts's own comment), each single-word `case` label,
  * and `"<label> <sub>"` for each `subcommand === '<sub>'` check inside that
- * case's block — `<sub>` itself may be multiple words (`issue objectives
- * edit` joins its second argv token into one literal,
- * `'objectives edit'`, rather than nesting a second dispatch level). A case
+ * case's block. A case
  * WITH subcommand branches (`init`, e.g.) still also dispatches its bare
  * label when the `else` branch is a real command call rather than an
- * "Unknown subcommand" refusal (`new`/`pr`/`issue`/`demo`, which have no
+ * "Unknown subcommand" refusal (`new`/`pr`, which have no
  * bare form) — detected by the absence of that refusal's
  * `console.error('Unknown ...')` text in the block.
  */
@@ -67,20 +68,10 @@ describe('router -> COMMANDS coverage', () => {
         'new check',
         'new noop-check',
         'new role',
-        'brief render',
         'pr rule',
-        'issue create',
-        'issue edit',
-        'issue surface',
-        'issue objectives edit',
         'task run',
         'task status',
         'task switch',
-        'milestone create',
-        'milestone adopt',
-        'milestone edit',
-        'milestone close',
-        'milestone status',
         'quickstart',
         'studio'
       ])
@@ -100,9 +91,43 @@ describe('COMMANDS -> needs declaration', () => {
 
   it('declares the reference examples the Test plan gate depends on', () => {
     const needs = (name: string) => COMMANDS.find((c) => c.name === name)?.needs
-    expect(needs('brief render')).toEqual(['forge', 'default-branch'])
     expect(needs('task status')).toEqual(['forge'])
-    expect(needs('issue create')).toEqual(['forge'])
     expect(needs('doctrine')).toEqual([])
+  })
+})
+
+describe('retired role operations', () => {
+  it('refuses old command words and subcommands with role-tool directions', () => {
+    const home = mkdtempSync(join(tmpdir(), 'vinaya-retired-commands-'))
+    const replacements: Record<string, string[]> = {
+      issue: [
+        'task_issue_create',
+        'task_issue_edit',
+        'task_issue_surface',
+        'task_objectives_edit',
+        'task_issue_validate'
+      ],
+      brief: ['brief_render'],
+      milestone: ['milestone_create', 'milestone_edit', 'milestone_adopt', 'milestone_close', 'milestone_status']
+    }
+    try {
+      for (const [word, tools] of Object.entries(replacements)) {
+        expect(COMMANDS.some((c) => c.name === word || c.name.startsWith(`${word} `))).toBe(false)
+        for (const args of [[word], [word, '--help'], [word, 'create'], [word, 'objectives', 'edit']]) {
+          const result = spawnSyncBudgeted('bun', [INDEX_PATH, ...args], {
+            cwd: home,
+            encoding: 'utf8',
+            env: { ...stripVinayaEnv(), HOME: home }
+          })
+          expect(result.status).toBe(2)
+          expect(result.stdout).toBe('')
+          expect(result.stderr.trim().split('\n')).toHaveLength(1)
+          expect(result.stderr).toContain('is a role tool now')
+          for (const tool of tools) expect(result.stderr).toContain(tool)
+        }
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })

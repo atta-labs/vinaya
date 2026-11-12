@@ -1,10 +1,5 @@
 [
   {
-    "file": "apps/cli/src/commands/brief.ts",
-    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
-    "owner": "@attalabs/vinaya"
-  },
-  {
     "file": "apps/cli/src/commands/demo.ts",
     "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
     "owner": "@attalabs/vinaya"
@@ -26,21 +21,6 @@
   },
   {
     "file": "apps/cli/src/commands/init.ts",
-    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
-    "owner": "@attalabs/vinaya"
-  },
-  {
-    "file": "apps/cli/src/commands/issue-objectives.ts",
-    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
-    "owner": "@attalabs/vinaya"
-  },
-  {
-    "file": "apps/cli/src/commands/issue.ts",
-    "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
-    "owner": "@attalabs/vinaya"
-  },
-  {
-    "file": "apps/cli/src/commands/milestone.ts",
     "reason": "A command-line command or the entry that composes the process names the process it runs and its roles; the Planner and Architect commands become role tools in a later tranche.",
     "owner": "@attalabs/vinaya"
   },

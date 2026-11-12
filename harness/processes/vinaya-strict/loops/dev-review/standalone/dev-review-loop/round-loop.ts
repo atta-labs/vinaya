@@ -933,7 +933,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         // O2: the loop's own publication self-check — objectives may have
         // moved between the dispatch above (`facts.manifest`, captured
         // before either reviewer ran) and now, right after both finished
-        // (a principal's `issue objectives edit`, a ruling, a brief
+        // (a principal's `task_objectives_edit`, a ruling, a brief
         // supersession, or — in principle — a policy change can each land
         // mid-round). Re-resolved BEFORE either verdict is held: neither
         // `verdicts` value (still in-memory only) is ever written to disk
@@ -961,7 +961,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         if (!binding.objectivesVersion) {
           const command = reassessedObjectives.edit
             ? describeObjectivesEdit(task, reassessedObjectives.edit)
-            : `vinaya issue objectives edit ${task} ... (edit comment not found on re-read)`
+            : `task_objectives_edit ${task} ... (edit comment not found on re-read)`
           const detail = `objectives moved from ${facts.manifest.objectivesVersion ?? 'none'} to ${
             reassessedObjectives.version ?? 'none'
           } between reviewer dispatch and assessment — superseded by \`${command}\``

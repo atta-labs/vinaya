@@ -102,7 +102,7 @@ export type MilestoneIntentLine = { slug: string; goal: string }
 
 /**
  * Every `- <slug>: <goal>` bullet a Milestone's `### Tranche intents` section
- * declares, in source order (`vinaya milestone status`) — the enumeration
+ * declares, in source order (`milestone_status`) — the enumeration
  * `intentGoalForSlug`'s reverse, per-slug lookup cannot answer on its own
  * (it needs the slug already; this needs none). Shares `intentsSection` and
  * `INTENT_BULLET` with `intentGoalForSlug` rather than re-deriving the
@@ -240,7 +240,7 @@ function factsFromLegacyMilestone(milestone: GhMilestone): MilestoneFacts {
 /**
  * `matchesLegacyMilestone`'s "kept forever, no exception" title match was
  * written for a Milestone that never changes underneath a slug — true for
- * every pre-migration Milestone, false the moment `vinaya milestone adopt`
+ * every pre-migration Milestone, false the moment `milestone_adopt`
  * exists. `adopt` closes the old 1:1 Milestone (never deletes it — the
  * retired-Milestone provenance is deliberate) and reattaches that slug's
  * real Issues to a different, still-open Milestone. The old Milestone still
@@ -338,7 +338,7 @@ export type MilestoneAttachTarget = { number: number; title: string }
  * Two candidates, legacy first (kept forever, per `matchesLegacyMilestone`'s
  * own contract): the exact-slug-titled Milestone, if it is still open —
  * attach there. A CLOSED legacy Milestone is never itself a valid target,
- * but it must NOT short-circuit the search: `vinaya milestone adopt`
+ * but it must NOT short-circuit the search: `milestone_adopt`
  * (`milestone-model.md` §4) closes the old 1:1 Milestone and reattaches the
  * slug's real Issues to a different, still-open, intent-declaring Milestone
  * — the exact live shape this repo runs. Falling through to the intent
@@ -497,7 +497,7 @@ export function listArchivedTrancheSlugs(owner: string, repo: string): ActiveTra
  * three single-purpose sync readers above, which stay on the un-paginated
  * `ghApiGet` they always used). Both legacy AND label-derived slugs need
  * their own Issues fetch now — see `resolveLegacyFacts`'s doc comment for
- * why a legacy slug is no longer free: `vinaya milestone adopt` closes the
+ * why a legacy slug is no longer free: `milestone_adopt` closes the
  * old 1:1 Milestone without deleting it, so its title still legacy-matches
  * while the tranche's real Issues move to a different, still-open Milestone.
  * All fetches run concurrently (`Promise.all`), not one after another — the

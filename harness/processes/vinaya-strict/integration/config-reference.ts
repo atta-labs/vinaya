@@ -48,7 +48,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'rings.ring1_forgeWriteInterception',
     type: 'boolean',
     semantics: [
-      '`true` (the default — an absent key resolves the same way) RUNS forge-write interception: `pr`/`issue create|edit` validate a body against `briefSchema` before any `gh` write, exactly as they always have. `false` is the opt-OUT — the only value that changes behavior — and skips that validation entirely.',
+      '`true` (the default — an absent key resolves the same way) RUNS forge-write interception: `pr`/`task_issue_create/task_issue_edit` validate a body against `briefSchema` before any `gh` write, exactly as they always have. `false` is the opt-OUT — the only value that changes behavior — and skips that validation entirely.',
       "Prior to issue-545's O2 fix this boolean's sense was inverted (`true` skipped, `false` ran) — `vinaya upgrade` migrates a config still holding the old values and prints what it changed."
     ],
     example: `{ "rings": { "ring1_forgeWriteInterception": true } }`
@@ -237,7 +237,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'briefSchema',
     type: 'object (optional)',
     semantics: [
-      'The config-defined brief schema the forge-write commands (`pr create|edit`, `issue create|edit`) validate a body against, locally, before any `gh` write. Declarative only — a required section is either a named battle-tested builtin or a generic heading/field/phrase matcher; no conditional grammar.'
+      'The config-defined brief schema the forge-write commands (`pr create|edit`, `task_issue_create/task_issue_edit`) validate a body against, locally, before any `gh` write. Declarative only — a required section is either a named battle-tested builtin or a generic heading/field/phrase matcher; no conditional grammar.'
     ],
     example: `{
   "briefSchema": {
@@ -254,14 +254,16 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
   {
     key: 'briefSchema.issue',
     type: '{ sections: BriefSection[] } (optional)',
-    semantics: ['Required sections for an Issue body — checked by `vinaya issue create|edit` before any `gh` write.'],
+    semantics: [
+      'Required sections for an Issue body — checked by `task_issue_create/task_issue_edit` before any `gh` write.'
+    ],
     example: `{ "issue": { "sections": [{ "builtin": "issueRationale" }] } }`
   },
   {
     key: 'briefSchema.milestone',
     type: '{ sections: BriefSection[] } (optional)',
     semantics: [
-      'Required sections for a Milestone body — checked by `vinaya milestone create` before any `gh` write, same shape as `briefSchema.pr`/`briefSchema.issue`.',
+      'Required sections for a Milestone body — checked by `milestone_create` before any `gh` write, same shape as `briefSchema.pr`/`briefSchema.issue`.',
       "`checkMilestoneShape`'s own refusal (goal absent, `Release:` present but malformed, the `### Tranche intents` section unparseable) is unconditional and runs whether or not this key is set — mirroring the Issue-only content gate (`checkBlastRadiusScope`/`checkNoBriefContent`/`checkRationaleNamesDocs`), config decides which EXTRA sections are required, never whether that check runs. This key only adds an adopter's own custom `heading`/`field`/`phrase` sections, or opts into the `milestoneShape` builtin explicitly for the same check surfaced through this path too."
     ],
     example: `{ "milestone": { "sections": [{ "builtin": "milestoneShape" }] } }`
@@ -297,7 +299,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     semantics: [
       'GitHub logins trusted as THIS repo’s own principals — the only authors whose PR comments count as a review-gate verdict, and the only actors an actor-verified `vinaya/waiver:docs`/`vinaya/waiver:review` label trusts. There is no built-in default: this list is the whole set of Principals.',
       'Repo-local only, same rule as `checks`: a global `~/.vinaya/config.json`’s `principals` key is stripped at load time with a loud stderr warning, never resolved — who is trusted to approve merges must come from the reviewed, committed per-repo file, never a machine-wide personal config.',
-      'Without this key on the default branch, every Principal-deciding gate and command refuses — review-gate, the waiver labels, and the commands that decide who counts as a Principal (`vinaya pr rule`, `vinaya issue objectives edit`, `vinaya-review-post`, `vinaya-review-status`, `vinaya task status`, dispatch and the review loop) — naming this key as the fix. Set it to your own team’s GitHub logins.',
+      'Without this key on the default branch, every Principal-deciding gate and command refuses — review-gate, the waiver labels, and the commands that decide who counts as a Principal (`vinaya pr rule`, `task_objectives_edit`, `vinaya-review-post`, `vinaya-review-status`, `vinaya task status`, dispatch and the review loop) — naming this key as the fix. Set it to your own team’s GitHub logins.',
       'Read from your repository’s DEFAULT BRANCH via the GitHub API — the value itself never comes from the pull request’s own checkout or local git state, both of which a pull request can rewrite. A PR that edits this field therefore takes effect only once it merges, never for itself. (The API call is addressed using the repository identity the Actions runner provides; that part is not a separate lever, for the reason in the next note.)',
       '⚠️ **This field is only a security control if `main` has branch protection with the Vinaya check marked as a required status check.** Vinaya’s checks run in a `pull_request`-triggered workflow, which GitHub executes from the pull request’s own copy of the workflow file — so a PR can always edit or delete the job that runs them. What a PR cannot do is satisfy a required status check that never reports. Without branch protection, `principals` is a useful team convention, not an enforced boundary. `vinaya init` prints the exact `gh api` command to enable it, and `vinaya doctor` reports when it is missing.',
       '**Set this on your default branch before you need it.** Because the value is read from the default branch, a pull request that introduces `principals` for the first time is refused by every Principal-deciding check until the key is on the default branch — so land it with the `vinaya init` install commit, or any push to the default branch, before enabling branch protection. Once it is on the default branch, ordinary review applies: adding a principal thereafter needs an existing principal’s approval, which is the point.'
@@ -765,7 +767,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'gateCutovers.objectivesSinceIssue',
     type: 'number (optional, non-negative integer)',
     semantics: [
-      'The Issue number from which the `## Objectives` gate (`checkIssueObjectives`, `vinaya issue create|edit`, and `vinaya-check coherence`’s R1) applies. Absent → no cutover: every task Issue must carry `## Objectives`, from Issue 1.'
+      'The Issue number from which the `## Objectives` gate (`checkIssueObjectives`, `task_issue_create/task_issue_edit`, and `vinaya-check coherence`’s R1) applies. Absent → no cutover: every task Issue must carry `## Objectives`, from Issue 1.'
     ],
     example: `{ "gateCutovers": { "objectivesSinceIssue": 404 } }`
   },
@@ -805,7 +807,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'planning',
     type: 'object (optional)',
     semantics: [
-      'Plan-time policy — what the Planner-facing gates in `vinaya issue create`/`vinaya issue edit` enforce about a task Issue before it reaches the forge.'
+      'Plan-time policy — what the Planner-facing gates in `task_issue_create`/`task_issue_edit` enforce about a task Issue before it reaches the forge.'
     ],
     example: `{
   "planning": {
@@ -817,7 +819,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'planning.collisionThreshold',
     type: 'number (optional, non-negative integer)',
     semantics: [
-      "How many files two tasks may have in common before the one being written must declare a `Conflicts-with` edge on the other. `vinaya issue create`/`vinaya issue edit` compare this Issue's Boundary `Pinned files:` against every other open task Issue's pinned files and every open pull request's changed files: at or above this many shared files, with no `Conflicts-with` edge declared in either direction, the write is refused, naming the other task and the shared files.",
+      "How many files two tasks may have in common before the one being written must declare a `Conflicts-with` edge on the other. `task_issue_create`/`task_issue_edit` compare this Issue's Boundary `Pinned files:` against every other open task Issue's pinned files and every open pull request's changed files: at or above this many shared files, with no `Conflicts-with` edge declared in either direction, the write is refused, naming the other task and the shared files.",
       'Under the threshold the Issue is accepted and each shared file is printed as a warning, with the task it is shared with — a small overlap is worth running in parallel, because a merge conflict over one or two files costs minutes while serializing a task costs a whole dispatch.',
       '`0` turns the refusal off entirely and leaves only the warning. Absent → `3`. The same comparison runs when a task is dispatched, scoped to open pull requests only; only the first fifty open pull requests are read, and the output says so when that bound was reached.'
     ],

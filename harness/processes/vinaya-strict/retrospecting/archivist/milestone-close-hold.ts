@@ -1,5 +1,5 @@
 // The one decision "may this Milestone close", shared by `vinaya archive
-// tranche` and `vinaya milestone close` so the two never answer it
+// tranche` and `milestone_close` so the two never answer it
 // differently. Each caller supplies its own special case for the tranche it
 // is closing through the per-slug lifecycle reader.
 
@@ -14,7 +14,7 @@ export type DeclaredTranche = { slug: string; lifecycle: TrancheLifecycle }
 /**
  * Every tranche a Milestone's `### Tranche intents` section declares, with
  * each one's lifecycle read by `readLifecycle` — in production the
- * `deriveTrancheFromForge` composition `vinaya milestone status` prints, so
+ * `deriveTrancheFromForge` composition `milestone_status` prints, so
  * "is that tranche done" is answered exactly once in this product.
  *
  * The tranche being closed is the caller's to report: it is `complete` by
