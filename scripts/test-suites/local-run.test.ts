@@ -10,6 +10,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   completionOf,
+  frozenPlanRunOptions,
+  parseRunArgs,
   LOCAL_GROUP_FILE_CAP,
   LOCAL_RUN_EXECUTION,
   type LocalRunOutcome,
@@ -852,6 +854,40 @@ describe('what a native run records', () => {
       context: note.native?.context
     })
     expect(await lookupGreenRun(note.native?.command as string, dir, cache)).toBeNull()
+  })
+
+  it('a push stops after the first failing group; a review round runs every group', () => {
+    expect(frozenPlanRunOptions({ allGroups: false })).toEqual({ stopAfterFailedGroup: true })
+    expect(frozenPlanRunOptions({ allGroups: true })).toEqual({ stopAfterFailedGroup: false })
+  })
+
+  it('`run --all-groups` reaches the scheduler as no stop after a failing group; plain `run` stops', () => {
+    expect(parseRunArgs(['run', '--log', '/c'])).toEqual({ log: '/c', allGroups: false })
+    expect(parseRunArgs(['run', '--all-groups', '--log', '/c'])).toEqual({ log: '/c', allGroups: true })
+    const { dir, head } = repo()
+    const note = frozen(dir, head, ['a.test.ts@default'])
+    const group: NativeGroup = { ...GROUP, cwd: '.', tests: ['a.test.ts'], args: ['./a.test.ts'] }
+    const native = { ...nativeOf([group], note.context), identities: ['a.test.ts@default'] }
+    const seen: (boolean | undefined)[] = []
+    for (const allGroups of [false, true]) {
+      runFrozenPlan(dir, native, {
+        allGroups: parseRunArgs(allGroups ? ['run', '--all-groups'] : ['run']).allGroups,
+        runGroups: (_root, groups, options) => {
+          seen.push(options?.stopAfterFailedGroup)
+          return {
+            failedRunners: [],
+            problems: [],
+            executions: groups.map((g) => ({ group: g.id, outcome: 'completed' as const, files: g.tests })),
+            failedTests: {},
+            outcomes: []
+          }
+        },
+        state: () => 'same',
+        context: () => note.context,
+        roots: [dir]
+      })
+    }
+    expect(seen).toEqual([true, false])
   })
 
   it('a run stopped after its first failing group credits no unrun test and names only the failing one', async () => {
