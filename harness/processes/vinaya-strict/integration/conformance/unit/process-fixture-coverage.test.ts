@@ -875,7 +875,6 @@ const GRANDFATHERED_FILES: readonly string[] = [
   'harness/processes/vinaya-strict/checks/core-parity.test.ts',
   'harness/processes/vinaya-strict/checks/doc-neutral-ci-parity.test.ts',
   'harness/processes/vinaya-strict/checks/evidence-fresh.test.ts',
-  'harness/processes/vinaya-strict/checks/issue-checks.test.ts',
   'harness/processes/vinaya-strict/checks/prose-gates-doctrine-root.test.ts',
   'harness/processes/vinaya-strict/checks/quoted-command-bin.test.ts',
   'harness/processes/vinaya-strict/checks/registry-gates.test.ts',
