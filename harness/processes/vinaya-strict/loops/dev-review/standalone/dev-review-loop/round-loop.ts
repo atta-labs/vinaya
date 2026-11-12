@@ -1,3 +1,25 @@
+import { worktreePathForBranch } from './developer-prompts.js'
+import { unpushedFailureMessage } from './developer-prompts.js'
+import { taskClock } from './run-state.js'
+import { roundReviewerSources } from './developer-context.js'
+import { renderFailedCheckLog } from './developer-defaults.js'
+import { publishingInstructionLine } from './driver-helpers.js'
+import { postUnpushedWorkResumeComment } from './developer-prompts.js'
+import { persistDeveloperHandoff } from './run-state.js'
+import { persistCurrentLoopState } from './run-state.js'
+import { logUnpushedWorkResume } from './developer-prompts.js'
+import { logPauseCommentRetryIfNotable } from './developer-prompts.js'
+import { logEvents } from './run-logging.js'
+import { issueRulingsBlock } from './developer-prompts.js'
+import { handoffFindings } from './developer-defaults.js'
+import { failureSignaturePart } from './developer-defaults.js'
+import { dispatchDeveloper } from './developer-turn.js'
+import { describeConfidencePauseDetail } from './runtime-defaults.js'
+import { deriveVerdictPauseDetail } from './runtime-defaults.js'
+import { deferredEntriesForRound } from './driver-helpers.js'
+import { commitAndPushPrompt } from './developer-prompts.js'
+import { checkStaleDriver } from './stale-driver.js'
+import { bestEffortInputVersions } from './run-state.js'
 /**
  * `dev-review-loop`'s round loop — the driver's decide-act-observe cycle from the first dispatch to a publish
  * or a pause. Moved out of
@@ -52,44 +74,31 @@ import type { LoopResult } from '../dev-review-loop.js'
 // eslint-disable-next-line no-constant-condition
 export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
   const {
-    bestEffortInputVersions,
     branch,
-    checkStaleDriver,
-    commitAndPushPrompt,
+
     config,
     d,
     deferredByRound,
-    deferredEntriesForRound,
-    deriveVerdictPauseDetail,
-    describeConfidencePauseDetail,
+
     dispatchAgent,
-    dispatchDeveloper,
+
     dispatchModel,
-    failureSignaturePart,
-    handoffFindings,
+
     input,
-    issueRulingsBlock,
+
     log,
-    logEvents,
-    logPauseCommentRetryIfNotable,
-    logUnpushedWorkResume,
+
     loopLogPath,
     pauseBoundRuling,
-    persistCurrentLoopState,
-    persistDeveloperHandoff,
-    postUnpushedWorkResumeComment,
+
     publicationState,
-    publishingInstructionLine,
-    renderFailedCheckLog,
+
     repo,
     rerunHeads,
     root,
-    roundReviewerSources,
+
     runId,
-    task,
-    taskClock,
-    unpushedFailureMessage,
-    worktreePathForBranch
+    task
   } = c
 
   while (true) {
@@ -98,7 +107,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
     // strictly safer, never wrong — this runs before every iteration's
     // own dispatch/gate/publish logic.
     if (c.decision.type !== 'pause') {
-      await checkStaleDriver()
+      await checkStaleDriver(c)
     }
 
     if (c.decision.type === 'dispatch_developer') {
@@ -141,7 +150,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
           // A resumed pause that was raised before the pull request existed
           // keeps its ruling on the task Issue: the first Developer dispatch
           // after it carries that ruling ahead of whatever the round asks.
-          c.issueRulingsOwed ? issueRulingsBlock() : null,
+          c.issueRulingsOwed ? issueRulingsBlock(c) : null,
           conflictFiles !== null
             ? renderConflictPrompt(conflictFiles, publishingInstructionLine())
             : c.resumedDispatch
@@ -182,7 +191,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         // simulating one, well beyond this fix's own boundary.
         const headBeforeDispatch = isGateRedRetry || conflictFiles !== null ? d.resolveHead(branch) : null
         c.roundStartMs = d.now()
-        await dispatchDeveloper(prompt, c.round, { answersFindings: isReviewFindingsRetry })
+        await dispatchDeveloper(c, prompt, c.round, { answersFindings: isReviewFindingsRetry })
         c.resumedDispatch = false
         c.issueRulingsOwed = false
 
@@ -214,7 +223,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
           // instruction (Traps: never resume more than once for this).
           let resolvedByUnpushedResume = false
           if (!c.unpushedResumeAttempted && refusedPublication === null) {
-            const unpushed = d.readUnpushedWorkDetail(worktreePathForBranch())
+            const unpushed = d.readUnpushedWorkDetail(worktreePathForBranch(c))
             if (unpushed.dirtyFiles.length > 0 || unpushed.aheadCount > 0) {
               c.unpushedResumeAttempted = true
               // A push that was made and did not land is the failure
@@ -235,22 +244,22 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
                   {
                     kind: 'mechanical_failure',
                     round: c.round,
-                    failure: unpushedFailureMessage(headBeforeDispatch, unpushed),
+                    failure: unpushedFailureMessage(c, headBeforeDispatch, unpushed),
                     stats: computeStats(c, headBeforeDispatch, c.roundStartMs)
                   },
-                  taskClock()
+                  taskClock(c)
                 )
                 c.state = firstAttempt.state
-                await logEvents(firstAttempt.events)
+                await logEvents(c, firstAttempt.events)
                 if (firstAttempt.decision.type === 'pause') {
                   c.decision = firstAttempt.decision
-                  persistCurrentLoopState('pause', firstAttempt.decision.reason)
+                  persistCurrentLoopState(c, 'pause', firstAttempt.decision.reason)
                   continue
                 }
               }
-              await logUnpushedWorkResume(c.round, unpushedWorkResumeDetail(unpushed))
-              await postUnpushedWorkResumeComment(c.round, headBeforeDispatch, unpushed)
-              await dispatchDeveloper(commitAndPushPrompt(), c.round, {})
+              await logUnpushedWorkResume(c, c.round, unpushedWorkResumeDetail(unpushed))
+              await postUnpushedWorkResumeComment(c, c.round, headBeforeDispatch, unpushed)
+              await dispatchDeveloper(c, commitAndPushPrompt(c), c.round, {})
               const resumedHead = await pollUntil(
                 () => {
                   const h = d.resolveHead(branch)
@@ -265,7 +274,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
               if (resumedHead !== null) {
                 resolvedByUnpushedResume = true
               } else {
-                const stillUnpushed = d.readUnpushedWorkDetail(worktreePathForBranch())
+                const stillUnpushed = d.readUnpushedWorkDetail(worktreePathForBranch(c))
                 const stats = computeStats(c, headBeforeDispatch, c.roundStartMs)
                 // The resume's own attempt, reported the same way and
                 // under the same commits-ahead condition. Two attempts
@@ -281,16 +290,16 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
                     {
                       kind: 'mechanical_failure',
                       round: c.round,
-                      failure: unpushedFailureMessage(headBeforeDispatch, stillUnpushed),
+                      failure: unpushedFailureMessage(c, headBeforeDispatch, stillUnpushed),
                       stats
                     },
-                    taskClock()
+                    taskClock(c)
                   )
                   c.state = resumedAttempt.state
-                  await logEvents(resumedAttempt.events)
+                  await logEvents(c, resumedAttempt.events)
                   if (resumedAttempt.decision.type === 'pause') {
                     c.decision = resumedAttempt.decision
-                    persistCurrentLoopState('pause', resumedAttempt.decision.reason)
+                    persistCurrentLoopState(c, 'pause', resumedAttempt.decision.reason)
                     continue
                   }
                 }
@@ -308,7 +317,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
                   resolvedByUnpushedResume = true
                 } else {
                   const detail = noPushPauseDetail(branch, stillUnpushed)
-                  await logEvents(driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'no_push'))
+                  await logEvents(c, driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'no_push'))
                   c.decision = { type: 'pause', reason: 'no_push', detail }
                   continue
                 }
@@ -375,7 +384,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
             // kill mid-episode (the process dies before ever reaching
             // the bound below) must not hand the next attach a fresh
             // budget of `MAX_GATE_STALLED_TURNS` turns.
-            persistCurrentLoopState('dispatch_developer')
+            persistCurrentLoopState(c, 'dispatch_developer')
             const stats = computeStats(c, headBeforeDispatch, c.roundStartMs)
             // A conflict is a named failure whether or not the file list
             // could be read — the conflict itself is the cause, and its
@@ -414,20 +423,20 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
                   failure: detail,
                   stats
                 },
-                taskClock()
+                taskClock(c)
               )
               c.state = stalled.state
-              await logEvents(stalled.events)
+              await logEvents(c, stalled.events)
               if (stalled.decision.type === 'pause') {
                 c.decision = stalled.decision
-                persistCurrentLoopState('pause', stalled.decision.reason)
+                persistCurrentLoopState(c, 'pause', stalled.decision.reason)
                 continue
               }
             }
             if (c.gateStalledStreak < MAX_GATE_STALLED_TURNS) {
               continue
             }
-            await logEvents(driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'infrastructure'))
+            await logEvents(c, driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'infrastructure'))
             c.decision = { type: 'pause', reason: 'infrastructure', detail }
             c.infrastructureRetries += 1
             continue
@@ -454,7 +463,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         // published pull request are spent: a person decides, through
         // the ordinary pause and its comment.
         const stats = computeStats(c, d.resolveHead(branch), c.roundStartMs)
-        await logEvents(driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'repeat_failure'))
+        await logEvents(c, driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'repeat_failure'))
         c.decision = { type: 'pause', reason: 'repeat_failure', detail: input.pauseOnConflict }
         continue
       }
@@ -475,9 +484,9 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       )
       const { gate, pauseDetail: parentRedPause } = await settleFirstRedRead(c, absorbedGate)
       if (parentRedPause !== null) {
-        await logEvents(driverDecidedPauseEvents(config.loopId, c.state, c.round, gate.stats, 'infrastructure'))
+        await logEvents(c, driverDecidedPauseEvents(config.loopId, c.state, c.round, gate.stats, 'infrastructure'))
         c.decision = { type: 'pause', reason: 'infrastructure', detail: parentRedPause }
-        persistCurrentLoopState('pause', 'infrastructure')
+        persistCurrentLoopState(c, 'pause', 'infrastructure')
         continue
       }
       // The dispatch gate's own premise re-assertion,
@@ -499,7 +508,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       const premiseFailureLines = premiseResult !== null ? premiseResult.errors.map((e) => e.message) : []
       const gateGreen = gate.green && !premiseFailed
       c.lastFailingChecks = [...gate.failingChecks, ...premiseFailureLines]
-      persistDeveloperHandoff({ failingChecks: c.lastFailingChecks.filter((check) => check.length > 0) })
+      persistDeveloperHandoff(c, { failingChecks: c.lastFailingChecks.filter((check) => check.length > 0) })
       c.lastFailureLogs = gate.failureLogs
       c.pendingGateRedRetry = !gateGreen
       if (c.mechanicalRetryRecoverySurvivesOneReset) {
@@ -525,24 +534,24 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         stats: gate.stats,
         ...(failure !== undefined ? { failure } : {})
       }
-      const result = assessRound(c.state, obs, taskClock())
+      const result = assessRound(c.state, obs, taskClock(c))
       c.state = result.state
       c.decision = result.decision
       if (c.decision.type === 'pause' && c.decision.reason === 'confidence' && c.decision.detail === undefined) {
         c.decision = { ...c.decision, detail: describeConfidencePauseDetail(confidence ?? 'absent') }
       }
-      await logEvents(result.events)
-      persistCurrentLoopState(c.decision.type, c.decision.type === 'pause' ? c.decision.reason : undefined)
+      await logEvents(c, result.events)
+      persistCurrentLoopState(c, c.decision.type, c.decision.type === 'pause' ? c.decision.reason : undefined)
     } else if (c.decision.type === 'ask_confidence') {
       const reaskPrompt =
         'The driver holds no accepted `completed` turn result for this round, so it has no confidence to read. Change and publish nothing; report your turn result for the work already on this branch.'
       // O1: a dispatch that only re-asks for the turn result publishes nothing.
-      await dispatchDeveloper(reaskPrompt, c.round, { skipPublish: true })
+      await dispatchDeveloper(c, reaskPrompt, c.round, { skipPublish: true })
       const head = d.resolveHead(branch)
       const stats = computeStats(c, head, c.roundStartMs)
       const confidence = roundConfidence(c, c.round)
       const obs: Observations = { kind: 'gate', round: c.round, green: true, confidence, stats }
-      const result = assessRound(c.state, obs, taskClock())
+      const result = assessRound(c.state, obs, taskClock(c))
       c.state = result.state
       c.decision = result.decision
       if (c.decision.type === 'pause' && c.decision.reason === 'confidence' && c.decision.detail === undefined) {
@@ -555,8 +564,8 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         c.gateStalledStreak = 0
       }
       c.unpushedResumeAttempted = false
-      await logEvents(result.events)
-      persistCurrentLoopState(c.decision.type, c.decision.type === 'pause' ? c.decision.reason : undefined)
+      await logEvents(c, result.events)
+      persistCurrentLoopState(c, c.decision.type, c.decision.type === 'pause' ? c.decision.reason : undefined)
     } else if (c.decision.type === 'dispatch_reviewers') {
       // O4/O7: mergeability is read BEFORE any CI
       // read or reviewer dispatch — a branch in conflict with the base
@@ -660,7 +669,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         manifest,
         policy: c.policy,
         deferralContext,
-        ...roundReviewerSources(c.round)
+        ...roundReviewerSources(c, c.round)
       }
 
       // O1: the parent persists this round's manifest to the control store
@@ -718,7 +727,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // in this mechanism positioned to catch it) — `dispatchReviewer`
       // then omits `cwd` entirely, the same as every round before this
       // task.
-      const candidateSourceDir = worktreePathForBranch()
+      const candidateSourceDir = worktreePathForBranch(c)
       // `buildVerifiedReviewerCandidate` (reviewer-isolation.ts) checks
       // the worktree's head both before AND after the copy — the local
       // worktree can advance mid-copy (round 2 review, MINOR), and a
@@ -826,7 +835,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         const [reviewerSettled, securitySettled, evidenceSettled] = await Promise.allSettled([
           dispatchReviewer(c, 'reviewer', c.round, facts, candidateDir, candidateInputsReady),
           dispatchReviewer(c, 'security', c.round, facts, candidateDir, candidateInputsReady),
-          d.runEvidenceReport(c.prNumber, worktreePathForBranch(), branch)
+          d.runEvidenceReport(c.prNumber, worktreePathForBranch(c), branch)
         ])
         if (reviewerSettled.status === 'rejected' || securitySettled.status === 'rejected') {
           const settled = [
@@ -899,6 +908,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         // `changes_requested` with no findings) — the resumed run reviews
         // this same round on this same head and ends it then.
         await logEvents(
+          c,
           driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'infrastructure').filter(
             (event) => event.event !== 'round_ended'
           )
@@ -956,22 +966,22 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
             reassessedObjectives.version ?? 'none'
           } between reviewer dispatch and assessment — superseded by \`${command}\``
           const stats = computeStats(c, head, c.roundStartMs)
-          await logEvents(driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'objectives_changed'))
+          await logEvents(c, driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'objectives_changed'))
           c.decision = { type: 'pause', reason: 'objectives_changed', detail }
         } else if (!binding.rulingOrdinal) {
           const detail = `a new ruling landed between reviewer dispatch and assessment — ruling ordinal moved from ${facts.manifest.rulingOrdinal} to ${reassessedRulingOrdinal} — superseded by ruling ${c.prNumber}-${reassessedRulingOrdinal}`
           const stats = computeStats(c, head, c.roundStartMs)
-          await logEvents(driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'ruling_posted'))
+          await logEvents(c, driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'ruling_posted'))
           c.decision = { type: 'pause', reason: 'ruling_posted', detail }
         } else if (!binding.briefHash) {
           const detail = `the frozen brief was superseded between reviewer dispatch and assessment — brief hash moved from ${facts.manifest.briefHash ?? 'none'} to ${currentManifest.briefHash ?? 'none'}`
           const stats = computeStats(c, head, c.roundStartMs)
-          await logEvents(driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'brief_superseded'))
+          await logEvents(c, driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'brief_superseded'))
           c.decision = { type: 'pause', reason: 'brief_superseded', detail }
         } else if (!binding.policyDigest) {
           const detail = `the review policy changed between reviewer dispatch and assessment — policy digest moved from ${facts.manifest.policyDigest} to ${currentManifest.policyDigest}`
           const stats = computeStats(c, head, c.roundStartMs)
-          await logEvents(driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'policy_changed'))
+          await logEvents(c, driverDecidedPauseEvents(config.loopId, c.state, c.round, stats, 'policy_changed'))
           c.decision = { type: 'pause', reason: 'policy_changed', detail }
         } else {
           const [reviewer, security] = verdicts
@@ -988,7 +998,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
           c.heldResultIdentity = { round: c.round, head }
           c.lastReviewContext = `${reviewer.verdict.rendered}\n\n---\n\n${security.verdict.rendered}`
           c.lastHandoffFindings = handoffFindings(c.round, reviewer.verdict.observation, security.verdict.observation)
-          persistDeveloperHandoff({
+          persistDeveloperHandoff(c, {
             findings: c.lastHandoffFindings.map((finding) => ({ id: finding.id, description: finding.line }))
           })
 
@@ -1002,7 +1012,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
             round: c.round,
             verdicts: roundVerdicts
           }
-          const result = assessRound(c.state, obs, taskClock())
+          const result = assessRound(c.state, obs, taskClock(c))
           c.state = result.state
           c.decision = result.decision
           if (c.decision.type === 'pause' && c.decision.detail === undefined) {
@@ -1058,19 +1068,19 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
               } else {
                 c.lastReviewContext = renderLiveWithdrawal(head, liveFailures)
                 c.lastHandoffFindings = []
-                persistDeveloperHandoff({ findings: [] })
+                persistDeveloperHandoff(c, { findings: [] })
                 c.decision = { type: 'dispatch_developer' }
               }
             }
           }
           const routed = routeCompletionEvents(roundEvents, c.decision.type)
           c.pendingCompletionEvents = routed.toDeferUntilPublish
-          await logEvents(routed.toLogNow)
+          await logEvents(c, routed.toLogNow)
           if (c.decision.type === 'dispatch_developer') c.round += 1
-          persistCurrentLoopState(c.decision.type, c.decision.type === 'pause' ? c.decision.reason : undefined)
+          persistCurrentLoopState(c, c.decision.type, c.decision.type === 'pause' ? c.decision.reason : undefined)
         }
       } else {
-        persistCurrentLoopState(c.decision.type, c.decision.type === 'pause' ? c.decision.reason : undefined)
+        persistCurrentLoopState(c, c.decision.type, c.decision.type === 'pause' ? c.decision.reason : undefined)
       }
     }
 
@@ -1094,6 +1104,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         c.heldResultIdentity = null
         if (c.round >= config.maxRounds) {
           await logEvents(
+            c,
             driverDecidedPauseEvents(
               config.loopId,
               c.state,
@@ -1107,14 +1118,14 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
             reason: 'max_rounds',
             detail: `max rounds: ${config.maxRounds} — both reviewers approved ${approvedHead}, but its \`[live]\` line(s) failed: ${liveFailures.map((f) => `\`${f.command}\` (${f.detail})`).join(', ')}`
           }
-          persistCurrentLoopState(c.decision.type, c.decision.reason)
+          persistCurrentLoopState(c, c.decision.type, c.decision.reason)
         } else {
           c.lastReviewContext = renderLiveWithdrawal(approvedHead, liveFailures)
           c.lastHandoffFindings = []
-          persistDeveloperHandoff({ findings: [] })
+          persistDeveloperHandoff(c, { findings: [] })
           c.round += 1
           c.decision = { type: 'dispatch_developer' }
-          persistCurrentLoopState(c.decision.type)
+          persistCurrentLoopState(c, c.decision.type)
           continue
         }
       }
@@ -1142,7 +1153,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         // The held-verdict files this round's `heldResultIdentity` named
         // were just discarded above — nothing is held any more.
         c.heldResultIdentity = null
-        persistCurrentLoopState(c.decision.type)
+        persistCurrentLoopState(c, c.decision.type)
         continue
       }
       publicationState.pendingConflictFiles = null
@@ -1152,7 +1163,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // point in the SAME iteration, with no loop-back to the top in
       // between, so the top-of-loop check alone never catches a base that
       // moved past this driver's own code while reviewers were working.
-      if (await checkStaleDriver()) {
+      if (await checkStaleDriver(c)) {
         continue
       }
 
@@ -1219,10 +1230,10 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // log get to say this run completed. A throw above (a post that
       // failed, or re-parsed dirty) skips this entirely, so the log never
       // claims `merged_ready` for a run that did not actually finish.
-      await logEvents(c.pendingCompletionEvents)
+      await logEvents(c, c.pendingCompletionEvents)
       // Published — nothing is held any more.
       c.heldResultIdentity = null
-      persistCurrentLoopState('publish')
+      persistCurrentLoopState(c, 'publish')
       return { finalDecision: c.decision, prNumber: c.prNumber, task }
     }
 
@@ -1269,7 +1280,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
           reason: c.decision.reason,
           detail: c.decision.detail,
           evidence: c.lastReviewContext ?? undefined,
-          ...bestEffortInputVersions()
+          ...bestEffortInputVersions(c)
         })
       } catch {
         // Best-effort — the pause state and comment below are the
@@ -1309,6 +1320,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // structurally guaranteed to have one.
       const pauseInvocation = { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) }
       await logPauseCommentRetryIfNotable(
+        c,
         c.round,
         c.prNumber <= 0
           ? d.postIssuePauseComment(
@@ -1334,7 +1346,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // which branch above decided it, funnels through here exactly
       // once before returning — the one call site that makes every
       // pause reason's final round/budget/held-result state durable.
-      persistCurrentLoopState('pause', c.decision.reason)
+      persistCurrentLoopState(c, 'pause', c.decision.reason)
       return { finalDecision: c.decision, prNumber: c.prNumber, task }
     }
   }

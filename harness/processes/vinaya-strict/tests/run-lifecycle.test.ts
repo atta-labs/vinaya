@@ -385,10 +385,14 @@ describe('one Engine runner per task', () => {
   })
 
   test('the standalone loop calls the moved functions rather than carrying its own copies', () => {
-    const source = readFileSync(
-      join(repoRoot, 'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts'),
-      'utf8'
-    )
+    const source = ['../dev-review-loop.ts', 'run-setup.ts', 'run-state.ts']
+      .map((file) =>
+        readFileSync(
+          join(repoRoot, 'harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop', file),
+          'utf8'
+        )
+      )
+      .join('\n')
     for (const call of ['createDriverExitRecorder(', 'emitDriverHeartbeat(', 'keepDriverLock(', 'seedLoopHistory('])
       expect(source).toContain(call)
     expect(source).not.toContain('function recordDriverExited(')

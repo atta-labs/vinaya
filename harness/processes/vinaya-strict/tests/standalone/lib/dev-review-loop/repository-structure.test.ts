@@ -43,23 +43,18 @@ afterEach(cleanupWorlds)
  */
 describe('devReviewLoop — the loop’s exit sites (O6)', () => {
   it('exactly one exitProcess call site exists — the re-exec hand-off — never a bare process.exit sprinkled elsewhere', () => {
-    const source = readFileSync(
-      join(import.meta.dir, '..', '..', '..', '..', 'loops', 'dev-review', 'standalone', 'dev-review-loop.ts'),
-      'utf8'
-    )
+    const source = readFileSync(join(MODULE_DIR, 'stale-driver.ts'), 'utf8')
     const exitProcessCalls = source.match(/\bd\.exitProcess\(/g) ?? []
     expect(exitProcessCalls).toHaveLength(1)
-    // ... and none hides in a module the driver calls into.
-    for (const file of readdirSync(MODULE_DIR).filter((name) => name.endsWith('.ts'))) {
+    // No second site hides in the orchestrator or another module.
+    expect(readFileSync(DRIVER_PATH, 'utf8').match(/\bd\.exitProcess\(/g) ?? []).toHaveLength(0)
+    for (const file of readdirSync(MODULE_DIR).filter((name) => name.endsWith('.ts') && name !== 'stale-driver.ts')) {
       expect(readFileSync(join(MODULE_DIR, file), 'utf8').match(/\bd\.exitProcess\(/g) ?? []).toHaveLength(0)
     }
   })
 
   it('the outer round-loop catch no longer re-throws — it is a `return`, same as every other decided exit', () => {
-    const source = readFileSync(
-      join(import.meta.dir, '..', '..', '..', '..', 'loops', 'dev-review', 'standalone', 'dev-review-loop.ts'),
-      'utf8'
-    )
+    const source = readFileSync(join(MODULE_DIR, 'run-start.ts'), 'utf8')
     // Located via `recordDriverExited('error')` — unique to THIS catch —
     // rather than a `catch (err) {`-anchored regex: several OTHER catches in
     // this file (control-store-v1 task 6, `#556`: `resolveEscalation`'s own
@@ -75,7 +70,7 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
     // The catch's own closing line: the first one after its `return`.
     const returnIndex = source.indexOf('return { finalDecision: decision, prNumber, task }', markerIndex)
     expect(returnIndex).toBeGreaterThan(markerIndex)
-    const catchEnd = source.indexOf('\n    }\n', returnIndex)
+    const catchEnd = source.indexOf('\n  }\n', returnIndex)
     expect(catchEnd).toBeGreaterThan(returnIndex)
     const body = source.slice(catchStart, catchEnd)
     expect(body).not.toMatch(/^\s*throw err\s*$/m)
@@ -93,10 +88,7 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
   // process-memoized control store `pause-resume.test.ts`'s own tests
   // avoid touching in-process for the identical reason.
   it("logPauseCommentRetryIfNotable's own guard only stays silent on a genuinely boring outcome (posted, attempts <= 1) — never a real posted:false failure", () => {
-    const source = readFileSync(
-      join(import.meta.dir, '..', '..', '..', '..', 'loops', 'dev-review', 'standalone', 'dev-review-loop.ts'),
-      'utf8'
-    )
+    const source = readFileSync(join(MODULE_DIR, 'developer-prompts.ts'), 'utf8')
     const markerIndex = source.indexOf('async function logPauseCommentRetryIfNotable(')
     expect(markerIndex).toBeGreaterThan(-1)
     const guardLine = source.slice(markerIndex, source.indexOf('\n', markerIndex + 1) + 200)
@@ -112,10 +104,7 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
 // above). This proves the call sites themselves reach the real merge-base
 // resolver, never the raw default-branch tip.
 describe('devReviewLoop — O4 (issue-657) wiring: the manifest builder reads a merge base, never the raw tip', () => {
-  const src = readFileSync(
-    join(import.meta.dirname, '..', '..', '..', '..', 'loops', 'dev-review', 'standalone', 'dev-review-loop.ts'),
-    'utf8'
-  )
+  const src = readFileSync(join(MODULE_DIR, 'driver-deps.ts'), 'utf8')
 
   // The round loop moved to its own module; the wiring it carries is read there.
   const roundLoopSrc = readFileSync(join(MODULE_DIR, 'round-loop.ts'), 'utf8')
@@ -130,8 +119,8 @@ describe('devReviewLoop — O4 (issue-657) wiring: the manifest builder reads a 
 
   it('gitMergeBase is a real Deps field, defaulting to resolveMergeBase — never an ad hoc shell pipeline in the driver', () => {
     expect(src).toContain('gitMergeBase: (head: string) => Promise<string>')
-    expect(src).toContain('gitMergeBase: defaultGitMergeBase')
-    expect(src).toMatch(
+    expect(readFileSync(join(MODULE_DIR, 'runtime-defaults.ts'), 'utf8')).toContain('gitMergeBase: defaultGitMergeBase')
+    expect(readFileSync(join(MODULE_DIR, 'git-defaults.ts'), 'utf8')).toMatch(
       /function defaultGitMergeBase\(head: string\): Promise<string> \{\s*return resolveMergeBase\(head\)/
     )
   })
@@ -164,9 +153,17 @@ describe('DRIVER_OWNED_PATHS covers every dev-review-loop/*.ts split module (rev
 // --- driver-split-v1 1: the driver file is a composition root, not the place the round loop lives ---
 
 /** The most lines `devReviewLoop`, its nested `runDevReviewLoopBody` included, may span. */
-const DEV_REVIEW_LOOP_LINE_CAP = 3950
+const DEV_REVIEW_LOOP_LINE_CAP = 400
 
 describe('devReviewLoop stays a bounded composition root (driver-split-v1 1)', () => {
+  it('keeps the driver at most 1,500 lines and every module at most 2,000 lines', () => {
+    expect(readFileSync(DRIVER_PATH, 'utf8').trimEnd().split('\n').length).toBeLessThanOrEqual(1500)
+    for (const file of readdirSync(MODULE_DIR).filter((name) => name.endsWith('.ts'))) {
+      expect(
+        { file, lines: readFileSync(join(MODULE_DIR, file), 'utf8').trimEnd().split('\n').length }.lines
+      ).toBeLessThanOrEqual(2000)
+    }
+  })
   it(`spans at most ${DEV_REVIEW_LOOP_LINE_CAP} lines`, () => {
     const source = readFileSync(DRIVER_PATH, 'utf8')
     const file = ts.createSourceFile(DRIVER_PATH, source, ts.ScriptTarget.Latest, true)

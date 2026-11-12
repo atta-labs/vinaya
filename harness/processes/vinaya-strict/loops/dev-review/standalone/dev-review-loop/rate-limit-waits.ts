@@ -1,3 +1,4 @@
+import { gatePollEnvOverride } from './runtime-defaults.js'
 /**
  * `dev-review-loop`'s waits on the forge: a GitHub rate limit waited out to its reset, a connection failure
  * retried in place, and the read wrappers that absorb either. Moved out of
@@ -101,7 +102,7 @@ export async function absorbRateLimitedRed(
  * round it throws `GitHubKeptAnswering`, an ordinary infrastructure pause.
  */
 export async function absorbGitHubOutage(c: LoopRunContext, err: unknown): Promise<void> {
-  const { d, gatePollEnvOverride, loopLogPath } = c
+  const { d, loopLogPath } = c
 
   if (c.round !== c.roundAtLastConnectionRetry) c.answeredConnectionRetries = 0
   c.roundAtLastConnectionRetry = c.round
